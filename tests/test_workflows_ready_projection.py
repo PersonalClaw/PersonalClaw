@@ -2,12 +2,12 @@
 
 `pool.frontier`/`pool.next_task` were a second scheduler: a private projection answering *what may
 be worked now* with its own ordering and its own leased-work filter, beside the admission core that
-answers the same question for the engine. `PP-13` retires it. The ordering became
+answers the same question for the engine. It is retired. The ordering became
 `admission.rank_key`, the exclusion became the composed `Lease` policy, and `admission.ready` is the
 two of them together.
 
-**The deliverable is the equivalence proof, and it is a golden file for the same reason `PP-11`'s
-was.** There is no oracle for "does the new scheduler still decide the same thing" once the old one
+**The deliverable is the equivalence proof, a golden file for the same reason the engine frontier's
+is.** There is no oracle for "does the new scheduler still decide the same thing" once the old one
 is deleted, so the old one's output was captured BEFORE the delete, from an unmodified `pool.py`
 (`ef8497ed5d29005d6df4cd4acfdba261a2fdedf2facca497f3410dee7627f36f`) at commit `854529a2`, over a
 seeded fixture rich enough for the claim to mean something. Both sides read ONE seed file: a
@@ -430,8 +430,8 @@ def test_BURST_coalescing_still_fires_after_the_retirement():
 
 class TestReadyTasksIsRanked:
     """`registry.ready_tasks` is the one funnel `/api/tasks/ready`, the dashboard slice and the
-    agent's next-task tool all share. Before `PP-13` it returned PROVIDER order — so the complete
-    ranking in `pool.frontier` was reachable by nobody, and the ranked projection the plan promised
+    agent's next-task tool all share. It used to return PROVIDER order — so the complete
+    ranking in `pool.frontier` was reachable by nobody, and the ranked projection
     was, in the surface a user actually sees, unsorted."""
 
     @pytest.fixture(autouse=True)

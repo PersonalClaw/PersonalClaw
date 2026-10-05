@@ -367,8 +367,8 @@ class TestTheInvariant:
 
     def test_a_credential_in_a_link_QUERY_is_closed_by_the_keep_params_allowlist(self):
         """The other half — and a RAIL on it. `_KEEP_PARAMS` is an allowlist, which is a stronger
-        control than this module's denylist, so BA-4 pins the property instead of duplicating it. A
-        later session that widens `_clean_link` to preserve query strings breaks THIS test by name
+        control than this module's denylist, so the property is pinned instead of duplicated. A
+        later change that widens `_clean_link` to preserve query strings breaks THIS test by name
         rather than silently reopening the path."""
         html = f'<html><body><a href="/r?access_token={BEARER}&q=hi">Resume</a></body></html>'
         extraction = extract_page(html, url=HOME_URL)
@@ -460,7 +460,7 @@ class TestThePark:
 
     def test_the_provider_projects_the_park_onto_the_shipped_needs_input_gate(self, monkeypatch):
         """`outcome="needs_input"` — the value the engine's action-node dispatch maps to WAITING and
-        `workflows/attention.py` projects into the inbox. BA-4 adds a reason, not a second gate."""
+        `workflows/attention.py` projects into the inbox. This adds a reason, not a second gate."""
         result = _run(
             BrowseActionProvider().execute(
                 {"goal": "sign in", "start_url": LOGIN_URL}, ActionContext(event="e")
@@ -554,7 +554,7 @@ class TestProfilePersistenceAndReuse:
         assert (profile_dir(HOME_URL) / ".meta.json").is_file()
 
     def test_a_second_run_reuses_the_persisted_profile_without_re_auth(self, monkeypatch):
-        """The change's third clause, end to end at the provider.
+        """The profile-reuse clause, end to end at the provider.
 
         Run 1 hits a sign-in page and parks. The human authenticates (simulated by the same
         `record_login` the provider calls on a completed run — see the module docstring in
@@ -714,7 +714,7 @@ class TestTheProfileDirectory:
 
 
 class TestTheProfileNeverTravels:
-    """§5.1: "never backed up by snapshot/portability (credentials), never exported"."""
+    """Never backed up by snapshot/portability (it holds credentials), never exported."""
 
     def test_the_profile_root_is_claimed_by_the_state_inventory(self, tmp_path):
         """A path under the home that nobody claims fails `audit_home`, so an unclaimed profile
@@ -843,11 +843,11 @@ class _FakeDashboardState:
 
 class TestTheExpiredSurfacing:
     def test_the_expired_park_surfaces_a_banner_and_no_row_of_its_own(self):
-        """At the auth_state=expired write, BA-5 raises the banner (a `browse_auth_expired` frame).
+        """At the auth_state=expired write, a banner is raised (a `browse_auth_expired` frame).
         The question itself is asked by what owns the park — the run's row, or the trigger's
         (`triggers.parks`) — where answering it runs the step again, so the provider raises no
         Inbox row of its own: one that resumed nothing was a second, dead copy of the question
-        (ledger 248). The tick stays success=True (no failed tick)."""
+        The tick stays success=True (no failed tick)."""
         from personalclaw.inbox import InboxStore
         from personalclaw.inbox_providers.native_source import set_dashboard_state
 

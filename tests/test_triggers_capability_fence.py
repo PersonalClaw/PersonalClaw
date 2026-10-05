@@ -1,9 +1,9 @@
-"""Decision 7's frozen-capability fence, actually enforced (§1.4 / R3).
+"""The frozen-capability fence, actually enforced.
 
 🔴 THE DEFECT. `FireContext.requested` defaulted to `{}` and **nothing in production
 ever populated it**. The only real construction (`service.tick`) omitted the field, so
 `evaluate`'s `if ctx.requested:` was always false and the frozen-capability fence —
-decision 7's whole enforcement point — had never run on a single real fire. It passed
+its whole enforcement point — had never run on a single real fire. It passed
 its own unit tests the whole time, because those supply `requested` by hand.
 
 Exactly the shape of the `existing_claim` finding, in the gate directly below it: a
@@ -13,7 +13,7 @@ control that is present, reviewed, and enforcing nothing because its input has n
 choosing: no writer sets `capabilities` — not `tools.create`, not the app-cron
 reconciler, not the digest reconciler, not the CLI, not the API — and every one of them
 creates a WRITE-CAPABLE action (`invoke-agent`, `run-prompt`, `notification-digest`). The
-fence denies on an empty block, so enforcement without decision 7's read-only default
+fence denies on an empty block, so enforcement without a read-only default
 plus a save-time freeze would have been a 100% outage of user automations dressed as a
 security fix.
 """
@@ -70,7 +70,7 @@ def _tick(store, tmp_path):
 
 
 def test_the_two_provider_sets_do_not_overlap():
-    """A provider in both sets would resolve by dict order — the defect S71 found in `fuse`."""
+    """A provider in both sets would resolve by dict order — the defect once found in `fuse`."""
     assert not (READ_ONLY_PROVIDERS & WRITE_CAPABLE_PROVIDERS)
 
 
@@ -120,7 +120,7 @@ def test_requested_reads_the_inline_action_shape():
 
 def test_requested_reads_the_flat_action_shape():
     """The chat tools write a flat `{provider, config}`. Reading only one shape would leave half a
-    real store unfenced — the same both-shapes lesson S103 recorded for the week grid."""
+    real store unfenced — the same both-shapes lesson the week grid taught."""
     trigger = Trigger(id="t", name="t", kind="clock", workflow={"provider": "notify", "config": {}})
     assert requested_capabilities(trigger) == {"providers": ["notify"]}
 
@@ -141,7 +141,7 @@ def test_no_action_requests_nothing():
 
 
 def test_a_read_only_action_fires_with_NO_capability_block(store, tmp_path):
-    """🔴 Decision 7's default, and what makes the fence landable: "auto-fired triggers default to
+    """🔴 The fence's default, and what makes it landable: "auto-fired triggers default to
     read-only action providers". A read-only action needs no opt-in."""
     _due(store, "clock:ro", "notify")
     result = _tick(store, tmp_path)
@@ -301,7 +301,7 @@ def test_the_digest_reconciler_freezes_too():
     assert "capabilities_for_action" in src
 
 
-# ── the doctor finding for pre-S116 rows ──
+# ── the doctor finding for rows authored before the fence ──
 
 
 def _diagnose(store):
@@ -321,7 +321,7 @@ def _diagnose(store):
 
 
 def test_the_doctor_reports_an_unfenced_write_action(store):
-    """🔴 The population this session cannot fix automatically: a trigger authored BEFORE the fence
+    """🔴 The population this change cannot fix automatically: a trigger authored BEFORE the fence
     was wired carries an empty block and refuses on its next fire. The refusal is in the ledger, but
     the user's question is "why did my automation stop" — and the doctor is where that is answered.
     """

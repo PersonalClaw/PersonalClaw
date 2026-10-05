@@ -46,7 +46,7 @@ _CAPABILITY_TO_ENUM = {
 
 
 def _log_chain_skip(use_case: str, ref: str, reason: str) -> None:
-    """SEL-record one fallback-chain entry skip (MODEL-USE-CASES-V2) — the audit
+    """SEL-record one fallback-chain entry skip — the audit
     trail for "why did my default model not serve this call". Best-effort."""
     try:
         from personalclaw.sel import sel
@@ -76,7 +76,7 @@ def _capability_enum(capability: str):
 class ProviderResolutionError(Exception):
     """Raised when a provider cannot be resolved from extension instances.
 
-    PLATFORM-LEGIBILITY §2: may carry an optional ``agent_error`` WHAT/WHY/FIX
+    May carry an optional ``agent_error`` WHAT/WHY/FIX
     envelope. When present, its ``render()`` string IS this exception's message,
     so every place that already surfaces ``str(exc)`` into a turn (a background
     turn that dies on a stale pin, the mid-turn factory) shows the coded,
@@ -214,7 +214,7 @@ def _provider_is_configured(provider_name: str) -> bool:
 def _fallback_chat_model(provider_hint: str | None = None, *, use_case: str = "chat") -> str:
     """A concrete model id to use when an agent declares no model of its own.
 
-    ``use_case`` names the governing axis (MODEL-USE-CASES-V2): the id comes from
+    ``use_case`` names the governing axis: the id comes from
     THAT axis's chain (``active_model_refs`` falls back to chat when the
     sub-category is unbound, preserving today's behavior until the user binds it).
 
@@ -922,7 +922,7 @@ def _build_native_runtime(
 
     Its inference ModelProvider is resolved through the SAME active-model
     selection (Settings → Models). ``model_axis`` names the chat sub-category
-    whose CHAIN governs the inner model (MODEL-USE-CASES-V2): "background" for
+    whose CHAIN governs the inner model: "background" for
     a heartbeat task, "loops" for a loop's worker and planner, "orchestration"
     for subagent spawns and the other agent turns nobody typed, else the
     session's own use case — so a sub-category binding governs native agents too
@@ -1071,7 +1071,7 @@ def _build_native_runtime(
     if not unattended:
         runtime.failover = _turn_failover(inner_axis, choices, runtime.served_model_ref, _resolve)
     runtime.resolved_from = basis.served_from(runtime.served_model_ref)
-    return runtime  # type: ignore[return-value]  # CI-2
+    return runtime  # type: ignore[return-value]
 
 
 def _turn_failover(
@@ -1410,7 +1410,7 @@ def resolve_provider_for_use_case(
     if use_case not in VALID_USE_CASES:
         raise ProviderResolutionError(f"Unknown use case: {use_case!r}")
 
-    # ── Native AgentProvider branch (E2-P4) ──
+    # ── Native AgentProvider branch ──
     # For an agentic chat use case whose agent's provider is "native", build the
     # in-process NativeAgentRuntime instead of an ACP/model provider.
     # ``_force_model_axis`` (set when the native builder resolves its INNER
@@ -1443,7 +1443,7 @@ def resolve_provider_for_use_case(
     _read_tool_roots = kwargs.pop("read_tool_roots", None)
     # Unattended run mode (scheduled run-prompt/run-workflow, Goal/Code loop cycle,
     # dry-run replay): strips interactive tools + fails the approval gate fast so a
-    # background turn can't wedge waiting for a human (T5). Popped here so it never
+    # background turn can't wedge waiting for a human. Popped here so it never
     # leaks into the MODEL-axis resolvers (which don't expect it) and re-injected
     # below for the ACP branch, where it tells the agent CLI nobody can answer its own
     # questions. The "auto"/"yolo" approval policy is a separate, complementary lever
@@ -1453,15 +1453,15 @@ def resolve_provider_for_use_case(
     # decided by ``chat_runner``): popped for the same reason, and re-injected below for the
     # ACP branch alone, the only runtime with a CLI to let approve its own calls.
     _self_approval = bool(kwargs.pop("self_approval", False))
-    # Dry-run replay (T9): observe-mode — write-capable tools return a synthetic
+    # Dry-run replay: observe-mode — write-capable tools return a synthetic
     # observation instead of executing. Pop unconditionally (native-only).
     _dry_run = bool(kwargs.pop("dry_run", False))
     # The Project this session's work scopes under. Pop unconditionally so it never
     # leaks into the model-axis resolvers; meaningful only to the native builder,
     # which binds it per-turn so artifact_save can stamp the artifact's project_id.
     _project_id = str(kwargs.pop("project_id", "") or "")
-    # The chat sub-category whose CHAIN governs this session's INNER model
-    # (MODEL-USE-CASES-V2 T2.x): a heartbeat task passes "background", a loop's worker
+    # The chat sub-category whose CHAIN governs this session's INNER model:
+    # a heartbeat task passes "background", a loop's worker
     # and planner "loops", subagent spawns and webhook agent turns "orchestration" (a
     # model the caller names rides beside the axis, never instead). Defaults to the
     # outer use_case itself (chat sessions → the chat chain; code_tools sessions →
@@ -1469,8 +1469,8 @@ def resolve_provider_for_use_case(
     # code_tools binding cosmetic for native agents). Pop unconditionally so it
     # never leaks into the model-axis resolvers.
     _model_axis = str(kwargs.pop("model_axis", "") or "")
-    # Explicit per-template tool-group activation (CONTEXT-ECONOMY §5.4 — the
-    # WORKFLOWS-V2 stage-spawn seam). Pop unconditionally: native-only, and the
+    # Explicit per-template tool-group activation (the workflow stage-spawn
+    # seam). Pop unconditionally: native-only, and the
     # model-axis resolvers don't expect it.
     _tool_groups = kwargs.pop("tool_groups", None)
     # Per-turn reasoning effort. The native builder consumes it (forwarded to the
@@ -1482,7 +1482,7 @@ def resolve_provider_for_use_case(
         if _provider_kind
         else _agent_provider_kind(agent)
     )
-    # §2.3 (gap 3): re-inject ``unattended`` and ``self_approval`` for the ACP branch. Only the
+    # Re-inject ``unattended`` and ``self_approval`` for the ACP branch. Only the
     # acp_agent factory sees these kwargs on that branch, and it is the one place that can
     # honour them — it hands them to AcpClient, whose ``sanitize_mode`` accepts a self-approving
     # mode only for work whose owner allowed it, while every other session stays clamped.
@@ -1561,8 +1561,8 @@ def resolve_provider_for_use_case(
     # loop judges and gates, a browse step's image reading) — the census of those is
     # tests/test_automation_spend_is_metered.py — routes every resolved provider through
     # ModelCallGuard (per-provider circuit breaker + hard wall-clock timeout +
-    # attempt-level JSONL audit) — so the breaker and the audit see the TRUE axis
-    # (MODEL-USE-CASES-V2). The interactive chat/code_tools stream stays OUT OF
+    # attempt-level JSONL audit) — so the breaker and the audit see the TRUE axis.
+    # The interactive chat/code_tools stream stays OUT OF
     # SCOPE: it returns above via _build_native_runtime (native) or resolves an
     # ACP CLI — both human-watched (its INNER model resolves with
     # _force_model_axis under its own axis). Thread the flag through kwargs so all
@@ -1617,8 +1617,8 @@ def resolve_provider_for_use_case(
         if refusal is not None:
             raise refusal
 
-    # The active selection (Settings → Models) is an ordered fallback CHAIN
-    # (MODEL-USE-CASES-V2): position 0 is the default, 1..n are the user's
+    # The active selection (Settings → Models) is an ordered fallback CHAIN:
+    # position 0 is the default, 1..n are the user's
     # declared fallbacks. Resolution walks the chain in order: an entry whose
     # provider's circuit breaker is OPEN is skipped (routed around a known-down
     # provider); an entry whose provider can't be built is skipped-with-warning
@@ -1650,7 +1650,7 @@ def resolve_provider_for_use_case(
         _routed = routing_active(use_case)
         if _routed:
             _refs = route_refs(use_case, _query_class, _refs)
-    except Exception:  # noqa: BLE001 — routing must never break resolution (fail-open, §3.1)
+    except Exception:  # noqa: BLE001 — routing must never break resolution (fail-open)
         logger.debug("routing seam skipped for %s", use_case, exc_info=True)
         _routed = False
     _last_dead: tuple[str, str] | None = None  # (ref, provider_name) of a dead entry
@@ -2034,7 +2034,7 @@ def can_resolve_use_case(use_case: str) -> bool:
     degraded registry, a workflow's preflight) — so the dashboard's "add a
     model" nudge and what the bridge can actually resolve never disagree (the
     coarse capability-only probe they used before could diverge from real
-    resolution; see F1).
+    resolution).
 
     Resolution for chat-class use cases succeeds when EITHER an active model is
     selected for the use case (Settings → Models) OR a configured provider
@@ -2230,7 +2230,7 @@ def _resolve_from_config_registry(
     # The non-interactive-text guard flag (set by resolve_provider_for_use_case for
     # the ``reasoning`` axis). Pop it unconditionally so it never leaks into the
     # build kwargs / factory; when set, the built provider is wrapped in a
-    # ModelCallGuard just before return (§2 chokepoint).
+    # ModelCallGuard just before return (the guard chokepoint).
     guard_use_case = str(kwargs.pop("_guard_use_case", "") or "")
     # Routing provenance flags. Popped UNCONDITIONALLY — like _guard_use_case — so they can
     # never leak into the build kwargs / factory of a provider that knows nothing about routing.
@@ -2354,7 +2354,7 @@ def _resolve_from_config_registry(
     # including the zero-config floor, which is a registry entry and never a binding.
     served_ref = f"{candidate.name}:{served_model}" if served_model else candidate.name
 
-    # §2 chokepoint: wrap the resolved provider for the non-interactive text axis
+    # The guard chokepoint: wrap the resolved provider for the non-interactive text axis
     # (breaker + hard timeout + audit + day-budget + outbound scan).
     if guard_use_case:
         guarded = metered(

@@ -10,7 +10,7 @@ statement: >
 appliesTo:
   - src/personalclaw/selfqa/**
 source: >
-  SV-11 (SELF-VERIFICATION §6 retirement). AUTO-R12 gave the engine a first-class `vcs`
+  The engine gained a first-class `vcs`
   trigger kind, so the interim `selfqa_commit_watch.py` cron script that predated it was
   deleted and the `self-qa` template rebound to the vcs preset. A re-added script — or an
   installer that re-materializes one — would resurrect the exact "present but superseded"
@@ -28,8 +28,8 @@ expiry_condition: never (the retirement is permanent; the vcs preset is the sole
 
 The self-QA companion once shipped a standalone cron script,
 `src/personalclaw/selfqa/scripts/selfqa_commit_watch.py`, to fire on a new commit. That was
-an **interim** stand-in from before the engine had a real version-control trigger. AUTO-R12
- added a first-class `vcs` file-watch trigger kind, so the interim
+an **interim** stand-in from before the engine had a real version-control trigger. The engine
+then gained a first-class `vcs` file-watch trigger kind, so the interim
 script was deleted and the bundled `self-qa` template was rebound to the vcs preset — a
 `file`-kind trigger whose spec watches `.git/refs/heads/*` with content dedup. There is now
 exactly one commit watcher, and it is the engine's own trigger, not an out-of-band script.
@@ -43,7 +43,7 @@ the real thing" shape the harness exists to prevent.
 - No `selfqa_commit_watch*` file ships anywhere under `src/` (no `src/personalclaw/selfqa/scripts/`
   directory materializing one).
 - `selfqa/install.py`'s `reconcile()` binds the template's trigger to `kind="file"` with the
-  AUTOMATION-SUBSTRATE vcs preset (`paths=vcs_patterns(...)`, `dedup="content"`), swapping the
+  automation engine's vcs preset (`paths=vcs_patterns(...)`, `dedup="content"`), swapping the
   kind in place on the stable id `system:selfqa-commit-watch` — it never materializes a cron
   script.
 - The retired filename may appear only in a cleanup/retirement allowlist (e.g. a

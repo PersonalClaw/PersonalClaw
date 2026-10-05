@@ -81,8 +81,8 @@ const EFFECTS: Transition = { duration: 0.2, ease: [0.2, 0, 0, 1] }
  *  four presets exist precisely so one slider dials the app's whole character. `spring`
  *  is the neutral one — "gentle settle" / "snappy" / "soft" tiers an author reaches for
  *  when the move carries no character to dial, plus one fade. Widening them to
- *  `--bounciness` would mean inventing three calm-damping constants here (the plan
- *  specifies endpoints for the four `physics` presets and for nothing else), would change
+ *  `--bounciness` would mean inventing three calm-damping constants here (endpoints
+ *  are specified for the four `physics` presets and for nothing else), would change
  *  the feel of ~112 call sites at every slider position below 1, and would leave the
  *  module with two families doing the same job under two sets of names — the
  *  parallel-vocabulary defect the physics reconciliation deleted. So: the a11y off-switch
@@ -135,7 +135,7 @@ function bouncy(stiffness: number, dampingAtPlayful: number, calmDamping: number
  *  `instant` under reduced motion. Named by FEEL, not by use case, so the choice is
  *  "how should this move?" rather than "which component am I in?".
  *
- *  Constants are the plan's, verbatim, and they are the taste surface: retuning the
+ *  The constants are the taste surface: retuning the
  *  app's whole personality is four numbers here, not a sweep of call sites. */
 export const physics = {
   /** quick, minimal overshoot — controls, chevrons, press/hover feedback */
@@ -195,7 +195,7 @@ export const thinkingPulse: Variants = {
 }
 
 /** Stagger a container's children by a fixed step. Use on list/grid entrances so
- *  rows cascade instead of popping in together (§4 choreography). */
+ *  rows cascade instead of popping in together. */
 export function stagger(step = 0.04, delayChildren = 0): Transition {
   return { staggerChildren: step, delayChildren }
 }
@@ -223,7 +223,7 @@ const REGION_STEP = 0.05
 const REGION_STEP_FLOOR = 0.4
 
 /** The entrance choreography for a SURFACE's REGIONS — the top-level bands of a page
- *  cascading in on arrival instead of all landing at once (plan FLUID-MOTION §S3 T3.2).
+ *  cascading in on arrival instead of all landing at once.
  *  Pair with `listItemEnter` on each region; `ui/motion/Entrance` is the one consumer.
  *
  *  Returns `null` under `prefers-reduced-motion`, and `null` means NO ENTRANCE AT ALL —

@@ -252,7 +252,7 @@ def test_evaluate_alert_reads_the_notification_rule(tmp_path, monkeypatch):
 
     Same matching semantics as before (they were lifted from this function's own body),
     but sourced from `notification_rules.json` so the identical escalation is expressible
-    for every notification kind — that generalization is the whole point of S3.
+    for every notification kind — that generalization is the whole point.
     """
     from personalclaw import notification_rules as nr
     from personalclaw.inbox import evaluate_alert

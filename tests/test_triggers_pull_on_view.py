@@ -1,4 +1,4 @@
-"""The `view` kind — pull-on-view refresh (R10 / §7 item 8).
+"""The `view` kind — pull-on-view refresh.
 
 🔴 THE DEFECT. `view` is the FOURTH declared kind found with no runtime, after `file`,
 `web_watch` and `run_completed`. It is in `KINDS`, `SPEC_KEYS` accepts
@@ -6,8 +6,8 @@
 page renders it. `surface_binding` was referenced by **exactly one** line in the whole
 tree — its own declaration in `SPEC_KEYS`. Nothing read it, so nothing could fire a `view` trigger.
 
-Deliberately NOT a poll. §3: "Pull-on-view (R10): fires when a bound surface renders past TTL;
-within TTL serve cache … Sidesteps the 1440-run-dirs critique by never firing unviewed." A poll here
+Deliberately NOT a poll. Pull-on-view fires when a bound surface renders past TTL and serves cache
+within TTL, which sidesteps the 1440-run-dirs critique by never firing unviewed. A poll here
 would reintroduce the exact cost this kind exists to avoid, so the runtime is a function a RENDER
 calls and these tests drive it that way.
 """
@@ -122,7 +122,7 @@ def test_the_cache_reason_reports_the_AGE(store, tmp_path):
 
 def test_the_TTL_is_FLOORED(store):
     """🔴 A dashboard re-renders on every websocket nudge, so a TTL of 1 would mean an LLM turn per
-    keystroke elsewhere in the UI. S109 recorded the R1 floor being declared but read by no code."""
+    keystroke elsewhere in the UI. The floor was once declared but read by no code."""
     assert V.ttl_for(_view(store, ttl_secs=1)) == V.MIN_REFRESH_INTERVAL_SECS
 
 
@@ -187,7 +187,7 @@ def test_a_CORRUPT_sidecar_reads_as_never_refreshed(tmp_path):
 
 
 def test_renders_returns_BOTH_refreshes_and_cache_hits(store, tmp_path):
-    """§7 criterion 8's zero-silent-drops rule applies to a skipped refresh exactly as to a skipped
+    """The zero-silent-drops rule applies to a skipped refresh exactly as to a skipped
     fire, so the caller gets both lists."""
     _view(store, tid="view:a", ttl_secs=300)
     _view(store, tid="view:b", ttl_secs=300)
@@ -243,8 +243,8 @@ def test_ONE_bad_binding_does_not_break_the_RENDER(store, tmp_path, monkeypatch)
 
 
 def test_NO_background_loop_polls_this_kind():
-    """🔴 R10's whole point, asserted. A `view` trigger must cost nothing when nobody is looking; a
-    poll loop would reintroduce the 1440-run-dirs-a-day cost the kind exists to avoid."""
+    """🔴 Pull-on-view's whole point, asserted. A `view` trigger must cost nothing when nobody is
+    looking; a poll loop would reintroduce the 1440-run-dirs-a-day cost the kind exists to avoid."""
     import inspect
 
     from personalclaw import gateway

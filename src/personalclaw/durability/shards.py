@@ -1,4 +1,4 @@
-"""Deterministic shard export — JSONL + SHA manifest (DURABILITY §2).
+"""Deterministic shard export — JSONL + SHA manifest.
 
 A tar snapshot is opaque: you cannot diff it, review it, or sync it. Shards are the
 *other* representation of the records — canonical JSONL, one directory per inventory
@@ -27,12 +27,12 @@ Three properties are load-bearing, and each is tested:
 * **Every shard is verifiable.** ``manifest.json`` records ``{bytes, rows, sha256}``
   per shard; :func:`validate` re-derives all three and re-parses every row, so a
   truncated or corrupted export is detected rather than trusted.
-* **Secrets never shard.** Shards are the representation that *leaves the machine*
-  (§2), so ``secret=True`` entries are excluded unconditionally — unlike a local
+* **Secrets never shard.** Shards are the representation that *leaves the machine*,
+  so ``secret=True`` entries are excluded unconditionally — unlike a local
   snapshot tar, which keeps them because a same-machine restore needs them.
 
 Databases are read through the sqlite backup API into a scratch copy first, so a
-live WAL store is exported consistently — the same hazard Session 1 closed for tars.
+live WAL store is exported consistently — the same hazard already closed for tars.
 Table discovery reads the schema rather than a hand-written allowlist: the previous
 allowlist in ``snapshot._merge_memory`` names two tables (``knowledge_facts``,
 ``knowledge_edges``) that do not exist in ``memory.db`` at all.
@@ -157,7 +157,7 @@ class ShardFile:
 
 @dataclass
 class DbCopy:
-    """A consistent whole-database copy staged for sync (DAS-6c-ii-g).
+    """A consistent whole-database copy staged for sync.
 
     The diffable row shards store byte/embedding columns as size placeholders, so they
     can't rebuild a DB losslessly; a sync export additionally stages the real DB file
@@ -1077,7 +1077,7 @@ def validate(shard_dir: Path) -> ValidationResult:
         if rel not in declared:
             result.problems.append(f"{rel}: present on disk but not declared in the manifest")
 
-    # Sync-only whole-DB copies (DAS-6c-ii-g): verify each declared db/ file's bytes + sha.
+    # Sync-only whole-DB copies: verify each declared db/ file's bytes + sha.
     # A manifest with no `databases` key (an incremental/row-only export) is valid — the
     # field is absent, not empty-and-wrong.
     for record in manifest.get("databases", []) or []:
@@ -1158,7 +1158,7 @@ class ImportResult:
     rows: dict[str, list[dict]] = field(default_factory=dict)
     problems: list[str] = field(default_factory=list)
     machine_id: str = ""
-    # entry id -> shard-dir-relative path of its whole-DB copy (sync-only, DAS-6c-ii-g).
+    # entry id -> shard-dir-relative path of its whole-DB copy (sync-only).
     databases: dict[str, str] = field(default_factory=dict)
     #: What the exporting home last agreed on with each machine: ``peer → entry → entity → sha``
     #: (sync-only, ``export_shards(agreements=)``). Empty for an export that carries none.
@@ -1247,7 +1247,7 @@ def import_shards(shard_dir: Path, *, entries: list[str] | None = None) -> Impor
             # practice; kept as a non-fatal guard rather than a crash on a race.
             result.problems.append(f"{rel}: unreadable during import ({exc})")
 
-    # Sync-only whole-DB copies (DAS-6c-ii-g): map each entry id to its db/ file so the
+    # Sync-only whole-DB copies: map each entry id to its db/ file so the
     # DB merger can ATTACH the real database (validate() already verified its bytes/sha).
     for record in manifest.get("databases", []) or []:
         rel = str(record.get("path", ""))

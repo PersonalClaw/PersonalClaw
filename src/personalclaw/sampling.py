@@ -392,7 +392,7 @@ async def best_of_n(
         requested option off; ``note`` says so, with the reason, when those differ from the
         ladder.
         ``judgments`` carries ``{idx, score, reason, reasoning}`` per scored candidate.
-        Plain JSON shapes throughout so the MCP tool, the skill and the HC-5 workflow
+        Plain JSON shapes throughout so the MCP tool, the skill and the ``best-of-n`` workflow
         template all consume one contract.
     """
     n = max(1, min(int(n or 1), MAX_N))

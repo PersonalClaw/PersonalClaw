@@ -1,8 +1,8 @@
-"""E2-P2: neutral AgentEvent + ACP→neutral adapter + decoupling.
+"""Neutral AgentEvent + ACP→neutral adapter + decoupling.
 
 Asserts:
 - AgentEvent constructs with the full field union the chat_runner/providers touch.
-- LLMEvent (llm/base) is now AgentEvent, NOT AcpEvent (G5 decoupled).
+- LLMEvent (llm/base) is now AgentEvent, NOT AcpEvent (decoupled).
 - acp_event_to_agent_event maps every AcpEvent field 1:1.
 - The EVENT_* constants in acp.types and llm.events agree (duplicated, not shared,
   to avoid a circular import — this test pins the parity).

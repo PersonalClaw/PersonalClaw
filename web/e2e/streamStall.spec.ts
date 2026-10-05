@@ -15,7 +15,7 @@ const PROMPT = 'Index this turn on the session map, please'
 // anyway. This spec is where that loss is FORCED and the net is the thing under test; everywhere
 // else, `driveScriptedTurns` refuses a turn that needed the net.
 //
-// CI run 36091495547 (`e2e-a11y`, sessionMap.spec.ts SSM-13, and again on retry1) is that state:
+// CI run 36091495547 (`e2e-a11y`, sessionMap.spec.ts's only-index test, and again on retry1) is that state:
 // the reply fully rendered, the ledger row landed ("unpriced · 51 tokens"), and the page still read
 // "Assistant is responding…" with the composer on Stop for 84 seconds — polling session detail 43
 // times with `running: false` in hand and discarding every one. `!(isLast && streaming)` then

@@ -2,9 +2,8 @@
 
 Core masks a provider/app setting on the wire only when the manifest marks it
 ``x-meta.sensitive``. That flag is the sole input to every masker core has — verified by
-reading them: :func:`personalclaw.dashboard.handlers.apps._sensitive_field_names` (which
-feeds ``_mask_secret_config``, whose own comment names the consequence, "leaving the
-backend in cleartext on every config-panel open (#43)"),
+reading them: :func:`personalclaw.apps.secret_fields.mask_secrets` (without the flag, the
+backend serves the value in cleartext on every config-panel open),
 :func:`personalclaw.config.validation._is_sensitive_path`, and the frontend's
 ``pages/apps/appConfigForm.tsx``, which decides ``type="password"`` and the write-only
 blank-input behaviour from the same flag. So a manifest that declares an ``api_key``
@@ -63,7 +62,7 @@ write-only blank-input behaviour (masking a non-secret and making a normal numer
 un-editable), and it cannot be renamed because ``max_tokens`` is the provider API's own
 parameter name. That red was the DEFAULT outcome for a dual-clone workspace, not something
 you opt into — ``_app_roots()`` resolves the apps clone as a sibling of the checkout, and a CI
-runner has no sibling, so CI stayed green and only humans and agent lanes ever saw it. That
+runner has no sibling, so CI stayed green and only humans and agents ever saw it. That
 is the worst place for a false red: it reads as product breakage, or gets "fixed" by
 annotating a non-secret as a credential.
 

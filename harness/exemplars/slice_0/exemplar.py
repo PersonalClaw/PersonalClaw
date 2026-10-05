@@ -1,8 +1,8 @@
-"""Slice 0 exemplar — data model, spec-ingestion validator, and the binding grammar.
+"""Workflow exemplar — data model, spec-ingestion validator, and the binding grammar.
 
-Slice 0 is the foundation the engine stands on: the `Node`/`WorkflowRun` model, the
+These are the foundation the engine stands on: the `Node`/`WorkflowRun` model, the
 never-throw structural validator (typed issues + Kahn level grouping), and the binding
-resolver. This exemplar drives all three WITHOUT the engine — Slice 0 is pre-engine, so its
+resolver. This exemplar drives all three WITHOUT the engine — they sit below it, so their
 mechanism is exercised directly rather than through a run:
 
 1. a well-formed spec validates clean and the validator returns its concurrency levels;

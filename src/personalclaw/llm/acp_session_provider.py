@@ -1,7 +1,7 @@
 """Session-backed ACP provider — one :class:`AcpSession` on a (possibly shared)
 :class:`AcpConnection`, exposed through the :class:`AgentProvider` surface.
 
-This is the concurrent path's provider (P9): where :class:`AcpAgentProvider` wraps one
+This is the concurrent path's provider: where :class:`AcpAgentProvider` wraps one
 :class:`AcpClient` (one process, one inline-reader turn loop), an ``AcpSessionProvider``
 wraps one demux-routed :class:`AcpSession`, so N of them can share ONE backend process
 via a single :class:`AcpConnection` + :class:`FrameRouter`. It is ADDITIVE: gated behind
@@ -61,8 +61,8 @@ class AcpSessionProvider(AcpToolOutcomesMixin, AcpTurnMeter, AgentProvider):
         self._model = model
         self._agent_name = agent_name
         # The same contract as ``AcpClient._self_approval``, on the POOLED door. Defaults False
-        # so a pooled session keeps AAP-5's clamp; only work whose owner let its CLI approve its
-        # own calls may keep an auto-approve mode.
+        # so a pooled session keeps the ``sanitize_mode`` clamp; only work whose owner let its
+        # CLI approve its own calls may keep an auto-approve mode.
         self._self_approval = bool(self_approval)
         # What the runtime's app declared about its CLI (``acp_agent.options_compacts_itself``),
         # answered here as the N=1 provider answers it.
@@ -145,7 +145,7 @@ class AcpSessionProvider(AcpToolOutcomesMixin, AcpTurnMeter, AgentProvider):
         return bool(self._conn.supports_native_commands)
 
     async def stream_command(self, command: str) -> AsyncIterator[LLMEvent]:
-        """Gated exactly like the N=1 client: no advertisement, no request (`G4`)."""
+        """Gated exactly like the N=1 client: no advertisement, no request."""
         if not self._conn.supports_native_commands:
             from personalclaw.acp.errors import AcpCommandsUnsupported
 
@@ -372,11 +372,11 @@ async def open_acp_session_provider(
 ) -> "AcpSessionProvider":
     """Open a new session on an already-live (spawned + ``initialize``-d) connection and
     wrap it in an :class:`AcpSessionProvider`. Multiple calls on the same connection =
-    concurrent sessions on one process (the P9 win). The caller (pool) owns spawning the
+    concurrent sessions on one process. The caller (pool) owns spawning the
     connection + its lifetime.
 
-    ``mcp_servers`` defaults to the ``personalclaw-core`` server (ACP-AGENT-PARITY §2.1
-    prong A) rather than to nothing: this parameter existed with no supplier, so the
+    ``mcp_servers`` defaults to the ``personalclaw-core`` server
+    rather than to nothing: this parameter existed with no supplier, so the
     concurrent path opened every session with an empty ``mcpServers`` exactly like the
     one-session path did. Pass ``[]`` to open a session with no MCP servers at all.
     """

@@ -1,4 +1,4 @@
-"""App dependency ledger (A3) — reference-counted shared-dependency tracking.
+"""App dependency ledger — reference-counted shared-dependency tracking.
 
 Covers: install records installedBy per dep; classify distinguishes removable
 (only this app) / shared (another app needs it) / userInstalled (no app owns

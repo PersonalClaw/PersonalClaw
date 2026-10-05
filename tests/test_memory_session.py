@@ -1,4 +1,4 @@
-"""M5c: session working memory + two-stage sealing → promotion.
+"""Session working memory + two-stage sealing → promotion.
 
 Session working memory is always-injected (tier=working, scope=session); sealing
 distills it to a durable session-scoped record and sweeps the rest; only the

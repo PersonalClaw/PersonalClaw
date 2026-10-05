@@ -54,7 +54,7 @@ describe('deleting an intent is confirmed from both places', () => {
   })
 
   it('the name is capped, so a sentence-long goal cannot become the dialog title', () => {
-    // cycle 142's rule, the same cap the row's aria-label already uses.
+    // The same cap the row's aria-label already uses.
     expect(CODE).toMatch(/rowSubject\(\[goal\], 40\)/)
   })
 

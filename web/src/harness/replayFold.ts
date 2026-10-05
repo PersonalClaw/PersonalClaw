@@ -2,7 +2,8 @@
 //
 // Feeds a recorded chat-stream trace through the SAME pure folds the live UI uses
 // (coalesceReducers.ts) and returns the terminal segment list, so a recorded trace
-// becomes a replayable regression for the K42/K44/K45 coalescer bug class instead of a
+// becomes a replayable regression for the stream-coalescer bugs (an activity line absorbing
+// the answer, the answer rendered twice, the next reply not opening its own run) instead of a
 // hand-written unit test. The run-stream equivalent drives runFold.ts's foldReducer.
 //
 // A trace step is one recorded stream event. We model the minimal event vocabulary the
@@ -47,7 +48,7 @@ export function replayRun(
 }
 
 /** A structural metric over a replayed chat: how many ADJACENT duplicate text segments
- *  exist (the K44 "answer rendered twice" signature). Zero on a healthy trace. */
+ *  exist (the "answer rendered twice" signature). Zero on a healthy trace. */
 export function adjacentDuplicateTextCount(segs: Segment[]): number {
   let dupes = 0
   for (let i = 1; i < segs.length; i++) {

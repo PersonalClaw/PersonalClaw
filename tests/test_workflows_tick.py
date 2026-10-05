@@ -5,7 +5,7 @@
 payoff of keeping scheduling separate from execution — the scheduler's edge cases are
 cheap to pin down here instead of being discovered in a live run.
 
-The two WF2-R18 regressions are acceptance criteria for the slice, and they guard
+The two join regressions are pinned here, and they guard
 opposite failure directions:
 
 * an UNTAKEN conditional path must never deadlock a downstream join, and
@@ -184,7 +184,7 @@ class TestParallelAndNeeds:
 
 
 class TestActiveEdgeJoinGating:
-    """The two acceptance regressions, guarding opposite failures."""
+    """The two join regressions, guarding opposite failures."""
 
     BRANCH_JOIN = {
         "kind": "parallel",
@@ -227,7 +227,7 @@ class TestActiveEdgeJoinGating:
         assert _paths(fr) == ["root.children[0].cases[bug]"]
 
     def test_an_untaken_branch_never_deadlocks_a_join(self) -> None:
-        """WF2-R18 regression #1."""
+        """The first of the two join regressions."""
         root = _node(self.BRANCH_JOIN)
         states = {
             "root.children[0]": InstanceState.DONE,
@@ -239,7 +239,7 @@ class TestActiveEdgeJoinGating:
         assert "root.children[1]" in _paths(fr)
 
     def test_an_async_fan_out_does_not_fire_a_join_early(self) -> None:
-        """WF2-R18 regression #2. WAITING is not terminal, so the join stays gated while
+        """The second join regression. WAITING is not terminal, so the join stays gated while
         the slow legs are parked — firing on the fast leg alone would merge partial work
         and look like a complete result."""
         root = _node(
@@ -678,7 +678,7 @@ class TestNodeKindCoverage:
 class TestDerivedOrderingReachability:
     """Ordering derived from bindings, and the `to_skip` reachability change.
 
-    This is the risk surface the change names. The tests below hold the two WF2-R18 directions
+    This is the risk surface the change names. The tests below hold the two join-failure directions
     apart on purpose: a declined path must skip EXACTLY the unreachable derived targets (never
     a live one — that fires a join early on a plausible wrong answer), and must leave NO
     reachable-only-in-theory target unskipped (that deadlocks the join).
@@ -686,7 +686,7 @@ class TestDerivedOrderingReachability:
 
     def test_a_parallel_binding_waits_without_a_hand_written_needs(self) -> None:
         """The core capability: `b` binds `a`'s output and is held until `a` is terminal, with
-        no `needs` declared. Under `PP-1` this spec was refused; the frontier now derives it."""
+        no `needs` declared. This spec used to be refused; the frontier now derives it."""
         root = _node(
             {
                 "kind": "parallel",
@@ -782,7 +782,7 @@ class TestDerivedOrderingReachability:
         assert not fr.blocked  # a is running — parked, not deadlocked
 
     def test_a_declined_case_skips_a_cross_container_dataflow_reader(self) -> None:
-        """WF2-R18 direction #1 (deadlock avoidance) across containers. A later sibling binds a
+        """The deadlock-avoidance direction, across containers. A later sibling binds a
         node inside the branch's UNTAKEN case; its output will never exist, so the reader is
         unreachable and must be skipped — leaving it pending would hang the run."""
         root = _node(
@@ -818,7 +818,7 @@ class TestDerivedOrderingReachability:
         assert not fr.blocked  # to_skip counts as progress, not deadlock
 
     def test_a_decline_skips_exactly_the_unreachable_target_not_a_live_one(self) -> None:
-        """WF2-R18 direction #2 (no early fire). Two readers sit beside a branch: one binds the
+        """The no-early-fire direction. Two readers sit beside a branch: one binds the
         TAKEN case, one the untaken. Only the reader of the untaken case is skipped; the reader
         of the live case must run, or the frontier fired a join early on a live leg."""
         root = _node(

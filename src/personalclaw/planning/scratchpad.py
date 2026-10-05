@@ -1,4 +1,4 @@
-"""Watched-scratchpad intake — a jotted line becomes a PROPOSED plan (UP-R18 / crit 9).
+"""Watched-scratchpad intake — a jotted line becomes a PROPOSED plan.
 
 The barrier to starting work here is "create a plan"; the barrier to writing something down in a
 notes file is nothing. This closes that gap in the only direction that is safe: a periodic scan of
@@ -527,7 +527,7 @@ def propose(state: Any, proposal: Proposal) -> str:
 
     PROPOSED, never run: this raises an inbox row and nothing else. There is no code path from a
     scratchpad line to a workflow start — accepting the proposal is a separate, human action on the
-    inbox row, which is the whole guardrail of criterion 9.
+    inbox row, which is the whole guardrail.
 
     Routed through `emit_attention_item` rather than `store.add` + `state.notify` because that
     helper is the only writer that reaches the LIVE store the API serves; a hand-rolled pair writes

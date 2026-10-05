@@ -9,7 +9,7 @@ const tones: Record<Tone, string> = {
   high: 'bg-surface-high',
 }
 
-/** Tonal surface — PersonalClaw elevation model (brand rebrand §3.1).
+/** Tonal surface — PersonalClaw elevation model.
  *
  *  Two modes, one prop:
  *  - default (`glass=false`) = **neumorphic GROUND** — tone step + soft shadow, no

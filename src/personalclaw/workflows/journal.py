@@ -14,7 +14,7 @@ four, and each one earns its place:
   a different prompt. Without this, editing a prompt mid-run and resuming would silently
   serve the pre-edit answer.
 
-A hit emits `step_cached` (WF2-A1) rather than staying invisible: "did my edit actually
+A hit emits `step_cached` rather than staying invisible: "did my edit actually
 re-run anything?" is the first question a user asks after a mid-flight edit, and the
 answer has to come from the ledger, not from reading logs.
 
@@ -255,7 +255,7 @@ class Journal(LedgerWriter):
         model_substituted: tuple[str, ...] | list[str] = (),
     ) -> None:
         """The ledger's primary record. Every field here is required by the flywheel's
-        refiner (§5 Run Ledger) — `cost_usd` is backend-authoritative with a rate-table
+        refiner — `cost_usd` is backend-authoritative with a rate-table
         floor, never a frontend estimate.
 
         `resolved_prompt_ref` points at the prompt as the PROVIDER received it, and the two
@@ -381,7 +381,7 @@ class Journal(LedgerWriter):
         state: InstanceState,
         output_ref: str = "",
     ) -> None:
-        """A resume/rewind cache hit (WF2-A1). Emitted so a user can confirm from the
+        """A resume/rewind cache hit. Emitted so a user can confirm from the
         ledger that an edit re-ran exactly the binding closure and nothing else."""
         self.write(
             STEP_CACHED,
@@ -434,7 +434,7 @@ class Journal(LedgerWriter):
         owner_username: str = "",
         origin_harness: str = "",
     ) -> None:
-        """`owner_username`/`origin_harness` are the run's attribution (TSE2-1), carried onto the
+        """`owner_username`/`origin_harness` are the run's attribution, carried onto the
         opening ledger row so a federated Run Ledger can attribute a run to who/what minted it
         without re-reading the SQLite row. Optional and defaulting to "" (the owner's) so a caller
         that never wired them — or a pre-plan replay — writes exactly today's bytes but for the
@@ -472,7 +472,6 @@ class Journal(LedgerWriter):
         spelling is the dual path the clean-break tenet forbids, and it would leave the NEXT
         consumer to rediscover the same trap. Free to rename — this emitter has no production
         caller, and `test_ledger_golden` probes kinds through `write()`, not the typed methods.
-        WORKFLOWS-V2 §5's event table said `at_node_id`; the doc moved with the code.
         """
         self.write(RUN_ABANDONED, node_id=node_id, elapsed_secs=round(elapsed_secs, 3))
 
@@ -487,7 +486,7 @@ class Journal(LedgerWriter):
     def handoff(
         self, path: str, node_id: str, *, epoch: int, iteration: int, handoff: dict
     ) -> None:
-        """One iteration's handoff to the next (WF2-R6).
+        """One iteration's handoff to the next.
 
         Journaled, not held in memory: a rewind to iteration 3 must replay iteration 2's handoff,
         and an in-memory one would be lost — leaving the replayed iteration to reconstruct from a
@@ -516,7 +515,7 @@ class Journal(LedgerWriter):
         )
 
     def decision(self, path: str, node_id: str, *, epoch: int, decision: dict) -> None:
-        """A settled choice and why (WF2-R6).
+        """A settled choice and why.
 
         The rejected alternatives are the point: compaction keeps "we used X" and drops "we
         rejected Y because", so a resumed run re-proposes Y with nothing in its context saying it
@@ -533,7 +532,7 @@ class Journal(LedgerWriter):
         outcome: str,
         failures: list[dict[str, Any]],
     ) -> None:
-        """A `collect` fan-out's per-item failures, once it is terminal (WV-13).
+        """A `collect` fan-out's per-item failures, once it is terminal.
 
         `failures` is the DOCUMENTED shape a later binding would surface: one entry per failed
         instance inside the fan-out, each carrying `item_index` (so a reader groups by item),
@@ -562,7 +561,7 @@ class Journal(LedgerWriter):
         horizon_secs: float,
         baseline: float,
     ) -> dict[str, Any]:
-        """Journal a decision's OPEN QUESTION at decision time (LEARN-R18).
+        """Journal a decision's OPEN QUESTION at decision time.
 
         The bet, not the answer: this run decided `subject`, and whether that decision was
         right can only be measured later by reading `metric` after `horizon_secs` have
@@ -570,7 +569,7 @@ class Journal(LedgerWriter):
         note its `event_id` — the key the resolver's `outcome_resolved` cites back, making a
         second curator tick idempotent.
 
-        The WORKFLOW-SHAPED adapter over the general facility (PP-9): it contributes
+        The WORKFLOW-SHAPED adapter over the general facility: it contributes
         `instance_path`/`node_id`/`epoch` and the `decision` producer, and nothing else. A
         non-decision producer calls `open_outcome` directly rather than pretending to be a node.
         """
@@ -600,7 +599,7 @@ class Journal(LedgerWriter):
         producer: str = outcomes.PRODUCER_DECISION,
         answer: str = "",
     ) -> dict[str, Any]:
-        """Journal the ground-truth resolution of a `pending_outcome` (LEARN-R18).
+        """Journal the ground-truth resolution of a `pending_outcome`.
 
         `resolution` is "measured" when `metric` was readable after the horizon and
         "inconclusive" when it was not — the latter decays faster, because an outcome we
@@ -608,7 +607,7 @@ class Journal(LedgerWriter):
         back to the open question so the resolver never re-resolves the same one. `answer` is
         which answer ground truth was, for a question that names one (an escalation's verb).
 
-        The workflow-shaped adapter over `resolve_outcome` (PP-9): the resolver hands back the
+        The workflow-shaped adapter over `resolve_outcome`: the resolver hands back the
         `producer` it read off the question, so a resolution never re-labels the bet it closes.
         """
         return self.resolve_outcome(
@@ -646,7 +645,7 @@ class Journal(LedgerWriter):
         compensation_ref: str = "",
         detail: str = "",
     ) -> None:
-        """One effect-lifecycle event (WF2-R1). ATTEMPTED is written BEFORE dispatch, so
+        """One effect-lifecycle event. ATTEMPTED is written BEFORE dispatch, so
         a crash between attempt and outcome leaves evidence the effect MAY have fired —
         "unknown, possibly fired" and "never fired" demand different recovery."""
         self.write(
@@ -665,7 +664,7 @@ class Journal(LedgerWriter):
     def clock_read(
         self, path: str, node_id: str, *, epoch: int, clock: float, wake_at: float = 0.0
     ) -> None:
-        """One load-bearing wall-clock read the run resolved a parked node against (PP-6).
+        """One load-bearing wall-clock read the run resolved a parked node against.
 
         `frontier()` is pure; the controller's `_wake_due_nodes` is the one place a run reads the
         wall clock to make a scheduling decision — a `wait` deadline or a `gate` timeout crossing
@@ -703,9 +702,9 @@ class Journal(LedgerWriter):
     def invalidate_prefix(self, path_prefix: str) -> int:
         """Drop cache entries at or under a path — the in-memory half of a rewind.
 
-        The journal FILE is never rewritten: it is append-only by contract, and the
-        archival of a rewound region is Slice 4's job. This only stops the current
-        process serving hits from the invalidated region.
+        The journal FILE is never rewritten: it is append-only by contract, and
+        `store.archive_output` archives a rewound region's outputs. This only stops the
+        current process serving hits from the invalidated region.
         """
         cache = self._load_cache()
         doomed = [k for k in cache if k.split("|", 1)[0].startswith(path_prefix)]
@@ -713,7 +712,7 @@ class Journal(LedgerWriter):
             cache.pop(k, None)
         return len(doomed)
 
-    # ── TASKS-SOPS projection events ──
+    # ── task projection events ──
 
     def task_materialized(
         self,
@@ -728,7 +727,7 @@ class Journal(LedgerWriter):
 
         `refreshed` distinguishes a rewind's dedup-merge from a first materialization. Without it a
         reader counting `task_materialized` events over-counts the run's output every time it was
-        rewound — and §1 makes idempotent recompute the NORMAL path, so that is not a rare case.
+        rewound — and idempotent recompute is the NORMAL path, so that is not a rare case.
         """
         self.write(
             TASK_MATERIALIZED,
@@ -772,7 +771,7 @@ class Journal(LedgerWriter):
 
         The boolean is what the engine acted on; the verb is what the user chose. They cannot
         disagree today, but recording only the boolean would make an audit unable to distinguish a
-        reject from an expiry auto-reject — which is exactly the distinction §4's per-type expiry
+        reject from an expiry auto-reject — which is exactly the distinction the per-type expiry
         policy exists to create.
 
         `answered` is False for the one close nobody chose: a WITHDRAWN ask (the run ended under
@@ -805,9 +804,9 @@ class Journal(LedgerWriter):
 
         `passed` is the TRISTATE, not a boolean: `None` means the check could not run (a missing
         binary, a timeout, a safety-screen refusal). Recorded as a separate `unrunnable` flag rather
-        than collapsed to False — measured (S61h), `bool(None)` is `False`, which would report "your
+        than collapsed to False — measured, `bool(None)` is `False`, which would report "your
         check failed" for a criterion that never executed and send the user to debug their code when
-        the problem is their environment. §1 projects the two to DIFFERENT blocked kinds
+        the problem is their environment. The two become DIFFERENT blocked kinds
         (`needs_input` vs `capability`) precisely because they need different fixes.
 
         `criterion` is recorded because "verification failed" without naming what was checked is a
@@ -828,8 +827,8 @@ class Journal(LedgerWriter):
     ) -> None:
         """An upstream failure blocked dependents. ONE event for the whole cascade.
 
-        The blocked ids ride as a list rather than one event each: §1 debounces the
-        notification, and a ledger recording N events for one upstream failure would make
+        The blocked ids ride as a list rather than one event each: the notification is
+        debounced, and a ledger recording N events for one upstream failure would make
         the run look like it failed N times.
         """
         self.write(
@@ -841,7 +840,7 @@ class Journal(LedgerWriter):
         )
 
     def workspace_provisioned(self, outcome: dict[str, Any]) -> None:
-        """What the run's workspace ended up being (WORK-CONTAINERS §4.1).
+        """What the run's workspace ended up being.
 
         Recorded even for a REFUSED or degraded workspace — especially then. A run that silently
         fell back from `worktree` to a scratch dir because git was missing behaves differently
@@ -887,13 +886,13 @@ def journal_records(run_id: str, *, kinds: set[str] | None = None) -> list[dict[
 def run_totals(run_id: str) -> dict[str, Any]:
     """Aggregate a run's ledger into the counters the run row carries.
 
-    Budgets are PRE-CHARGED from this on resume (WF2-R4 invariant #1): a resumed run
+    Budgets are PRE-CHARGED from this on resume: a resumed run
     must inherit what it already spent, or a crash loop becomes an unbounded spend.
 
     Carries ``priced`` beside ``cost_usd`` (#2566): ``False`` means the dollar figure is a FLOOR
     because some completed step booked no cost, and a surface must render that as unknown rather
     than ``$0.00``. Engine-written rows always book one, so a run reaching this facade reports
     ``priced=True`` — the flag earns its keep for the LOOP producer today, and for loop-shaped rows
-    once PP-16 retires the loop noun onto this one.
+    once the loop noun retires onto this one.
     """
     return reader.run_totals(store, run_id)

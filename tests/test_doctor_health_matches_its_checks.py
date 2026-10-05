@@ -1,4 +1,4 @@
-"""Settings B16 — the Doctor must not report health it does not have.
+"""The Doctor must not report health it does not have.
 
 What the validator saw on one page: two failed checks ("faiss index desync: 0 indexed vs 2
 embedded rows", "4 unclaimed paths … in NO snapshot"), neither with a Fix — only "Investigate in

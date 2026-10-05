@@ -99,7 +99,7 @@ def test_an_authors_broken_regex_does_not_make_the_field_unfillable():
     [
         # Both bounds and a bool-for-a-number, the three shapes the provider path let through.
         # These rows used Vector Memory's `confidence_threshold` until that field was removed —
-        # nothing ever read it (settings B10); the core setting it pretended to be is the one
+        # nothing ever read it; the core setting it pretended to be is the one
         # the store applies.
         ("bundled-chat", "context_tokens", 9000),
         ("bundled-chat", "context_tokens", 0),

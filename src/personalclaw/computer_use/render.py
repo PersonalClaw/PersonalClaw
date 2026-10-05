@@ -1,7 +1,7 @@
 """The live-view renderer — one read-only view model for the dashboard.
 
-**Everything here is a MIRROR of something that already happened.** The plan's live view
-"mirrors what the model already read", and this package reads accessibility trees, not
+**Everything here is a MIRROR of something that already happened.** The live view
+mirrors what the model already read, and this package reads accessibility trees, not
 pixels — so the honest mirror is the walked tree: the elements and frames of the
 snapshots the dispatch is already holding for the model's own indices
 (:func:`personalclaw.computer_use.service.live_snapshots`), the overlay's trail of approved
@@ -96,8 +96,8 @@ def _snapshot_rows() -> list[dict[str, Any]]:
 def _feed_rows(limit: int) -> list[dict[str, Any]]:
     """The most recent computer-use SEL rows, redacted and narrowed for the feed.
 
-    Filtered on the one ``event_type`` every attempt row carries (`DCU-2`), which is what
-    keeps `DCU-1`'s once-per-run ``api_access`` posture row out of a feed of attempts.
+    Filtered on the one ``event_type`` every attempt row carries, which is what
+    keeps the once-per-run ``api_access`` posture row out of a feed of attempts.
     Rows pass through :func:`personalclaw.sel.redact_event` — the single definition of what
     a SEL record looks like once it leaves the process — and are then narrowed to the feed's
     fields, so the view cannot become a second, wider audit export.

@@ -1,6 +1,6 @@
 """A slash command an agent cannot run must ANSWER, not hard-error the turn.
 
-The measured defect (ACP-AGENT-PARITY `O23`): the dashboard sent
+The measured defect: the dashboard sent
 ``_vendor.dev/commands/execute`` for any ``/word`` message with no capability check at all.
 claude-code adapter 0.60.0 does not implement that method, answered JSON-RPC ``-32601``,
 and the turn died with ``Prompt error: {'code': -32601, …}`` — the plain-prompt fallback the
@@ -41,7 +41,7 @@ from personalclaw.dashboard.chat_utils import (
 )
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 
-# The capability set adapter 0.60.0 really advertised (`O1`, verbatim). Used as the
+# The capability set adapter 0.60.0 really advertised (verbatim). Used as the
 # NEGATIVE fixture: none of these seven keys is a command capability, which is why the
 # gate closes for the provider the audit marked WIRED.
 _CAPS_0_60_0 = {
@@ -137,7 +137,7 @@ class TestNoFrameWithoutAdvertisement:
         """The load-bearing one. The script answers ANY second request with the exact
         ``-32601`` adapter 0.60.0 returned, so removing the gate in
         ``AcpClient.stream_command`` does not merely flip a flag — the turn hard-errors
-        with :class:`AcpMethodNotFound`, which is `O23` reproduced."""
+        with :class:`AcpMethodNotFound`, which is the measured defect reproduced."""
         from unittest.mock import AsyncMock
 
         from personalclaw.acp.client import AcpClient
@@ -271,8 +271,8 @@ class TestDispatchOutcomes:
     async def test_unadvertised_command_is_answered_as_a_plain_prompt(self):
         provider = _FakeProvider(supports=False)
         events, notices = await _dispatch(provider)
-        # The user asked a question and got an answer. This is the whole gap: `O23`
-        # produced an error card here.
+        # The user asked a question and got an answer. This is the whole gap: the
+        # defect produced an error card here.
         assert [e.text for e in events if e.kind == EVENT_TEXT_CHUNK] == ["ANSWER"]
         assert provider.prompts == ["/compact"]
         assert provider.commands == [], "nothing may be dispatched as a command"
@@ -399,8 +399,8 @@ class TestTurnLevel:
         self, tmp_path, monkeypatch
     ):
         """End to end through ``run_chat``: `/compact` on a provider with no command axis
-        lands an ASSISTANT message (not the `O23` error card) and broadcasts the
-        substitution on the activity channel CE2-8 established."""
+        lands an ASSISTANT message (not the error card) and broadcasts the
+        substitution on the activity channel."""
         from unittest.mock import AsyncMock, MagicMock
 
         import personalclaw.trust_mode as _tm

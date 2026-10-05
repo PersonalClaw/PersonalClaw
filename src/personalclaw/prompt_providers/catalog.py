@@ -395,12 +395,12 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
             ),
         ),
     ),
-    # P10 — the generalized, user-parameterized recurring DIGEST. Unlike task-inbox-digest
+    # The generalized, user-parameterized recurring DIGEST. Unlike task-inbox-digest
     # (a one-shot text summarizer over pasted messages), this is an AGENT directive fired by
     # the ``run-prompt`` action on a Schedule Trigger: the agent GATHERS the named sources
     # with its own tools, correlates/dedups, narrates, and DELIVERS to the chosen target —
-    # so cadence + sourcing + delivery are all config, no new service/provider (see
-    # the digest plan). Fresh use_case="digest" (auto-registers in
+    # so cadence + sourcing + delivery are all config, no new service/provider. Fresh
+    # use_case="digest" (auto-registers in
     # PROMPT_USE_CASES; independent of the model-capability USE_CASES vocab).
     BundledPrompt(
         name="task-digest",
@@ -939,7 +939,7 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
         filename="task-cycle_judge_skeptic.md",
         kind="user",
         category="loop",
-        description="Adversarial cycle judge (P4): a second, skeptical assessor that tries to REFUTE a claimed completion/regression before the supervisor trusts it (JSON out, same shape as cycle_judge).",  # noqa: E501
+        description="Adversarial cycle judge: a second, skeptical assessor that tries to REFUTE a claimed completion/regression before the supervisor trusts it (JSON out, same shape as cycle_judge).",  # noqa: E501
         variables=(
             PromptVariable(
                 name="goal",

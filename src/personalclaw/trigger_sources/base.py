@@ -1,4 +1,4 @@
-"""Abstract base for trigger-source providers (AUTOMATION-SUBSTRATE AUTO-A4).
+"""Abstract base for trigger-source providers.
 
 A **trigger source** is an app-contributed origin of events that `kind: event` triggers match.
 The app owns the outside world — a remote workspace's message stream, a device's sensor, a

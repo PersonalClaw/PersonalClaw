@@ -91,7 +91,7 @@ class JobResult:
 def active_home() -> Path:
     """The home this process operates on: :func:`~personalclaw.config.loader.config_dir`.
 
-    Public because the dashboard's conflict-review routes (DAS-10) must read the queue from
+    Public because the dashboard's conflict-review routes must read the queue from
     the SAME home the sync cycle writes it to; resolving it a second way in the handler is
     how a review surface ends up reading an empty queue in an isolated dev home."""
     from personalclaw.config.loader import config_dir
@@ -173,7 +173,7 @@ def job_stamp_fields(job: str, result: JobResult, *, at: float, previous: dict) 
       (`shards.Changes.except_for`), so the next hourly export reads it again.
     * `drill` stamps on ANY non-skip, failure included: a failing drill must not retry
       every tick and bury the user in notifications. The warning is already delivered,
-      so the VERDICT is stamped with it (§6's "validate status") and the archive browser
+      so the VERDICT is stamped with it and the archive browser
       can show *whether* the last drill passed, not just when it ran.
     * a drill that PASSES is also recorded as the newest verified snapshot, on its own, so a later
       failing drill cannot erase it: retention holds that snapshot until a newer one passes.
@@ -487,7 +487,7 @@ def run_incremental_export() -> JobResult:
 
 
 def run_history_commit() -> JobResult:
-    """Hourly git commit of the memory tree — §3's deferred piece, owned by §5.
+    """Hourly git commit of the memory tree.
 
     Independent of the debouncer: the debouncer only fires when something wrote
     through `atomic_write`, and the memory markdown tree is edited by paths that
@@ -860,7 +860,7 @@ def restorable(snapshot: dict) -> str:
 
 
 def run_sync_job() -> JobResult:
-    """Run one sync cycle against the configured transport, if sync is enabled (§4).
+    """Run one sync cycle against the configured transport, if sync is enabled.
 
     Guarded and fail-quiet: sync stays idle unless ``durability.sync_enabled`` is on AND
     a ``sync_transport`` is both named and registered (an installed, enabled transport).
@@ -1028,7 +1028,7 @@ def _notify(job: str, previous: dict, fields: dict, notifier=None) -> None:
 
 
 def _draft_conflict_proposals(home: Path) -> None:
-    """Run the background propose-only merge pass over the fresh conflicts (DAS-7, §4.2).
+    """Run the background propose-only merge pass over the fresh conflicts.
 
     Best-effort and fail-open in BOTH directions: the pass itself never raises (a missing
     model leaves each record needs-review with no proposal), and this wrapper swallows even a
@@ -1054,7 +1054,7 @@ def _draft_conflict_proposals(home: Path) -> None:
 
 
 def _tick_graph_maintenance() -> None:
-    """One graph-maintenance tick (KL-14). Never raises; logs only when something ran.
+    """One graph-maintenance tick. Never raises; logs only when something ran.
 
     Kept as a named module function rather than a lambda so the tick's own test can call
     exactly what the loop calls — a lambda would force the test to re-implement the body and
@@ -1084,11 +1084,11 @@ def _tick_graph_maintenance() -> None:
 
 
 def _tick_evals_watchdog(*, notifier=None) -> None:
-    """One eval-substrate maintenance tick (EVALUATION-SUBSTRATE §3.1 + §3.2).
+    """One eval-substrate maintenance tick.
 
-    This is the "cron today" the plan asks for: the ablation runner is periodic and the
-    model-upgrade watchdog is "an mtime check on the maintenance tick today" (a
-    ``Trigger{kind:clock}`` / ``kind:file`` watcher after AUTOMATION-SUBSTRATE). A named
+    This is the maintenance tick standing in for a cron: the ablation runner is periodic and the
+    model-upgrade watchdog is an mtime check on the maintenance tick (a
+    ``Trigger{kind:clock}`` / ``kind:file`` watcher later). A named
     module function, like ``_tick_graph_maintenance``, so its test calls exactly what the
     loop calls.
 
@@ -1146,9 +1146,9 @@ def _cfg_evals_enabled() -> bool:
 
 
 async def _prune_expired_runs() -> int:
-    """Apply ``workflows.retention_per_def`` to every def that has runs (RET-3).
+    """Apply ``workflows.retention_per_def`` to every def that has runs.
 
-    This is the run-retention pruner's only caller. Before RET-3 it had NONE: `prune_runs` was
+    This is the run-retention pruner's only caller. Before this it had NONE: `prune_runs` was
     shipped, tested and documented as "the path that fires without anyone watching", and nothing
     watched because nothing called it — `workflows.retention_per_def` was likewise declared,
     clamped, loaded and PATCH-writable with zero readers. A knob wired to nothing and a pruner
@@ -1169,7 +1169,7 @@ async def _prune_expired_runs() -> int:
 
 
 async def _tick_footprint_maintenance() -> None:
-    """One footprint-maintenance tick (RET-3): prune expired runs, reclaim the bytes their
+    """One footprint-maintenance tick: prune expired runs, reclaim the bytes their
     deletion freed, and record a footprint sample.
 
     **The three steps are one job because the first two are useless apart.** Deleting rows from a
@@ -1283,7 +1283,7 @@ def run_due_jobs(*, now: float | None = None, force: str = "", notifier=None) ->
 
 
 def _resolved_encryption(cfg) -> bool:
-    """Whether the CONFIGURED transport's shards will actually be encrypted (§4.4).
+    """Whether the CONFIGURED transport's shards will actually be encrypted.
 
     Resolves the tri-state against the transport's own default so the status surface can
     answer "are my bytes readable in that bucket?" instead of echoing "auto". With no
@@ -1426,7 +1426,7 @@ def enabled() -> bool:
     """Whether the scheduled service should run (``durability.auto_backup``).
 
     Fail-SAFE to ON: losing scheduled backups because a config file was unreadable
-    is the failure this whole plan exists to prevent.
+    is the failure this whole service exists to prevent.
     """
     try:
         from personalclaw.config.loader import AppConfig

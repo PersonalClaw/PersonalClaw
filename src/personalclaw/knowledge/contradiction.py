@@ -90,7 +90,7 @@ _NEGATIONS = frozenset(
 
 @dataclass
 class Claim:
-    """One structured assertion. The shape §2.1 persists inside `file_metadata`."""
+    """One structured assertion. The shape persisted inside `file_metadata`."""
 
     id: str = ""
     statement: str = ""

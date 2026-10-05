@@ -228,7 +228,7 @@ export function ReadingView({
   }, [content])
 
   // ── resume where you left off ────────────────────────────────────────────
-  // The other half of the progress ring: KL-7 reported the fraction, this persists it, and
+  // The other half of the progress ring: the ring reports the fraction, this persists it, and
   // the library home's continue-reading shelf is what reads it back.
   //
   // 🔑 THE RESTORE GATES THE WRITE. `read()` above fires 0 on mount, and `setReadingPosition`

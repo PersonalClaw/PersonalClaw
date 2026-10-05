@@ -56,7 +56,7 @@ describe("an intent's goal survives truncation", () => {
   })
 
   it('and the delete control still names itself from the capped goal', () => {
-    // cycle 142's rule — a sentence-long goal must not become a paragraph-long button name.
+    // A sentence-long goal must not become a paragraph-long button name.
     expect(CODE).toMatch(/ariaLabel=\{`Delete intent: \$\{rowSubject\(\[it\.goal \|\| it\.id\], 40\)\}`\}/)
   })
 })

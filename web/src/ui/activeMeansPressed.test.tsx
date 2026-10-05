@@ -10,7 +10,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Three primitives modelled "this control is on" and told nobody ───────────────────────────
 //
-// Cycle 128 measured 48 boolean-toggling buttons and closed 14, leaving 34 to CLASSIFY (the rail's
+// A first pass measured 48 boolean-toggling buttons and closed 14, leaving 34 to CLASSIFY (the rail's
 // ceiling). Reading them turned the remainder inside out: **most are not raw buttons at all.** They are
 // primitives that already take an `active` prop — and every one of them spent it on a colour:
 //
@@ -24,7 +24,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // `Segmented`/`SegToggle` already ship `aria-pressed` for exclusive choice; this brings the `active`
 // family onto the same contract instead of inventing one.
 //
-// Driven, parent worktree vs this one (`grep -c 'aria-pressed={active}'` = 0 there, 1 here per file):
+// Driven, before vs after the change (`grep -c 'aria-pressed={active}'` = 0 before, 1 after, per file):
 //
 //   surface        aria-pressed nodes   one live flip
 //   #/knowledge    **0 → 9** (2 true)   the type chips are an exclusive group; clicking the active one
@@ -41,7 +41,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // `active`, so it must emit NO `aria-pressed` at all — announcing `"false"` would tell assistive tech that
 // a plain action has an off state.
 //
-// ── Cycle 153: THE SAME FAMILY, THREE SITES CYCLE 128 DID NOT REACH ─────────────────────────────────
+// ── THE SAME FAMILY, THREE SITES THE FIRST PASS DID NOT REACH ───────────────────────────────────────
 //
 // `#/settings/design` is where this costs the most, because the whole page IS selection. Read out of
 // Chrome's accessibility tree: **3 of 89 buttons exposed any state** — the Mode row — and everything the
@@ -96,7 +96,7 @@ describe('IconButton does the same, and keeps what it already announced', () => 
   })
 
   it('still carries its name and its disabled contract', () => {
-    // Cycle 119's work must survive: the reason rides `title`, the name stays findable.
+    // Its disabled contract must survive: the reason rides `title`, the name stays findable.
     render(<IconButton icon={PanelRight} label="Optimize prompt" disabled disabledReason="Type something first" onClick={vi.fn()} />)
     const el = screen.getByRole('button', { name: 'Optimize prompt' })
     expect(el.getAttribute('aria-disabled')).toBe('true')
@@ -165,7 +165,7 @@ describe('the population this reaches, so the primitives were the right place', 
   const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
   /** 🪤 Matched to the SELF-CLOSING `/>`, never to the first `>` — `onClick={() => …}` contains one, and
-   *  that mistake produced four false negatives earlier in this session. */
+   *  that mistake produced four false negatives in earlier rails. */
   const callSites = (prim: string) =>
     walk(SRC).flatMap((abs) =>
       [...readSource(abs).matchAll(new RegExp(`<${prim}\\b[\\s\\S]{0,400}?/>`, 'g'))]

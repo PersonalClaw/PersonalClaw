@@ -1,4 +1,4 @@
-"""TokenJuice savings ledger (Context Economy §1.3) — aggregated, bounded, best-effort."""
+"""TokenJuice savings ledger — aggregated, bounded, best-effort."""
 
 from __future__ import annotations
 

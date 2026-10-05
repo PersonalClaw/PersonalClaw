@@ -1,7 +1,7 @@
 // The typed doc-object shape for `ui/` primitives.
 //
 // Each `web/src/ui/<Name>.tsx` primitive gains a co-located `<Name>.doc.ts` that
-// default-exports one or more `UiDoc`s — the Astryx `.doc.mjs` pattern: the
+// default-exports one or more `UiDoc`s, so the
 // conventions currently living as comments (the HeaderActions ordering tenet, the
 // SidePanel `urlKey` contract, the token-lint ratchet) become machine-readable
 // data an app-building agent can `ui_search`/`ui_get`.
@@ -11,7 +11,7 @@
 // each prop's `type` and `required`, straight from the TypeScript source. The drift
 // test asserts the authored prop set equals the compiler-derived set, so a prop can
 // never be added to a component without being documented, and the type half can
-// never rot. This is the §1 "describe from the source; drift is a test failure"
+// never rot. This is the "describe from the source; drift is a test failure"
 // thesis applied to the component kit.
 
 /** One prop's authored documentation. `type`/`required` are filled at build time. */

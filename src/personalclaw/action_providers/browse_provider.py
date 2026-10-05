@@ -4,17 +4,17 @@ A standard :class:`~personalclaw.action_providers.base.ActionProvider`, which is
 point: a workflow action node, a schedule trigger, a lifecycle hook and an event trigger all
 invoke it by NAME through the seams they already use, so browse inherits the denylist, the
 incident kill switch, the rung ladder and the injection screen without any of those seams
-learning what a browser is. Plan §9 calls this provider-fidelity wiring; the failure it
+learning what a browser is. This is provider-fidelity wiring; the failure it
 avoids is a bespoke "browse runner" beside the dispatch path, governed by nothing.
 
 ``action_config``::
 
     {"goal": "…", "start_url": "https://…",
-     "max_steps": 20,              # optional; plan §7.2 default
+     "max_steps": 20,              # optional; the default
      "target": "gateway",          # optional; "gateway" (default) | "user_browser"
      "cdp_url": "ws://127.0.0.1:9222/devtools/page/…",   # the page target to drive
      "screenshot_dir": "/path",    # optional; capture-to-PATH, never base64
-     "vision_grounding": false}    # optional, BA-10; default false — see below
+     "vision_grounding": false}    # optional; default false — see below
 
 **The located vision path is per-invocation and OFF by default**. ``vision_grounding``
 opts one run into ``CLICK_VISION`` for pages whose only control is a canvas or image-map. It is a
@@ -26,7 +26,7 @@ the moment one task needed it. It also needs ``screenshot_dir`` — grounding re
 and a model bound to ``image_modality`` in Settings → Models, without which the first
 ``CLICK_VISION`` parks with a typed "no vision model available" reason.
 
-**Two execution targets, one selector** (BA-7, plan §(a)/§(d)). ``target`` picks WHICH browser:
+**Two execution targets, one selector**. ``target`` picks WHICH browser:
 ``gateway`` (the default, and the only behaviour) drives the ``cdp_url`` on this
 config under the gateway's own profile; ``user_browser`` drives the operator's own browser
 through the connector. The vocabulary, the connector and both refusals live in
@@ -42,7 +42,7 @@ up shipped and inert.
 
 **The credential handoff**. Three things happen here and nowhere else:
 
-* **§5.3, before a model call is spent.** :func:`~personalclaw.browse.handoff.session_state` is
+* **Before a model call is spent.** :func:`~personalclaw.browse.handoff.session_state` is
   consulted on ``start_url``. A site whose recorded session has gone stale parks IMMEDIATELY, which
   is the whole value of a pre-run check — parking on step 14 wastes thirteen steps the user paid
   for. A site with no profile at all does NOT park unless ``start_url`` is itself a sign-in page:
@@ -51,14 +51,14 @@ up shipped and inert.
 * **The park routes through the SHIPPED needs-input gate.** A ``login_required`` park is a park:
   ``_to_result`` already maps every park to ``outcome="needs_input"``, which the engine's
   action-node dispatch maps to WAITING and ``workflows/attention.py`` projects into the inbox.
-  BA-4 adds a reason and a card, not a second park/resume.
+  The handoff adds a reason and a card, not a second park/resume.
 * **"Authenticated" is OBSERVED, never asserted.** :func:`~personalclaw.browse.handoff.record_login`
-  is called when a run that started without a fresh session COMPLETES — that is the own
-  wording for the invariant ("it only knows 'I am now authenticated' by observing that the
-  post-login page contains the expected content"). It is also what makes the second run cheap:
+  is called when a run that started without a fresh session COMPLETES — the invariant is that
+  it only knows "I am now authenticated" by observing that the post-login page contains the
+  expected content. It is also what makes the second run cheap:
   run 1 records the session, run 2 reads ``fresh`` and never asks the human again.
 
-**Browser lifecycle is still NOT here**, and BA-4 does not change that. ``browse/transport.py``
+**Browser lifecycle is still NOT here**; the handoff does not change that. ``browse/transport.py``
 records the decision: core does not discover Chrome, does not own a ``--user-data-dir`` process and
 does not supervise one — so it opens no sign-in window either. The person signs in in the browser
 the step drives (its ``cdp_url`` target), and answering the park runs the step again there. Absent
@@ -165,7 +165,7 @@ def _budget_check() -> tuple[str, str]:
 
 
 def _kill_check() -> tuple[bool, str]:
-    """The browse kill-switch verdict, consulted before every model call in the loop (BA-5).
+    """The browse kill-switch verdict, consulted before every model call in the loop.
 
     Never raises — an unreadable flag answers "not killed" (the switch is opt-in; see
     :func:`personalclaw.browse.killswitch.get_kill`), so a bookkeeping hiccup cannot halt browse
@@ -400,7 +400,7 @@ class BrowseActionProvider(ActionProvider):
             # On the dispatch a person's answer started (`ActionContext.answer`: "I have signed
             # in"), the pre-run check does not park again. It reads the profile's `.meta.json`,
             # which a person signing in never writes, so re-running it parked on the same check
-            # by construction and the handoff could not be left. §5.2: on the user's confirmation
+            # by construction and the handoff could not be left. On the user's confirmation
             # the run resumes. The session is still OBSERVED, not assumed — a completed run
             # records it (`_to_result`), and a page still asking for a password parks mid-run.
             if getattr(ctx, "answer", None) is None and (
@@ -523,7 +523,7 @@ class BrowseActionProvider(ActionProvider):
     # ── plumbing ─────────────────────────────────────────────────────────────
 
     def _mirror_sink(self, ctx: ActionContext) -> Callable[[BrowseStep, str], None]:
-        """A per-step sink that relays each completed step to the live mirror (BA-5).
+        """A per-step sink that relays each completed step to the live mirror.
 
         Bound to this step's run (``base.run_identity``; a fire's is none) so a watcher can tell
         concurrent browse runs apart. It only RELAYS what the loop already produced — the SCREENED
@@ -555,7 +555,8 @@ class BrowseActionProvider(ActionProvider):
         """Connect to the RESOLVED page target and wrap it in the gated session + driver.
 
         ``cdp_url`` arrives resolved (``browse.target.resolve_cdp_url``) rather than being read
-        from ``action_config`` here: which browser a task drives is the ONE decision BA-7 owns,
+        from ``action_config`` here: which browser a task drives is the ONE decision
+        :mod:`personalclaw.browse.target` owns,
         and a second read of the config key at the connect site is how a `user_browser` task
         would end up on the gateway's profile after all.
         """
@@ -581,15 +582,15 @@ class BrowseActionProvider(ActionProvider):
     def _login_park(
         self, url: str, *, reason: str, ctx: ActionContext, started: float
     ) -> ActionResult:
-        """Park on the needs-input gate because a HUMAN must authenticate (plan §5.2).
+        """Park on the needs-input gate because a HUMAN must authenticate.
 
         ``success=True`` with ``outcome="needs_input"``, exactly like every other park: a login wall
         is not a failure, and reporting one would invite the retry machinery to re-run the task
         against a wall that will still be there.
 
-        Also writes ``auth_state=expired`` into the profile's ``.meta.json``. That is the state BA-5
-        renders a persistent banner from, and writing it at the moment the wall is OBSERVED is what
-        makes that atom a rendering job rather than a re-derivation.
+        Also writes ``auth_state=expired`` into the profile's ``.meta.json``. That is the state the
+        persistent banner renders from, and writing it at the moment the wall is OBSERVED is what
+        makes the banner a rendering job rather than a re-derivation.
         """
         from personalclaw.browse.handoff import (
             REASON_SESSION_EXPIRED,
@@ -605,7 +606,7 @@ class BrowseActionProvider(ActionProvider):
         handoff = request_login(url, reason=reason, run_id=run_id, node_id=PROVIDER_NAME)
         if reason == REASON_SESSION_EXPIRED:
             mark_expired(url)
-            # BA-5 §(c): the moment auth_state=expired is written, SURFACE it as a persistent
+            # The moment auth_state=expired is written, SURFACE it as a persistent
             # banner. The question itself is asked by what the park belongs to — the workflow run's
             # row, or the trigger's (`triggers.parks`) — where answering it runs this step again.
             from personalclaw.browse.mirror import surface_auth_expired
@@ -695,7 +696,7 @@ class BrowseActionProvider(ActionProvider):
         """What a person reads on a run that finished: how far it went, where, and what it noted.
 
         A finished run's history row used to be its `stdout` — the loop's whole account as JSON,
-        which is the right trace and not a line anyone reads (ledger 295). The notes are what the
+        which is the right trace and not a line anyone reads. The notes are what the
         run was sent for, so they are the sentence; the JSON on `stdout` keeps everything else.
         """
         count = result.step_count
@@ -716,12 +717,12 @@ class BrowseActionProvider(ActionProvider):
     def _park_sentence(result: BrowseLoopResult) -> str:
         """What the user reads on the parked run. A sentence, because this IS a UI surface.
 
-        Exhaustive over the park vocabulary, and now actually so: BA-10's rail
+        Exhaustive over the park vocabulary, and now actually so: a rail
         (``test_every_park_reason_renders_as_a_sentence_not_a_reason_code``) walks the module's own
         ``PARK_*`` constants, and it found that ``stuck`` and ``navigation_blocked`` had NEVER had a
-        sentence — a parked run has been showing users "Browse stopped early (stuck)" since BA-3.
-        That is the leak this method's own comment warns about, two reasons older than BA-10, so the
-        sentences are added here rather than left for the rail to keep reporting.
+        sentence — a parked run had been showing users "Browse stopped early (stuck)" ever since.
+        That is the leak this method's own comment warns about, two reasons older than the rail, so
+        the sentences are added here rather than left for the rail to keep reporting.
         """
         if result.park_reason == PARK_STEP_EXHAUSTED:
             head = f"Browse stopped after {result.step_count} steps without finishing"
@@ -788,7 +789,7 @@ class BrowseUnavailable(RuntimeError):
 
 
 def create_provider(config: dict[str, Any] | None = None) -> BrowseActionProvider:
-    """Factory the app manifest's ``implementation`` names (plan §9).
+    """Factory the app manifest's ``implementation`` names.
 
     ``config`` is the extension's own provider config, handed over by
     ``providers.registry.ActionProviderHandler.create``. Accepted and ignored: browse takes its

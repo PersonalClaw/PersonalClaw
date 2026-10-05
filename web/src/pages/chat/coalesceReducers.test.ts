@@ -3,8 +3,8 @@ import { applyCoalescedFlush, insertActivity, TextRunOwnership, type SegmentsUpd
 import type { Segment } from './chatTypes'
 
 // Regression suite for the chat stream coalescer's segment attribution — the exact
-// logic behind K42 (mid-stream activity duplicated the reply), K44 (turn N+1 absorbed
-// turn N's answer) and K45 (edit-resend glued the new answer onto the old). These
+// logic behind three bugs: mid-stream activity duplicated the reply, turn N+1 absorbed
+// turn N's answer, and edit-resend glued the new answer onto the old. These
 // lived inline in ChatPage and were untested, which is how they shipped. Locking them.
 
 const text = (t: string): Segment => ({ kind: 'text', text: t })
@@ -23,7 +23,7 @@ describe('applyCoalescedFlush — replace vs push', () => {
     expect(segs).toEqual([text('Hello world')]) // ONE segment, replaced each frame
   })
 
-  it('K44/K45: a flush that does not own the tail (fresh send/turn) PUSHES beside prior text — never replaces it', () => {
+  it('a flush that does not own the tail (fresh send/turn) PUSHES beside prior text — never replaces it', () => {
     // Prior turn left an owned text run; a new send releases it. The next flush must OPEN A
     // NEW segment, not overwrite/absorb the prior turn's answer.
     const prior = [text('Turn 1 full answer.')]
@@ -32,11 +32,11 @@ describe('applyCoalescedFlush — replace vs push', () => {
     expect(segs[0]).toEqual(text('Turn 1 full answer.')) // prior answer intact, not glued/absorbed
   })
 
-  it('K42: after an activity segment interleaves, an owning flush does NOT duplicate — it replaces the tail only when the tail is text', () => {
+  it('after an activity segment interleaves, an owning flush does NOT duplicate — it replaces the tail only when the tail is text', () => {
     // Simulate: text run owned, then activity inserted BEFORE it (via insertActivity),
     // so the tail is STILL the text run → flush replaces in place (no duplicate push).
     let segs: Segment[] = [text('The answer so far')]
-    segs = insertActivity(segs, 'recalled context', 'context', true) // K42 insert
+    segs = insertActivity(segs, 'recalled context', 'context', true) // the mid-run insert
     // tail is still the text run
     expect(segs[segs.length - 1]).toEqual(text('The answer so far'))
     segs = applyCoalescedFlush(segs, 'The answer so far, extended', true)
@@ -47,7 +47,7 @@ describe('applyCoalescedFlush — replace vs push', () => {
   })
 })
 
-describe('insertActivity — K42 ordering discipline', () => {
+describe('insertActivity — ordering discipline', () => {
   it('inserts BEFORE the active coalesced text run (keeps text as the tail)', () => {
     const segs = insertActivity([text('streaming answer')], 'recalled context', 'context', true)
     expect(segs).toEqual([activity('recalled context'), text('streaming answer')])
@@ -92,7 +92,7 @@ describe('TextRunOwnership — every decision is taken at dispatch', () => {
   })
 
   it('an activity line queued before the release still lands ABOVE the live text', () => {
-    // The day56b s14 doubling: the stats line and chat_done shared a render batch.
+    // The stats-line doubling: the stats line and chat_done shared a render batch.
     const run = new TextRunOwnership()
     const painted = applyAll([], [run.flush('the whole answer')])
     const queued = [run.activity('Turn complete', 'stats'), run.flush('the whole answer')]

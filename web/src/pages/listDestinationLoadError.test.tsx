@@ -23,7 +23,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //
 // The four destinations that already converged (tasks, prompts, loops, notifications) each carry a
 // comment saying why the catch went; these three are the remainder that fetch a primary collection
-// through `useQuery`. After this cycle every one of them agrees.
+// through `useQuery`. After this change every one of them agrees.
 //
 // 🪤 `persist: true` (skills) means a warm cache seeds `data` and the fetch can fail AFTER a paint.
 // That must keep showing the cached rows, so the gate is `data === undefined && error` — never
@@ -282,7 +282,7 @@ describe('every useQuery list destination adopts LoadError', () => {
     // Each holdout swallows through a DIFFERENT mechanism, so each needs its own judgement — not a
     // bulk find-and-replace. Named here so the list is a decision record rather than a blind spot.
     expect(holdouts).toEqual([
-      // 🎓 GRADUATED (ux-676): `tools/ToolsPage.tsx` was excused here because it composes five reads
+      // 🎓 GRADUATED: `tools/ToolsPage.tsx` was excused here because it composes five reads
       // under one `Promise.all` and "partial tolerance is the design". That reasoning was half right —
       // it holds for the four PERIPHERAL reads (MCP servers, importable, pool stats, groups), which
       // still carry their own fallbacks and are asserted to keep them. It did not hold for the INDEX,

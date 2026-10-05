@@ -63,7 +63,7 @@ re-verifying one legitimately reports drift; that is the wrong question, not tam
 | State | Meaning | Install behaviour |
 |---|---|---|
 | `signed` | Ed25519 verifies against an in-tree key, and the tree matches the signed manifest. | Installs. A `community`-origin bundle is raised to **`official`** trust tier — proven provenance buys exactly what the curated registry already has. Never lowers a tier. |
-| `unsigned` | Neither signature file present. | **Installs, at community tier.** Graduated trust (contract C2): unsigned is a *state*, not a verdict, and never a hard wall. Most community apps are unsigned and that is fine. |
+| `unsigned` | Neither signature file present. | **Installs, at community tier.** Graduated trust: unsigned is a *state*, not a verdict, and never a hard wall. Most community apps are unsigned and that is fine. |
 | `invalid` | Anything else. | **Refused, terminal.** `confirm=True` does **not** override it. |
 
 `invalid` is deliberately not consentable. A warning verdict asks the user to weigh a
@@ -155,7 +155,7 @@ minisign -Vm apps/my-app/.pclaw-signature.sha256 -p src/personalclaw/trusted_key
 ### Current state
 
 The mechanism is live on every app install and update. The trust store ships **empty**
-until the maintainer signing key is generated (SECURITY-HARDENING owner task 2), which is
+until the maintainer signing key is generated, which is
 the safe direction: no signature verifies, so nothing is falsely attributed, and unsigned
 bundles keep installing at community tier exactly as before. **No release workflow signs a
 bundle today**: nothing under `.github/workflows/` invokes `scripts/sign_app.py`, and

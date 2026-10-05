@@ -165,7 +165,7 @@ FIRST_SCAN_MAX_BYTES = 100 * 1024 * 1024
 
 @dataclass
 class _DirCursor:
-    """The source's persisted observation state (§3.2 cursor, opaque to the engine).
+    """The source's persisted observation state (the cursor, opaque to the engine).
 
     ``sigs`` is the committed baseline — the last signature actually re-indexed for each
     relative path. A file whose change is still settling, or that a poll left for the next
@@ -360,7 +360,7 @@ def note_file(store: Any, rel: str) -> str:
 
 
 class DirSourceProvider(KnowledgeSourceProvider):
-    """Poll-capable provider over a watched local directory (§4).
+    """Poll-capable provider over a watched local directory.
 
     Reads its per-source configuration from the WatchedSource row's ``spec``:
 
@@ -412,7 +412,7 @@ class DirSourceProvider(KnowledgeSourceProvider):
     async def get_item(self, item_id: str) -> KnowledgeItem | None:
         return None
 
-    # ── save-time (and poll-time) spec validation — §4 path guard + cap ─────────────
+    # ── save-time (and poll-time) spec validation — path guard + cap ────────────────
 
     def validate_spec(self, spec: dict) -> tuple[bool, str]:
         """Validate a dir-source spec: real directory, not sensitive, within the cap.
@@ -433,7 +433,7 @@ class DirSourceProvider(KnowledgeSourceProvider):
         if not resolved:
             return False, f"path could not be resolved: {raw!r}"
         if is_sensitive_path(resolved):
-            # Refused even if an operator explicitly configured it — decision 7's
+            # Refused even if an operator explicitly configured it — the
             # bypass-immune class. An entry naming a credential location is far likelier
             # to be a mistake (or an injected edit) than an intention.
             return False, "path is a sensitive location and cannot be watched"
@@ -610,7 +610,7 @@ class DirSourceProvider(KnowledgeSourceProvider):
         many sightings are emitted; the rest stay uncommitted and come next poll, so none
         is lost to the cap. ``None`` (a direct call) emits every settled change.
 
-        Never raises to the engine (§1.1) — a bad spec or an unwalkable tree is reported
+        Never raises to the engine — a bad spec or an unwalkable tree is reported
         as a soft error so the source degrades rather than killing the loop.
         """
         source = self._store.get_source(source_id)

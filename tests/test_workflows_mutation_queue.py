@@ -1,4 +1,4 @@
-"""The controller's mutation queue (WF2-R2 / R20 safety protocol).
+"""The controller's mutation queue and its safety protocol.
 
 Mutation is only safe because of WHEN it applies: between scheduling steps, under the
 lock, with nothing mid-launch. These tests pin that and its consequences:
@@ -268,7 +268,7 @@ class TestReentry:
         assert "gather" not in c._outputs
 
     async def test_the_epoch_holds_without_force(self) -> None:
-        """WF2-R2 #4: unchanged inputs must replay from cache, not pay to recompute."""
+        """Unchanged inputs must replay from cache, not pay to recompute."""
         c = await _completed_controller()
         before = c._instance("root.children[1]").epoch
         c.submit_mutation([{"op": "rewind", "node_id": "gather"}], confirm=True)
@@ -316,7 +316,7 @@ class TestReentry:
 
 class TestInputsStale:
     async def test_a_done_node_outside_the_rerun_set_is_flagged(self) -> None:
-        """WF2-R2 #3. `run_from` excludes the seed from the re-run set, but `analyze` still
+        """`run_from` excludes the seed from the re-run set, but `analyze` still
         reads it — so `analyze`'s inputs are, in principle, from a different world."""
         c = await _completed_controller()
         c.submit_mutation([{"op": "run_from", "node_id": "gather"}], confirm=True)

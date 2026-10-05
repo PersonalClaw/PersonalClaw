@@ -1,11 +1,11 @@
 """The periodic identity report — "how I've adapted to you".
 
 What this is: a **long-horizon** composition over the learning artifacts that already
-have live writers, rendered as one readable document. LV-3's
+have live writers, rendered as one readable document. The weekly summary in
 :mod:`personalclaw.learning_summary` answers "what changed lately" (deltas inside a
-window); this answers "what shape have I taken" (the accumulated state). The plan's
-amendment names the difference explicitly — *"the weekly digest shows deltas; the
-identity report shows the accumulated shape"* — which is why the two are separate
+window); this answers "what shape have I taken" (the accumulated state). The
+difference is deliberate — the weekly digest shows deltas; the
+identity report shows the accumulated shape — which is why the two are separate
 functions over the same seams rather than one function with a flag.
 
 Five sections, each over an existing read seam:
@@ -14,17 +14,16 @@ Five sections, each over an existing read seam:
   class, its *decayed* stability and the live state the ambient PROFILE block uses. So
   the report cannot claim a preference is shaping replies when the decay says it is
   fading.
-* **lessons** — ``MemoryService.over_vector_store(vs).get_lessons()``. (The plan's
-  recon named ``learn.py::LessonStore.load_all()``; **that class was deleted by
-  WF2LEA-3** and LV-3 recorded the correction — lessons live in ``memory.db
-  lesson.*``.)
+* **lessons** — ``MemoryService.over_vector_store(vs).get_lessons()``. (Not
+  ``learn.py::LessonStore.load_all()``; **that class was deleted** — lessons live in
+  ``memory.db lesson.*``.)
 * **skills** — the ``auto/`` namespace from ``SkillsLoader.list_skills``, with use
   counts and recency from ``SkillUsageStore.all_usage()`` (ridden through
   ``with_usage=True``, not re-derived) and the curator's persisted aging ``status``.
 * **proposals** — :func:`personalclaw.skills.proposals.list_pending`.
 * **memory** — a subset of ``memory_stats()``.
 
-Three properties the change is judged on, and how each is built in:
+Three properties the report is judged on, and how each is built in:
 
 * **Propose-don't-write.** Every read is a snapshot. Nothing here writes to a facet, a
   lesson, a skill, a proposal or the memory store — so *generating* the report cannot
@@ -34,9 +33,8 @@ Three properties the change is judged on, and how each is built in:
   :class:`ReportSection` whose ``count`` is ``len()`` of the full row list it was built
   from and whose ``items`` are the capped sample. A UI showing ``len(items)`` as the
   count would under-report the moment a home got busy, so the two are separate fields
-  and neither derives from the other. The plan's contract spelled ``proposals_pending``
-  as a bare ``int``; it is a section here for exactly this reason (recorded as a
-  DEVIATION in the plan's execution log).
+  and neither derives from the other. ``proposals_pending`` is a section rather than
+  a bare ``int`` for exactly this reason.
 * **The narrative cannot invent a number.** :func:`narrate_identity_report` makes ONE
   ``one_shot_completion(use_case="background")`` call over the *already gathered* facts,
   fenced as data. Its output is prose that sits ABOVE the deterministic sections; the
@@ -81,7 +79,7 @@ _MAX_ITEMS = 30
 #: only — the full text stays readable on its own surface (Memory → Studio).
 _MAX_TEXT_LEN = 160
 
-#: Window bounds. 30 = the monthly cadence the amendment names as the default.
+#: Window bounds. 30 = the default monthly cadence.
 DEFAULT_WINDOW_DAYS = 30
 MIN_WINDOW_DAYS = 7
 MAX_WINDOW_DAYS = 365
@@ -93,7 +91,7 @@ MAX_WINDOW_DAYS = 365
 #: are exactly the drift this file's sibling comments keep paying for.
 #:
 #: ``off`` lives IN the cadence rather than beside it as an ``identity_report_enabled`` bool.
-#: The plan's §T2.5 named both; two switches for one concern is the shape this codebase calls
+#: Two switches for one concern is the shape this codebase calls
 #: a stateless control masking a stateful one — ``enabled=true, cadence=off`` and
 #: ``enabled=false, cadence=weekly`` are contradictions a reconciler would have to invent a
 #: precedence for, and one of them is always a setting that silently does nothing.
@@ -132,8 +130,8 @@ ARTIFACT_SLUG = "learning-identity-report"
 NOTIFY_SOURCE = "learning"
 NOTIFY_KIND = "report"
 
-#: Bound on the narrative. One paragraph is the product decision (the amendment calls it
-#: "a readable narrative", not an essay); the cap is what stops a chatty model turning a
+#: Bound on the narrative. One paragraph is the product decision (a readable narrative,
+#: not an essay); the cap is what stops a chatty model turning a
 #: monthly note into a wall.
 _MAX_NARRATIVE_CHARS = 1200
 
@@ -254,7 +252,7 @@ class IdentityReport:
 
     @property
     def period(self) -> dict[str, Any]:
-        """The plan's contract spells the period as one object; this is that view."""
+        """The report period as one object."""
         return {"window_days": self.window_days, "since": self.since, "until": self.generated_at}
 
     def with_narrative(self, text: str, *, status: str) -> "IdentityReport":
@@ -322,7 +320,7 @@ def _gather_facets(vs: Any, now: datetime) -> list[dict[str, Any]]:
 def _gather_lessons(vs: Any) -> list[dict[str, Any]]:
     """Durable lessons from the memory service.
 
-    ``over_vector_store``, NOT ``service_for``. LV-3 measured the trap:
+    ``over_vector_store``, NOT ``service_for``. The trap, measured:
     ``service_for(provider)`` discovers the store on ``provider.vector_store``, so
     handing it a ``VectorMemoryStore`` yields ``_vs = None`` and ``get_lessons()``
     returns ``[]`` — every lesson would read as absent forever, with no error.

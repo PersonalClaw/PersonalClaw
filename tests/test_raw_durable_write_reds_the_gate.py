@@ -200,7 +200,7 @@ def test_the_gate_is_registered_and_the_family_scans_a_real_population() -> None
     assert FAMILY in by_family, f"the committed census has no {FAMILY!r} tally"
     assert by_family[FAMILY] > 0, (
         f"the committed census counts 0 {FAMILY} sites. Either the re-derivations were all "
-        "folded into atomic_write (then say so in the plan log and this floor can go), or the "
+        "folded into atomic_write (then this floor can go, in the same change), or the "
         "finder stopped matching — and a finder that matches nothing looks exactly like a "
         "clean tree."
     )

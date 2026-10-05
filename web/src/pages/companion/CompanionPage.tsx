@@ -19,7 +19,7 @@ import { BUSY_REASON } from '../../ui/unavailable'
  *
  *  A run that is blocked on a permission decision is the one thing that genuinely cannot wait
  *  until the owner is back at a desk, so the phone route ships that decision FIRST and by
- *  itself and stays at the TOP of the column. `MC-6` adds the rest of the attention path
+ *  itself and stays at the TOP of the column. The rest of the attention path sits
  *  underneath it — running loops, tasks, inbox, recent notifications — in
  *  `CompanionSections.tsx`; the ordering is the priority order and is not negotiable, because
  *  a blocked run is the only row on this page that another person is waiting on.
@@ -186,17 +186,16 @@ export function CompanionPage({ navigate, query }: RouteProps) {
         </section>
 
         {/* The rest of the attention path. The "Not on the phone yet" stub list that
-            stood here through MC-3/MC-4/MC-5 is DELETED, not hidden — the sections it named
+            stood here earlier is DELETED, not hidden — the sections it named
             are what these four are. */}
         <RunningLoopsSection />
         <TasksSection />
         <InboxSection />
         <RecentSection />
 
-        {/* Two ways off this page, and no third. `#/settings/devices` is the ONE device list
-            (`MC-2` consumed the contract to build it); linking to it is how the phone
-            reaches its own pairing/revocation without the companion growing a second copy —
-            recorded as owed to this change in the Execution log entry. */}
+        {/* Two ways off this page, and no third. `#/settings/devices` is the ONE device list;
+            linking to it is how the phone reaches its own pairing/revocation without the
+            companion growing a second copy. */}
         <footer className="flex flex-wrap gap-s">
           <Button variant="secondary" size="sm" onClick={() => navigate('dashboard')}>
             <LayoutDashboard size={15} /> Open the full dashboard
@@ -210,7 +209,7 @@ export function CompanionPage({ navigate, query }: RouteProps) {
   )
 }
 
-/** "Is this phone woken up for an approval?" — the one control MC-5 adds to this surface.
+/** "Is this phone woken up for an approval?" — the one push control on this surface.
  *
  *  It lives here rather than in Settings because the answer is per-BROWSER: only the device
  *  holding the subscription can create or drop it, and a desktop Settings page cannot

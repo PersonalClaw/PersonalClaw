@@ -1,5 +1,4 @@
-"""The codebase graph — a symbol index the agent queries instead of grepping blind
-(CONTEXT-ECONOMY §5.5).
+"""The codebase graph — a symbol index the agent queries instead of grepping blind.
 
 Finding where a function is defined and who calls it currently costs three to five
 tool calls: a `grep` for the name, a `read_file` or two to see context, another grep

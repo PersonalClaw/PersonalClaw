@@ -2,7 +2,7 @@ import type { DialogField } from '../../ui/dialog'
 import type { WorkflowInputParam } from '../../lib/api'
 import { BOOL_FALSE_WORDS, BOOL_TRUE_WORDS } from '../tools/schema'
 
-/** Turning a template's declared inputs into a run dialog (WF2 Slice 9b).
+/** Turning a template's declared inputs into a run dialog.
  *
  *  The gap this closes: every bundled template declares a REQUIRED input, and the list page's
  *  Run button passed none — so the engine correctly refused with `WF_RUN_MISSING_INPUTS` and

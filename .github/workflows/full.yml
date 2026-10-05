@@ -66,18 +66,18 @@ permissions:
 
 jobs:
   matrix-shard:
-    # Python {3.12, 3.13} × OS {ubuntu, macos} on x86_64, plus two arm64 runners
-    # (PLATFORM-REACH A1.3). The arm pair is added via `include` — one job each on
+    # Python {3.12, 3.13} × OS {ubuntu, macos} on x86_64, plus two arm64 runners.
+    # The arm pair is added via `include` — one job each on
     # the newest supported Python — rather than crossing arm into the full grid:
-    # A1.3 scopes arm to the non-PR path "for budget", so two extra legs prove the
+    # arm is scoped to the non-PR path for budget, so two extra legs prove the
     # arch while four would double this workflow's arm cost for no new signal.
     #
     # ── Sharded 4 ways, same mechanism as ci.yml's `test-shard` ───────────────────────────────
     # Each leg is also split into N=4 disjoint shards (pytest-split `--splits/--group`), so every
     # leg runs ~1/4 of the suite. Beyond wall-clock, this directly attacks #2720: the macOS
     # runners OOM-killed the full-suite step mid-run and truncated the log, and a quarter-suite
-    # shard has a proportionally smaller peak RSS and log. The stable `matrix` id (CI-RELEASE-
-    # ENGINEERING C1) is preserved by the aggregation gate job below. This is the main/nightly
+    # shard has a proportionally smaller peak RSS and log. The stable `matrix` id
+    # is preserved by the aggregation gate job below. This is the main/nightly
     # path (not the PR gate), so the extra jobs cost budget only off the critical path.
     #
     # The arm `include` legs carry an explicit `shard` each (GitHub adds an include entry that
@@ -137,11 +137,11 @@ jobs:
         run: uv python install ${{ matrix.python }}
       - name: Install (locked)
         run: uv sync --locked --extra dev --python ${{ matrix.python }}
-      # Same reason as ci.yml's `test` job: the SC5 real-daemon leg is skipif-gated on a
+      # Same reason as ci.yml's `test` job: the real-daemon tmux leg is skipif-gated on a
       # tmux binary and no stock runner image ships one, so it had been skipping on all six
       # cells here. Installed per-OS rather than apt-only because this matrix spans macOS too;
       # the already-present branch keeps the step a no-op if an image ever starts shipping it.
-      - name: Install tmux (EI-6 durable sessions — real-daemon test leg)
+      - name: Install tmux (durable sessions — real-daemon test leg)
         run: |
           if command -v tmux >/dev/null 2>&1; then tmux -V; exit 0; fi
           case "$RUNNER_OS" in
@@ -225,8 +225,8 @@ jobs:
           echo "all matrix shards passed"
 
   audit:
-    # Report-only supply-chain scan — visibility, not a merge gate (soul guardrail:
-    # substrate not bureaucracy). Dependabot drives the actual update PRs.
+    # Report-only supply-chain scan — visibility, not a merge gate (substrate, not
+    # bureaucracy). Dependabot drives the actual update PRs.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     continue-on-error: true
@@ -340,7 +340,7 @@ jobs:
     # ── The front door, finally EXECUTED ────────────────────────────────────────────────────
     # `curl -fsSL https://personalclaw.dev/install | sh` is the first thing a new user runs, and
     # until now NOTHING in CI ran it. `deploy/website/install.sh`'s own header claimed this job
-    # already existed ("plan 33 full.yml runs it in a bare ubuntu container weekly"). It did not:
+    # already existed ("full.yml runs it in a bare ubuntu container weekly"). It did not:
     # measured 2026-09-06, this workflow had four jobs — matrix, audit, security-corpus,
     # coverage — and grepping .github/workflows/ for `website/install`, `install.sh` or
     # `personalclaw.dev/install` returned nothing. The ninth absent-vs-declared-false in this

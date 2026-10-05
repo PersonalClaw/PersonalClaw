@@ -1,4 +1,4 @@
-"""OP2 — per-session raw tool-result store + tool_result_get round-trip.
+"""Per-session raw tool-result store + tool_result_get round-trip.
 
 A large tool output is projected (preview to the model) and its raw is retained;
 the agent recovers the dropped slice via tool_result_get(result_id, range|grep).
@@ -68,7 +68,7 @@ def test_pathlike_id_rejected():
     assert result_store.fetch_slice("sessP", "a/b")["ok"] is False
 
 
-# ── Context Economy §1.1: content-addressed ids + idempotent storage ──────────
+# ── Content-addressed ids + idempotent storage ────────────────────────────────
 
 
 def test_content_hash_id_form():
@@ -96,7 +96,7 @@ def test_different_content_distinct_ids():
     assert a != b
 
 
-# ── Context Economy §1.2: line addressing ─────────────────────────────────────
+# ── Line addressing ───────────────────────────────────────────────────────────
 
 
 def test_fetch_slice_line_range():
@@ -129,12 +129,12 @@ def test_line_and_char_modes_mutually_exclusive():
     assert res["mode"] == "lines" and res["content"] == "row2\nrow3"
 
 
-# ── OP4-analog: projection retains raw with NO double-loss on the new id form ──
+# ── Projection retains raw with NO double-loss on the new id form ─────────────
 
 
 def test_project_and_retain_no_double_loss_content_hash():
     # A large log projects to a preview AND retains the full raw under a content-hash id;
-    # the buried line is recoverable — the OP4 "no double loss" contract on the new id.
+    # the buried line is recoverable — the "no double loss" contract on the new id.
     from personalclaw.tool_providers.projection import project_and_retain
 
     lines = [f"ok {i}" for i in range(5000)]

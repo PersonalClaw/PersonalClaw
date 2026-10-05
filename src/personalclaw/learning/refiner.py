@@ -1,9 +1,9 @@
-"""Run outcomes → template refinement: the acceptance discipline (LEARN-R2 / §3.1).
+"""Run outcomes → template refinement: the acceptance discipline.
 
 The flagship spoke, and the one with the most ways to go wrong. An optimizer that edits templates
 from
-run outcomes random-walks them under judge noise unless acceptance is strict, so §3.1's
-"acceptance discipline" section is longer than its mechanism section — and this module is the
+run outcomes random-walks them under judge noise unless acceptance is strict, so the acceptance
+discipline matters more than the mechanism — and this module is the
 discipline, expressed as pure decisions the refiner pipeline applies.
 
 The four gates, each with the failure it prevents:
@@ -12,8 +12,8 @@ The four gates, each with the failure it prevents:
   shared mechanism and ranks them by frequency × unresolvedness. The refiner proposes against the
   TOP cluster only. Without it, an LLM reads a hundred unrelated failures and proposes something
   plausible about none of them.
-* **Median of 3 critic runs, with an epsilon margin.** §3.1 is blunt: single-run acceptance is
-  provably indistinguishable from noise". The median of three is what makes a score a measurement.
+* **Median of 3 critic runs, with an epsilon margin.** Single-run acceptance is
+  provably indistinguishable from noise. The median of three is what makes a score a measurement.
 * **Held-out replay (GateOK).** An accepted edit must IMPROVE its target and may regress every
   other cluster by at most epsilon. An edit that fixes one failure by breaking two is a regression
   that looks like progress on the metric it was written against.
@@ -24,7 +24,7 @@ The four gates, each with the failure it prevents:
 
 **Measured before writing.** Every prerequisite is in place: `journal.LEDGER_KINDS` carries all
 five events the refiner reads (`step_completed`/`step_failed`/`step_skipped`/`gate_resolved`/
-`run_abandoned`) plus `user_edited_mid_flight` — the "gold" signal §3.1 names, because a repeated
+`run_abandoned`) plus `user_edited_mid_flight` — the "gold" signal, because a repeated
 identical hand-fix is a user telling you what the template should have said. And `mutations.OpKind`
 is a
 CLOSED vocabulary of ten ops, so a diff is expressed in the engine's own terms rather than a second
@@ -60,8 +60,8 @@ EVIDENCE_KINDS: tuple[str, ...] = (
 #: "pattern" is one bad afternoon, and a template edited from it is a template edited from noise.
 MIN_RUNS_FOR_EVIDENCE = 3
 
-#: Critic runs whose MEDIAN decides. Three, not one: §3.1 says single-run judge acceptance is
-#: "provably indistinguishable from noise", and three is the smallest set with a median that
+#: Critic runs whose MEDIAN decides. Three, not one: single-run judge acceptance is
+#: provably indistinguishable from noise, and three is the smallest set with a median that
 #: resists a single outlier.
 CRITIC_RUNS = 3
 
@@ -117,10 +117,10 @@ DIFF_OPS: frozenset[str] = frozenset({"update_node", "insert", "delete", "move",
 
 
 class RiskTier(str, Enum):
-    """Deterministic risk tier by edit TYPE (§3.1, batch-5).
+    """Deterministic risk tier by edit TYPE.
 
-    Proposal Inbox metadata ONLY — for ordering, filtering, and bulk-accept ergonomics. §3.1 is
-    explicit that any "auto" tier is guardrail-violating: human-installs is absolute, so
+    Proposal Inbox metadata ONLY — for ordering, filtering, and bulk-accept ergonomics. Any
+    "auto" tier is guardrail-violating: human-installs is absolute, so
     there is deliberately no `AUTO` member.
     """
 
@@ -209,7 +209,7 @@ class Cluster:
 
     @property
     def rank(self) -> float:
-        """frequency × unresolvedness (§3.1's ranking).
+        """frequency × unresolvedness.
 
         The product, not the sum: a frequent failure that self-heals is not worth an edit, and
         neither is a permanent failure that happened once. Only the conjunction is a target.
@@ -252,9 +252,9 @@ UNTRUSTED_EVIDENCE_FIELDS: tuple[str, ...] = (
 class Screened:
     """One ledger event, with its untrusted text screened and fenced.
 
-    `blocked` is the load-bearing field. §7's criterion 4 says injection planted in a run
+    `blocked` is the load-bearing field. Injection planted in a run
     transcript or
-    `run_feedback` comment "must not surface as a proposal (let alone an accepted diff)" — a blocked
+    `run_feedback` comment must not surface as a proposal (let alone an accepted diff) — a blocked
     event is DROPPED from the evidence set entirely rather than fenced and passed along. Fencing
     alone
     would still let the text reach the refiner's prompt as quoted data, and a model asked to
@@ -284,7 +284,7 @@ class Screened:
 def screen_evidence(events: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[Screened]]:
     """Screen and fence ledger events before they become refiner evidence.
 
-    Returns `(safe_events, verdicts)`. §3.1's TRUST clause makes fencing the CALLER's job,
+    Returns `(safe_events, verdicts)`. Fencing is the CALLER's job,
     and this is the refiner's call site — measured before it existed: an injection planted in a
     `step_failed` error flowed straight into the cluster signature, which is exactly what a refiner
     prompt carries as its evidence.
@@ -390,7 +390,7 @@ def cluster_safely(events: list[dict[str, Any]]) -> tuple[list[Cluster], list[Sc
 def cluster_failures(events: list[dict[str, Any]]) -> list[Cluster]:
     """Cold-pass clustering over ledger events, ranked worst-first. Pure, zero LLM calls.
 
-    §3.1's tier discipline: this runs BEFORE any model is touched, so a template with no failure
+    Tier discipline: this runs BEFORE any model is touched, so a template with no failure
     pattern costs nothing to examine. Events of unknown kinds are ignored rather than guessed at —
     the ledger is append-only and gains kinds over time, and a refiner that reacted to an event it
     does not understand would propose against a signal nobody designed.
@@ -550,7 +550,7 @@ def check_diff(ops: list[dict[str, Any]]) -> tuple[bool, list[str]]:
 class CriticScore:
     """One critic run's four named check scores.
 
-    Missing scores default to 0.0, the reject-by-default §3.1 requires: an LLM that failed to
+    Missing scores default to 0.0, which is reject-by-default: an LLM that failed to
     produce a parseable score has not endorsed anything, and treating an absent score as neutral
     would let a parse failure pass a diff.
     """
@@ -626,7 +626,7 @@ def judge(
 
     Two independent refusals:
 
-    * **Too few runs.** Fewer than `required_runs` scores means there is no median. §3.1: single
+    * **Too few runs.** Fewer than `required_runs` scores means there is no median. Single
       run acceptance is indistinguishable from noise, so a short critic pass rejects rather than
       falling back to a mean.
     * **Margin below epsilon.** Judge jitter alone would otherwise accept roughly half of all no-op
@@ -688,7 +688,7 @@ def gate_ok(
 ) -> GateResult:
     """GateOK: improve the target cluster, regress nothing else by more than `eps`. Pure.
 
-    The machine-checkable form of §3.1's held-out replay. Both halves are load-bearing:
+    The machine-checkable form of the held-out replay. Both halves are load-bearing:
 
     * requiring TARGET improvement stops a diff being accepted for a coincidental gain elsewhere; *
     bounding OTHER clusters stops an edit that fixes one failure by breaking two — a regression
@@ -750,7 +750,7 @@ def should_stop(
 ) -> tuple[bool, str]:
     """Whether a learning cycle has stopped improving and should end. Returns `(stop, reason)`.
 
-    §3.1's session-level stop rule. A cycle proposing after convergence spends budget to
+    The session-level stop rule. A cycle proposing after convergence spends budget to
     produce diffs the critic will reject — and the k-round window distinguishes "converged" from
     "one flat round".
     """
@@ -773,7 +773,7 @@ def should_stop(
 class Decision:
     """Everything that had to be true for a diff to reach a human.
 
-    One object rather than four separate checks at the call site, because §3.1's discipline is a
+    One object rather than four separate checks at the call site, because the discipline is a
     CONJUNCTION and a caller that forgot one gate would have a refiner that random-walks templates
     while appearing to be gated.
     """
@@ -808,7 +808,7 @@ def evaluate_diff(
     Order is applicability → critic → GateOK, cheapest and most decisive first: an op touching the
     frozen region is unfixable, so paying three critic runs to discover that would be waste.
 
-    Sub-threshold diffs are DROPPED SILENTLY (§3.1) — `Decision` records why in the log, but the
+    Sub-threshold diffs are DROPPED SILENTLY — `Decision` records why in the log, but the
     user sees only defensible proposals. A review queue full of rejected machine guesses trains
     people to stop reading it.
     """
@@ -834,7 +834,7 @@ def evaluate_diff(
 
 @dataclass
 class EvidenceManifest:
-    """What a proposal must carry to be falsifiable (§3.1's EVIDENCE rule).
+    """What a proposal must carry to be falsifiable (the EVIDENCE rule).
 
     Without run ids a reviewer cannot check the claim; without the evaluating model they cannot
     weigh it; without `measured_at` they cannot tell whether it still holds. A proposal that cannot
@@ -870,7 +870,7 @@ def build_manifest(
     """The manifest for a surfaced diff.
 
     `confidence` is the critic's margin scaled into [0, 1], not a number the model asserted about
-    itself. A self-reported confidence is the same ornamental signal §2.5 rejects for helpfulness —
+    itself. A self-reported confidence is the same ornamental signal rejected for helpfulness —
     this one is derived from the measurement that actually gated the diff.
     """
     margin = decision.critic.margin if decision.critic else 0.0
@@ -885,9 +885,9 @@ def build_manifest(
 
 
 def canary_verdict(*, before: float, after: float, runs: int, min_runs: int = 3) -> str:
-    """The post-acceptance verdict for an applied diff (LEARN-R16 predict-then-verify).
+    """The post-acceptance verdict for an applied diff (predict-then-verify).
 
-    Five outcomes, and `HARMFUL` is the one that matters: §3.1 auto-FILES a revert proposal for it,
+    Five outcomes, and `HARMFUL` is the one that matters: a revert proposal is auto-FILED for it,
     through the queue, never silently. Under `min_runs` the answer is `PENDING` rather
     than a guess — declaring a diff effective after one run is how a lucky run becomes a permanent
     change.

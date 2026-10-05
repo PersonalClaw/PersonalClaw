@@ -1,4 +1,4 @@
-"""App-provided MCP servers register into the live MCP config (#31).
+"""App-provided MCP servers register into the live MCP config.
 
 An app that ships its own MCP server (manifest.mcpServers) must have it wired
 into ~/.personalclaw/mcp.json on install/enable (namespaced {app}:{server}) and

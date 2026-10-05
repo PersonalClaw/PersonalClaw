@@ -1,6 +1,6 @@
-"""Checkpoints, `fork`, `revert`, and the Slice-4 property tests.
+"""Checkpoints, `fork`, `revert`, and their property tests.
 
-The plan names six properties for this slice; each is a class below. They are properties
+Six properties matter here; each is a class below. They are properties
 rather than examples because the failure modes are combinatorial — a cascade that is right
 for one graph shape and wrong for another is exactly what a hand-picked example misses.
 
@@ -130,7 +130,7 @@ async def _live_done(spec: dict = CHAIN):
 
 
 class TestCascadeEqualsBindingClosure:
-    """The plan's headline property: cascade == binding closure, NOT tree descendants."""
+    """The headline property: cascade == binding closure, NOT tree descendants."""
 
     @pytest.mark.parametrize(
         "spec,seed,expected",
@@ -339,7 +339,7 @@ class TestForkIsolation:
         )
 
     async def test_the_fork_axis_is_threaded_into_the_childs_inputs(self) -> None:
-        """Per-fork disambiguation for the axes a fork cannot isolate (WF2-R2 am.) — a
+        """Per-fork disambiguation for the axes a fork cannot isolate — a
         unique-name generator seeds off it instead of colliding with the parent."""
         c = await _completed()
         result = CP.fork_run(c.run, c.spec, c.instances)
@@ -358,7 +358,7 @@ class TestForkIsCheap:
 
     async def test_the_outputs_come_along_so_a_cache_hit_reads_a_real_file(self) -> None:
         """Without the outputs, a hit (keys match) reads a MISSING file and resolves a
-        binding to None — a silent wrong answer, the exact failure this slice prevents."""
+        binding to None — a silent wrong answer, the exact failure this prevents."""
         c = await _completed()
         result = CP.fork_run(c.run, c.spec, c.instances)
         for path, inst in store.read_state(result.child.id).items():
@@ -603,7 +603,7 @@ class TestPruneFork:
         assert store.read_state(c.run.id)
 
     def test_a_traversal_id_is_refused(self) -> None:
-        """A stored run id is not a trust boundary (WF2-R13 deletion-sweep contract)."""
+        """A stored run id is not a trust boundary (the deletion-sweep contract)."""
         assert not CP.prune_fork("../../etc")
 
 

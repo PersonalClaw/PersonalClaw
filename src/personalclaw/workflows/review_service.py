@@ -3,7 +3,7 @@
 :mod:`personalclaw.review_triage` is deliberately surface-free and engine-free: it parses, anchors,
 triages, briefs and calibrates, and it knows nothing about runs, worktrees or git. This module is
 the workflow-run binding for it — the half that answers "which diff?" and "which worker?" — so the
-primitive stays reusable by the other consumers §7 names (loop judge feedback, inbox drafts) without
+primitive stays reusable by its other consumers (loop judge feedback, inbox drafts) without
 inheriting a run id.
 
 Three decisions worth reading before changing anything here:

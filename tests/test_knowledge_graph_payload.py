@@ -7,7 +7,7 @@ library were not collapsed or summarised, they were simply absent, and a user na
 the graph could not tell the difference between "this entity has no relations" and "this
 entity was not in the top 200 by degree".
 
-KL-17 replaces the node cap with edge thinning -- a weight floor plus a top-K-PER-NODE keep
+Edge thinning now replaces the node cap -- a weight floor plus a top-K-PER-NODE keep
 -- so the payload stays bounded while every node survives. The tests below pin the four
 properties that make that a real replacement rather than a rename:
 
@@ -142,11 +142,11 @@ def _relate(store, a, b, weight=1.0, rtype="relates_to") -> None:
     store.add_entity_relation(source_id=a, target_id=b, relation_type=rtype, weight=weight)
 
 
-# ---------- clause 1: every node ships ----------
+# ---------- every node ships ----------
 
 
 def test_every_node_ships_when_the_graph_exceeds_the_old_node_cap(store, spy):
-    """The clause's whole point. Above the retired cap, nothing is dropped -- including the
+    """The whole point. Above the retired cap, nothing is dropped -- including the
     two entities the old degree sort would have discarded FIRST."""
     total = OLD_NODE_CAP + 20
     ids = [_entity(store, f"E{i:04d}") for i in range(total)]
@@ -185,7 +185,7 @@ def test_a_limit_query_param_no_longer_caps_the_nodes(store, spy):
     assert "limit" not in body["thinning"]
 
 
-# ---------- clause 2: edges are thinned, by a floor and per-node ----------
+# ---------- edges are thinned, by a floor and per-node ----------
 
 
 def test_edges_are_thinned_by_the_weight_floor(store, spy):
@@ -306,7 +306,7 @@ def test_thinning_is_order_independent(store, spy):
     assert 0 < forward["thinning"]["edges_kept"] < forward["thinning"]["edges_total"]
 
 
-# ---------- clause 3: positions ----------
+# ---------- positions ----------
 
 
 def test_positions_are_item_centroids_and_the_unplaceable_sit_at_the_origin(store, spy):
@@ -394,7 +394,7 @@ def test_a_stale_dimension_item_does_not_drag_a_centroid_to_the_middle(store, sp
     assert at[mixed] != (0.0, 0.0)
 
 
-# ---------- clause 4: cluster labels from dominant tags ----------
+# ---------- cluster labels from dominant tags ----------
 
 
 def _cluster_of(body, node_id):
@@ -481,7 +481,7 @@ def test_an_untagged_cluster_falls_back_to_its_dominant_entity_type(store, spy):
     assert store.db.execute("SELECT COUNT(*) AS c FROM item_tags").fetchone()["c"] == 0
 
 
-# ---------- clause 5: memoized with a debounced invalidation ----------
+# ---------- memoized with a debounced invalidation ----------
 
 
 def test_a_second_call_is_served_from_the_memo_without_reprojecting(store, spy):

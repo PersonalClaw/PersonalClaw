@@ -3,12 +3,12 @@ import {
   type ReactNode,
 } from 'react'
 
-// ── The shared windowing primitive (resuming SM-3) ──────────────────────────
+// ── The shared windowing primitive ──────────────────────────────────────────
 //
-// 🔴 MEASURED, not assumed. SM-3 deferred sidebar windowing "pending measurement",
-// so this change took the measurement first. A real gateway (port 10777, home
-// `/private/tmp/dsc13-wt/.dev-home`, both asserted from its READY line) over a real
-// populated store — 5,000 session `.jsonl` files, 5,000 knowledge rows — driving the
+// 🔴 MEASURED, not assumed. Sidebar windowing was deferred "pending measurement",
+// so this change took the measurement first. A real gateway (port 10777, an isolated
+// dev home, both asserted from its READY line) over a real populated store — 5,000
+// session `.jsonl` files, 5,000 knowledge rows — driving the
 // real built SPA at `#/chat/history` under a 4x CPU throttle (the Lighthouse
 // convention; unthrottled on an M-series Mac the same curve tops out at 39.7ms and
 // flatters the defect):
@@ -21,7 +21,7 @@ import {
 //    2,000     70,682          69.0ms         97.4ms        8,389ms
 //    5,000    175,683         137.1ms        273.4ms       13,446ms
 //
-// 🔑 THE NUMBER SM-3 ASKED FOR: interaction degrades at **250 rows** (scroll first
+// 🔑 THE NUMBER THE DEFERRAL ASKED FOR: interaction degrades at **250 rows** (scroll first
 // costs more than one 16.7ms frame) and is unambiguously broken by **1,000** (51.6ms
 // scroll = three dropped frames, and the curve turns superlinear from there — 2x the
 // rows costs 2.8x the scroll between 2,000 and 5,000). Keystroke latency crosses the

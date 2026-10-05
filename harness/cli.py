@@ -15,10 +15,10 @@ The agent-facing surface of the self-development harness:
 - ``workflow-resume-audit <run_id>`` — check a workflow run resumes byte-equal from disk
   alone: the reconstructed frontier matches the pre-kill snapshot and the journal event-fold
   rebuilds the same node states (workflow half).
-- ``fanout-measure <observations.json>`` — token-matched fan-out vs single-agent verdict
-  (WORK-CONTAINERS amendment (e)). Exits 0 for ANY honest verdict including
+- ``fanout-measure <observations.json>`` — token-matched fan-out vs single-agent verdict.
+  Exits 0 for ANY honest verdict including
   ``inconclusive``; only a malformed observation file fails.
-- ``worktree-bench`` — fan-out worktree hydration baseline + HARNESS-CRAFT §1.1's
+- ``worktree-bench`` — fan-out worktree hydration baseline + the
   measure-first gate. Exits 0 for any honest verdict, ``unresolved`` included.
 - ``dispatch-bench`` — serial-vs-concurrent tool-dispatch before/after + the gate that
   the improvement is real on the benchmark rather than assumed. Same exit convention.
@@ -174,7 +174,7 @@ def cmd_explain(args: argparse.Namespace) -> int:
         print("    (none resolved — check requiredProfiles / requiredTests)")
     for rc in cmds:
         print(f"    [{rc.profile}] {rc.command}")
-    # Negative acceptance is the clause LEDGER prose always drops — surface it loudly.
+    # Negative acceptance is the clause prose task notes always drop — surface it loudly.
     acc = task.meta.get("acceptance")
     if isinstance(acc, dict) and acc.get("negative"):
         print("  negative acceptance (must NOT happen):")
@@ -207,7 +207,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         return _run_diff(args)
 
     if not args.task:
-        print(f"{_FAIL} run needs a task id (or --diff); e.g. `run T1.1`", file=sys.stderr)
+        print(
+            f"{_FAIL} run needs a task id (or --diff); e.g. `run T1.example-config-field`",
+            file=sys.stderr,
+        )
         return 2
 
     specs = _load_or_die()
@@ -418,11 +421,11 @@ def cmd_replay(args: argparse.Namespace) -> int:
 
 
 def cmd_fanout_measure(args: argparse.Namespace) -> int:
-    """Token-matched fan-out vs single-agent comparison (WORK-CONTAINERS amendment (e)).
+    """Token-matched fan-out vs single-agent comparison.
 
     Exit 0 for every HONEST verdict, `inconclusive` included, and that is the design decision. A
     non-zero exit on "inconclusive" would make the honest answer look like a broken run, and the
-    amendment's own risk register says the failure mode to guard against is a measurement that only
+    failure mode to guard against is a measurement that only
     ever reports wins. Only a malformed observation file — which is a measurement that did not
     happen — exits non-zero.
     """
@@ -461,7 +464,7 @@ def cmd_worktree_bench(args: argparse.Namespace) -> int:
     Exit 0 for every honest verdict, `unresolved` included — same reasoning as
     ``fanout-measure``: a non-zero exit on "the measurement cannot separate these" would make the
     honest answer look like a broken run, and the whole point of the gate is that BOTH outcomes
-    (build §1.2, or skip and re-scope) are acceptable results.
+    (build it, or skip and re-scope) are acceptable results.
     """
     from harness import worktree_bench
 
@@ -552,12 +555,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_val.set_defaults(func=cmd_validate)
 
     p_exp = sub.add_parser("explain", help="Print the commands/rules/tests a task owes.")
-    p_exp.add_argument("task", help="Task spec id (e.g. T1.1)")
+    p_exp.add_argument("task", help="Task spec id (e.g. T1.example-config-field)")
     p_exp.set_defaults(func=cmd_explain)
 
     p_run = sub.add_parser("run", help="Execute a task's required profiles (or --diff).")
     p_run.add_argument("task", nargs="?", help="Task spec id")
-    p_run.add_argument("--diff", action="store_true", help="Diff-aware selection (Session 2).")
+    p_run.add_argument("--diff", action="store_true", help="Diff-aware selection.")
     p_run.add_argument("--dry-run", action="store_true", help="Print commands without running.")
     p_run.set_defaults(func=cmd_run)
 
@@ -568,23 +571,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_replay = sub.add_parser("replay", help="Gate replay scenarios vs checked-in baselines.")
     p_replay.set_defaults(func=cmd_replay)
 
-    p_resume = sub.add_parser(
-        "resume-audit", help="Audit whether a loop resumes from disk alone (§2.4)."
-    )
+    p_resume = sub.add_parser("resume-audit", help="Audit whether a loop resumes from disk alone.")
     p_resume.add_argument("loop_id", help="Loop id to audit")
     p_resume.set_defaults(func=cmd_resume_audit)
 
     p_wf_resume = sub.add_parser(
         "workflow-resume-audit",
-        help="Audit whether a workflow run resumes byte-equal from disk alone (§2.4).",
+        help="Audit whether a workflow run resumes byte-equal from disk alone.",
     )
     p_wf_resume.add_argument("run_id", help="Workflow run id to audit")
     p_wf_resume.set_defaults(func=cmd_workflow_resume_audit)
 
     p_fanout = sub.add_parser(
         "fanout-measure",
-        help="Token-matched fan-out vs single-agent verdict (amendment (e); "
-        "sub-5-point delta == inconclusive).",
+        help="Token-matched fan-out vs single-agent verdict "
+        "(sub-5-point delta == inconclusive).",
     )
     p_fanout.add_argument("observations", help="Path to an observations JSON file")
     p_fanout.add_argument(
@@ -594,7 +595,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_wt_bench = sub.add_parser(
         "worktree-bench",
-        help="Fan-out worktree hydration baseline + HARNESS-CRAFT §1.1's measure-first gate "
+        help="Fan-out worktree hydration baseline + the measure-first gate "
         "(near-boundary == unresolved).",
     )
     p_wt_bench.add_argument(
@@ -624,7 +625,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_disp = sub.add_parser(
         "dispatch-bench",
-        help="Serial-vs-concurrent tool dispatch before/after + HC-6's gate that the "
+        help="Serial-vs-concurrent tool dispatch before/after + the gate that the "
         "improvement is real (overlapping arms == unresolved).",
     )
     p_disp.add_argument(

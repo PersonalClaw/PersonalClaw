@@ -11,13 +11,13 @@ import type { CSSProperties } from 'react'
 // (`pages/loops/loopStatusMeta.ts`) with exactly the drift the old comment here named as
 // fixed: "Stalled" vs "Stagnant", "Analyzing" vs "Intake", "Complete" vs "Completed",
 // "Needs you" vs "Needs input" — plus a second, contradictory colour language (`running`
-// green here vs primary there, `complete` primary there vs green here). PP-16 retires it:
+// green here vs primary there, `complete` primary there vs green here). This file retires it:
 // one table, three accessors, no second registry.
 //
 // The words, where a state exists on both work-unit nouns, are the ones `workflowMeta`
 // already ships for the same wire value — `complete` → "Completed" (the locked
-// terminal-label ruling, railed by `pages/workflows/terminalSuccessLabel.test.ts`; this
-// registry was the file that ruling's rail could not see) and `needs_input` → "Needs you".
+// terminal label, railed by `pages/workflows/terminalSuccessLabel.test.ts`; this
+// registry was the file that rail could not see) and `needs_input` → "Needs you".
 //
 // The tones say one thing each: primary = in flight, ok = finished well, info = it is your
 // turn (actionable, waits on the user), warn = stalled or a non-genuine finish, danger =
@@ -87,7 +87,7 @@ export function loopStatusColor(status: string): string {
  *  cockpit, the flywheel and the reports could act on WHY a loop stopped without parsing prose,
  *  and this function — the one producer of the end-state label — was the last consumer still
  *  parsing it. It takes no `errorMessage` argument on purpose: keeping one as a fallback would
- *  leave the free-text read alive on the path that matters, which is exactly the clause.
+ *  leave the free-text read alive on the path that matters, which is exactly what the enum ended.
  *
  *  🪤 `stop_reason !== 'done'` is NOT the same test as "has an error_message", and assuming it
  *  was is what kept this migration open. `loop/watchdog.py`'s budget-cap site pairs its stop with
@@ -157,7 +157,7 @@ export const STOPPABLE_LOOP_STATUSES: ReadonlySet<string> = new Set([
 /** The pre-launch statuses whose spec is still editable — no worker has run yet. Mirrors the
  *  backend `loop.loop:PRELAUNCH_STATUSES` (railed alongside the active set). A list filter that
  *  means "work I am shepherding" is ACTIVE ∪ PRELAUNCH; a lifecycle affordance is not — this set
- *  is about spec-editability, not about what may be acted on. Since `PP-16` the backend accepts
+ *  is about spec-editability, not about what may be acted on. The backend now accepts
  *  `stop` from `intake` and `planning` (see STOPPABLE_LOOP_STATUSES); `review` and `ready` are the
  *  two pre-launch states it still refuses it from, and they need no exit because `start` is
  *  available there. This comment previously said the backend refuses `stop` on any pre-launch
@@ -193,7 +193,7 @@ export type LoopAction = 'start' | 'pause' | 'resume' | 'stop'
  *  backend's own `stop` row is literally `STOPPABLE_STATUSES`. The rail asserts this row stays a
  *  reference, so the two cannot drift apart even by one careless edit.
  *
- *  That row was ACTIVE_LOOP_STATUSES until `PP-16` found the gap it left: the union of all four
+ *  That row was ACTIVE_LOOP_STATUSES until the gap it left was found: the union of all four
  *  rows omitted `intake` and `planning`, so a loop whose classifier or planner died offered NO
  *  action anywhere and Delete was its only exit — discarding the record rather than terminating
  *  it. `stop` is the right home (`stopped` is terminal and needs no worker), and it is a distinct
@@ -206,7 +206,7 @@ export const LOOP_ACTION_SOURCE_STATUSES: Readonly<Record<LoopAction, ReadonlySe
   stop: STOPPABLE_LOOP_STATUSES,
 }
 
-/** The same question for a RUN-BACKED loop — one whose row carries `run_id` (PP-16: a ported kind
+/** The same question for a RUN-BACKED loop — one whose row carries `run_id` (a ported kind
  *  runs as a workflow run, and `GET /api/loops` lists it beside the loops-table rows). Mirrors
  *  `workflows/loop_view.py:RUN_ACTION_SOURCE_STATES`, railed equal by
  *  `tests/test_loop_action_guard_mirror.py`.

@@ -1,6 +1,6 @@
 """The context-% surface never states a number the backend did not supply.
 
-ACP-AGENT-PARITY `G8`/`O7`: a `context_usage` frame was emitted every turn with
+A `context_usage` frame was emitted every turn with
 ``pct: 0.0`` and the live telemetry line printed ``context 0%`` on all ~14 turns of an
 audited drive — including turns carrying 18 KB of injected context. The producer could
 not express "unknown": ``AcpPromptStats.context_pct`` and ``AgentEvent.context_usage_pct``

@@ -1,15 +1,15 @@
 """Fan-out subagent-path defect fixes.
 
-Each test proves one acceptance criterion from the plan's amendment task table:
+Each test proves one of these properties:
 
-- C1.1 injection wall: N near-simultaneous completions deliver in ONE batch turn
+- Injection wall: N near-simultaneous completions deliver in ONE batch turn
   without loss AND a delivery failure never resets the parent (context preserved).
-- C1.2 queue correctness: a queued headless spawn keeps its full parameter set and
+- Queue correctness: a queued headless spawn keeps its full parameter set and
   is cancellable by its returned (real, non-colliding) id.
-- C1.3 agent validation: an unknown agent name → typed error, no silent downgrade.
-- C1.4 fan-out control: a run-scoped lane, one-click kill-fan-out, and a
+- Agent validation: an unknown agent name → typed error, no silent downgrade.
+- Fan-out control: a run-scoped lane, one-click kill-fan-out, and a
   consecutive-child-failure breaker that trips at 5.
-- C1.5 run-scoped budget: re-checked mid-flight, stops a fan-out with a typed reason
+- Run-scoped budget: re-checked mid-flight, stops a fan-out with a typed reason
   and per-child cost is surfaced on the completion event.
 """
 
@@ -65,7 +65,7 @@ def _completing_sessions(*, text: str = "result", cost: float = 0.0) -> MagicMoc
     return sessions
 
 
-# ── C1.1 ─────────────────────────────────────────────────────────────
+# ── injection wall ───────────────────────────────────────────────────
 
 
 class TestInjectionWall:
@@ -131,7 +131,7 @@ class TestInjectionWall:
         assert "subagent_injection_failed" in events
 
 
-# ── C1.2 ─────────────────────────────────────────────────────────────
+# ── queue correctness ────────────────────────────────────────────────
 
 
 class TestQueueCorrectness:
@@ -192,7 +192,7 @@ class TestQueueCorrectness:
             assert mgr.get(q2.id) is q2
 
 
-# ── C1.3 ─────────────────────────────────────────────────────────────
+# ── agent validation ─────────────────────────────────────────────────
 
 
 class TestAgentValidation:
@@ -231,7 +231,7 @@ class TestAgentValidation:
         assert info.id not in mgr._tasks  # never started
 
 
-# ── C1.4 ─────────────────────────────────────────────────────────────
+# ── fan-out control ──────────────────────────────────────────────────
 
 
 class TestFanoutControl:
@@ -348,7 +348,7 @@ class TestFanoutControl:
             assert fkey not in mgr._fanout_stops
 
 
-# ── C1.5 ─────────────────────────────────────────────────────────────
+# ── run-scoped budget ────────────────────────────────────────────────
 
 
 class TestRunBudget:

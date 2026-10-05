@@ -11,11 +11,11 @@ import { isNodeTerminal } from './workflowMeta'
 
 /** The per-node inspector drawer.
  *
- *  A read-only forensics view over ONE terminal node's §5 reconstructability set — the resolved
+ *  A read-only forensics view over ONE terminal node's reconstructability set — the resolved
  *  prompt, the resolved inputs, the output, the attempt records, this node's ledger slice, and
  *  whether the output was served from cache. It fetches `GET …/nodes/{node_id}/inspect` on open
  *  (never eagerly — the run view renders many nodes and inspecting is a deliberate act) via
- *  `api.workflowRunNodeInspect`, the sole caller of a client method WV-9 shipped.
+ *  `api.workflowRunNodeInspect`, the sole caller of that client method.
  *
  *  SECRETS ARE ALREADY ABSENT. Every text field arrives redacted by the SAME journal redactor the
  *  ledger writer uses. This component renders what it receives verbatim — a prompt or output

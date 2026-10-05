@@ -1,4 +1,4 @@
-"""RunPin — the identity of one eval run (EVALUATION-SUBSTRATE amendment E1).
+"""RunPin — the identity of one eval run.
 
 A score without a pin is not evidence: "the template got better" is unreadable if
 the scenario, the bound model, the prompt text or the config could have moved
@@ -7,7 +7,7 @@ anything, persists it beside the run's artifacts, and carries it on the
 ``results.tsv`` row — :func:`personalclaw.evals.store.append_result` refuses a row
 without one, so an unpinned result cannot enter the ledger at all.
 
-The four parts the amendment names:
+The four core parts:
 
 * ``scenario_sha256`` — canonical-JSON hash of the scenario file (see
   :mod:`personalclaw.evals.scenarios`); reformatting does not move it, editing an
@@ -29,7 +29,7 @@ The four parts the amendment names:
 * ``config_snapshot_ref`` — hash over the relevant ``AppConfig`` subset (the evals
   section), so a knob change that moves scores is visible in the pin.
 
-Two further parts are pinned because ES-2 made them part of a run's identity:
+Two further parts are pinned because they are part of a run's identity:
 ``fixture_home`` (the named seed the run executes over) and ``library_version``.
 
 This module deliberately does NOT fail soft. If the pin cannot be computed, the
@@ -145,7 +145,7 @@ class RunPin:
         )
 
     def is_complete(self) -> bool:
-        """Are all four amendment-named parts present?
+        """Are all four core parts present?
 
         This is the predicate the ledger enforces. A run that could not resolve its
         scenario, read its model bindings, resolve its prompts, or load its config
@@ -326,7 +326,7 @@ def compute_pin_for_subject(
     ``RunPin``'s two subject fields are spelled ``scenario_*`` because the scenario
     library was the first subject to need pinning, and they are the ledger's shipped
     column names — renaming them would rewrite an append-only header. So a subject that
-    is not a scenario (ES-4's judge fixture SET) passes its own id and canonical hash
+    is not a scenario (a judge fixture SET) passes its own id and canonical hash
     here, and the ledger's ``kind`` column is what tells a reader which sort of subject
     a row scored. The three environment parts (model bindings, prompt pack, config) are
     read the same way for every subject, which is the whole reason this is one function.
@@ -381,7 +381,7 @@ def matrix_pin(matrix_id: str) -> RunPin | None:
     return read_pin(store.matrix_dir(matrix_id))
 
 
-# ── the pin-diff query the amendment asks for ────────────────────────────────
+# ── the pin-diff query ───────────────────────────────────────────────────────
 
 
 def pin_diff(rows: list[dict] | None = None) -> list[dict]:

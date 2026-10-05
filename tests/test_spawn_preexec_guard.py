@@ -1,4 +1,4 @@
-"""No-async-preexec_fn tripwire (SH1.3b).
+"""No-async-preexec_fn tripwire.
 
 The premise correction at the heart: ``preexec_fn`` is unsafe on an async spawn.
 It forces CPython off ``posix_spawn``/``vfork`` onto a full ``fork()`` of the many-threaded

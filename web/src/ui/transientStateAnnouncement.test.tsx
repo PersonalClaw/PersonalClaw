@@ -8,9 +8,9 @@ import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A state that exists for 5 seconds still has to reach a screen reader ─────────────
 //
-// The TIME axis. Every a11y probe in this session drives a surface, waits for it to settle,
-// then measures — so anything that exists only in a window was never looked at. Cycle 51
-// found a real defect living in a 600ms slice while data loaded; this covers the two
+// The TIME axis. Every a11y probe drives a surface, waits for it to settle,
+// then measures — so anything that exists only in a window was never looked at. An earlier
+// probe found a real defect living in a 600ms slice while data loaded; this covers the two
 // transient mechanisms the whole app routes through.
 //
 // 1. TOASTS WERE NEVER ANNOUNCED. `notify()` is the app's ONE channel for "that worked" /
@@ -128,7 +128,7 @@ describe('an in-flight button says it is busy', () => {
 // Converting them is NOT mechanical and is NOT this PR: `loading` cross-fades the WHOLE
 // label out for a centred spinner, while the hand-rolled form swaps only the leading icon
 // and keeps the text. That is a visible difference on 50 buttons — a visual-language
-// decision, logged as an owner taste call rather than guessed at.
+// decision, left open deliberately rather than guessed at.
 //
 // This assertion pins the population so the number cannot drift silently while the
 // decision is pending.
@@ -145,7 +145,7 @@ describe('the hand-rolled in-flight population is pinned', () => {
     })
     // Measured 24 across 18 files at the time of writing. (A line-oriented grep said 22 —
     // this matcher tolerates the whitespace variants, so 24 is the real number. Trust the
-    // rail over the grep; see the JSX-matcher note in the ledger.) A NEW hand-rolled
+    // rail over the grep.) A NEW hand-rolled
     // spinner should either pass `loading` (and inherit aria-busy) or consciously raise
     // this ceiling.
     expect(

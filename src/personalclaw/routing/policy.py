@@ -1,4 +1,4 @@
-"""Heuristic route ordering — ``route_refs`` + ``routing_policy.json`` (§6.1-6.2).
+"""Heuristic route ordering — ``route_refs`` + ``routing_policy.json``.
 
 The router does not pick a model; it **reorders the user's own bindings**. Candidates for a routed
 use case are exactly the refs ``active_models.json`` holds for it — this module never
@@ -29,7 +29,7 @@ never replaced.
 Ordering precedence, strongest first:
 
 1. **mode ``off``** (the default) → identity. Routing is opt-in per use case.
-2. **pin** (§6.2 lever 2) → ``local`` / ``cloud`` / an explicit ref is hoisted first and the
+2. **pin** (lever 2) → ``local`` / ``cloud`` / an explicit ref is hoisted first and the
    heuristic is short-circuited. A user pin is mightier than any policy.
 3. **an explicit table order** for this ``(use_case, query_class)`` → the stored order wins
    (its ``basis`` records whether a user or a learned proposal decided it). Refs the
@@ -40,8 +40,9 @@ Ordering precedence, strongest first:
    whose id exposes a parameter-size hint below :data:`_MIN_LOCAL_REASONING_B`.
 
 Mode ``learned`` is accepted and folded onto the heuristic here: the learned scoring stage is
-MRT-5's, and the heuristic is its permanent below-confidence-floor floor, so a use case
-already set to ``learned`` behaves as ``heuristic`` rather than erroring or silently going off.
+:mod:`personalclaw.routing.learned`'s, and the heuristic is its permanent below-confidence-floor
+floor, so a use case already set to ``learned`` behaves as ``heuristic`` rather than erroring or
+silently going off.
 """
 
 from __future__ import annotations
@@ -60,7 +61,7 @@ logger = logging.getLogger(__name__)
 _POLICY_FILE = "routing_policy.json"
 #: Bump when the table's schema changes.
 POLICY_VERSION = 1
-#: The per-use-case routing modes (§6.2 lever 1). ``off`` is the default everywhere.
+#: The per-use-case routing modes (lever 1). ``off`` is the default everywhere.
 MODES = ("off", "heuristic", "learned")
 #: The key the per-use-case settings store (``use_case_settings/{uc}.json``) holds the mode under.
 #: Routing enablement lives beside the use case's other behavior settings, NOT in config.json —
@@ -69,11 +70,11 @@ MODE_KEY = "routing_mode"
 #: The key that store holds the pin under, when a pin is set there rather than in the table.
 PIN_KEY = "routing_pin"
 #: A local model below this parameter-size hint (in billions) is demoted for ``long_reasoning``
-#: (§4.1). Only applied when the model id actually exposes a hint — absent one, nothing is demoted.
+#: Only applied when the model id actually exposes a hint — absent one, nothing is demoted.
 _MIN_LOCAL_REASONING_B = 7.0
 #: Parameter-size hint in a model id: "qwen3:8b", "…-13B-instruct", "3.8b".
 _SIZE_HINT = re.compile(r"(\d+(?:\.\d+)?)\s*b(?![a-z0-9])", re.IGNORECASE)
-#: The capability spelling that means "can be asked for schema-constrained JSON" (§4.1, read from
+#: The capability spelling that means "can be asked for schema-constrained JSON" (read from
 #: the existing capability channel — no new channel).
 _STRUCTURED_CAP = "structured_output"
 #: Query classes with an ordering exception (mirrors routing/classifier.py's vocabulary).
@@ -189,7 +190,7 @@ def _settings_for(use_case: str) -> dict[str, Any]:
 def mode_for(use_case: str, *, home: Path | None = None) -> str:
     """The routing mode for ``use_case``: one of :data:`MODES`, defaulting to ``off``.
 
-    The per-use-case settings store wins (that is the lever the UI writes, §6.2); the table's own
+    The per-use-case settings store wins (that is the lever the UI writes); the table's own
     ``mode`` is the fallback so a hand-edited ``routing_policy.json`` is still honored. An
     unrecognized value reads as ``off`` — an unknown mode must not silently enable routing.
     """
@@ -209,7 +210,7 @@ def pin_for(use_case: str, *, home: Path | None = None) -> str:
 
 
 def master_enabled() -> bool:
-    """The ``routing.enabled`` master switch (config.json, §7). Default/fail-open: False.
+    """The ``routing.enabled`` master switch (config.json). Default/fail-open: False.
 
     Read here rather than at the seam so the switch is genuinely load-bearing: with it off, no
     per-use-case mode can route anything, which is what "master" has to mean.
@@ -223,7 +224,7 @@ def master_enabled() -> bool:
 
 
 def local_timeout_secs() -> float:
-    """``routing.local_timeout_secs`` (§4.1): the wall clock a local attempt gets before the chain
+    """``routing.local_timeout_secs``: the wall clock a local attempt gets before the chain
     moves on to the next bound ref. Fail-open to the shipped 20s default; a non-positive value
     reads as "no routing-specific timeout" so the guard keeps its own default."""
     try:
@@ -249,7 +250,7 @@ def routing_active(use_case: str, *, home: Path | None = None) -> bool:
 
 def table_order(use_case: str, query_class: str, *, home: Path | None = None) -> list[str]:
     """The explicitly recorded order for ``(use_case, query_class)``, or ``[]`` when the table has
-    no opinion. Every recorded order carries a ``basis`` (§6.1) — see :func:`order_basis`."""
+    no opinion. Every recorded order carries a ``basis`` — see :func:`order_basis`."""
     classes = _use_case_entry(load_policy(home), use_case).get("classes")
     if not isinstance(classes, dict):
         return []
@@ -264,7 +265,7 @@ def table_order(use_case: str, query_class: str, *, home: Path | None = None) ->
 
 
 def order_basis(use_case: str, query_class: str, *, home: Path | None = None) -> dict[str, Any]:
-    """The ``basis`` behind a recorded order — why the table says what it says (§6.1)."""
+    """The ``basis`` behind a recorded order — why the table says what it says."""
     classes = _use_case_entry(load_policy(home), use_case).get("classes")
     if not isinstance(classes, dict):
         return {}
@@ -318,7 +319,7 @@ def is_local_ref(ref: str) -> bool:
 
 
 def _structured_providers() -> set[str]:
-    """Normalized provider names whose config entry declares structured output (§4.1).
+    """Normalized provider names whose config entry declares structured output.
 
     Read from the existing capability channel (``ProviderEntry.declared_capabilities``) without
     building anything. Fail-open to empty: with no capability information the structured-output
@@ -374,14 +375,14 @@ def _heuristic_rank(
     local_refs: frozenset[str],
     structured: set[str],
 ) -> tuple[int, int]:
-    """The §4.1 rank for one ref. Lower sorts earlier; ties fall through to the input order.
+    """The heuristic rank for one ref. Lower sorts earlier; ties fall through to the input order.
 
     Two components, most specific first:
 
     * the class exception — ``extract_structured`` hoists a declared structured-output provider;
       ``long_reasoning`` demotes a local model whose size hint is below the floor (a 1B model is
       the wrong tool for long reasoning, and trying it first only spends the timeout);
-    * local-first — a local ref is free and private, so it leads (§4.1, §5.2).
+    * local-first — a local ref is free and private, so it leads.
     """
     local = ref in local_refs
     exception = 0
@@ -412,7 +413,7 @@ def _learned_order(
     *,
     home: Path | None = None,
 ) -> list[str]:
-    """The MRT-5 learned stage, with everything it needs loaded HERE rather than inside it.
+    """The learned stage, with everything it needs loaded HERE rather than inside it.
 
     ``learned.learned_order`` is deliberately pure — no file, config, clock or network — so this
     is the one place that reads the fold, the three knobs and the price table. Two consequences
@@ -424,7 +425,7 @@ def _learned_order(
     the fold's ``feedback`` field mean two different things depending on which writer touched it
     last. Today the overlay is empty on every real install — no ``judge_verdict`` producer stamps
     ``(use_case, query_class, ref)`` — so ``_score`` renormalises onto ``success_rate`` alone,
-    which is precisely the atom's declared behaviour when feedback is absent.
+    which is precisely ``_score``'s declared behaviour when feedback is absent.
     """
     from personalclaw.routing import learned as _learned
     from personalclaw.routing import stats as _stats
@@ -602,7 +603,7 @@ def _stable_by(refs: list[str], key: Any) -> list[str]:
 
 
 def _sel_policy_change(use_case: str, what: str, value: str) -> None:
-    """SEL-record one policy-table mutation (§6.4).
+    """SEL-record one policy-table mutation.
 
     Routing decides which providers see which content, so CHANGING the table is
     security-relevant — a mode or pin flip can move prompts from a local model to a cloud one.
@@ -624,7 +625,7 @@ def _sel_policy_change(use_case: str, what: str, value: str) -> None:
 
 
 def set_mode(use_case: str, mode: str) -> None:
-    """Set the per-use-case routing mode (§6.2 lever 1). Raises ValueError on an unknown mode —
+    """Set the per-use-case routing mode (lever 1). Raises ValueError on an unknown mode —
     a write path must reject a bad value loudly rather than silently storing something the read
     path will treat as ``off``."""
     if mode not in MODES:
@@ -638,7 +639,7 @@ def set_mode(use_case: str, mode: str) -> None:
 
 
 def set_pin(use_case: str, pin: str) -> None:
-    """Set (or clear, with ``""``) the per-use-case pin (§6.2 lever 2)."""
+    """Set (or clear, with ``""``) the per-use-case pin (lever 2)."""
     from personalclaw.providers.use_cases import load_use_case_settings, save_use_case_settings
 
     settings = dict(load_use_case_settings(use_case) or {})
@@ -658,11 +659,11 @@ def set_order(
     home: Path | None = None,
     basis: dict[str, Any] | None = None,
 ) -> None:
-    """Record a manual order for ``(use_case, query_class)`` (§6.2 lever 3).
+    """Record a manual order for ``(use_case, query_class)`` (lever 3).
 
     The order is stored with a ``basis`` so the table can always explain itself; a hand reorder
     records ``{"source": "user"}``, which the learned stage may later propose changing but never
-    silently overwrite (§6.3). Note ``route_refs`` still treats the stored order as a *ranking*,
+    silently overwrite. Note ``route_refs`` still treats the stored order as a *ranking*,
     not a filter — a ref that is not in it is ranked last, never dropped.
 
     The table is read strictly (:func:`read_policy`): one that is there and cannot be read raises
@@ -706,7 +707,7 @@ def order_cell(use_case: str, query_class: str, *, home: Path | None = None) -> 
 
 
 def table_for(use_case: str, *, home: Path | None = None) -> dict[str, Any]:
-    """The inspectable table for one use case (§6.1): its mode, pin, and every recorded
+    """The inspectable table for one use case: its mode, pin, and every recorded
     per-class order with the basis behind it. What the read-only Routing tab renders."""
     entry = _use_case_entry(load_policy(home), use_case)
     raw_classes = entry.get("classes")

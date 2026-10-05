@@ -14,10 +14,8 @@ nothing else — shown two ways:
   — the downstream consumer is included, the unrelated node is excluded.
 - **End-to-end:** a real controller runs the spec to completion, `n2`'s prompt is edited, the
   run is resumed — and the ledger shows exactly two nodes re-ran (`n2` with its new prompt,
-  then `n3`), the untouched prefix served from the resume cache (`STEP_CACHED` records). This
-  is the acceptance bar Slice 4 set: the targeted-re-run claim is answerable from the
-  LEDGER, not from logs.
+  then `n3`), the untouched prefix served from the resume cache (`STEP_CACHED` records). So
+  the targeted-re-run claim is answerable from the LEDGER, not from logs.
 
 **Mechanism under test:** `personalclaw.workflows.mutations.binding_closure` /
-`cascade_preview` + the `RunController` resume cache keyed on (path, epoch, inputs, spec)
-(WF2-R2 / WF2-A1).
+`cascade_preview` + the `RunController` resume cache keyed on (path, epoch, inputs, spec).

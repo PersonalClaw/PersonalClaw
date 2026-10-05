@@ -62,8 +62,7 @@ def _publish_media_resolver(cwd: str | None) -> Any:
 async def apply_publish(
     node: Node, result: NodeResult, *, run_id: str = "", cwd: str | None = None
 ) -> NodeResult:
-    """Publish a node's output as an Artifact when it declares `publish:` (WORK-CONTAINERS §2,
-    S47).
+    """Publish a node's output as an Artifact when it declares `publish:`.
 
     At the dispatch seam beside the artifact gate, so a new node kind inherits publishing
     rather than
@@ -227,12 +226,12 @@ PUBLISH_CONSUMPTION_HORIZON_SECS = 7 * 24 * 3600.0
 def _open_publish_outcome(run_id: str, node_id: str, payload: dict[str, Any]) -> None:
     """Open the artifact's outcome question: we published a deliverable — did anyone consume it?
 
-    The `publish:` producer of the general outcome facility (PP-9). Publishing records what the run
+    The `publish:` producer of the general outcome facility. Publishing records what the run
     DID; this records the bet about what it was FOR, so an artifact stream nobody reads becomes a
-    measurable fact instead of a busy outbox. `PP-10` supplies the ground truth this asks for: a
+    measurable fact instead of a busy outbox. The ground truth comes from the outcomes ledger: a
     :data:`~personalclaw.ledger.outcomes.SOURCE_CONSUMPTION` question is graded off the artifact's
     own lifecycle timeline and the dashboard pin list — writers that already exist — so the answer
-    is a real `measured` 1.0/0.0 on any box, with no vector store and no new counter. `PP-10`'s
+    is a real `measured` 1.0/0.0 on any box, with no vector store and no new counter. The
     dormancy sweep (`learning/consumer_liveness.py`) then reads the RESOLUTIONS and proposes pausing
     or retiring a work unit whose last N cycles all went untouched.
 
@@ -264,7 +263,7 @@ def _open_publish_outcome(run_id: str, node_id: str, payload: dict[str, Any]) ->
 
 
 def _journal_publish(run_id: str, node_id: str, payload: dict[str, Any]) -> None:
-    """Record one publish outcome in the run's own log — what the §2.5 outbox lists.
+    """Record one publish outcome in the run's own log — what the run's outbox lists.
 
     A run-scoped journal rather than a query over the artifact registry: the registry knows an
     artifact exists, not which run published it, and reconstructing that from event metadata means

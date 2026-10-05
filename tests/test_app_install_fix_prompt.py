@@ -1,4 +1,4 @@
-"""APE-8 "Fix with AI" — a failed install surfaces the install log fenced as untrusted.
+"""The "Fix with AI" path — a failed install surfaces the install log fenced as untrusted.
 
 When an app install fails with captured subprocess output (a ``setup.onInstall`` hook
 or a python-dependency install), ``InstallResult`` carries a bounded ``log_excerpt`` and

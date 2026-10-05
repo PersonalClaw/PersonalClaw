@@ -1,6 +1,6 @@
 """Project-fingerprint auto-surfacing + the pack_owned update flow.
 
-The acceptance clauses here are almost all NEGATIVE properties — "no model call", "not on a
+The guarantees here are almost all NEGATIVE properties — "no model call", "not on a
 read", "installs nothing", "never re-nags", "does not clobber your edit" — and a negative is
 only real if something fails when it stops holding. So each block below pins the negative:
 
@@ -10,7 +10,7 @@ only real if something fails when it stops holding. So each block below pins the
   Prose alone is unfalsifiable, and the dynamic test alone would pass on a lazily-imported
   seam that simply wasn't reached by the fixture's rules.
 * ``test_a_scan_needs_one_of_two_reasons`` / ``test_reading_a_project_does_not_scan`` — the
-  "on project-create and on-demand ONLY" clause, asserted as the negative.
+  "on project-create and on-demand ONLY" rule, asserted as the negative.
 * ``test_surfacing_writes_nothing`` — propose-only: a full scan with inspect reports leaves the
   home byte-identical.
 * ``test_a_rejection_is_remembered_and_never_re_nags`` — the persistence test the never-re-nag
@@ -49,7 +49,7 @@ def home(tmp_path, monkeypatch):
 
 @pytest.fixture
 def terraform_workspace(tmp_path):
-    """A Terraform-SHAPED directory — the §7 / Success-7 scenario, on real files.
+    """A Terraform-SHAPED directory, on real files.
 
     Two of the ``infra-ops`` rule's globs and both of its signals are present, so a full
     coverage match is what the scanner should see. ``node_modules`` carries a decoy ``.tf`` to
@@ -157,7 +157,7 @@ def test_the_scanner_imports_no_model_seam():
 
 
 def test_a_scan_needs_one_of_two_reasons(home, project):
-    """§7's "never on a background loop" is a typed refusal, not a docstring.
+    """ "Never on a background loop" is a typed refusal, not a docstring.
 
     A timer could not schedule a scan without inventing a reason name — and that fails loudly
     here rather than silently acquiring a new trigger surface.
@@ -189,7 +189,7 @@ def test_reading_a_project_does_not_scan():
         rel = path.relative_to(root).as_posix()
         # Attribute the call to its ENCLOSING FUNCTION, not just its file. Scoping this to
         # files would let a scan added to ``api_projects_get`` pass — same module as the
-        # create handler — which is precisely the read path this clause forbids.
+        # create handler — which is precisely the read path this rule forbids.
         for parent in ast.walk(tree):
             if not isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -210,7 +210,7 @@ def test_reading_a_project_does_not_scan():
 # ── propose-only ──────────────────────────────────────────────────────────────
 
 
-#: The SEL audit trail is the ONE thing a scan is expected to write (§8: every scan verdict is
+#: The SEL audit trail is the ONE thing a scan is expected to write (every scan verdict is
 #: SEL-audited, same as a skill install). It is not entity state — it is the security log
 #: recording that a dry run happened — so the propose-only assertion below excludes it BY NAME
 #: and then asserts it positively, rather than quietly widening to "nothing much changed".
@@ -443,7 +443,7 @@ def test_a_bundled_pack_declares_the_terraform_fingerprint():
     assert "Terraform project" in labels
 
 
-# ── §1 the pack_owned update flow ─────────────────────────────────────────────
+# ── the pack_owned update flow ────────────────────────────────────────────────
 
 
 @pytest.fixture
@@ -489,7 +489,7 @@ def test_an_unmodified_pack_owned_component_is_overwritten(home, installed_infra
 
 
 def test_a_user_edited_component_is_skipped_with_a_drift_note(home, installed_infra):
-    """§1/Success-8: the user's edit survives an update, and the skip is VISIBLE.
+    """The user's edit survives an update, and the skip is VISIBLE.
 
     Both halves are load-bearing. A silent skip is indistinguishable from a clobber to anyone
     reading the result, so the note is part of the contract, not a nicety.
@@ -633,7 +633,7 @@ def test_component_digest_moves_on_any_content_change(tmp_path):
 
 
 def test_infra_ops_round_trips_onto_a_second_home(tmp_path, monkeypatch):
-    """The validation sweep for the pack this change adds (§Success 1's shape).
+    """The validation sweep for the pack this change adds.
 
     The archive is BUILT while one home is bound and IMPORTED while a different, empty home is
     bound, so nothing here can pass because state leaked from the exporting side — the same

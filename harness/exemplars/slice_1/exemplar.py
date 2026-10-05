@@ -1,8 +1,8 @@
-"""Slice 1 exemplar — the pure frontier, the engine, and the journal-backed run (WF2 §Slice 1).
+"""Workflow exemplar — the pure frontier, the engine, and the journal-backed run.
 
 A three-node sequence driven end to end against a temp home with only the model call faked:
 `seed` (transform) → `think` (infer, binding-fed) → `final` (transform, consuming think).
-It exercises the load-bearing Slice-1 machinery at once: the pure `frontier()` scheduling
+It exercises the load-bearing engine machinery at once: the pure `frontier()` scheduling
 one node at a time in dependency order, the dispatchers, binding resolution threading a
 value from node to node, terminal-status ownership, and the Run Ledger emission.
 

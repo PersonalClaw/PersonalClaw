@@ -11,7 +11,7 @@ import {
   type ResolvedTokens, type Scheme, type TokenOverrides,
 } from './DesignCockpitPage'
 
-/** D3 — in the design planning walkthrough, a token-bearing step (foundations / palette
+/** In the design planning walkthrough, a token-bearing step (foundations / palette
  *  / typography) renders the EXTRACTED token values as the editable whole-system design
  *  preview: the step's `token_overrides` patch is merged onto the loop, then the loop's
  *  RESOLVED tokens (defaults + all approved overrides + this step's) render as TokensView

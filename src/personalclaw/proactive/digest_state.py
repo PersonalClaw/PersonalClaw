@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-#: The schedule §5.4 installs, under a DETERMINISTIC id (the `system:heartbeat:fts` convention
+#: The schedule the digest installs, under a DETERMINISTIC id (the `system:heartbeat:fts` convention
 #: `triggers.models` documents). That is what makes the install idempotent with nothing to
 #: remember: a second install finds this row instead of adding a duplicate, and the reconcile can
 #: address it after a restart. `created_by="system"` is the closed three-value vocabulary the field
@@ -57,8 +57,8 @@ def schedule_payload(trigger: Any) -> dict[str, Any]:
 def install_state() -> dict[str, Any]:
     """Installedness + the drift between the config switch and the schedule's own flag.
 
-    ``drift`` is reported rather than silently repaired on a READ. Criterion 10 wants disabling
-    ``triage_enabled`` to retire the schedule, and the reconcile that does it is a POST — so a
+    ``drift`` is reported rather than silently repaired on a READ. Disabling
+    ``triage_enabled`` must retire the schedule, and the reconcile that does it is a POST — so a
     GET that quietly fixed the divergence would hide from the user that two switches had
     disagreed, and would make the read a writer.
     """

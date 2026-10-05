@@ -1,4 +1,4 @@
-"""Tests for plan revision and the review surface (UP-R4/R7).
+"""Tests for plan revision and the review surface.
 
 The property that carries this module is that **an untouched stage cannot change**. A revision that
 regenerates the whole spec re-rolls the dice on every stage nobody complained about, and the drift

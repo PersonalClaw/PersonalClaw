@@ -25,9 +25,9 @@ import { join } from 'node:path'
 //
 // 🔴 320px IS STILL BROKEN AND THIS CHANGE IS NOT THE FIX FOR IT. Once folded, the pill (32×32 at
 // x=110) is COVERED by `button[aria-label="More actions"]` (40×40) — the overflow menu. That is the
-// sixth measured instance of TC-10's family, whose other members are `knowledge-detail`'s back button,
+// sixth measured instance of the header-overlap family, whose other members are `knowledge-detail`'s back button,
 // `apps`' listbox trigger, `loops`/`loop`'s Granularity and `code`'s Project kind. **Do not "finish"
-// this locally**: TC-10 needs a ruling on what the header row does when it cannot fit, and this file
+// this locally**: the family needs a decision on what the header row does when it cannot fit, and this file
 // only removes the crush that was stacked on top of it.
 //
 // 🪤 The measurement that produced those numbers is easy to get wrong twice over, and I got it wrong
@@ -87,7 +87,7 @@ describe('the skills mode toggle folds instead of being crushed', () => {
     expect(seg, 'and its prescription').toMatch(/should scroll or fold/)
   })
 
-  it('🔴 records that 320px remains a TC-10 overlap, not a crush', () => {
+  it('🔴 records that 320px remains a header overlap, not a crush', () => {
     // The residual failure has a different cause and a different owner. Without this, a later pass
     // measures 1×1 at 320px, concludes `collapse` did not work, and reverts it.
     const src = read('pages/skills/SkillsPage.tsx')

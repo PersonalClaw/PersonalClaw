@@ -225,7 +225,7 @@ def check_action(
     Order (first match wins): built-in sensitive-path check on any path-carrying
     config value → operator ``autonomy_denylist`` path globs (unioned with the
     session's SafetyProfile ``denylist_extra``) → the host-lifecycle self-destruct
-    guard on an unattended run (WF2AUT-14) → a delete of a protected folder on an unattended
+    guard on an unattended run → a delete of a protected folder on an unattended
     run → built-in + operator denied-command patterns against any command string. Returns an
     ``allowed`` decision when nothing matches.
 
@@ -269,7 +269,7 @@ def check_action(
         )
     paths = _config_paths(action_config, written)
 
-    # The session's SafetyProfile can layer extra path globs (§3 ``denylist_extra``) and
+    # The session's SafetyProfile can layer extra path globs (``denylist_extra``) and
     # CONFINE the run to an allow-list (the ``paths`` ceiling scope). Read lazily + only
     # when a session identity is known.
     profile_globs: tuple[str, ...] = ()
@@ -446,7 +446,7 @@ def enforce_action(
     True, recording :meth:`DenyDecision.refusal` where its run is recorded.
 
     ``session_key`` is threaded to ``check_action`` so the run's SafetyProfile can
-    layer extra deny globs (§3 ``denylist_extra``), and ``written`` (the config as it was written,
+    layer extra deny globs (``denylist_extra``), and ``written`` (the config as it was written,
     its secrets' references unfilled) so the refusal and its row quote it as written.
     """
     decision = check_action(provider_name, action_config, ctx, session_key, written=written)

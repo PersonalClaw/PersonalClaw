@@ -1,4 +1,4 @@
-"""WS7 — web_extract: fetch (via the guarded web_fetch pipeline) + schema-guided LLM
+"""web_extract: fetch (via the guarded web_fetch pipeline) + schema-guided LLM
 extraction → a structured JSON object.
 
 Both the network fetch (net_fetch) and the extraction model (one_shot_completion) are
@@ -67,8 +67,8 @@ def _patch_fetch(monkeypatch, resp=None):
 
 def _patch_llm(monkeypatch, text):
     async def _fake(prompt, *, use_case="reasoning", output_type=None):
-        # Faithfully mirror the real one_shot_completion typed-output contract
-        # (AUTONOMY-GUARDRAILS §2.4): when output_type is set and the text does
+        # Faithfully mirror the real one_shot_completion typed-output contract:
+        # when output_type is set and the text does
         # not parse as that shape, raise OutputContractError (the mock returns a
         # fixed text, so the internal retry can't change the outcome).
         if output_type is not None:

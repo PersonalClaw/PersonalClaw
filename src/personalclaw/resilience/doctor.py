@@ -171,7 +171,7 @@ _RESTART_REMEDY = "No automatic fix — restart the gateway: `personalclaw resta
 async def _safe_run(probe: Probe, ctx: DoctorContext) -> ProbeResult:
     """Run one probe, converting ANY exception into an ``ok=False`` result.
 
-    This is the AUTO-R15 rule restated as the framework invariant: a probe never
+    This is the framework invariant: a probe never
     raises out to the caller — a broken probe reports a failed capability row, it
     does not 500 the Doctor.
     """
@@ -716,7 +716,7 @@ async def _probe_local_models(ctx: DoctorContext) -> ProbeResult:
     reported and passes: an installed runtime nobody uses is not a fault.
 
     Scope note: the on-disk HF ``models--`` layout probe belongs to
-    LOCAL-MODEL-MANAGER-V2 (``local_models/layouts.py``, unbuilt) — this pack uses
+    the local model manager (``local_models/layouts.py``, unbuilt) — this pack uses
     provider-computed availability and binding-integrity, not a raw cache scan.
     """
     avail = await _availability()
@@ -768,7 +768,7 @@ async def _probe_apps(ctx: DoctorContext) -> ProbeResult:
     call ``recover_interrupted_updates`` — that mutates).
 
     Scope note: installed-copy-vs-repo manifest drift has no stored hash to diff
-    (INTEGRATION recon) — deferred to the plan that adds a manifest checksum; this
+    — it waits for a manifest checksum; this
     pack probes liveness + rollback leftovers, the real signals available today.
     """
     from personalclaw.apps.backend_runtime import get_backend_supervisor
@@ -1008,7 +1008,7 @@ def _measured_failure(name: str) -> str:
 
 
 async def _probe_model_providers(ctx: DoctorContext) -> ProbeResult:
-    """model-providers — COMPOSED from AUTONOMY-GUARDRAILS §2.5 provider health
+    """model-providers — COMPOSED from the autonomy guardrails' provider health
     (breaker state + latency + failure modes derived from the model-call audit).
 
     The Doctor RENDERS this view; it never rebuilds the audit. A provider whose breaker has
@@ -1053,7 +1053,7 @@ async def _probe_model_providers(ctx: DoctorContext) -> ProbeResult:
 
 
 async def _probe_crashes(ctx: DoctorContext) -> ProbeResult:
-    """crashes — recent structured crash artifacts (PLATFORM-RESILIENCE §6.5).
+    """crashes — recent structured crash artifacts.
 
     A crash file on disk is not a live failure — the gateway is running (we are
     probing from inside it). It's a WARN so the user (or the agent-run Doctor) sees
@@ -1100,13 +1100,13 @@ _MEMORY_BACKLOG_WARN = 200
 
 
 async def _probe_memory_pipeline(ctx: DoctorContext) -> ProbeResult:
-    """memory-pipeline — is memory extraction actually running? (PLATFORM-RESILIENCE §3.2.)
+    """memory-pipeline — is memory extraction actually running?
 
-    Silent memory-pipeline death (the S05 bug-class) is invisible from outside precisely
+    Silent memory-pipeline death is invisible from outside precisely
     because the healthy case and the dead case both look like silence: a pass that ran and
     honestly found nothing is indistinguishable from a pass whose reader returns nothing,
-    unless someone counted. LEARN-R19's ``flush_records`` are that count, and this probe is
-    their first health consumer.
+    unless someone counted. The staging store's ``flush_records`` are that count, and this
+    probe is their first health consumer.
 
     Three WARN shapes, all read off :meth:`StagingStore.health` +
     :meth:`~personalclaw.learning.staging.StagingStore.cost_by_op`:
@@ -1214,7 +1214,7 @@ async def _probe_memory_pipeline(ctx: DoctorContext) -> ProbeResult:
 
 
 async def _probe_state_inventory(ctx: DoctorContext) -> ProbeResult:
-    """durability — is every path under the home claimed by the state manifest? (S179)
+    """durability — is every path under the home claimed by the state manifest?
 
     🔴 WHY THIS EXISTS. `durability.inventory.audit_home()` is the claims-everything guard — the
     thing that "keeps the manifest honest … which is precisely how nine directories silently escaped
@@ -1427,7 +1427,7 @@ def _minutes_ago(ts: float) -> str:
 
 
 async def _probe_remote_reachability(ctx: DoctorContext) -> ProbeResult:
-    """remote — can this dashboard be reached from a phone, and safely? (MOBILE-COMPANION S1)
+    """remote — can this dashboard be reached from a phone, and safely?
 
     Three outcomes, all read-only (no token minted, no network dialed beyond a
     stdlib address enumeration):
@@ -1443,7 +1443,7 @@ async def _probe_remote_reachability(ctx: DoctorContext) -> ProbeResult:
       that reaches the interface walks in.
       (``effective_bind`` forces NONE to loopback, so this only arises when
       ``PERSONALCLAW_BIND_HOST`` overrode the bind.)
-    * **bypass behind a declared proxy** → not ok (RUA-5). The opt-in
+    * **bypass behind a declared proxy** → not ok. The opt-in
       ``PERSONALCLAW_BYPASS_LOCAL_NETWORKS`` bypass is armed on an instance that
       also declares ``trusted_proxies`` or a ``public_url``. See the comment block
       at the branch itself for why the *combination* is the hazard when neither
@@ -1586,11 +1586,11 @@ async def _probe_remote_reachability(ctx: DoctorContext) -> ProbeResult:
 
 
 async def _probe_knowledge_vector_index(ctx: DoctorContext) -> ProbeResult:
-    """knowledge — is the chunk ANN index (sqlite-vec) live, and does it cover the chunks? (KL-11)
+    """knowledge — is the chunk ANN index (sqlite-vec) live, and does it cover the chunks?
 
-    🔴 WHY THIS EXISTS. KL-10 made knowledge search score every embedded CHUNK, measured at
-    ~21 µs/row in Python — roughly 650 ms/query on a 5,000-item library. KL-11 puts a
-    ``sqlite-vec`` ``vec0`` index in front of that, but SQLite extension loading depends on how
+    🔴 WHY THIS EXISTS. Knowledge search scores every embedded CHUNK, measured at
+    ~21 µs/row in Python — roughly 650 ms/query on a 5,000-item library. A
+    ``sqlite-vec`` ``vec0`` index sits in front of that, but SQLite extension loading depends on how
     the interpreter's SQLite was built, so on some installs the index cannot load and search
     silently reverts to that linear scan. A user whose search feels slow deserves to be told
     WHY here rather than concluding the product is broken.
@@ -1676,7 +1676,7 @@ async def _probe_knowledge_vector_index(ctx: DoctorContext) -> ProbeResult:
 
 
 async def _probe_baseline_denylist(_ctx: DoctorContext) -> ProbeResult:
-    """security — is the enforced bash denylist still the baseline we shipped? (SH-6)
+    """security — is the enforced bash denylist still the baseline we shipped?
 
     Every ``denied_command_patterns()`` read already re-asserts the in-memory list, so
     in-process drift is healed continuously. This probe is the *periodic* half: it
@@ -1714,7 +1714,7 @@ async def _probe_baseline_denylist(_ctx: DoctorContext) -> ProbeResult:
 
 
 async def _probe_credential_backend(_ctx: DoctorContext) -> ProbeResult:
-    """security — which credential store is actually holding the secrets? (SH-1)
+    """security — which credential store is actually holding the secrets?
 
     Reports the RESOLVED backend, not the requested one. The distinction is the whole
     point: an install that sets ``PERSONALCLAW_CREDENTIAL_BACKEND=keychain`` on a headless
@@ -1843,7 +1843,7 @@ async def _probe_credentials_file(ctx: DoctorContext) -> ProbeResult:
 
 
 async def _probe_session_lifetime(_ctx: DoctorContext) -> ProbeResult:
-    """security — does ``auth.session_ttl`` ask for longer than the 90-day limit? (ledger 285)
+    """security — does ``auth.session_ttl`` ask for longer than the 90-day limit?
 
     A sign-in lasts at most 90 days, the most a long-lived credential may live. A WRITE of a
     longer value is refused; a config file that already says longer is applied as 90 days
@@ -1942,7 +1942,7 @@ async def _probe_legacy_trigger_files(ctx: DoctorContext) -> ProbeResult:
 async def _probe_legacy_mcp_settings(ctx: DoctorContext) -> ProbeResult:
     """tools — does the legacy ``settings/mcp.json`` still hold a server that no longer runs?
 
-    It was the MCP store before ``mcp.json`` became the one store (UT3). A fold at every start used
+    It was the MCP store before ``mcp.json`` became the one store. A fold at every start used
     to copy whatever it held into ``mcp.json``, where the boot probe spawned it and the next agent
     rebuild allowed its tools without asking — so a file restored from an old snapshot, or put there
     by anything at all, became running servers nobody had chosen. Nothing reads it now, so a server
@@ -1986,9 +1986,9 @@ async def _probe_legacy_mcp_settings(ctx: DoctorContext) -> ProbeResult:
 
 
 async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
-    """knowledge — which ingested items can search NOT fully reach? (RET-2, RET-4)
+    """knowledge — which ingested items can search NOT fully reach?
 
-    🔴 WHY THIS EXISTS. Measured before RET-2: an image-only PDF and a document ingested
+    🔴 WHY THIS EXISTS. Measured before this was fixed: an image-only PDF and a document ingested
     with no embedding provider both persisted ``processing_status='done'`` while part of
     retrieval could not see either — the AnythingLLM #6143 shape, where the app reports
     success and RAG returns no sources. The ingest runner now persists ``unsearchable`` + a
@@ -2005,7 +2005,7 @@ async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
     **Reports failed, not degraded**, and that is the deliberate half. Doctor's other
     knowledge probes report degraded because a slower-but-correct search is not an outage.
     An item half of search cannot see is a gap the user must act on (bind an embedder, add
-    a text version, re-ingest), which is exactly what ``ok=False`` is for. Per §1.3 it still
+    a text version, re-ingest), which is exactly what ``ok=False`` is for. It still
     degrades only this capability: it never marks the gateway unhealthy and never justifies
     a restart.
 
@@ -2017,7 +2017,7 @@ async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
     throughout: ``knowledge.db`` is opened ``mode=ro`` with ``create=False``, so a health
     check on an install that has never used knowledge creates nothing.
 
-    **RET-4 folds in one more gap**: an item whose PASSAGE vectors came from a different
+    **One more gap folds in**: an item whose PASSAGE vectors came from a different
     embedding model than the one bound now (``stale_index``). Keyword search still reaches
     it and semantic search skips it, the same user-visible shape as a missing embedding, so
     it belongs in this row rather than in a second probe a user has to correlate. Its remedy
@@ -2132,7 +2132,7 @@ async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
 
 
 async def _probe_knowledge_vault(ctx: DoctorContext) -> ProbeResult:
-    """knowledge — is any markdown projection waiting on the OWNER? (KL-20)
+    """knowledge — is any markdown projection waiting on the OWNER?
 
     The projection is two-way, so it has exactly two states only a human can clear: a page
     that changed HERE and in the app since the last sync (nothing was written on either side,
@@ -2143,7 +2143,7 @@ async def _probe_knowledge_vault(ctx: DoctorContext) -> ProbeResult:
 
     **Reports degraded, not failed.** A conflict is the projection working as designed — the
     alternative to surfacing it is resolving it silently toward the database, which is the one
-    outcome the atom forbids. Failing the capability would make correct behaviour look like an
+    outcome the projection forbids. Failing the capability would make correct behaviour look like an
     outage, and Doctor's own doctrine is that a tier-3 row never justifies a restart.
 
     Read-only: opens ``knowledge.db`` with ``mode=ro`` and ``create=False``, so a health check

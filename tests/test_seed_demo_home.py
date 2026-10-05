@@ -340,7 +340,7 @@ def test_the_demo_loop_loads_through_the_production_store(seeded_home: Path) -> 
     # A phase with no exit criteria renders as an empty checklist in the cockpit.
     for phase in loop.plan:
         assert phase.get("exit_criteria"), f"loop phase {phase.get('phase')!r} has no exit criteria"
-    # A completed loop with zero cycles reads as never run. Since PP-16 seam 4a the count is the
+    # A completed loop with zero cycles reads as never run. The count is the
     # LEDGER's `step_completed` count, not a `total_cycles` column, so this asserts the fixture
     # ships real cycles rather than a stored number. The version this replaced asserted the column
     # and passed against `total_cycles=6` with an EMPTY ledger — six cycles claimed, none recorded,
@@ -435,7 +435,7 @@ def test_the_committed_fixture_dbs_are_self_contained() -> None:
 def test_every_demo_surface_is_non_empty(seeded_home: Path) -> None:
     """The vacuity floor for the whole fixture.
 
-    acceptance criterion is "boots a demo-ready dashboard". Each surface above is
+    The fixture must boot a demo-ready dashboard. Each surface above is
     asserted on its own, but a future refactor that quietly empties one store
     would leave the others green and still ship a half-blank demo. This pins a
     count per surface in one place, so "demo-ready" cannot degrade silently.

@@ -22,14 +22,14 @@ import { join } from 'node:path'
 //
 // 🔑 THE CHIPS STILL CLEAR, DELIBERATELY. A dismissal is a request to get something out of the way, so
 // refusing to hide it would fight the click; the report is what makes a later reappearance explicable.
-// That is the OPPOSITE ruling from `chat/approvalDecisionReported`, where the pill may not move until
+// That is the OPPOSITE decision from `chat/approvalDecisionReported`, where the pill may not move until
 // the server agrees — and the distinction is what the control is claiming. A permission pill asserts a
 // server fact; a dismissed chip only hides a suggestion. Both are pinned so a later pass cannot
 // "normalise" one into the other.
 //
 // 🪤 NOT FIXED HERE: `RoutingChip`'s second call, `api.recordFeedback(...)`, also swallows. It is a
-// different concern (feedback capture, not dismissal) with its own roadmap owner, and folding it in
-// would widen this past one thing. Recorded in the handoff.
+// different concern (feedback capture, not dismissal), and folding it in
+// would widen this past one thing.
 
 const F = (rel: string) => readFileSync(join(process.cwd(), 'src', 'pages', rel), 'utf8')
 const strip = (s: string) =>
@@ -95,7 +95,7 @@ describe('a dismissal that fails says so', () => {
     }
   })
 
-  it('the CHIPS still hide on a failure — the opposite ruling, pinned', () => {
+  it('the CHIPS still hide on a failure — the opposite decision, pinned', () => {
     // If a later pass "fixed" these to keep the chip visible, it would be fighting the click. The
     // reasoning lives in this file's header; this is the assertion that makes changing it deliberate.
     const organize = strip(F('chat/OrganizeChip.tsx'))

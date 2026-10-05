@@ -1,6 +1,6 @@
 """The sparse per-run ``SupervisorPolicy`` overlay.
 
-The ruling, restated once: ``SupervisorPolicy`` had ZERO persistence while five of its knobs
+The reason, stated once: ``SupervisorPolicy`` had ZERO persistence while five of its knobs
 (`attended`, `autopilot`, `max_cycles`, `idle_secs`, `success_criteria`) are per-INSTANCE,
 user-settable settings. A template is SHARED across runs, so it structurally cannot hold a
 per-instance value — the declared defaults stay where they are (``KIND_CONVERGENCE``, a

@@ -4,9 +4,9 @@ const assert = require("node:assert/strict");
 const { AUTH_SWITCHES, INSTALL_KIND, buildGatewayEnv } = require("../gatewayEnv");
 
 /**
- * The gateway spawn environment (DC-1 T1.3 / DISTRIBUTION C1).
+ * The gateway spawn environment.
  *
- * The clause these tests exist for is `PERSONALCLAW_INSTALL_KIND`. It was missing for the whole
+ * The variable these tests exist for is `PERSONALCLAW_INSTALL_KIND`. It was missing for the whole
  * life of the shipped Linux desktop artifact (issue #2673): the gateway inside the AppImage/.deb
  * fell through `detect_install_kind()` to `"pip"`, and the Updates panel offered an in-app apply
  * that runs an installer against a frozen PyInstaller binary. Every assertion below is EXECUTED

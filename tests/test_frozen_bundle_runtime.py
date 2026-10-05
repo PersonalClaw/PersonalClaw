@@ -72,7 +72,7 @@ class TestInstallKindFromTheArtefact:
         assert self_update.detect_install_kind() == "pip"
 
     def test_the_env_still_wins_over_frozen(self, frozen, monkeypatch):
-        """Contract C1 order is unchanged: the shell's declaration is still first, so a
+        """The detection order is unchanged: the shell's declaration is still first, so a
         container image that happens to freeze its backend keeps saying `container`."""
         monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
         assert self_update.detect_install_kind() == "container"

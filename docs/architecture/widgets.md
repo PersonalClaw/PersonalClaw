@@ -205,7 +205,7 @@ iteration path mutates the artifact; the receiving agent regenerates it. The hos
 shows the artifact decides who receives it:
 
 - **the artifact library / a chat widget** → the widget bridge, i.e. the same
-  `[UI]`-prefixed turn a widget action produces, carrying the C32 `refresh artifact
+  `[UI]`-prefixed turn a widget action produces, carrying the living-view `refresh artifact
   "<slug>" in place` suffix so the agent rewrites THAT artifact rather than spawning a
   new one;
 - **a loop's output tab** → the loop's own steer channel (`guidance.txt`, via

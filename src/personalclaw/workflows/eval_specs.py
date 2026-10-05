@@ -1,10 +1,11 @@
-"""Per-template eval specs, derived rather than authored (UP-R13.3).
+"""Per-template eval specs, derived rather than authored.
 
-Session 40's routing fixtures assert which template an intent picks. They say nothing about whether
+The routing fixtures assert which template an intent picks. They say nothing about whether
 that template, once picked, produces a good plan — and a routing suite that passes while every
 template is subtly wrong is exactly the false confidence the old loop classifiers had.
 
-This module closes that gap the same way session 42 closed the parameter gap: by DERIVING the
+This module closes that gap the same way the derived input schema closed the parameter gap: by
+DERIVING the
 benchmark from the template artifact instead of maintaining it beside it. One declarative artifact
 compiles into both the runnable plan and its eval config, so the eval cannot drift from the template
 — the drift is what makes a hand-maintained benchmark worse than none, because a stale expectation
@@ -13,11 +14,11 @@ gets "fixed" by loosening the assertion.
 What is derivable and what is not is a hard line here:
 
 * **Derivable** — the fixture intents (from the template's own keywords and example outputs), the
-  expected parameterization (from the input schema session 42 already derives from the tree), the
+  expected parameterization (from the input schema already derived from the tree), the
   structural acceptance checks (from the node kinds and gates that are literally present).
 * **NOT derivable** — whether the OUTPUT is any good. That needs a judge, and this module never
   pretends otherwise: `EvalSpec.graded_checks` names what a judge would have to grade and leaves it
-  to LEARNING-FLYWHEEL, which owns the judge harness.
+  to the learning loop, which owns the judge harness.
 
 Pure functions. No LLM, no I/O, no clock — an eval spec that needed a model call to build would be
 one nobody runs in CI.
@@ -120,8 +121,8 @@ def _fixtures(name: str, spec: dict[str, Any], metadata: dict[str, Any]) -> list
     """Fixture intents built from the template's own matchable surface.
 
     Keywords first (what a user types), then example outputs phrased as a request (an intent
-    resembles its desired output more than it resembles prose about a workflow — session 40's T2
-    finding). Required parameters come from the derived schema so a fixture cannot ask for a
+    resembles its desired output more than it resembles prose about a workflow). Required
+    parameters come from the derived schema so a fixture cannot ask for a
     parameter the tree does not read.
     """
     required = [p.name for p in resolve_unfilled_inputs(spec) if p.required]
@@ -175,7 +176,7 @@ def _structural_checks(spec: dict[str, Any]) -> list[str]:
 def _param_checks(spec: dict[str, Any]) -> list[str]:
     """Checks over the derived launch form.
 
-    These catch the two failures session 42 measured on the real library, in both directions: a
+    These catch the two failures measured on the real library, in both directions: a
     declared input nothing reads (a control that silently does nothing) and a binding with no
     declared input (a run that dies on its first binding).
     """

@@ -4,8 +4,8 @@ Covers: the store round-trips records (per-job file + cross-job index), rotation
 path-traversal rejection, lock-free partial-line tolerance, and the TaskProvider-shaped
 `(rows, total)` read API.
 
-🔴 The `ScheduleService` recording + `_record_run` status-mapping sections retired with the class
-(S112). The T7 contract they pinned — an honest `launched` that does NOT claim success — lives in
+🔴 The `ScheduleService` recording + `_record_run` status-mapping sections retired with the class.
+The contract they pinned — an honest `launched` that does NOT claim success — lives in
 the substrate now: `test_triggers_executor.py` covers `classify()` and
 `test_triggers_facade_store.py` covers the badge. `ScheduleRunStore` is unchanged, which is what
 remains here.
@@ -122,7 +122,7 @@ async def test_delete_for_job(tmp_path: Path) -> None:
 
 
 # 🔴 The `ScheduleService` recording + `_record_run` status-mapping sections retired with the
-# class. The T7 contract they pinned — an honest `launched` that does NOT claim success —
+# class. The contract they pinned — an honest `launched` that does NOT claim success —
 # lives in the substrate now and is covered by `test_triggers_executor.py`'s `classify()` tests
 # and `test_triggers_facade_store.py`'s badge assertions. `ScheduleRunStore` itself is unchanged,
 # which is what the section above exercises.
@@ -147,7 +147,7 @@ async def test_count_since_counts_only_the_window(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_only_a_run_of_yours_is_left_out(tmp_path: Path) -> None:
-    """§3.6: "manual fires bypass the hourly cap". The cap exists to stop the MACHINE running away,
+    """Manual fires bypass the hourly cap. The cap exists to stop the MACHINE running away,
     and you clicking Run is not the machine running away — counting your clicks would let you lock
     yourself out of your own automation. Only yours: a run an agent asked for is the automation
     firing, and so is a row that does not say who started it."""
@@ -187,8 +187,8 @@ async def test_an_unknown_job_counts_zero_rather_than_raising(tmp_path: Path) ->
 
 @pytest.mark.asyncio
 async def test_a_SUPPRESSION_does_not_count_toward_the_RATE_WINDOW(tmp_path: Path):
-    """🔴 A second-order defect S171 introduced and this closes. Once suppressed fires began
-    persisting their typed row here (§7 crit 8's "zero silent drops"), `count_since` counted them —
+    """🔴 A second-order defect, closed here. Once suppressed fires began
+    persisting their typed row here (so nothing drops silently), `count_since` counted them —
     measured, 5 quiet-hours skips read as 5 fires.
 
     That inverts the cap: a trigger held by its OWN quiet window would consume the hourly
@@ -227,7 +227,7 @@ async def test_a_REAL_fire_and_a_FAILED_one_both_still_count(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_your_runs_are_left_out_alongside_the_suppressions(tmp_path: Path):
-    """The rule is unchanged: §3.6 says your runs bypass the hourly cap, because you clicking Run
+    """The rule is unchanged: your runs bypass the hourly cap, because you clicking Run
     is not the machine running away. Both exclusions apply and neither shadows the other."""
     store = ScheduleRunStore(tmp_path)
     now = 1_800_000_000.0
@@ -269,8 +269,8 @@ async def test_the_exclusion_reads_the_SHARED_inert_set(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_a_SUPPRESSION_STORM_does_not_evict_the_real_run(tmp_path: Path):
-    """🔴 A regression S171 introduced and this closes. That session began persisting suppressed
-    fires (criterion 8's "zero silent drops"), and rotation kept a flat `[-100:]` tail.
+    """🔴 A regression, closed here. Suppressed fires began persisting
+    (so nothing drops silently), and rotation kept a flat `[-100:]` tail.
 
     A minutely trigger held by quiet hours writes 1440 skips a day — `RunWeight`'s own
     docstring names that number. Measured against the flat tail: **1 real backup run plus
@@ -381,7 +381,7 @@ async def test_a_NOISY_job_does_not_evict_every_OTHER_automation(tmp_path: Path)
     """🔴 THE DEFECT, and the cross-job half. The index is SHARED — it backs the dashboard's
     "recent runs across all schedules" — and a flat tail lets the loudest writer own all of it.
 
-    Measured after S171 began persisting suppressions: three well-behaved automations with one run
+    Measured once suppressions began persisting: three well-behaved automations with one run
     each, plus 1.5 days of one minutely trigger's quiet-hours skips, and the index held **2000 rows
     from that single trigger and nothing else**. Every other automation vanished from the only
     cross-job view there is.
@@ -482,7 +482,7 @@ async def test_the_index_stays_NEWEST_FIRST(tmp_path: Path):
 def _write_legacy(store: ScheduleRunStore, job_id: str, rows: list[dict]) -> None:
     """Write a job file DIRECTLY, bypassing append-time rotation.
 
-    That is the state a PRE-S173 install has on disk when the new build first boots — which is the
+    That is the state an older install has on disk when the new build first boots — which is the
     only way to reach the boot trim with an over-cap file, and therefore the only way this defect is
     observable. Appending the same rows would rotate them on the way in and hide it.
     """
@@ -509,7 +509,7 @@ def _row(run_id: str, job_id: str, status: str, started: float) -> dict:
 @pytest.mark.asyncio
 async def test_BOOT_rotation_does_not_evict_what_APPEND_rotation_protects(tmp_path: Path):
     """🔴 THE DEFECT. `_rotate_all_sync` carried its own inlined `rows[-_MAX_RECORDS_PER_JOB:]` — the
-    pre-S173 flat tail — so the BOOT path undid what the append path protects.
+    old flat tail — so the BOOT path undid what the append path protects.
 
     Measured on the realistic case, an existing install's first boot on the new build: a
     200-row legacy file (1 real run + 199 quiet-hours skips) came back as 100 rows with the

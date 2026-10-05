@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fresh-installation validation in throwaway containers (DISTRIBUTION V5 / DIST-12).
+# Fresh-installation validation in throwaway containers.
 #
 # Every install path this project advertises is a claim about a machine we do not own: a
 # clean one. A dev box cannot test that claim — Homebrew, pip, uv and nix are all already

@@ -1,7 +1,7 @@
 """Fire-time liveness heuristics for `skip_if_active`.
 
-§3.5 asks for an OPTIONAL guard on a mutating trigger: "using cheap liveness heuristics (dirty
-worktree, lockfiles, recent mtime) at fire time … a busy target defers rather than fires". This is
+An OPTIONAL guard on a mutating trigger, using cheap liveness heuristics (dirty
+worktree, lockfiles, recent mtime) at fire time: a busy target defers rather than fires. This is
 the distinct sibling of the named resource-slot gate (`claims.busy_slot`): a slot serializes two
 trigger-fired runs against a NAMED resource one of them declared, while this defers a fire when the
 working STATE it would act on looks like something else is touching it right now — a file that was
@@ -26,8 +26,8 @@ mix a pure-state reader with bounded external I/O. A small dedicated module keep
   against a target that turned out to be busy, which the claim and resource-slot gates still bound.
   This matches the `slot` gate's own unreadable-store reasoning (`models.FAIL_OPEN_GATES`).
 
-Each recognized `skip_if_active` key is EVALUATED here — a declared-but-unread sub-key would be the
-"inert control" defect the plan's comment culture warns against, so there are none.
+Each recognized `skip_if_active` key is EVALUATED here — a declared-but-unread sub-key would be an
+"inert control" defect, so there are none.
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ def _recently_modified(path: Path, *, now: float, window: float) -> bool:
     """Whether `path` (or, for a dir, any entry one level down) changed within `window`.
 
     Never raises: an unreadable path reads as NOT modified (fail-open). Shallow for a directory — a
-    full recursive walk is not "cheap", and the signal §3.5 wants is "did the target just change",
+    full recursive walk is not "cheap", and the signal wanted is "did the target just change",
     which the directory's own mtime plus its immediate children answer without a deep scan.
     """
     try:

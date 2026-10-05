@@ -1,16 +1,16 @@
-"""WF2AUT-14 ratification ratchet: the resume-target contract SHAPE is pinned.
+"""Ratchet: the resume-target contract SHAPE is pinned.
 
-See `the wf2aut14-resume-target-contract plan (internal, not in this repo)`. Behavioural pins (a
+Behavioural pins (a
 real run driven to a real gate and resumed, the missing-target dispositions, idempotence)
 live in ``test_triggers_resume_target.py``; this file is the cement the change adds — it pins
-the *shape* of the contract WF2LOO-9 and every future consumer read against:
+the *shape* of the contract every consumer reads against:
 
 * the public authored key,
 * the exact authored field set (``node_id`` deliberately absent — descoped),
 * the exact normalized-output key set.
 
 A change to any of these is a change to the contract, so it must be a deliberate edit to a
-RED test (and to the design note), never a silent drift.
+RED test, never a silent drift.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from types import SimpleNamespace
 from personalclaw.triggers.models import _RESUME_TARGET_FIELDS, parse_trigger
 from personalclaw.triggers.wakeup import RESUME_TARGET_KEY, resume_target_of
 
-#: The ratified authored field set. ``node_id`` from the original R11 scope is NOT here.
+#: The ratified authored field set. ``node_id`` from the original scope is NOT here.
 _RATIFIED_AUTHORED_FIELDS = ("run_id", "project_id", "resume_token", "answer")
 
 #: The exact keys ``resume_target_of`` normalizes a populated target down to.
@@ -38,8 +38,7 @@ def test_the_resume_key_is_the_public_contract_key() -> None:
 
 
 def test_the_authored_field_set_is_ratified_and_frozen() -> None:
-    """A change here is a change to the contract every consumer reads — make it deliberately
-    and update the ratification design note in the same change."""
+    """A change here is a change to the contract every consumer reads — make it deliberately."""
     assert _RESUME_TARGET_FIELDS == _RATIFIED_AUTHORED_FIELDS
 
 

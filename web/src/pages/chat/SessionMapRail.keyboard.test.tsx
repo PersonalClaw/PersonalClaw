@@ -7,7 +7,7 @@ import type { ChatTurn, Segment } from './chatTypes'
 
 // ── Click + keyboard jump, roving tabindex ───────────────────────────────────────────────────
 //
-// acceptance criteria: ArrowUp/Down move the selection with ONE tab stop; Home/End jump to the ends;
+// The contract: ArrowUp/Down move the selection with ONE tab stop; Home/End jump to the ends;
 // Enter/Space call `onJumpTo(entry.visibleIndex)` and that scrolls the matching turnNode; Escape
 // closes the card; the focused `aria-label` is the short "Message X of N: …" (never the full text);
 // `aria-live` announces ONLY while focused.
@@ -25,7 +25,7 @@ import type { ChatTurn, Segment } from './chatTypes'
 //     fire EXACTLY once, and wired to a `jumpToTurn`-shaped scroller over the same `turnNodes` map
 //     `ChatPage` owns — the matching node's `scrollIntoView` runs and no other node's does.
 //  4. "aria-live ANNOUNCES" is satisfiable by a region that is never empty, which is the double-speak
-//     §A.6 forbids. Asserted in three states: empty at rest, filled on the jump, empty again once
+//     the announcement policy forbids. Asserted in three states: empty at rest, filled on the jump, empty again once
 //     focus leaves the rail.
 
 /** A no-op IntersectionObserver, LOCAL to this file. jsdom ships none, and this harness hands the
@@ -247,7 +247,7 @@ describe('SessionMapRail — what the rail says', () => {
 
     key(h, 'ArrowUp')
     // Moving the cursor says nothing HERE: the focused marker's own aria-label already names the
-    // position, and repeating it would be the double-speak §A.6 forbids.
+    // position, and repeating it would be the double-speak the announcement policy forbids.
     expect(h.live()).toBe('')
 
     const at = tabStop(h)

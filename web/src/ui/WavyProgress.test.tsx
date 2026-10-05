@@ -12,9 +12,8 @@ import { WavyProgress } from './WavyProgress'
 // Name/Role/Value (4.1.2), and axe's `aria-progressbar-name` would have caught it — except the bar
 // only renders while a download job is `running`, so no audit of `#/settings/models` ever reached it.
 //
-// 🔑 THE SAME BLIND SPOT AS EVERY OTHER FINDING THIS SESSION: the tools see a surface's default
-// state. Cycle 178 fixed this exact gap on `ui/ProgressRing` (which had no role at all) and recorded
-// this one as the follow-up; this is it.
+// 🔑 THE USUAL BLIND SPOT: the tools see a surface's default state. This exact gap was fixed on
+// `ui/ProgressRing` (which had no role at all), with this one recorded as the follow-up; this is it.
 //
 // 🪤 THE INDETERMINATE MODE MUST STAY UNNAMED, and that is a distinction rather than an oversight.
 // It renders `aria-hidden` with no role, because the caller prints its own line — "downloading ·
@@ -62,8 +61,8 @@ describe('WavyProgress', () => {
   })
 
   it('the doc records the pairing, because the drift guard reads it', () => {
-    // A `ui/` primitive's props must be documented in the same change — cycle 178 learned that from a
-    // red `uiDocs.drift` gate rather than from CI.
+    // A `ui/` primitive's props must be documented in the same change, or the `uiDocs.drift` gate
+    // goes red.
     const doc = readFileSync(join(process.cwd(), 'src/ui/WavyProgress.doc.ts'), 'utf8')
     expect(doc).toMatch(/name: 'label'/)
     expect(doc).toMatch(/aria-hidden on purpose|aria-hidden deliberately/)

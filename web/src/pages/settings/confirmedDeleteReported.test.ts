@@ -113,7 +113,7 @@ describe('a confirmed delete reports its failure', () => {
       expect(at, `${rel} must still perform the delete`).toBeGreaterThan(-1)
       if (/\.catch\(\(\)\s*=>\s*\{\s*\}\)/.test(src.slice(at, at + 160))) swallowing.push(`${rel}:${call}`)
       if (rel === join('loops', 'LoopsListPage.tsx')) {
-        // AUD-A11 moved this one delete onto its file's own reportingWrite convention (every
+        // This one delete moved onto its file's own reportingWrite convention (every
         // other write there already rode it). The shared reporter IS the report — it owns the
         // same "Couldn't …" toast — so the pin follows the write to the funnel that carries it.
         expect(src, `${rel} must report through the shared reporter`)

@@ -39,7 +39,7 @@ difference. Suspected interference is then reproduced with the implicated node
 IDs together and alone before any fix is attributed to it.
 
 Run A used the repository's ordinary local invocation. Its session rail
-reported four writes under the operator's real PersonalClaw home. Other lanes
+reported four writes under the operator's real PersonalClaw home. Other test runs
 were active on the same host, so those writes cannot be attributed to this
 suite without further evidence. Run B therefore loaded a temporary external
 pytest safety plugin that redirected only unscoped, default-home access outside
@@ -158,6 +158,6 @@ parent, and a stale PID-lifecycle double using a removed client method. They
 remain expected failures and appear in neither baseline failing set.
 
 The unexplained residual before the post-fix full run is the real-home session
-rail: run A saw four changed paths, but concurrent lanes prevent honest
+rail: run A saw four changed paths, but concurrent runs prevent honest
 attribution. No test was pointed at or allowed to clean the real home during
 this investigation.

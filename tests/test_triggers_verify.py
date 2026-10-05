@@ -1,8 +1,7 @@
 """`automation verify-migration` — the row-for-row diff.
 
-§7 step 2 names it: "row-for-row cron migration (old file read-only one release; `personalclaw
-automation verify-migration` diff command)". §8 lists it as the mitigation for "Migration trust
-(crons are the most-loved automations)".
+The cron migration is row-for-row (the old file stays read-only for one release), and this diff
+command is the mitigation for migration trust: crons are the most-loved automations.
 
 **🔴 WHAT DRIVING IT AGAINST THE OWNER'S REAL STORE FOUND.** Four jobs migrate `lossless:
 true`, and TWO come out disabled — `j-every` (a 5-minute interval) and `j-seq` (an
@@ -12,7 +11,7 @@ That is not a bug: `migrate.convert_job` pauses any row that produced a note, an
 right ("nothing fires on a schedule the migration could not fully interpret … the opposite
 default would run a half-understood automation unattended"). But `lossless: true` beside two
 silently-stopped automations is technically accurate and practically misleading, and closing
-exactly that gap is why the plan put a diff command in the same breath as the migration.
+exactly that gap is why a diff command ships in the same breath as the migration.
 
 So `VerifyReport.ok` is FALSE for a paused row while `migrate_crons`' `lossless` is TRUE — the
 deliberate difference these tests pin.
@@ -346,7 +345,7 @@ def _run_cli(home, *args):
 )
 def test_the_cli_exits_nonzero_when_the_migration_needs_attention(home):
     """🔴 A read-only diff that always exited 0 could not gate anything, and gating the cutover is
-    why §8 lists this command as the migration-trust mitigation.
+    why this command is the migration-trust mitigation.
     """
     _migrated(home, _crons(_job("j-every", "every")))
     code, out = _run_cli(home, "automation", "verify-migration")

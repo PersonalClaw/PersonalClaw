@@ -1,6 +1,6 @@
 """The loop-end learner — a terminal loop run mines its own ledger for lessons.
 
-The loop-engine sibling of :mod:`personalclaw.learning.run_end`. Before PP-5 the flywheel's §3.2
+The loop-engine sibling of :mod:`personalclaw.learning.run_end`. Originally the flywheel's
 producers ran only over workflow runs, because a loop's findings/verdicts lived in a file store with
 no event vocabulary — `learning.mining` derives from *"the run's own journal"*, and a loop had none.
 Now that loop cycles emit `step_started`/`step_completed`/`judge_verdict`/`breaker_trip`/

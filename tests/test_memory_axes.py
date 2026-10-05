@@ -1,4 +1,4 @@
-"""M5a: the TIER × SCOPE axes — migration v6 + axis-aware persistence.
+"""The TIER × SCOPE axes — migration v6 + axis-aware persistence.
 
 Asserts the axes round-trip through the provider's put()/get()/query() and that
 legacy writes keep today's global/durable defaults (no behavior change).

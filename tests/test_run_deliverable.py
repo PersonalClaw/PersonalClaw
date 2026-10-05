@@ -1,9 +1,8 @@
 """A run has a DOCUMENT deliverable, and every way of having none is NAMED.
 
-The remaining work is five units, and this file rails the first one — the only one that was
-agent-closable, in the change's own words:
+This file rails a run's document deliverable:
 
-    (1) A RUN-LEVEL DOCUMENT DELIVERABLE — the run-side answer to GET /api/loops/{id}/report
+    A RUN-LEVEL DOCUMENT DELIVERABLE — the run-side answer to GET /api/loops/{id}/report
     (store.read_deliverable + read_log, kind-named REPORT.md / MONITOR_LOG.md / DESIGN.md).
 
 Measured on `origin/main` before this change, the run side answered none of it. Of the 26 run
@@ -40,10 +39,10 @@ from personalclaw.loop import store as loop_store
 from personalclaw.workflows import deliverable as D
 from personalclaw.workflows import loop_aliases
 
-#: The three documents the unit-1 clause names, quoted above. Pinned here rather than read out
-#: of the derived table so the step's list and the code's answer are two independent statements — a
+#: The three documents named above. Pinned here rather than read out
+#: of the derived table so the stated list and the code's answer are two independent statements — a
 #: kind that stopped declaring its document would otherwise shrink both at once and stay green.
-ATOM_NAMED_DOCUMENTS = ("REPORT.md", "MONITOR_LOG.md", "DESIGN.md")
+NAMED_DOCUMENTS = ("REPORT.md", "MONITOR_LOG.md", "DESIGN.md")
 
 _SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "personalclaw"
 
@@ -73,14 +72,14 @@ def _run(workflow: str, *, spec: dict | None = None, workspace: str = "") -> str
 # ── the mapping is DRIVEN, and it agrees with the kinds in both directions ──
 
 
-def test_the_derived_table_names_the_three_documents_the_atom_names():
+def test_the_derived_table_names_the_three_named_documents():
     """REPORT.md / MONITOR_LOG.md / DESIGN.md are all reachable, each from a real template."""
     table = D.template_deliverables()
     assert table, "vacuity floor: the forward walk produced no rows at all"
     derived = {source.name for source in table.values() if source.name}
     assert derived, "vacuity floor: every template resolved to an empty document name"
-    missing = [name for name in ATOM_NAMED_DOCUMENTS if name not in derived]
-    assert not missing, f"unit 1's own clause names documents no template produces: {missing}"
+    missing = [name for name in NAMED_DOCUMENTS if name not in derived]
+    assert not missing, f"the named documents include ones no template produces: {missing}"
 
 
 def test_each_named_document_belongs_to_the_template_its_kind_resolves_to():
@@ -143,10 +142,10 @@ def test_the_name_is_asked_of_the_kind_rather_than_read_from_a_constant_here():
 def test_the_source_file_hard_codes_none_of_the_document_names():
     """The module that RESOLVES the name must not contain one.
 
-    A literal `REPORT.md` in `deliverable.py` is exactly the second source of truth this unit exists
-    to avoid: it would keep working after a kind renamed its document, and the surface would show a
-    file the worker no longer writes. Docstrings are stripped first — the module's prose names the
-    documents to explain itself, and explaining is not deciding.
+    A literal `REPORT.md` in `deliverable.py` is exactly the second source of truth this module
+    exists to avoid: it would keep working after a kind renamed its document, and the surface would
+    show a file the worker no longer writes. Docstrings are stripped first — the module's prose
+    names the documents to explain itself, and explaining is not deciding.
     """
     import ast
 
@@ -170,7 +169,7 @@ def test_the_source_file_hard_codes_none_of_the_document_names():
         if isinstance(node, ast.Constant)
         and isinstance(node.value, str)
         and id(node) not in doc_nodes
-        and any(name in node.value for name in (*ATOM_NAMED_DOCUMENTS, "RESEARCH.md"))
+        and any(name in node.value for name in (*NAMED_DOCUMENTS, "RESEARCH.md"))
     ]
     assert doc_nodes, "vacuity floor: no docstrings found, so nothing was excluded"
     assert not offenders, f"deliverable.py spells a document name itself: {offenders}"
@@ -180,7 +179,7 @@ def test_the_log_name_is_the_loop_stores_own_declaration():
     """One on-disk convention, one string — the run side imports it rather than re-spelling it."""
     assert loop_store.LOG_NAME == "FINDINGS.md"
     assert loop_store.LOG_NAME in loop_store.DELIVERABLE_FALLBACKS
-    for name in ATOM_NAMED_DOCUMENTS:
+    for name in NAMED_DOCUMENTS:
         assert (
             name in loop_store.DELIVERABLE_FALLBACKS
         ), f"the loop side's fallback list dropped {name}"
@@ -205,7 +204,7 @@ def test_the_loop_side_still_reads_the_log_by_that_name(run_home, monkeypatch):
 
 
 def test_a_run_with_no_document_reports_not_written_and_no_content(run_home):
-    """The common case, and the one clause 4 of this unit is about.
+    """The common case.
 
     `content is None`, not `""`: an empty string is a document someone wrote nothing into, and the
     panel would render an empty page for it rather than saying why there is none.
@@ -626,10 +625,10 @@ def test_the_payload_carries_no_money_field(run_home):
     `ledger.reader.run_totals` reports `cost_usd 0.0` and `tokens 0` for a LOOP, because
     `LoopJournal.cycle` writes no money keys at all — loop money lives in `usage/turns.jsonl` via
     `loop_spend` — and `introspection.RunStats.cost_usd` has the same shape. Three packages consume
-    that contract, so changing it needs an owner ruling and is NOT this unit's work. What IS this
-    unit's work is refusing to put a figure on this payload that would read "$0.00" for a
+    that contract, so changing it is a decision of its own and NOT this change's work. What IS
+    this change's work is refusing to put a figure on this payload that would read "$0.00" for a
     loop-backed run's document. Absent, not zero: the field is not here, and this test is what keeps
-    a later session from adding one without meeting the finding.
+    a later change from adding one without meeting the issue.
     """
     from personalclaw.workflows import run_cockpit
 
@@ -642,7 +641,7 @@ def test_the_payload_carries_no_money_field(run_home):
 
 
 def test_the_payload_carries_no_roi_axis_either(run_home):
-    """The fidelity gap the change records as a design question rather than a bug.
+    """A fidelity gap recorded as a design question rather than a bug.
 
     The run controller ledgers only `verdict`/`status`/`evidence` and keeps the rich `JudgeVerdict`
     in the node OUTPUT, so `marginal_value` and `quality_score` — the axes the loop's `RoiRail`

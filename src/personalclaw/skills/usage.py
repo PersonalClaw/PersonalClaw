@@ -1,14 +1,14 @@
-"""Skill-use counter — a lightweight sidecar usage store (skill-use-counter).
+"""Skill-use counter — a lightweight sidecar usage store.
 
-The shared primitive behind `skill-semantic-surfacing` (#26 — rank/tie-break by
-real use) and `skill-library-curator` (#27 — GC the cold `auto/` namespace). It
+The shared primitive behind semantic skill surfacing (rank/tie-break by
+real use) and the skill-library curator (GC the cold `auto/` namespace). It
 records, at *turn time*, that a skill was actually surfaced into a turn — for ALL
 skills (not just ``auto/``), without ever rewriting a ``SKILL.md``.
 
 Why a sidecar, not the frontmatter ``reuse_count``:
 - Incrementing the file per use churns its ``mtime``, which would invalidate the
   loader's mtime-keyed frontmatter cache AND the mtime-keyed skill-description
-  embedding cache (#26). The sidecar leaves skill files — and both caches — alone.
+  embedding cache. The sidecar leaves skill files — and both caches — alone.
 - The frontmatter field is ``auto/``-only; usage signal is wanted for every skill.
 
 The frontmatter ``reuse_count`` is kept as a human-facing *snapshot*, refreshed

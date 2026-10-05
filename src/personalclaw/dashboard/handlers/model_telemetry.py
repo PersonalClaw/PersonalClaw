@@ -2,7 +2,7 @@
 
 One GET over the routing fold + a bounded ``model_calls.jsonl`` tail: per-model efficiency rows
 for a (use_case, query_class), each flagged ``on_frontier`` (not dominated on quality/latency/cost).
-Read-only — this plan is observation, never a routing decision here (that's the Session-3 router).
+Read-only — this route is observation, never a routing decision (that is the router's job).
 Errors use the shared ``{error:{code,message}}`` envelope
 (:func:`personalclaw.http_errors.json_error`). The Routing & Efficiency FE tab
 renders this; this is the data it reads.
@@ -63,7 +63,7 @@ async def api_models_telemetry(request: web.Request) -> web.Response:
 
 
 async def api_routing_policy(request: web.Request) -> web.Response:
-    """GET /api/models/routing-policy — the inspectable routing table (§6.1).
+    """GET /api/models/routing-policy — the inspectable routing table.
 
     One row per routed use case: its mode, its pin, the refs currently bound to it (each flagged
     ``local``), and every recorded per-class order together with the ``basis`` that decided it —
@@ -130,12 +130,12 @@ async def api_routing_policy(request: web.Request) -> web.Response:
 
 
 async def api_routing_policy_put(request: web.Request) -> web.Response:
-    """PUT /api/models/routing-policy — set one of the three user levers (§6.2).
+    """PUT /api/models/routing-policy — set one of the three user levers.
 
     Body: ``{use_case, mode?, pin?, query_class?, order?}``. Each lever is applied only when
     present, so the UI can PATCH-like a single control without echoing the rest of the table back
     (which is how a stale client silently reverts a setting it never rendered). Every accepted
-    mutation is SEL-audited by the policy layer (§6.4).
+    mutation is SEL-audited by the policy layer.
 
     ``order`` requires ``query_class``: an order is always recorded per class, because "which model
     first" has no single answer across kinds of work — that is the whole premise of the table.
@@ -264,7 +264,7 @@ async def api_routing_policy_put(request: web.Request) -> web.Response:
 
 
 async def api_routing_proposals(request: web.Request) -> web.Response:
-    """GET /api/models/routing-proposals — the propose-don't-write review queue (§6.3).
+    """GET /api/models/routing-proposals — the propose-don't-write review queue.
 
     ``{count, proposals: [{...summary, evidence}]}``, oldest first. The evidence rides along on the
     list because a proposal without it is not reviewable, and there is no second round-trip worth
@@ -292,7 +292,7 @@ async def api_routing_proposals(request: web.Request) -> web.Response:
 
 
 async def api_routing_proposal_accept(request: web.Request) -> web.Response:
-    """POST /api/models/routing-proposals/{id}/accept — apply it to the table (§6.3).
+    """POST /api/models/routing-proposals/{id}/accept — apply it to the table.
 
     The table write, the ``proposal_id`` basis and the SEL row are all the policy layer's; this
     handler only turns the outcome into a response. ``accept`` returns ``False`` for two unlike
@@ -344,7 +344,7 @@ async def api_routing_proposal_accept(request: web.Request) -> web.Response:
 
 
 async def api_routing_proposal_reject(request: web.Request) -> web.Response:
-    """DELETE /api/models/routing-proposals/{id} — decline it, and remember the decision (§6.3).
+    """DELETE /api/models/routing-proposals/{id} — decline it, and remember the decision.
 
     Writes NO table. The rejection suppresses the same finding for
     ``routing.reproposal_cooldown_days``, which is the proposals module's job — the shape mirrors

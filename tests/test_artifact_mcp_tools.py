@@ -1,4 +1,4 @@
-"""E13-P2: artifact_* MCP tools.
+"""The artifact_* MCP tools.
 
 The tools dispatch directly against the native provider entity (no HTTP),
 attributed as the agent so artifact_update snapshots + emits 'iterated'. They
@@ -166,7 +166,7 @@ class TestArtifactMcpTools:
         assert any(a.kind == "react" for a in saved)
 
     def test_collection_roundtrips_through_the_tools(self, wired) -> None:
-        """ARTIFACTS S1: `collection` round-trips through the MCP tools.
+        """`collection` round-trips through the MCP tools.
 
         The write is `artifact_save`/`artifact_update`; the read-back is the
         `artifact_list` filter narrowing (the rows deliberately carry no `collection`

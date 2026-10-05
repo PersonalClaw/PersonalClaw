@@ -1,4 +1,4 @@
-"""The budget gate, actually supplied — and `max_fires` enforced (§3.6 / crit 8).
+"""The budget gate, actually supplied — and `max_fires` enforced.
 
 🔴 THE DEFECT. `firepath`'s budget gate reads `ctx.budget_remaining`, and `service.tick` **never set
 it**. So `if ctx.budget_remaining is not None` was always False and the budget gate had never
@@ -120,11 +120,11 @@ def test_the_counter_increments_on_a_GRANTED_fire_not_on_completion(store, tmp_p
     assert store.get("clock:t").trigger.run_count == 1, "counted before any dispatch reported back"
 
 
-# ── the refusal is legible (criterion 8) ──
+# ── the refusal is legible ──
 
 
 def test_the_refusal_is_a_TYPED_ledger_row(store, tmp_path):
-    """§7 criterion 8: every suppressed fire is a typed row with a reason — zero silent drops."""
+    """Every suppressed fire is a typed row with a reason — zero silent drops."""
     _due(store, tmp_path, {"max_fires": 1})
     _fires, rows = _run_slots(store, tmp_path, 3)
     refusals = [r for r in rows if r["outcome"] == Outcome.SKIPPED_BUDGET.value]
@@ -216,16 +216,16 @@ def test_the_doctor_is_SILENT_for_max_fires():
 
 
 def test_MAX_FIRES_is_not_in_the_unmetered_set():
-    """A regression guard on the set itself: adding `max_fires` here would tell users the cap this
-    session wired does not work."""
+    """A regression guard on the set itself: adding `max_fires` here would tell users the cap the
+    fire path enforces does not work."""
     from personalclaw.triggers.calendar import UNMETERED_CAPS
 
     assert "max_fires" not in UNMETERED_CAPS
 
 
 def test_the_STORM_SPACING_gates_are_named_too():
-    """🔴 S150. A `GATE_KEYS` sweep found five declared gate keys with no reader on the fire path,
-    and the asymmetry made it worth a session: a user setting a per-window cost cap was honestly
+    """🔴 A `GATE_KEYS` sweep found five declared gate keys with no reader on the fire path,
+    and the asymmetry made it worth fixing: a user setting a per-window cost cap was honestly
     told it is unmetered, while one setting `debounce_secs: 300` got SILENCE — and believed their
     automation was spacing its fires.
 
@@ -249,12 +249,12 @@ def test_the_STORM_SPACING_gates_are_named_too():
     finding = next(
         f for f in diagnose(rows, known_workflows=None).findings if f.code == "unmetered_cap"
     )
-    # `debounce_secs`/`cooldown_secs` were in this list at S150 and were WIRED at S151, so they must
+    # `debounce_secs`/`cooldown_secs` were once in this list and have since been WIRED, so they must
     # no longer be reported as unmetered — reporting a working gate as broken is the same class of
-    # lie as the silence S150 fixed, pointing the other way.
+    # lie as the silence the sweep fixed, pointing the other way.
     for key in ("idempotency", "threshold"):
         assert key in finding.detail, key
-    # Wired since S150 named them: debounce/cooldown at S151, the three hourly caps at S152. A key
+    # Wired since the sweep named them: debounce/cooldown, then the three hourly caps. A key
     # that has been wired must STOP being reported, or the doctor lies in the opposite direction.
     for wired in ("debounce_secs", "cooldown_secs", "rate_cap"):
         assert wired not in finding.detail, f"{wired} is enforced now"
@@ -283,12 +283,12 @@ def test_the_unmetered_set_and_the_gate_vocabulary_stay_in_step():
     """The completeness guard, so this list shrinks for a REASON rather than by guesswork.
 
     Every declared gate key must be either ENFORCED on the fire path or named as unmetered. A key
-    in neither bucket is the defect this session closed: declared, unread, and silent about it.
+    in neither bucket is the defect this guard closes: declared, unread, and silent about it.
     """
     from personalclaw.triggers.calendar import UNMETERED_CAPS
     from personalclaw.triggers.models import GATE_KEYS
 
-    # `debounce_secs`/`cooldown_secs` joined the enforced set at S151 (the `spacing` gate), which is
+    # `debounce_secs`/`cooldown_secs` joined the enforced set with the `spacing` gate, which is
     # why they are no longer in UNMETERED_CAPS — a key must move buckets, never sit in both.
     enforced = {
         "max_fires",
@@ -298,11 +298,11 @@ def test_the_unmetered_set_and_the_gate_vocabulary_stay_in_step():
         "condition",
         "debounce_secs",
         "cooldown_secs",
-        # …and the three hourly caps, wired at S152 by `ScheduleRunStore.count_since`.
+        # …and the three hourly caps, wired by `ScheduleRunStore.count_since`.
         "rate_cap",
         "max_runs_per_hour",
         "max_actions_per_hour",
-        # `max_cost_usd_per_run` joined at S154: `ModelCallGuard` checks the ambient run scope
+        # `max_cost_usd_per_run` is enforced too: `ModelCallGuard` checks the ambient run scope
         # against the ceiling `calendar.run_budget_for` derives from these gates. Enforced in the
         # guard rather than on the fire path because run spend accrues DURING the run — a pre-fire
         # gate reads $0.00 on a freshly bound per-fire key and is inert by construction.
@@ -316,11 +316,11 @@ def test_the_unmetered_set_and_the_gate_vocabulary_stay_in_step():
     assert not (enforced & set(UNMETERED_CAPS)), "a gate cannot be both enforced and unmetered"
 
 
-# ── the 24h storm (criterion 8) ──
+# ── the 24h storm ──
 
 
 def test_a_24H_STORM_drops_NOTHING(store, tmp_path):
-    """🔴 Criterion 8's named bar: "zero silent drops under a 24h storm test", which did not exist.
+    """🔴 The bar is "zero silent drops under a 24h storm", and that test did not exist.
 
     1440 slots of a per-minute trigger suppressed by quiet hours: every slot must produce
     exactly one
@@ -387,7 +387,7 @@ def test_a_one_shot_that_KEEPS_its_row_is_still_disabled(store, tmp_path):
 
 
 def test_the_run_cap_implementation_matches_its_declared_fail_direction():
-    """A control's behaviour must agree with the table describing it — S130 found the inert control
+    """A control's behaviour must agree with the table describing it — once, the inert control
     here was the *description of the controls*, so a newly enforced key gets checked both ways.
 
     `max_cost_usd_per_run` is classified FAIL-OPEN (the per-trigger cap-key class), and

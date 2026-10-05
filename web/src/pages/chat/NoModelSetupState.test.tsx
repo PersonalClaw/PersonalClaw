@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { NoModelSetupState, isNoModelSetupError, noModelChosenFor, MODELS_ROUTE } from './NoModelSetupState'
 
-// WT-04. The trigger is a turn-level error, and the ONLY thing linking this surface to
+// The trigger is a turn-level error, and the ONLY thing linking this surface to
 // the backend is the text of that error: the sentence `AgentError.sentence()` makes of the
 // resolver's coded refusal (`resolve_provider_for_use_case` in
 // `src/personalclaw/providers/provider_bridge.py`, code ERR_MODEL_UNRESOLVED), which the chat's

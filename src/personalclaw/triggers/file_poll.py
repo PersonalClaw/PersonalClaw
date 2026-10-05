@@ -1,17 +1,17 @@
-"""The file-watch poll runtime — what actually FIRES a `file` trigger (§3 / crit 2).
+"""The file-watch poll runtime — what actually FIRES a `file` trigger.
 
-S83 shipped `file_watch.py`: glob expansion, content-hash dedup, the three-way delta. Its own
+`file_watch.py` came first: glob expansion, content-hash dedup, the three-way delta. Its own
 PARTIAL note recorded why it stopped there — "there is no unified trigger store" to enumerate
-`file` triggers from. S87 shipped that store and S92 made file triggers CREATABLE in chat. Measured
+`file` triggers from. That store followed, and file triggers became CREATABLE in chat. Measured
 here before writing a line: `file_watch.changed_files` has **zero live callers**, and the tick
 clock (`service.due_ids`) only surfaces triggers with a `next_fire_at` — a `file` trigger has none,
-so nothing ever polls it. The criterion-2 automation is present and inert: the user can create
+so nothing ever polls it. The file-change automation is present and inert: the user can create
 "when a file in ~/notes changes…" and it will never fire.
 
 This closes that gap and ONLY that gap. It is deliberately DISJOINT from `ScheduleService`, which
 fires clock crons and reads no `file` trigger — so wiring this into boot beside it **cannot
 double-fire** anything. That is what makes it the additive, completable cutover rather than the
-class-B clock switch-over the queue still defers.
+class-B clock switch-over.
 
 **What it owns:** enumerate enabled `file` triggers, poll each one's globs against its persisted
 `WatchState`, and hand a real change to the shipped dispatch→executor chain. **What it does not:**
@@ -89,11 +89,11 @@ def save_state(trigger_id: str, state: WatchState, *, base_dir: Path | str | Non
 def file_triggers(store: Any) -> list[Any]:
     """Enabled, parseable, OWNER-AUTHORED `file` triggers from the store.
 
-    Broken rows are skipped (they load DISABLED under S87's lenient parse), and a disabled row is
-    not polled — pausing a watch must actually stop the filesystem work, or "paused" is a lie the
+    Broken rows are skipped (they load DISABLED under the store's lenient parse), and a disabled row
+    is not polled — pausing a watch must actually stop the filesystem work, or "paused" is a lie the
     user pays for on every poll.
 
-    Reads `provider.armable` rather than `store.load()` so a foreign row (§2.2 — TSE-4) is never
+    Reads `provider.armable` rather than `store.load()` so a foreign row is never
     polled at all: this loop dispatches straight to the gateway's fire path, so filtering only in
     `service.tick` would leave the `file` kind able to tick for somebody else.
     """

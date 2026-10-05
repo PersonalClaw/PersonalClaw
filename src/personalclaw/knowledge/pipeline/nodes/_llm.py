@@ -1,4 +1,4 @@
-"""Shared helpers for model-backed pipeline nodes (#47).
+"""Shared helpers for model-backed pipeline nodes.
 
 A node resolves its model through a Settings>Models **use-case** (via
 ``resolve_metered_model``: the model itself, behind the spend guard; image understanding through
@@ -34,7 +34,7 @@ async def complete_text(use_case: str, prompt: str, *, images: list[str] | None 
     step's whole text, a truncated transcription or description nothing marked.
 
     With a >1-entry chain bound to *use_case*, a provider failure advances to the next
-    entry (T2.4) instead of degrading on the first one. A one-entry/unbound axis takes
+    entry instead of degrading on the first one. A one-entry/unbound axis takes
     the plain single-resolve path below, with its two distinct WARNING lines.
 
     Each completed call writes its usage row, as background work: a library ingests unwatched.

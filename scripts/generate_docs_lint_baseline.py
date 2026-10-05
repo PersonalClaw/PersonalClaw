@@ -53,27 +53,24 @@ red is always a real regression):
    with ``/<citation>``, so an abbreviated ``config/loader.py`` still resolves to
    ``src/personalclaw/config/loader.py``). A DRIFTED LINE NUMBER (file exists, the ``:NNN``
    points at a different line) is **NOT** counted: roadmap prose is full of ``file.py:NNN``
-   citations whose line numbers drift constantly — SELF-VERIFICATION explicitly mandates
-   "specs reference stable anchors, never line numbers" precisely because line-drift is
+   citations whose line numbers drift constantly — the harness's spec format explicitly
+   mandates stable anchors, never line numbers, precisely because line-drift is
    chronic — so validating that every ``:NNN`` points at a semantically-correct line is
    impossible and noisy. Only a stale PATH is a hard dead citation.
 
 3. ``stale_header`` — **DORMANT since the plans left this repository.** The check is scoped
-   to ``docs/roadmap/plans/``, and that tree is no longer published (it is internal planning
-   state, kept in the maintainer's workspace), so this kind can never fire against a real
-   file here. It is retained rather than deleted because its reproduction test seeds a
-   synthetic path under that prefix and still proves the checker works — so if plans ever
-   return to the repository the check engages immediately. Said plainly because a checker
-   that cannot fire, left undocumented, reads as coverage it does not provide.
+   to ``docs/roadmap/plans/``, and that tree is no longer published, so this kind can never
+   fire against a real file here. It is retained rather than deleted because its reproduction
+   test seeds a synthetic path under that prefix and still proves the checker works — so if
+   plans ever return to the repository the check engages immediately. Said plainly because a
+   checker that cannot fire, left undocumented, reads as coverage it does not provide.
 
    A plan under ``docs/roadmap/plans/`` whose ``**Status:**`` header
    matches a stale shape (``DESIGNED``/``PROPOSED``/``READY``/``NOT STARTED``) while the file
    carries a populated ``## Execution log`` containing a ``DONE`` entry: the exact "plan
-   headers lie" drift the 2026-08-04 audit surfaced. The ``**Status:**`` regex was taken
-   from the maintainer's roadmap dashboard generator, which — like the plans themselves — is
-   not in this repository, so that agreement cannot be checked here and is not claimed as an
-   invariant. This is a heuristic, not a proof — it reproduces the audit finding on a seeded
-   stale header;
+   headers lie" drift. The ``**Status:**`` regex is not checked against any other reader of
+   these headers, and no such agreement is claimed as an invariant. This is a heuristic, not a
+   proof — it reproduces that drift on a seeded stale header;
    it does not attempt to adjudicate every real header against reality (the log and the code
    win over the header, so this ratchets rather than blocks).
 
@@ -136,8 +133,8 @@ _FILE_EXT_RE = re.compile(
 # A ``file.py:NNN`` citation. Same shape the task specifies.
 _CITATION_RE = re.compile(r"([\w/.-]+\.py):(\d+)")
 
-# ``**Status:**`` header — taken from the maintainer's roadmap dashboard generator, which is
-# not in this repository, so the agreement cannot be checked here (see check 3).
+# ``**Status:**`` header — not checked against any other reader of these headers (see
+# check 3).
 _STATUS_RE = re.compile(r"^\*\*Status:\*\*\s*(.+?)(?:\n\n|\n##|\n\*\*)", re.S | re.M)
 
 # Stale-shape status words: a header claiming the work is not yet done.

@@ -145,7 +145,7 @@ def _hdr(app_name: str) -> dict[str, str]:
 
 @pytest.mark.asyncio
 async def test_two_apps_exchange_typed_message(tmp_path, monkeypatch):
-    """V3-4: one app drives another — sender POSTs a typed message, receiver drains it."""
+    """One app drives another — sender POSTs a typed message, receiver drains it."""
     async with _client(tmp_path, monkeypatch) as client:
         _install(tmp_path, "sender", app_messaging=["receiver"])
         _install(tmp_path, "receiver")
@@ -190,7 +190,7 @@ async def test_delivered_payload_is_fenced(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_undeclared_pair_is_denied_and_audited(tmp_path, monkeypatch):
-    """Acceptance criteria #3: an app messaging another WITHOUT a declared appMessaging grant is
+    """An app messaging another WITHOUT a declared appMessaging grant is
     refused 403 AND a SEL denial row is written (fail closed)."""
     from personalclaw.sel import sel
 

@@ -1,24 +1,24 @@
 """One device-pairing mechanism, and no platform-specific code in the shared surfaces.
 
-COMPANION-APPS Success Criterion 1 and its rows assert two properties of the
+Two properties are asserted of the
 *repository*, not of the prose that claims them:
 
-* **no parallel device-token code** — its own device-token/QR design was folded
-  into COMPANION-APPS §C1/§C2, and the fold cost nothing because the rival design was
+* **no parallel device-token code** — an earlier device-token/QR design was folded
+  into the one pairing mechanism, and the fold cost nothing because the rival design was
   never built. A doc saying "there is no second mechanism" is not evidence; the moment someone
   adds a `device_token` route, store or claim, every one of those sentences becomes a lie and
   nothing goes red. These censuses are what makes it go red.
 * **no speculative per-platform code shipped** — the future-platform recipe in
   ``docs/guides/companion-apps.md`` says a new platform wraps the served UI and implements the
-  client contract, gated on PLATFORM-REACH. The failure mode it guards against is a well-meant
+  client contract, once the platform is cleared. The failure mode it guards against is a well-meant
   stub: a native SDK import or a reserved branch landing in the surfaces every platform shares,
   ahead of any shell that uses it. That is dead code that reads as a promise.
 
 **What is NOT a violation here.** A sanctioned native shell landing as its own tree with its own
-build once PLATFORM-REACH clears the platform is the recipe working, not a regression — which is
+build once the platform is cleared is the recipe working, not a regression — which is
 why the platform census is scoped to ``src/personalclaw`` and ``web/src`` (the shared halves) and
 deliberately says nothing about a shell directory. ``desktop/`` is likewise out of scope: an
-Electron shell is DESKTOP-CAPABILITIES' to branch on host OS as it needs.
+Electron shell may branch on host OS as it needs.
 ``personalclaw.auth.enrollment`` is out of scope too — it is a documented deliberate sibling of
 ``auth.pairing`` with its own store file and its own surface, not a second device-pairing path.
 
@@ -94,7 +94,7 @@ def _corpus(roots: tuple[str, ...]) -> tuple[tuple[str, tuple[str, ...]], ...]:
     walks nine markers — so re-walking and re-reading `src/personalclaw` plus `web/src` inside
     every call made the cost O(files x patterns) for no benefit. Measured on an idle machine,
     that one test took **45.0s** of the module's 71.7s; under the load this repo is routinely
-    developed at (several agents, load 40-70 on 18 cores) it ran past the suite's own 120s
+    developed at (several agents at once, a heavily loaded host) it ran past the suite's own 120s
     per-test timeout and failed as a timeout rather than an assertion, which reads like a broken
     test rather than a slow one. Reading once makes the tree a constant, not a multiplier.
 
@@ -131,7 +131,7 @@ def test_scanner_is_not_vacuous() -> None:
         assert (_ROOT / root).is_dir(), f"{root} does not exist — every census below is vacuous"
     # A control pattern that IS present, proving a zero elsewhere means absence, not a broken
     # scanner. `issuer=ISSUER_PAIR` is the device-provenance writer (the pairing door's mint);
-    # `endpointSocketUrl` is the S3 socket-URL helper the wrapper contract names.
+    # `endpointSocketUrl` is the socket-URL helper the wrapper contract names.
     assert _census("issuer=ISSUER_PAIR"), "control pattern missing — the Python census is broken"
     assert _census("endpointSocketUrl"), "control pattern missing — the web census is broken"
     # The device-token pattern itself can match, and matches the shapes a symbol takes.
@@ -143,14 +143,14 @@ def test_scanner_is_not_vacuous() -> None:
 
 
 def test_no_parallel_device_token_code() -> None:
-    """Success Criterion 1: no second device-token design survives in code.
+    """No second device-token design survives in code.
 
     A device session is a ``sessions.json`` row with ``device``/``issuer`` set. There is no
     separate token type, so the words should not appear in code at all.
     """
     hits = _census(_DEVICE_TOKEN_RE)
     assert hits == {}, (
-        "a device-token code path appeared; COMPANION-APPS §C1 says a device session is a "
+        "a device-token code path appeared; a device session is a "
         f"sessions.json row and nothing else: {hits}"
     )
 
@@ -166,13 +166,13 @@ def test_pairing_code_store_has_one_production_importer() -> None:
         _census("auth.pairing", ("src/personalclaw",))
     )
     assert importers == {"src/personalclaw/dashboard/handlers/devices.py"}, (
-        "pairing codes are redeemed from more than one place; COMPANION-APPS §C2 owns that "
+        "pairing codes are redeemed from more than one place; the pairing route owns that "
         f"redemption once: {sorted(importers)}"
     )
 
 
 def test_device_provenance_has_one_writer() -> None:
-    """Only the C2 route module names a paired device or writes its provenance.
+    """Only the device-pairing route module names a paired device or writes its provenance.
 
     Pairing provenance is the door a session is minted through (``issuer=ISSUER_PAIR``), and
     the pairing-only capabilities read exactly that — so one module may mint through it.
@@ -189,7 +189,7 @@ def test_device_provenance_has_one_writer() -> None:
 
 
 def test_no_speculative_per_platform_code() -> None:
-    """The shared surfaces carry no native SDK ahead of a PLATFORM-REACH-cleared shell."""
+    """The shared surfaces carry no native SDK ahead of a shell that uses it."""
     hits: dict[str, dict[str, list[int]]] = {}
     for marker in _PLATFORM_SDK_MARKERS:
         found = _census(marker, _SHARED_ROOTS)

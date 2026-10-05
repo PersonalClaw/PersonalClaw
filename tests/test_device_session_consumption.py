@@ -1,7 +1,7 @@
-"""The CONSUMPTION side of COMPANION-APPS' device session, at the HTTP boundary.
+"""The CONSUMPTION side of the companion apps' device session, at the HTTP boundary.
 
-MC-2 builds no mechanism. Pairing, the durable session row, the registry route and the
-Settings → Devices panel are all CA-1/CA-2's, merged already; this module asserts the two
+No mechanism is built here. Pairing, the durable session row, the registry route and the
+Settings → Devices panel all shipped already; this module asserts the two
 clauses a *phone* depends on, and both of them live in the middleware rather than in the store
 that the tests exercise:
 
@@ -10,9 +10,9 @@ that the tests exercise:
   :func:`check_token_ip` and :func:`bind_token_ip` in ``token_auth.token_auth_middleware``). So a
   phone that changes carrier or Wi-Fi keeps its session with zero ``token_auth.py`` change. That
   is free *today* and silently broken the day someone binds cookie sessions too — which is
-  exactly what COMPANION-APPS' ``CA-3`` log flagged as "worth a change of its own". This is it.
+  exactly what was flagged earlier as "worth a change of its own". This is it.
 
-* **Revocation** — CA-2 asserts revoke through :func:`token_auth.validate_token`. A phone never
+* **Revocation** — tests assert revoke through :func:`token_auth.validate_token`. A phone never
   calls ``validate_token``; it makes an HTTP request. Between the two sit the bypass lists, the
   cookie branch and the adopt-from-store path, any of which could keep a revoked device alive
   while the validator already says no. The clause is worded "on the next **request**", so it
@@ -91,7 +91,7 @@ def _app() -> web.Application:
     app["port"] = PORT
     app["allowed_origins"] = {f"http://localhost:{PORT}"}
     devices_h.register_device_routes(app)
-    app.router.add_get("/api/mc2/probe", _probe)
+    app.router.add_get("/api/device-probe", _probe)
     return app
 
 
@@ -138,13 +138,13 @@ async def test_the_ip_check_is_live_on_the_query_param_exchange(_isolated) -> No
 
         # First query-param use binds the token to the address it arrived from.
         bound = await device.get(
-            "/api/mc2/probe", params={"token": token}, headers={"X-Real-IP": IP_HOME}
+            "/api/device-probe", params={"token": token}, headers={"X-Real-IP": IP_HOME}
         )
         assert bound.status == 200, await bound.text()
 
         # The SAME credential, the same route, one different address.
         moved = await device.get(
-            "/api/mc2/probe", params={"token": token}, headers={"X-Real-IP": IP_ROAMED}
+            "/api/device-probe", params={"token": token}, headers={"X-Real-IP": IP_ROAMED}
         )
         assert moved.status == 403, "the query-param path must reject a moved token"
         # The refusal says why: this link already signed in another device.
@@ -166,7 +166,7 @@ async def test_a_device_session_roams_between_client_ips(_isolated) -> None:
         token, _device_id = await _pair_a_device(owner, device, IP_HOME)
 
         first = await device.get(
-            "/api/mc2/probe", cookies={COOKIE: token}, headers={"X-Real-IP": IP_HOME}
+            "/api/device-probe", cookies={COOKIE: token}, headers={"X-Real-IP": IP_HOME}
         )
         assert first.status == 200, await first.text()
         assert (await first.json())["user"] == devices_h.PAIRED_DEVICE_USER
@@ -175,12 +175,12 @@ async def test_a_device_session_roams_between_client_ips(_isolated) -> None:
         # ?token= exchange at the very moment the cookie is accepted. The contrast is the point:
         # a build that bound cookie sessions too would fail HERE, not in some future refactor.
         primed = await device.get(
-            "/api/mc2/probe", params={"token": token}, headers={"X-Real-IP": IP_HOME}
+            "/api/device-probe", params={"token": token}, headers={"X-Real-IP": IP_HOME}
         )
         assert primed.status == 200, await primed.text()
 
         roamed = await device.get(
-            "/api/mc2/probe", cookies={COOKIE: token}, headers={"X-Real-IP": IP_ROAMED}
+            "/api/device-probe", cookies={COOKIE: token}, headers={"X-Real-IP": IP_ROAMED}
         )
         assert roamed.status == 200, "a device session must ride the cookie, not the address"
         assert (await roamed.json())["user"] == devices_h.PAIRED_DEVICE_USER
@@ -211,7 +211,7 @@ async def test_a_roam_does_not_need_a_token_auth_change(_isolated) -> None:
 
     payload = json.loads(token_auth._b64url_decode(token.split(".")[0]))
     # Exactly the claim set an owner-token carries — `nonce` is the store handle every session
-    # has, not a device claim. An extra key here IS the second credential type §C1 forbids.
+    # has, not a device claim. An extra key here IS a forbidden second credential type.
     assert set(payload) == {"sub", "exp", "session_exp", "iat", "nonce"}, "a claim was added"
     assert payload["sub"] == devices_h.PAIRED_DEVICE_USER
     assert device_id not in json.dumps(payload), "the device id must live in the store, not here"
@@ -229,15 +229,15 @@ async def test_a_roam_does_not_need_a_token_auth_change(_isolated) -> None:
 async def test_revoke_refuses_the_devices_next_http_request(_isolated) -> None:
     """THE CLAUSE, at the boundary a phone actually crosses.
 
-    CA-2 asserts this through ``validate_token``. Between that verdict and a request stand the
-    bypass lists, the cookie branch and the adopt-from-store path — so the request is what gets
-    asserted here.
+    ``test_device_pairing.py`` asserts this through ``validate_token``. Between that verdict and
+    a request stand the bypass lists, the cookie branch and the adopt-from-store path — so the
+    request is what gets asserted here.
     """
     server = TestServer(_app())
     async with _client(server) as owner, _client(server) as device:
         token, device_id = await _pair_a_device(owner, device, IP_HOME)
 
-        before = await device.get("/api/mc2/probe", cookies={COOKIE: token})
+        before = await device.get("/api/device-probe", cookies={COOKIE: token})
         assert before.status == 200, "the vacuity floor: the device must be in before it is out"
 
         owner_token = token_auth.generate_token("owner", ttl_seconds=3600)
@@ -247,7 +247,7 @@ async def test_revoke_refuses_the_devices_next_http_request(_isolated) -> None:
         assert revoked.status == 200, await revoked.text()
         assert (await revoked.json())["revoked"] == 1
 
-        after = await device.get("/api/mc2/probe", cookies={COOKIE: token})
+        after = await device.get("/api/device-probe", cookies={COOKIE: token})
         assert after.status == 403, "the very next request must be refused"
 
         # And the panel the owner is looking at agrees, from the same read the UI performs:
@@ -263,9 +263,9 @@ async def test_revoke_refuses_the_devices_next_http_request(_isolated) -> None:
 async def test_a_revoked_device_stays_refused_across_a_restart(_isolated) -> None:
     """A revoke that un-revokes on reboot is worse than no revoke: the owner was told it worked.
 
-    CA-2 covers this at the validator; repeated here at the HTTP boundary because that is where
-    the store-adoption path runs, and adoption is the exact mechanism that could resurrect a
-    forgotten nonce.
+    ``test_device_pairing.py`` covers this at the validator; repeated here at the HTTP boundary
+    because that is where the store-adoption path runs, and adoption is the exact mechanism that
+    could resurrect a forgotten nonce.
     """
     server = TestServer(_app())
     async with _client(server) as owner, _client(server) as device:
@@ -281,5 +281,5 @@ async def test_a_revoked_device_stays_refused_across_a_restart(_isolated) -> Non
         token_auth._state.clear_all()
         token_auth.reset_secret_cache()
 
-        after = await device.get("/api/mc2/probe", cookies={COOKIE: token})
+        after = await device.get("/api/device-probe", cookies={COOKIE: token})
         assert after.status == 403, "the durable half of the revoke must bite too"

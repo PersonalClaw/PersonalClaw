@@ -63,7 +63,7 @@ def session_limit_sentence(limit: int) -> str:
 # session_id but the PTY spawns on WS connect). Keyed by session_id.
 _pending_cwd: dict[str, str] = {}
 
-# EI-4 §1.3(3): every session id names the tier its shell runs in, ``<id>@<tier>``, the host's
+# Every session id names the tier its shell runs in, ``<id>@<tier>``, the host's
 # (``none``) included, and every open reads the tier from the id: the shell opens in it or is
 # refused, never on this computer's own shell instead. The tier used to be held in a map the first
 # connect popped, so a reconnect after a gateway restart (or after the orphan reaper ended the
@@ -163,7 +163,7 @@ class _TerminalSession:
     reader_task: asyncio.Task | None = None
     cwd: str = ""  # the dir the PTY started in (shown in the UI)
     shell: str = ""  # the shell binary (shown in the UI)
-    # P25: tmux-backed persistence. When True the PTY wraps a tmux CLIENT attached to a
+    # tmux-backed persistence. When True the PTY wraps a tmux CLIENT attached to a
     # detached tmux session (the daemon owns the real shell), so the shell + scrollback
     # survive a gateway restart — only the attach-client dies on restart/WS-drop, not the
     # session. The orphan-reaper kills the client, never `tmux kill-session`.
@@ -186,7 +186,7 @@ def _get_config(request: web.Request) -> dict:
         return {}
 
 
-# P25 — tmux-backed persistence. Opt-in (config `dashboard.terminal.persist`) AND requires
+# tmux-backed persistence. Opt-in (config `dashboard.terminal.persist`) AND requires
 # the `tmux` binary; both gates default to the in-process PTY (today's behavior). The home's own
 # tmux server (`tmux_substrate.server_flags`) isolates our sessions from the user's own tmux and
 # from every other PersonalClaw home.
@@ -216,7 +216,7 @@ def _persist_enabled(request: web.Request) -> bool:
 def _tmux_session_name(session_id: str) -> str:
     """tmux session name for a PClaw terminal id. One implementation, in `tmux_substrate`.
 
-    Terminal names share a namespace with EI-6's durable worker sessions (same socket, same
+    Terminal names share a namespace with the durable worker sessions (same socket, same
     `pclaw-` prefix), so the mapping is defined once. Two copies would eventually disagree,
     and a disagreement here means the reaper kills a session the sweep is counting on.
     """
@@ -474,8 +474,7 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
             # Security: a session in the ``none`` tier is intentionally unsandboxed — this is the
             # user's own interactive terminal (like SSH), not agent-executed code.
             # Auth is enforced at WS handshake via token_auth_middleware.
-            # See CLI_PANEL_DESIGN.md §8 "Security Considerations".
-            # EI-4 §1.3(3): a session opened in a sandbox tier runs its shell INSIDE that tier —
+            # A session opened in a sandbox tier runs its shell INSIDE that tier —
             # the provider-wrapped launch (the SAME create_subprocess_limited below runs it, so
             # the audited spawn site is unchanged) — on its first connect and on every reopen
             # after it, because the tier is read from the id each time. A tier that is gone or
@@ -490,7 +489,7 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
             if handle is not None:
                 argv = handle.argv
             elif persistent:
-                # P25: a persistent PTY runs a tmux CLIENT attached to a detached session
+                # A persistent PTY runs a tmux CLIENT attached to a detached session
                 # (created if absent, re-attached if it survived a restart). `new-session -A -s`
                 # is attach-or-create; the daemon (not this client) owns the shell, so a
                 # gateway restart kills only the client — the shell + scrollback live on.
@@ -685,7 +684,7 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
 
 
 async def api_sandbox_providers(request: web.Request) -> web.Response:
-    """GET /api/sandbox/providers — the sandbox tiers the terminal picker offers (EI-4 §1.3(3)).
+    """GET /api/sandbox/providers — the sandbox tiers the terminal picker offers.
 
     Read-only. Each entry is ``{name, display_name, available}``: ``available`` is the tier's live
     probe, so a container/VM tier whose runtime is down comes back greyed-with-reason. The host
@@ -786,7 +785,7 @@ async def api_terminal_create(request: web.Request) -> web.Response:
                 {"error": "Cannot open a terminal in a system or credential directory."},
                 status=403,
             )
-    # EI-4 §1.3(3): the picked sandbox tier rides the session id (``<id>@<tier>``, ``@none`` for
+    # The picked sandbox tier rides the session id (``<id>@<tier>``, ``@none`` for
     # the host shell), so the WS opens the shell in it on the first connect and on every reopen,
     # a gateway restart included. A tier that is not installed is refused here with a sentence:
     # it used to be dropped, and the terminal opened on the host under a picker that named the
@@ -961,7 +960,7 @@ async def api_terminal_list(request: web.Request) -> web.Response:
                 "sandbox": session_tier(sid),
             }
         )
-    # P25: surface tmux-backed sessions that survived a GATEWAY RESTART — they have no
+    # Surface tmux-backed sessions that survived a GATEWAY RESTART — they have no
     # in-memory registry entry yet (the reader/client died with the old process), but the
     # tmux daemon kept the shell alive. Listing them lets the FE's mount-time restore
     # re-attach after a restart, not just a page reload. Reconnecting maps session_id →

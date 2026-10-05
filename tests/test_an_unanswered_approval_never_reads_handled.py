@@ -4,7 +4,7 @@ Measured on a running gateway: at a gateway shutdown, two approvals a batch run 
 were closed in the Inbox as "handled", with no decision anyone had made. "Handled" is the Inbox's
 word for a request its owner dealt with, and a row a restart closed carried it, with a check mark.
 
-The approval's answer is awaited in memory, so none survives a restart, and the ruling is the one
+The approval's answer is awaited in memory, so none survives a restart, and the rule is the one
 that stays true everywhere: an approval nobody answered EXPIRES, and its row says why — the gateway
 stopped or restarted, nobody answered in time, or the work that asked was stopped. Only an answer
 makes a row handled.

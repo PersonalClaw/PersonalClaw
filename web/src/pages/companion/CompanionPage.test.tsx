@@ -104,7 +104,7 @@ describe('the companion approvals queue', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Allow Bash' }))
     // 🔑 THE CENTRAL RAIL. `POST /api/approvals/{id}/{action}` (state.resolve_approval) is the
     // resolver for the queue this surface lists — it answers BOTH gateway-level futures and
-    // chat-session ones. The plan's C2 map named the chat route
+    // chat-session ones. An earlier design named the chat route
     // `POST /api/chat/sessions/{session}/approve`, which needs a session name the queue's
     // gateway-originated rows do not have and carries chat-only trust scopes.
     expect(resolveApproval).toHaveBeenCalledWith('ap-1', 'approve')
@@ -210,7 +210,7 @@ describe('the companion approvals queue', () => {
 
   // REPLACED. This slot held "stubs the unbuilt sections HONESTLY", which asserted
   // the presence of the "Not on the phone yet" list and its three "arrives in a later
-  // release" rows. `MC-6` BUILDS those sections and deletes that list, so the old assertion
+  // release" rows. The page now BUILDS those sections and deletes that list, so the old assertion
   // is not weakened — its subject no longer exists. The honesty requirement it enforced moved
   // with the sections: `companionSections.test.tsx` asserts, per section, that a failed fetch
   // announces rather than falling through to an empty state.

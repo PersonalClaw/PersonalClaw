@@ -1,4 +1,4 @@
-"""Guardrail tests for the realtime-transport doctrine (SSE M5).
+"""Guardrail tests for the realtime-transport doctrine.
 
 VISION.md "Realtime transport" — single-transport-per-concern:
 - Always-on dashboard state (status/sessions/titles/notifications/refresh) rides
@@ -7,7 +7,7 @@ VISION.md "Realtime transport" — single-transport-per-concern:
 - Nothing is delivered over two transports.
 
 These tests pin the structural invariants so a future change can't silently
-re-introduce the dual-emit (the debt M3 removed) or split always-on concerns into
+re-introduce the removed dual-emit or split always-on concerns into
 their own streams (the connection-budget anti-pattern).
 """
 
@@ -31,10 +31,10 @@ def _read(rel: str) -> str:
 
 
 def test_state_has_no_global_sse_hub():
-    """The dead global SSE hub + accessor must stay gone (M3)."""
+    """The dead global SSE hub + accessor must stay gone."""
     assert not hasattr(
         state_mod.DashboardState, "sse_hub"
-    ), "global SSE hub removed in M3 — dashboard state rides the WebSocket"
+    ), "global SSE hub removed — dashboard state rides the WebSocket"
     # The per-resource campaign registry IS expected to remain.
     assert hasattr(state_mod.DashboardState, "loop_sse")
 
@@ -49,8 +49,8 @@ def test_broadcast_does_not_publish_to_a_global_sse_hub():
     """
     src = inspect.getsource(state_mod.DashboardState._broadcast)
     assert "_sse.publish" not in src, (
-        "_broadcast must not publish to a global SSE hub — that is the dual-emit "
-        "M3 removed; always-on state rides the WebSocket"
+        "_broadcast must not publish to a global SSE hub — that is the removed "
+        "dual-emit; always-on state rides the WebSocket"
     )
 
 
@@ -61,14 +61,14 @@ def test_no_global_api_stream_route():
     # handler module, not here; the global /api/stream must be gone.
     assert not re.search(
         r'add_get\(\s*["\']/api/stream["\']', server_src
-    ), "/api/stream (global SSE) was removed in M3"
+    ), "/api/stream (global SSE) was removed"
 
 
 def test_useSSE_hook_deleted():
-    """The dead, never-mounted useSSE.ts frontend hook must stay deleted (M3)."""
+    """The dead, never-mounted useSSE.ts frontend hook must stay deleted."""
     assert not (
         _ROOT / "web/src/hooks/useSSE.ts"
-    ).exists(), "useSSE.ts was dead (never mounted) and removed in M3"
+    ).exists(), "useSSE.ts was dead (never mounted) and removed"
 
 
 def test_per_resource_sse_substrate_present():
@@ -83,10 +83,10 @@ def test_per_resource_sse_substrate_present():
 def test_unified_loop_sse_events_are_all_registered_in_the_frontend():
     """Every event the unified Loop backend publishes on loop_sse() MUST be listed in
     the FE useRunStream RUN_LIFECYCLE union — EventSource silently DROPS event types with
-    no registered listener, so an unlisted publish is a missed refetch (the C326/C367/
-    C369 plan_step/deleted/ratchet_regression drift). The one loop_routes handler +
+    no registered listener, so an unlisted publish is a missed refetch (the
+    plan_step/deleted/ratchet_regression drift). The one loop_routes handler +
     loop/watchdog serve EVERY kind (goal/code/general/design); the cockpit subscribes
-    via useRunStream (P16 collapsed the per-cockpit LIFECYCLE arrays into the ONE shared
+    via useRunStream (the per-cockpit LIFECYCLE arrays were collapsed into the ONE shared
     RUN_LIFECYCLE union in useRunStream.ts). Pin the contract so a new publish without the
     matching FE listener fails CI instead of silently never reaching an open cockpit.
     """
@@ -123,7 +123,7 @@ def test_workflow_engine_sse_events_are_all_registered_in_the_frontend():
     WORKFLOW_LIFECYCLE union — EventSource silently DROPS event types with no registered
     listener, so an unlisted publish is a live update that never arrives, invisible in
     every test that does not assert the list itself. Same drift class as the loop cockpits
-    above (C326/C367); pinned here so a new `_publish(...)` without the matching FE
+    above; pinned here so a new `_publish(...)` without the matching FE
     listener fails CI instead of silently never reaching an open run view.
     """
     from tests.controller_sources import controller_source
@@ -154,7 +154,7 @@ def test_workflow_engine_sse_events_are_all_registered_in_the_frontend():
 
 
 def test_the_coalesced_batch_frame_is_registered_and_its_members_are_foldable():
-    """The coalescer (WF2-R11 batch-5) introduces a frame that is NOT a lifecycle event: it
+    """The coalescer introduces a frame that is NOT a lifecycle event: it
     is an envelope around several. Two ways that drifts, both silent:
 
     1. the batch frame itself has no FE listener — EventSource drops it, and every batched
@@ -194,7 +194,7 @@ def test_the_coalesced_batch_frame_is_registered_and_its_members_are_foldable():
 
 
 def test_code_cockpit_sse_events_are_all_registered_in_the_frontend():
-    """The Code cockpit subscribes to the SAME unified per-loop feed (P16 pointed it at
+    """The Code cockpit subscribes to the SAME unified per-loop feed (through
     the shared useRunStream), but a code loop ALSO publishes code-specific events from the
     sdlc kind's on_new_cycle orchestration (stage_advance / gate_check / task_started /
     task_done / stage_stalled / blocked) via ctx.publish(...). Those plus the shared

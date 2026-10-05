@@ -1,4 +1,4 @@
-"""Deleting a run, and the per-item foreach projection (Slice 8c).
+"""Deleting a run, and the per-item foreach projection.
 
 **Delete.** Two things a run delete has to get right, both of which a naive `DELETE FROM runs`
 gets wrong:
@@ -172,7 +172,7 @@ class TestADraftRunIsNotPermanent:
         assert "next step" in result["message"]
 
     async def test_a_launched_run_with_a_controller_still_defers_to_it(self) -> None:
-        """WF2-R10 is intact: the in-band write is scoped to PRELAUNCH.
+        """The single-writer discipline is intact: the in-band write is scoped to PRELAUNCH.
 
         A DRAFT run has no controller, which is what makes finalizing it here safe — the
         same reasoning ``overlap.drain`` already relies on. A run whose controller is live

@@ -53,12 +53,12 @@ you are careless, and only one of them is a worker that has not written yet:
 **Money is deliberately not here, and that is issue #2566.** ``ledger.reader.run_totals`` reports
 ``cost_usd 0.0`` / ``tokens 0`` for a LOOP, because ``LoopJournal.cycle`` writes no money keys at
 all (loop money lives in ``usage/turns.jsonl`` via ``loop_spend``), and ``introspection.RunStats``
-has the same shape. PP-16 retires the loop noun ONTO the run noun, so loop-backed runs will flow
+has the same shape. The loop noun retires ONTO the run noun, so loop-backed runs will flow
 through every run-side surface — and "what did this document cost" answered as ``$0.00`` on the one
 page a user opens to find out is the worst place for that bug to land. Three packages consume that
-contract and changing it needs an owner ruling, so this payload carries no money field rather than
-carrying one that would read zero. The rail (``tests/test_run_deliverable.py``) asserts the
-absence, so a later session cannot add one without meeting the finding.
+contract, so changing it is a cross-package decision, and this payload carries no money field rather
+than carrying one that would read zero. The rail (``tests/test_run_deliverable.py``) asserts the
+absence, so a later change cannot add one without meeting the rail.
 """
 
 from __future__ import annotations

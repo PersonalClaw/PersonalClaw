@@ -1,4 +1,4 @@
-"""What DRIVES a pre-registered template study — EVALUATION-SUBSTRATE §2.
+"""What DRIVES a pre-registered template study.
 
 :mod:`personalclaw.evals.studies` is the instrument: pre-registration, the `locked/` check
 DSL, the rubric pin, the blinded position-swapped judge, the verdict. It had no driver —
@@ -23,7 +23,7 @@ module is the driver, and it owns exactly four seams:
    template is the variable by definition.
 
 3. **The production ``ArmRunner``** (:class:`TemplateArmRunner` / :func:`live_arm_runner`),
-   the one function here that spends money, deliberately shaped like ES-4's
+   the one function here that spends money, deliberately shaped like the judge bench's
    ``live_judge_caller``: one ``one_shot_completion`` on the arm's rendered prompt, wall
    time measured here, cost read back off the guard's attempt audit. Each arm run gets its
    OWN output workspace and the response is written into it, so the supervisor-side
@@ -400,8 +400,8 @@ async def _one_shot_completion(prompt: str, *, use_case: str) -> str:
 def _arm_cost_since(started_ts: float, use_case: str) -> tuple[float | None, str]:
     """``(cost_usd, model)`` from the guard's attempt audit.
 
-    Reuses ES-4's derivation rather than re-deriving it: two answers to "what did this model
-    call cost" is one answer too many, and the judge-bench version already encodes the
+    Reuses the judge bench's derivation rather than re-deriving it: two answers to "what did
+    this model call cost" is one answer too many, and the judge-bench version already encodes the
     subtlety that a total of exactly 0.0 is an honest unknown, not a free call.
     """
     from personalclaw.evals.judge_bench import _audit_cost_since
@@ -542,7 +542,7 @@ def register_template_study(
 ) -> StudyRegistration:
     """Pre-register a template A/B over the harvested suite. Spends nothing.
 
-    Registration is free and MUST precede arm 1 — that is the whole of §2.1 — so this is
+    Registration is free and MUST precede arm 1 — that is the whole rule — so this is
     what the flywheel's filing path calls. Running is a separate, deliberate invocation with
     its own spend preflight (``personalclaw study --run``), because an agent tool call that
     silently started a three-digit model-call matrix is the exact thing the preflight exists

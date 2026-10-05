@@ -28,8 +28,8 @@ from personalclaw.triggers.nl_kind import route
 # ── 🔴 the per-minute-poll trap ──
 
 
-def test_criterion_2s_own_sentence_routes_to_the_file_kind():
-    """🔴 The bar §4 sets, verbatim from criterion 2. Before this module the same sentence reached
+def test_the_file_change_sentence_routes_to_the_file_kind():
+    """🔴 The file-change sentence the NL contract names. Before this module that sentence reached
     only `nl_to_cron`, whose single output shape is a cadence."""
     r = route("when a file in ~/notes changes")
     assert r.kind == "file"
@@ -313,7 +313,7 @@ def test_a_memory_cue_beats_a_lifecycle_word():
 
 def test_every_routed_kind_is_a_kind_the_store_accepts():
     """🔴 A route to a kind the entity rejects would create a trigger that loads broken and never
-    fires — the same present-and-inert class this program keeps finding."""
+    fires — the same present-and-inert class this codebase keeps finding."""
     from personalclaw.triggers.models import SPEC_KEYS
 
     texts = [
@@ -344,7 +344,7 @@ def test_a_routed_spec_only_uses_keys_the_kind_declares():
 
 
 def test_a_route_explains_itself():
-    """§4 requires agent-created triggers be "announced to the user on creation". A wrong route
+    """An agent-created trigger must be announced to the user on creation. A wrong route
     the user cannot see is a wrong route they cannot correct."""
     assert "path" in route("when a file in ~/notes changes").because
     assert route("every weekday at 9").because

@@ -1,10 +1,10 @@
 """``ollama-models`` is BUNDLED, and bundling it re-coupled nothing to core.
 
-an owner ruling: an app essential to the platform offering ships in core
+An app essential to the platform offering ships in core
 and auto-installs at gateway install, **through the app mechanism** — `apps/native/` plus
 the app loader. What was deliberately removed when Ollama was de-cored was *hardcoded
 integration inside core*: an `llm/*.py` self-register, a special case in the registry.
-That must not come back. This file is the machine-checkable form of that ruling for the
+That must not come back. This file is the machine-checkable form of that rule for the
 first bundled model provider.
 
 Why `ollama-models` and not another: of the 16 chat-capable model apps it is the only one
@@ -80,7 +80,7 @@ def test_the_manifest_declares_a_bundle_relative_model_provider():
     assert {"chat", "embedding"} <= set(provider.capabilities)
     assert provider.implementation == "provider:create_provider", (
         "the implementation must be bundle-relative (no dot in the module path). A dotted "
-        "path names a CORE module, which is exactly the coupling R1 forbids."
+        "path names a CORE module, which is exactly the coupling the rule forbids."
     )
 
 
@@ -146,7 +146,7 @@ def test_the_bundles_runtime_imports_are_core_dependencies():
         )
 
 
-# ── R1: the registration lives in the APP, and core has no copy ───────────────
+# ── The registration lives in the APP, and core has no copy ───────────────────
 
 
 def _reset_registration_state() -> None:
@@ -261,7 +261,7 @@ def test_a_gateway_already_loaded_the_module_and_the_type_still_registers():
 def test_the_registration_came_from_the_bundles_own_file(registered_bundle):
     """The module that called ``register_type`` is the bundle's ``provider.py``.
 
-    This is the R1 assertion stated positively. The app reaches the registry through the
+    This is the rule's assertion stated positively. The app reaches the registry through the
     published re-export in ``personalclaw.sdk.model``; the call site is in the app's file,
     under the app's own directory, loaded under a namespaced module name.
     """
@@ -276,7 +276,7 @@ def test_the_registration_came_from_the_bundles_own_file(registered_bundle):
 
 
 def test_core_declares_no_ollama_provider_type():
-    """R1's negative half: no core module registers or implements an ollama provider.
+    """The rule's negative half: no core module registers or implements an ollama provider.
 
     Ollama's de-coring removed a hardcoded integration from core, and bundling must not put
     one back. The two spellings that would count are a ``register_type`` call naming the
@@ -305,7 +305,7 @@ def test_core_declares_no_ollama_provider_type():
         if hits:
             offenders[str(path.relative_to(_SRC_DIR))] = hits
     assert not offenders, (
-        "core re-acquired a hardcoded Ollama provider registration — the exact thing R1 "
+        "core re-acquired a hardcoded Ollama provider registration — the exact thing the rule "
         "forbids. The registration belongs in the app's own provider.py, reached through "
         "personalclaw.sdk.model:\n" + json.dumps(offenders, indent=2)
     )

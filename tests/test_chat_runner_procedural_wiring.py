@@ -1,4 +1,4 @@
-"""M5d wiring regression: the dashboard's after-turn review must drain tool
+"""Wiring regression: the dashboard's after-turn review must drain tool
 outcomes from the PROVIDER returned by get_or_create (threaded in), not from a
 nonexistent ``session.provider`` attribute.
 

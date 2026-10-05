@@ -39,7 +39,7 @@ def live_writes_disabled() -> bool:
 class LiveWriteDisabled(Exception):
     """Raised when a live destructive write is refused because writes are disabled.
 
-    A loud, typed refusal — the whole point of §1.4 is that a suppressed write
+    A loud, typed refusal — the whole point is that a suppressed write
     FAILS visibly (so a vacuous test can't pass) rather than silently no-op'ing.
     """
 

@@ -1,4 +1,4 @@
-"""DURABILITY-AND-SYNC §4.1 / DAS-6c-ii-b — the durable outbox + consumed-only cursor.
+"""The durable outbox + consumed-only cursor.
 
 The durable-state half of the sync cycle: a push obligation survives a crash (one file per
 (target, seq)); a push is discharged only by a real delivery or an explicit permanent

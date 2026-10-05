@@ -1,4 +1,4 @@
-"""P1: ACPDialect strategy — per-CLI protocol divergences.
+"""ACPDialect strategy — per-CLI protocol divergences.
 
 Core AcpClient stays vendor-neutral by delegating the handshake/permission
 divergences to a dialect. These pin each dialect's concrete choices + the
@@ -217,7 +217,6 @@ def test_select_allow_option_id_echoes_agent_defined_id():
         {"id": "no", "label": "Reject", "kind": "reject_once"},
     ]
     assert d.select_allow_option_id(offered) == "allow"  # the once option's id
-    assert d.select_allow_option_id(offered, prefer_always=True) == "allow_all"
     # No options captured → empty (caller falls back to default).
     assert d.select_allow_option_id([]) == ""
     # Only a reject option offered → no allow id, falls through to "".

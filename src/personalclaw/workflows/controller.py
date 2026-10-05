@@ -1,12 +1,12 @@
 """The run controller — one conductor per run, and the only writer of run state.
 
-Everything about this module follows from one rule: **a run has exactly one writer**
-(WF2-R10). The tick loop under `self._lock` is it. Nothing else — not a dispatcher, not
+Everything about this module follows from one rule: **a run has exactly one writer**.
+The tick loop under `self._lock` is it. Nothing else — not a dispatcher, not
 a watchdog, not an HTTP handler — writes a terminal status. Handlers request; the loop
 decides and writes.
 
-That rule is what makes the harder features tractable later. Mid-flight mutation (Slice
-4) can only be safe if there is a well-defined moment when no node is being scheduled;
+That rule is what makes the harder features tractable later. Mid-flight mutation
+can only be safe if there is a well-defined moment when no node is being scheduled;
 here that moment is "between scheduling steps, holding the lock". Crash recovery can only
 be correct if terminal writes are serialized, or a resumed run and a still-dying task
 race to disagree about the outcome.
@@ -33,7 +33,7 @@ functions over the controller: `run_admission`, `stage_settlement`, `step_dispat
 object — its tick loop and `resume` — so the split adds no writer: the one writer
 is still the controller, filed by what it decides.
 
-**Budget pre-charge (WF2-R4 invariant).** A resumed run inherits spend from its ledger
+**Budget pre-charge.** A resumed run inherits spend from its ledger
 before scheduling anything. Minting a fresh budget on resume would turn a crash loop into
 unbounded spend — the exact failure the cap exists to prevent.
 """
@@ -276,7 +276,7 @@ class RunController:
         self._declined_edges: set[str] = self._collect_declined_edges()
         self._iterations: dict[str, int] = {}
         self._dry_streaks: dict[str, int] = {}
-        #: Item paths whose WIP=1 refusal has already been journaled (R5b). In memory only:
+        #: Item paths whose WIP=1 refusal has already been journaled. In memory only:
         #: the record it dedupes is a scheduling note, and re-journaling one after a resume is
         #: harmless next to carrying a second persisted set to keep in sync.
         self._wip_logged: set[str] = set()
@@ -288,7 +288,7 @@ class RunController:
         #: controller: it is a directory scan, and the answer cannot change without this object
         #: being the one that changed it.
         self._leases_adopted: bool = False
-        #: Paths whose PP-12 admission hold is already journaled, deduped exactly like
+        #: Paths whose clock-and-disk admission hold is already journaled, deduped exactly like
         #: `_wip_logged` — the frontier re-derives every tick, and one baking step would otherwise
         #: write a record per tick for the whole bake window.
         self._admission_logged: set[str] = set()
@@ -308,8 +308,8 @@ class RunController:
         #: `<step path>@<epoch>` keys whose metric rollback is already queued, so one regressed step
         #: queues one rewind instead of one per tick until the drain lands.
         self._rollbacks_queued: set[str] = set()
-        #: `<foreach path>@<epoch>` keys whose collected-failure record is already in the ledger
-        #: (WV-13). Seeded from the ledger on first use rather than left empty like
+        #: `<foreach path>@<epoch>` keys whose collected-failure record is already in the ledger.
+        #: Seeded from the ledger on first use rather than left empty like
         #: `_wip_logged`: this record's payload is a COUNT of failed items, and a resumed run
         #: that wrote it twice would tell a reader the fan-out failed twice.
         self._items_collected: set[str] | None = None
@@ -438,7 +438,7 @@ class RunController:
     async def run_to_completion(self, *, timeout: float = 0.0) -> RunStatus:
         """Blocking mode: drive to terminal, drain the projection writes, return the status.
 
-        The drain is load-bearing, not tidiness. Measured (S61g): a projected Task write is
+        The drain is load-bearing, not tidiness. Measured: a projected Task write is
         scheduled
         on the loop from the SYNC settle path, and returning at terminal left it pending — so a
         caller that awaited this and then closed its loop lost the board row entirely, with the run
@@ -461,12 +461,12 @@ class RunController:
 
         Bounded: a hung task store must not hold a finished run open forever.
 
-        The pending writes are NOT cancelled on timeout. Measured (S61g): `asyncio.wait_for` cancels
+        The pending writes are NOT cancelled on timeout. Measured: `asyncio.wait_for` cancels
         the awaitable it wraps, so the obvious `wait_for(gather(...))` spelling silently kills the
         very writes it was waiting for — and a cancelled write may ALREADY have created the task,
         which loses the id without undoing the row. Waiting on SHIELDED handles leaves the
         real tasks
-        running, so the next projection rebuild (§1's normal path) still recovers them.
+        running, so the next projection rebuild (the normal path) still recovers them.
         """
         pending = [h for h in list(self._projection_writes) if not h.done()]
         if not pending:
@@ -662,7 +662,7 @@ class RunController:
         """
         resumed = bool(self.run.started_at)
         totals = journal_mod.run_totals(self.run.id)
-        # Budget pre-charge (WF2-R4 #1): a resumed run inherits its own spend. Without
+        # Budget pre-charge: a resumed run inherits its own spend. Without
         # this a crash loop mints a fresh budget each time and spends without bound.
         tokens_recorded = self._inherit_ledger_tokens(totals)
         self._inherit_ledger_spend(totals)
@@ -740,7 +740,7 @@ class RunController:
     async def _step(self) -> bool:
         """One scheduling step under the lock. Returns True when the run is terminal.
 
-        This is also the designated safe point for mid-flight mutation (Slice 4): the
+        This is also the designated safe point for mid-flight mutation: the
         lock is held and no node is mid-launch.
         """
         if store.cancel_requested(self.run.id):
@@ -766,7 +766,7 @@ class RunController:
         if self._incident_held:
             incident_hold.carry_on(self)
 
-        # Mutations drain HERE — lock held, nothing mid-launch (WF2-R20 safety #1). Before
+        # Mutations drain HERE — lock held, nothing mid-launch. Before
         # the frontier, so an applied edit is reflected in this step's scheduling rather
         # than a tick later.
         mid_flight.drain_mutations(self)
@@ -830,7 +830,8 @@ class RunController:
             self._skip(path)
         loop_iteration.advance_skipped(self, fr.to_skip)
 
-        # PP-12 admission: the two rules the frontier structurally cannot apply, because both need
+        # Clock-and-disk admission: the two rules the frontier structurally cannot apply, because
+        # both need
         # a clock and one needs the disk. Skipped entirely for a spec that declares none of their
         # keys — the same code path as before this existed, which is what "additive" has to mean.
         admitted = await run_admission.admit_ready(self, fr.ready)
@@ -895,7 +896,7 @@ class RunController:
         `channel` marks a REMOTE reply, and *by* is then you on that channel, named by who
         replied. A remote answer must come from the run's owner — without that binding, a shared
         channel is a privilege-escalation path where anyone who can type can approve someone
-        else's deployment (WF2-R7).
+        else's deployment.
         """
         from personalclaw.workflows.human_input import (
             Ask,
@@ -1007,7 +1008,7 @@ class RunController:
             epoch=cont.epoch,
             approved=approved,
             answer=filled,
-            # §4.4 human-attention accounting: how long this ask held human attention,
+            # Human-attention accounting: how long this ask held human attention,
             # explicit rather than re-derived from the continuation record. Only the
             # human path carries it — an auto-approved gate cost no attention.
             resolved_after_secs=(
@@ -1065,7 +1066,7 @@ class RunController:
         self._terminal.clear()
         self._task = asyncio.create_task(self._tick_loop(), context=run_start.run_context(self.run))
 
-    # ── mid-flight mutation (WF2-R2 / R20) ──
+    # ── mid-flight mutation ──
 
     def submit_mutation(
         self,
@@ -1084,7 +1085,7 @@ class RunController:
         Returns the preview and issues synchronously — a caller needs to see the cascade
         before it lands, and a batch that cannot pass validation should not reach the queue
         at all. Nothing here writes run state: this is a handler, and handlers request
-        while the loop decides (WF2-R10).
+        while the loop decides.
 
         A cascade that re-runs completed work needs `confirm=True`. Without the gate, a
         one-line prompt edit could silently re-run (and re-bill) a dozen finished stages.
@@ -1205,8 +1206,8 @@ class RunController:
         polled subagent has no such signal, so this is real settle LATENCY — up to five seconds
         per stage, measured at 5.33s for a stage whose fake finished one lookup in. Against a
         stage that takes minutes that is under 2%, and buying it back means a second writer
-        nudging the controller from the completion side, which is exactly what WF2-R10 (`_apply`
-        is the only place a node reaches terminal) exists to prevent.
+        nudging the controller from the completion side, which is exactly what the one-writer rule
+        (`_apply` is the only place a node reaches terminal) exists to prevent.
 
         Deliberately NOT folded into `_next_wake_delay`, even though that is where a deadline
         belongs. `_step` (:926) uses that method as the "nothing will wake this run" oracle for
@@ -1290,7 +1291,7 @@ class RunController:
             inputs=self.run.inputs,
             iterations=self._iterations,
             running_lanes=self._running_lanes(),
-            # WIP=1 (LOOPS-EVOLUTION R5b). Read from the spec's `runtime_hints.execution`
+            # WIP=1. Read from the spec's `runtime_hints.execution`
             # every tick rather than cached at construction, because a mid-flight spec edit
             # can turn the invariant on and a cached flag would keep scheduling under the
             # old rule while the template said otherwise.
@@ -1303,7 +1304,7 @@ class RunController:
         return fr
 
     def _journal_wip_holds(self, fr: Frontier) -> None:
-        """Record a WIP=1 refusal once per held item (R5b).
+        """Record a WIP=1 refusal once per held item.
 
         Written to the ledger because a refusal nobody can read is indistinguishable from a
         scheduler that lost the item — "why has feature 2 not started?" has to be answerable
@@ -1328,7 +1329,7 @@ class RunController:
     def _journal_collected_items(self, states: dict[str, InstanceState]) -> None:
         """Write each `on_item_error: collect` fan-out's per-item failures once it is terminal.
 
-        This is the DATA half of COLLECT (WV-13). The outcome half — run every item, then let the
+        This is the DATA half of COLLECT. The outcome half — run every item, then let the
         failures fail the run — lives in `tick.foreach_outcome`; on its own it produces a FAILED
         run whose reader has to know a fan-out's item-path shape to work out WHICH items broke.
 
@@ -1441,7 +1442,7 @@ class RunController:
 
         hit = self.journal.lookup(key)
         if hit:
-            # Resume/rewind cache hit (WF2-A1). Emitted, not silent: "did my edit re-run
+            # Resume/rewind cache hit. Emitted, not silent: "did my edit re-run
             # anything?" must be answerable from the ledger.
             state = InstanceState(str(hit.get("state", "done")))
             inst.state = state
@@ -1587,7 +1588,7 @@ class RunController:
     # ── applying results ──
 
     def _apply(self, entry: _InFlight, result: NodeResult) -> None:
-        """Write one node's outcome. The ONLY place a node reaches terminal (WF2-R10)."""
+        """Write one node's outcome. The ONLY place a node reaches terminal."""
         item = entry.ready
         inst = self._instance(item.path)
         duration = max(0.0, time.time() - entry.started)
@@ -1820,11 +1821,11 @@ class RunController:
                 # that node needs in order to know what it is invalidating.
                 self.journal.child_run_attach(self.run.id, child_id, item.node.id)
 
-        # Judge gate verdict → Run Ledger (criterion 3). A judge gate's
+        # Judge gate verdict → Run Ledger. A judge gate's
         # NodeResult carries `judge_evidence` (see engine.dispatch_gate); emit here at the settle,
         # for BOTH pass and reject, so a refiner reading the ledger sees every judge call with its
-        # evidence chain and discard status — and criterion 3 ("judges reject at least once with
-        # evidence over parity runs") is provable from the ledger rather than only from tests.
+        # evidence chain and discard status — and "judges reject at least once with
+        # evidence over parity runs" is provable from the ledger rather than only from tests.
         out = result.output if isinstance(result.output, dict) else {}
         if "judge_evidence" in out:
             self.journal.write(
@@ -1844,14 +1845,14 @@ class RunController:
         # and a judge gate both land here without either declaring anything new.
         #
         # Emitted RAW (the reviewer's own claimed `location`), one row per finding. Anchor
-        # validation deliberately does NOT happen here: §7 requires findings validated against the
+        # validation deliberately does NOT happen here: findings must be validated against the
         # ACTUAL diff "before render", and the diff at settle time is not the diff the human will
         # be looking at — the worker keeps working. Validating once at emit and storing the verdict
         # would bake in an answer that goes stale, which is the exact wrong-line failure the
         # validation exists to prevent. The panel re-anchors on every read.
         # A `findings` key in a DICT output, or a JSON string that mentions one — an `infer` node
         # returns its JSON as text, and gating on dicts alone would make the emit fire for
-        # `transform` nodes and stay silent for the LLM reviewers §7 is actually about. The cheap
+        # `transform` nodes and stay silent for the LLM reviewers this is actually about. The cheap
         # substring test comes first so a megabyte of prose is not JSON-parsed on every settle.
         raw_out = result.output
         if isinstance(raw_out, dict) or (isinstance(raw_out, str) and '"findings"' in raw_out):
@@ -2322,7 +2323,7 @@ class RunController:
         )
 
     async def _finish(self, status: RunStatus, *, error: str = "") -> None:
-        """Write the run's terminal status. The single terminal writer (WF2-R10)."""
+        """Write the run's terminal status. The single terminal writer."""
         # Why it ended, when something other than its owner cancelled it (its loop's Stop, the
         # turn that started it): its waits and what its steps started end saying so too.
         because = store.cancel_reason(self.run.id) if status == RunStatus.CANCELLED else ""
@@ -2393,7 +2394,7 @@ class RunController:
             await run_finish.end_what_its_steps_started(self, status, because=because)
 
     def _item_context(self, item: ReadyNode) -> dict[str, Any]:
-        """The per-item fields a foreach row renders (WF2-R5): `[i/total] label`.
+        """The per-item fields a foreach row renders: `[i/total] label`.
 
         Empty for a non-iterated node, so the payload does not carry meaningless keys — a
         consumer branching on presence is simpler than one branching on a null.
@@ -2421,7 +2422,7 @@ class RunController:
             out["item_label"] = label
         return out
 
-    # ── TASKS-SOPS projection events ──
+    # ── task projection events ──
     #
     # Thin wrappers over `_publish` + the matching journal kind, so the LIVE stream and the
     # REPLAYABLE ledger carry the same fact under the same name. A consumer folding the stream and
@@ -2520,7 +2521,7 @@ class RunController:
     def publish_cascade_blocked(
         self, path: str, node_id: str, *, blocked_task_ids: list[str], cause: str
     ) -> None:
-        """ONE event for the whole cascade, matching §1's debounce.
+        """ONE event for the whole cascade, matching the projection's debounce.
 
         N events for one upstream failure would make the run look like it failed N times, and the
         notification layer already collapses them — two different collapse points would disagree.
@@ -2541,7 +2542,7 @@ class RunController:
 
         Three fields are added HERE rather than at each of the twelve call sites, because a
         call site that forgot one would produce an event the FE cannot dedup or supersede —
-        and that is invisible until a rewind duplicates a row (WF2-R11):
+        and that is invisible until a rewind duplicates a row:
 
         * `event_id` — deterministic (`<run>-evt-<n>`), so a re-emit is an idempotent no-op
           rather than a second row.

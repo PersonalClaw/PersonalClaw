@@ -1,4 +1,4 @@
-"""App Platform lifecycle — install / enable / disable / uninstall (A1).
+"""App Platform lifecycle — install / enable / disable / uninstall.
 
 The runtime is PClaw-native, built on top of
 the existing manifest (:mod:`apps.manifest`) + storage primitives
@@ -31,7 +31,8 @@ RCE-by-design, so a hook only runs after the scanner passes (or the caller gives
 explicit consent for a ``warning``) — never on a ``dangerous`` verdict, and never
 auto-forced for an unattended/agent-initiated install.
 
-Atomic update + rollback is A2; the dependency ledger is A3; this is the core.
+Atomic update + rollback (:func:`update`) and the shared-dependency ledger
+(:mod:`apps.dependency_ledger`) build on this core.
 """
 
 from __future__ import annotations
@@ -98,7 +99,7 @@ class AppLifecycleError(Exception):
 
     ``log_excerpt`` carries the bounded tail of the underlying subprocess output
     (a failed ``pip`` dependency install or a ``setup`` hook) when there is one, so
-    the install result can surface it to the UI's "Fix with AI" affordance (APE-8).
+    the install result can surface it to the UI's "Fix with AI" affordance.
     It is UNTRUSTED: a malicious app's build can emit attacker-controlled text.
     """
 
@@ -122,12 +123,12 @@ class InstallResult:
     # `app_runtime.restart_reason` joins (a package it had already loaded was replaced, a thread
     # the previous version started is still running…). "" when the new code already runs alone.
     restart_reason: str = ""
-    # P21 platform gate: set when the app can't be server-installed here (installMode=client,
+    # Platform gate: set when the app can't be server-installed here (installMode=client,
     # or this OS isn't in the app's `os` list). The install did NOT commit; the UI shows the
     # copy-paste client-install one-liner instead. `client_install` = {shell, postInstall}.
     needs_client_install: bool = False
     client_install: dict[str, Any] | None = None
-    # APE-8 "Fix with AI": the bounded tail of the failing subprocess output (a pip
+    # "Fix with AI": the bounded tail of the failing subprocess output (a pip
     # dependency install or a setup hook) when the install failed with one available.
     # UNTRUSTED — a malicious app's build can emit attacker-controlled text — so it is
     # never dropped raw into a prompt; `fix_prompt` fences it (see the property).
@@ -153,7 +154,7 @@ class InstallResult:
         Built HERE (backend), not the FE, because the fence is the security control:
         the install log is untrusted text and must be wrapped in the
         ``<untrusted_content>`` fence — which only the Python :func:`fence_untrusted`
-        can produce — before it ever reaches a chat prompt (APE-8). The FE button just
+        can produce — before it ever reaches a chat prompt. The FE button just
         passes this string to ``launchChat({prompt})``. Empty on success or when there
         is no captured log, so the FE shows the button only when it can act.
         """
@@ -265,7 +266,7 @@ def _tier_for_origin(origin: str) -> TrustTier:
 
 
 def _signature_gate(staged: Path, origin: str) -> tuple[SignatureInfo, TrustTier]:
-    """Verify the STAGED bundle's signature and derive the trust tier from it (SH-3).
+    """Verify the STAGED bundle's signature and derive the trust tier from it.
 
     Runs before the content scan and long before the commit, so the answer is known for
     the exact bytes that will land: the staged tree is the one the commit step moves into
@@ -277,7 +278,7 @@ def _signature_gate(staged: Path, origin: str) -> tuple[SignatureInfo, TrustTier
       provenance ``official`` already means for the curated registry. It never *lowers*
       an origin's tier: ``builtin`` stays ``builtin``, and an unsigned bundle keeps the
       tier its origin earned — signing only ever adds trust it can prove.
-    * ``unsigned`` → unchanged. Community-tier installable, per C2's graduated trust.
+    * ``unsigned`` → unchanged. Community-tier installable, per the graduated trust tiers.
     """
     info = verify_bundle(staged)
     tier = _tier_for_origin(origin)
@@ -366,7 +367,7 @@ def _core_requirement_pins() -> dict[str, "Requirement"]:
 
 
 def _reject_core_dependency_conflicts(manifest: AppManifest, reqs: list[str]) -> None:
-    """Refuse an app that pins a core gateway dependency to a version core does not run (EI-12 D3).
+    """Refuse an app that pins a core gateway dependency to a version core does not run.
 
     App packages install into ``<home>/app-python`` (``apps/app_python.py``), which the gateway
     loads AFTER its own environment — so core's installed copy of a package always wins the
@@ -506,7 +507,7 @@ def _install_python_deps(manifest: AppManifest) -> list[str]:
         return []
 
     # Before anything is installed: refuse a pin on a CORE dependency that core's installed
-    # version does not satisfy — it could never take effect (EI-12 D3).
+    # version does not satisfy — it could never take effect.
     _reject_core_dependency_conflicts(manifest, reqs)
 
     from personalclaw.apps import app_python
@@ -754,7 +755,7 @@ def _consent_error(action: str, report: ScanReport, *, stale: bool) -> str:
 
 
 def _client_install_directive(r: _Reviewed) -> InstallResult | None:
-    """P21 Gap B: an app that must be installed on the user's own machine
+    """An app that must be installed on the user's own machine
     (``installMode="client"``), or that does not support THIS server's OS, cannot be
     server-installed here — hand back the copy-paste one-liner instead, committing nothing.
     That shell runs on the user's machine, OUTSIDE the scanner, so it is surfaced as
@@ -918,7 +919,7 @@ def preview(source: str | Path, *, origin: str = "local", name: str | None = Non
     install; for an update only when it changes what the app gets, or the scan warns.
 
     A terminal outcome (invalid signature, ``dangerous``) comes back as its refusal with
-    the scan; a P21 client-install app as its directive; a bundle that cannot be offered at
+    the scan; a client-install app as its directive; a bundle that cannot be offered at
     all (bad manifest, too-new core, already installed / not installed) as ``ok=False``
     with only ``error`` set."""
     src = Path(source)
@@ -981,7 +982,7 @@ def install(
     caller: str = "app_manager",
     source_ref: str | None = None,
 ) -> InstallResult:
-    """Install an app from a local directory ``source`` (path/git → A4 fetch).
+    """Install an app from a local directory ``source`` (a path, or a git source fetched to one).
 
     Staged → gated (signature, scan) → CONSENT → onInstall → registered.
 
@@ -1050,7 +1051,7 @@ def install(
         manifest = gate.manifest
         report = gate.report
 
-        # 4.5 Platform gate (P21 Gap B) — a directive, not an install, so it needs no consent.
+        # 4.5 Platform gate — a directive, not an install, so it needs no consent.
         directive = _client_install_directive(gate)
         if directive is not None:
             platform_cfg = manifest.platform
@@ -1157,7 +1158,7 @@ def install(
             app_runtime.load(manifest)
         if replaced:
             app_runtime.note_restart(name, [_replaced_packages(replaced)])
-        # Record this app against each shared dependency it declares (A3 ledger),
+        # Record this app against each shared dependency it declares (the dependency ledger),
         # so a later uninstall can tell removable from shared.
         try:
             from personalclaw.apps import dependency_ledger
@@ -1493,7 +1494,7 @@ def update(
     consent: str = "",
     caller: str = "app_manager",
 ) -> InstallResult:
-    """Atomically update an installed app to new code at ``source`` (A2).
+    """Atomically update an installed app to new code at ``source``.
 
     Consent is the same contract as :func:`install` (``confirm``, or a ``consent`` digest
     bound to the reviewed bytes), required when the update CHANGES what the app gets —
@@ -1638,7 +1639,7 @@ def update(
         # and MCP servers stop, its providers go, and its code leaves the process — so nothing
         # ever runs from a half-swapped dir, and what the load below imports is the new files.
         # Its prompts and skills go too; the new version's re-seed (a prompt renamed or removed
-        # between versions must not linger, and skills re-pass the scan — §4.1).
+        # between versions must not linger, and skills re-pass the scan).
         old_manifest = _manifest_of(name)
         previous_meta = _read_installed(name)
         was_enabled = previous_meta is None or previous_meta.enabled
@@ -1757,7 +1758,7 @@ def _resync_native_bundle(name: str, src_dir: "Path") -> list[str]:
     """Refresh an already-seeded native app's PACKAGED FILES from the wheel's copy.
 
     Every file the bundle ships — ``app.json`` and, under the native capability contract
-    (APE-5, ``apps/native_contract.py``), the app's own Python modules and any other
+    (``apps/native_contract.py``), the app's own Python modules and any other
     packaged asset — is owned by the packaged source, not by the user. User-owned state
     lives in exactly two places this function never touches: ``data/`` (config, which
     ``install``/``update`` also preserve) and ``installed.json`` (enabled state, origin,
@@ -1766,8 +1767,8 @@ def _resync_native_bundle(name: str, src_dir: "Path") -> list[str]:
     🔴 THIS USED TO BE MANIFEST-ONLY, and that made a bundled app's CODE unfixable.
     ``app.json`` alone was enough while every native app was a thin manifest over a core
     factory — a core fix rode the wheel's own module and only the schema needed copying
-    (bug #24: the create-task schema fix #21 never propagated). APE-5 broke that
-    assumption by letting a bundle own its `provider.py`, and seeding is once-only, so a
+    (without it, a create-task schema fix never propagated). The native capability contract
+    broke that assumption by letting a bundle own its `provider.py`, and seeding is once-only, so a
     provider fix shipped in a new wheel reached a FRESH home and no existing one. The two
     bundles that own code (``personalclaw-ui-docs`` and ``ollama-models``) would each have
     been permanently frozen at whatever release first seeded them, with no in-band repair:
@@ -1837,8 +1838,8 @@ def seed_builtin_apps() -> list[str]:
         # wheel ships for it — app.json's schema/description/capabilities AND,
         # the bundle's own provider module — is packaged-source-owned. User config lives
         # separately in data/config.json, which we never touch. So a fix in apps/native/
-        # MUST reach an existing install; the old seed-once-skip stranded it forever (bug
-        # #24: the create-task assignee/due/labels schema fix #21 never propagated), and the
+        # MUST reach an existing install; the old seed-once-skip stranded it forever (the
+        # create-task assignee/due/labels schema fix never propagated), and the
         # manifest-only resync that replaced it stranded every code fix the same way.
         if name in seeded:
             _resync_native_bundle(name, entry)
@@ -2241,7 +2242,7 @@ def disable(name: str, *, caller: str = "app_manager") -> bool:
 
 def preview_uninstall(name: str) -> list:
     """Read-only: classify each shared dependency this app declares as
-    removable / shared / userInstalled (A3), for the uninstall-confirm UI. Empty
+    removable / shared / userInstalled, for the uninstall-confirm UI. Empty
     list if the app or its manifest is absent."""
     manifest = _manifest_of(name)
     if manifest is None:
@@ -2630,7 +2631,7 @@ def force_uninstall(name: str, *, caller: str = "app_manager") -> bool:
 
 
 def _manifest_of(name: str) -> AppManifest | None:
-    # A path-escaping name (app_dir now rejects '../', '/etc', … — #44) is simply
+    # A path-escaping name (app_dir now rejects '../', '/etc', …) is simply
     # "not an installed app": return None so callers/routes 404 cleanly rather than
     # surfacing the guard's ValueError as an unhandled 500.
     try:

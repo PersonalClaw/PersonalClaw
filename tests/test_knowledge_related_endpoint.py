@@ -3,7 +3,7 @@
 What changed, and why these tests exist: the endpoint used to rank neighbours by
 ``COUNT(DISTINCT entity_id)`` with *no floor at all*, so one incidentally shared entity
 ranked level with a genuine topical neighbour and the endpoint answered with *something*
-for very nearly any item. KL-13 replaces that with the precomputed similarity edges behind
+for very nearly any item. That is replaced by the precomputed similarity edges behind
 a real score floor (``knowledge.similarity_min_score``).
 
 The honest consequence, asserted below: an item whose nearest neighbour scores below the
@@ -47,7 +47,7 @@ def _run(coro):
 
 
 class _EdgeStore(KnowledgeStore):
-    """The real store, plus a stand-in for the ``similar_items`` KL-13a owns.
+    """The real store, plus a stand-in for the store's ``similar_items``.
 
     Only that one method is substituted: items, mentions, the ``status``/``is_archived``
     columns and ``_serialize_item`` are all the real thing, so everything the handler
@@ -142,7 +142,7 @@ def _link(store, item_id, entity_name):
 def _with_similarity_config(monkeypatch, *, min_score=None, top_k=None):
     """Make ``AppConfig.load()`` report the similarity knobs.
 
-    Both fields land with a sibling KL-13 change, so this proves the handler *reads* them
+    Both fields land with a sibling change, so this proves the handler *reads* them
     without depending on that change having merged. Omitting a field leaves the handler's
     defensive ``getattr`` fallback on the same code path.
     """
@@ -158,7 +158,7 @@ def _with_similarity_config(monkeypatch, *, min_score=None, top_k=None):
     )
 
 
-# ── the threshold: the clause this change exists for ──
+# ── the threshold: the reason this change exists ──
 
 
 class TestScoreFloor:
@@ -228,7 +228,7 @@ class TestScoreFloor:
         assert body == []
 
     def test_ranking_no_longer_follows_entity_overlap(self, store):
-        """The 'replacing the unthresholded shared-entity COUNT' clause, directly.
+        """The 'replacing the unthresholded shared-entity COUNT' requirement, directly.
 
         The low-similarity item shares three entities; the high-similarity item shares
         none. The old handler ranked the overlap-heavy item first (and it was the only one

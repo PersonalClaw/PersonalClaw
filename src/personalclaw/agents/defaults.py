@@ -292,7 +292,7 @@ def make_coder_profile(profile_cls: type) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Code DEEP PLANNER (the agentic intake planner — the C163 upgrade).
+# Code DEEP PLANNER (the agentic intake planner).
 #
 # Unlike the one-shot text classifier, this is a tool-equipped agent that
 # INVESTIGATES the real context before authoring a plan: it reads the workspace,
@@ -383,7 +383,7 @@ def make_lite_agent_profile(profile_cls: type) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Template refiner (Learning-Flywheel §3.1).
+# Template refiner.
 #
 # The propose-only agent the `refine-template` workflow runs over a template's
 # own run ledger. It PROPOSES a typed template diff and nothing more — it cannot

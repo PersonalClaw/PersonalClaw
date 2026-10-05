@@ -1,4 +1,4 @@
-"""The `/api/workflows` REST surface (Slice 7a) — one engine, two surfaces.
+"""The `/api/workflows` REST surface — one engine, two surfaces.
 
 The load-bearing claims:
 
@@ -817,7 +817,7 @@ class TestWorkspaceRoute:
     """`GET /api/workflows/runs/{run_id}/workspace` — the code-run cockpit's review.
 
     A READ, deliberately: reintegration is OFFERED, never performed. The absence of a POST
-    companion is the plan's ruling, and it is asserted here so a future one cannot be added
+    companion is deliberate, and it is asserted here so a future one cannot be added
     without a reviewer meeting this note.
     """
 
@@ -874,7 +874,7 @@ class TestWorkspaceRoute:
         assert "keep_open=keep_open" in source
 
 
-# ── introspection: the nine questions (R6) ──
+# ── introspection: the nine questions ──
 
 
 class TestIntrospectRoute:
@@ -934,7 +934,7 @@ class TestIntrospectRoute:
         assert "step_completed" in kinds, kinds
 
     async def test_the_edge_distribution_rides_the_real_response(self, provider) -> None:
-        """PP-8 wired-vs-inert: the edge-decision projection must be CALLED by the route, not
+        """Wired, not inert: the edge-decision projection must be CALLED by the route, not
         merely exist. A run with no branch has an empty distribution — but the key, and its shape,
         prove the route reads it. `risky.edges` carries the same object so the "what is risky"
         answer sees a dead case the way it sees a fake check."""
@@ -994,7 +994,7 @@ class TestIntrospectRoute:
         assert body["stats"]["tokens"] == before["stats"]["tokens"]
 
     async def test_all_nine_checklist_questions_are_answered(self, provider) -> None:
-        """The change's actual criterion. `checklist_gaps` is the contract: a non-empty list names a
+        """The bar that matters. `checklist_gaps` is the contract: a non-empty list names a
         question this payload cannot answer, and an evaluator would hit that hole in the UI."""
         from personalclaw.workflows.introspection import CHECKLIST
 

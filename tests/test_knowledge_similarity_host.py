@@ -1,6 +1,6 @@
 """The similarity-edge pass's HOST REGISTRATION.
 
-The clause under test: *"the edge pass runs on the maintenance host, never inline on the
+The rule under test: *"the edge pass runs on the maintenance host, never inline on the
 write path."* That is two claims, and each fails in its own silent way, so each is asserted
 separately here:
 
@@ -229,7 +229,7 @@ def test_a_broken_similarity_module_does_not_cost_the_other_passes(home, monkeyp
 
 
 def test_the_similarity_pass_does_NOT_run_inline_on_the_write_path(store, monkeypatch):
-    """The clause's negative half, asserted at the real write path.
+    """The rule's negative half, asserted at the real write path.
 
     N real `create_typed_item` calls must invoke the pass ZERO times while still moving the
     watermark, and ONE host run must then invoke it exactly once. Both halves are needed: the
@@ -297,9 +297,9 @@ def test_the_real_similarity_module_satisfies_the_registered_contract():
         # in the fromlist resolution, which raises the parent class. Catching only the narrower
         # one turned this skip into an ERROR — measured, not assumed.
         pytest.skip(
-            "knowledge/similarity_edges.py is a sibling atom's file and is not on this branch, "
+            "knowledge/similarity_edges.py is not on this branch, "
             "so the registered pass is UNVERIFIED against the real callable — everything else "
-            "here runs against a stand-in. This skip must become a pass at assembly; a skip "
+            "here runs against a stand-in. This skip must become a pass; a skip "
             "that survives the merge means the pass module never landed and the registration "
             "points at nothing."
         )

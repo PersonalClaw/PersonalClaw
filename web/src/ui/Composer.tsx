@@ -179,8 +179,7 @@ export function Composer({
   const actions = (
     <div className="flex items-center gap-xs">
       {/* The reason rides `disabledReason`, NOT the label. Folding it into the label mutates the
-          accessible NAME, so the action stops being findable by the name it has when it works —
-          the failure cycle 56 measured and ruled against. */}
+          accessible NAME, so the action stops being findable by the name it has when it works. */}
       {/* 🔑 THE SAME RULE, ONE STATE FURTHER. The comment above bans folding a REASON into the
           name; this button was folding its PROGRESS in ("Optimizing…"), for the same reason the
           reason used to live there — there was nowhere else to put it. `loading` is that place:

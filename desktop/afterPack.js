@@ -1,8 +1,8 @@
 // electron-builder afterPack hook — ad-hoc sign the packed macOS bundle.
 //
-// WHY THIS EXISTS. The project ships the desktop app unsigned by owner ruling (2026-09-22:
+// WHY THIS EXISTS. The project ships the desktop app unsigned, on purpose:
 // producing the installer does not require signing, and a real signature needs a paid Apple
-// Developer account deliberately not bought). `mac.identity: null` plus
+// Developer account deliberately not bought. `mac.identity: null` plus
 // `CSC_IDENTITY_AUTO_DISCOVERY=false` stop electron-builder discovering a Developer identity
 // from the build machine's login keychain — which it once did, shipping an app signed by an
 // unrelated third party. Those two guards stay, and this hook is NOT a reversal of them: an

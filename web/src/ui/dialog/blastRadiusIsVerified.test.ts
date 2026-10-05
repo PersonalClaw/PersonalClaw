@@ -38,7 +38,7 @@ describe('the task delete states what the backend really does', () => {
     )
     // 🪤 AND THAT THE BODY ACTUALLY USES IT — caught by mutation: deleting the interpolation while
     // leaving the `unblocks` const in place kept the first assertion green, so the claim existed and
-    // was never rendered. Third time this session a rail of mine checked a DEFINITION instead of its
+    // was never rendered. Not the first rail here to check a DEFINITION instead of its
     // SUPPLY; the composed string is the only thing a user sees.
     expect(ui, 'and the body interpolates it').toMatch(
       /body: `This cannot be undone\.\$\{unblocks\}\$\{withComments\}`/,
@@ -180,7 +180,7 @@ describe('no destructive dialog names its subject NOWHERE', () => {
   it('every hand-rolled danger dialog identifies what it is about', () => {
     // 🪤 #1608's ratchet was keyed on `confirmDelete(` callers, so a HAND-ROLLED `confirm({danger:true})`
     // was outside its population entirely — which is how the task delete kept asking about "this task"
-    // for another five cycles. Keyed here on the danger dialogs themselves.
+    // for five more passes. Keyed here on the danger dialogs themselves.
     //
     // The bar is "title OR body identifies it", not "the title interpolates": seven of the eight
     // subject-less TITLES name their subject in the BODY instead (`"${s.title}" and its history will be
@@ -825,7 +825,7 @@ describe('three more bodies, checked against their handlers', () => {
   // body, and that body still carries the destruction warning. Where the sentence LIVES is not the
   // invariant; that it exists, is custom, and is verified against the handler is.
   it('the two project deletes ride the shared ritual, with a custom destruction body', () => {
-    // AUD-A11: both code surfaces hand-rolled `confirm({ title: `Delete project …`, danger })` —
+    // Both code surfaces hand-rolled `confirm({ title: `Delete project …`, danger })` —
     // composing exactly what confirmDelete() composes, so the hand-roll was drift, and it kept both
     // sites outside every ratchet keyed on `confirmDelete(` callers. They ride the helper now. The
     // custom body remains the point of these dialogs, so the pin still requires one to be passed

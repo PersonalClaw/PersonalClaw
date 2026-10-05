@@ -3,7 +3,7 @@ id: stream-event-duplicated-or-lost
 type: triage-scenario
 symptom: >
   A streamed reply renders twice, a UI update never appears, or a loop/run widget shows a
-  stale or out-of-order state — the K42/K44/K45 stream-coalescer family.
+  stale or out-of-order state — the stream-coalescer family.
 appliesTo:
   - web/src/pages/chat/coalesceReducers.ts
   - web/src/pages/loops/runFold.ts
@@ -37,9 +37,9 @@ acceptance:
 
 ## Known causes + mitigations
 
-- **K44 (answer rendered twice):** a spurious boundary reset makes the next flush PUSH
+- **Answer rendered twice:** a spurious boundary reset makes the next flush PUSH
   instead of REPLACE. `adjacentDuplicateTextCount` in the replay driver catches it.
-- **K42 (activity absorbed the answer):** an activity line inserted AFTER the active text
+- **Activity absorbed the answer:** an activity line inserted AFTER the active text
   run instead of before it. `insertActivity` inserts before the tail text run.
 - **Out-of-order / lost:** a `seq` regression or gap — the backend replay metrics
   (`order_violation_count`, `reconnect_loss_count`) catch it against the baseline.

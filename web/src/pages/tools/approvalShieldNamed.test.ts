@@ -135,7 +135,7 @@ describe('the approval shield names itself', () => {
 
   it('every recorded-not-fixed exemption still exists and is still unnamed', () => {
     // An exemption for a site that has since been FIXED would silently keep the sweep narrower than it
-    // needs to be — the same staleness that let the triggers census fence outlive TSE-4.
+    // needs to be — the same staleness that let the triggers census fence outlive its reason.
     for (const entry of RECORDED_NOT_FIXED) {
       const [rel, glyph] = entry.split(': ')
       const text = strip(readSource(join(SRC, 'pages', rel)))

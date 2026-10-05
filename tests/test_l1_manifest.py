@@ -1,4 +1,4 @@
-"""L1 memory manifest + recall-count + memory_recall tool (D-MEM-INJECT half 1)."""
+"""L1 memory manifest + recall-count + memory_recall tool."""
 
 from __future__ import annotations
 
@@ -81,7 +81,7 @@ def test_l1_manifest_respects_limit(vs):
 
 def test_get_context_uses_manifest_when_l1_on(tmp_path, monkeypatch):
     # Context composition (L1-manifest vs legacy full-block) is the MemoryService's
-    # job (L3) post-M2; the MemoryStore is just the markdown projection.
+    # job (L3); the MemoryStore is just the markdown projection.
     from personalclaw.memory import MemoryStore
     from personalclaw.memory_service import MemoryService
 

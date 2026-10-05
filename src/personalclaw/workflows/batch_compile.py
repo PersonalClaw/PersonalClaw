@@ -8,7 +8,7 @@ The threshold rule is the whole ergonomic story: **N=1 stays a raw spawn, N≥2 
 check X while I keep chatting" is chat-native delegation, and forcing a run record plus project
 resolution onto it is ceremony that kills the personal feel.
 
-What the compiled run ships with (R2):
+What the compiled run ships with:
 
 * **Isolation by default**, with a compile-time lint that warns when more than one concurrent worker
   holds write access to the same path. Two workers writing one file is a lost update, and it is
@@ -24,10 +24,10 @@ What the compiled run ships with (R2):
 * **Per-leaf error isolation.** One leaf failing never rejects the batch: the whole point of five
   parallel investigations is that four still return.
 
-**The leaf CONTRACT is the load-bearing artifact, not the leaf's identity (amendment (b)).**
+**The leaf CONTRACT is the load-bearing artifact, not the leaf's identity.**
 Every leaf declares three things and none of them are optional: an **objective**, a declared
 **output format**, and a **boundary** — what it must not touch. The evidence review behind the
-amendment is why: across 1,642 annotated traces, "disobey role specification" is the 2nd-RAREST of
+rule is why: across 1,642 annotated traces, "disobey role specification" is the 2nd-RAREST of
 14 failure modes (1.5%) while specification drift is 11.8% and verification ~23.5%, and the one
 place a "roles help" result survived scrutiny it was the differing INSTRUCTIONS doing the work
 (ChatEval's identical-role arm scored exactly the single-agent number). So the compile refuses an
@@ -61,7 +61,7 @@ string. One path sent as text is a one-item list and never the characters of a s
 as JSON text is that list; a value of any other type, a capability that is not one of the two, and
 a key the contract does not have are refused, naming the field and the shape it takes.
 
-**Homogeneous by default, heterogeneous by MODEL only (amendment (a)).** A leaf inherits the
+**Homogeneous by default, heterogeneous by MODEL only.** A leaf inherits the
 parent's agent binding unless it pins one, and may pin a different `model` — the single measured
 heterogeneity win in the literature (up to 44% accuracy at matched cost). There is deliberately NO
 persona/role field on `LeafTask`: the best-powered direct test of personas (162 roles, 4 model
@@ -69,7 +69,7 @@ families, 2,410 questions) found no improvement with per-persona effects "largel
 persona churn is bidirectional (one measured case fixed 4% while breaking 18%), which is strictly
 worse than a uniform loss for an autonomous system because it destroys reproducibility.
 
-**Writes stay single-threaded (amendment (c)).** `mutating` leaves are serialized against each
+**Writes stay single-threaded.** `mutating` leaves are serialized against each
 other WITHIN the run by a `needs` chain, so two of them can never be in flight together, while
 research leaves stay fully parallel. Measured against the real frontier rather than assumed: a
 `needs` predecessor satisfies its edge once it is TERMINAL (done, failed or skipped alike), so a
@@ -183,10 +183,10 @@ def leaf_tool_posture(capability: Capability) -> dict[str, Any]:
 
 
 #: Minimum length for a declared objective/boundary. Not style policing — a two-word objective
-#: ("check things") carries no more specification than an empty one, and the whole reason C2.1
-#: exists is that specification drift is 11.8% of measured multi-agent failures while role confusion
-#: is
-#: 1.5%. A floor that admits "x" would make the requirement satisfiable without satisfying it.
+#: ("check things") carries no more specification than an empty one, and the whole reason the
+#: contract lint exists is that specification drift is 11.8% of measured multi-agent failures while
+#: role confusion is 1.5%. A floor that admits "x" would make the requirement satisfiable without
+#: satisfying it.
 MIN_DECLARATION_CHARS = 12
 
 #: How long a step's name (`LeafTask.label`) may run before it is cut, at a word.
@@ -212,7 +212,7 @@ class LintFinding:
 
 @dataclass
 class LeafTask:
-    """One leaf's CONTRACT — the load-bearing artifact of a fan-out (amendment (b)).
+    """One leaf's CONTRACT — the load-bearing artifact of a fan-out.
 
     `objective`, `output_format` and `boundary` are REQUIRED positionally-declarable fields with no
     defaults, deliberately: a dataclass default is an unsupplied input that satisfies a gate nobody
@@ -240,12 +240,12 @@ class LeafTask:
     #: step "repo_users_…_0", which says nothing to the person asked to approve it.
     title: str = ""
     agent: str = ""
-    #: Per-leaf model pin (amendment (a)): homogeneous by default, heterogeneous by MODEL. Empty
+    #: Per-leaf model pin: homogeneous by default, heterogeneous by MODEL. Empty
     #: means "inherit the parent's binding", which is what makes homogeneity the default rather
     #: than a thing every caller has to remember to ask for.
     #:
     #: Named `model_ref` and NOT `model` on purpose: `mutations._FIELD_ALIASES` already maps the
-    #: author-facing name `model` onto `model_tier` (WF2-R20d), so a `workflow_edit` op saying
+    #: author-facing name `model` onto `model_tier`, so a `workflow_edit` op saying
     #: `fields: {model: "..."}` on a compiled leaf would silently rewrite the TIER and leave the pin
     #: untouched — the author would then debug why their pin "did not apply" while looking at a key
     #: that was never written.
@@ -610,7 +610,7 @@ _REQUIRED_DECLARATIONS = ("objective", "output_format", "boundary")
 
 #: A persona field would look like any of these. Asserted ABSENT rather than merely not-added:
 #: "we did not add one" is a fact about one commit, while a check is a fact about every future one,
-#: and amendment (a) is a standing prohibition rather than a one-time decision.
+#: and the no-persona rule is a standing prohibition rather than a one-time decision.
 FORBIDDEN_LEAF_FIELDS = frozenset({"persona", "role", "character", "personality", "style", "voice"})
 
 
@@ -634,8 +634,8 @@ def agent_lint(leaves: list[LeafTask]) -> tuple[dict[int, str], list[LintFinding
     rename-proofing measure into a runtime break. Slugs are the MATCHING key; the config key is the
     BINDING value.
 
-    An unresolvable agent is an ERROR because `_validate_agent` would fail the spawn anyway (C1.3
-    made it a typed error rather than a silent downgrade). Catching it at compile costs nothing;
+    An unresolvable agent is an ERROR because `_validate_agent` would fail the spawn anyway (it
+    raises a typed error rather than silently downgrading). Catching it at compile costs nothing;
     catching it at spawn has already minted a run whose branches all fail on a typo.
     """
     from personalclaw.workflows import roster
@@ -669,9 +669,9 @@ def agent_lint(leaves: list[LeafTask]) -> tuple[dict[int, str], list[LintFinding
 
 def contract_lint(leaves: list[LeafTask]) -> list[LintFinding]:
     """Refuse a leaf that has not declared what it is for, what it returns, and what it must
-    not touch (amendment (b), C2.1).
+    not touch.
 
-    An ERROR, not a warning, and that is the whole point of the row. The measured failure budget of
+    An ERROR, not a warning, and that is the whole point of the lint. The measured failure budget of
     multi-agent systems goes to specification drift (11.8%) and verification (~23.5%), not to role
     confusion (1.5%) — so an under-specified leaf is the failure mode, and compiling it anyway would
     make the contract a suggestion. A blank-but-present declaration is treated identically to a
@@ -777,7 +777,7 @@ def depth_lint(depth: int) -> list[LintFinding]:
 
 
 def forbidden_declarations() -> list[str]:
-    """Persona-shaped fields present on the leaf contract. Empty is the invariant (amendment (a)).
+    """Persona-shaped fields present on the leaf contract. Empty is the invariant.
 
     A function rather than a comment saying "we did not add one": the prohibition is standing, so it
     has to be checkable by the gate on every future commit rather than true of the commit that wrote
@@ -946,15 +946,14 @@ def compile_batch(
 
     children: list[dict[str, Any]] = []
     postures: dict[str, dict[str, Any]] = {}
-    #: Writes stay single-threaded (amendment (c)): each `mutating` leaf `needs` the previous one,
+    #: Writes stay single-threaded: each `mutating` leaf `needs` the previous one,
     #: so the frontier makes at most one of them ready at a time while every research leaf stays
-    #: fully parallel. MEASURED against `tick.frontier`, not assumed — the note records what
-    #: assuming join semantics cost last time. Three properties came out of driving it: research
-    #: leaves all launch on tick 0 alongside the first mutator; the chain advances one mutator per
-    #: tick; and a FAILED mutator still hands the lane on, because `_visit_parallel` satisfies a
-    #: `needs` edge on any TERMINAL predecessor. That last one matters most — a chain that stalled
-    #: on a failure would have turned serialization into a second way for one bad leaf to sink a
-    #: batch, which is exactly what `join: quorum` exists to prevent.
+    #: fully parallel. MEASURED against `tick.frontier`, not assumed. Three properties came out
+    #: of driving it: research leaves all launch on tick 0 alongside the first mutator; the chain
+    #: advances one mutator per tick; and a FAILED mutator still hands the lane on, because
+    #: `_visit_parallel` satisfies a `needs` edge on any TERMINAL predecessor. That last one matters
+    #: most — a chain that stalled on a failure would have turned serialization into a second way
+    #: for one bad leaf to sink a batch, which is exactly what `join: quorum` exists to prevent.
     previous_mutator = ""
     for index, leaf in enumerate(leaves):
         node_id = leaf.node_id(index)
@@ -970,7 +969,7 @@ def compile_batch(
             "prompt": leaf.prompt(),
             "model_tier": "standard",
             # Emitted because `engine.leaf_spawn_env` NOW READS IT to set the leaf's read-only
-            # flag, which `mcp_shared.leaf_tool_denial` enforces at the tool handler (WF2WOR-5 C2).
+            # flag, which `mcp_shared.leaf_tool_denial` enforces at the tool handler.
             # Before that seam existed this key was deliberately withheld — an unread config key
             # that looks like a control is worse than an honest external contract. It has a reader
             # now, so withholding it would leave every compiled leaf's capability unenforced.

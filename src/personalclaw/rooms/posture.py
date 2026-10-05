@@ -3,8 +3,8 @@
 A room exists so that differently-privileged agents can deliberate in one place: a
 read-only critic and a tool-bearing executor share a transcript without sharing reach.
 That is this module's whole job, and it does it by **instantiating the shipped
-Autonomy-Guardrails vocabulary differently per member** rather than minting a room-specific
-one — the plan header's soul guardrail applied to safety. There is no
+autonomy-guardrails vocabulary differently per member** rather than minting a room-specific
+one — reuse over invention, applied to safety. There is no
 second safety-profile object here: the type is
 :class:`~personalclaw.guardrails.policy.SafetyProfile` and the narrowing is
 :meth:`~personalclaw.guardrails.policy.SafetyProfile.with_overrides`.
@@ -71,7 +71,7 @@ to the member's own key so ``guardrails.model_call.ModelCallGuard`` — the ship
 enforcement read — charges and clamps that member alone, and :func:`spend_verdict` is the
 pre-turn read that stops an over-ceiling member from speaking while the room carries on. No
 new scope VALUE is added to :class:`~personalclaw.guardrails.budgets.Budget`: the scope is a
-run-scope KEY, per AUTONOMY-GUARDRAILS' own rule that the evaluator dispatches on archetypes
+run-scope KEY, per the autonomy guardrails' own rule that the evaluator dispatches on archetypes
 and never on a scope name. Run totals live in memory, so a member ceiling bounds a gateway's
 lifetime; the calendar day is the operator's day budget's job and it already applies.
 """
@@ -131,7 +131,7 @@ MEMBER_AXES: tuple[str, ...] = ("tool_grants", "tool_allowlist", "budget")
 #: Data rather than prose in one error string, so the refusal an author reads is the same
 #: sentence this module argues from — and so admitting an axis means deleting its row here.
 #:
-#: 🔴 The last three are a MEASURED DEVIATION, which names all six.
+#: 🔴 The last three are refused because of a measurement, not a preference.
 #: Their enforcement points RE-RESOLVE the profile from a session key instead of accepting
 #: one — ``net.policy.egress_policy_for_run`` reads ``profile_for_session(session_key)
 #: .egress_tier`` for every request the guard judges, and
@@ -350,7 +350,7 @@ def member_posture(key: str, member: RoomMember) -> SafetyProfile:
 
 
 def describe_members(room: Room) -> list[dict]:
-    """Every member's RESOLVED posture, for the human and for `AR-8`'s UI.
+    """Every member's RESOLVED posture, for the human and for the room members panel.
 
     The declaration is already on the wire (it is a ``RoomMember`` field); this is the
     answer, which is the part a reader cannot compute — it folds in the restrictive default

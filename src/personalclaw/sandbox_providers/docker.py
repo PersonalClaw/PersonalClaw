@@ -2,13 +2,13 @@
 
 The first *confinement* tier: where the ``none`` builtin only hides credential paths and
 applies resource ceilings on the host, ``docker`` runs an agent-influenced process tree inside a
-bind-mount container over its WORK-R3 worktree, so the isolation is a real filesystem +
+bind-mount container over its worktree, so the isolation is a real filesystem +
 process + (optional) network boundary rather than a seatbelt profile.
 
 It is a ``bind_mount``-kind tier (sandcastle's taxonomy): the host owns the workspace and the
 provider mounts it in — no copy-in/out sync. UID alignment uses ``--user <uid>:<gid>`` so files
 written to the mount are owned by the host user with **no runtime ``chown -R``** (the permission
-hazard the plan calls out); on Linux the mount carries an SELinux ``:z`` relabel. Resource
+hazard to avoid); on Linux the mount carries an SELinux ``:z`` relabel. Resource
 ceilings map to docker's native knobs — ``max_pids`` → ``--pids-limit`` (a fork bomb dies at
 the limit, enforced by the container runtime on Linux and inside Docker Desktop's Linux VM on
 macOS), ``max_rss_mb`` → ``--memory``. The workspace is the only writable host path unless
@@ -53,7 +53,7 @@ DEFAULT_SANDBOX_IMAGE = "python:3.12-slim"
 
 _IMAGE_ENV = "PERSONALCLAW_SANDBOX_DOCKER_IMAGE"
 
-# Cached availability probe (the plan's short-TTL cached probe — a per-spawn ``docker version``
+# Cached availability probe (a short-TTL cache — a per-spawn ``docker version``
 # would add ~100ms to every launch). ``(checked_monotonic, ok)``.
 _PROBE_TTL_SECS = 30.0
 _probe_cache: tuple[float, bool] | None = None
@@ -159,7 +159,7 @@ def build_docker_argv(
         argv += ["--workdir", os.path.abspath(os.path.expanduser(workspace_dir))]
 
     # Container environment is spec.env ONLY — the host environment is never copied in, so a
-    # secret in the gateway process cannot reach the sandbox (WORK-R19 filters spec.env upstream).
+    # secret in the gateway process cannot reach the sandbox (spec.env is filtered upstream).
     for key in sorted(spec.env):
         argv += ["--env", f"{key}={spec.env[key]}"]
 

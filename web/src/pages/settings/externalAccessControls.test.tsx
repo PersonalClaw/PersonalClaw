@@ -233,7 +233,7 @@ describe('the external-access controls reach the backend', () => {
   })
 })
 
-// ── A token's lifetime is stated where the surface and the client are (ledger 317a) ──────────────
+// ── A token's lifetime is stated where the surface and the client are ────────────────────────────
 //
 // A surface's own token can stop working while the surface stays on for registered clients, and a
 // client's token ends 90 days after it was issued at the latest. Neither may read as "fine".

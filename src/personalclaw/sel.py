@@ -252,8 +252,8 @@ class SecurityEvent:
     request_id: str = ""  # ACP permission request ID
     error: str = ""
     #: WHICH SUBSYSTEM's pass was running when this event was recorded — one of
-    #: :data:`personalclaw.guardrails.audit.CALLERS`, or "" when nothing bound one (`G47`,
-    #: ACP-AGENT-PARITY). ``caller_identity`` above answers "whose SESSION" (a security
+    #: :data:`personalclaw.guardrails.audit.CALLERS`, or "" when nothing bound one.
+    #: ``caller_identity`` above answers "whose SESSION" (a security
     #: ACTOR — a session key / ``user`` / a remote address); this answers "whose PASS", the
     #: per-call caller the actor alone cannot carry. Filled by :meth:`SecurityEventLog.log`
     #: from the SAME ``guardrails.audit.caller_scope`` seam that stamps the model-call

@@ -3,7 +3,7 @@
 Project already exists and is already the right shape — named, briefed, owning a `context/` dir and
 `worktrees/`, with protected `Personal`/`Repeatable` defaults. This module adds only what the run
 engine needs from it, and deliberately adds no second umbrella noun: **no sub-projects, no
-milestones, no org semantics.** That is the enterprise slope the plan names explicitly.
+milestones, no org semantics.** That is the enterprise slope, kept out on purpose.
 
 Three things land here:
 
@@ -197,7 +197,8 @@ def release(existing: Claim | None, holder: str) -> tuple[Claim | None, str]:
 class Substrate:
     """Whether a run's execution substrate outlived the process that was driving it.
 
-    This is the distinction §5.2 turns on. `alive=True` means the work is recoverable — a worktree
+    This is the distinction the truthful lifecycle turns on. `alive=True` means the work is
+    recoverable — a worktree
     still on disk, a container still up — so the run is SUSPENDED and resumable. `alive=False` means
     the work is gone and the run is honestly aborted.
     """
@@ -213,7 +214,7 @@ class Substrate:
         An inline run's substrate IS the process, so it can never survive a restart — reporting one
         as suspended would offer a Resume that cannot work.
 
-        `tmux` joined this set with EI-6's durable sessions (EXECUTION-ISOLATION §5.1). It belongs
+        `tmux` joined this set with the durable worker sessions. It belongs
         for exactly the reason `container` does: the tmux DAEMON owns the worker's shell, not the
         gateway, so killing the gateway leaves the work running. That is also why aliveness for
         this kind is a live probe rather than a path check — a session whose shell exited is gone
@@ -250,9 +251,9 @@ class SweepDecision:
 
 
 def durable_worker_name(run: Any) -> str:
-    """The durable tmux session name for *run*'s worker — the ONE run→name derivation (§5.1).
+    """The durable tmux session name for *run*'s worker — the ONE run→name derivation.
 
-    Both halves of EI-6's mechanism call this: the spawn side names the session it opens and
+    Both halves of the durable mechanism call this: the spawn side names the session it opens and
     the boot sweep RECOMPUTES the name to ask whether that worker outlived the gateway. The
     recomputability is the whole trick — nothing is persisted at spawn time — which is exactly
     why the derivation may exist once. Two inline copies of the ``or "default"`` fallbacks
@@ -307,8 +308,8 @@ def sweep_decision(run: Any, substrate: Substrate) -> SweepDecision:
 def board_state_for(run: Any) -> BoardState:
     """Project one run onto the board's vocabulary.
 
-    `queued` is derived from the record existing WITHOUT a start time, which is why §5.2 asks that
-    the record be written before a slot is acquired: without that ordering, a run waiting for a slot
+    `queued` is derived from the record existing WITHOUT a start time, which is why the record
+    must be written before a slot is acquired: without that ordering, a run waiting for a slot
     indistinguishable from one that is running, and the board reports work in flight that has not
     begun.
     """

@@ -58,7 +58,7 @@ pytestmark = pytest.mark.skipif(not _WEB.exists(), reason="web sources not prese
 #: literal: a rename must red loudly here, not silently stop matching somewhere downstream.
 _DECL = "export const LOOP_ACTION_SOURCE_STATUSES"
 
-#: The RUN-BACKED loop's map (PP-16: a ported kind runs as a workflow run and is listed beside the
+#: The RUN-BACKED loop's map (a ported kind runs as a workflow run and is listed beside the
 #: loops-table rows), mirroring `workflows/loop_view.py:RUN_ACTION_SOURCE_STATES`. Parsed by the
 #: same parser, so it carries the same floors.
 _RUN_DECL = "export const RUN_LOOP_ACTION_SOURCE_STATUSES"
@@ -86,7 +86,7 @@ _SPREAD = re.compile(r"\.\.\.([A-Za-z_]\w*)")
 
 #: An action-guard MAP declaring a `resume` row, in either shape the map could take. Scoped to what
 #: it can actually see: this catches a second action→states TABLE reappearing, which is the
-#: unification this slice performs. It deliberately does NOT catch a bare inline guard (an
+#: unification this change performs. It deliberately does NOT catch a bare inline guard (an
 #: ``includes`` literal, or the chained ``===`` form ``CodeCockpitPage`` used) — those live on the
 #: call sites and are censused by the surfaces that own them, not from here.
 _ACTION_MAP_ROW = re.compile(r"\bresume:\s*(?:new Set\(|\[)")
@@ -238,7 +238,7 @@ def test_the_stop_row_reuses_the_active_status_set_by_reference():
         "the `stop` row of LOOP_ACTION_SOURCE_STATUSES must reference STOPPABLE_LOOP_STATUSES, not "
         f"restate its members (found: {refs.get('stop') or 'an inline literal'}). The backend's "
         "own `stop` row IS STOPPABLE_STATUSES; a second copy of those strings in the same "
-        "file is a new drift seam of exactly the kind this slice closes."
+        "file is a new drift seam of exactly the kind this rail closes."
     )
 
 

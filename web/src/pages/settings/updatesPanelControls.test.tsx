@@ -176,7 +176,7 @@ describe('every Updates control round-trips to its own config field', () => {
   })
 })
 
-describe('the rollback control (RUM-9 surfaced)', () => {
+describe('the rollback control', () => {
   it('offers the recorded previous version, pins it, THEN applies', async () => {
     mountWith({ last_version: '0.1.2' })
     const btn = screen.getByRole('button', { name: /Roll back to v0\.1\.2/ })

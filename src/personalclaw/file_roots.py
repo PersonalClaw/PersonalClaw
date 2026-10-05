@@ -39,7 +39,7 @@ def is_system_root(path: str) -> bool:
 
 
 def screenshot_dir() -> Path:
-    """Where a captured screenshot lands, resolved AT CALL TIME (CRE-8).
+    """Where a captured screenshot lands, resolved AT CALL TIME.
 
     This was a module-level ``_SCREENSHOT_DIR`` bound at import, and that is the whole
     defect: a constant is already a value, so no test fixture can redirect it and a
@@ -168,7 +168,7 @@ def all_dashboard_roots() -> list[tuple[str, str]]:
     except Exception:
         pass
 
-    # Project workspaces — a Project (projects-native-entity) is a first-class work
+    # Project workspaces — a Project is a first-class work
     # unit that MAY bind an arbitrary codebase dir on disk. Its detail view surfaces
     # that workspace as a "view contents" peek + "Open in Files", so the allowlist
     # must admit each bound Project.workspace_dir (exactly like a Loop's, above) —

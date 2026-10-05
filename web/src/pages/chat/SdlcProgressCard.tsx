@@ -118,7 +118,7 @@ export function SdlcProgressCard({ refObj }: { refObj: SdlcRef }) {
   const Icon = meta.icon
   const cycles = entity?.total_cycles
 
-  // Progress + steps + parked are the SHARED run view-model (P16 foldRun) — the same
+  // Progress + steps + parked are the SHARED run view-model (foldRun) — the same
   // pure derivation the cockpits use, so this card can never drift from them. Feed it
   // the DISPLAY kind + EFFECTIVE status (the two card-specific resolutions above:
   // dispKind fixes design/general mislabel, effectiveLoopStatus derives ended_early).

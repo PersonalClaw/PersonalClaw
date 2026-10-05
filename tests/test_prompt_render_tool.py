@@ -6,9 +6,9 @@ Covers: registration + schema, native-loop discoverability, the success path
 (renders via /api/prompts/{name}/render with vars), and the guard paths
 (missing prompt_id, bad vars type, render error, empty render).
 
-Lives in ``mcp_prompts`` as of WORKFLOWS-V2 Phase 0. It was in ``mcp_workflows``
+Lives in ``mcp_prompts``. It was in ``mcp_workflows``
 only because both were authored together; Prompts are their own entity, and that
-module is deleted wholesale when the old workflow feature is replaced.
+module was deleted wholesale when the old workflow feature was replaced.
 """
 
 from __future__ import annotations
@@ -68,8 +68,8 @@ class TestPromptRenderDispatch:
 
 class TestPromptsCategoryIsIndependent:
     """The relocation is the point: Prompts must survive the workflow feature's
-    replacement. Phase 1 deleted `mcp_workflows` wholesale (anything still living there
-    went with it), and Slice 6a rebuilt it as the v2 engine's tool surface. What the
+    replacement. The rebuild deleted `mcp_workflows` wholesale (anything still living there
+    went with it), and later restored it as the v2 engine's tool surface. What the
     relocation guarantees is not that the module is absent — it is back — but that
     `prompt_render` no longer lives in it and Prompts does not depend on it."""
 
@@ -81,7 +81,7 @@ class TestPromptsCategoryIsIndependent:
         try:
             wf = importlib.import_module("personalclaw.mcp_workflows")
         except ModuleNotFoundError:
-            return  # deleted (between Phase 1 and Slice 6a) — trivially satisfied
+            return  # deleted (mid-rebuild) — trivially satisfied
         names = {t["name"] for t in wf._list_tools()}
         assert "prompt_render" not in names
         assert all(n.startswith("workflow_") for n in names)

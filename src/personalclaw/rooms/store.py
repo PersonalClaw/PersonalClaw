@@ -23,8 +23,8 @@ hands :func:`export_payload` to ``dashboard/session_export.render`` from the HTT
 There is no third redactor and no second renderer — and no import of ``dashboard/`` from
 here, because a domain module may not reach up into the HTTP surface.
 
-Layout under the home (``rooms/`` is per-room, one directory each, so the transcript
-lands at the path AGENT-ROOMS names)::
+Layout under the home (``rooms/`` is per-room, one directory each, so each room's transcript
+lands at a path of its own)::
 
     rooms/index.json                    the room records, members included
     rooms/<id>/transcript.jsonl         the shared transcript
@@ -136,7 +136,7 @@ class RoomMember:
     substitute the default agent.
 
     ``profile_narrowing`` is what lets a read-only critic and a tool-bearing executor share
-    one room: the Autonomy-Guardrails capability axes this member declares against the room's
+    one room: the autonomy-guardrails capability axes this member declares against the room's
     own posture. The vocabulary, the validation, the restrictive default and the refusal all
     live in :mod:`personalclaw.rooms.posture` — this field is storage. It holds the raw
     DECLARATION rather than a resolved profile because the base it narrows is resolved per
@@ -421,7 +421,7 @@ def require_room(room_id: str) -> Room:
 
 
 def create_room(title: str) -> Room:
-    """Create a room from *title* and return it. Only a human reaches this (V1 exclusion).
+    """Create a room from *title* and return it. Only a human reaches this.
 
     The transcript file is NOT created here: ``ConversationLog.append`` creates it with its
     metadata line on the first message, and pre-creating it would mean two places that know
@@ -500,7 +500,7 @@ def add_member(
     listen_policy: str = DEFAULT_LISTEN_POLICY,
     profile_narrowing: object = None,
 ) -> Room:
-    """Add a member and return the updated room. Only a human reaches this (V1 exclusion).
+    """Add a member and return the updated room. Only a human reaches this.
 
     Validation order is deliberate: every check runs and raises BEFORE the index is
     rewritten, so a refused add writes nothing at all rather than leaving a half-member.

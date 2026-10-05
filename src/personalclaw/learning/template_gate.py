@@ -91,7 +91,7 @@ def record_skip(decision: GateDecision, *, detail: str = "") -> bool:
 
 
 def skip_counts(*, days: int = 30) -> dict[str, int]:
-    """Counts per typed skip reason over a window — the "negative space" §3.2 tunes against.
+    """Counts per typed skip reason over a window — the "negative space" to tune against.
 
     Reads the same ``flush_records`` rows :func:`record_skip` writes and keys them by the ``Skip``
     value parsed back out of ``detail``. Only reasons this module actually wrote are counted, so a
@@ -169,7 +169,7 @@ def evaluate(
 ) -> GateOutcome:
     """Run the chain on a real candidate, record any refusal, and file an accepted one.
 
-    ``CONSULT`` files nothing here. §3.2 pays for a model only in the ambiguous middle band, and
+    ``CONSULT`` files nothing here. A model is paid for only in the ambiguous middle band, and
     this call site has no model to pay with — reporting the band honestly is better than promoting
     the candidate on a score the design said was inconclusive, and better than recording it as a
     skip it was not.

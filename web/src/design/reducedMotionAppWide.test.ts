@@ -5,7 +5,7 @@
  * Seven `*.reducedMotion.test.tsx` files already ship, and each proves ONE component takes an
  * instant branch. `motion.test.ts` proves the four `physics` presets collapse — from a HAND
  * LIST (`const PRESETS = ['snappy','smooth','fluid','playful']`). Neither shape can answer the
- * question FM-7 actually asks: **does anything, anywhere, still animate when the user asked the
+ * question that actually matters: **does anything, anywhere, still animate when the user asked the
  * platform for less motion?** A per-component test says nothing about the component added next
  * week; a hand list says nothing about the transition family added next quarter.
  *
@@ -445,7 +445,7 @@ describe('census self-checks — the floors that stop a silent pass', () => {
 
 // ── A getter read at MODULE SCOPE freezes the gate for the session ────────────────────────
 //
-// 🔴 The defect class this closes, found twice while building FM-7 and fixed both times.
+// 🔴 The defect class this closes, found twice while building this rail and fixed both times.
 // The gated presets are GETTERS: they read the media query at property-access time. Held in a
 // module-scope object literal, that access happens ONCE at import, so the answer is frozen for
 // the whole session and a user who enables reduced motion mid-session keeps the spring.

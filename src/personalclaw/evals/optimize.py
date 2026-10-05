@@ -89,7 +89,7 @@ EXPERIENCE_DIR = ".experience"
 
 # ── declared stop conditions ─────────────────────────────────────────────────
 
-#: The auto-harness field values §8.2 names. Kept equal to ``loop.tick``'s defaults on
+#: The auto-harness field values. Kept equal to ``loop.tick``'s defaults on
 #: purpose: the same rule with two different numbers would be two rules.
 DEFAULT_HYPOTHESIS_ABANDON_AFTER = 3
 DEFAULT_NO_IMPROVEMENT_HALT = 5
@@ -127,7 +127,7 @@ class HaltReason(str, Enum):
 
 class CandidateOutcome(str, Enum):
     """One candidate's fate. ``SCOPE_VIOLATION`` is terminal for the candidate and is
-    recorded whether or not the score would have won — §8.1's "dead regardless of score"."""
+    recorded whether or not the score would have won — "dead regardless of score"."""
 
     ADMITTED = "admitted"
     SCOPE_VIOLATION = "scope_violation"
@@ -498,14 +498,14 @@ def capture_best_ever(subject: str, *, rows: Sequence[dict] | None = None) -> Be
 
 @dataclass(frozen=True)
 class DualGate:
-    """§8.1's keep/discard rule: BOTH halves, or the candidate is discarded.
+    """The keep/discard rule: BOTH halves, or the candidate is discarded.
 
     The halves are separate predicates rather than one boolean expression so each can be
     railed on its own — a gate whose two halves are only ever observed together is a gate
     that could be admitting on one of them.
     """
 
-    #: Half A — the harvested regression suite's pass threshold (LEARN-R2's GateOK floor).
+    #: Half A — the harvested regression suite's pass threshold (the GateOK floor).
     suite_threshold: float
     #: Where half B's bar starts: the monotonic best-ever from ``results.tsv``, frozen at capture.
     best_ever: BestEver
@@ -567,7 +567,7 @@ class Candidate:
 
     @property
     def no_change(self) -> bool:
-        """An empty edit. §8.1: these inherit the incumbent score without re-evaluation —
+        """An empty edit. These inherit the incumbent score without re-evaluation —
         scoring an unchanged artifact spends the suite's whole cost to learn nothing."""
         return not self.diff_text.strip() and not self.ops
 
@@ -681,7 +681,7 @@ def _winner(rows: Sequence[LedgerRow]) -> LedgerRow | None:
 class SearchOutcome:
     """What a completed search hands back. ``winner`` is ``None`` when nothing was admitted.
 
-    ``needs_from_human`` is populated for exactly the halts §8.2 says deserve one — a search
+    ``needs_from_human`` is populated for exactly the halts that deserve one — a search
     that abandoned its hypothesis, ran out of improvement or reached its budget has learned
     something a person should read, whereas one that simply exhausted its iteration count has
     not. ``summary`` is the sentence the search ends with, for every halt: why it stopped and
@@ -953,7 +953,7 @@ def search_summary(halt: HaltReason, detail: str, rows: Sequence[LedgerRow]) -> 
 
 
 def _needs_from_human(halt: HaltReason, summary: str) -> str:
-    """§8.2's structured ``needs_from_human`` note — for the halts that earned one.
+    """The structured ``needs_from_human`` note — for the halts that earned one.
 
     ``ITERATIONS_EXHAUSTED`` and ``PROPOSER_EXHAUSTED`` do not: the first means the envelope
     was too small and the second means there was nothing to try, and neither is a question
@@ -1045,8 +1045,8 @@ def violation_row(
 def no_change_row(
     gate: DualGate, rows: Sequence[LedgerRow], candidate: Candidate, *, scope: dict[str, Any]
 ) -> LedgerRow:
-    """The row of an empty candidate: it reaches no scorer and inherits the incumbent's score
-    (§8.1), so it does not move the bar either."""
+    """The row of an empty candidate: it reaches no scorer and inherits the incumbent's score,
+    so it does not move the bar either."""
     bar = gate.bar(rows)
     return replace(
         violation_row(gate, rows, candidate, scope=scope),

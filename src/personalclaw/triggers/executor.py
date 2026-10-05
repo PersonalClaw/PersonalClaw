@@ -1,13 +1,13 @@
 """The executor: drain a session inbox, run the action, classify the outcome.
 
-The fire path ends: "… → create run (full or ledger-only) → engine executes under the
+The fire path ends: … → create run (full or ledger-only) → engine executes under the
 `headless` profile
-→ **outcome classification** → delivery contract (decision 13) → health rollup +
-failure policy."
+→ **outcome classification** → delivery contract → health rollup +
+failure policy.
 
-S86 built the gate order, S87 the store, S88 the tick, S89 the dispatcher. This is the last
+The gate order, the store, the tick and the dispatcher come first. This is the last
 link: it takes
-what S89 queued onto a session inbox and turns it into a typed outcome plus a delivery.
+what the dispatcher queued onto a session inbox and turns it into a typed outcome plus a delivery.
 
 **Measured before writing — every dependency shipped, and two honesty contracts already fought
 for.**
@@ -20,13 +20,13 @@ for.**
   "_pending"` and only
   defaults to `"ok"` if the sentinel SURVIVED — its comment says why: "so a failed action's
   'error' is no
-  longer CLOBBERED by an unconditional 'ok' (the honest-status bug T7 set out to kill: a failed run
+  longer CLOBBERED by an unconditional 'ok' (the honest-status bug: a failed run
   recorded as success)". This module reproduces that three-state logic exactly.
 * **`launched` ≠ succeeded.** `engine.dispatch_action`'s docstring: "'launched' means
   background work
   STARTED, not that it succeeded, so it maps to DEGRADED with a reason rather than a clean DONE.
-  Reporting it as success would make a fire-and-forget action look verified." S84 preserved the same
-  distinction in the history projection (`launched` → `deferred`). This preserves it a third time.
+  Reporting it as success would make a fire-and-forget action look verified." The history
+  projection keeps the same distinction (`launched` → `deferred`). This preserves it a third time.
 * `dispatch.classify_handler_outcome` and `autopause.outcome_for_exit` already own the
   exception→outcome
   and exit-type→outcome mappings, so neither is re-derived here.
@@ -56,14 +56,14 @@ logger = logging.getLogger(__name__)
 #: when nothing
 #: else was reported — otherwise an unconditional success clobbers a runner's own `"error"`,
 #: which is the
-#: honest-status bug T7 was written to kill.
+#: honest-status bug.
 STATUS_PENDING = "_pending"
 
 #: A runner's reported status → a typed fire outcome. Data rather than branches, so the mapping is
 #: reviewable and a new status cannot silently fall through to success.
 #:
 #: `launched` → `DEFERRED`, never `RAN`: the action started background work and nobody has seen the
-#: result. `engine.dispatch_action` maps the same status to DEGRADED for the same reason, and S84's
+#: result. `engine.dispatch_action` maps the same status to DEGRADED for the same reason, and the
 #: history projection maps it to `deferred` too. Three surfaces, one meaning.
 #:
 #: 🔴 `skip`/`done`/`report` were ABSENT, and absence here means `unrecognized runner status` →
@@ -72,7 +72,7 @@ STATUS_PENDING = "_pending"
 #: — and a failure is not cosmetic on this path: `autopause` spends a 5-failure budget off these
 #: rows, so a healthy weekly script reporting `skip` would pause its own automation.
 #:
-#: `skip` → `SKIPPED_NOOP`, which is the value §1.3 defines as "ran and mutated nothing durable" and
+#: `skip` → `SKIPPED_NOOP`, which is the value defined as "ran and mutated nothing durable" and
 #: which `INERT_OUTCOMES` already folds out of the default runs view. It had a live reader
 #: (`history.is_inert`) and no writer.
 #:
@@ -238,8 +238,9 @@ def classify(reported: str, exception: BaseException | None = None) -> tuple[str
        `autopause` count
        only TRUE failures toward its threshold).
     2. A reported status is honoured verbatim through `STATUS_TO_OUTCOME`.
-    3. Only the SURVIVING sentinel defaults to success. This is the T7 rule: an unconditional `"ok"`
-       would clobber a runner's own `"error"` and record a failed run as a success.
+    3. Only the SURVIVING sentinel defaults to success. This is the honest-status rule: an
+       unconditional `"ok"` would clobber a runner's own `"error"` and record a failed run as a
+       success.
 
     An unrecognized status becomes `failed`, not `ran`: a status this build cannot classify
     must not be
@@ -279,8 +280,8 @@ def classify(reported: str, exception: BaseException | None = None) -> tuple[str
 def _payload_of(row: Any) -> dict[str, Any]:
     """The wakeup payload out of one queue row.
 
-    S89 queues `(msg_ts, text, kwargs)` with the structured payload under `kwargs['wakeup']` —
-    that is
+    The dispatcher queues `(msg_ts, text, kwargs)` with the structured payload under
+    `kwargs['wakeup']` — that is
     how it survives without widening the queue's tuple shape. Read defensively: a row queued by some
     other emitter (a chat nudge) has no wakeup, and this must skip it rather than raise.
     """
@@ -314,7 +315,7 @@ async def run_one(
     a `status`
     (or a `.last_status` attribute, matching the shipped `ScheduleJob` shape) or by RAISING.
 
-    The trigger's CLAIM is released in a `finally` (S97). The tick persists a claim so `overlap`
+    The trigger's CLAIM is released in a `finally`. The tick persists a claim so `overlap`
     can enforce; without the release every `overlap: skip` trigger would block itself after one
     run until the 1h expiry. `release_claim` is injected (default: the real claim store) so a test
     needs no home directory, and passing `None` disables it for a caller that owns the claim itself.
@@ -377,10 +378,10 @@ async def drain(
 
     The cap is reported rather than silent (`truncated`), because a partial drain that looked
     complete
-    would make a backed-up queue invisible — the S65 rule this program keeps re-learning on
+    would make a backed-up queue invisible — a rule that keeps being re-learned on
     new surfaces.
 
-    🔴 `base_dir` is threaded to `run_one` so the CLAIM IS RELEASED (S97). Measured while wiring the
+    🔴 `base_dir` is threaded to `run_one` so the CLAIM IS RELEASED. Measured while wiring the
     clock loop: `drain` took no `base_dir`, so `run_one`'s release was a no-op on every
     drained fire —
     which meant `overlap: skip` would block a trigger for the full 1h claim expiry after its first
@@ -427,7 +428,7 @@ async def drain(
 
 
 def delivery_for(outcome: RunOutcome, *, trigger_name: str = "", destination: str = "") -> Any:
-    """S85's completion notification for one settled run, or None while it is deferred.
+    """The completion notification for one settled run, or None while it is deferred.
 
     Returns None for `DEFERRED` deliberately: the action launched background work and nobody
     has seen the
@@ -451,9 +452,9 @@ def delivery_for(outcome: RunOutcome, *, trigger_name: str = "", destination: st
 
 
 def ledger_rows(result: DrainResult) -> list[dict[str, Any]]:
-    """One typed row per executed payload — §7 crit 8's "zero silent drops", at the execution end.
+    """One typed row per executed payload — no silent drops, at the execution end.
 
-    S86's fire path writes a row for every fire it evaluated; this writes one for every fire that
+    The fire path writes a row for every fire it evaluated; this writes one for every fire that
     actually ran. Both halves are needed: a fire that passed every gate and then died in the
     executor
     would otherwise leave a `ran` row from the gate walk and nothing else.
@@ -473,7 +474,7 @@ def ledger_rows(result: DrainResult) -> list[dict[str, Any]]:
 
 
 def health_delta(result: DrainResult) -> dict[str, Any]:
-    """What this drain does to a trigger's health rollup (§3.7).
+    """What this drain does to a trigger's health rollup.
 
     `deferred` counts toward NEITHER success nor failure. A rollup that counted a
     launched-but-unverified

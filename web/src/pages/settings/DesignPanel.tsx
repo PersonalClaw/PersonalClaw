@@ -190,8 +190,8 @@ export function DesignPanel() {
  *  live (`app/navDisclosure.ts`), so it is a plain switch over that store rather than another
  *  entry in the appearance blob. The panel does not know the rail's id list and must not
  *  import it — a static import of `app/App.tsx` from a lazily-loaded settings panel is what
- *  pulls the whole shell into the first-load bundle (the `INEFFECTIVE_DYNAMIC_IMPORT` trap
- *  OU-2 hit) — so the hint counts what this store itself knows: the surfaces already
+ *  pulls the whole shell into the first-load bundle (the `INEFFECTIVE_DYNAMIC_IMPORT`
+ *  trap) — so the hint counts what this store itself knows: the surfaces already
  *  revealed. */
 function NavigationSection() {
   const { mode, pinned, setMode } = useNavDisclosure()

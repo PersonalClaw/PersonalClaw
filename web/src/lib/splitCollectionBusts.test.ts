@@ -5,7 +5,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── One collection, two namespaces, and a bust that could only ever reach one ─────────────────────
 //
-// Fourth and last instance of the family opened in ux-682: a key named after its READER is invisible
+// Fourth and last instance of a family: a key named after its READER is invisible
 // to its collection's invalidation. The first three were found by chasing a specific surface. This one
 // was found by asking the general question — *which collections are read under keys in more than one
 // namespace?* — over all 74 collection reads in the tree. Ten came back; two were real:
@@ -17,13 +17,13 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // dropped by anything, ever. That key feeds `DependencyEditor`, the *only* place a task's dependencies
 // are chosen, and it is `persist: true`.
 //
-// 🪤 AND HERE IS WHERE THIS CYCLE ALMOST SHIPPED A FALSE CLAIM. The obvious write-up is "creating a
+// 🪤 AND HERE IS WHERE THIS FIX ALMOST SHIPPED A FALSE CLAIM. The obvious write-up is "creating a
 // task and then depending on it was impossible". Driven in the browser against the PRE-FIX build, the
 // just-created task **was** offered — because `useQuery` revalidates on EVERY mount, so a missing
 // bust cannot produce a durably wrong list. It produces a wrong FIRST PAINT, for the length of one
 // refetch, and `persist: true` means a hard reload — the gesture a user makes when a list looks wrong —
 // paints that same wrong list again before correcting itself. That is the real, smaller defect. It is
-// worth fixing and it is not worth overstating. (The two sibling cycles that opened this family, #1682
+// worth fixing and it is not worth overstating. (The two sibling fixes that opened this family, #1682
 // and #1686, describe their staleness as surviving a reload; by this measurement the survival is one
 // revalidation window, not indefinite.)
 //
@@ -120,7 +120,7 @@ describe('both readers of the loaded-model set share one key', () => {
 
 describe('the general check, so the fifth instance is caught by a test', () => {
   it('no collection is read under keys in two different namespaces', () => {
-    // The question that found this cycle's two defects. A namespace is the segment before the first
+    // The question that found the two defects above. A namespace is the segment before the first
     // `:` (or the whole key when there is none), so `tasks` and `tasks-all` count as one and
     // `settings:x` vs `dashboard:y` do not.
     const byCall = new Map<string, Set<string>>()
@@ -156,12 +156,12 @@ describe('the general check, so the fifth instance is caught by a test', () => {
     //     provider TYPES. Nothing can staleten a reader, so the split costs nothing. They are named in
     //     KNOWN_DISTINCTIONS below rather than left pending.
     //   · appCatalog — real: onboarding installs apps, and `app-catalog` (persist:true) is a separate
-    //     key. Its own cycle.
+    //     key. Its own fix.
     //   · dashboardConfig, personalclawConfig — real, and NOT separable. `settings:chat` is a
     //     COMPOSITE read (`Promise.all([api.dashboardConfig(), api.personalclawConfig()])`), so it
     //     belongs to BOTH collections and can sit in neither one's namespace. Converging one
     //     collection alone would leave the composite half-covered while looking handled, so these two
-    //     must move together in one cycle. The sharpest instance is fixed below in the meantime.
+    //     must move together in one change. The sharpest instance is fixed below in the meantime.
     //
     // 🔑 This is a RATCHET, not an allowlist: an entry may only ever be removed. A collection that
     // starts splitting across namespaces is not on the list, so it fails here.
@@ -174,7 +174,7 @@ describe('the general check, so the fifth instance is caught by a test', () => {
     const unexpected = split.filter((c) => !PENDING_JUDGMENT.has(c))
     expect(unexpected, `these newly read one collection under two namespaces:\n${unexpected.join('\n')}`)
       .toEqual([])
-    // The two this cycle closed must never come back — the ratchet direction, asserted.
+    // The two closed here must never come back — the ratchet direction, asserted.
     expect(split, 'the task collection is one namespace again').not.toContain('tasks')
     expect(split, 'the loaded-model set is one key again').not.toContain('modelsLoaded')
     // And the list may not grow silently: a stale entry means someone judged it without pruning.

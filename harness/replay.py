@@ -187,7 +187,7 @@ def metrics_for_scenario(trace_dir: str | Path) -> Metrics:
     When the scenario carries a workflow journal→SSE projection (events on a ``workflow:``
     key), the terminal state of the event-fold law (:func:`fold_workflow`) is attached as
     ``Metrics.fold`` so a baseline can pin the invariant — a format change that breaks the
-    fold changes this dict and trips the baseline compare (Success Criterion #4).
+    fold changes this dict and trips the baseline compare.
     """
     events = load_scenario(trace_dir)
     m = compute_metrics(events)
@@ -201,9 +201,9 @@ def metrics_for_scenario(trace_dir: str | Path) -> Metrics:
 #
 # The Python mirror of ``web/src/pages/workflows/workflowFold.ts``. The FOLD LAW: folding a
 # run's SSE events over its (empty, for a from-start recording) snapshot reconstructs exactly
-# the state the server would report. This is the invariant SV-5 gates: a change to the
-# journal→projection event format that breaks the law changes the terminal fold, so the
-# checked-in baseline (:mod:`harness.baselines`) stops matching and the compare FAILS.
+# the state the server would report. The workflow replay scenarios gate this invariant: a
+# change to the journal→projection event format that breaks the law changes the terminal fold,
+# so the checked-in baseline (:mod:`harness.baselines`) stops matching and the compare FAILS.
 #
 # Three guards make the law survive rewind + reconnect — the same three the TS fold enforces:
 #   1. dedup by deterministic ``event_id`` (a reconnect re-delivers events);
@@ -359,7 +359,7 @@ def fold_workflow(events: list[TraceEvent]) -> dict[str, Any]:
     return vm.snapshot()
 
 
-# ── MCP record/replay-as-fake-server (§2.1 rider) ────────────────────────────
+# ── MCP record/replay-as-fake-server ─────────────────────────────────────────
 
 
 class FakeMcpServer:

@@ -208,16 +208,16 @@ async def api_projects_create(request: web.Request) -> web.Response:
 
 
 def _fingerprint_proposals(project: Any) -> list[dict[str, Any]]:
-    """The AGENT-PACKS §7 propose-only pack cards for a just-created project.
+    """The propose-only pack cards for a just-created project.
 
     ONE of the two places a fingerprint scan may run (the other is the on-demand
-    ``GET /api/packs/proposals``); §7 forbids a background loop, and
+    ``GET /api/packs/proposals``); a background loop is forbidden, and
     :func:`packs.fingerprint.scan_project` enforces that by refusing any other ``reason``.
 
     The scan writes nothing and is fail-soft: a project must be created even if pack discovery
     breaks, so any failure logs and returns no proposals. ``with_inspect=False`` keeps creation
     latency independent of how many packs matched — the card in the pack store fetches the full
-    §3.1 report from the on-demand route when the user actually looks at it.
+    report from the on-demand route when the user actually looks at it.
     """
     from personalclaw.packs.fingerprint import SCAN_REASON_CREATE, scan_project
 
@@ -327,8 +327,8 @@ async def api_projects_linked(request: web.Request) -> web.Response:
     Read-only summaries (id/name/status) so the Projects detail page can show the
     integration — everything the user does on one effort, in one place.
 
-    Also carries the project's ARTIFACTS and its run-written KNOWLEDGE (WORK-CONTAINERS
-    §1.6) — the two "what did work on this project leave behind" surfaces."""
+    Also carries the project's ARTIFACTS and its run-written KNOWLEDGE — the two "what did
+    work on this project leave behind" surfaces."""
     pid = request.match_info["project_id"]
     if _store().get_project(pid) is None:
         return web.json_response({"error": "not found"}, status=404)
@@ -526,7 +526,7 @@ def _as_board_row(d: dict) -> containers.BoardRow:
 
 
 def _run_rows(pid: str, now: float) -> list[dict]:
-    """WF2 runs bound to this project, as board-row dicts with their live claim."""
+    """Workflow runs bound to this project, as board-row dicts with their live claim."""
     runs, _ = run_store.list_runs(project_id=pid, limit=500)
     return [
         containers.board_row(r, claim_record=leases.read_claim(r.id), now=now).to_dict()
@@ -596,7 +596,7 @@ def _task_rows(tasks: list, pid: str) -> list[dict]:
 async def api_projects_work(request: web.Request) -> web.Response:
     """GET /api/projects/{project_id}/work — the state-grouped Work board.
 
-    One board over three heterogeneous sources — WF2 runs, legacy loops, standalone
+    One board over three heterogeneous sources — workflow runs, legacy loops, standalone
     tasks — each collected under its own try/except so a slow or broken source degrades
     ONE section rather than the whole first paint (`containers.collect_sections`). OK
     sections' rows are flattened and grouped by `containers.group_board`, which pins

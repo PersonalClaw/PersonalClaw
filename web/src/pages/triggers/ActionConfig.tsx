@@ -41,7 +41,7 @@ export function ActionConfig({ providers, provider, config, onProvider, onConfig
   // Metadata-driven widgets: a schema field with x-meta.widget "prompt" renders a
   // live, searchable picker of saved Prompts instead of a free-text box. Loaded
   // lazily. Clearing the picker (the X) leaves the field empty — which for
-  // run-prompt means "use loop.md" (T3).
+  // run-prompt means "use loop.md".
   //
   // "workflow" picks one of your workflows and "workflow-inputs" fills in the chosen one's declared
   // inputs (the run-workflow action). Its manifest was restored with them: without it this form
@@ -102,7 +102,7 @@ export function ActionConfig({ providers, provider, config, onProvider, onConfig
               guided fields that populate the action's `vars` object — so a parameterized
               template (e.g. the digest: sources/window/target) is filled with labelled,
               typed inputs instead of hand-writing raw JSON in the advanced "Variables" box.
-              This is the P10 "digest builder" realized on the ONE trigger-authoring surface
+              This is the "digest builder" realized on the ONE trigger-authoring surface
               (no separate route/dual path). */}
           <PromptVarsFields prompts={prompts} promptId={String(config.prompt_id ?? '')}
             vars={(config.vars as Record<string, unknown>) || {}}

@@ -5,11 +5,11 @@ schedule / lifecycle / event trigger names a saved :class:`PromptSnippet` /
 ``PromptTemplate``, which is resolved, rendered through the prompt engine
 (includes / loops / conditionals), wrapped in the autonomous-run framing, and
 run as an unattended subagent turn. The unit-of-recurrence is the *saved
-artifact*, decoupled from the runner — the gap E1 closes.
+artifact*, decoupled from the runner.
 
 It reuses the same ``services.subagents.spawn`` path the marquee ``invoke-agent``
 action uses, so it inherits the recursion-depth cap, the concurrency semaphore,
-and the auto-approve + unattended (T5) run mode for free. The only new work is
+and the auto-approve + unattended run mode for free. The only new work is
 resolving + rendering the saved prompt.
 
 ``action_config`` shape::
@@ -112,7 +112,7 @@ def render_saved_prompt(prompt_id: str, values: dict[str, Any] | None) -> str:
 
     Raises ``LookupError`` when no such prompt exists, ``ValueError`` when the
     prompt engine rejects the render (e.g. a required variable is unset). Shared
-    with the ``loop.md`` convenience (T3), which renders a file-sourced prompt
+    with the ``loop.md`` convenience, which renders a file-sourced prompt
     through the same engine.
     """
     from personalclaw.prompt_providers import (
@@ -191,7 +191,7 @@ class RunPromptActionProvider(ActionProvider):
         # in its place.
         #
         # Neither → run the project/user default-recurring-prompt (loop.md), the thin convenience
-        # that makes 'every 20m, run my loop' work with no saved-prompt id (T3). The file is the
+        # that makes 'every 20m, run my loop' work with no saved-prompt id. The file is the
         # prompt source; everything else (framing, spawn) is identical to a named prompt.
         message = str(action_config.get("message") or "").strip()
         source_label = f"prompt {prompt_id!r}"
@@ -226,7 +226,7 @@ class RunPromptActionProvider(ActionProvider):
 
         # The turn runs unattended (no user to answer) — frame it so the model
         # doesn't fall back to questions / option menus, and rely on the spawn's
-        # auto-approve + T5 unattended toolset so it can't wedge. After the instruction comes what
+        # auto-approve + unattended toolset so it can't wedge. After the instruction comes what
         # started this run (`ActionContext.fire_facts`): the file that arrived, the message that
         # came. Without it, a file trigger's run read its own instruction as a request to set up
         # the automation, and reported the automation already there.
@@ -273,7 +273,7 @@ class RunPromptActionProvider(ActionProvider):
 
         # What its agent may do, as its Allow said it (`automation_posture.fire_policy`, the check
         # invoke-agent builds its run from too): the run is built from the same mapping the Allow's
-        # sentence is. §4.1 creation-time write grant: this fire is auto-fired, so it is read-only
+        # sentence is. The creation-time write grant: this fire is auto-fired, so it is read-only
         # unless the automation was created with ``capability: "mutating"``, and a working folder
         # (a project ``<cwd>/loop.md``, project scripts) the owner has not trusted holds it to
         # reading too: a write grant cannot silently execute project scripts there.
@@ -321,7 +321,7 @@ class RunPromptActionProvider(ActionProvider):
             return ActionResult(success=False, error=f"run-prompt: {refused}")
         from personalclaw.subagent import agent_work_id
 
-        # "launched", not "succeeded": we only started the background turn (T7 honesty). The
+        # "launched", not "succeeded": we only started the background turn. The
         # run's row names the agent, and says how it went when it ends.
         return ActionResult(
             success=True,

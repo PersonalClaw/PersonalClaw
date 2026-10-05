@@ -56,10 +56,10 @@ describe('the tool grid gives a name room on a phone', () => {
   it('the name is still the truncating identifier it was', () => {
     // The fix gives it room; it does not stop it truncating when a name is genuinely enormous.
     //
-    // 🔑 RE-POINTED, NOT RELAXED (cycle 622). This pinned the prop string up to its closing `>`, so
+    // 🔑 RE-POINTED, NOT RELAXED. This pinned the prop string up to its closing `>`, so
     // adding the `title` that a truncating identifier needs broke a match whose INTENT — still a
-    // truncating monospace identifier — was untouched. Second time this exact shape has bitten in this
-    // session (see `mutedLinkTargets`), so it now asserts each prop independently AND the recovery
+    // truncating monospace identifier — was untouched. Second time this exact shape has bitten
+    // (see `mutedLinkTargets`), so it now asserts each prop independently AND the recovery
     // title, which is strictly more than the literal ever checked.
     const span = /<span className="truncate font-mono text-on-surface text-\[0\.8125rem\]"[^>]*>\{t\.name\}<\/span>/.exec(CODE)?.[0] ?? ''
     expect(span, 'the tool name is still a truncating mono span').toBeTruthy()

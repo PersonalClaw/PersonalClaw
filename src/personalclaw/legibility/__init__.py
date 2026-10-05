@@ -1,6 +1,6 @@
-"""Platform-legibility runtime surfaces (Platform-Legibility §6-§7).
+"""Platform-legibility runtime surfaces.
 
-Two user-facing features that read the self-description machinery S1-S5 built and
+Two user-facing features that read the platform's self-description machinery and
 turn it into help the human can see:
 
 * :mod:`personalclaw.legibility.discover` — the "Discover" dashboard section and the

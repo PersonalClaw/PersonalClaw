@@ -595,7 +595,7 @@ def plan(store: Any, verb: str, item_id: str, params: dict | None = None) -> Pla
 
 
 def refresh_derived(store: Any, item_ids: list[str], *, reason: str) -> list[str]:
-    """Invalidate the derived layer for *item_ids* and hand the rebuild to KL-14's host.
+    """Invalidate the derived layer for *item_ids* and hand the rebuild to the maintenance host.
 
     Invalidate rather than recompute, and the split between the two is the whole design. What
     happens HERE is cheap, synchronous and must be atomic with the restructure: the chunk rows
@@ -606,7 +606,7 @@ def refresh_derived(store: Any, item_ids: list[str], *, reason: str) -> list[str
 
     Doing the expensive half inline is the mistake `maintenance_passes` was written to prevent
     -- a bulk restructure would then do it once per item, each pass superseded by the next,
-    while holding the write lock. Doing NEITHER half is the mistake this atom names: halves
+    while holding the write lock. Doing NEITHER half is the mistake this function prevents: halves
     that keep the parent's vectors search as if the text never moved.
     """
     from personalclaw.knowledge import maintenance

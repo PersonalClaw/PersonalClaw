@@ -350,13 +350,13 @@ const PAIR_ROUTE = "/pair";
  * Read a pairing URL — `<base>/pair?code=XXXX-XXXX` — into an origin plus a code.
  *
  * 🔑 THIS IS THE PREFERRED WAY TO ADD AN ENDPOINT, and the reason is a security one. `base` is
- * composed **by the gateway** (`handlers/devices.py:_pair_base_url`, C2 (a)), so pasting the URL
+ * composed **by the gateway** (`handlers/devices.py:_pair_base_url`), so pasting the URL
  * means the host string came from the owner's own gateway rather than from their typing. A typo
  * cannot point the shell somewhere else, because there is nothing to mistype.
  *
  * The code is NOT a credential this shell holds. It rides in the URL handed to the WebView, which
  * is what lets the served `/pair` page do the redemption so the session cookie lands in the
- * WebView's own jar (the same ruling `mobile/www/shell/network.mjs:pairingTargetFromScan`
+ * WebView's own jar (the same decision `mobile/www/shell/network.mjs:pairingTargetFromScan`
  * records: a shell that redeemed natively would hold a session the WebView could not use).
  */
 function parsePairingUrl(raw) {
@@ -415,8 +415,8 @@ function parsePairingUrl(raw) {
  *   - **loopback + http** — allowed silently. This is the spawn-local default and the traffic
  *     never leaves the machine.
  *   - **private + http** — allowed, but ONLY behind an explicit confirmation, because every other
- *     device on that network can read the session cookie and the whole conversation. The plan's
- *     own C1 example is `http://claw.local:10000`, so refusing this outright would refuse the
+ *     device on that network can read the session cookie and the whole conversation. The connect
+ *     dialog's own example is `http://claw.local:10000`, so refusing this outright would refuse the
  *     documented LAN case; making the user say yes once is the narrowest honest answer.
  *   - **public + http** — REFUSED. Not warned about: refused. A gateway reached over the internet
  *     rides the TLS boundary, whose session cookie is `Secure` and therefore is

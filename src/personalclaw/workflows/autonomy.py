@@ -17,8 +17,8 @@ are failures: honoring "run unattended" on a plan that deletes production is the
 quietly refusing it is the one that makes a user distrust the whole control.
 
 **Everything compiles to `require_hitl`.** Node-level HITL/AFK typing, the risk registry and the
-chosen mode all reduce to one flag the engine already knows how to honour. The plan's own risk note
-is explicit: autonomy machinery that grew its own enforcement path would contradict the engine's
+chosen mode all reduce to one flag the engine already knows how to honour. Autonomy machinery
+that grew its own enforcement path would contradict the engine's
 trust plumbing, so the compilation target is single by design.
 
 **Two interrupts, and only two.** An unattended run stops for an irreversible action and for an
@@ -96,7 +96,7 @@ class RiskSignal:
     caps_autonomy_at: Mode = Mode.PER_STAGE
 
 
-#: THE registry. One file, cited by reference — the plan is explicit that planner and templates must
+#: THE registry. One file, cited by reference — planner and templates must
 #: not each carry their own opinion of what risky means.
 RISK_SIGNALS: tuple[RiskSignal, ...] = (
     RiskSignal(
@@ -344,8 +344,8 @@ def type_attention(spec: dict[str, Any], hits: list[RiskHit] | None = None) -> d
 def compile_require_hitl(spec: dict[str, Any], mode: Mode) -> dict[str, bool]:
     """The ONE uniform engine target: node id → `require_hitl`.
 
-    Everything above — the registry, the attention typing, the chosen mode — reduces here. The
-    plan's own risk note says autonomy machinery that grew a second enforcement path would
+    Everything above — the registry, the attention typing, the chosen mode — reduces here.
+    Autonomy machinery that grew a second enforcement path would
     contradict the engine's trust plumbing, so there is exactly one output and the engine already
     knows how to honour it.
 
@@ -679,7 +679,7 @@ class Interrupt(str, Enum):
     Closed AND produced: every member is named in `should_interrupt`, and a ratchet fails the build
     if a new one is added without a branch. A documented interrupt nothing can produce is worse than
     no interrupt at all — it reads, to anyone auditing the guardrail, like a stop that exists.
-    (WF2UNI-13 removed a third member, `CONFLICTING`, for exactly that reason: "requirements that
+    (A third member, `CONFLICTING`, was removed for exactly that reason: "requirements that
     contradict each other" named no signal a `ConfirmationRequest` carries. The one real
     contradiction this module detects — a template `autonomy_floor` above the risk ceiling, in
     `offer_autonomy` — is resolved at PLAN time by letting the floor win, so it never reaches a run
@@ -727,7 +727,7 @@ def should_interrupt(
     frank description of the trade rather than as a control that has to be conservative.
 
     Exhaustive over `ConfirmationType` with a RAISING tail, and every `Interrupt` member is named
-    here. Both halves are the ratchet (WF2UNI-13): before it, two of the three documented interrupts
+    here. Both halves are the ratchet: before it, two of the three documented interrupts
     were produced nowhere, so the taxonomy described stops that could not happen.
     """
     if mode != Mode.UNATTENDED:

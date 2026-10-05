@@ -1,4 +1,4 @@
-"""Data-event triggers (#38): the event bus and the pattern grammar of `kind: "event"` rows.
+"""Data-event triggers: the event bus and the pattern grammar of `kind: "event"` rows.
 
 An event trigger is an ordinary row in the one trigger store (`triggers.json`) with
 ``kind: "event"``. It fires when PersonalClaw's own state changes. The vocabulary is
@@ -18,7 +18,7 @@ Inbox messages (``inbox_service._ingest``, after the allowlist) — ``source="in
 - **InboxSender**      — a message whose sender matches ``sender_glob``.
 - **InboxAddress**     — a message whose receiving address matches ``address_glob``.
 
-App-contributed sources (``trigger_sources.emit``, AUTO-A4) — ``source="app"``:
+App-contributed sources (``trigger_sources.emit``) — ``source="app"``:
 
 - **AppEvent**         — an event from an installed app's ``trigger_source`` provider, whose
   namespaced name (``app:<app>:<event>``) matches ``event_glob``. An empty glob matches every app
@@ -62,11 +62,11 @@ from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
-# Event sources (EIAT-1 C1). A source is the CLASS of origin — matching is scoped by it, so a
+# Event sources. A source is the CLASS of origin — matching is scoped by it, so a
 # memory trigger can never fire on an inbox event and vice versa.
 SOURCE_MEMORY = "memory"
 SOURCE_INBOX = "inbox"
-#: App-contributed sources (AUTO-A4). Its PRODUCER is `trigger_sources.registry.emit`, the single
+#: App-contributed sources. Its PRODUCER is `trigger_sources.registry.emit`, the single
 #: ingestion point that namespaces the event (`app:<app>:<event>`) from the app's registered name
 #: and fences its text at origin.
 SOURCE_APP = "app"
@@ -82,7 +82,7 @@ CONTENT_MATCH = "ContentMatch"
 INBOX_MESSAGE = "InboxMessage"
 INBOX_SENDER = "InboxSender"
 INBOX_ADDRESS = "InboxAddress"
-# App-source pattern (AUTO-A4). ONE pattern, not a catch-all plus a glob pattern: both would read
+# App-source pattern. ONE pattern, not a catch-all plus a glob pattern: both would read
 # the same `event_type`, so the catch-all is just an empty `event_glob`.
 APP_EVENT = "AppEvent"
 EVENT_PATTERNS = (
@@ -182,8 +182,8 @@ def with_derived_source(spec: dict[str, Any]) -> dict[str, Any]:
 
 #: How much of a memory value `ContentMatch` will scan.
 #:
-#: §7/R4 rule (d) — "payload content never participates in event-pattern matching; only trigger spec
-#: patterns match, payload is data" — HOLDS here: the regex comes from the trigger's spec and the
+#: The rule "payload content never participates in event-pattern matching; only trigger spec
+#: patterns match, payload is data" HOLDS here: the regex comes from the trigger's spec and the
 #: value is only ever matched against.
 #:
 #: 4 KB because a `ContentMatch` trigger asks "does this memory value mention X", and a mention that
@@ -237,7 +237,7 @@ def matches(
     here: it is the gate walk's ``budget`` gate, which records the suppression instead of dropping
     it.
 
-    §7/R4 rule (d): only the trigger SPEC supplies patterns. The value's scan length is capped — see
+    Only the trigger SPEC supplies patterns. The value's scan length is capped — see
     `CONTENT_MATCH_SCAN_LIMIT`.
     """
     if getattr(trigger, "kind", "") != "event" or not getattr(
@@ -306,7 +306,7 @@ class BusEvent:
 
 
 def _truncate_fenced(value: str, limit: int) -> str:
-    """Truncate text that is ALREADY fenced, keeping the fence closed (AUTO-A4).
+    """Truncate text that is ALREADY fenced, keeping the fence closed.
 
     Cutting a fenced span can remove its closing marker, and an UNTERMINATED fence is worse than a
     truncated one: everything the model reads after it falls outside the fence. So the close is
@@ -325,8 +325,8 @@ def fire_payload(trigger_id: str, event: BusEvent) -> tuple[dict[str, Any], str]
     """What one matched event hands the store dispatch: ``(payload, context)``.
 
     The value is FENCED HERE, AT ORIGIN, for every fire — a memory value, an inbox message and an
-    app's text are all untrusted by definition. At origin because provenance is three claims (§7/R4
-    rule c — S127): the CLASS of origin, WHICH one, and HOW it got here. "an event said this" and
+    app's text are all untrusted by definition. At origin because provenance is three claims: the
+    CLASS of origin, WHICH one, and HOW it got here. "an event said this" and
     "THIS memory key said it, truncated to 2000 chars" differ, and only the second lets a reader
     tell whether the text the model acted on is the text that arrived. The store dispatch's door
     (``fire_facts.hand_on``) keeps a fence that holds all of a value, so it leaves this richer
@@ -436,7 +436,7 @@ def emit_event(
     now: float,
     meta: dict | None = None,
 ) -> None:
-    """The ONE emitter every source calls after an event (EIAT-1). Best-effort, never raises.
+    """The ONE emitter every source calls after an event. Best-effort, never raises.
 
     ``source`` (``SOURCE_MEMORY``/``SOURCE_INBOX``/``SOURCE_APP``) scopes which triggers can fire,
     and ``meta`` carries source-specific fields (an inbox message's ``sender``/``address``) the

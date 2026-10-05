@@ -1,4 +1,4 @@
-"""The web_watch poll runtime — what actually FIRES a `web_watch` trigger (§7 item 8).
+"""The web_watch poll runtime — what actually FIRES a `web_watch` trigger.
 
 **🔴 THE DEFECT THIS CLOSES.** `web_watch` is a declared kind: it is in `KINDS`, `SPEC_KEYS` accepts
 `{url, poll_interval, extraction, novelty_key}`, `nl_kind.route()` routes any URL to it, the store
@@ -11,7 +11,7 @@ it. Measured before writing a line:
     tick()                       → considered: none      (no `next_fire_at`; not a clock kind)
     file_poll.file_triggers()    → ['file:t']            (only `file`)
 
-So a user could ask for exactly what the plan advertises, be told it worked, see it in the UI — and
+So a user could ask for exactly what the app advertises, be told it worked, see it in the UI — and
 it would never fire. Same shape as the file-watch gap, one kind over: present, listable, inert.
 
 **The seen-set IS the storm guard**, in its own words. A page that changes on every fetch (a
@@ -26,7 +26,7 @@ navigates, precisely because a browser does its own DNS and would otherwise bypa
 pointed at `http://169.254.169.254/` is an SSRF against the machine's own metadata service, and both
 tiers refuse it; re-implementing a fetch here would bypass every one of those controls.
 
-**A daily request budget, enforced.** §3 asks for one, and without it a `poll_interval` of 60 on a
+**A daily request budget, enforced.** Without one, a `poll_interval` of 60 on a
 handful of watches is a few thousand requests a day at someone else's server. The budget is counted
 in the sidecar and refuses visibly rather than silently skipping.
 
@@ -82,9 +82,10 @@ logger = logging.getLogger(__name__)
 #: its slot without the loop itself becoming a busy wait.
 POLL_INTERVAL_SECS = 60.0
 
-#: The floor a `poll_interval` is clamped to. The R1-class rate floor, applied here because this is
+#: The floor a `poll_interval` is clamped to. A rate floor like the clock's cadence floor, applied
+#: here because this is
 #: the one trigger kind that makes requests to SOMEONE ELSE'S server: a 5-second watch is abusive to
-#: the target and indistinguishable from a scraper. S109 recorded that the R1 floor was declared but
+#: the target and indistinguishable from a scraper. The clock's floor was once declared but
 #: read by no code, so this one is enforced at the point of use rather than only validated.
 MIN_POLL_INTERVAL_SECS = 300.0
 
@@ -380,7 +381,7 @@ def extract_items(body: str, *, novelty_key: str = "") -> list[str]:
 
 def _digest(key: str) -> str:
     """Items are stored HASHED. A seen-set of raw URLs is a browsing history in a plaintext sidecar
-    that snapshots (S113) carry; the control needs identity, not the value."""
+    that snapshots carry; the control needs identity, not the value."""
     return hashlib.sha256(key.encode("utf-8", errors="replace")).hexdigest()[:32]
 
 
@@ -491,8 +492,8 @@ def _render_headless(url: str, renderer: Any, policy: Any) -> Any:
 
 
 def _with_escalation(base: str, escalation: str) -> str:
-    """Fold an escalation marker into the check's sentence, so the watch's record shows it — §7
-    criterion 8 bans a silent escalation as much as a silent skip."""
+    """Fold an escalation marker into the check's sentence, so the watch's record shows it — a
+    silent escalation is banned as much as a silent skip."""
     return f"{base} [{escalation}]" if escalation else base
 
 
@@ -613,8 +614,8 @@ class PollOutcome:
     """One poll's result: a payload to dispatch, and what the check came to.
 
     `check` is "" only when the watch was not checked at all — it was not due — and then nothing
-    was recorded either. Every check has an outcome and a sentence, because §7 criterion 8 bans
-    silent drops: "the budget was spent" or "the network settings refused it" is something a user
+    was recorded either. Every check has an outcome and a sentence, because silent drops are
+    banned: "the budget was spent" or "the network settings refused it" is something a user
     must be able to see, and a watch that stopped firing with no explanation is indistinguishable
     from a broken one.
     """
@@ -625,8 +626,8 @@ class PollOutcome:
     said: str = ""
     fetched: bool = False
     #: The headless-escalation marker, when this poll attempted one. Set whether the escalation
-    #: fired, was refused by its budget, failed, or found the tier unavailable — §7 criterion 8
-    #: bans a silent escalation as much as a silent skip. It is folded into `said`, and on a firing
+    #: fired, was refused by its budget, failed, or found the tier unavailable — a silent
+    #: escalation is banned as much as a silent skip. It is folded into `said`, and on a firing
     #: poll it also rides in the payload under the `escalation` key.
     escalation: str = ""
     #: Whether this check began a new stretch (`_record`), and whether that stretch is owed its
@@ -748,7 +749,7 @@ def poll_one(
     if not raw_items and _escalate_enabled(trigger):
         limit = headless_budget_for(trigger)
         if headless_budget_remaining(state, now=now, limit=limit) <= 0:
-            # Refused, VISIBLY (§7 criterion 8). A render is the expensive tier; spent, it stops and
+            # Refused, VISIBLY. A render is the expensive tier; spent, it stops and
             # says so rather than launching a browser it has no budget for.
             escalation = f"headless escalation budget spent ({limit} renders); resumes tomorrow"
         else:
@@ -835,13 +836,13 @@ def poll_one(
         "url": url,
         "new_count": len(fresh),
         # The escalation marker rides in the fired payload too, so a headless-sourced fire is
-        # not a silent escalation (§7 criterion 8).
+        # not a silent escalation.
         "escalation": escalation,
         # The raw item keys the fire is ABOUT, so the action can say what changed. Capped: a
         # payload carrying 400 urls is a prompt nobody can afford.
         #
-        # FENCED with provenance at the source (§7/R4 rule c). These strings came off a
-        # third-party page, and S126 closed the template sink; fencing HERE additionally means
+        # FENCED with provenance at the source. These strings came off a
+        # third-party page, and the template sink is already closed; fencing HERE additionally means
         # any future consumer of the payload inherits the marker and the origin rather than
         # having to know that `new_items` is untrusted.
         "new_items": [

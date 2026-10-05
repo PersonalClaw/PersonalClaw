@@ -7,9 +7,9 @@ exactly one message. Anthropic realises a cache breakpoint as ``cache_control:
 * put the marker on the hinted message's **LAST block** (not the first, not every one);
 * make ``system=`` **BLOCK-SHAPED** when the hinted message is a hoisted system message
   (Anthropic serves ``system=`` ahead of ``messages[0]``, so that is where the stable
-  head's breakpoint belongs — §C4);
+  head's breakpoint belongs);
 * leave an **unhinted** request byte-for-byte what ships today, ``system=`` still a
-  bare ``str`` (soul guardrail 2 — a non-caching provider is never penalised);
+  bare ``str`` (a non-caching provider is never penalised);
 * treat a hint on an absent/empty span, or on the per-turn VOLATILE note, as a NO-OP.
 
 The last section is the rails sweep: vendor cache syntax lives in exactly ONE core
@@ -196,7 +196,7 @@ def test_hint_on_the_volatile_note_is_ignored():
 
     assert system == ""
     assert _markers(out) == []
-    # PCS-1 relocation still holds: the note ships, at the tail of the last user turn.
+    # The volatile-note relocation still holds: the note ships, at the tail of the last user turn.
     assert out == [
         {
             "role": "user",
@@ -247,7 +247,7 @@ def test_anthropic_declares_explicit(fake_anthropic_module):
     assert getattr(inst, "prompt_cache", PromptCache.NONE) is PromptCache.EXPLICIT
 
 
-# ── Request kwargs: byte-identical when unhinted (soul guardrail 2) ──────────
+# ── Request kwargs: byte-identical when unhinted ─────────────────────────────
 
 
 class _FakeStreamIter:
@@ -329,10 +329,10 @@ _CONVERSATION: list[dict] = [
     {"role": "tool", "tool_call_id": "toolu_1", "content": "sunny"},
 ]
 
-# The exact kwargs this conversation produced BEFORE PCS-4, written out by hand from the
-# pre-PCS-4 translation rules: system concatenated into a bare ``str``; plain messages as
+# The exact kwargs this conversation produced BEFORE cache hints, written out by hand from the
+# earlier translation rules: system concatenated into a bare ``str``; plain messages as
 # ``{role, content}``; tool_calls → [text, tool_use]; tool → a user turn of tool_result.
-_PRE_PCS4_KWARGS: dict[str, Any] = {
+_UNHINTED_KWARGS: dict[str, Any] = {
     "model": "claude-x",
     "messages": [
         {"role": "user", "content": "weather in sf?"},
@@ -367,10 +367,10 @@ async def _capture_kwargs(messages: list[dict]) -> dict[str, Any]:
 
 @pytest.mark.asyncio
 async def test_unhinted_request_kwargs_are_byte_identical_to_today(fake_anthropic_module):
-    """No hint anywhere ⇒ exactly the pre-PCS-4 kwargs, ``system`` still a bare str."""
+    """No hint anywhere ⇒ exactly the pre-hint kwargs, ``system`` still a bare str."""
     kwargs = await _capture_kwargs(_CONVERSATION)
 
-    assert kwargs == _PRE_PCS4_KWARGS
+    assert kwargs == _UNHINTED_KWARGS
     assert type(kwargs["system"]) is str
     assert _markers(kwargs) == []
     assert "cache_control" not in str(kwargs)
@@ -379,10 +379,10 @@ async def test_unhinted_request_kwargs_are_byte_identical_to_today(fake_anthropi
 @pytest.mark.asyncio
 async def test_a_none_provider_posture_still_yields_the_same_kwargs(fake_anthropic_module):
     """The marker layer at PromptCache.NONE hands the list back untouched, so the
-    request that reaches the wire is the pre-PCS-4 one."""
+    request that reaches the wire is the one from before cache hints."""
     kwargs = await _capture_kwargs(mark_cacheable_prefix(_CONVERSATION, PromptCache.NONE))
 
-    assert kwargs == _PRE_PCS4_KWARGS
+    assert kwargs == _UNHINTED_KWARGS
 
 
 @pytest.mark.asyncio
@@ -400,13 +400,13 @@ async def test_hinted_request_differs_from_today_only_by_the_marked_block(
     assert _markers(kwargs) == [_EPHEMERAL]
     # system= stays a bare str: the hinted message is not a system message here.
     assert type(kwargs["system"]) is str
-    assert kwargs["system"] == _PRE_PCS4_KWARGS["system"]
+    assert kwargs["system"] == _UNHINTED_KWARGS["system"]
     # Strip the one added key and the request is byte-identical to today's.
     stripped = kwargs["messages"][1]["content"][-1].copy()
     stripped.pop("cache_control")
-    assert stripped == _PRE_PCS4_KWARGS["messages"][1]["content"][-1]
-    assert kwargs["messages"][0] == _PRE_PCS4_KWARGS["messages"][0]
-    assert kwargs["messages"][2] == _PRE_PCS4_KWARGS["messages"][2]
+    assert stripped == _UNHINTED_KWARGS["messages"][1]["content"][-1]
+    assert kwargs["messages"][0] == _UNHINTED_KWARGS["messages"][0]
+    assert kwargs["messages"][2] == _UNHINTED_KWARGS["messages"][2]
 
 
 @pytest.mark.asyncio
@@ -462,7 +462,7 @@ async def test_the_request_built_after_a_tool_result_ends_on_that_turn(fake_anth
     assert sent[0] == {"role": "user", "content": "Remember: never quote consignee names."}
 
 
-# ── T2.5 rails sweep: vendor cache syntax lives in ONE core module ───────────
+# ── Rails sweep: vendor cache syntax lives in ONE core module ────────────────
 
 _CORE = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 #: The ONLY core file permitted to name Anthropic's cache syntax. `llm/anthropic.py` is
@@ -508,7 +508,7 @@ def test_the_sweep_is_not_vacuous():
 
 
 def test_the_neutral_marker_module_stays_vendor_free():
-    """The seam PCS-3 owns must never learn a vendor's syntax (its own rail's twin)."""
+    """The neutral marker seam must never learn a vendor's syntax (its own rail's twin)."""
     src = (_CORE / "llm" / "prompt_cache.py").read_text(encoding="utf-8")
     for pat in _VENDOR_CACHE_SYNTAX:
         assert not pat.search(src)

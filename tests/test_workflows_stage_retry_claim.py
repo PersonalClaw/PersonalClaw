@@ -418,7 +418,7 @@ def test_a_stage_that_SUCCEEDS_still_holds_its_claim(wired) -> None:
     claim back when it resets the node (`mid_flight._apply_reentry`,
     `test_a_rewind_the_owner_confirmed_reruns_a_stage_that_SUCCEEDED`). This used to say such a
     re-run is intercepted before the claim is consulted — by the committed-effects redo gate, then
-    the WF2-A1 resume cache. A rewind the owner CONFIRMED is not: the confirm is that gate's answer,
+    the resume cache. A rewind the owner CONFIRMED is not: the confirm is that gate's answer,
     and the reset clears the cache entry, so it dispatched and met this claim.
 
     **If you widen the release to both branches, this test is the one that must change**: rewrite it
@@ -456,7 +456,7 @@ def test_a_concurrent_second_execution_of_the_same_instance_is_still_refused(wir
 
     The premise is a LIVE attempt: the stage is RUNNING, its subagent has not reported, and the
     controller therefore has not settled it. A second execution of that same instance in that
-    window is the thing §1.5 is about, and it must still be turned away — and the winner must
+    window is the thing the claim is for, and it must still be turned away — and the winner must
     still hold its claim afterwards, because a release by a non-holder would let the loser steal
     the work by releasing first.
 

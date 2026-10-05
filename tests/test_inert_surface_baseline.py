@@ -1,4 +1,4 @@
-"""Shrink-only ratchet for the committed inert-surface inventory (PLATFORM-HARDENING-FLOORS SH3.2).
+"""Shrink-only ratchet for the committed inert-surface inventory.
 
 ``inert-surface-baseline.json`` is a GENERATED census (by
 ``scripts/generate_inert_surface_baseline.py``) of *declared-but-inert surfaces* across
@@ -12,7 +12,7 @@ This suite is the ratchet that keeps the census honest. It regenerates in-memory
 asserts every per-file inert counter **may only shrink** versus the committed baseline:
 
   * A per-file counter that ROSE — a NEW declared-but-inert surface — reds CI, naming the
-    file and the new surface. This is acceptance criteria: "adding a declared-but-unread surface
+    file and the new surface. This is the rule: "adding a declared-but-unread surface
     reds CI".
   * A DECREASE is welcome (a cleanup added the missing writer/reader). The ratchet does
     NOT demand exact equality and does NOT require the count to go down — only that it
@@ -20,7 +20,7 @@ asserts every per-file inert counter **may only shrink** versus the committed ba
     gate given teeth at zero would red every pre-existing inert surface at once (an
     outage). See the generator's module docstring.
 
-⚠️  FORBIDDEN-TO-RAISE RULE (the acceptance criteria doc line — do not weaken it): when this test
+⚠️  FORBIDDEN-TO-RAISE RULE (a required doc line — do not weaken it): when this test
     reds because a counter ROSE, the fix is to ADD THE MISSING WRITER OR READER for the new
     surface — NEVER to regenerate ``inert-surface-baseline.json`` to bless the higher
     number. Raising a committed count to make CI green re-hides exactly the defect this
@@ -100,7 +100,7 @@ from scripts.generate_inert_surface_baseline import (
 )
 
 # The forbidden-to-raise sentence, asserted present in both the generator and this test so
-# the acceptance criteria "forbidden-to-raise doc line is present" cannot silently be dropped.
+# the "forbidden-to-raise doc line is present" requirement cannot silently be dropped.
 _FORBIDDEN_TO_RAISE = "add the missing writer or reader"
 
 
@@ -233,8 +233,7 @@ def test_baseline_ships_at_a_nonzero_measured_population():
 
     A zeroed baseline would mean the ratchet was given teeth before the existing inert
     surfaces were driven down — the outage this change explicitly avoids. A nonzero total is
-    the evidence we measured first and committed the real number (SH3.3 owns driving it
-    down)."""
+    the evidence we measured first and committed the real number."""
     inv = _committed_inventory()
     assert inv["totals"]["inert"] > 0, (
         "inert-surface-baseline.json reports zero inert surfaces — ship at the MEASURED "
@@ -243,7 +242,7 @@ def test_baseline_ships_at_a_nonzero_measured_population():
 
 
 def test_a_new_inert_surface_reds_the_ratchet():
-    """Acceptance criteria: "adding a declared-but-unread surface reds CI".
+    """The rule: "adding a declared-but-unread surface reds CI".
 
     We do NOT add dead code to the tree — we exercise the SHARED comparison the ratchet
     relies on against a synthetic ``current`` that carries one extra surface for a real
@@ -594,7 +593,7 @@ def test_the_enum_census_still_finds_a_nontrivial_population():
 
 # ── The value-lookup ruling (NOT a widening — a pinned decision) ─────────────────────────
 #
-# ``PHF-13`` audited every ``E(value)`` site behind the surviving enum surfaces and ruled
+# An audit of every ``E(value)`` site behind the surviving enum surfaces ruled
 # AGAINST teaching the detector that shape: five of the six sites either never execute in
 # production or read only values this codebase itself wrote, so a syntactic rule would FALSE-
 # CLEAR them. A false clear passes the shrink-only ratchet silently (the count goes DOWN), so
@@ -606,8 +605,8 @@ def test_value_lookup_alone_does_not_clear_a_member(tmp_path):
 
     ``E(value)`` does not prove reachability: the construction may never execute, and its value
     may come from state we wrote ourselves. Whoever wants to change this must first re-run
-    The per-site provenance audit (verdict table in the generator docstring and in
-    The execution log) — not just make this test green.
+    the per-site provenance audit (verdict table in the generator docstring) — not just make
+    this test green.
     """
     inert = _inert_in(
         tmp_path,
@@ -631,18 +630,18 @@ def test_value_lookup_alone_does_not_clear_a_member(tmp_path):
     )
     assert inert == {"Coerced.NEVER_WRITTEN"}, (
         "value-lookup construction cleared a member the census cannot prove is reachable; "
-        f"got {sorted(inert)} — see PHF-13's verdict table before widening this rule"
+        f"got {sorted(inert)} — see the generator's verdict table before widening this rule"
     )
 
 
 def test_the_audited_value_lookup_call_sites_are_wired_and_the_members_re_verdicted():
-    """The ruling, RE-VERDICTED after ``WF2LOO-13`` wired the judge contract.
+    """The ruling, RE-VERDICTED after the judge contract was wired.
 
-    PHF-13 reported ``Verdict.REPLAN``, ``Ratchet.RELAXED`` and ``Actor.WORKER`` inert even though
+    The audit reported ``Verdict.REPLAN``, ``Ratchet.RELAXED`` and ``Actor.WORKER`` inert though
     each sits on a class with an ``E(value)`` construction, because the FUNCTIONS holding those
     constructions had no production caller — ``engine.py`` restated the judge aggregation rule
     instead of importing it. This test used to assert that dead-call-site premise and told the next
-    reader to re-verdict if it ever changed. WF2LOO-13 changed it: ``validate_verdict``,
+    reader to re-verdict if it ever changed. The wiring changed it: ``validate_verdict``,
     ``hints_from_dict`` and ``resolve_transition`` are all called from the live judge path now.
 
     So the assertion is inverted rather than dropped, and it pins the re-verdict:
@@ -671,7 +670,7 @@ def test_the_audited_value_lookup_call_sites_are_wired_and_the_members_re_verdic
     stranded = [name for name, found in callers.items() if not found]
     assert not stranded, (
         f"{stranded} lost its production caller — the judge contract is authored-and-unrun again "
-        "(the WF2LOO-12 defect). Re-verdict the members PHF-13 covers before touching the baseline."
+        "Re-verdict the members the value-lookup audit covers before touching the baseline."
     )
 
     baseline = _committed_inventory()
@@ -691,15 +690,15 @@ def test_the_audited_value_lookup_call_sites_are_wired_and_the_members_re_verdic
 
 def test_the_value_lookup_ruling_is_recorded_in_the_generator():
     """The verdicts are the deliverable, so they must live where the next reader lands: in the
-    detector that produces the flags, not only in a plan log."""
+    detector that produces the flags, not somewhere outside the repository."""
     from scripts import generate_inert_surface_baseline as gen
 
     doc = (gen._inert_enum_members.__doc__ or "").lower()
-    assert "deliberately not taught" in doc, "the PHF-13 ruling is missing from the detector"
+    assert "deliberately not taught" in doc, "the value-lookup ruling is missing from the detector"
     for marker in ("externally reachable", "internal only", "dead call site"):
         assert marker in doc, f"the per-site verdict vocabulary lost {marker!r}"
     assert "construction is the known remaining false-red shape" not in doc, (
-        "PHF-12's superseded premise is asserted again in the detector docstring; "
+        "a superseded premise is asserted again in the detector docstring; "
         "judge_contract.py:342 has no production caller, so it does not make REPLAN reachable"
     )
 
@@ -903,7 +902,7 @@ def test_an_export_reachable_from_no_published_signature_is_still_inert():
             types_only.add(label)
     assert len(types_only) >= 39, (
         f"only {len(types_only)} exported TYPES are still reported inert (54 when the "
-        "API-closure clear landed, 43 after function roots, 39 after OU-14's app wired "
+        "API-closure clear landed, 43 after function roots, 39 after an app wired "
         "LocalModelProvider and ProviderSettings) — either the clear has over-reached, in which "
         "case narrow it rather than trusting a suspiciously clean census, or an export was "
         "genuinely wired, in which case name it and its new importer in this docstring. The "
@@ -1119,7 +1118,7 @@ def test_an_exported_functions_signature_clears_an_export_in_both_directions():
 
 
 def test_forbidden_to_raise_doc_line_is_present():
-    """Acceptance criteria: "the forbidden-to-raise doc line is present" — in BOTH the generator and
+    """The requirement: "the forbidden-to-raise doc line is present" — in BOTH the generator and
     this test, so neither can drop it unnoticed."""
     from scripts import generate_inert_surface_baseline as gen
 

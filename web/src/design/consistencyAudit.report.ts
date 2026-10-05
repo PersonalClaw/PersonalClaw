@@ -1,12 +1,12 @@
 // @module-tag tree-scan
-// ── Design-System Consistency Audit — reporter (Plan: DESIGN-SYSTEM-CONSISTENCY) ──
+// ── Design-System Consistency Audit — reporter ──
 //
 // This module is the *measurement engine* for the consistency audit. Unlike
 // tokenLint.test.ts (a pass/fail RATCHET that only guards hex/inline-px in
 // not-yet-clean files), this reporter INVENTORIES every design-value drift in
 // web/src across five categories, plus a primitive-adoption scan, grouped by
-// file:line. It emits a machine-readable JSON inventory that the audit doc
-// (docs/design/consistency-audit.md) and the report task consume.
+// file:line. It emits a machine-readable JSON inventory, which `npm run
+// audit:consistency` writes to docs/design/consistency-audit.json.
 //
 // It makes NO fixes and fails NO build — it only measures. Run via the
 // companion test (consistencyAudit.test.ts) or import scanDrift() directly.
@@ -308,7 +308,7 @@ export function countInlineFontWeights(): { total: number; byFile: Record<string
   return { total, byFile }
 }
 
-// ── Uppercase-tracked-eyebrow scan (design-system consistency, CD-02) ───────
+// ── Uppercase-tracked-eyebrow scan (design-system consistency) ──────────────
 // The Weight-First rule (web/DESIGN.md §3/§6) makes emphasis a variable-weight
 // STEP, never uppercase-with-tracking — yet section eyebrows and chip labels
 // across web/src had drifted to `text-[0.75rem] uppercase tracking-wide`, the
@@ -509,7 +509,7 @@ export async function scanInertUtilities(): Promise<InertUtilityHit[]> {
  *
  * NO timestamp, deliberately — the artifact is committed, so a `generatedAt` made every
  * suite run rewrite it and a real data refresh became indistinguishable from noise. The
- * consequence is in the plan logs: the diff was discarded as "pure timestamp churn" at
+ * consequence: the diff was discarded as "pure timestamp churn" at
  * least eight times across weeks, and the committed copy went stale as a direct result
  * (`filesScanned` drifted 310 → 442 → 518 → 523 → 527 while nobody committed a refresh).
  * Git already records when a file changed.

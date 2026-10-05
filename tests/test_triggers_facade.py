@@ -1,4 +1,4 @@
-"""P4b — the unified Trigger facade (/api/triggers over hooks + schedule stores).
+"""The unified Trigger facade (/api/triggers over hooks + schedule stores).
 
 Drives the handlers directly with a fake state that carries a real ScriptHookStore
 (lifecycle) + a mocked schedule service (schedule). Asserts: cross-kind list,
@@ -190,7 +190,7 @@ def test_schedule_run_dispatches(state):
     assert _body(resp)["name"] == "Nightly"
 
 
-# ── P4d: variable catalog ──
+# ── variable catalog ──
 
 
 def test_variables_catalog(state):
@@ -218,7 +218,7 @@ def test_variables_catalog(state):
 
 # ── Event-kind parity ──
 #
-# S67 measured the `event:` namespace answering 404 for toggle/run/PUT and 400 for /test, so there
+# The `event:` namespace once answered 404 for toggle/run/PUT and 400 for /test, so there
 # was no way to drive an event trigger by hand. That namespace is gone: a data-event trigger is a
 # row in the one store (`kind: "event"`), listed and addressed as `store:<id>`, so it takes the
 # store kind's operations — toggle, run, dry run, history, delete — which is what these pin.
@@ -315,7 +315,7 @@ def test_the_facade_has_no_remaining_parity_gaps(state, monkeypatch):
 
     Support is derived by DRIVING each handler and seeing whether it refuses on kind grounds, not by
     reading the source — a branch that exists but returns 404 is not support, and that distinction
-    is the entire finding of this session.
+    is the entire finding here.
     """
     from personalclaw.triggers.events import parity_report
 
@@ -358,7 +358,7 @@ def test_the_facade_has_no_remaining_parity_gaps(state, monkeypatch):
     assert parity_report(support) == {}
 
 
-# ── The week grid + automation doctor (AUTO-A1, §7 criterion 12) ──
+# ── The week grid + automation doctor ──
 
 
 def _seed_interval(
@@ -376,7 +376,7 @@ def _seed_interval(
     """Write an interval (or cron) trigger into the fixture's real store.
 
     Replaces `_every_job`, which built a `ScheduleJob` for `crons.list_jobs` to return — the legacy
-    fallback S110 retired. The grid anchor comes from `next_fire_at`: the legacy shape carried it as
+    fallback now retired. The grid anchor comes from `next_fire_at`: the legacy shape carried it as
     `created_ts`/`last_run_ts`, and the store carries an armed ISO fire, so the helper arms the row
     the way every real write path does.
 
@@ -578,7 +578,7 @@ def test_a_VALID_cron_and_a_REGISTERED_provider_are_still_healthy(state):
 def test_week_and_doctor_routes_register_before_the_id_route():
     """`/week` and `/doctor` must not be captured as trigger ids.
 
-    The ordering landmine S67 already paid for with `/surfacing`: aiohttp matches in registration
+    The ordering landmine already paid for once with `/surfacing`: aiohttp matches in registration
     order, so a literal path registered after `/{id}` is unreachable.
     """
     import inspect

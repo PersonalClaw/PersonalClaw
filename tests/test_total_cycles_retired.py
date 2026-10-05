@@ -2,7 +2,7 @@
 
 The column was a denormalized cache of something the ledger already derives: both of its writers in
 `loop/watchdog.py` wrote exactly ``len(loop_files.get_findings(cid))``, and `get_findings` is a pure
-projection over the `step_completed` records `PP-5` already ships. Deleting it removes a second
+projection over the `step_completed` records the ledger already holds. Deleting it removes a second
 source of truth rather than moving one.
 
 What these rails are for, and why each can FAIL:

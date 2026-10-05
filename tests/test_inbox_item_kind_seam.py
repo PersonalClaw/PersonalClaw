@@ -52,7 +52,7 @@ def test_source_declarable_kinds_is_exactly_the_channel_shaped_enum_members():
     A new ``ItemKind`` member must land on one side or the other deliberately — either a
     non-channel attention kind (core raises it via ``emit_attention_item``) or a kind a
     source may declare. Silence would mean a new channel-shaped kind that no source can
-    ever set: the exact bug EIAT-6 exists to close.
+    ever set: the exact bug this seam exists to close.
     """
     every = {k.value for k in ItemKind}
     assert SOURCE_DECLARABLE_KINDS == every - NON_CHANNEL_KINDS
@@ -177,7 +177,7 @@ async def test_declared_kind_survives_poll_persistence_and_the_api(declared, tmp
 
 @pytest.mark.asyncio
 async def test_a_source_declaring_nothing_still_lands_as_a_message(tmp_path, monkeypatch):
-    """The pre-EIAT-6 behavior, unchanged — the seam is additive for existing sources."""
+    """The pre-seam behavior, unchanged — the seam is additive for existing sources."""
     from personalclaw.dashboard import handlers_inbox as h
 
     _drop_batch({"id": "m1", "channel_id": "C1", "channel_name": "#ops", "timestamp": 1.0})

@@ -9,13 +9,13 @@ import { TURN_ERROR_WITHOUT_REASON } from './turnError'
 // Each block below reproduces one measured defect on a fresh instance
 // and drives it through the real ChatPage:
 //
-//   1. `s20`: a provider whose connection was refused → `chat_message {role:'error', content:''}`
+//   1. A provider whose connection was refused → `chat_message {role:'error', content:''}`
 //      → a red error bar with NOTHING in it (the client's fallback only caught a MISSING value).
-//   2. `s24E`: Edit & resend on a MIDDLE turn → `{"rewound": 0}` and the later turn gone from
+//   2. Edit & resend on a MIDDLE turn → `{"rewound": 0}` and the later turn gone from
 //      disk, with nothing on screen saying it would be.
-//   3. `c2-25`: a 60k-character paste → the turn's error landed ~21,000px below the viewport,
+//   3. A 60k-character paste → the turn's error landed ~21,000px below the viewport,
 //      reachable only through "Jump to latest".
-//   4. `s26`/`s33`: a link to a chat that does not exist rendered as a normal empty chat; a
+//   4. A link to a chat that does not exist rendered as a normal empty chat; a
 //      message sent there failed "No such chat session." and was not saved.
 
 const h = vi.hoisted(() => ({

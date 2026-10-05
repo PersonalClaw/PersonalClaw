@@ -1,4 +1,4 @@
-"""The A2A gateway — dialect 4.
+"""The A2A gateway.
 
 Five properties here are the ones that fake most easily, so each is asserted with its
 own negative control:
@@ -20,8 +20,8 @@ own negative control:
    hook validation and an unregistered one is rejected. One direction alone is the
    classic false green.
 5. **Deny-by-default egress** — a non-allowlisted host is REFUSED, with an allowlisted
-   host proving the refusal is not "everything is refused", and with the composition §5's
-   prose actually names shown to be permissive (the finding recorded on
+   host proving the refusal is not "everything is refused", and with the CONNECTOR
+   composition shown to be permissive (the finding recorded on
    ``a2a.outbound_policy``).
 """
 
@@ -740,9 +740,9 @@ def framing_preamble_in(text: str) -> bool:
 
 
 class TestHookProviderAllowlist:
-    """The clause is "or hook create/update rejects it", so both directions are asserted.
+    """The requirement is "or hook create/update rejects it", so both directions are asserted.
 
-    ``webhook`` is the positive control and is exactly the precedent §5 names: an
+    ``webhook`` is the positive control and is exactly the precedent: an
     APP-delivered provider whose NAME lives in core's allowlist. ``a2a-call`` is now the
     SECOND instance of that same shape: the ``a2a-action`` bundle ships in the
     ``PersonalClawApps`` repo, so the name is on the accept side here.
@@ -779,7 +779,7 @@ class TestHookProviderAllowlist:
             return False, None, str(exc)
 
     def test_a_registered_app_delivered_provider_is_accepted(self):
-        """``webhook`` is the precedent §5 names: app-delivered provider, core-listed name."""
+        """``webhook`` is the precedent: app-delivered provider, core-listed name."""
         from personalclaw.validation import ALLOWED_HOOK_PROVIDERS
 
         assert "webhook" in ALLOWED_HOOK_PROVIDERS
@@ -792,7 +792,7 @@ class TestHookProviderAllowlist:
 
         It is now the same shape as ``webhook`` directly above — an app-delivered provider
         whose NAME lives in core's allowlist — because the ``a2a-action`` bundle exists in
-        PersonalClawApps. This assertion is what makes the core half of EA-8 unsafe to land
+        PersonalClawApps. This assertion is what makes the core half unsafe to land
         alone: if it passes while the bundle is absent, a hook naming ``a2a-call`` validates,
         saves, and then fails at fire time.
         """
@@ -918,14 +918,14 @@ class TestOutboundEgressIsDenyByDefault:
             is False
         )
 
-    def test_the_composition_the_plan_prose_names_is_permissive(self, monkeypatch):
+    def test_the_connector_composition_is_permissive(self, monkeypatch):
         """The recorded finding, as an executable claim.
 
-        §5 says "CONNECTOR policy layered by ``egress_policy_for``". ``CONNECTOR`` has
+        A2A egress could be "CONNECTOR policy layered by ``egress_policy_for``". ``CONNECTOR`` has
         ``allow_only=False`` and ``egress_policy_for`` UNIONS the operator's allow-list
         onto the profile's, so that composition reaches every public host and the
         allow-list is decorative. ``a2a.outbound_policy`` builds on ``LISTED`` instead.
-        This test exists so the divergence cannot be "cleaned up" back to the prose.
+        This test exists so the divergence cannot be "cleaned up" back to that composition.
         """
         from personalclaw.net.guard import evaluate
         from personalclaw.net.policy import CONNECTOR, egress_policy_for

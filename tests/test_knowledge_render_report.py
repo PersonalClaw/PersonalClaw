@@ -1,4 +1,4 @@
-"""The `render-report` action provider and its renderer (KNOWLEDGE-SYNTHESIS §6.2 / KNOW-R15).
+"""The `render-report` action provider and its renderer.
 
 Two things are load-bearing here and both are the kind that pass a smoke test while broken.
 
@@ -105,7 +105,7 @@ def test_registry_and_allowlist_agree():
 
 
 def test_classified_as_write_capable():
-    """It writes two artifacts, so an auto-fired trigger must opt in explicitly (Decision 7)."""
+    """It writes two artifacts, so an auto-fired trigger must opt in explicitly."""
     from personalclaw.triggers.screen import WRITE_CAPABLE_PROVIDERS, provider_is_read_only
 
     assert "render-report" in WRITE_CAPABLE_PROVIDERS

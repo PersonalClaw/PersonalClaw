@@ -66,7 +66,7 @@ def canonical_url(url: str) -> str:
 
 
 def merge_key(url: str) -> str:
-    """The cross-source merge key for an item, or ``""`` when it has none (§3.3).
+    """The cross-source merge key for an item, or ``""`` when it has none.
 
     ``""`` means *"do not merge this"* — every caller must treat an empty key as "keep
     both items", never as "merge with everything else that also has no key" (that
@@ -85,7 +85,7 @@ def merge_key(url: str) -> str:
 
 
 def compose_guid(*, guid: str = "", url: str = "", title: str = "", published_at: str = "") -> str:
-    """The per-source novelty key for one sighting (§3.3's composable guid).
+    """The per-source novelty key for one sighting (a composable guid).
 
     Cascade, most-authoritative first: the feed's own ``guid``/``id``, else the
     canonicalized URL, else ``sha256(title + published_at)[:16]``. Returns ``""`` when

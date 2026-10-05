@@ -3,7 +3,7 @@ import { ChevronDown, X } from 'lucide-react'
 import { cx } from './cx'
 import { Eyebrow } from './Eyebrow'
 
-// ── Shared form-field family (design-system consistency, plan S2/Owner task 2) ─
+// ── Shared form-field family ───────────────────────────────────────────────────
 // The canonical form primitives, extracted from pages/tasks/formControls.tsx so
 // they live under ui/ alongside the other primitives (Button, Modal, Segmented).
 // This is the SAME shape the app already uses — a byte-identical relocation, not
@@ -72,8 +72,7 @@ export const FieldLabelProvider = FieldLabelCtx.Provider
  *  sections that were PATCH-editable with no Settings control (#752,
  *  #2801) added 46 hinted rows in one change and two new wrappers, `SegRow` and `SelectRow`, which is
  *  NumberRow's +28 by itself. The 271/236 and 196/99/69/28 readings before that are staler still, the
- *  last one's "69" being the number of hinted `Row` CALL SITES rather than of switches, a distinction
- *  the Q13/BE-8 queue entry lost.
+ *  last one's "69" being the number of hinted `Row` CALL SITES rather than of switches.
  *
  *  🪤 THESE NUMBERS ROT IN A DAY, so treat them as a dated observation, not a fact. The previous line
  *  here read 260/229 (Field 118, NumberRow 34) and was recounted **the day before** — one tick of

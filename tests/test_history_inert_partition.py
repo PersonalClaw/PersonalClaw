@@ -1,6 +1,6 @@
 """The archive split: the runs inbox is for what the machine DID.
 
-§1.3 on `INERT_OUTCOMES`: *"These collapse to ledger rows and archive out of the default inbox
+The rule for `INERT_OUTCOMES`: *"These collapse to ledger rows and archive out of the default inbox
 view —
 the runs inbox is for what the machine DID."*
 
@@ -12,8 +12,8 @@ undifferentiated, so a minutely trigger held by quiet hours buries the one fire 
 
 **A PARTITION, not a filter.** The suppressed rows are the answer to "why did my automation not
 run",
-so dropping them would replace one bad default with a worse one — §7 criterion 8 bans silent
-drops, and
+so dropping them would replace one bad default with a worse one — silent drops are banned
+outright, and
 a row filtered out of the only surface that shows it is a silent drop with extra steps. `runs` still
 carries every row; two id lists let a default view show work and fold the rest away.
 """
@@ -62,7 +62,7 @@ def test_FAILED_is_not_inert():
 
 def test_REFUSED_is_not_inert():
     """🔴 A policy refusal is a DECISION the machine made — the kill switch, a capability fence, an
-    unresolved secret. §1.3 groups it with neither the skips nor the successes, and it must stay
+    unresolved secret. It belongs with neither the skips nor the successes, and it must stay
     visible: "your automation was refused" is not the same as "it was not due"."""
     assert is_inert(_rec("x", Outcome.REFUSED.value)) is False
 
@@ -88,8 +88,8 @@ def test_the_partition_splits_work_from_suppression():
 
 
 def test_NO_ROW_IS_LOST():
-    """🔴 The property that makes this a partition rather than a filter. §7 criterion 8 bans silent
-    drops, and a row dropped from the only surface that shows it is a silent drop with extra steps.
+    """🔴 The property that makes this a partition rather than a filter. Silent drops are
+    banned, and a row dropped from the only surface that shows it is a silent drop with extra steps.
     """
     did, suppressed = partition_inert(MIXED)
     assert len(did) + len(suppressed) == len(MIXED)
@@ -108,7 +108,7 @@ def test_an_EMPTY_feed_partitions_cleanly():
 
 
 def test_an_ALL_SUPPRESSED_feed_reports_zero_work():
-    """The exact case §1.3 describes: a minutely trigger held by quiet hours."""
+    """The exact case from the defect: a minutely trigger held by quiet hours."""
     rows = [_rec(str(i), Outcome.SKIPPED_GATE.value) for i in range(20)]
     did, suppressed = partition_inert(rows)
     assert did == []

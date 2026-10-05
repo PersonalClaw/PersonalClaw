@@ -53,7 +53,7 @@ export const WORKFLOW_LIFECYCLE = [
 
 export type WorkflowLifecycleEvent = (typeof WORKFLOW_LIFECYCLE)[number]
 
-// The coalesced frame (WF2-R11 batch-5). The backend batches one tick's per-node chatter
+// The coalesced frame. The backend batches one tick's per-node chatter
 // into ONE frame so a 20-node fan-out is one write and one render instead of twenty. It is
 // NOT a lifecycle event — it is an envelope AROUND them, so it gets its own listener that
 // unwraps and replays the members in order. Every member keeps its own event envelope, so

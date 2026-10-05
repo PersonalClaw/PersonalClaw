@@ -1,10 +1,10 @@
-"""The file-watch poll loop is wired into gateway boot (§3 / crit 2).
+"""The file-watch poll loop is wired into gateway boot.
 
 `file_poll` is tested as a library in `test_triggers_file_poll.py`; these tests pin the GATEWAY
 adapter — that a file change routes to the trigger's declared action provider through the same
 registry a cron uses, and that the loop is disjoint from `ScheduleService`. A runtime that polled
 correctly but was never started, or fired through a second dispatch path, would be the
-present-and-inert / drift defects this program keeps finding.
+present-and-inert / drift defects that keep recurring.
 """
 
 from __future__ import annotations
@@ -133,8 +133,8 @@ def test_the_loop_lives_in_the_no_crons_else_branch(monkeypatch):
     Pinning that it sits inside the else-branch (not before the guard).
 
     Anchored on the GUARD itself, not on `reconcile_digest_cron`. That proxy meant "the last thing
-    in the else-branch", and S108 moved the reconcilers AFTER the boot migration (they wrote a file
-    the clock engine never read), which broke the assertion without breaking the property. An anchor
+    in the else-branch", and moving the reconcilers AFTER the boot migration (they wrote a file
+    the clock engine never read) broke the assertion without breaking the property. An anchor
     that moves when unrelated code is reordered tests the layout, not the contract.
     """
     import inspect

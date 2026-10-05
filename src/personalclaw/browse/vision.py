@@ -1,6 +1,6 @@
 """Vision grounding for the browse loop — the located-input fallback.
 
-BA-1 gave the loop perception over the DOM and BA-3 gave it an action language addressed by
+The loop perceives the DOM and acts through an action language addressed by
 :class:`~personalclaw.browse.extraction.ElementRef`. Both are blind to the one control shape the
 DOM does not describe: a ``<canvas>``, an image-map, or a WebGL surface. ``extract_page`` yields
 **zero** actionable refs for such a page, so every ref-addressed action the model can emit names
@@ -33,14 +33,13 @@ is bounded by the refusals below.
 
 **It refuses the challenges a human must answer.** A CAPTCHA is, structurally, exactly the page
 this module exists for: a canvas with no clickable element. So without :func:`human_challenge` the
-vision fallback would be a CAPTCHA-clicking machine — and the soul guardrail
-(``plans/BROWSE-AUTOMATION.md:1233``) is explicit that a located input path is an ADDITIONAL
+vision fallback would be a CAPTCHA-clicking machine — and a located input path is an ADDITIONAL
 modality, never a licence to bypass the 2FA/CAPTCHA refusal posture. The refusal is a screen over
 both the page and the agent's own request, and it is checked BEFORE a provider is resolved, so a
 challenge is never sent to a model at all.
 
 **Nothing here is bundled.** :data:`RECOMMENDED_MODELS` are *references* a user pulls, carrying the
-licence each is recommended under. No weight ships in the wheel or the image, which is why BA-10
+licence each is recommended under. No weight ships in the wheel or the image, which is why it
 cannot trip the packaging size budget — and ``tests/test_browse_vision_grounding.py`` asserts
 that against its own licence rail rather than a second copy of its rules.
 """
@@ -61,7 +60,7 @@ logger = logging.getLogger(__name__)
 #: The Settings → Models capability this path reads images through — the EXISTING vision axis
 #: (``providers/use_cases.py``), whose binding the platform's image reader asks first, before a
 #: chat model that takes images (``providers/image_input.py``). Naming it once here is what keeps
-#: BA-10 free of a new vendor string.
+#: vision grounding free of a new vendor string.
 VISION_USE_CASE = IMAGE_USE_CASE
 
 #: The typed reason a run parks when nothing reads images (see :func:`available`). A CONSTANT rather
@@ -99,9 +98,9 @@ OUTCOME_FAILED = "failed"
 
 @dataclass(frozen=True)
 class GroundingModel:
-    """One vision model BA-10 recommends, and the licence it is recommended under.
+    """One recommended vision model, and the licence it is recommended under.
 
-    ``licence`` is an SPDX identifier and is checked against OU-14's ``PERMITTED_LICENCES`` by
+    ``licence`` is an SPDX identifier and is checked against ``bundled_model.PERMITTED_LICENCES`` by
     ``tests/test_browse_vision_grounding.py`` — so the rule that PersonalClaw recommends only
     permissively licensed models is enforced by the rail that already owns it rather than
     restated here. ``obtain`` is a pull instruction, never a path: nothing in this tuple can name
@@ -114,7 +113,7 @@ class GroundingModel:
     note: str
 
 
-#: The models BA-10 default-recommends, best-default FIRST. Every entry is **Apache-2.0** and
+#: The default-recommended models, best-default FIRST. Every entry is **Apache-2.0** and
 #: every entry is **pulled by the user** (see the module docstring's last paragraph).
 #:
 #: 🔴 ``qwen2.5vl:3b`` IS DELIBERATELY ABSENT, and its absence is asserted by a test. It is the
@@ -247,11 +246,11 @@ async def available() -> bool:
 def human_challenge(*, page_text: str, description: str) -> str:
     """The human-only challenge this click would answer, or ``""``.
 
-    🔴 THE SOUL GUARDRAIL, as a function. A CAPTCHA is a canvas with no addressable element — the
-    exact page shape that reaches the vision fallback — so "grounded click on a canvas" and "solve
-    the CAPTCHA" are the same operation unless something refuses. Checked against the page AND the
-    request because either one can be the tell, and matched on the LOWERCASED haystack so a
-    stylised "CAPTCHA" heading is not a bypass.
+    🔴 THE HUMAN-CHALLENGE GUARDRAIL, as a function. A CAPTCHA is a canvas with no addressable
+    element — the exact page shape that reaches the vision fallback — so "grounded click on a
+    canvas" and "solve the CAPTCHA" are the same operation unless something refuses. Checked
+    against the page AND the request because either one can be the tell, and matched on the
+    LOWERCASED haystack so a stylised "CAPTCHA" heading is not a bypass.
 
     Returns the token that matched, so the refusal can NAME what it refused. A refusal that says
     only "refused" is one a user re-runs.
@@ -319,7 +318,7 @@ async def ground(
     1. **The human-only challenge** — before a provider is resolved, so a CAPTCHA never reaches a
        model at all. Resolving first and refusing after would send the image anyway.
     2. **A screenshot exists.** ``PageDriver.screenshot`` returns ``""`` when capture is
-       unavailable, and grounding on an absent image is the silent no-op this atom forbids.
+       unavailable, and grounding on an absent image is the silent no-op this function forbids.
     3. **A vision model is bound** — :data:`REASON_NO_VISION_MODEL`, the honest refusal.
     4. Only then the call.
 

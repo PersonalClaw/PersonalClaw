@@ -270,7 +270,7 @@ def check_config_four_points(files: list[Path], root: Path) -> list[Finding]:
 
     The DECLARATIONS are read from every module in ``config/``, not from ``loader.py`` alone,
     and the load mapping is read from ``loader.py`` because that is where ``AppConfig`` lives.
-    Those two used to be the same file, and PHF-14 split them: the sections moved out to
+    Those two used to be the same file, until a split moved the sections out to
     sibling modules while ``AppConfig`` stayed. A scan pinned to ``loader.py`` would then have
     kept passing while silently checking 280 of 367 fields — a gate that narrows without
     redding is worse than one that is absent, because the green is read as coverage.
@@ -352,7 +352,7 @@ def _calls_field_with_meta(value: ast.AST | None) -> bool:
 
 
 #: The ``AppConfig`` methods that may hold the load mapping. ``load()`` is a one-line
-#: delegate; the mapping lives in ``load_with_migration_state()`` (PHF-15 split them so
+#: delegate; the mapping lives in ``load_with_migration_state()`` (they were split so
 #: ``load()`` could stop writing the config it reads). Mirrored in
 #: ``scripts/generate_inert_surface_baseline.py``.
 _LOAD_MAPPING_METHODS = frozenset({"load", "load_with_migration_state"})

@@ -1,5 +1,5 @@
-"""Tests for the safety floor (AUTONOMY-GUARDRAILS §1.2 denylist, §1.3 incident,
-§1.4 DISABLE_LIVE_WRITES)."""
+"""Tests for the safety floor (the denylist, the incident kill switch,
+DISABLE_LIVE_WRITES)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from personalclaw.guardrails import incident as _incident
 from personalclaw.guardrails.denylist import DenyRule, check_action, enforce_action
 from personalclaw.guardrails.writes import LiveWriteDisabled, live_writes_disabled
 
-# ── §1.2 denylist ────────────────────────────────────────────────────────────
+# ── denylist ─────────────────────────────────────────────────────────────────
 
 
 def test_denylist_blocks_sensitive_path():
@@ -52,7 +52,7 @@ def test_denyrule_dataclass_defaults():
 
 
 def test_profile_denylist_extra_blocks_when_set(monkeypatch):
-    # AG-5 edit 4: a session's SafetyProfile can layer extra deny globs. Prove the
+    # A session's SafetyProfile can layer extra deny globs. Prove the
     # reader is LIVE — a profile with denylist_extra set blocks a matching path...
     # `check_action` lazy-imports `profile_for_session` from the policy module, so
     # patch it there (not on denylist, which never holds the name).
@@ -85,7 +85,7 @@ def test_profile_denylist_extra_skipped_without_session_key():
     assert not d.blocked
 
 
-# ── §1.3 incident kill switch ────────────────────────────────────────────────
+# ── incident kill switch ─────────────────────────────────────────────────────
 
 
 def test_incident_activate_resume_roundtrip(monkeypatch, tmp_path):
@@ -124,7 +124,7 @@ def test_incident_missing_file_is_no_incident(monkeypatch, tmp_path):
     assert not _incident.incident_active()
 
 
-# ── §1.4 DISABLE_LIVE_WRITES ─────────────────────────────────────────────────
+# ── DISABLE_LIVE_WRITES ──────────────────────────────────────────────────────
 
 
 def test_live_writes_disabled_reads_env(monkeypatch):

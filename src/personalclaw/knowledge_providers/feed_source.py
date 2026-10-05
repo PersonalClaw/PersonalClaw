@@ -2,7 +2,7 @@
 
 The kind for endpoints that are ALREADY structured: RSS 2.0, Atom, JSON Feed, JSON APIs,
 and CSV-with-header. There is nothing to detect and nothing to guess here (that is the
-web-source's job, §2) — a feed states its own items, so this provider is pure parsing plus
+web-source's job) — a feed states its own items, so this provider is pure parsing plus
 conditional GET, and it costs zero tokens by construction.
 
 **Three parsers, not five formats.** RSS and Atom differ only in element names, so one XML
@@ -145,7 +145,7 @@ _ATOM_NS = "{http://www.w3.org/2005/Atom}"
 
 
 def resolve_spec(spec: dict | None) -> dict:
-    """A source's spec with its preset's defaults underneath (§3.1).
+    """A source's spec with its preset's defaults underneath.
 
     The source's OWN keys win, so a preset is a starting point rather than a constraint —
     overriding ``url`` on ``hn_algolia`` (to poll a query instead of the front page) leaves
@@ -192,7 +192,7 @@ def _text(el: Any) -> str:
 
 
 class FeedSourceProvider(KnowledgeSourceProvider):
-    """Poll-capable provider over a structured feed endpoint (§3).
+    """Poll-capable provider over a structured feed endpoint.
 
     Spec keys (after preset resolution — see :func:`resolve_spec`):
 
@@ -423,7 +423,7 @@ class FeedSourceProvider(KnowledgeSourceProvider):
     async def poll(
         self, source_id: str, cursor: str = "", *, policy: Any = None
     ) -> SourcePollResult:
-        """One conditional fetch + parse. Never raises to the engine (§1.1).
+        """One conditional fetch + parse. Never raises to the engine.
 
         A 304 returns zero items and KEEPS the validators, which is the cheap steady state
         a feed should spend almost all its polls in. Any other failure is reported as a soft

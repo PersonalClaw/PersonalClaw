@@ -1,4 +1,4 @@
-"""The claim store: which trigger is running right now (§3.1 overlap).
+"""The claim store: which trigger is running right now (overlap).
 
 **🔴 TWO MEASURED DEFECTS THIS CLEARS.** `scheduling.claim_fire` decides overlap from an `existing`
 claim the caller supplies, and `firepath.evaluate` returns the claim it granted with the note "the
@@ -230,7 +230,7 @@ def running_ids(*, now: float = 0.0, base_dir: Path | str | None = None) -> list
 def orphaned_ids(*, now: float = 0.0, base_dir: Path | str | None = None) -> list[tuple[str, int]]:
     """Live claims whose OWNING PROCESS is provably gone, as `(trigger_id, owner_pid)`.
 
-    🔴 WHY THIS EXISTS (WF2AUT-16). A claim answered "since when" and never "by whom", so the only
+    🔴 WHY THIS EXISTS. A claim answered "since when" and never "by whom", so the only
     thing that could terminalize a run a crash orphaned was `reaper.overdue` — a 1800s DEADLINE, not
     an observation. For that whole window the run read as in-flight on every surface, which is the
     defect `guardrails/self_destruct.py` states in its own words: *"the ScheduleRunStore row never
@@ -280,7 +280,7 @@ def orphaned_ids(*, now: float = 0.0, base_dir: Path | str | None = None) -> lis
     return sorted(out)
 
 
-# ── named resource slots (§3.5 / AUTO-R9) ──
+# ── named resource slots ──
 
 
 def slot_holders(
@@ -289,14 +289,14 @@ def slot_holders(
     """`{slot_name: holding_trigger_id}` for every slot a RUNNING trigger holds.
 
     🔴 WHY THIS EXISTS. `Trigger.resource_slots` was declared in the entity, persisted, round-tripped
-    by `to_dict`/`from_dict` — and read by **nothing**. Found by generalising S134's container audit
+    by `to_dict`/`from_dict` — and read by **nothing**. Found by generalising a container audit
     across all 41 dataclasses in `triggers/`: it was the only field with zero
     non-declaration readers.
-    §3.5 is explicit: *"triggers/runs declare needs (`gpu`, `local-llm`); the substrate serializes
+    The slot contract: triggers/runs declare needs (`gpu`, `local-llm`); the substrate serializes
     conflicting runs per slot and refuses over-capacity starts with a typed RESOURCE_BUSY + holder
-    identity (a `deferred` ledger row)."* So a user could declare `resource_slots: ["local-llm"]` on
-    three triggers and have all three run a local model at once — the exact contention §3.5
-    exists to
+    identity (a `deferred` ledger row). So a user could declare `resource_slots: ["local-llm"]` on
+    three triggers and have all three run a local model at once — the exact contention slots
+    exist to
     prevent on a machine shared with the interactive user.
 
     Derived from the CLAIM STORE rather than a second sidecar, which is the design decision here: a
@@ -340,7 +340,7 @@ def busy_slot(
 ) -> tuple[str, str]:
     """The first slot this trigger wants but cannot have, as `(slot, holder_id)`; else `("", "")`.
 
-    Returns the HOLDER too, because §3.5 asks for "holder identity" in the refusal: "the gpu is
+    Returns the HOLDER too, because the refusal carries holder identity: "the gpu is
     busy"
     sends a user looking through every automation they own, while "held by clock:nightly-index" is
     actionable.

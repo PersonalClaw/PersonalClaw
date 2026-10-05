@@ -1,7 +1,7 @@
-"""Supply-chain gates folded into A8 — skill install (S3) + memory write.
+"""Supply-chain gates — skill install + memory write.
 
-S3: install_skill_files routes ALL incoming skill content through the shared
-scanner before writing; a dangerous script is refused (nothing written). S5: the
+install_skill_files routes ALL incoming skill content through the shared
+scanner before writing; a dangerous script is refused (nothing written). The
 scanner's scan_text dispatches the destructive-script ruleset on the 'script'
 surface and the injection/invisible ruleset elsewhere — the two gates the apps
 and skills both reuse.

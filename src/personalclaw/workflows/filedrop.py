@@ -1,4 +1,4 @@
-"""Per-run inbound file drop and outbound artifact listing (R17).
+"""Per-run inbound file drop and outbound artifact listing.
 
 The two directions a run exchanges files with its human, kept in ONE module because they are one
 feature with one enable/disable decision — split across two, "drop is on but the outbox is off"
@@ -58,8 +58,7 @@ _SAFE_NAME_RE = re.compile(r"[^\w.\-]")
 
 #: The spec key that turns the drop on and names auto-accepted MIME types. Absent = drop DISABLED,
 #: deliberately: a run that never declared it accepts files should not accept files because a route
-#: exists. The disabled response is honest about why rather than a bare 404 (§2.5 "honest
-#: disabled-status responses").
+#: exists. The disabled response is honest about why rather than a bare 404.
 SPEC_KEY = "file_drop"
 
 
@@ -178,7 +177,7 @@ def record_drop(run_id: str, entry: dict[str, Any]) -> None:
 def store_dropped_bytes(run_id: str, filename: str, data: bytes) -> dict[str, Any]:
     """Land one dropped file in the run's immutable zone and return its manifest record.
 
-    Written through ``atomic_write_bytes`` (§2.5) so a partial write never presents itself as a
+    Written through ``atomic_write_bytes`` so a partial write never presents itself as a
     complete reference file, and containment-checked against the drop dir even though the name is
     already sanitized — the sanitizer and the containment check fail differently, and the one that
     matters here is the one that cannot be argued about.

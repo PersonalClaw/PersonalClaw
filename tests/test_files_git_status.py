@@ -1,4 +1,4 @@
-"""Tests for the Files git-status endpoint (Files P2).
+"""Tests for the Files git-status endpoint.
 
 The ``git_original`` block near the bottom pins #432: one endpoint had re-implemented
 ``_git``'s subprocess call, and the copy forgot each thing the original knew — a

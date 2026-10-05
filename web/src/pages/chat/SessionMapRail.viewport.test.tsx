@@ -4,9 +4,9 @@ import { SessionMapRail } from './SessionMapRail'
 import { sessionMapEntries } from './sessionMap'
 import type { ChatTurn, Segment } from './chatTypes'
 
-// ── SSM-5 (the DOM half) — the IntersectionObserver repaints the on-screen colour ─────────────
+// ── The DOM half — the IntersectionObserver repaints the on-screen colour ─────────────────────
 //
-// acceptance criteria: an IntersectionObserver over EVERY turn the map's entries own repaints the markers of
+// The contract: an IntersectionObserver over EVERY turn the map's entries own repaints the markers of
 // the exchanges on screen to `--color-primary`; changing which turn nodes intersect makes the coral
 // set match the on-screen exchanges (via `currentMarkRange`); a reply on screen keeps its question
 // lit after the question itself has scrolled away; and streaming text does NOT trigger a

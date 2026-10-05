@@ -1,8 +1,8 @@
-"""WHICH browser a browse task drives — the execution-target selector (BA-7, plan §(a)/§(d)).
+"""WHICH browser a browse task drives — the execution-target selector.
 
 Two targets, one closed vocabulary:
 
-* ``gateway`` (the DEFAULT) — the shipped §5 path: a CDP page target named on the action
+* ``gateway`` (the DEFAULT) — the shipped path: a CDP page target named on the action
   config, running under the gateway's own per-site profile. Absent a ``target`` key this is
   what a config resolves to, so every browse action authored before this module existed
   keeps the behaviour it had.
@@ -22,14 +22,14 @@ Two targets, one closed vocabulary:
    reads its endpoint from the run's GRANT (the tab the browser opened for that run) and never
    from ``action_config["cdp_url"]``, so there is no code path along which the gateway's target
    can be reached by a task that asked for the user's browser.
-2. **Never unattended.** Per AUTONOMY-GUARDRAILS' earned-autonomy ladder the ``user_browser``
+2. **Never unattended.** On the earned-autonomy ladder the ``user_browser``
    target sits at a floor that no evidence promotes: driving a browser that is already
    logged into the operator's bank while nobody is watching is not a rung, it is a category
    the ladder does not contain. So this is expressed as a construction-level refusal rather
    than a fifth rung name — see :func:`permits_unattended` and
    :func:`unattended_refusal`. The provider ``browse`` remains registered at
    ``one_tap``/``one_tap`` in ``guardrails.rungs`` (that spec is read, not restructured,
-   here); ``tests/test_browse_target.py`` rails its ceiling so a later session cannot
+   here); ``tests/test_browse_target.py`` rails its ceiling so a later change cannot
    promote the provider to an unattended rung underneath this floor.
 
 **Where each refusal is consulted.** The unattended refusal fires at REGISTRATION

@@ -1,4 +1,4 @@
-"""CRE-5 rails for lock refresh and release image attestations."""
+"""Rails for lock refresh and release image attestations."""
 
 from __future__ import annotations
 

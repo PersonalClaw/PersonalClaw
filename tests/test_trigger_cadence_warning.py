@@ -172,9 +172,10 @@ def test_a_trigger_ABOVE_the_floor_warns_about_nothing(home, state):
 
 
 def test_the_floor_is_a_WARNING_and_the_create_still_succeeds(home, state):
-    """R1 makes the floor overridable, so a 5-second cadence must persist verbatim. Measured on the
+    """The floor is overridable, so a 5-second cadence must persist verbatim. Measured on the
     live API before the fix and preserved here: the server never had a lower bound, and adding one
-    would refuse a trigger the plan says to allow."""
+    would refuse a trigger the product deliberately allows (a fast local-model poll is a
+    legitimate choice)."""
     created = _create(state, name="five-seconds", every=5)
     assert created["every_secs"] == 5
     assert _spec(home, "clock:five-seconds")["spec"]["interval_secs"] == 5
@@ -463,7 +464,7 @@ def test_changing_the_TIMEZONE_still_re_arms(home, state, monkeypatch):
     assert after["next_fire_at"] != armed_before
 
 
-# ── the floor governs only an action that can call a model (B10, 2026-09-25) ──
+# ── the floor governs only an action that can call a model ──
 
 
 def test_a_NOTIFY_trigger_under_the_floor_is_NOT_warned(home, state):

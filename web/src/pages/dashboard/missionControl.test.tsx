@@ -8,7 +8,7 @@ import type { LaneCard } from '../../lib/attentionLanes'
 
 // ── Mission Control is a CONTROL surface ─────────────────────────────────────────────────────
 //
-// The change's acceptance criterion has three clauses and only the first is about rendering. These tests are
+// The contract has three parts and only the first is about rendering. These tests are
 // weighted the same way: one covers the four lanes, and the rest cover the two verbs, because a
 // four-lane view that lists work without resolving it is the thing this change exists to replace.
 //
@@ -134,7 +134,7 @@ beforeEach(() => {
   toLanes.mockReturnValue(lanes())
 })
 
-// ── Clause 1: four lanes, always ────────────────────────────────────────────────────────────
+// ── Four lanes, always ──────────────────────────────────────────────────────────────────────
 describe('the four lanes', () => {
   it('renders all four headings even when every lane is empty', async () => {
     render(<MissionControl />)
@@ -160,7 +160,7 @@ describe('the four lanes', () => {
   })
 })
 
-// ── Clause 2: approving from a lane resolves the approval ───────────────────────────────────
+// ── Approving from a lane resolves the approval ─────────────────────────────────────────────
 describe('approving from a lane', () => {
   const card = approvalCard({ subtitle: 'rm -rf ./build' })
 
@@ -220,7 +220,7 @@ describe('approving from a lane', () => {
   })
 })
 
-// ── Clause 3: a question answered from a card unblocks its loop ─────────────────────────────
+// ── A question answered from a card unblocks its loop ───────────────────────────────────────
 describe('answering a pending question', () => {
   const card = questionCard(questionItem())
 
@@ -565,7 +565,7 @@ describe('questionOf — reading the options off the wire', () => {
 // ── The mount ────────────────────────────────────────────────────────────────
 //
 // Everything above tests the component in isolation, which is silent about the one thing the
-// change's acceptance criteria actually requires: that a locked Mission Control view RENDERS. A page
+// contract actually requires: that a locked Mission Control view RENDERS. A page
 // component that nothing routes to renders nowhere. This file's own suite passed at full green
 // while `App.tsx` had never heard of it.
 //

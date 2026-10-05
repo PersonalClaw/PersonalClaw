@@ -116,7 +116,7 @@ StopOutcome = Literal["soft", "hard", "idle"]
 
 
 async def _fire_session_end(key: str, reason: str, session: "_Session") -> None:
-    """Fire `SessionEnd` (AUTO crit 5). Declared, selectable in the hook UI, fired by nothing until
+    """Fire `SessionEnd`. Declared, selectable in the hook UI, fired by nothing until
     now.
 
     `reason` distinguishes the three real endings this module has — `removed` (resumable: tab close,
@@ -155,9 +155,9 @@ def _resolve_acp_spawn_cwd(cwd: str | None) -> Path:
       ``Path(work_dir)``, and ``Path("")`` is ``Path(".")``, so the CLI got spawned in
       whatever directory the GATEWAY happens to be running in — a repo checkout, ``/``, or
       whatever a service manager set — and every file it wrote landed somewhere the user
-      cannot find. Same family as G39's real-home escape: a containment decision falling
+      cannot find. Same family as the real-home escape: a containment decision falling
       through to an ambient value.
-    * Substituting ``workspace_root()`` (G39's standardised definition) would be worse in
+    * Substituting ``workspace_root()`` (the standardised definition) would be worse in
       the case that actually reaches here, because that is the very path the sensitivity
       check rejected. It would spawn the CLI inside a credential directory.
 
@@ -368,7 +368,7 @@ class _Session:
     agent: str = ""  # ACP agent name used for this session
     # Channel message queue: FIFO of (msg_ts, text, kwargs) waiting for the semaphore
     queue: deque[tuple[str, str, dict]] = field(default_factory=deque)
-    # Queue-steering (#37): mid-turn messages in `steer` mode buffer here and the
+    # Queue-steering: mid-turn messages in `steer` mode buffer here and the
     # native loop drains them at the next model boundary (vs `queue` = followup).
     steers: deque[str] = field(default_factory=deque)
     # Set by the dispatcher for the duration of a turn when that turn's runtime
@@ -635,7 +635,7 @@ class SessionManager:
         cwd: str | None,
         extra_factory_kwargs: dict[str, Any],
     ) -> "ModelProvider | None":
-        """P9: open a session on a SHARED per-runtime AcpConnection when concurrent
+        """Open a session on a SHARED per-runtime AcpConnection when concurrent
         sessions are enabled (double-gated). Returns ``None`` when the gate is off or the
         runtime isn't an ``acp:<cli>`` (caller falls back to the one-session path)."""
         provider_kind = str(extra_factory_kwargs.get("provider_kind") or "")
@@ -1153,7 +1153,7 @@ class SessionManager:
             try:
                 # Re-key pooled provider with actual session parameters via the
                 # AgentProvider capability surface (set_session_key/set_model) so
-                # any stateful runtime — ACP today, native in P4 — claims cleanly.
+                # any stateful runtime — ACP or native — claims cleanly.
                 from personalclaw.agents.provider import AgentProvider
 
                 if isinstance(provider, AgentProvider):
@@ -1736,12 +1736,12 @@ class SessionManager:
         return None
 
     def add_steer(self, key: str, text: str) -> bool:
-        """Buffer a mid-turn steering message (#37). Returns True only when the
+        """Buffer a mid-turn steering message. Returns True only when the
         message will actually reach the running turn; False means the caller must
         queue it instead.
 
         Both conditions are required, and the second one is the fix for a real
-        silent-drop bug (PLATFORM-RESILIENCE S6.1):
+        silent-drop bug:
 
         * a turn must be in-flight (the semaphore is held) — otherwise there is
           nothing to steer and the message belongs in the normal queue;
@@ -1770,7 +1770,7 @@ class SessionManager:
         turn, False when the turn ends (so a steer sent between turns is queued
         rather than buffered against a runtime that is no longer pulling).
 
-        The RETURN is the fix for the second half of the silent drop (PR2-10). The buffer
+        The RETURN is the fix for the second half of the silent drop. The buffer
         still has to be emptied at turn end — a steer aimed at a finished answer must not
         surface inside an unrelated later turn — but emptying it and telling nobody meant a
         message the user was shown as accepted disappeared with no trace anywhere. Handing
@@ -2050,7 +2050,7 @@ class SessionManager:
         if not preserve_queue:
             self.clear_queue(key)
         # Spawned subagents and batch runs are WORK this turn started, so a stop reaches them
-        # too (PR2-12). Before this, stopping a turn that had fanned out left every child
+        # too. Before this, stopping a turn that had fanned out left every child
         # running: they kept burning tokens, kept holding their worktrees, and later
         # delivered results into a session the user had already stopped. Runs BEFORE
         # provider.cancel so the children are dying while the parent's soft-stop budget

@@ -360,14 +360,14 @@ CHUNK_BACKFILL_PASS = "chunk_backfill"
 
 
 def chunk_backfill_pass(*, batch_size: int) -> int:
-    """One bounded batch of the knowledge CHUNK backfill (KL-12). Returns units processed.
+    """One bounded batch of the knowledge CHUNK backfill. Returns units processed.
 
     Sibling of the item-vector re-index above, and deliberately separate from it: the
     re-index rewrites the items' OWN vectors on a model switch, while this only adds the
     chunk layer beneath them for items that predate chunking. Both are needed and neither
     substitutes for the other.
 
-    This is a graph-maintenance pass, not a boot hook (KL-14). The backfill used to run from
+    This is a graph-maintenance pass, not a boot hook. The backfill used to run from
     ``app.on_startup``, which fires exactly once: on a gateway that stays up for a week, a
     library that gains pre-chunking items after boot never gained deep-document recall. The
     host (:mod:`personalclaw.knowledge.maintenance`) instead calls this on every due tick and

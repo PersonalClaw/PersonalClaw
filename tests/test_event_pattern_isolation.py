@@ -1,6 +1,6 @@
-"""Rule (d): payload is DATA, never a pattern — plus the ReDoS surface that audit exposed.
+"""Payload is DATA, never a pattern — plus the ReDoS surface that audit exposed.
 
-§7/R4 rule (d): *"payload content never participates in event-pattern/template matching — only
+The rule: *"payload content never participates in event-pattern/template matching — only
 trigger spec patterns match; payload is data."*
 
 **The rule HOLDS, and this file is the guard rather than a fix.** Verified rather than assumed: the
@@ -174,7 +174,7 @@ def test_the_hint_says_HOW_TO_FIX_IT():
 
 
 def test_the_CREATE_handler_surfaces_the_hint(tmp_path, monkeypatch):
-    """🔴 A hint nothing returns is the inert-control defect this program keeps finding. Driven
+    """🔴 A hint nothing returns is the inert-control defect that keeps recurring. Driven
     through the Triggers page's create route, not read off its source."""
     import asyncio
     import json
@@ -239,7 +239,7 @@ def test_an_EDIT_that_introduces_the_pattern_is_warned_on_the_row(tmp_path):
 
 def test_a_catastrophic_pattern_is_WARNED_not_REFUSED():
     """Refusing would break triggers people already have — the same warn-and-keep-working reasoning
-    S119 recorded for a verbatim webhook token. The trigger still matches."""
+    already recorded for a verbatim webhook token. The trigger still matches."""
     t = _trigger(matcher=r"(a+)+$")
     assert matches(t, event_type="set", key="k", value="aaa!") is False  # ran, did not raise
     assert catastrophic_regex_hint(t.spec["content_re"]), "and the author was warned"

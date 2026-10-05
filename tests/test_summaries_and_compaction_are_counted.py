@@ -1,7 +1,7 @@
 """A room's summary and a chat's history compression each write one usage row, and the model-call
 census leaves out every call a usage row already counts.
 
-Measured on ``integration`` (row 310's leftover of 264): a room member folding its context and a
+Measured on ``integration``: a room member folding its context and a
 chat compressing its history both call a model on the Background axis, through ``ModelCallGuard``,
 so each call got a ``model_calls.jsonl`` row and charged the spend meter, and ``usage/turns.jsonl``
 got nothing. Settings → Usage, its daily-budget line and a chat's own total never saw them. The

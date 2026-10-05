@@ -1,4 +1,4 @@
-"""SDK: the shared-store provider conformance kit (TEAM-SHARED-HARNESS TSHR-1).
+"""SDK: the shared-store provider conformance kit.
 
 A shared-store provider app — a multi-tenant task backend, a ``trigger`` store like the
 bundled ``shared-automations`` app, a future shared-memory provider — imports the
@@ -12,9 +12,9 @@ apps import boundary forbids) and runs its provider against the one executable c
     def test_conforms():
         assert_shared_store_contract(SharedStoreCase(...))  # raises on the first violation
 
-The contract encodes the shared-store failure modes the internet-research companion
-documented (F3 foreign-attribution scoping, F4 last-writer-wins data loss, F6
-ownership-transfer orphaning) so an app cannot silently repeat them. See
+The contract encodes the failure modes a shared store adds (F3 foreign-attribution
+scoping, F4 last-writer-wins data loss, F6 ownership-transfer orphaning) so an app cannot
+silently repeat them. See
 ``docs/architecture/shared-store-provider-conformance.md`` for the contract prose and
 the reference implementations, and the kit module for each clause's obligation.
 """

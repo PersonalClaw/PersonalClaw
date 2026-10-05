@@ -1,1 +1,1 @@
-"""slice_5 exemplar package (WF2 slice_5)."""
+"""slice_5 exemplar package (the workflow human-input contract)."""

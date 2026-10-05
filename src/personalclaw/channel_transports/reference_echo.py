@@ -1,7 +1,7 @@
-"""Reference channel transport (#41) — a complete, minimal adapter.
+"""Reference channel transport — a complete, minimal adapter.
 
-This is the worked example referenced by ``docs/ADDING_A_CHANNEL.md``: the smallest
-transport that exercises the full normalized contract (#40) — outbound ``send``,
+This is the worked example ``docs/architecture/inbox-channels.md`` names: the smallest
+transport that exercises the full normalized contract — outbound ``send``,
 declared ``capabilities``, an inbound ``receive`` loop emitting :class:`ChannelMessage`,
 plus ``connect``/``disconnect``/``health``. It "echoes" — outbound sends are recorded
 and surfaced back as inbound messages — so it's runnable + testable with no external
@@ -50,7 +50,7 @@ class ReferenceEchoTransport(ChannelTransportProvider):
     def display_name(self) -> str:
         return "Reference (Echo)"
 
-    # ── capability declaration (#40) ──
+    # ── capability declaration ──
     def capabilities(self) -> ChannelCapabilities:
         return ChannelCapabilities(
             inbound=True,
@@ -115,7 +115,7 @@ class ReferenceEchoTransport(ChannelTransportProvider):
         self._services = None
 
     async def handle_inbound(self, msg: ChannelMessage, *, is_dm: bool = True) -> "TrustDecision":
-        """Hand one inbound :class:`ChannelMessage` to the platform's guarded door (EA-7).
+        """Hand one inbound :class:`ChannelMessage` to the platform's guarded door.
 
         This is the reference wiring every channel app copies, and it is deliberately ONE
         call: ``services.deliver_channel_inbound(...)``. The transport does not decide

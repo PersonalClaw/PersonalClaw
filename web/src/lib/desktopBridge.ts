@@ -1,4 +1,4 @@
-/** The renderer's typed view of the desktop shell bridge (DC-2 C1).
+/** The renderer's typed view of the desktop shell bridge.
  *
  *  `window.pclawDesktop` exists ONLY inside the Electron shell — `preload.js` exposes
  *  it over `contextBridge` with `contextIsolation: true`. In a browser tab it is
@@ -90,7 +90,7 @@ export interface DesktopBridge {
     setCapturing: (on: boolean) => Promise<boolean>
     on: (cb: (push: { action: 'toggle' | 'stop'; reason?: string }) => void) => () => void
   }
-  /** Native OS notifications — plan-42's `native` delivery target. Deliberately not
+  /** Native OS notifications — the `native` delivery target. Deliberately not
    *  a general "notify the user" API: `show()` is called only for a gateway note whose rule
    *  named the target and whose `native.deliver` came back true, so the policy stays in the
    *  rules engine. `on()` fires when a banner is TAPPED — the shell has already focused the

@@ -27,7 +27,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // measured spread rather than picked: `ARTIFACT_KINDS` (16) is nearly 3x the next-largest registry
 // feeding a Segmented anywhere in the app (6). A threshold of 10 therefore flags nothing that fits
 // today and catches a registry that grows past the point where any label set could fit a phone.
-// Between 6 and 10 it stays a per-site measurement — cycle 71 measured the 6-entry Loop-kind slider
+// Between 6 and 10 it stays a per-site measurement — the 6-entry Loop-kind slider was measured
 // and it fits at 390px, which is exactly why this is not a "every mapped Segmented" rule.
 
 const THRESHOLD = 10

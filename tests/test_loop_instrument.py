@@ -1,4 +1,4 @@
-"""Tests for the P4 'prove-the-instrument' gates: the calibrated returns-band, the
+"""Tests for the 'prove-the-instrument' gates: the calibrated returns-band, the
 adversarial-skeptic adjudication, and the canary judge probe."""
 
 from __future__ import annotations
@@ -156,7 +156,7 @@ async def test_canary_defers_on_exception():
 
 
 def test_verdict_to_dict_keys_are_unconditional():
-    """DEVIATION, recorded: `adversarial`/`band_used` used to be OMITTED when unset
+    """A deliberate change: `adversarial`/`band_used` used to be OMITTED when unset
     (the deleted `CycleVerdict.to_dict` built its dict conditionally). On the contract record
     they are two of twenty-one keys and every other one is unconditional, so they are emitted
     always. The cockpit is unaffected either way — it guards with `verdict?.adversarial` and
@@ -172,7 +172,7 @@ def test_verdict_to_dict_includes_set_observability():
     assert d["adversarial"] is True and d["band_used"] == 1.78  # rounded to 2dp
 
 
-# ── reproduce_confirm anchor resolution (V5 fix: fall back to the kind's deliverable) ──
+# ── reproduce_confirm anchor resolution (fall back to the kind's deliverable) ──
 
 
 @pytest.mark.asyncio
@@ -197,7 +197,7 @@ async def test_reproduce_uses_kind_deliverable_when_cfg_empty(monkeypatch, tmp_p
             kind_config={"goal_type": "open_ended", "deliverables": []},
         )
     )
-    # A finding is a cycle_NNN.json file the worker writes; PP-5 ingests it into the ledger, which
+    # A finding is a cycle_NNN.json file the worker writes; it is ingested into the ledger, which
     # is what get_findings (and thus reproduce_confirm) now reads. The watchdog ingests each poll
     # before _complete calls reproduce_confirm, so ingest here to mirror that flow.
     fdir = loop_files.loop_dir(loop.id) / "findings"

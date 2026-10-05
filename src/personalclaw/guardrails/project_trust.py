@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 _FILENAME = "project_trust.json"
 
 # The capability class an untrusted/Preview folder forces. Kept equal to
-# ``subagent.CAPABILITY_RESEARCH`` (a coherence test asserts it) so Preview reuses the §4.1
+# ``subagent.CAPABILITY_RESEARCH`` (a coherence test asserts it) so Preview reuses the
 # read-only class rather than a parallel read-only mechanism that could drift from it.
 PREVIEW_CAPABILITY = "research"
 
@@ -231,7 +231,7 @@ def held_to(cwd: str, requested: str | None) -> str | None:
 def gate_project_capability(
     cwd: str, requested: str | None, *, state: Any | None = None
 ) -> str | None:
-    """Bound a fire's capability class by the project folder's trust decision (§4.3), as
+    """Bound a fire's capability class by the project folder's trust decision, as
     :func:`held_to` reads it.
 
     The first fire a folder holds back (an **unknown** folder, and a run that asked for more than

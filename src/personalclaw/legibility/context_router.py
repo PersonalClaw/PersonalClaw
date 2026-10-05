@@ -68,8 +68,8 @@ def _neutralize_markers(value: str) -> str:
     return value.replace(PCLAW_START, _ESCAPED_START).replace(PCLAW_END, _ESCAPED_END)
 
 
-# The per-tier headings. The two content-source headings are DISTINCT by contract
-# (success-criterion 8): memory-derived vs knowledge-derived never share a heading.
+# The per-tier headings. The two content-source headings are DISTINCT by contract:
+# memory-derived vs knowledge-derived never share a heading.
 MEMORY_HEADING = "How this user works"
 KNOWLEDGE_HEADING = "Reference material (pointers — retrieve the body on demand)"
 SKILLS_HEADING = "Skills available here"

@@ -300,7 +300,7 @@ REPORTED_READ_KINDS: frozenset[str] = frozenset({"read", "fetch", "search", "thi
 # routinely holds a ``kind: "execute"`` frame with no command. Before this existed, that
 # state resolved to the literal ``"destructive"`` — a verdict about the command, minted
 # from the command's ABSENCE, which is how a read-only ``pwd; ls`` was audited as
-# destructive (`G10`/`O10`). Absence now has its own value, and each consumer decides
+# destructive. Absence now has its own value, and each consumer decides
 # what to do with it explicitly: the gate DENIES it (fails closed — an unreadable
 # command must not run under a read-only posture) while the risk names it for what it is,
 # its declaration, else CAUTION (fails honest — never ``safe``, so it still raises a card, and

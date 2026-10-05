@@ -4,7 +4,7 @@ import type { UploadProgress } from '../../lib/chunkedUpload'
 /**
  * Knowledge data layer — a thin pass-through to the real backend. Typed items
  * (note/fleeting/journal/gist/bookmark) are authored via `POST /api/knowledge/
- * items`; media types upload through the ingestion pipeline. (P6b replaced the
+ * items`; media types upload through the ingestion pipeline. (This replaced the
  * former localStorage stub — every call now hits the backend.)
  */
 

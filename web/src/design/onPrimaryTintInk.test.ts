@@ -118,7 +118,7 @@ describe('--color-on-primary-tint', () => {
   })
 
   it('the tonal variant actually reads the token', () => {
-    // 🪤 The `--color-on-danger` cycle's lesson: a token fix does nothing for a component that
+    // 🪤 The `--color-on-danger` fix's lesson: a token fix does nothing for a component that
     // never reads it, and `HeaderActions` was the one site that bypassed the token.
     const btn = readSource(join(WEB, 'src/ui/Button.tsx'))
       .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')

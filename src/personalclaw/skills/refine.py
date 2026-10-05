@@ -1,4 +1,4 @@
-"""Refine proposals from a detected stumble — LEARNING-VISIBILITY S3 (the refinement arm).
+"""Refine proposals from a detected stumble (the refinement arm).
 
 ``after_turn_review.detect_stumble`` decides that a turn used a skill and still went wrong.
 This module turns that verdict into ONE reviewable artifact: a ``kind="refine"`` proposal on

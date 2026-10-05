@@ -1,21 +1,21 @@
 """The Trigger entity, its specs, and the fire records.
 
-Session 62 is the ENTITY layer only: the record, the per-kind specs, the typed fire outcomes. No
-scheduler, no dispatch, no migration — those are 63/64/66. The shape has to be settled first because
-the migration is the step that cannot be redone cheaply.
+This is the ENTITY layer only: the record, the per-kind specs, the typed fire outcomes. No
+scheduler, no dispatch, no migration — those are tested elsewhere. The shape has to be settled first
+because the migration is the step that cannot be redone cheaply.
 
-**The measurement that shaped this session.** `ScheduleJob` has 33 fields and `EventTrigger` 11.
+**The measurement that shaped the entity.** `ScheduleJob` has 33 fields and `EventTrigger` 11.
 Checked against the new dataclass: **31 of the 44 have no same-named home.** A migration written
 against `Trigger` alone would silently drop `skip_dates` (the trigger keeps firing on a holiday),
 `strict_schedule` (a missed slot catches up when the author said not to) and `content_re` (an event
-trigger fires on everything). So `LEGACY_FIELD_MAP` lands in THIS session, and the tests
+trigger fires on everything). So `LEGACY_FIELD_MAP` lands WITH the entity, and the tests
 below assert
 coverage against the real dataclasses — a field added to `ScheduleJob` next month fails here rather
-than vanishing in session 66.
+than vanishing in the migration.
 
-**Two contracts the plan states, made checkable.** Never-throw structural validation (R15): an
+**Two contracts, made checkable.** Never-throw structural validation: an
 agent-authored near-miss becomes a warning with a suggestion, on a row that still loads. And "silent
-drops are banned" (R2): every non-clean outcome must carry a one-line reason, asserted by
+drops are banned": every non-clean outcome must carry a one-line reason, asserted by
 `fire_issues` rather than trusted.
 """
 
@@ -60,7 +60,7 @@ def _raw(**over) -> dict:
     return base
 
 
-# ── never-throw structural validation (R15) ──
+# ── never-throw structural validation ──
 
 
 def test_a_VALID_trigger_parses_with_no_issues():
@@ -197,7 +197,7 @@ def test_a_spec_key_from_ANOTHER_kind_is_flagged():
 
 
 def test_the_min_clock_interval_is_declared():
-    """A floor rather than a hard rule — the plan makes it overridable — but it has to exist so a
+    """A floor rather than a hard rule, but it has to exist so a
     typed `* * * * *` is not an accident that runs an LLM every minute."""
     assert MIN_CLOCK_INTERVAL_SECS == 900
 
@@ -252,7 +252,7 @@ def test_an_unknown_GATE_is_flagged_as_never_enforced():
 
 
 def test_budget_and_storm_gates_FAIL_OPEN():
-    """R3's amendment. A budget probe that hangs must not silently stop every automation on the
+    """A budget probe that hangs must not silently stop every automation on the
     machine."""
     for gate in ("max_cost_usd_per_run", "max_runs_per_hour", "rate_cap", "condition"):
         assert gate_failure_mode(gate) == "open"
@@ -285,7 +285,7 @@ def test_every_declared_gate_is_in_the_vocabulary():
     assert "skip_dates" in GATE_KEYS
 
 
-# ── fire records: no silent drops (R2) ──
+# ── fire records: no silent drops ──
 
 
 def test_every_non_clean_outcome_MUST_carry_a_reason():
@@ -339,7 +339,7 @@ def test_only_a_TRUE_failure_counts_toward_autopause():
 
 
 def test_PRODUCTIVITY_is_the_materiality_predicate_not_the_outcome():
-    """§1.3 is explicit: the classification criterion is "did it mutate durable state". A
+    """The classification criterion is explicit: "did it mutate durable state". A
     view built on
     the outcome alone would show a page of runs that changed nothing."""
     ran_but_inert = FireRecord(id="f", trigger_id="t", outcome=Outcome.RAN.value, mutated=False)
@@ -399,11 +399,11 @@ def test_anything_multi_node_llm_or_resumable_is_FULL(kw):
     assert classify_weight(**kw) == RunWeight.FULL.value
 
 
-# ── the migration map (what makes session 66 lossless) ──
+# ── the migration map (what makes the migration lossless) ──
 
 
 def test_EVERY_ScheduleJob_field_is_accounted_for():
-    """The measurement that shaped this session: 31 of 44 legacy fields have no same-named home on
+    """The measurement that shaped the entity: 31 of 44 legacy fields have no same-named home on
     `Trigger`. A field with no map entry is one a migration drops silently."""
     from personalclaw.schedule import ScheduleJob
 
@@ -508,7 +508,7 @@ def test_failure_delivery_defaults_to_the_INBOX_even_when_delivery_is_none():
 
 
 def test_the_health_rollups_live_ON_the_row():
-    """R7: computing them per render means reading every run of every trigger to draw one page of
+    """Computing them per render means reading every run of every trigger to draw one page of
     status dots."""
     names = {f.name for f in dc.fields(Trigger)}
     assert {"last_success_at", "last_failure_at", "health_status", "last_error_summary"} <= names

@@ -1,14 +1,14 @@
 """The RUN_END learner — a terminal run mines its own Run Ledger for lessons.
 
-LEARNING-FLYWHEEL §3.3 / §7 step 5, the RUN_END cadence. This suite covers the clauses
-The acceptance criterion names for the run-end spoke, each against the REAL
+The RUN_END cadence. This suite covers what the
+run-end spoke must do, each against the REAL
 `MemoryService`/`VectorMemoryStore`, the REAL Run Ledger (`Journal` over `store`), and the
 REAL proposal store (monkeypatched to a tmp home) — not hand-built state:
 
 * the spoke is INERT unless a memory service with a live vector store is injected — the exact
   guard `self_model_observer.observe_turn` uses, so every terminal-run controller test writes
   nothing and never touches the real home;
-* a terminal failure files a `lesson_batch` PROPOSAL (never a live lesson) carrying an R8
+* a terminal failure files a `lesson_batch` PROPOSAL (never a live lesson) carrying a
   failure CAPSULE — repro command, signature, forbidden success modes, bounded evidence —
   keyed by `(template, mode, signature)` so the same mechanism failing twice is ONE proposal;
 * the environment deny-filter drops world-condition failures before they can teach the
@@ -101,7 +101,7 @@ def test_no_vector_store_is_a_noop(home):
         # EXACT-dict comparison, on purpose: this test's job is that a null-memory service writes
         # nothing at all, and a new counter that could be nonzero on this path must fail here.
         "mined": 0,
-        # `tier_migration` is the (LEARN-R17) producer, wired alongside `mined`. Zero here for
+        # `tier_migration` is the tier-migration producer, wired alongside `mined`. Zero here for
         # the same reason: the whole capture short-circuits before any producer runs when no live
         # vector store is injected, so a null-memory terminal run still writes nothing at all.
         "tier_migration": 0,
@@ -120,7 +120,7 @@ def test_a_run_with_no_failures_proposes_nothing(svc, home):
     assert run_end.capture(run, svc, journal=journal_mod)["proposed"] == 0
 
 
-# ── a terminal failure files a lesson PROPOSAL with an R8 capsule ──
+# ── a terminal failure files a lesson PROPOSAL with a failure capsule ──
 
 
 def test_a_terminal_failure_files_a_lesson_proposal(svc, home):
@@ -136,8 +136,8 @@ def test_a_terminal_failure_files_a_lesson_proposal(svc, home):
     assert "run_end" in prop.tags and "workflow_run" in prop.tags
 
 
-def test_the_proposal_body_carries_an_R8_capsule(svc, home):
-    """LEARN-R8d: the proposal body embeds a checkable capsule — repro command, signature,
+def test_the_proposal_body_carries_a_failure_capsule(svc, home):
+    """The proposal body embeds a checkable capsule — repro command, signature,
     forbidden success modes — so a later replay can verify the lesson still applies rather
     than re-reading prose."""
     run = _terminal_run()
@@ -152,7 +152,7 @@ def test_the_proposal_body_carries_an_R8_capsule(svc, home):
 
 
 def test_the_key_is_template_mode_signature(svc, home):
-    """LEARN-R8a/b: the lesson is keyed by `(template, failure_mode, signature)` so it can be
+    """The lesson is keyed by `(template, failure_mode, signature)` so it can be
     re-injected on future runs of the SAME template."""
     from personalclaw.learning.detectors import (
         LessonKey,

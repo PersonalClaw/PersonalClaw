@@ -29,7 +29,7 @@ from personalclaw.llm.acp_agent import AcpAgentProvider, _factory
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 from personalclaw.llm.registry import ProviderEntry
 
-# The measured `O7` shape: the claude-code bundle registers the entry as
+# The measured shape: the claude-code bundle registers the entry as
 # ``acp:claude-code`` but launches the ADAPTER, whose basename is
 # ``claude-agent-acp`` — and under the npx fallback, ``npx``.
 ADAPTER_ARGV = ["/opt/homebrew/bin/claude-agent-acp"]
@@ -202,7 +202,7 @@ async def _turn_and_state(tmp_path, *, provider_id: str, is_new: bool, resumed: 
     return _session_lines(state), state
 
 
-# ── G14 at the call site: the sentence itself ───────────────────────────────
+# ── the runtime label at the call site: the sentence itself ─────────────────
 
 
 class TestRenderedSentenceNamesTheRuntime:
@@ -244,7 +244,7 @@ class TestSentenceVerbMatchesWhatHappened:
 
     @pytest.mark.asyncio
     async def test_a_reused_live_session_says_continued_not_created(self, tmp_path):
-        """The measured `G15` symptom: every later turn of one conversation takes
+        """The measured symptom: every later turn of one conversation takes
         the reuse path (``is_new=False, resumed=False``) and used to claim
         "Session created"."""
         lines = await _one_turn(
@@ -264,7 +264,7 @@ class TestSentenceVerbMatchesWhatHappened:
 
     @pytest.mark.asyncio
     async def test_exactly_one_session_sentence_per_turn(self, tmp_path):
-        """Two divergent broadcast branches is how `G14` shipped a stale label in
+        """Two divergent broadcast branches is how a stale label shipped in
         one of them. One turn emits one sentence, from one format string."""
         for is_new, resumed in ((True, False), (True, True), (False, False)):
             lines = await _one_turn(

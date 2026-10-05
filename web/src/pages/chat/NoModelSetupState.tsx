@@ -46,7 +46,7 @@ export function noModelChosenFor(text: string | null | undefined): string | null
   return m ? m[1] : null
 }
 
-/** WT-04: the calm setup empty-state shown in the transcript when a turn cannot run
+/** The calm setup empty-state shown in the transcript when a turn cannot run
  *  because no model is connected yet. Replaces the danger strip — which put a refusal
  *  worded for configuration on a newcomer's very first screen — with one plain
  *  sentence, the way forward as a CTA, and the full refusal tucked behind a

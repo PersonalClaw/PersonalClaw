@@ -1,4 +1,4 @@
-"""DURABILITY-AND-SYNC §4.1 / DAS-6c-ii-a — the versioned sync registry model.
+"""The versioned sync registry model.
 
 The pure coordination model the sync cycle turns on: parse/serialize registry.json
 canonically (so a CAS sha is stable), bump the local seq monotonically on export, and

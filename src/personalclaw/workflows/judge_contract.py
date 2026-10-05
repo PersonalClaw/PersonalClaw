@@ -55,8 +55,8 @@ measured first. On this tree:
   asked for this module's exact object in its own prompt — and the engine then appended
   `Respond with EXACTLY ONE word`, contradicting the template. The other 6 asked an open
   question and relied on that appended word.
-* **6 templates declare `runtime_hints.judge`, carrying 13 rubric criteria** (not 14 — the
-  WF2LOO-12 count was one high). Exactly **1** template has BOTH a judge gate and a rubric,
+* **6 templates declare `runtime_hints.judge`, carrying 13 rubric criteria** (not 14 — an
+  earlier count was one high). Exactly **1** template has BOTH a judge gate and a rubric,
   so on 6 of the 7 gates the ratchet has nothing to compare and is a no-op by construction.
 
 Three rules keep the teeth off the templates' throat:
@@ -128,7 +128,7 @@ logger = logging.getLogger(__name__)
 class Verdict(str, Enum):
     """The ONE closed verdict enum. Loop nodes route on data, never on prose.
 
-    There used to be two (WF2LOO-13). `verify.Verdict` carried PASS/RETRY/ESCALATE/REJECT for
+    There used to be two. `verify.Verdict` carried PASS/RETRY/ESCALATE/REJECT for
     the live gate and the verification ladder; this one carried PASS/REJECT/REPLAN/ESCALATE/
     NEEDS_INPUT for a contract nothing called. Two vocabularies over one decision meant
     `engine.py` had to RESTATE the sampling rule rather than import `aggregate_samples`, to
@@ -458,7 +458,7 @@ class JudgeVerdict:
 
         `done`/`done_reason`/`marginal_value`/`quality_score`/`regressed` are the keys the loop
         cockpit's ROI rail and verdict panel already read off the persisted shape, so absorbing
-        the loop dialect (WF2LOO-16) is additive on the wire: every key a stored verdict
+        the loop dialect is additive on the wire: every key a stored verdict
         carried before it is still here, spelled the same.
         """
         return {
@@ -523,7 +523,7 @@ def adjudicate(primary: JudgeVerdict, skeptic: JudgeVerdict | None) -> JudgeVerd
     unchanged: we never manufacture a refutation we did not get.
 
     marginal/quality/band come from the primary — the skeptic exists to veto a completion, not
-    to re-score. `reasoning` and `evidence_refs` come from the primary too: the pre-WF2LOO-16
+    to re-score. `reasoning` and `evidence_refs` come from the primary too: the earlier
     loop-local version dropped both, which silently discarded the chain-of-thought and the
     observed ground truth on exactly the high-stakes verdicts that earned a second judge.
     """
@@ -559,7 +559,7 @@ def _normalize_key(text: Any) -> str:
 def score_for(criterion: str, scores: dict[str, int]) -> int | None:
     """The score a judge gave `criterion`, tolerant of key restatement.
 
-    🔴 This tolerance is what keeps the ratchet from being an outage (WF2LOO-13). Under
+    🔴 This tolerance is what keeps the ratchet from being an outage. Under
     `Ratchet.STRICT` an unscored criterion is a shortfall, so a REJECT; with byte-exact
     lookup, a judge answering `"verify command passes"` for the declared
     `"the verify command passes"` would have failed every PASS in the templates that
@@ -627,7 +627,7 @@ def meets_ratchet(scores: dict[str, int], hints: JudgeHints) -> tuple[bool, list
 
 
 def evidence_hash_of(evidence_text: str) -> str:
-    """`ES-12`: the stable identity of one evidence slice — sha256[:16] of the exact text the
+    """The stable identity of one evidence slice — sha256[:16] of the exact text the
     judge was shown. Stamped on the verdict record by the CALLER that assembled the slice, so a
     persisted verdict names which evidence it was answerable from. Empty input hashes to ""
     rather than the hash of the empty string: "no evidence supplied" must stay distinguishable
@@ -646,14 +646,14 @@ def _normalize_for_grounding(text: str) -> str:
 def ungrounded_refs(
     refs: list[str], evidence_text: str, hints: JudgeHints | None = None
 ) -> list[str]:
-    """`ES-12`: the citations that cannot be grounded in what the judge was shown or did.
+    """The citations that cannot be grounded in what the judge was shown or did.
 
     A ref is GROUNDED when (a) its text appears verbatim (whitespace/case-normalized) in the
     evidence slice, or (b) it cites one of the observation commands the hints DECLARED the
     judge should run itself (`proof_command`, `hidden_validation_commands`) — the judge is
     told to re-run those and cite their output, so that output is legitimately outside the
     slice. Everything else references evidence that was neither shown nor sanctioned: the
-    verdict asserts a conclusion the presented evidence cannot support (the T04 gap).
+    verdict asserts a conclusion the presented evidence cannot support.
 
     Short refs (< 12 normalized chars) are never flagged: a fragment that small ("passed",
     "the diff") grounds against almost anything, so flagging it is noise, and passing it
@@ -765,7 +765,7 @@ def validate_verdict(
         result.protocol_error = True
         return result
 
-    # `ES-12` answerability: a PASS whose EVERY substantive citation references evidence that
+    # Answerability: a PASS whose EVERY substantive citation references evidence that
     # was neither shown nor sanctioned is a conclusion the presented evidence cannot support —
     # the same class of invalid answer as citing nothing, so it takes the same protocol exit.
     # Partially-grounded verdicts are FLAGGED (unanswerable_refs above), not rejected: one bad
@@ -865,7 +865,7 @@ def aggregate_samples(verdicts: list[JudgeVerdict], hints: JudgeHints) -> JudgeV
     opinion.
 
     The four rules, in order — this is the ONE aggregator now. `engine.py` used to restate
-    them over its own verdict enum (`_aggregate_gate_verdicts`, deleted in WF2LOO-13),
+    them over its own verdict enum (`_aggregate_gate_verdicts`, since deleted),
     because the two vocabularies could not share a function; the merged `Verdict` removed
     the reason for the duplicate:
 
@@ -926,7 +926,7 @@ def judge_instruction(prompt: str, hints: JudgeHints) -> str:
     """The judge's full instruction: the template's rubric prose plus this contract's shape.
 
     🔴 Generated from the SAME `JudgeHints` the validation reads. That is the whole
-    anti-outage argument of WF2LOO-13: every requirement `validate_verdict` will refuse a
+    anti-outage argument: every requirement `validate_verdict` will refuse a
     PASS for is stated here first, by name, including the exact `scores` keys `meets_ratchet`
     will look up. A contract enforced against a prompt that never mentioned it is not a gate,
     it is a trap — which is why the one-word prompt could not be given teeth in place.

@@ -161,7 +161,7 @@ class TestStructuralRules:
     def test_a_cross_container_needs_to_a_real_node_is_honoured(self) -> None:
         """The sibling-only restriction is gone. A `needs` that names a real node in
         another container is accepted — the frontier derives and holds the global edge — where
-        `PP-1` refused it as 'not a sibling in this parallel block'."""
+        it used to be refused as 'not a sibling in this parallel block'."""
         spec = _wrap(
             {
                 "kind": "sequence",
@@ -599,9 +599,9 @@ class TestDependencyOrdering:
     node running beside `x`, and the only symptom was a mid-run `USER` failure telling the
     author to check an id that was correct.
 
-    `PP-2` closed the gap the other way: the frontier now DERIVES ordering from the same
+    The gap is now closed the other way: the frontier DERIVES ordering from the same
     bindings and holds the reader itself, so a concurrent-parallel binding is honoured rather
-    than refused (the `tick.py`-untouched promise of `PP-1` no longer holds). What
+    than refused (the authoring-time refusal's `tick.py`-untouched promise no longer holds). What
     `WF_UNORDERED_DEP` still refuses is a STRUCTURAL contradiction no wait can resolve —
     enclosure, `sequence`-after, `branch`-exclusivity.
     """
@@ -615,7 +615,7 @@ class TestDependencyOrdering:
     # ── the `parallel` half: a binding now ORDERS its two branches ──
 
     def test_a_parallel_sibling_binding_is_ordered_by_derivation(self) -> None:
-        """`PP-1` refused this; `PP-2` honours it. A `parallel` child that binds a sibling's
+        """This used to be refused; it is honoured now. A `parallel` child that binds a sibling's
         output no longer needs a hand-written `needs` — the frontier derives the edge and
         holds the reader until the producer is terminal, across concurrent legs."""
         spec = _wrap(
@@ -692,8 +692,8 @@ class TestDependencyOrdering:
         assert validate_spec(spec).ok
 
     def test_a_binding_is_ordered_even_when_needs_names_a_different_sibling(self) -> None:
-        """Under `PP-1` a `needs` that did not reach the bound producer left the binding
-        unordered. Under `PP-2` the binding itself orders `b` after `a` by derivation, and the
+        """A `needs` that did not reach the bound producer used to leave the binding
+        unordered. Now the binding itself orders `b` after `a` by derivation, and the
         separate `needs: [c]` is just an additional (honourable) ordering edge onto `c` — so
         the spec is clean, not refused."""
         spec = _wrap(
@@ -715,9 +715,9 @@ class TestDependencyOrdering:
         assert validate_spec(spec).ok
 
     def test_a_diamond_spanning_two_parallel_branches_is_now_expressible(self) -> None:
-        """The capability `PP-2` exists to add. A reader nested inside one leg of a `parallel`
-        binds a producer nested inside ANOTHER leg — a diamond spanning two containers. `PP-1`
-        refused it ('needs: ["left"]' between the branches, which could never reach across the
+        """The capability derived ordering adds. A reader nested inside one leg of a `parallel`
+        binds a producer nested inside ANOTHER leg — a diamond spanning two containers. It was
+        refused ('needs: ["left"]' between the branches, which could never reach across the
         nesting); the derived edge now holds the reader across the concurrent legs."""
         spec = _wrap(
             {
@@ -746,8 +746,8 @@ class TestDependencyOrdering:
         assert validate_spec(spec).ok
 
     def test_an_anonymous_parallel_branch_producer_is_orderable(self) -> None:
-        """`PP-1` refused this because `needs` addresses siblings by id and an anonymous branch
-        could not be named. `PP-2` derives the edge from the BINDING, not from a `needs`-by-id,
+        """This was refused because `needs` addresses siblings by id and an anonymous branch
+        could not be named. The edge is now derived from the BINDING, not from a `needs`-by-id,
         so the producer's anonymity no longer matters — the reader is held until it finishes."""
         spec = _wrap(
             {
@@ -923,7 +923,7 @@ class TestDependencyOrdering:
     def test_a_branch_case_producer_stays_readable_after_the_branch(self) -> None:
         """The branch IS ordered before a later sibling, so this is not an authoring-time
         ordering defect even though the case may not be taken. Whether the producer actually
-        ran is the runtime reachability question `PP-2` now answers in the frontier — a reader
+        ran is the runtime reachability question the frontier now answers — a reader
         whose bound producer went SKIPPED is itself skipped, not hung — so the validator does
         not need to (and must not) pre-judge it here."""
         spec = _wrap(
@@ -992,8 +992,8 @@ class TestDependencyOrdering:
 
     def test_an_anonymous_reader_binding_is_ordered_by_derivation(self) -> None:
         """The derived edge is keyed by PATH, not by the reader's id, so an anonymous reader's
-        binding is ordered exactly like a named one — `PP-2` honours it rather than (as `PP-1`
-        did) refusing a concurrent-parallel binding the author forgot to hand-order."""
+        binding is ordered exactly like a named one — derivation honours it rather than (as the
+        old refusal did) refusing a concurrent-parallel binding the author forgot to hand-order."""
         spec = _wrap(
             {
                 "kind": "parallel",
@@ -1025,8 +1025,8 @@ class TestNeedsCrossCheck:
     def test_a_needs_the_structure_cannot_honour_is_an_error(self) -> None:
         """`needs: ["later"]` on the FIRST child of a `sequence` that runs `later` third is a
         contradiction: the frontier would hold the reader for a producer the sequence will not
-        start until the reader finishes, and the run hangs. Before `PP-2` a `needs` outside a
-        `parallel` was inert, so this silently did nothing."""
+        start until the reader finishes, and the run hangs. A `needs` outside a
+        `parallel` used to be inert, so this silently did nothing."""
         spec = _wrap(
             {
                 "kind": "sequence",
@@ -1071,8 +1071,8 @@ class TestNeedsCrossCheck:
     def test_a_non_dataflow_needs_is_neither_error_nor_warning(self) -> None:
         """The field's one legitimate use: ordering that is not dataflow. `b` runs after `a`
         (a lock, an external side-effect sequence) but binds nothing of `a`'s. It is honourable
-        (concurrent legs) and not redundant, so it is silently accepted — no warning at every
-        save, which is the deliberate deviation from the plan's step-3 'warn on absence'."""
+        (concurrent legs) and not redundant, so it is silently accepted — deliberately no warning
+        at every save."""
         spec = _wrap(
             {
                 "kind": "parallel",
@@ -1308,7 +1308,7 @@ class TestOutputContractCrossCheck:
         assert "WF_UNCONTRACTED_OUTPUT_REF" not in _codes(spec)
 
     def test_a_spec_that_uses_NO_contracts_is_left_alone(self) -> None:
-        """The scoping deviation, asserted. Censused: 18 of the 19 bundled templates read a
+        """The scoping decision, asserted. Censused: 18 of the 19 bundled templates read a
         sub-path and ZERO declare a contract, so an unconditional warning fires 77 times
         across the shipped library — on every validation, of essentially every template. The
         warning therefore addresses authors who have ADOPTED contracts and left a producer
@@ -1356,9 +1356,9 @@ class TestOutputContractCrossCheck:
         assert all(r.producer_id == "a" and r.declared for r in judged)
 
     def test_the_read_paths_ride_the_SAME_edge_list_as_the_ordering_rule(self) -> None:
-        """The anti-duplication assertion. `PP-1` and `PP-3` must not derive two reference
-        lists — that is the defect this pillar exists to remove — so the read paths hang off
-        `DepEdge` and every producer they name is a producer `node_deps` already found.
+        """The anti-duplication assertion. The ordering and read-path rules must not derive two
+        reference lists — the defect the shared edge list exists to remove — so the read paths
+        hang off `DepEdge` and every producer they name is a producer `node_deps` already found.
         """
         spec = self._seq(
             self._producer("a", self.JSON_FINDINGS),

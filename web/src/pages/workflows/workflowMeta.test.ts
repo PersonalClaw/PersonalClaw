@@ -232,7 +232,7 @@ describe('WORKFLOW_LIFECYCLE', () => {
   })
 })
 
-// ── Per-item foreach progress (Slice 8c) ────────────────────────────────────
+// ── Per-item foreach progress ───────────────────────────────────────────────
 //
 // A twelve-item fan-out renders as twelve rows whose only difference is an index suffix —
 // technically correct and useless for answering "which item is stuck?". This is what makes

@@ -35,7 +35,7 @@ import { LedgerRailsPanel } from './LedgerRailsPanel'
 import { DeliverablePanel } from './DeliverablePanel'
 import { ReviewTriagePanel } from './ReviewTriagePanel'
 
-/** One workflow run, live (WORKFLOWS-V2 Slice 7b).
+/** One workflow run, live.
  *
  *  Snapshot-then-subscribe: the SSE endpoint writes the full status BEFORE the stream
  *  opens, so the first frame populates the view. A lifecycle event is a REFETCH CUE, not a
@@ -69,7 +69,7 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
   // seed would silently keep showing the first node. Local state stays the render source — a row's
   // own Inspect click must not depend on a URL round-trip — and this only pushes into it.
   useEffect(() => { if (deepLinkNodeId) setInspectNodeId(deepLinkNodeId) }, [deepLinkNodeId])
-  // The mid-run steering + judge-triage panel (R14 / criterion 8). Docked to the right like
+  // The mid-run steering + judge-triage panel. Docked to the right like
   // the inspector; toggled from the header, live runs only.
   const [steerOpen, setSteerOpen] = useState(false)
   // The code-run workspace review: changed files + the two reintegration verbs. Closed by
@@ -78,7 +78,7 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
   // to decide what to do with the work.
   const [workspaceOpen, setWorkspaceOpen] = useState(false)
   const [outboxOpen, setOutboxOpen] = useState(false)
-  // The reviewer-comment triage drawer (EXECUTION-ISOLATION §7 / criterion 9). Closed by default
+  // The reviewer-comment triage drawer. Closed by default
   // and fetched on open — the read costs a live `git diff` plus a ledger scan, and it re-anchors
   // every finding on each open rather than caching a verdict that goes stale as the worker works.
   // On BOTH sides of the terminal split: mid-run an accepted finding is steered into the next
@@ -212,11 +212,11 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
     })
   }, [act, nameOf, runId])
 
-  // Mid-flight edit of a node's prompt (WF2-R10 / criterion 9). The user pauses a running
+  // Mid-flight edit of a node's prompt. The user pauses a running
   // workflow, edits a stage's instruction, and resumes. The edit is a real spec mutation
   // (`update_node`), but the calibration point is the WARNING: a bundled template carries a
   // typed doc block whose judge calibration is tuned to the prompt it shipped with, so editing
-  // that prompt can silently invalidate it (R10b). We surface that BEFORE applying — the user
+  // that prompt can silently invalidate it. We surface that BEFORE applying — the user
   // confirms the trade rather than discovering later that the judge is grading against a
   // rubric the run no longer matches.
   const editNodePrompt = useCallback(async (nodeId: string) => {
@@ -358,7 +358,7 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
     return latest ? `${latest.instance_path}:${latest.state}` : ''
   }, [nodes, inspectNodeId])
 
-  // Collapsible containers (WF2 Slice 10b). The `deep-research` template expands to 21 rows and 18
+  // Collapsible containers. The `deep-research` template expands to 21 rows and 18
   // of them are one untaken subgraph — the three that matter are buried in the ones that did not
   // run.
   const rows = useMemo(() => buildTree(nodes), [nodes])
@@ -494,10 +494,10 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
           {/* 🔴 THIS ROUTE HAD NO h1 AT ALL. `#/workflows` renders `h1 "Workflows"`, and opening
               a run navigates to `#/workflows/runs/<id>` where the h1 count drops to ZERO — axe
               `page-has-heading-one`, and a screen-reader user skimming by heading lands on nothing.
-              The rule this settles (cycle 150 left it open): when the URL's PATH identifies the entity,
+              The rule this settles: when the URL's PATH identifies the entity,
               that entity IS the destination and takes the h1; when the entity is a query param on a list
               route (`?item=`, `?open=` — the peek), the list keeps its h1 and the panel gets none. All
-              five surfaces measured agree, and it is the row lesson from cycle 161 one level up: a
+              five surfaces measured agree, and it is the row lesson one level up: a
               destination is named by its identity, not by its category. */}
           {/* A run started as a loop is named by the loop (`title`), not by its template — the page
               read "general-project" for a loop the user had just named. */}
@@ -550,7 +550,7 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
             {/* Introspect, on both sides of the terminal split for the strongest reason of the
                 three: mid-run it answers "what will you do next if I say nothing", and after, it
                 is the Proof section that lets a user review unattended work without reading the
-                transcript (criteria 6 & 8). */}
+                transcript. */}
             <HeaderControl icon={ScanSearch} label="Introspect" priority="low" ariaExpanded={introspectOpen}
               onClick={() => setIntrospectOpen((v) => !v)}
               title="Introspect — cost, latency, gates, timeline and proof" hint="Cost, latency, gates, timeline and proof" />
@@ -833,7 +833,7 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                         </div>
                       ))}
                     </div>
-                    {/* Cache-origin (WF2-A1), at a glance on the ROW rather than only inside the
+                    {/* Cache-origin, at a glance on the ROW rather than only inside the
                         per-node drawer. "Did my edit actually re-run anything?" is a question about
                         the whole run, and answering it by opening twenty drawers in turn is the
                         per-node version of a run-level question.
@@ -873,7 +873,7 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                         )}
                         {canReenter && (
                           <>
-                            {/* Mid-flight edit (criterion 9): change this stage's instruction on a
+                            {/* Mid-flight edit: change this stage's instruction on a
                                 live run. Surfaces the re-validate warning before applying, since a
                                 bundled template's judge calibration is tuned to the shipped prompt. */}
                             <QuietButton onClick={() => editNodePrompt(n.node_id)} title="Edit this stage's instruction — re-validates the template's judge calibration">
@@ -896,7 +896,7 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
 
             {/* The run's DOCUMENT deliverable + working log, the run-side answer to
                 `GET /api/loops/{id}/report`. In the BODY rather than a drawer, for two reasons: the
-                loop cockpit puts its Deliverable tab in the body too (so the two sides of PP-16 read
+                loop cockpit puts its Deliverable tab in the body too (so the loop and run sides read
                 alike), and the COMMON case here is that there is no document yet — which a drawer
                 would hide behind a click and a body section states outright. Keyed on the run id so
                 navigating between runs refetches rather than showing the previous run's document,
@@ -919,7 +919,7 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
           onClose={() => setInspectNodeId(null)} />
       )}
 
-      {/* The workspace review drawer (§4.1 / criterion 7), docked right. Keyed on the run id so
+      {/* The workspace review drawer, docked right. Keyed on the run id so
           navigating between runs refetches rather than showing the previous run's diff. */}
       {workspaceOpen && (
         <WorkspacePanel runId={runId} onClose={() => setWorkspaceOpen(false)} />
@@ -932,7 +932,7 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
         <OutboxPanel runId={runId} onClose={() => setOutboxOpen(false)} />
       )}
 
-      {/* The introspection drawer (§6.4 / criteria 6 & 8), docked right. Keyed on the run id like
+      {/* The introspection drawer, docked right. Keyed on the run id like
           its siblings, so navigating between runs refetches rather than showing the previous run's
           economics — which on this surface would be a wrong number a user would act on. */}
       {introspectOpen && (
@@ -948,7 +948,7 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
         </SidePanel>
       )}
 
-      {/* The reviewer-comment triage drawer (§7 / criterion 9), docked right. Keyed on the run id
+      {/* The reviewer-comment triage drawer, docked right. Keyed on the run id
           like its siblings. The panel re-anchors on mount, so opening it is what produces a fresh
           anchor verdict — there is no cached one to go stale. */}
       {reviewOpen && (
@@ -957,7 +957,7 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
         </SidePanel>
       )}
 
-      {/* The steering + judge-triage drawer (R14 / criterion 8), docked right. Mounted only for
+      {/* The steering + judge-triage drawer, docked right. Mounted only for
           a live run — a terminal run cannot act on a steer, and the backend refuses one anyway.
           Auto-closes if the run reaches a terminal state while open. */}
       {run && steerOpen && !isTerminal(run.status) && (

@@ -7,8 +7,8 @@ import { WorkflowRunDetail } from './WorkflowRunDetail'
 // ── The node-inspector drawer renders the reconstructability set ──────────────────
 //
 // The drawer fetches `api.workflowRunNodeInspect(runId, nodeId)` ON OPEN and renders the six
-// fields WV-9 ships (resolved_prompt / resolved_inputs / output / attempts / ledger_events) plus a
-// cached badge. These pins turn on the change's acceptance criteria, from rendered DOM:
+// fields the endpoint ships (resolved_prompt / resolved_inputs / output / attempts / ledger_events) plus a
+// cached badge. These pins check, from rendered DOM:
 //   1. a full payload renders all six fields + the cached badge;
 //   2. a `{ref}` prompt and an `{artifact_ref}` output render as monospace chips, NOT code blocks
 //      (and never trigger a second fetch — the redaction pass spilled them on purpose);
@@ -158,9 +158,9 @@ describe('NodeInspectorDrawer', () => {
   })
 })
 
-// ── SELF-VERIFICATION Success Criterion #6: the skip is VISIBLE IN THE RUNS SURFACE ──────
+// ── The skip is VISIBLE IN THE RUNS SURFACE ──────
 //
-// #6 asks for "a ledger-only skip record with a one-line rationale (visible in the runs surface,
+// The requirement is "a ledger-only skip record with a one-line rationale (visible in the runs surface,
 // no full run spent)". The write half shipped; the rendering half did not — the ledger
 // list showed each row's `kind` and dropped its `sha`/`impact`/`rationale`, so the Self-QA
 // companion's per-commit skips arrived as N identical words. These pins are on RENDERED DOM,

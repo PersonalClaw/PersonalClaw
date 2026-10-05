@@ -14,7 +14,7 @@ from personalclaw.knowledge.store import KnowledgeStore, SimpleDiGraph, normaliz
 
 
 def test_compose_item_text_is_title_and_summary_only():
-    """KL-9 clean break: the whole-item vector text is title + summary ONLY. The old
+    """Clean break: the whole-item vector text is title + summary ONLY. The old
     1000-char body top-up is retired — body-level recall now lives in the chunk index —
     so ``content`` is accepted (stable signature) but never appended."""
     from personalclaw.knowledge.embedder import compose_item_text as c
@@ -29,7 +29,7 @@ def test_compose_item_text_is_title_and_summary_only():
 
 
 def test_unified_embedder_exposes_model_name(monkeypatch):
-    """Regression (bug #15): the knowledge stats + embedding-status endpoints read the
+    """Regression: the knowledge stats + embedding-status endpoints read the
     embedder's model label. The old per-backend embedder had a `.model` attribute;
     UnifiedEmbedder wraps an embed_fn and must expose `model_name` (from the active
     embedding selection) instead. `.model` used to AttributeError → /api/knowledge/
@@ -132,7 +132,7 @@ class TestKnowledgeStore:
         assert item["content"] == "JWT tokens with 1h expiry"
         assert item["item_type"] == "design_doc"
         assert item["summary"] == "Auth overview"
-        # P6b: the API serializes tags as a JSON ARRAY (not a string) + exposes `type`.
+        # The API serializes tags as a JSON ARRAY (not a string) + exposes `type`.
         assert item["tags"] == ["auth", "jwt"]
         assert item["type"] == "design_doc"
 
@@ -327,7 +327,7 @@ class TestFileReader:
             assert ext in reader.SUPPORTED, f"{ext} missing from SUPPORTED"
 
     def test_pdf_reader_dependency_present(self):
-        """pdfplumber is a declared core dep (#71): the PDF path must NOT
+        """pdfplumber is a declared core dep: the PDF path must NOT
         degrade to the format:'error' missing-dependency sentinel."""
         import personalclaw.knowledge.readers as rd
 
@@ -399,7 +399,7 @@ class TestFileReader:
         assert meta["format"] == "error"
 
     def test_pptx_and_html_readers_present(self):
-        """python-pptx + html2text are declared core deps (#71)."""
+        """python-pptx + html2text are declared core deps."""
         import personalclaw.knowledge.readers as rd
 
         assert rd._library("pptx") is not None, "python-pptx missing — .pptx upload yields 0 items"
@@ -639,7 +639,7 @@ class TestHybridRetriever:
         hit = next((r for r in results if r["id"] == iid), None)
         assert hit is not None and "graph" in hit["match_type"]
 
-    # ── P12 per-item citation locator (source_type/section/line_range/deep_link) ──
+    # ── per-item citation locator (source_type/section/line_range/deep_link) ──
 
     def test_search_result_carries_citation_locator(self, store):
         """Every hit gains the four locator fields; for a doc with a markdown header
@@ -1577,9 +1577,9 @@ class TestChunkVectorArm:
 #
 # The stated recall tolerance. The ANN path is a CANDIDATE GENERATOR: `_consider` still does
 # the scoring, so ANN and the exact scan cannot disagree on a similarity value — the only way
-# they can differ is candidate truncation. 0.95 is the contract this task promises; the design
+# they can differ is candidate truncation. 0.95 is the contract this index promises; the design
 # is expected to do better than that (the tests below assert the observed 1.00 as well, so a
-# regression to a merely-tolerable 0.96 still fails), and the plan's sharpest named risk is a
+# regression to a merely-tolerable 0.96 still fails), and the sharpest named risk is a
 # silent recall regression, so the looser number is a floor, never a target.
 _ANN_RECALL_TOLERANCE = 0.95
 
@@ -1644,7 +1644,7 @@ def clean_vec_probe():
 
 
 class TestChunkAnnIndex:
-    """H1.4 — a vec0 index over chunk vectors, fail-soft to the exact scan."""
+    """A vec0 index over chunk vectors, fail-soft to the exact scan."""
 
     def test_sqlite_vec_loads_in_this_environment(self, clean_vec_probe):
         """sqlite-vec is a CORE dependency, so it must resolve here. Asserted on its own so a
@@ -1808,7 +1808,7 @@ class TestChunkAnnIndex:
     def test_a_database_written_without_the_index_is_reconciled_on_the_next_search(
         self, store, clean_vec_probe, caplog
     ):
-        """The pre-KL-11 / wrote-while-degraded case: chunk rows with no index entries. The
+        """The pre-index / wrote-while-degraded case: chunk rows with no index entries. The
         first search must rebuild rather than quietly return fewer results."""
         _collapsing_corpus(store, items=6, per_item=4)
         store.db.execute("DELETE FROM chunk_vec_4 WHERE chunk_id IN (SELECT id FROM chunks)")
@@ -1861,7 +1861,7 @@ class TestChunkAnnIndex:
         assert {i for i, _ in retriever._vector_search("q", limit=10)} == {ids[1]}
 
     def test_faiss_stays_an_extra_and_sqlite_vec_is_core(self):
-        """The dependency ruling, asserted: sqlite-vec joins core, faiss does NOT move."""
+        """The dependency decision, asserted: sqlite-vec joins core, faiss does NOT move."""
         import pathlib
         import re
 
@@ -2004,7 +2004,7 @@ def _long_doc(marker: str, *, needle_section: int | None = None, parts: int = 5)
 
 
 def _prechunk_corpus(store, *, items=6, needle_at=3):
-    """A pre-KL-9 library: items with content and a whole-item vector but NO chunk rows.
+    """A pre-chunking library: items with content and a whole-item vector but NO chunk rows.
     The marked passage sits mid-document in item index *needle_at*. Returns the item ids."""
     ids = []
     for i in range(items):
@@ -2054,7 +2054,7 @@ class TestChunkBacklogQuery:
 
 
 class TestChunkBackfill:
-    """H1.5 — resumable, batched, progress-reporting, and idempotent."""
+    """The chunk backfill: resumable, batched, progress-reporting, and idempotent."""
 
     def _run(self, store, emb, **kw):
         from personalclaw.knowledge.chunk_backfill import backfill_item_chunks
@@ -2079,7 +2079,7 @@ class TestChunkBackfill:
             assert any(c["section"] for c in chunks), "structural sections are preserved"
 
     def test_it_leaves_the_items_own_whole_item_vectors_alone(self, store):
-        """Amendment Design (c) keeps re-embed a separate, migration-level concern. The
+        """Re-embed stays a separate, migration-level concern. The
         backfill adds the chunk layer BENEATH the item vectors; it must not rewrite them."""
         ids = _prechunk_corpus(store, items=3)
         before = {
@@ -2185,7 +2185,7 @@ class TestChunkBackfill:
         assert self._run(store, _ChunkEmb())["chunked"] == 1
 
     def test_the_ann_index_is_not_left_stale_by_the_bulk_write(self, store):
-        """The back-door staleness KL-11 warns about: a bulk writer that bypassed
+        """The back-door staleness to guard against: a bulk writer that bypassed
         ``replace_chunks`` would leave every backfilled item's vectors unindexed, and a
         silently-unindexed chunk is a silently-unrecallable one."""
         _prechunk_corpus(store, items=6)

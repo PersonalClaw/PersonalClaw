@@ -1,11 +1,11 @@
-"""Persisted, idempotent scheduled-actuator browse plans (BROWSE-AUTOMATION §(d)/A3).
+"""Persisted, idempotent scheduled-actuator browse plans.
 
 A long-running browse is NOT a long-lived session — it is a **persisted plan re-executed as
 stateless one-tick runs**. Each plan lives in ``browse/plans/<id>.json`` and carries a
 ``cursor`` that is the whole of its progress, so killing the gateway mid-flow loses at most
 one step and re-firing the same tick is a no-op at the same cursor.
 
-Two kinds (§(d)):
+Two kinds:
 
 * ``watch_page`` — one tick re-extracts the page and diffs the content against the cursor.
   A tick that sees the same content reports no change and leaves the cursor untouched; the
@@ -14,7 +14,7 @@ Two kinds (§(d)):
   success, so a crash between the browser action and the cursor write re-runs the same step
   rather than skipping it, and a plan that never verifies never advances.
 
-**Autonomy floor (§(d) rung cap).** The ``action.browse`` PROVIDER sits at ``one_tap`` on the
+**Autonomy floor (rung cap).** The ``action.browse`` PROVIDER sits at ``one_tap`` on the
 earned-autonomy ladder; the floor for a persisted PLAN is decided here, per plan:
 
 * A read-only ``watch_page`` plan may graduate up the ladder (its floor is ``one_tap``).
@@ -142,7 +142,7 @@ def _plan_path(plan_id: str) -> Path:
 def validate_plan(plan: BrowsePlan) -> None:
     """Raise :class:`PlanError` if the plan cannot legally run as a scheduled actuator.
 
-    The ``user_browser`` refusal is the load-bearing one (§(d) rung cap): a persisted plan is
+    The ``user_browser`` refusal is the load-bearing one (the rung cap): a persisted plan is
     executed by an unattended tick, and ``user_browser`` sits at a floor no evidence promotes,
     so such a plan could never run — surfacing that at registration, not at every silent tick.
     """
@@ -217,7 +217,7 @@ class TickOutcome:
 
     ``content`` is the extracted page text a ``watch_page`` tick hashes and diffs. ``html`` is
     the raw rendered markup behind that text, carried for a caller that must run its OWN
-    extraction on the DOM (the WATCHED-SOURCES browse tier runs detectors on it); it never
+    extraction on the DOM (the watched-sources browse tier runs detectors on it); it never
     feeds the change hash, which stays the stable text. ``verified`` is whether a ``walk_flow``
     step's success was confirmed (a step that acted but did not verify does NOT advance the
     cursor). ``submitted`` records a SUBMIT actually happened, so a tick can refuse to persist a
@@ -244,7 +244,7 @@ class TickResult:
     """The outcome of one scheduled tick against a plan.
 
     ``content``/``html`` carry the rendered bytes up from the runner so a caller that escalated
-    to a browse tick (the WATCHED-SOURCES tier) can run its own extraction on the DOM; both are
+    to a browse tick (the watched-sources tier) can run its own extraction on the DOM; both are
     empty for a ``walk_flow`` tick, which produces no page to hand back.
     """
 

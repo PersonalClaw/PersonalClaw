@@ -1,6 +1,6 @@
 """Sync conflict records, the review queue, and the propose-only merge pass.
 
-Covers the three rules §4.2 turns on:
+Covers the three rules conflict handling turns on:
   * both-sides-edited is the trigger (a one-sided divergence is a fast-forward, not noise);
   * the local version stays authoritative (byte-identical after a conflicting pull);
   * a missing/failing model loses the PROPOSAL, never the CONFLICT (fail-open),
@@ -478,7 +478,7 @@ class TestProposeOnly:
         monkeypatch.setattr(conflict_merge, "one_shot_completion", fake)
         report = await conflict_merge.draft_proposals(tmp_path, now="T1")
         assert report.drafted == 1 and report.failed == 0
-        assert seen["use_case"] == "background"  # the reasoning axis, per §4.2
+        assert seen["use_case"] == "background"  # the reasoning axis
         rec = q.items()[0]
         assert rec.proposal == {"id": "t1", "text": "MERGED"}
         assert rec.rationale == "why" and rec.proposed_at == "T1"
@@ -592,12 +592,12 @@ def test_the_queue_never_lands_in_an_entrys_store_path():
     )
 
 
-# ── criterion 5, end to end through the real cycle ───────────────────────────
+# ── offline edits on two machines, end to end through the real cycle ─────────
 
 
-class TestCriterionFive:
+class TestOfflineEditsOnTwoMachines:
     """Two machines, one shared store: the same task edited on both while offline yields a
-    conflict-review item and applies NOTHING (DAS-7 acceptance criteria / plan criterion 5).
+    conflict-review item and applies NOTHING.
 
     Also the wiring proof for this change's new seams: what each machine agreed on with the
     other is written by its pull, and the queue is fed by the cycle — a call site that merely

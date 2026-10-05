@@ -10,7 +10,7 @@ import type { ChatTurn } from './chatTypes'
 //
 // Because the Session Map is the SOLE in-session index nav, the mobile form may not simply
 // drop it. The rail collapses to one named control — `ChatPage`'s "Session map" header control —
-// that opens this drawer, and every entry becomes a tappable row. The owner's 2026-09-25 rules
+// that opens this drawer, and every entry becomes a tappable row. The same rules
 // apply to both forms: one entry per USER message, previewing the start of its reply.
 //
 // WHAT THIS FILE OWNS vs. WHAT THE BROWSER GATE OWNS. Two of this change's properties cannot be
@@ -86,7 +86,7 @@ describe('the Session Map drawer', () => {
     expect(first.querySelector('[data-session-map-row-kind]')).toBeNull()
   })
 
-  it('🪤 has NO return-to-newest control of its own (SSM-9 owns the app\'s only one)', () => {
+  it('🪤 has NO return-to-newest control of its own (SessionMapReturnLatest is the app\'s only one)', () => {
     render(<SessionMapDrawer entries={ENTRIES} onJumpTo={() => {}} />)
     expect(screen.queryByRole('button', { name: /latest|newest|bottom/i })).toBeNull()
   })

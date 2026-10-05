@@ -1,4 +1,4 @@
-"""`knowledge.updates` — ONE updater for a knowledge item (WF2KNO-11 clause B).
+"""`knowledge.updates` — ONE updater for a knowledge item.
 
 Four things are worth asserting, and none of them is the happy path:
 

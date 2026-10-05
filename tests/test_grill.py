@@ -1,4 +1,4 @@
-"""Shared goal-scoping grill seam (#32) — assess → check_memory → decompose."""
+"""Shared goal-scoping grill seam — assess → check_memory → decompose."""
 
 from __future__ import annotations
 

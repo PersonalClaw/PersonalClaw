@@ -62,7 +62,7 @@ class ToolGroup:
     ``instructions`` is returned to the model when the group is newly activated —
     usage guidance arrives exactly when the tools do. ``capability`` is an
     optional gate name: a group whose capability doesn't resolve is not
-    offerable (per-capability gating, §5.5 — the field ships now, the probe
+    offerable (per-capability gating — the field ships now, the probe
     lands with it).
     """
 
@@ -269,7 +269,7 @@ def capability_available(capability: str) -> bool:
 
 
 def offerable(group: ToolGroup) -> bool:
-    """Whether ``group`` may be activated or stub-listed at all (§5.5).
+    """Whether ``group`` may be activated or stub-listed at all.
 
     An always-on group is always offerable — ``core`` holds the primitives an
     agent can't recover from losing, so no probe may remove it.
@@ -281,8 +281,8 @@ def offerable(group: ToolGroup) -> bool:
 
 # ── per-surface defaults ────────────────────────────────────────────────────
 # Which groups start active for a given SURFACE — keyed by the session's model
-# axis, the classifier already threaded through provider resolution
-# (MODEL-USE-CASES-V2): "chat"/"code_tools"/"reasoning" for human-watched chat,
+# axis, the classifier already threaded through provider resolution:
+# "chat"/"code_tools"/"reasoning" for human-watched chat,
 # "background" for a heartbeat task, "loops" for loop workers,
 # "orchestration" for subagent spawns.
 #

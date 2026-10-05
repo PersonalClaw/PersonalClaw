@@ -1,7 +1,7 @@
-"""SOP surfacing discipline: modes, trigger phrases, one-source-two-wrappers (§2 R3/R4).
+"""SOP surfacing discipline: modes, trigger phrases, one-source-two-wrappers.
 
 SOPs become workflow templates, and the templates keep surfacing — but surfacing gains
-discipline it did not have. The governing precedent is in the plan and it is somebody else's
+discipline it did not have. The governing precedent is somebody else's
 scar tissue: **OpenSquilla shipped auto-trigger-by-default and retreated to manual-first
 after pasted content kept firing workflows.** So a new def is `off`, a migrated SOP is
 `passive`, and `suggest` — the mode that actually proposes running something — is earned per
@@ -35,7 +35,7 @@ from typing import Any
 #: Trigger phrases per def. Two is the floor because one phrase is a keyword, not a trigger surface;
 #: five is the ceiling because a def matching eight phrases is a def that fires on adjacent
 #: work — and
-#: the plan's cited failure is exactly over-firing.
+#: the cited failure is exactly over-firing.
 MIN_TRIGGERS = 2
 MAX_TRIGGERS = 5
 
@@ -75,7 +75,7 @@ class SurfaceMode(str, Enum):
 #: turning
 #: it off would look like the migration lost it); a new def starts OFF, which is the retreat
 #: position
-#: the plan's cited precedent arrived at the hard way.
+#: the cited precedent arrived at the hard way.
 DEFAULT_MODE_MIGRATED = SurfaceMode.PASSIVE
 DEFAULT_MODE_NEW = SurfaceMode.OFF
 
@@ -312,7 +312,7 @@ class Veto(str, Enum):
 
 
 #: A request that is asking for a PLAN, not for execution. Suggesting a workflow run here answers a
-#: question nobody asked, and the plan lists it as a negative trigger explicitly.
+#: question nobody asked, so it is a negative trigger.
 _PLANNING_MARKERS = (
     "how would i",
     "how do i",
@@ -443,7 +443,7 @@ def render_suggest(meta: SurfacingMeta, *, name: str, inputs: dict[str, Any] | N
 def drift(meta: SurfacingMeta, *, name: str) -> list[str]:
     """Assert the two renders cannot diverge on the shared body.
 
-    The coexistence-period check the plan asks for. A forked copy would drift
+    The coexistence-period check. A forked copy would drift
     silently -- both renders look plausible, and nobody compares them -- so this
     asserts the suggest render CONTAINS the passive render verbatim rather than
     merely resembling it.
@@ -551,7 +551,7 @@ def graduate(meta: SurfacingMeta) -> tuple[SurfacingMeta | None, str]:
 def unreachable(defs: dict[str, SurfacingMeta]) -> list[str]:
     """Defs that can never surface and are not explicitly indexed — the reachability doctor.
 
-    The mirror failure of over-firing, and the plan cites a real number for it: an audit found 63
+    The mirror failure of over-firing, with a real number behind it: an audit found 63
     silently unreachable skills on first run. A def nobody can reach is a def
     whose author believes it is working.
 

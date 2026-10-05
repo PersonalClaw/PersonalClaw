@@ -15,8 +15,8 @@ callers that need to explain the order to a user read the tuple.
 
 Naming: the field is ``natural_voice`` and deliberately **not** ``voice``.
 ``AgentProfile.voice`` already means the persona ("WHO the agent is — tone,
-opinions, bluntness, persona") and ``voice_profiles`` already means SPEECH
-(MULTIMODAL-IO), so a third meaning on that one word would collide with two
+opinions, bluntness, persona") and ``voice_profiles`` already means SPEECH,
+so a third meaning on that one word would collide with two
 shipped surfaces at once.
 
 REJECTED ALTERNATIVE — a post-hoc rewriting pass
@@ -39,7 +39,7 @@ seriousness:
    over the output is a mechanism that can do both.
 
 So the instruction is a **persona-layer instruction** instead, injected the same
-way PT-1 injects a theme's persona: a bundled, user-editable prompt snippet
+way a theme's persona is injected: a bundled, user-editable prompt snippet
 appended to the turn the model sees. One call, one meaning, and the model applies
 the style while it composes rather than having it applied to it afterwards.
 """
@@ -163,7 +163,7 @@ def agent_default(agent_name: str) -> bool:
 def instruction() -> str:
     """The natural-voice instruction — the bundled ``natural-voice`` prompt snippet.
 
-    Same path PT-1's personas take (``render_snippet_block`` over a bundled
+    Same path a theme's persona takes (``render_snippet_block`` over a bundled
     snippet, cached), so the text is editable in Settings → Prompts and there is
     exactly one persona-injection mechanism rather than two.
     """
@@ -176,7 +176,7 @@ def maybe_inject(message: str, conversation: object = "", agent: bool = False) -
     """Append the natural-voice instruction to *message* when it resolves ON.
 
     Injected on EVERY turn it is on, not only a new session's first turn (which
-    is what PT-1's persona does). Two reasons: the toggle is flippable
+    is what a theme's persona does). Two reasons: the toggle is flippable
     mid-conversation, so a first-turn-only injection would make turning it on at
     turn 12 a visible no-op — the control would report itself enabled while doing
     nothing; and a style instruction is the first thing a long conversation

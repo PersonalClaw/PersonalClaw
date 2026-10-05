@@ -136,7 +136,7 @@ def _read_cached(name: str, mtime_ns: int) -> WorkflowDef | None:
 def read_template(name: str) -> WorkflowDef | None:
     """Load one bundled template with macros expanded, or None if it cannot be used.
 
-    Every caller gets its OWN copy (ledger 294). The cache holds one parsed definition per
+    Every caller gets its OWN copy. The cache holds one parsed definition per
     template, and handing that object out let any caller edit the library for every later one: a
     test that rewrote one node's argument in place (`test_workflows_bundled`'s mutation control)
     made `rich-ingest` fail validation for whichever test read it next on the same worker, and a

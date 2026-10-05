@@ -75,13 +75,13 @@ vi.mock('../../lib/api', async (importOriginal) => {
       // The identity report is fetched by the same LearningPage this file renders. A partial
       // `api` mock does not fail on the missing key — it throws `api.identityReport is not a
       // function` from inside the render, so BOTH call-site tests below died before asserting
-      // anything. Neither PR could see it alone: LV-4 added the call, this file mocks only its own
+      // anything. Neither PR could see it alone: one added the call, this file mocks only its own
       // reads, and the break exists only in the union. Rejecting is the honest stub — the page must
       // paint the ablation grade whether or not the identity report resolves, and if it ever grows a
       // dependency on that payload these tests should say so rather than silently pass.
       identityReport: () => Promise.reject(new Error('not under test')),
       // The skill-impact benchmark, and the SECOND instance of the paragraph above — same
-      // shape, one PR later: LV-7 added the read to `LearningPage`, this file mocks only its own,
+      // shape, one PR later: the benchmark read was added to `LearningPage`, this file mocks only its own,
       // and `api.learningBenchmark is not a function` killed both call-site tests in the union
       // alone. Answering the wire's `{"ran": false}` rather than rejecting, because
       // `BenchmarkPanel` renders its never-run state from that value and a rejection would quietly

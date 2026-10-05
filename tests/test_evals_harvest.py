@@ -80,7 +80,7 @@ def _run(
         j.step_completed(
             f"root.{node}", node, epoch=1, cache_key=f"ck-{node}", state=InstanceState.DONE
         )
-    # Written through the REAL WF2-R13 emitter, so a change to the `consulted` event's shape
+    # Written through the REAL journal emitter, so a change to the `consulted` event's shape
     # breaks the `consulted_refs` scope instead of quietly emptying it.
     for index, ref in enumerate(consulted):
         j.consulted(f"root.{steps[0] if steps else 'fetch'}", f"n{index}", ref=ref)

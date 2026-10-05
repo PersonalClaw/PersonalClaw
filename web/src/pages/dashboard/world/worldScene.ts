@@ -1,6 +1,6 @@
 import type { AgentActivityEntity, AgentActivityKind, AgentActivityState } from '../../../lib/useAgentActivity'
 
-// ── The world's scene model (AMBIENT-SURFACES A2-3) ──────────────────────────
+// ── The world's scene model ──────────────────────────
 // Everything here is PURE: entities in, geometry out. No canvas, no DOM, no rAF,
 // no fetch. That split is deliberate — a WebGL/canvas scene cannot be asserted on
 // in jsdom (there is no GPU and `getContext` is a stub), so the parts that carry

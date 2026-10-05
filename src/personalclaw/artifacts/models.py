@@ -94,9 +94,8 @@ def ext_for_mime(mime: str, default: str = "png") -> str:
 def kind_for_mime(mime: str) -> str:
     """The BINARY artifact kind *mime* belongs to, or ``""`` when it is not one.
 
-    The mime↔kind agreement check for a binary write path (DOCUMENT-FIDELITY-EDITOR
-    §C3): a ``.docx`` slug must not be handed a pdf, and only a MIME the store can
-    name a file for may be stored at all.
+    The mime↔kind agreement check for a binary write path: a ``.docx`` slug must not
+    be handed a pdf, and only a MIME the store can name a file for may be stored at all.
 
     DERIVED, never a second list. Validity comes from :data:`_MIME_TO_EXT` (a MIME
     with no extension has no on-disk body, so it is refused), and the kind comes from
@@ -150,9 +149,9 @@ class ArtifactVersionConflict(ValueError):
     """A write named an expected version the artifact no longer has.
 
     Raised by a provider write that was handed ``expect_version`` — the optimistic
-    concurrency check for the whole-document write path (DOCUMENT-FIDELITY-EDITOR
-    §C3). It exists as its own type because the caller's remedy is specific and
-    machine-actionable: reload the artifact and re-apply, not "fix your request". It
+    concurrency check for the whole-document write path. It exists as its own type
+    because the caller's remedy is specific and machine-actionable: reload the artifact
+    and re-apply, not "fix your request". It
     subclasses ``ValueError`` so a provider caller that already funnels bad input into
     a 400 keeps working; a caller that cares catches this first.
 
@@ -279,10 +278,10 @@ class Artifact:
     # "" = unscoped. Lets a project's outputs surface alongside its loops/code/tasks.
     project_id: str = ""
     # Optional user-defined library collection (a free-form grouping label for the
-    # artifacts library — ARTIFACTS S1). "" = uncollected. Tolerant read: pre-existing
+    # artifacts library). "" = uncollected. Tolerant read: pre-existing
     # meta.json without the key loads as "" (clean break under the pre-1.0 banner).
     collection: str = ""
-    # Containing library folder (ArtifactFolderStore id) — PEP-6. "" = unfiled (the
+    # Containing library folder (ArtifactFolderStore id). "" = unfiled (the
     # library root). Tolerant read: a pre-existing meta.json without the key loads as
     # "". Distinct from ``collection``: a collection is a free-form label the model may
     # author, a folder is a user-placed node in the side-rail tree.

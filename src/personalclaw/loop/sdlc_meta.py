@@ -1,7 +1,7 @@
 """SDLC stage vocabulary for the code loop kind — the canonical ladder + the lateral
 entry types. Pure data, no deps; lives in the unified ``loop`` package so the code kind
-+ its classifier don't reach back into the legacy ``code`` package (cutover Slice 2e —
-making ``loop/`` self-contained before the legacy engines are deleted)."""
++ its classifier don't reach back into the legacy ``code`` package (making
+``loop/`` self-contained before the legacy engines are deleted)."""
 
 from __future__ import annotations
 

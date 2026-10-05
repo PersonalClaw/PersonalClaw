@@ -1,7 +1,8 @@
-"""The file-watch poll runtime — what actually FIRES a `file` trigger (§3 / crit 2).
+"""The file-watch poll runtime — what actually FIRES a `file` trigger.
 
-S83 shipped `file_watch.py` (globs, hashing, delta) and stopped there because there was no store to
-enumerate `file` triggers from. S87 shipped the store; S92 made file triggers creatable in chat.
+`file_watch.py` (globs, hashing, delta) shipped first and stopped there because there was no store
+to enumerate `file` triggers from. Then the store shipped, and file triggers became creatable in
+chat.
 Measured before writing: `file_watch.changed_files` had **zero live callers**, and the tick clock
 (`service.due_ids`) only surfaces triggers with a `next_fire_at` — a `file` trigger has none. So a
 chat-created "when a file in ~/notes changes…" automation was present and inert: creatable, never

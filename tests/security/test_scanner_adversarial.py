@@ -1,7 +1,7 @@
 """The adversarial corpus harness against ``SkillScanner`` / ``install_scanned``.
 
 Six attack classes, stored one directory per class under ``tests/security/corpus/``.
-Five were named by SECURITY-HARDENING S3/C3; ``baseline-tamper`` was added:
+Five are the original classes; ``baseline-tamper`` was added:
 
 * ``archive`` — zip-slip / absolute-path / mid-path traversal / case-collision.
 * ``integrity-race`` — the scanned-bytes == installed-bytes invariant under a
@@ -24,8 +24,8 @@ and feeds it to the gate. A case's ``expect`` names the refusal being asserted, 
 fixture that is added without being wired to an assertion turns
 ``TestCorpusIsComplete`` red rather than passing silently.
 
-The last class, ``TestCorpusRedsOnAWeakenedScanner``, is the meta-test for the change's
-red-on-weakness clause (plan V3): it weakens one control per class **in process, via
+The last class, ``TestCorpusRedsOnAWeakenedScanner``, is the red-on-weakness
+meta-test: it weakens one control per class **in process, via
 monkeypatch**, and asserts the corresponding corpus assertion now fails. The shipped
 scanner is never weakened; ``docs/security/scanner-testing.md`` records the equivalent
 on-disk mutation for anyone reproducing it by hand.
@@ -816,7 +816,7 @@ class TestCorpusIsComplete:
 
 
 class TestCorpusRedsOnAWeakenedScanner:
-    """Plan V3 — prove the corpus is load-bearing.
+    """Prove the corpus is load-bearing.
 
     Each test weakens ONE control for the duration of the test (monkeypatch only, so the
     shipped scanner is untouched) and asserts the matching corpus rail now fails. If a

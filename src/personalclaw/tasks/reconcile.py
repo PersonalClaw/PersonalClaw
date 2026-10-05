@@ -1,4 +1,4 @@
-"""Dependency-driven status reconciliation + DAG analysis (seam S3).
+"""Dependency-driven status reconciliation + DAG analysis.
 
 This is the provider-agnostic engine that makes the task DAG *mean* something:
 
@@ -18,7 +18,7 @@ returned changed set. Cancelling a prerequisite counts as terminal → it unbloc
 dependents (a cancelled blocker is "resolved"). All graph walks are cycle-tolerant
 so a defensive back-edge never hangs the server.
 
-Built in P5a (#15); reused by P5b workflows (#16) and P7a project decompose (#19).
+Its callers are the task registry and handlers, and the workflow pool's cycle check.
 """
 
 from __future__ import annotations

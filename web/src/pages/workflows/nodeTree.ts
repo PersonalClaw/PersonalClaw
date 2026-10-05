@@ -2,7 +2,7 @@ import type { WorkflowNodeState } from '../../lib/api'
 import { byInstancePath } from './instancePathOrder'
 import { nodeDepth } from './workflowMeta'
 
-/** Grouping a flat node list into collapsible containers (WF2 Slice 10b).
+/** Grouping a flat node list into collapsible containers.
  *
  *  The run view renders one row per node INSTANCE, which is right until a spec fans out: the
  *  `deep-research` template expands to 21 rows, and 18 of them are one skipped subgraph. A flat

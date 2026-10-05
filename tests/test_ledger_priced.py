@@ -95,7 +95,7 @@ def _loop_totals(loop_id: str) -> dict:
 def test_a_loop_shaped_ledger_reports_its_cost_as_UNPRICED(ledger_home):
     """The retirement-critical case. A loop `step_completed` carries no cost key at all.
 
-    Once PP-16 makes a Loop a `WorkflowRun`, loop-shaped rows flow through run-side readers, and a
+    Once a Loop becomes a `WorkflowRun`, loop-shaped rows flow through run-side readers, and a
     surface trusting `run_totals["cost_usd"]` would report a paid loop as free.
     """
     totals = _loop_totals(_loop_ledger())

@@ -287,7 +287,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
             )
             if _cr is not None:
                 return _cr
-        # Mid-run handling (#37) — 4 modes:
+        # Mid-run handling — 4 modes:
         #   steer: inject at the next model boundary of the RUNNING turn (only when
         #     that turn's runtime exposes the drain seam); followup: queue for after
         #     the turn; collect: queue (coalesced later); interrupt: /interrupt.
@@ -362,7 +362,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         logger.warning("autonudge.notify_user_input failed", exc_info=True)
 
     # ── kind:idle: the same signal, for store-defined idle triggers. ──
-    # 🔴 Wired HERE, beside autonudge's own cancel, rather than left for a later session: a
+    # 🔴 Wired HERE, beside autonudge's own cancel, rather than left for later: a
     # re-arm reader with no writer is the worst inert shape — `armed_at` would only ever advance on
     # a fire, so a user typing all afternoon would still be nudged for "going quiet". Autonudge
     # CANCELS a pending timer; a poll has no timer, so the equivalent is moving the arm point.
@@ -462,7 +462,7 @@ def _default_mid_turn_mode() -> str:
     Derived from `resilience.mid_turn_policy`: policy ``steer`` defaults to steering,
     everything else defaults to queueing. Historically this was hardcoded to
     ``"steer"``, which meant the platform policy had no say over the webui's own
-    behavior. An explicit `queue_mode` in the request still wins (owner ruling) —
+    behavior. An explicit `queue_mode` in the request still wins —
     this only supplies the default.
 
     Best-effort: any config failure falls back to ``"queue"``, the safe behavior
@@ -485,8 +485,8 @@ async def _maybe_cancel_and_replace(
     *,
     pastes: Sequence[Mapping[str, Any]] = (),
 ) -> "web.Response | None":
-    """Cancel-and-replace decision for a follow-up sent mid-turn (PLATFORM-RESILIENCE
-    §6.3). Returns a JSON response when it HANDLED the message (cancelled the in-flight
+    """Cancel-and-replace decision for a follow-up sent mid-turn.
+    Returns a JSON response when it HANDLED the message (cancelled the in-flight
     turn + queued the new one, which the turn-end drain delivers as the next turn), or
     ``None`` to fall through to the normal steer/queue path.
 
@@ -843,7 +843,7 @@ def _started_by(creator: object, names: dict[str, str]) -> dict[str, str]:
 
 async def api_chat_tool_result(request: web.Request) -> web.Response:
     """GET /api/chat/sessions/{session}/tool-result/{rid} — the FULL raw output of
-    a projected tool result (tool-output-projection raw store), for the chat
+    a projected tool result (the tool-output projection's raw store), for the chat
     card's "Show full result" affordance. Optional ?grep= / ?start= / ?end= to
     pull a slice. Read-only; redacted the same way the live output was."""
     from personalclaw.security import redact_credentials, redact_exfiltration_urls
@@ -874,7 +874,7 @@ async def api_chat_tool_result(request: web.Request) -> web.Response:
 async def api_chat_session_bound_project(request: web.Request) -> web.Response:
     """GET /api/chat/sessions/bound-project — the CALLING session's bound Project id.
 
-    ACP-AGENT-PARITY §2.6 gap 10. An ACP CLI's tools run in a separate ``mcp-core``
+    An ACP CLI's tools run in a separate ``mcp-core``
     process, where the native runtime's per-turn project contextvar is empty by
     construction, so ``artifact_save`` there stamped nothing. The session key already
     crosses to that process, so this endpoint closes the loop with no protocol change.
@@ -1201,12 +1201,12 @@ async def api_chat_session_create(request: web.Request) -> web.Response:
 
 
 def _stop_reach_report(session: _ChatSession) -> dict:
-    """What the stop actually REACHED, off the provider's cancel scope (PR2-12).
+    """What the stop actually REACHED, off the provider's cancel scope.
 
     The stop card used to say only "stopped", which is a claim about the button rather
     than about the work. This is the evidence behind it — whether the model request was
     aborted, how many child processes were reaped, how many queued tool calls were
-    dropped, how many subagents were stopped — and it is the shape PR2-13 consumes.
+    dropped, how many subagents were stopped — and it is the shape the stop card consumes.
 
     ``getattr`` because only a provider that OWNS a turn's cancellation can report on
     it: an ACP-backed session delegates the turn to an external agent process, so it
@@ -1450,13 +1450,13 @@ async def api_chat_image_input(request: web.Request) -> web.Response:
 async def api_chat_screen_frame(request: web.Request) -> web.Response:
     """POST /api/chat/screen-frame — stage one screen frame for the next chat turn.
 
-    MULTIMODAL-IO §5.3. Body: ``{session, action, frame_b64}`` where ``action`` is
+    Body: ``{session, action, frame_b64}`` where ``action`` is
     one of:
 
     * ``start`` — the user just picked a screen/window in the browser's share
       dialog. Audited, and clears any stale slot so a share always begins blank.
     * ``frame`` (the default) — stage ``frame_b64`` for the next turn, REPLACING
-      any frame already staged (latest-wins, §5.4).
+      any frame already staged (latest-wins).
     * ``stop`` — sharing ended (chip, browser stop button, or session close).
       Audited, and drops the slot immediately rather than waiting for a drain.
 
@@ -1563,7 +1563,7 @@ async def api_chat_screen_frame(request: web.Request) -> web.Response:
 async def api_chat_screen_frame_pin(request: web.Request) -> web.Response:
     """POST /api/chat/screen-frame/pin — promote one frame to an ordinary attachment.
 
-    MULTIMODAL-IO §5.4. Pinning is the ONLY way a screen frame becomes a file, and it
+    Pinning is the ONLY way a screen frame becomes a file, and it
     is deliberately a separate verb from sharing: sharing is a read, pinning is a
     write. The bytes come from the CLIENT rather than from a server-side slot,
     because there is no server-side slot to take them from once a turn has drained it
@@ -1798,7 +1798,7 @@ async def api_chat_session_queue_cancel(request: web.Request) -> web.Response:
 async def api_chat_session_delete(request: web.Request) -> web.Response:
     """DELETE /api/chat/sessions/{session} — delete a chat for good: the Delete button.
 
-    HARD DELETE (product decision 2026-07-03): the explicit "Delete chat" button must actually
+    HARD DELETE, on purpose: the explicit "Delete chat" button must actually
     destroy the conversation, not soft-close it. A soft close left the raw tool-result store
     (file contents, command output) on disk and let the chat RESURRECT when its URL was reopened
     (the rehydrate path clears `closed`). So it goes through the one way a chat is deleted
@@ -1985,7 +1985,7 @@ async def api_chat_session_agent(request: web.Request) -> web.Response:
 
 
 def _effort_not_honorable(provider: str, effort: str) -> str | None:
-    """Why *effort* cannot be honored on ACP runtime *provider*, or None if it can (`G21`).
+    """Why *effort* cannot be honored on ACP runtime *provider*, or None if it can.
 
     The composer already hides its effort pill when the bound agent declares no options
     (``effortsForAgent`` → ``[]``), but the API accepted, PERSISTED and echoed back an
@@ -2201,11 +2201,11 @@ async def api_chat_session_workspace_dir(request: web.Request) -> web.Response:
     scopes the session's memory partition.
 
     Clearing is an EXPLICIT ``{"workspace_dir": ""}``. A body that omits the key is
-    refused rather than treated as a clear: measured during the `AAP-3` sweep, a
+    refused rather than treated as a clear: measured, a
     request with a mistyped key (``{"dir": "/some/path"}``) answered
     ``{"ok": true, "workspace_dir": ""}`` and *unbound* the session's workspace. For
     an ACP session that binding decides where the agent's CLI actually runs, so a
-    silent clear is the same defect class as the profile-bound cwd escape (`G39`) —
+    silent clear is the same defect class as the profile-bound cwd escape —
     the caller believes it set a directory and the agent lands somewhere else.
     """
     state: DashboardState = request.app["state"]

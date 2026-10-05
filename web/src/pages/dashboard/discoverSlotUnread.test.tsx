@@ -11,7 +11,7 @@ import { join } from 'node:path'
 // the read has not landed yet, or the user really did turn tips off — so two thirds of the time that
 // line was a confident claim about a SETTING THE USER NEVER TOUCHED, on the app's first screen.
 //
-// Measured on a genuinely empty home (`PERSONALCLAW_HOME=/tmp/wave2-firstrun-empty`, no `--seed`),
+// Measured on a genuinely empty home (`PERSONALCLAW_HOME` a fresh temp dir, no `--seed`),
 // dashboard at 1440×1000, with `/api/legibility/discover` intercepted:
 //
 //   aborted read  → dashboard slot: "Discover tips are off."

@@ -18,8 +18,7 @@ const guidanceOf = (p: ProjectItem): Revisioned<string> => ({
   revision: p.revisions?.agent_instructions_template ?? '',
 })
 
-/** Mid-run steering + judge-comment triage for a live workflow run (LOOPS-EVOLUTION R14 /
- *  criterion 8).
+/** Mid-run steering + judge-comment triage for a live workflow run.
  *
  *  Three affordances, one panel, because they are one conversation with a running job:
  *   • the INTERRUPT QUEUE — a free-text instruction the user queues (`/steer`), consumed at

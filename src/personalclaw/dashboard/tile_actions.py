@@ -1,6 +1,6 @@
 """UI-originated tile re-fire, fenced by the tile's FROZEN capability set.
 
-AMBIENT-SURFACES §5.4, third routing case: *"tile widgets → actions run through the
+The tile-widget routing rule: *"tile widgets → actions run through the
 tile's bound workflow (re-fire with bound args), subject to the trigger's frozen
 capability set — a rendered button can never introduce actions the trigger didn't
 declare (the frozen action-set invariant applies to UI-originated fires too)."*
@@ -24,10 +24,10 @@ which is exactly the sentence this module exists to make false. Membership in
 `tile_refresh.DATA_PROVIDERS` is checked TOO (defense in depth): the fence bounds what
 this tile may do, the allowlist bounds what any tile may do.
 
-DEVIATION (recorded in the plan's execution log): the criterion says "the *trigger's*
+A deliberate departure from that rule: it says "the *trigger's*
 frozen capability set", but a tile cannot bind a trigger yet — `TileRefresh.mode: "view"`
-(the bound AUTOMATION-SUBSTRATE view trigger) is deliberately absent until substrate step
-8. So the frozen set is read from the tile's binding today, through `frozen_capabilities`,
+(a bound automation view trigger) is deliberately absent for now.
+So the frozen set is read from the tile's binding today, through `frozen_capabilities`,
 which is the ONE place a `mode: "view"` tile will later read `Trigger.capabilities`
 instead. The invariant and its enforcement point do not move.
 """

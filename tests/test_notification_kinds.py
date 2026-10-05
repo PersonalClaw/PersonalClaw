@@ -222,7 +222,7 @@ def test_reachable_pairs_preserve_their_old_severity_exactly():
     surfacing one they had filtered out.
 
     Pairs NOT reachable from any flat string are new (they exist for the attention kinds
-    S2 introduces via `emit_attention_item`) and are free to carry their honest severity —
+    introduced via `emit_attention_item`) and are free to carry their honest severity —
     there is no established behavior to preserve.
 
     🔑 THIS IS WHAT MAKES THE REGISTRY-BACKED GATE BEHAVIOUR-PRESERVING (#341). The gate no longer
@@ -243,7 +243,7 @@ def test_reachable_pairs_preserve_their_old_severity_exactly():
 def test_attention_pairs_have_no_legacy_history():
     """Pins WHY the attention kinds are exempt from the severity invariant.
 
-    They DO have a wire string (S2 added `_ATTENTION_FLAT`, because `notify()` resolves a
+    They DO have a wire string (`_ATTENTION_FLAT` exists because `notify()` resolves a
     rule from the wire value — without one, a "always interrupt me for needs_input" rule
     would silently do nothing). But they have no entry in `_LEGACY_FLAT`, which is the
     historical record of what a pre-existing emitter passed. No history ⇒ no severity
@@ -597,7 +597,7 @@ def test_EVERY_CONFIGURABLE_MATRIX_ROW_HAS_A_DECLARED_PRODUCTION_OWNER():
     """A configurable row needs an accountable production module, not merely a wire alias (#341).
 
     Wire reachability cannot prove ownership: computed kinds made a literal/constant grep report
-    23 false gaps on the ruling's calibration tree. The registry declaration is the capability
+    23 false gaps on the calibration tree. The registry declaration is the capability
     contract instead. Resolution-only rows stay registered for old persisted wires but are not
     matrix controls; pinning that population prevents a future missing owner from silently hiding
     a row.
@@ -754,7 +754,7 @@ def test_frontend_display_map_kinds_all_resolve():
     if keys is None:
         pytest.skip("web/ not present in this checkout")
     tolerated = {
-        "schedule",  # pre-existing drift (T1.1 inventory); no emitter, kept for old rows
+        "schedule",  # pre-existing drift; no emitter, kept for old rows
         # Bare kinds whose pair emits a legacy flat string instead. Kept for persisted history.
         "alert",  # inbox/alert     → emits `inbox_alert`
         "result",  # cron/result     → emits `cron`

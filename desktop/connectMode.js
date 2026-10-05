@@ -21,7 +21,7 @@
  * 2. **The pairing code is never held by this process.** `pair/complete` replies with an httponly
  *    `Set-Cookie`, so the session has to land in the WebView's own jar; a shell that redeemed the
  *    code natively would hold a session the page could not use. So the shell hands the WebView
- *    `<origin>/pair?code=…` and lets the served page do the exchange — the same ruling
+ *    `<origin>/pair?code=…` and lets the served page do the exchange — the same decision
  *    `mobile/www/shell/network.mjs:pairingTargetFromScan` already records.
  * 3. **`.local_secret` and the shell token never leave loopback.** They authenticate the
  *    capability bridge, whose whole claim is "I am a process on THIS machine". `main.js` binds
@@ -452,7 +452,7 @@ function confirmEndpoint(store, plan, { label = "", id, kind = "remote", now = D
     // Left empty deliberately: `pair/complete` answers with `device_id` and an httponly cookie,
     // never the nonce this field names, and the shell hands the redemption to the served `/pair`
     // page so the cookie lands in the WebView's jar. Filling it would need something that can
-    // observe the redemption, which this process is not. See the report note on §C1.
+    // observe the redemption, which this process is not.
     device_session_ref: (existing && existing.device_session_ref) || "",
   });
   writeConfirmation(store, rowId, {

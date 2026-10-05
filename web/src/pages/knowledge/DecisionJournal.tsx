@@ -52,7 +52,7 @@ export function DecisionJournal({ onOpenItem, onOpenChat }: { onOpenItem: (id: s
         // mints its one-shot review trigger, so `handlers/knowledge.py` deliberately refuses to
         // create a `decision` from the library's create picker (an item authored there would be a
         // decision that never comes back). Naming chat in prose and leaving the user to find it is
-        // what PEP-2 flagged on Knowledge › Intents, so this carries the control.
+        // what the empty-state census flagged on Knowledge › Intents, so this carries the control.
         action={{ label: 'Open chat', onClick: onOpenChat, icon: MessageSquare }}
       />
     )

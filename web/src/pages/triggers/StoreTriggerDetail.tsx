@@ -336,7 +336,7 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
       </Section>
 
       {/* 🔴 A store trigger's run history, which this panel never showed. The backend has
-          served the list since S166 and the per-run detail, and the only UI for either
+          served the list and the per-run detail, and the only UI for either
           lived inside `ScheduleDetail` behind a hardcoded `schedule:` id — so a `web_watch` or
           `file` automation showed "When it runs" and "What it runs" and nothing about whether it
           ever HAD. Reusing the exported `RunHistory` rather than writing a second one: a duplicate

@@ -1,6 +1,6 @@
 """Connector-pack app kind + the source-recipe directory.
 
-The change's acceptance criterion has four clauses and each is asserted as an OUTCOME, never as "the
+Four clauses, each asserted as an OUTCOME, never as "the
 call returned":
 
 * **a connector pack installs and registers via KnowledgeTypeHandler** — a real app dir with
@@ -266,7 +266,7 @@ def _items(store, sid):
     ).fetchall()
 
 
-# ── acceptance criteria 1: a pack installs and registers through KnowledgeTypeHandler ──────────
+# ── clause 1: a pack installs and registers through KnowledgeTypeHandler ───────────────────────
 
 
 def test_a_connector_pack_registers_through_the_knowledge_type_handler(tmp_path, monkeypatch):
@@ -330,7 +330,7 @@ def test_the_pack_provider_module_is_importable_only_through_the_sdk(tmp_path):
     assert reached == ["personalclaw.sdk.knowledge"]
 
 
-# ── acceptance criteria 2: engine-fetched body on stdin → JSON lines → items ────────
+# ── clause 2: engine-fetched body on stdin → JSON lines → items ─────────────────────
 
 
 @pytest.mark.asyncio
@@ -386,7 +386,7 @@ async def test_the_script_receives_its_declared_args_on_argv(tmp_path, store):
     assert [i.metadata["repo"] for i in result.items] == ["acme/widget", "acme/widget"]
 
 
-# ── acceptance criteria 4 / SC#11: the script cannot open a socket ──────────────────
+# ── clause 4: the script cannot open a socket ───────────────────────────────────────
 
 #: A pack script that tries to reach a REAL listener. Written so the only way it can emit an
 #: item at all is by having connected — so "zero items" and "zero connections" are the same
@@ -477,7 +477,7 @@ def test_a_closed_listener_leaves_no_thread_behind():
 
 
 def test_a_pack_script_that_tries_to_open_a_socket_reaches_nothing(tmp_path, listener):
-    """SC#11 for the pack path, proved as an OUTCOME at both ends.
+    """No network for the pack path, proved as an OUTCOME at both ends.
 
     The script's ONE job is to connect to a listener this test owns and then emit an item. It
     gets neither: the parse fails closed with the refusal code, and the listener — a real
@@ -1161,7 +1161,7 @@ def test_the_factory_accepts_a_file_inside_the_pack(tmp_path, store):
     assert provider._timeout_secs == 5
 
 
-# ── acceptance criteria 3: bundled recipes surface in the create flow ───────────────
+# ── clause 3: bundled recipes surface in the create flow ────────────────────────────
 
 
 def test_the_bundled_recipe_directory_is_not_empty():
@@ -1279,7 +1279,7 @@ def test_every_bundled_recipe_spec_is_accepted_by_its_own_provider():
 
 @pytest.mark.asyncio
 async def test_the_recipe_directory_is_reachable_over_http():
-    """ "Surfaces in the create flow" is only true if something can read it. WS-9 owns the UI;
+    """ "Surfaces in the create flow" is only true if something can read it. The UI is separate;
     this is the route that UI consumes, driven through the real handler."""
     from aiohttp import web
     from aiohttp.test_utils import make_mocked_request

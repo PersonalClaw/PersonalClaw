@@ -65,7 +65,7 @@ describe('an optimistic settings write reports its failure', () => {
     }
   })
 
-  // ── The sweep, WIDENED from verb-matching to shape-matching (cycle 629) ─────────────────────────
+  // ── The sweep, WIDENED from verb-matching to shape-matching ─────────────────────────
   //
   // 🪤 THIS RAIL USED TO FILTER BY VERB NAME — `api.save*` and `api.patchConfig` — and therefore could not
   // see the two writes it was written for. `UpdatesPanel`'s `setAutoUpdate` / `setUpdateDevMode` flipped
@@ -90,7 +90,7 @@ describe('an optimistic settings write reports its failure', () => {
     for (const f of files) {
       const src = readFileSync(join(SETTINGS, f), 'utf8')
       // 🪤 Neutralise `=>` before any bounded scan: it contains a `>` and, more importantly here, the
-      // catch bodies themselves are arrow functions. Four regex traps this session came from forgetting it.
+      // catch bodies themselves are arrow functions. Four regex traps came from forgetting it.
       const scan = src.replace(/=>/g, '\u21d2')
       for (const m of scan.matchAll(/api\.(\w+)\(/g)) {
         const chain = scan.slice(m.index!, m.index! + 420)
@@ -163,7 +163,7 @@ describe('an optimistic settings write reports its failure', () => {
 // that failed is a GOOD report — often better than a toast. What made this one a defect was the distance
 // plus the shared channel. The census below is therefore a ceiling on "a message-shaped failure state
 // whose render sites carry no error tone", not a to-do list: 7 before this change, **6 after**, and the
-// panel this cycle fixed must no longer appear in it. That drop is also the vacuity proof — a census that
+// panel this change fixed must no longer appear in it. That drop is also the vacuity proof — a census that
 // does not shrink when you fix a member was never measuring the member.
 
 describe('a failure report lands where the failure happened', () => {
@@ -248,7 +248,7 @@ describe('a failure report lands where the failure happened', () => {
     return out
   }
 
-  it('the panel this cycle fixed has left the family', () => {
+  it('the panel this change fixed has left the family', () => {
     // Not a tautology: `mutedFailureStates` reads the same tree the assertion above constrains, so this
     // is the end-to-end proof that routing failures to `notify` removes a member from the census.
     expect(mutedFailureStates(), `${P} must no longer hold a muted failure message`)

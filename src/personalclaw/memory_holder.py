@@ -12,7 +12,7 @@ Deliberately an AXIS on existing rows, not a claims subsystem:
   ``assistant``, ``person:<entity_id>``, or ``external``.
 * ``weight`` — a coarse 0.05-quantized strength, capped by holder class. There is no
   ``kind`` column: kind inference stays key-prefix based (``claim.*``), which is the
-  recon invariant the rest of the memory system already relies on.
+  invariant the rest of the memory system already relies on.
 
 Two rules carry the safety here:
 
@@ -51,8 +51,8 @@ SELF_REPORT_CAP = 0.75
 #: Ceiling for a secondhand / amplified claim.
 SECONDHAND_CAP = 0.55
 
-#: Precedence for adjudicating contradictions (§4.2: "user statement > compiled
-#: synthesis > external"). A plain fact sits at the compiled-synthesis level, which is
+#: Precedence for adjudicating contradictions (user statement > compiled
+#: synthesis > external). A plain fact sits at the compiled-synthesis level, which is
 #: exactly what it is: the store's own distillation.
 _PRECEDENCE = {
     HOLDER_USER: 3,
@@ -127,7 +127,7 @@ def normalize_weight(holder: str, weight: object) -> float:
 def precedence(holder: object) -> int:
     """How much authority a holder class carries when two rows contradict.
 
-    Higher wins. Used at the DECIDE point (§4.1), not at read time: a lower-precedence
+    Higher wins. Used at the DECIDE point, not at read time: a lower-precedence
     claim must not be able to supersede a higher-precedence one at all, which is a
     different guarantee from merely ranking below it in recall.
     """
@@ -165,7 +165,7 @@ def render_fact_line(
 ) -> str:
     """One line of the injected fact block, attributed when the row carries a holder.
 
-    A plain fact renders byte-identically to the pre-MGAV-5 format (``key: value``).
+    A plain fact renders byte-identically to the pre-attribution format (``key: value``).
     An attributed claim renders the attribution AND the weight, because an attribution
     without a strength reads as endorsement — "Alex believes X" and "Alex believes X
     (0.35)" should not look the same to the model.

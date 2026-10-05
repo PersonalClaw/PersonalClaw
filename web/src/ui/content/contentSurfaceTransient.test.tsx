@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 // ── ContentSurface's transient + scroll states ───────────────────────────────────────
 //
-// Cycle 52 covered the two APP-WIDE transient mechanisms (the toast host, and `Button`'s
+// The two APP-WIDE transient mechanisms are covered elsewhere (the toast host, and `Button`'s
 // `loading` → `aria-busy`). This covers the surface that opts out of both: `ContentSurface`
 // builds its toolbar from RAW `<button>`s rather than the `Button` primitive, so it inherits
 // none of the primitive's wiring.
@@ -27,7 +27,7 @@ import { join } from 'node:path'
 //    "<document title> preview".
 //
 // 2. A SAVE IN FLIGHT ANNOUNCED NOTHING. `saving` swaps the leading icon for a spinner and
-//    disables the button — a purely visual signal. These being raw `<button>`s, cycle 52's
+//    disables the button — a purely visual signal. These being raw `<button>`s, the
 //    `Button loading` → `aria-busy` fix does not reach them, so they need it explicitly.
 //
 // This is a SOURCE rail on purpose. Driving a real save needs the CodeMirror editor mounted
@@ -39,7 +39,7 @@ const SRC = join(process.cwd(), 'src')
 const source = readFileSync(join(SRC, 'ui/content/ContentSurface.tsx'), 'utf8')
 
 /** The full opening tag starting at `from`, tracking {} depth so a `>` inside an attribute
- *  value (`onClick={() => f()}`) does not truncate it — the cycle-51 lesson. */
+ *  value (`onClick={() => f()}`) does not truncate it. */
 function tagAt(from: number): string {
   let depth = 0
   for (let i = from; i < source.length; i++) {

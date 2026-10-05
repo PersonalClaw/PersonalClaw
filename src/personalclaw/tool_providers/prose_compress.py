@@ -1,4 +1,4 @@
-"""Prose-model compressor (Context Economy §2.4) — background paths ONLY.
+"""Prose-model compressor — background paths ONLY.
 
 An LLM summarizer for long natural-language text, used exclusively where latency is
 already tolerable (the background compression service, the subagent-result path). It
@@ -13,7 +13,7 @@ Contract (guard-the-guard):
     bounded, useful result;
   * savings are recorded under the ``prose`` compressor key.
 
-When AUTONOMY-GUARDRAILS lands, the ``one_shot_completion`` call inherits its
+The ``one_shot_completion`` call inherits the model-call guard's
 chokepoint (breaker/metering) for free — no bespoke resilience built here.
 """
 
@@ -102,7 +102,7 @@ async def compress_prose(
 
 
 def _record(chars_in: int, chars_out: int) -> None:
-    """Savings accounting under the ``prose`` compressor key (§1.3). Never raises."""
+    """Savings accounting under the ``prose`` compressor key. Never raises."""
     try:
         from datetime import datetime
 

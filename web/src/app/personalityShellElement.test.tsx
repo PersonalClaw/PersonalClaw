@@ -21,7 +21,7 @@
  * The personality arrives through the REAL provider (localStorage → context →
  * getShellElement → Suspense), so the wiring under test is the shipped wiring. Only
  * `./appearance` is stubbed, exactly as `errorTreatmentSkin.test.tsx` does: it owns
- * colour application, which PT-1 covers and which has nothing to do with this change.
+ * colour application, which is covered elsewhere and which has nothing to do with this change.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'

@@ -1,7 +1,7 @@
 import type { HTMLAttributes } from 'react'
 import { cx } from './cx'
 
-/* The one canonical tinted status pill (audit AB-2). Pages hand-rolled this
+/* The one canonical tinted status pill. Pages hand-rolled this
  * exact pair ~90 times — `background: color-mix(in srgb, <tone> 16%,
  * transparent)` beside `color: <tone>` — and LocalModelManager had even
  * parameterized it as a local helper without vending it. This component IS

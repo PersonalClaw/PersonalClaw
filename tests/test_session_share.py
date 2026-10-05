@@ -1,5 +1,4 @@
-"""Share a chat as a redacted, read-only artifact (SESSION-MANAGEMENT SM-9 / T3.3's
-second half).
+"""Share a chat as a redacted, read-only artifact.
 
 Three claims are load-bearing here, and each has a test that would fail if it stopped
 being true:

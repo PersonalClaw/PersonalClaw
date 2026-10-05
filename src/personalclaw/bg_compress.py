@@ -1,4 +1,4 @@
-"""Background compression (Context Economy §4): shortens what the MODEL reads of an idle chat.
+"""Background compression: shortens what the MODEL reads of an idle chat.
 
 The always-on complement to on-demand projection. An old, idle, at-rest chat is
 topic-segmented and attention-weighted on the maintenance cadence, so that when it is
@@ -25,9 +25,9 @@ Design (all verified seams):
     verbatim, the middle segments as their request/response pairs capped to
     ``_MIDDLE_MSG_CAP`` characters (tool rows are not read), and the oldest tier as one
     summary from the ``compress_prose`` background model, which names every
-    ``tool_result_get`` handle the span held (OP4).
+    ``tool_result_get`` handle the span held.
   * **Prefix stability** — a record only changes what a FRESH runner is given, and only for
-    chats at rest, so it never breaks a live session's KV-cache prefix (§3 invariant 3).
+    chats at rest, so it never breaks a live session's KV-cache prefix.
 
 Nothing here is security-eventful (no SEL); actions log to the normal logger and the
 savings ledger under compressor ``"bg_topic"``.
@@ -59,7 +59,7 @@ _MIN_TRANSCRIPT_CHARS = 8_000
 _KEEP_RECENT_SEGMENTS = 1
 # Per-message content cap for the middle request/response tier.
 _MIDDLE_MSG_CAP = 600
-# Preserve a projected result's retrieval handle through summarization (OP4).
+# Preserve a projected result's retrieval handle through summarization.
 _RESULT_ID_RE = re.compile(r'tool_result_get\(result_id="(r_[^"]+)"\)')
 
 #: Chats a pass read and found nothing to summarize in: transcript path → the
@@ -78,7 +78,7 @@ def _transcript_chars(messages: list[dict]) -> int:
 
 def _collect_raw_refs(messages: list[dict]) -> list[str]:
     """Every ``tool_result_get`` handle mentioned in a span — so a summary can name
-    them and the raw output stays reachable to the model (OP4)."""
+    them and the raw output stays reachable to the model."""
     seen: list[str] = []
     for m in messages:
         for rid in _RESULT_ID_RE.findall(str(m.get("content", ""))):
@@ -289,7 +289,7 @@ async def run_bg_compression_pass(
 
 
 def _record_savings(chars_in: int, chars_out: int) -> None:
-    """Savings under the ``bg_topic`` compressor key (§1.3). Never raises."""
+    """Savings under the ``bg_topic`` compressor key. Never raises."""
     try:
         from personalclaw.tool_providers import savings
 

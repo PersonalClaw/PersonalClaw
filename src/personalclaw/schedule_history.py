@@ -108,7 +108,7 @@ class ScheduleRun:
     # "launched": the run only STARTED background work (a fire-and-forget spawn —
     #   run-prompt / run-workflow / invoke-agent); the spawned turn's real outcome
     #   is recorded by ITS own run, not this one. Honest "started ≠ succeeded"
-    #   status (T7) — a green "ran" must not imply the work succeeded.
+    #   status — a green "ran" must not imply the work succeeded.
     # "skipped_noop": the action ran and had nothing to do (`status_for_result`).
     # "degraded": the action did its work at its no-model floor and its summary says what it went
     #   without — a digest with no synthesis (`status_for_result`). Not a plain success.
@@ -169,8 +169,8 @@ class ScheduleRun:
 
 
 #: The `ActionResult.outcome` refinements a finished run records as its own status, rather than
-#: as a plain `success`. `launched` and `queued` started work that records its own outcome (T7,
-#: WV-14); `skip` ran and had nothing to do, recorded as the inert `skipped_noop`, which folds out
+#: as a plain `success`. `launched` and `queued` started work that records its own outcome;
+#: `skip` ran and had nothing to do, recorded as the inert `skipped_noop`, which folds out
 #: of the default history and runs views — a minutely automation with nothing to do would
 #: otherwise bury the runs that did something.
 _RESULT_STATUS: dict[str, str] = {
@@ -261,7 +261,7 @@ def late_summary(late: str, summary: str) -> str:
 
 
 def _redact_stored(text: str | None) -> str:
-    """Credential-redact a field on its way INTO the run ledger (criterion 11 — S138).
+    """Credential-redact a field on its way INTO the run ledger.
 
     Never raises: a redaction failure must not lose the run record. The unredacted text is dropped
     rather than stored in that case — losing a summary is recoverable, and writing a credential to
@@ -376,9 +376,9 @@ class ScheduleRunStore:
     # ── Write ─────────────────────────────────────────────────────────
 
     def append_sync(self, run: ScheduleRun) -> None:
-        # 🔴 REDACT BEFORE WRITE (criterion 11). The criterion is explicit that
-        # `{{secret:KEY}}` "never appears resolved in triggers.json, journals, LEDGER, or
-        # `automation_history` output". The API's `_redact_run` cleans the response, but
+        # 🔴 REDACT BEFORE WRITE. A `{{secret:KEY}}` must never appear resolved in
+        # triggers.json, journals, the run ledger, or `automation_history` output. The API's
+        # `_redact_run` cleans the response, but
         # nothing cleaned the WRITE — a bash action that echoed a resolved credential put it in
         # plaintext into `cron-history/<job>.jsonl` AND `_index.jsonl`, both 0600 but both on disk,
         # both carried by `personalclaw snapshot`, and both readable by anything that reads
@@ -564,7 +564,7 @@ class ScheduleRunStore:
                 continue
             if started < since:
                 continue
-            # A run of YOURS is not counted (§3.6, "manual fires bypass the hourly cap"): the cap
+            # A run of YOURS is not counted (manual fires bypass the hourly cap): the cap
             # exists to stop the machine running away on its own, and you pressing Run is not the
             # machine running away. Counting your runs would let you lock yourself out of your own
             # automation. Only yours: a run an agent, an app or a program asked for is the
@@ -572,7 +572,7 @@ class ScheduleRunStore:
             if run_source.yours(run_source.of_row(row)):
                 continue
             # 🔴 A SUPPRESSION IS NOT A FIRE. Since suppressed fires began persisting their
-            # typed row here (§7 crit 8's "zero silent drops"), this window would otherwise count
+            # typed row here (no silent drops), this window would otherwise count
             # them — measured, 5 quiet-hours skips read as 5 fires, so a trigger held by its own
             # quiet window would consume the hourly cap it never used and then be refused for
             # "running away". The cap exists to bound work the machine DID.
@@ -592,11 +592,11 @@ class ScheduleRunStore:
     async def count_since(self, job_id: str, since: float) -> int:
         """How many runs this job recorded at or after `since` (a UTC epoch), yours left out.
 
-        🔴 THE WINDOWED QUERY three rate caps were waiting on (S152). `rate_cap`,
+        🔴 THE WINDOWED QUERY three rate caps were waiting on. `rate_cap`,
         `max_runs_per_hour` and `max_actions_per_hour` were all validated, carried, and enforced by
         NOTHING because this read did not exist — `list_for_job` is offset/limit only, so a caller
-        could page rows but not ask "how many in the last hour". S150 named that gap explicitly;
-        `missed.within_rate_window` has been the pure decision waiting for this number since S65.
+        could page rows but not ask "how many in the last hour", and
+        `missed.within_rate_window` was the pure decision waiting for this number.
 
         Counts rows rather than paging them: the answer is one integer, and `list_for_job(0, 1000)`
         would allocate a thousand dicts to compute it — on a path that runs on every fire.
@@ -641,10 +641,10 @@ class ScheduleRunStore:
     # ── Rotation + delete ─────────────────────────────────────────────
 
     def _rotate_job_locked(self, job_id: str) -> None:
-        """Trim a job's history, keeping WORK and suppressions on separate quotas (S173).
+        """Trim a job's history, keeping WORK and suppressions on separate quotas.
 
         🔴 WHY THE SPLIT. A single `[-_MAX_RECORDS_PER_JOB:]` tail is correct while every row is a
-        run — but S171 began persisting suppressed fires (criterion 8's "zero silent drops"), and a
+        run — but suppressed fires are persisted too (no silent drops), and a
         minutely trigger held by quiet hours writes 1440 of them a day. `RunWeight`'s own docstring
         names that number. Measured against the flat tail: **1 real backup run plus 129 quiet-hours
         skips evicted the backup entirely**, and the 100-row window held ~100 MINUTES of history
@@ -680,18 +680,19 @@ class ScheduleRunStore:
         self._write_jsonl(path, [rows[i] for i in keep])
 
     def _rotate_index_locked(self) -> None:
-        """Trim the cross-job index, bounding how much of it ONE job may hold (S174).
+        """Trim the cross-job index, bounding how much of it ONE job may hold.
 
         🔴 WHY A PER-JOB BOUND. The index is SHARED — it backs the dashboard's "recent runs across
-        all schedules" — and a flat tail lets the loudest writer own all of it. Measured after S171
-        began persisting suppressions: three well-behaved automations with one run each, plus 1.5
+        all schedules" — and a flat tail lets the loudest writer own all of it. Measured once
+        suppressions were persisted: three well-behaved automations with one run each, plus 1.5
         days of one minutely trigger's quiet-hours skips, and the index held **2000 rows from that
         single trigger and nothing else**. Every other automation was evicted from the only
         cross-job view.
 
-        S173 fixed the same shape per job; this is the cross-job half. There the classes competed
-        (work vs suppressions), here the JOBS compete, so the bound is per `job_id`: no job may hold
-        more than `_MAX_INDEX_PER_JOB` rows while others are being dropped.
+        `_rotate_job_locked` fixes the same shape per job; this is the cross-job half. There the
+        classes competed (work vs suppressions), here the JOBS compete, so the bound is per
+        `job_id`: no job may hold more than `_MAX_INDEX_PER_JOB` rows while others are being
+        dropped.
 
         Applied only when trimming is needed, and only to jobs OVER their share — a store with a few
         busy jobs and room to spare keeps everything, so nothing regresses for an install that never
@@ -714,8 +715,8 @@ class ScheduleRunStore:
     def _rotate_all_sync(self) -> None:
         """Rotate every job file + the index. Runs once at gateway boot.
 
-        🔴 DELEGATES to `_rotate_job_locked` rather than repeating the trim (S175). This carried its
-        own inlined `rows[-_MAX_RECORDS_PER_JOB:]` — the pre-S173 flat tail — so the BOOT path undid
+        🔴 DELEGATES to `_rotate_job_locked` rather than repeating the trim. This carried its
+        own inlined `rows[-_MAX_RECORDS_PER_JOB:]` — the old flat tail — so the BOOT path undid
         what the append path protects. Measured on the realistic case, an existing install's first
         boot on the new build: a 200-row legacy file (1 real run + 199 quiet-hours skips) came back
         as 100 rows with the real run **evicted**, while appending those same rows keeps it.

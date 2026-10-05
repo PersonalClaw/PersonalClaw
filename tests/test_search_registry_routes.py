@@ -1,4 +1,4 @@
-"""WS3 — Settings → Search backend: the /api/search/* registry routes.
+"""Settings → Search backend: the /api/search/* registry routes.
 
 Drives the handlers directly with mocked aiohttp requests (no full server spin-up),
 isolating the active-binding store to a tmp path and the provider registry to fakes.
@@ -88,7 +88,7 @@ async def test_set_active_binds_provider():
 async def test_set_active_rejects_unknown_provider():
     """Binding to a provider that isn't registered must fail-fast (400), not silently
     strand the use-case on a dead name. Regression for the set-time validation gap
-    (the search sibling of model bug #16)."""
+    (the search sibling of the same gap in the active-model setter)."""
     reg.register_provider(_Fake("tavily"))
     req = make_mocked_request(
         "PUT", "/api/search/active/search-general", match_info={"use_case": "search-general"}

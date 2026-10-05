@@ -12,7 +12,7 @@ import {
 } from './weekGrid'
 import type { WeekOccurrence } from '../../lib/api'
 
-/** The week grid's placement logic (AUTO-A3).
+/** The week grid's placement logic.
  *
  *  Tested here rather than through the component because the hard part is arithmetic: which cell an
  *  epoch lands in, and what the cell says when some of its fires are suppressed. The same split

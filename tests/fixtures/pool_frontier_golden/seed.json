@@ -1,5 +1,5 @@
 {
-  "note": "PP-13 equivalence seed. The INPUT to both the retired `pool.frontier` (whose output is `ready.jsonl`) and the unified core's `admission.ready`. One file so the two sides cannot drift: a re-stated seed is a second implementation of the fixture.",
+  "note": "Equivalence seed. The INPUT to both the retired `pool.frontier` (whose output is `ready.jsonl`) and the unified core's `admission.ready`. One file so the two sides cannot drift: a re-stated seed is a second implementation of the fixture.",
   "now": 1700000000.0,
   "board_holder": "work-board",
   "lease_ttl_secs": 900,

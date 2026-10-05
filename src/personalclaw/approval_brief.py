@@ -1,5 +1,4 @@
-"""The approval brief carried over the core↔channel seam (Contract C2,
-`the plan (internal, not in this repo)`).
+"""The approval brief carried over the core↔channel seam.
 
 A channel (Slack, …) prompts the owner to approve a tool call through
 :meth:`~personalclaw.channel_delivery.ChannelDelivery.request_approval`. Until this
@@ -332,7 +331,7 @@ def established_facets(radius: dict[str, bool] | None) -> list[dict[str, str]]:
 
 
 def blast_radius_line(radius: dict[str, bool] | None) -> str:
-    """The compact one-line form — the done_when's "blast-radius line".
+    """The compact one-line form — the "blast-radius line".
 
     Empty string when nothing is established: the caller then says nothing about the
     blast radius, rather than "nothing established", which a reader hears as "nothing

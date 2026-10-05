@@ -1,8 +1,8 @@
 """The update documentation says what the code does — and cannot silently drift back.
 
-The prose this file guards is CURRENTLY CORRECT BY ACCIDENT. RUM-3 rewrote README's privacy
-paragraph when it built the check kill switch, and RUM-4/6/7 rewrote the container guide when
-they made the apply channel-aware — but nothing asserted any of it, so the next edit to either
+The prose this file guards is CURRENTLY CORRECT BY ACCIDENT. README's privacy paragraph was
+rewritten when the check kill switch was built, and the container guide when the apply became
+channel-aware — but nothing asserted any of it, so the next edit to either
 file could reinstate "no setting turns the check off" and every test in the suite would stay
 green. A behaviour whose only proof is a person having read the file once is undocumented.
 
@@ -188,7 +188,7 @@ def test_the_kill_switch_this_rail_describes_is_really_wired() -> None:
 def test_each_install_guide_describes_every_update_decision(guide: str) -> None:
     """Channels, pinning, opt-in staging and the kill switch, per install kind.
 
-    Before RUM-11 the count was 0/4 in `getting-started.md` and `desktop.md`: a wheel user
+    The count was once 0/4 in `getting-started.md` and `desktop.md`: a wheel user
     following the primary install path was never told that `beta` exists, that a pin is how
     you stay put, that auto-apply is opt-in, or that the release check has an off switch.
     """
@@ -216,7 +216,7 @@ def test_each_install_guide_advises_a_snapshot_before_moving_versions(guide: str
 
 @pytest.mark.parametrize("guide", KIND_GUIDES)
 def test_each_install_guide_documents_rolling_back(guide: str) -> None:
-    """RUM-9 made rollback a supported path; a supported path a user cannot find is not one."""
+    """Rollback is a supported path; a supported path a user cannot find is not one."""
     low = _read(GUIDES / guide).lower()
     assert (
         "roll back" in low or "rolling back" in low

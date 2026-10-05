@@ -79,7 +79,7 @@ MODE_CONCURRENT = "concurrent"
 #: Ceiling on how many calls one wave may dispatch at once. Not a config field: it is a
 #: resource bound on this process's executor, not a user preference, and the runtime takes
 #: it as a constructor argument so a caller can set it to 1 — which reproduces the exact
-#: pre-HC-6 serial behaviour and is what the benchmark's baseline arm measures.
+#: one-at-a-time serial behaviour and is what the benchmark's baseline arm measures.
 MAX_CONCURRENT_CALLS = 8
 
 # ── reservations ──

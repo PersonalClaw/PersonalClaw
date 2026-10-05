@@ -1,8 +1,8 @@
 """The Security Event Log audit for the nine chat-surface mechanics.
 
-The wrap-up change's acceptance criterion reads: *"SEL shows one event per security-relevant
+The rule reads: *"SEL shows one event per security-relevant
 action across all seven mechanics (snip rides existing upload SEL)"*. It was written when
-the surface had seven; the 2026-07-29 amendment added two more — **Branch** and
+the surface had seven; two more were added on 2026-07-29 — **Branch** and
 **chat plan mode** — and both carry server actions, so the audit here covers
 **nine**. That sentence has three failure modes and this suite is written against all
 three, because each one leaves the surface looking audited when it is not:
@@ -198,7 +198,7 @@ class TestRewindSel:
 
 
 class TestBranchSel:
-    """Mechanic 2 (amendment (a)): Branch. Security-relevant because it COPIES a
+    """Mechanic 2: Branch. Security-relevant because it COPIES a
     persisted transcript into a second session — the event is what tells a user (or an
     auditor) that another copy of a conversation now exists, and where it was cut."""
 
@@ -234,7 +234,7 @@ class TestBranchSel:
 
     @pytest.mark.asyncio
     async def test_branching_the_same_message_twice_logs_two_events(self, tmp_path, monkeypatch):
-        """The amendment's *"the same message may be branched repeatedly"* clause, counted.
+        """The *"the same message may be branched repeatedly"* rule, counted.
         Two branches are two copies; a per-session-once event would under-report the
         second."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
@@ -271,7 +271,7 @@ class TestBranchSel:
 
 
 class TestPlanModeSel:
-    """Mechanic 3 (amendment (b)): plan mode. TWO security-relevant transitions, not
+    """Mechanic 3: plan mode. TWO security-relevant transitions, not
     one — activation puts the chat under the read-only ``plan`` tool gate, and approval
     takes it back out of that posture and runs the plan. Each is exactly one event, and the
     panel's text-only controls (edit, comment) add none."""
@@ -572,7 +572,7 @@ class TestClientOnlyMechanicsAreCorrectlySilent:
     module that implements it."""
 
     def test_find_scans_memory_and_never_calls_the_server(self):
-        # KL-16 promoted the find bar to a shared primitive for the knowledge reader, so the
+        # The find bar was promoted to a shared primitive for the knowledge reader, so the
         # three modules that implement Find no longer all live under `pages/chat/`: the bar and
         # the text matcher moved to `ui/`, and only the chat-shaped segment extractor stayed.
         # The paths are spelled out because `read_text` raises on a stale one — which is how
@@ -593,7 +593,7 @@ class TestClientOnlyMechanicsAreCorrectlySilent:
             (dashboard / name).read_text(encoding="utf-8") for name in ("server.py", "routes.py")
         )
         assert '"/api/chat/sessions/{session}"' in server, "the route table was read"
-        # SESSION-MANAGEMENT owns CROSS-session search; in-conversation find is a
+        # Session management owns CROSS-session search; in-conversation find is a
         # client-side scan of already-hydrated turns and adds no route.
         assert "find-in-conversation" not in server
         assert "/api/chat/sessions/{session}/find" not in server
@@ -648,7 +648,7 @@ class TestTheAuditIsComplete:
             assert f'"{op}"' in src, f"{op} is not emitted anywhere in {rel}"
 
     def test_the_guide_documents_all_nine_mechanics_and_everything_they_record(self):
-        """The docs clause as a rail rather than a promise.
+        """The guide's coverage as a rail rather than a promise.
 
         The guide is the only place a user learns what the chat surface can do and what it
         records. Two mechanics shipped *after* it was written (Branch, plan mode) and it

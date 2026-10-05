@@ -1,4 +1,4 @@
-"""BA-2 live: the gate, the PRODUCTION transport, and a real browser.
+"""Live: the browse gate, the PRODUCTION transport, and a real browser.
 
 ``test_browse_cdp_preflight.py`` proves the gate against a recording fake. A fake can show
 that ``navigate`` declines to call ``send``; it cannot show that Chrome's own
@@ -24,7 +24,7 @@ ALREADY left the browser by the time ``Page.frameNavigated`` reports it. The gua
 un-send it; what it can do is ensure the agent never reads the denied document. So the
 redirected-request hit IS expected in the ledger, and what this file asserts is the teardown —
 the page ends on ``about:blank`` with the denied DOM gone. Claiming the request was prevented
-would be a lie, and the plan's §6.3 already says so.
+would be a lie.
 """
 
 from __future__ import annotations
@@ -76,7 +76,7 @@ def _refuse_unmeasured(obs: dict) -> None:
     * and the allowed-redirect check reads as the guard eating a legal navigation.
 
     All three are the same one line in a CDP reply, and chasing any of them as a guard
-    defect is wasted work — measured four times across two lanes before this existed
+    defect is wasted work — measured four times across two branches before this existed
     (see #2549). ``cdp._enforce`` is not implicated: it caught the failure, quarantined,
     and refused all further navigation, which is the fail-closed behaviour it documents.
 
@@ -233,15 +233,15 @@ def _browser(chrome: str):
     """Launch a headless browser and yield ONE page target's WebSocket URL.
 
     Launching lives in the test on purpose: ``browse/transport.py`` deliberately owns no
-    process, because per-site persistent profiles are the scope and §4.1 has not settled
+    process, because per-site persistent profiles are the scope and it is not yet settled
     whether the gateway shares the interactive MCP's browser.
     """
     port = _free_port()
-    profile = tempfile.mkdtemp(prefix="ba2-live-profile-")
+    profile = tempfile.mkdtemp(prefix="browse-live-profile-")
     # Chrome's own stderr, kept so a launch that never reaches CDP reports its real cause
     # rather than only the generic poll timeout. On GitHub's ubuntu-latest a headless launch
     # without --no-sandbox aborts at startup, and DEVNULL used to swallow that fatal line.
-    stderr_log = tempfile.NamedTemporaryFile(prefix="ba2-live-stderr-", suffix=".log")
+    stderr_log = tempfile.NamedTemporaryFile(prefix="browse-live-stderr-", suffix=".log")
     proc = subprocess.Popen(
         [
             chrome,
@@ -475,7 +475,7 @@ def test_the_guard_script_is_installed_before_anything_navigates(live: dict) -> 
 
 
 def test_the_session_really_injected_the_real_safety_script(live: dict) -> None:
-    """Clause 3 at the SESSION's call site: the guard the session injects is the shipped
+    """The injected script at the SESSION's call site: the guard the session injects is the shipped
     one, and it installed in the live page. The sibling file proves what the script DOES;
     this proves the session is what put it there."""
     marker = live["marker"]
@@ -559,7 +559,7 @@ def test_the_redirect_request_itself_already_left_the_browser(live: dict) -> Non
     """The honest limit, asserted so nobody later mistakes the teardown for prevention.
 
     A client-side redirect is dispatched by the page; ``Page.frameNavigated`` is the browser
-    telling us it already happened. The guard's reach is the DOM, not the socket — §6.3.
+    telling us it already happened. The guard's reach is the DOM, not the socket.
     """
     assert any(h.startswith("/secret") for h in live["redirect_denied"]["server_hits"]), (
         "if the denied request never reached the server, this test's premise is wrong and "

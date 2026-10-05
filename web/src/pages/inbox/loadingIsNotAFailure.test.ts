@@ -40,7 +40,7 @@ describe('a failed inbox-settings read is reported, not shown as loading', () =>
     expect(src, 'and be rendered').toMatch(/<LoadError what="inbox settings"/)
   })
 
-  // The drawer's gate now names what is loading (cycle 144: `Loading` became a live region).
+  // The drawer's gate now names what is loading (`Loading` became a live region).
   it.each([[DRAWER, /if \(!s\) return <Loading what="inbox settings" \/>/], [PANEL, /return <FormSkeleton/]])(
     '%s puts the error branch before its loading gate', (rel, loadingGate) => {
       const src = read(rel)

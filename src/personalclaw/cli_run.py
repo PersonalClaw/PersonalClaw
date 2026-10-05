@@ -80,9 +80,8 @@ if TYPE_CHECKING:
 #: ``inbound:`` kind as unattended, so this prefix is what makes the run HEADLESS.
 CLI_SESSION_PREFIX = session_keys.INBOUND.key("cli:")
 
-#: SpendMeter run scope for CLI turns (§9.5 "budgets ride SpendMeter scope_key=cli").
-#: The meter's real parameter is ``run_key``, not ``scope_key`` — see the DEVIATION note
-#: in the plan's execution log.
+#: SpendMeter run scope for CLI turns: their budgets ride the meter under this key.
+#: The meter's parameter is ``run_key``, not ``scope_key``.
 CLI_RUN_KEY = "cli"
 
 VALID_FORMATS = ("plain", "json", "streaming-json")
@@ -300,7 +299,7 @@ def agent_cli_of(agent: str) -> str:
 def grant_notice(session_key: str, task_mode: str, *, agent_cli: str = "") -> str:
     """The stderr posture line. Printed for BOTH modes, not only for ``--allow``.
 
-    §9.5 asks for the write grant to be printed "so scripts are self-documenting".
+    The write grant is printed so scripts are self-documenting.
     Printing only the grant would make the read-only default the silent case — the one
     a reader cannot distinguish from "no posture was applied at all". Announcing both
     means the absence of this line is itself a signal.
@@ -385,7 +384,7 @@ def _api(port: int, token: str, path: str, body: dict | None = None) -> dict:
 
 
 class _Collector:
-    """Accumulates the WS frames of one turn into the §9.5 ``json`` document."""
+    """Accumulates the WS frames of one turn into the ``json`` document."""
 
     def __init__(self, session_key: str, fmt: str) -> None:
         self.session_key = session_key
@@ -407,7 +406,7 @@ class _Collector:
             return
         if self.fmt == "streaming-json":
             # NDJSON of the SAME envelopes the dashboard consumes — one stream contract.
-            # Emitted only for the three §9.5 frame kinds so the contract is a promise
+            # Emitted only for the three frame kinds below so the contract is a promise
             # about a named set, not "whatever the gateway happened to broadcast".
             if kind in ("chat_chunk", "tool_call", "chat_done"):
                 sys.stdout.write(json.dumps(envelope, separators=(",", ":")) + "\n")

@@ -31,9 +31,9 @@ a member's words.
   least-restricted policy the unbounded one), a ``silent`` member answers only its human, and
   no member can enqueue itself.
 
-**The round budget is what reconciles this with a bounded room.** `AR-3` restricted the turn
-path to a single human-triggered pass over the roster *because* no budget existed yet, and
-said so; the mention chain above is the multi-pass behaviour that restriction stood in for,
+**The round budget is what reconciles this with a bounded room.** The turn path was first
+restricted to a single human-triggered pass over the roster *because* no budget existed yet,
+and said so; the mention chain above is the multi-pass behaviour that restriction stood in for,
 and it is admitted here only because :func:`drain_round` now bounds it. Every agent turn that
 SPOKE since the human's last message is charged to ``Room.rounds_used``; at
 ``rooms.round_budget`` (6 by default — two full passes of a three-member room) the room stops

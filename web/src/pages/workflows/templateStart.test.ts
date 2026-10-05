@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { coerceInputs, inputFields, labelFor, startsWithoutInput } from './templateStart'
 import type { WorkflowInputParam } from '../../lib/api'
 
-// ── The template run dialog (WF2 Slice 9b) ──────────────────────────────────
+// ── The template run dialog ─────────────────────────────────────────────────
 //
 // The gap this closes: every bundled template declares a REQUIRED input, and the list page's Run
 // button passed none — so the engine correctly refused with `WF_RUN_MISSING_INPUTS` and every

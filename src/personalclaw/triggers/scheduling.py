@@ -114,7 +114,8 @@ def jitter_offset(trigger_id: str, window: float) -> float:
 
     The SAME algorithm as the shipped `ScheduleService._jitter_offset`, deliberately duplicated in
     docstring intent rather than imported: this module must not import the legacy service (the
-    dependency would point the wrong way for §2's absorb order), and the property that matters is
+    dependency would point the wrong way — the unified engine absorbs the legacy one, never the
+    reverse), and the property that matters is
     that a migrated trigger lands in the SAME slot as the job it came from. A different algorithm
     here would re-phase every schedule on migration day.
 
@@ -257,14 +258,14 @@ def boot_recovery(
 
 @dataclass
 class Claim:
-    """A fire claim. The single-flight enforcement point (§3.1).
+    """A fire claim. The single-flight enforcement point.
 
     `max_duration` is the self-expiry: a process killed mid-run cannot
     permanently wedge the trigger,
     because the next pass sees an expired claim and may take it. That complements the reaper rather
     than replacing it — the reaper kills the orphan, this releases the schedule.
 
-    🔴 `owner_pid` is WHICH PROCESS is running this (WF2AUT-16). Without it a claim answers "since
+    🔴 `owner_pid` is WHICH PROCESS is running this. Without it a claim answers "since
     when" and never "by whom", so the only way to tell a live run from one a crash orphaned was to
     wait out a 1800s deadline — and for that whole window the run read as HUNG. `self_destruct.py`
     named the cost in its own words: *"the user is left debugging a phantom."*
@@ -352,7 +353,7 @@ def revalidate(
 ) -> tuple[bool, str]:
     """Whether a fire that was armed earlier may still proceed.
 
-    The shipped-scheduler detail §3.1 calls out: re-fetch and revalidate on
+    A detail carried over from the shipped scheduler: re-fetch and revalidate on
     fire, bail if the trigger
     was disabled or rescheduled mid-wait. Without it, a trigger the user
     disabled while the timer slept

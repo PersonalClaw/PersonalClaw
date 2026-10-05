@@ -1,7 +1,7 @@
-"""WS6 — the research loop kind drives the real web tools.
+"""The research loop kind drives the real web tools.
 
 The research worker is a normal loop agent with the full tool catalog (web_search +
-web_fetch are enabled out-of-box, verified elsewhere). WS6 makes the kind's brief /
+web_fetch are enabled out-of-box, verified elsewhere). The kind's brief /
 nudge / directive name those concrete tools and surface the breadth×depth + max_uses
 budget, so the worker runs a bounded deep-research sweep instead of reasoning from
 memory. These pin that wiring.

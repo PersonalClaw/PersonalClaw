@@ -1,4 +1,4 @@
-"""Tests for the template-creation pipeline (UP-R9).
+"""Tests for the template-creation pipeline.
 
 Two properties carry this module.
 
@@ -201,7 +201,7 @@ def spec_with(*prompts) -> dict:
 
 
 def test_every_slot_is_DECLARED_as_an_input():
-    """Session 42 measured both directions of this: a declared input nothing reads is a control
+    """Both directions of this were measured: a declared input nothing reads is a control
     that silently does nothing, and a binding with no declared input dies at run start."""
     out, mapping = parameterize(spec_with("review the Northwind Trading contract"))
     assert set(mapping) == set(out["inputs"])

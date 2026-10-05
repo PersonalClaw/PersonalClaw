@@ -109,7 +109,7 @@ async def stream_and_collect(
         on_complete: Optional callback invoked with the terminal ``EVENT_COMPLETE``
             event (which carries the turn's token counts + cost) just before the
             text is returned — the seam the cost/token ledger's non-``run_chat``
-            write-sites use (COST-AND-TOKEN-OBSERVABILITY C2). A turn that ends in an
+            write-sites use. A turn that ends in an
             error hands it its ``EVENT_SPENT`` instead, what the calls it made before
             the error cost, and the error is raised after. Default ``None``
             leaves the streamed text byte-identical for every other caller. Never
@@ -660,8 +660,8 @@ def save_conversation_turn(
 def _enforces_json_schema_natively(model_ref: str) -> bool:
     """Does the provider behind ``model_ref`` enforce a supplied JSON Schema NATIVELY?
 
-    The gate on forwarding ``output_type`` as a build kwarg (AUTONOMY-GUARDRAILS §2.4,
-    AG-9). It asks a narrow question about ONE entry and answers ``False`` to every
+    The gate on forwarding ``output_type`` as a build kwarg.
+    It asks a narrow question about ONE entry and answers ``False`` to every
     doubt, because a false positive here does not degrade to a weaker constraint — it
     corrupts the request. Build kwargs land in the provider's ``extra_options``, and both
     wire clients copy that bag onto the request body (``llm/openai.py`` assigns
@@ -827,7 +827,7 @@ async def run_over_use_case_chain(
 ) -> _ChainResult:
     """Run ``run`` against ``chain`` entry 0, advancing to N+1 on a call failure.
 
-    The call-failure half of the fallback chain (MODEL-USE-CASES-V2 T2.4), complementing
+    The call-failure half of the fallback chain, complementing
     the seam's resolution-time breaker skip: a ``CircuitOpenError``/provider failure from
     entry N rebuilds from entry N+1 — once per remaining entry, bounded by chain length —
     so a declared fallback actually serves a call that a live provider dropped mid-flight
@@ -975,7 +975,7 @@ async def one_shot_completion(
     and never builds an agent CLI: a call asks a model for a text answer. With no model chosen
     for the use case the bridge's refusal is raised, and nothing is built.
 
-    ``use_case`` names a chat sub-category axis (MODEL-USE-CASES-V2):
+    ``use_case`` names a chat sub-category axis:
     ``"background"`` IS a real axis now (titles/tags/suggestions/digests/
     consolidation route through it, falling back to the active ``chat`` chain when
     unbound), as are ``"reasoning"``, ``"loops"``, and ``"orchestration"``. The
@@ -991,7 +991,7 @@ async def one_shot_completion(
     :class:`~personalclaw.guardrails.failure.EmptyCompletion`, so a chain moves on and a
     caller never has to tell an empty string from a failure.
 
-    ``output_type`` (AUTONOMY-GUARDRAILS §2.4) opts into typed structured output:
+    ``output_type`` opts into typed structured output:
     pass ``dict`` or ``list`` to require the response parse as that JSON shape.
     ``validate`` checks the shape the caller needs inside it: it is given the answer's text and
     returns ``""`` when the caller can use it, else what is wrong with it ("no 'proposals'
@@ -1007,7 +1007,7 @@ async def one_shot_completion(
     :func:`parse_llm_json_value`: the reading this call's ``output_type`` check uses, so the answer
     the call accepted is the one its caller reads, and a ``validate`` check reads it the same way.
 
-    ``output_type`` ALSO rides the bridge as a build kwarg (AG-9) — but only to an entry
+    ``output_type`` ALSO rides the bridge as a build kwarg — but only to an entry
     whose provider advertised ``StructuredOutput.JSON_SCHEMA``, so a natively capable
     provider CONSTRAINS generation instead of merely being asked nicely in prose. The
     ollama app is the first consumer: it pops the key and normalizes ``dict``/``list``
@@ -1022,14 +1022,14 @@ async def one_shot_completion(
 
     ``model`` PINS resolution to one concrete model (a ``"Provider:model_id"`` ref,
     or a bare id), bypassing the use case's active-selection CHAIN — a pin is not a
-    chain. This is the seam cross-model judge isolation needs (WF2LOO-11): the engine
+    chain. This is the seam cross-model judge isolation needs: the engine
     resolves a different-FAMILY judge model up front, validates it against the
     producing stage's model, and pins it here so the judge provably runs on the model
     it was checked against. The default ``""`` keeps today's use-case-only resolution
     byte-for-byte.
 
-    ``temperature`` pins the SAMPLING temperature for this one call (HARNESS-CRAFT
-    §2.1): it rides the bridge as a build kwarg into the provider's ``extra_options``,
+    ``temperature`` pins the SAMPLING temperature for this one call:
+    it rides the bridge as a build kwarg into the provider's ``extra_options``,
     where both protocol clients already forward call params into the request. This is
     what makes best-of-N sampling genuinely varied rather than N identical calls. Two
     honest caveats: an Anthropic model in extended-thinking mode forbids a custom
@@ -1037,7 +1037,7 @@ async def one_shot_completion(
     parameter simply returns its default — a temperature is a request, not a promise.
     ``None`` (the default) sends nothing, keeping every existing call site unchanged.
 
-    The per-call OUTPUT BUDGET (LMMV §2.2) is derived, never hardcoded: every resolution
+    The per-call OUTPUT BUDGET is derived, never hardcoded: every resolution
     path (pin / chain-advance / plain) asks
     :func:`personalclaw.local_models.budgets.output_budget` for the model it is about to
     run and rides the answer as a ``max_tokens`` build kwarg. A local model whose card
@@ -1142,7 +1142,7 @@ async def _one_shot_completion(
 
         ``max_tokens`` is the per-model output budget DERIVED for ``model_ref``. The
         number comes from the local-model catalog's ``context_tokens`` /
-        ``output_tokens`` (LMMV §2.2) via ``local_models.budgets``, which falls back to
+        ``output_tokens`` via ``local_models.budgets``, which falls back to
         the shared hosted-model window table and, only when that too is silent, to the
         4096 the adapters used to hardcode. Riding it as a build kwarg means it reaches
         the provider through the same seam ``temperature`` uses — and because the bridge
@@ -1153,7 +1153,7 @@ async def _one_shot_completion(
         so the call site degrades to "pass nothing" (the adapter default) rather than
         raising.
 
-        ``output_type`` rides here too (AG-9), and ONLY when this entry's provider
+        ``output_type`` rides here too, and ONLY when this entry's provider
         advertised ``StructuredOutput.JSON_SCHEMA`` — see
         :func:`_enforces_json_schema_natively` for why an unadvertised provider must not
         receive the key. PER ENTRY is the whole point of deciding here rather than once

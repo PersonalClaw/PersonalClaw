@@ -1,5 +1,5 @@
 # CI — PR + feature-branch push. Fast verification gate (≤10-min budget).
-# Jobs are the stable ids other roadmap plans reference:
+# Jobs are stable ids that tests in this repo reference:
 # lint · test · web · rails · harness · client. Heavier matrix/coverage/audit live in full.yml (main + nightly).
 #
 # The three browser-driven jobs (e2e-a11y · e2e-walkthrough · e2e-pwa) take a `needs:` on the
@@ -220,7 +220,7 @@ jobs:
           enable-cache: true
       - name: Install (locked)
         run: uv sync --locked --extra dev
-      # `harness/` and `scripts/` are repo-inner dev infra beside src/ (SELF-VERIFICATION,
+      # `harness/` and `scripts/` are repo-inner dev infra beside src/ (self-verification,
       # and the baseline generators / validators / release helpers). `make lint` lints both
       # under the same tools as core; CI used to skip `harness/`, so a harness-only lint
       # break went green here and red for a local contributor. `scripts/` was the same hole
@@ -391,7 +391,7 @@ jobs:
     # run in PARALLEL, so each PR's tests finish in ~1/N the wall-clock and each shard's log is
     # ~1/N the size (which also mitigates the #2720 log-truncation class). The `test` job below
     # is the AGGREGATION GATE: it keeps the STABLE `test` id — the branch-protection required
-    # check and the id roadmap plans reference — and goes green only
+    # check — and goes green only
     # when every shard passed.
     #
     # Coverage is deliberately NOT measured on the shards: it stays owned by full.yml's dedicated
@@ -431,12 +431,12 @@ jobs:
           enable-cache: true
       - name: Install (locked)
         run: uv sync --locked --extra dev
-      # The SC5 real-daemon leg (tests/test_durable_spawn.py::TestSC5RealTmux) is
+      # The real-daemon leg (tests/test_durable_spawn.py::TestRealTmux) is
       # skipif-gated on a tmux binary, and NO stock runner image ships one — checked against
       # the Ubuntu-24.04 and macOS-15-arm64 runner-image manifests: zero mentions each. So the
       # one leg that proves a durable worker really outlives the gateway against the real
-      # server had been skipping silently on every run since it landed, and the roadmap
-      # recorded that skip as a MACHINE CEILING ("closes via a machine with tmux").
+      # server had been skipping silently on every run since it landed, and that skip was
+      # recorded as a MACHINE CEILING ("closes via a machine with tmux").
       #
       # It was never a ceiling, only an unasked question: apt has tmux and it installs in
       # seconds. Absent is not unavailable — a skip is the absence of an answer, not a
@@ -444,7 +444,7 @@ jobs:
       #
       # `tmux -V` runs in the SAME step deliberately: an install that fails must red the job
       # HERE, not reappear downstream as a skip in a count nobody reads.
-      - name: Install tmux (EI-6 durable sessions — real-daemon test leg)
+      - name: Install tmux (durable sessions — real-daemon test leg)
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends tmux
@@ -506,8 +506,8 @@ jobs:
 
   test:
     # ── Aggregation gate for the sharded suite above ──────────────────────────────────────────
-    # This job carries the STABLE `test` id (the branch-protection required-check name and the id
-    # roadmap plans reference). It goes green only when EVERY shard succeeded, and a FAILING shard
+    # This job carries the STABLE `test` id (the branch-protection required-check name).
+    # It goes green only when EVERY shard succeeded, and a FAILING shard
     # still reports RED here rather than skipped — `fail-fast: false` above means a shard failure
     # never cancels the run, so `!cancelled()` is satisfied and this job runs. It needs no
     # checkout or toolchain: it only reads the matrix's aggregate result.
@@ -578,8 +578,8 @@ jobs:
       - name: typecheck
         run: npm run typecheck:web
       - name: test (vitest)
-        # Includes the design-system consistency rails (plan DESIGN-SYSTEM-CONSISTENCY,
-        # C1/T3.4): tokenLint.test.ts (token-lint-strict — no raw hex/px outside the
+        # Includes the design-system consistency rails:
+        # tokenLint.test.ts (token-lint-strict — no raw hex/px outside the
         # shrinking allowlist) + primitiveAdoption.test.ts (bespoke-chrome ratchet:
         # raw <button>/<input>/dialog counts may only shrink) + inertUtilities.test.ts
         # (a text-*/bg-*/border-* class must compile to real CSS — a name with no
@@ -612,7 +612,7 @@ jobs:
         run: npm run test:desktop
       - name: test (mobile, node --test)
         # mobile/ is the THIRD member of this single root workspace (the Capacitor shell that
-        # wraps the served `#/companion` route — MOBILE-COMPANION `MC-7`), so the `npm ci`
+        # wraps the served `#/companion` route), so the `npm ci`
         # above already installed it. 24 cases over the shell's pure modules: which URL the
         # WebView is handed, the private-network navigation rail, and safe-area insets actually
         # landing on an element. The NATIVE builds are deliberately not here — they need Xcode
@@ -638,7 +638,7 @@ jobs:
 
   e2e-pwa:
     # ── The service-worker cache rail, finally EXECUTED ──────────────────────────────────────────
-    # `web/e2e/pwa.spec.ts` is the PROOF for the security clause: a service
+    # `web/e2e/pwa.spec.ts` is the PROOF for the security requirement: a service
     # worker that caches an authenticated `/api` response is a data leak (a later visitor, or the
     # same browser after logout, gets the previous session's approvals off disk). `swPolicy.test.ts`
     # asserts the policy's return values and its call sites; neither can show what a browser
@@ -787,7 +787,7 @@ jobs:
       - name: a deployed page runs in an origin of its own (web/e2e/deployedArtifacts.spec.ts)
         working-directory: web
         run: npx playwright test e2e/deployedArtifacts.spec.ts --project=chromium
-      # The clause: the browser gate completes a real chat turn OFFLINE, with no
+      # The requirement: the browser gate completes a real chat turn OFFLINE, with no
       # provider credential anywhere in the environment, against the scripted fixture
       # provider. A separate step because this one proves a different property from the
       # two above — not "is the page accessible" but "does the app still work at all
@@ -809,7 +809,7 @@ jobs:
       - name: a lost terminal frame does not strand a chat (web/e2e/streamStall.spec.ts)
         working-directory: web
         run: npx playwright test e2e/streamStall.spec.ts --project=chromium
-      # The clauses — the rail renders in-session, stays fixed while the transcript
+      # The requirements — the rail renders in-session, stays fixed while the transcript
       # scrolls, a mark jump scrolls it, and the coarse-pointer form collapses to one control. All
       # four are LAYOUT or NAVIGATION properties of a ~4k-line `ChatPage` that jsdom cannot mount
       # and could not measure if it did, so the honest home is this job and not vitest. It belongs
@@ -915,7 +915,7 @@ jobs:
         run: npm ci
       - name: install chromium
         run: npx playwright install --with-deps chromium
-      - name: V3 walkthrough — keyboard / reduced-motion / phone (web/e2e/walkthrough.spec.ts)
+      - name: full-app walkthrough — keyboard / reduced-motion / phone (web/e2e/walkthrough.spec.ts)
         working-directory: web
         run: npx playwright test e2e/walkthrough.spec.ts --project=chromium
       - name: upload the traces
@@ -929,14 +929,14 @@ jobs:
 
   browse-live:
     # ── The BEHAVIOURAL proof, finally EXECUTED on the merge gate ────────────────────────────────
-    # Two of the acceptance clauses can only be proven by a real browser:
+    # Two of the browse safety guarantees can only be proven by a real browser:
     # the injected safety script making a page's `fetch()` / `media.play()` / `navigator.bluetooth`
     # throw or return blocked, and a client-side redirect being re-evaluated per
     # `Page.frameNavigated`. tests/test_browse_safety_script.py (layer 2) and
     # tests/test_browse_cdp_live.py drive a real Chromium over raw CDP to assert them.
     #
     # The `test` job installs NO browser, so on the one machine that gates every merge those cases
-    # `pytest.skip` — MEASURED: 20 of them, and a skip is reported as a pass. The clauses were
+    # `pytest.skip` — MEASURED: 20 of them, and a skip is reported as a pass. Those guarantees were
     # proven only on a developer laptop that happened to have a Chromium, and nothing would have
     # noticed if they broke. That is the false green this job closes.
     #
@@ -995,7 +995,7 @@ jobs:
       # globbed — a glob that matches nothing exits clean, and "the proof ran" is a claim about
       # specific files. test_browse_live_legs_run_in_ci.py asserts this line names every module
       # that imports browse_chrome, and that each path it names exists.
-      - name: BA-2 behavioural proof in a REAL browser (safety script · redirect re-eval)
+      - name: browse behavioural proof in a REAL browser (safety script · redirect re-eval)
         run: uv run pytest tests/test_browse_safety_script.py tests/test_browse_cdp_live.py tests/test_browse_behavioural_proof_is_reachable.py -n0 --junitxml=reports/junit-browse-live.xml
       # Same argument as `test-shard`'s upload step. It bites hardest here: this leg's whole
       # purpose is that a missing browser must RED instead of skip, and "exit code 1" cannot
@@ -1010,7 +1010,7 @@ jobs:
           retention-days: 7
 
   rails:
-    # Cheap anti-regression rails: the machine-checked invariants roadmap plans add.
+    # Cheap anti-regression rails: machine-checked invariants.
     # Today: provider-boundary residue sweep (present on main).
     runs-on: ubuntu-latest
     # No PERSONALCLAW_HOME (see the test job) — the residue sweep is a static
@@ -1026,7 +1026,7 @@ jobs:
       # -n0 forces serial (these rails are tiny) while keeping the pyproject
       # addopts intact — `-p no:xdist` would break because addopts injects
       # -n/--dist, which pytest then can't parse with the xdist plugin disabled.
-      - name: provider-boundary residue sweep (plan 32)
+      - name: provider-boundary residue sweep
         run: uv run pytest tests/test_provider_boundary_residue.py -n0 --junitxml=reports/junit-rails.xml
       # Every tracked font, image, binary and fixture has a recorded source, licence and notice
       # in ASSET_LICENSES.json. tests/test_asset_licenses.py asserts the same thing inside the

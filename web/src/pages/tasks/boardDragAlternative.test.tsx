@@ -75,7 +75,7 @@ describe('the non-drag path that makes the board legal', () => {
   })
 
   it('a card is still openable from the keyboard (the fix that got it here)', () => {
-    // Cycle 164's measurement: 30 draggable cards, role/tabindex/aria-label all null, 0 of 70 Tab
+    // The measurement before the fix: 30 draggable cards, role/tabindex/aria-label all null, 0 of 70 Tab
     // presses landed on one. Pinned because reaching the form is the whole alternative — a card you
     // cannot focus is a form you cannot open.
     const board = code('TaskBoard.tsx')

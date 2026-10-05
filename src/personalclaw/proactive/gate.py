@@ -18,7 +18,7 @@ Two failure directions, deliberately opposite:
   resolve to `propose`. This is the opposite of the proposal stage's fail-CLOSED, and
   the asymmetry is the point — a broken *filter* that silently swallowed the user's inbox is
   worse than one that shows them too much, while a broken *proposer* that invented actions is
-  worse than one that proposes nothing. PA-1 recorded the same split for `ProactiveConfig`:
+  worse than one that proposes nothing. The same split holds for `ProactiveConfig`:
   both switches fail closed, the classifier gate fails open.
 
 The gate never sees an action, a tier or a rule id. It answers one question per item — is
@@ -33,7 +33,7 @@ from enum import Enum
 from personalclaw.proactive.manifest import CollectedItem, Manifest
 
 
-#: What the gate may say. `surface` is the middle rung §1.2 asks for and the reason the gate
+#: What the gate may say. `surface` is the middle rung and the reason the gate
 #: is not a boolean: an item can be worth SEEING without being worth proposing an action on,
 #: and collapsing the two would force every mention into either silence or a proposal.
 class GateDisposition(str, Enum):
@@ -115,7 +115,7 @@ def should_call_gate(
 ) -> bool:
     """The precondition guard — may the gate spend a model call at all?
 
-    False on an empty window (the §1.2 short-circuit: one cheap store query decides whether
+    False on an empty window (the short-circuit: one cheap store query decides whether
     the LLM stage runs), false when the user turned the gate off, and false when no rule
     applies to anything collected — a gate with no rule to apply has nothing to decide, and
     asking a model to "filter by no criteria" is a token spent to learn that.
@@ -168,7 +168,7 @@ def parse_gate_output(raw: object, manifest: Manifest) -> dict[str, GateOutcome]
     which `apply_gate` then fills with `propose` for every item.
 
     A disposition for an ordinal the manifest never minted is DISCARDED, not resolved. The
-    manifest is the only id authority (§1.1); honouring an id it does not contain would let
+    manifest is the only id authority; honouring an id it does not contain would let
     the gate drop an item that does not exist and, worse, would make the id space negotiable
     one stage before the proposal contract depends on it being fixed.
     """

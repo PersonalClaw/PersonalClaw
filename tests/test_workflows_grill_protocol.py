@@ -1,4 +1,4 @@
-"""Tests for the structured `rigor: deep` protocol (UP-R5).
+"""Tests for the structured `rigor: deep` protocol.
 
 The property carrying this module is that **a question the system could answer itself is never
 asked**. A grill that asks what it could look up reads as not having paid attention, and the user
@@ -58,7 +58,7 @@ def test_a_discoverable_question_routes_to_a_lookup(text, channel):
 
 def test_the_memory_and_knowledge_channels_are_never_merged():
     """Two subsystems with two lifecycles. A merged "context fetch" would make it impossible to say
-    which one answered, and the plan states the boundary normatively for exactly that reason."""
+    which one answered, and the boundary is stated normatively for exactly that reason."""
     _asked, lookups = split_facts_and_decisions(
         [
             q("a", "Did I decide on the format?"),
@@ -434,7 +434,7 @@ def test_the_plan_tool_ships_the_grill_surface_when_deep():
 
 def test_an_ordinary_goal_gets_no_grill_block():
     """An empty grill block would put a heavyweight affordance in front of a plan that did not earn
-    one, which is the over-machinery risk the plan names explicitly."""
+    one, which is exactly the over-machinery risk."""
     import json
 
     from personalclaw.workflows import bundled_defs
@@ -447,7 +447,7 @@ def test_an_ordinary_goal_gets_no_grill_block():
 
 
 def test_a_RISK_hit_grills_a_plan_the_classifier_called_standard():
-    """`deep_triggered` implemented the plan's "any risk hit forces deep" rule, but
+    """`deep_triggered` implemented the "any risk hit forces deep" rule, but
     nothing was feeding it hits — so a destructive plan the classifier happened to call standard
     went ungrilled. The rule was present and inert."""
     from personalclaw.workflows.autonomy import scan_risk
@@ -465,7 +465,7 @@ def test_a_RISK_hit_grills_a_plan_the_classifier_called_standard():
     assert "destructive_op" in why
 
 
-# ── the SAVE seam (WF2LEA-7 clause D): a settled decision must persist ──
+# ── the SAVE seam: a settled decision must persist ──
 
 
 def test_only_confirmed_answers_count_as_settled():

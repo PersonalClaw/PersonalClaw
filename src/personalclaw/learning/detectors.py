@@ -1,11 +1,11 @@
 """Repeated ad-hoc work → templates; failed stages → typed lessons.
 
 Two spokes that share one discipline: a DETERMINISTIC gate chain decides, and a model is consulted
-only at the score boundary. §3.2 is explicit that this replaces "pure LLM-prompt branches" — the
+only at the score boundary. This deliberately replaces "pure LLM-prompt branches" — the
 previous shape asked a model whether something was template-worthy, which costs a call per
 candidate and answers differently on Tuesday.
 
-The chain, in order (LEARN-R13):
+The chain, in order:
 
 1. **Hard pre-gates.** Plan ≥2 steps; no template already surfaced for the run; budget burn ≤80%.
    Near-death plans make bad templates: a run that spent its budget flailing is not a procedure.
@@ -14,14 +14,13 @@ The chain, in order (LEARN-R13):
    tuned against.
 3. **The LLM runs ONLY at the score boundary.** A high score auto-FILES with zero model calls; a low
    score is dropped; only the ambiguous middle is worth paying for.
-4. **Every negative decision writes a `skipped(reason)` row.** §3.2: the flywheel's negative space
-   how thresholds get tuned" — a detector that silently declines is one nobody can calibrate.
+4. **Every negative decision writes a `skipped(reason)` row.** The flywheel's negative space is
+   how thresholds get tuned — a detector that silently declines is one nobody can calibrate.
 
 **Measured before writing.** `is_environment_failure_claim` — the deny-filter, the guardrail that
 keeps a flaky network from becoming a durable lesson — caught **1 of 4** real environment failures:
-"connection refused", `ECONNRESET`, and rate-limit noise all passed straight through. §3.3 routes
-every
-`step_failed` through it, which made the gap worse, so this session widened it (now 12/12,
+"connection refused", `ECONNRESET`, and rate-limit noise all passed straight through. Every
+`step_failed` is routed through it, which made the gap worse, so it was widened (now 12/12,
 with 0 false positives on real lessons — a bare `429` had been filtering "the 429 rate limiter
 config
 lives in settings.py").
@@ -90,7 +89,7 @@ _SLOT = re.compile(r"(\{\{[^}]+\}\})|(\$[A-Za-z_][\w]*)|(<[a-z_][\w ]{2,}>)")
 
 
 class Skip(str, Enum):
-    """Why a candidate was declined. §3.2 requires a row for EVERY negative decision.
+    """Why a candidate was declined. EVERY negative decision gets a row.
 
     Typed rather than prose because these are what thresholds get tuned against: "declined" is
     unfilterable, while a count per reason says which gate is doing the work and which is dead
@@ -125,7 +124,7 @@ class Candidate:
 class Score:
     """The deterministic structural score, with its components visible.
 
-    Components rather than one number, because §3.2 tunes thresholds from data and a scalar cannot
+    Components rather than one number, because thresholds are tuned from data and a scalar cannot
     say WHICH signal was weak. A candidate rejected for having no slots needs a different fix from
     one rejected for repeating a single verb.
     """
@@ -158,7 +157,7 @@ class Score:
 def structural_score(candidate: Candidate) -> Score:
     """Score a candidate's shape. Zero LLM calls, fully reproducible.
 
-    Reproducibility is the point: §3.2 replaced "pure LLM-prompt branches" with this because a model
+    Reproducibility is the point: this replaced "pure LLM-prompt branches" because a model
     asked "is this template-worthy" costs a call per candidate and answers differently daily.
     """
     steps = [s for s in candidate.steps if s and s.strip()]
@@ -238,7 +237,7 @@ def gate(candidate: Candidate) -> GateDecision:
     Hard pre-gates first, cheapest and most decisive: a one-step plan cannot become a useful
     template however it scores, so scoring it is waste.
 
-    Every negative branch names a TYPED skip reason (§3.2's negative space). A detector silently
+    Every negative branch names a TYPED skip reason (the negative space). A detector silently
     declines is one nobody can calibrate — the reason counts are what say which gate earns its
     place.
     """
@@ -334,7 +333,7 @@ def similarity_verdict(
 
 
 class FailureMode(str, Enum):
-    """The first-class failure dimension §3.3 (LEARN-R8a) puts on the Run Ledger.
+    """The first-class failure dimension on the Run Ledger.
 
     A closed enum, so `failure_distribution` is computable and the refiner targets the DOMINANT
     mode. Prose failure text cannot be counted, and a refiner that cannot count cannot choose..
@@ -432,7 +431,7 @@ _MODE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 def classify_failure(text: str) -> str:
     """Map failure text onto the closed mode enum.
 
-    The ENVIRONMENT check runs FIRST and wins outright, because §3.3's guardrail is absolute: an
+    The ENVIRONMENT check runs FIRST and wins outright, because the guardrail is absolute: an
     environment failure must never become a lesson, and a message that is both (a refused
     a traceback) is still the world's fault, not the work's.
 
@@ -453,7 +452,7 @@ def classify_failure(text: str) -> str:
 
 
 def failure_distribution(failures: list[str]) -> dict[str, int]:
-    """Counts per failure mode, for the refiner's dominant-mode targeting (§3.3a).
+    """Counts per failure mode, for the refiner's dominant-mode targeting.
 
     Returns only NON-ZERO modes, so a reader sees what is actually happening rather than a table of
     twelve zeros — and so a caller cannot mistake an absent mode for a measured zero.
@@ -481,7 +480,7 @@ def dominant_mode(failures: list[str]) -> str:
 def lesson_worthy(text: str) -> tuple[bool, str]:
     """Whether a failure should become a lesson proposal. Returns `(worthy, reason)`.
 
-    §3.3's guardrail, as a function with the reason attached. The refusal is as important as the
+    The guardrail, as a function with the reason attached. The refusal is as important as the
     accept:
     a `skipped(reason)` row for a filtered failure makes the filter tunable; without it a
     widened pattern list would silently start eating real lessons.
@@ -500,10 +499,10 @@ def lesson_worthy(text: str) -> tuple[bool, str]:
 
 @dataclass
 class LessonKey:
-    """The (template, failure_mode) key §3.3b stores failed-stage lessons under.
+    """The (template, failure_mode) key failed-stage lessons are stored under.
 
     Keyed rather than free-floating so the lesson can be RE-INJECTED on future runs of the same
-    template — §3.3 calls a lesson "a persistent mutation hint", and a hint nobody can look up by
+    template — a lesson is a persistent mutation hint, and a hint nobody can look up by
     template is a note in a drawer.
     """
 
@@ -528,7 +527,7 @@ class LessonKey:
 
 
 def dedupe_signature(text: str, *, limit: int = 10) -> str:
-    """The collapsed signature §3.3b keys lessons by.
+    """The collapsed signature lessons are keyed by.
 
     Reuses the refiner's noise-stripping so the same failure produces the same signature in BOTH
     spokes. Two signature schemes would make a clustered failure and its lesson un-joinable — the

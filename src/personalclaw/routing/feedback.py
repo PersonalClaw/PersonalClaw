@@ -1,5 +1,4 @@
-"""Routing feedback extraction — WF2 judge verdicts as a per-cell signal (MODEL-ROUTING-TELEMETRY
-§4.2, MRT-5).
+"""Routing feedback extraction — workflow judge verdicts as a per-cell signal.
 
 :func:`personalclaw.routing.stats._score` already computes ``0.60·success_rate + 0.40·feedback`` and
 already renormalizes onto ``success_rate`` when ``feedback_n`` is 0. This module supplies the
@@ -10,7 +9,7 @@ ledger extraction exists to prevent.
 
 ── What is read ──
 
-The WF2 Run Ledger: ``<home>/workflows/runs/<run_id>/events.jsonl``, the file
+The workflow Run Ledger: ``<home>/workflows/runs/<run_id>/events.jsonl``, the file
 :class:`personalclaw.ledger.writer.LedgerWriter` mirrors every :data:`LEDGER_KINDS` record into.
 The kind is :data:`personalclaw.ledger.kinds.JUDGE_VERDICT` (``"judge_verdict"``) — "something
 assessed something" — and the field read off it is ``verdict``, the closed

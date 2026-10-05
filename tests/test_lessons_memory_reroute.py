@@ -1,7 +1,7 @@
-"""WF2LEA-3 regression: /api/lessons rides memory.db lesson.* (no JSONL store).
+"""Regression: /api/lessons rides memory.db lesson.* (no JSONL store).
 
-Success criterion 6 ("the /api/lessons consumers — MCP tools, dashboard, no-embedder
-path — work identically after the consumer reroute onto memory.db"). The legacy JSONL
+The requirement: "the /api/lessons consumers — MCP tools, dashboard, no-embedder
+path — work identically after the consumer reroute onto memory.db". The legacy JSONL
 ``LessonStore`` is deleted; every lesson read/write now goes through the memory service
 onto memory.db ``lesson.*`` records. These tests pin:
 
@@ -78,7 +78,7 @@ async def _read_body(resp):
     return json.loads(resp.body)
 
 
-# ── criterion 6: the three consumers round-trip through memory.db ──────────────
+# ── the three consumers round-trip through memory.db ───────────────────────────
 
 
 @pytest.mark.asyncio

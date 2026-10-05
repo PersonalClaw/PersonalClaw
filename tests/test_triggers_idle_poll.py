@@ -1,5 +1,4 @@
-"""The idle runtime — the fourth declared-but-inert kind, and the wiring that closes it
-(WF2AUT-11).
+"""The idle runtime — the fourth declared-but-inert kind, and the wiring that closes it.
 
 **🔴 MEASURED BEFORE A LINE WAS WRITTEN.** `idle` has been fully declared — in
 `models.KINDS`, with `SPEC_KEYS['idle'] == {scope, idle_secs, first_idle_secs}` and NL phrasings in

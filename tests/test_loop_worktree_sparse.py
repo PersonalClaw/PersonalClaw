@@ -1,6 +1,6 @@
 """Sparse + pooled + reused worktree hydration.
 
-Drives REAL git against temp repos, because every claim in HC-2 is a claim about what
+Drives REAL git against temp repos, because every claim here is a claim about what
 git actually does, and the interesting behaviours are the ones a mock would paper over:
 
 * An out-of-cone write lands on disk, but ``git add -A`` then refuses it and stages
@@ -11,7 +11,7 @@ git actually does, and the interesting behaviours are the ones a mock would pape
   first asserts an out-of-scope path is missing. Without that floor, a full checkout
   would satisfy every other assertion in the file.
 * The pool bound is asserted as a NUMBER under a monkeypatched ``cpu_count``, both above
-  and below the ceiling — on an 18-core dev box an unbounded pool would look identical
+  and below the ceiling — on a many-core dev box an unbounded pool would look identical
   to a bounded one.
 * The fan-out claim is asserted as OVERLAP, never as wall clock. Nothing in this file may
   gate on a duration or on a ratio between two durations: the pool's win is bounded by
@@ -209,7 +209,7 @@ class TestConfigGate:
 
     def test_real_config_object_carries_the_field(self, tmp_path, monkeypatch):
         """Guards the wiring itself: a renamed/removed dataclass field would make
-        ``sparse_enabled`` silently fail-open to False and disable HC-2 wholesale."""
+        ``sparse_enabled`` silently fail-open to False and disable sparse hydration wholesale."""
         from personalclaw.config.loader import AppConfig
 
         cfg = AppConfig()
@@ -351,7 +351,7 @@ class TestAutoWiden:
         assert os.path.isfile(os.path.join(path, "web/lost.ts")), "the task's write was lost"
 
     def test_widening_makes_an_out_of_scope_write_land(self, tmp_path):
-        """The acceptance clause: the write SUCCEEDS (reaches the commit) and the cone
+        """The requirement: the write SUCCEEDS (reaches the commit) and the cone
         GREW. Both are asserted — a widen that ran but did not cover the path, or a
         cone that grew without the file being committed, each fail here."""
         ws = _repo(tmp_path)
@@ -388,7 +388,7 @@ class TestAutoWiden:
         assert wt.widen_for_pending(path) == []
 
     def test_merge_back_carries_an_out_of_scope_write(self, tmp_path):
-        """End to end through the real merge path — this is the clause that would break
+        """End to end through the real merge path — this is the claim that would break
         silently in production, because ``merge_worktree`` is where ``add -A`` runs."""
         ws = _repo(tmp_path)
         path = wt.add_worktree(ws, "t-merge", scope=["src"])
@@ -409,7 +409,7 @@ class TestAutoWiden:
 
 
 def test_merge_back_is_diff_identical_to_a_full_checkout(tmp_path):
-    """``merge-back is diff-identical to full checkouts`` clause, as a direct
+    """``merge-back is diff-identical to full checkouts``, as a direct
     comparison: the same edits made in a sparse worktree and in a full one produce the
     same tree hash on the base branch."""
     results = []
@@ -434,7 +434,7 @@ def test_merge_back_is_diff_identical_to_a_full_checkout(tmp_path):
 
 class TestPoolBound:
     def test_ceiling_binds_on_a_big_box(self, monkeypatch):
-        """The bound as a NUMBER. An unbounded pool on this 18-core dev box would pass
+        """The bound as a NUMBER. An unbounded pool on a many-core dev box would pass
         any 'a pool exists' assertion, so the ceiling is asserted explicitly."""
         monkeypatch.setattr(os, "cpu_count", lambda: 64)
         assert wt.pool_size(16) == 4
@@ -486,7 +486,7 @@ class TestPoolBound:
             assert "docs/guide.md" not in _tree(path)
 
     def test_batch_overlaps_where_serial_creation_cannot(self, tmp_path, monkeypatch):
-        """The fan-out clause, as OVERLAP rather than wall clock: peak in-flight is
+        """The fan-out claim, as OVERLAP rather than wall clock: peak in-flight is
         > 1 for a four-way batch and exactly 1 for the same four specs created one at a
         time through the same counter.
 
@@ -659,7 +659,7 @@ class TestReusePool:
 
     def test_reuse_preserves_the_sparse_cone(self, tmp_path):
         """Reset must not silently re-hydrate the repo — that would make phase 2 of
-        every loop pay the full cost the plan is trying to avoid."""
+        every loop pay the full cost sparse hydration is meant to avoid."""
         ws = _repo(tmp_path)
         path = wt.add_worktree(ws, "t-cone", scope=["src"])
         assert wt.sparse_scope(path) == ["src"]

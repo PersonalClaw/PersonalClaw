@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import type { AppInstallResult } from '../../lib/api'
 
-// APE-8 "Fix with AI". A failed app install that captured a build/hook log gets a button that
+// "Fix with AI". A failed app install that captured a build/hook log gets a button that
 // opens a chat pre-filled with the FENCED install log. Two halves of the FE contract: a confirmed
 // install that fails with a `fix_prompt` offers the button beside its error, inside the consent
 // dialog — the one surface every install fails on — and the button renders ONLY when there is a

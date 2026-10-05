@@ -1,8 +1,8 @@
 /**
  * A suppression's REASON must not render as an error.
  *
- * 🔴 THE DEFECT, created by its own fix. That session began PERSISTING a suppressed fire's row so
- * criterion 8's "zero silent drops" became real — and the reason lands in `ScheduleRun.error`, which
+ * 🔴 THE DEFECT, created by its own fix. Suppressed fires began PERSISTING a row so
+ * "zero silent drops" became real — and the reason lands in `ScheduleRun.error`, which
  * `RunTrace` renders inside a danger-tinted box. Measured:
  *
  *     quiet-hours skip   dot=gate     tone=--color-on-surface-low   dangerBox=true
@@ -13,7 +13,7 @@
  * `ConnectionError`. The alarming half is the one a user reacts to, so an automation working exactly as
  * configured read as broken — sending the user hunting a fault that is not there.
  *
- * This is the shape its own log warned about one layer down: a visibility fix landing a value on a
+ * This is a known shape, one layer down: a visibility fix landing a value on a
  * surface that was not built to receive it.
  */
 import { describe, it, expect } from 'vitest'

@@ -29,7 +29,7 @@ export function kindIcon(kind: string): LucideIcon {
 }
 
 // ── Risk tiers ──
-// Metadata for ordering and filtering, NEVER an auto-apply lane (§3.1: any "auto" tier is
+// Metadata for ordering and filtering, NEVER an auto-apply lane (any "auto" tier is
 // guardrail-violating). The tones deliberately escalate: `manual_only` reads as the one to stop at.
 export const TIER_TONE: Record<string, string> = {
   low: 'var(--color-on-surface-var)',
@@ -66,7 +66,7 @@ export function bulkBlockedReason(row: LearningRow): string {
 
 // ── Evidence: how many refs, and WHAT KIND ──
 // The queue stamps a tier at `enqueue` and the tiers are not interchangeable: an ablation is a
-// paired on/off MEASUREMENT (EVALUATION-SUBSTRATE §3.1 files a retirement on one), a correlation is
+// paired on/off MEASUREMENT (evaluation files a retirement on one), a correlation is
 // a co-occurrence. Rendering only the count made those identical on screen — and "retire this
 // component" is exactly the decision where the difference decides the answer.
 const EVIDENCE_GRADE: Record<string, string> = {
@@ -89,7 +89,7 @@ export function evidenceLabel(row: LearningRow): string {
 }
 
 // ── The Loop-2 gate: before/after, or an honest "ungated" ──
-// EVALUATION-SUBSTRATE amendment E2. The gate re-runs a cheap scenario subset over the home
+// The gate re-runs a cheap scenario subset over the home
 // as it is and again with the candidate staged, so a reviewer sees whether the change made things
 // worse BEFORE accepting it. Three facts have to survive to the screen and they are all separate:
 //

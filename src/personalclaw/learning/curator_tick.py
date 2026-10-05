@@ -32,7 +32,7 @@ def run_curator_tick(svc: Any) -> str:
     if not getattr(cfg, "enabled", True) or not getattr(cfg, "curator_enabled", True):
         return ""
 
-    # LEARN-R18: grade any decision whose horizon has elapsed BEFORE the aging pass, so a
+    # Grade any decision whose horizon has elapsed BEFORE the aging pass, so a
     # freshly-measured outcome is in the library the same tick it resolves. Inert unless a
     # vector store is wired (``svc`` degrades to null), and best-effort — a resolver failure
     # never blocks curation.
@@ -64,7 +64,7 @@ def run_curator_tick(svc: Any) -> str:
     except Exception:
         logger.debug("Consumer-liveness sweep failed", exc_info=True)
 
-    # LEARN-R16 / criterion 9: grade every accepted change whose post-acceptance horizon has
+    # Grade every accepted change whose post-acceptance horizon has
     # elapsed. Reads the Run Ledger (not semantic memory) so it runs on every box regardless of
     # embedder; inert-by-data when nothing has been accepted, gated on `learning.attribution_*`
     # internally, best-effort — a grading failure never blocks curation. A HARMFUL verdict files
@@ -79,7 +79,7 @@ def run_curator_tick(svc: Any) -> str:
     except Exception:
         logger.debug("Attribution grading failed", exc_info=True)
 
-    # LEARN-R4 / §2.5: "Events prune at 90d on the curator tick." Here rather than on its own
+    # Surfacing events prune at 90d on the curator tick. Here rather than on its own
     # timer because the surfacing log is exactly the kind of high-volume, low-value,
     # independently-prunable data the curator tick already exists to age — a second cadence
     # would be a daemon to own for one DELETE.
@@ -116,7 +116,7 @@ def run_curator_tick(svc: Any) -> str:
         active_dates = store.active_days()
         report = curator_mod.run_aging(candidates, active_dates=active_dates, mode="")
         curator_mod.file_review_proposals(report)
-        # LEARN-R6f: heat-earned promotion. The multi-gate (`usage.promotion_ready`) had no
+        # Heat-earned promotion. The multi-gate (`usage.promotion_ready`) had no
         # caller anywhere in the tree — a gate nothing runs is a gate that never refuses
         # anything, and the bare "surfaced ≥2×" it replaced was still what the ladder
         # effectively used. This is its live cadence: the same verified tick as the aging

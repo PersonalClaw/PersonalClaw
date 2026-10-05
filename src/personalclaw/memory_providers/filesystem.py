@@ -1,6 +1,6 @@
 """Filesystem plain-text memory provider — the capability-degraded fallback.
 
-The VISION fallback chain, made real (memory-architecture.md §3.4): when no
+The fallback chain, made real: when no
 embedding model is configured, the native record/vector provider reports
 ``capabilities.vector=False`` and the service degrades retrieval to keyword
 search. This provider is the *plain-text* end of that chain — it persists

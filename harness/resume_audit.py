@@ -21,7 +21,7 @@ bugs. Two entities, two halves:
   reconstruction. A persisted run is KILLED, resumed from DISK ALONE via a fresh
   ``RunController`` (no in-memory carryover — the whole point of the audit), and the
   frontier the resumed controller derives is asserted BYTE-EQUAL to the pre-kill snapshot,
-  cross-checked against the journal event-fold (the ``fold_workflow``). This is the WF2
+  cross-checked against the journal event-fold (the ``fold_workflow``). This is the workflow
   event-fold law tested destructively: a resume that reconstructs a DIFFERENT frontier —
   or a journal whose fold no longer matches the persisted node states — is the dead-resume
   bug class this audit exists to catch.
@@ -143,7 +143,7 @@ def audit_loop(loop_id: str) -> ResumeReport:
     return report
 
 
-# ── workflow-run half (WF2 event-fold byte-equal frontier reconstruction) ──
+# ── workflow-run half (event-fold byte-equal frontier reconstruction) ──
 
 
 @dataclass
@@ -152,8 +152,8 @@ class WorkflowResumeReport:
 
     ``ok`` is true only when the run resumed from disk alone reproduces its pre-kill
     frontier byte-for-byte AND the journal event-fold agrees with the persisted node
-    states. A mismatch on either is the dead-resume bug class (SV Success Criterion #5,
-    workflow half): a resume that silently reconstructs a different scheduling decision, or
+    states. A mismatch on either is the dead-resume bug class (the audit's workflow
+    half): a resume that silently reconstructs a different scheduling decision, or
     a journal whose replay diverges from the state it is supposed to be able to rebuild.
     """
 
@@ -166,7 +166,7 @@ class WorkflowResumeReport:
     resumed_frontier: str = ""
     #: The two agree byte-for-byte — the audit's primary assertion.
     frontier_byte_equal: bool = False
-    #: The journal event-fold's node-state map equals the persisted node states — the WF2
+    #: The journal event-fold's node-state map equals the persisted node states — the workflow
     #: event-fold law, cross-checked so a divergent replay (a corrupted or truncated
     #: journal) fails the audit rather than passing on the state file alone.
     fold_matches_state: bool = False
@@ -279,7 +279,7 @@ def audit_workflow_run(
     run_id: str, *, pre_kill_frontier: str | None = None
 ) -> WorkflowResumeReport:
     """Reconstruct a persisted workflow run from disk ALONE and prove the frontier is
-    byte-equal to its pre-kill snapshot (SV Success Criterion #5, workflow half).
+    byte-equal to its pre-kill snapshot.
 
     The audit models a crash/kill: a fresh :class:`RunController` is built from the run row,
     spec, and ``state.json`` on disk — no in-memory carryover from whatever was driving the

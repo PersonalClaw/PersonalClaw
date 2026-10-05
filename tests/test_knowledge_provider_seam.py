@@ -1,4 +1,4 @@
-"""Native knowledge provider + ingest queue (#30 Task A — provider seam)."""
+"""Native knowledge provider + ingest queue (the provider seam)."""
 
 from __future__ import annotations
 
@@ -79,7 +79,7 @@ def test_provider_lists_single_library_source(store):
 
 
 def test_thirteen_native_types():
-    # 13 since PA-4 added `decision`. The count is a ratchet, so the
+    # 13 since `decision` was added. The count is a ratchet, so the
     # named subset below is what actually pins membership — a count alone would pass if a type
     # were swapped for another.
     assert len(NATIVE_TYPES) == 13
@@ -139,7 +139,7 @@ def test_queue_processes_item_end_to_end(store):
             item_type="note", title="N", content="queue body", extra={"processing_status": "queued"}
         )
         # The queue resolves its own embedder, so the bound provider is declared HERE:
-        # without one RET-2 files the item `unsearchable`, and this test's subject is the
+        # without one the ingest files the item `unsearchable`, and this test's subject is the
         # drain loop reaching a terminal status, not the no-provider verdict.
         q = KnowledgeIngestQueue(store, embedder_factory=BoundEmbedder)
         q.start()

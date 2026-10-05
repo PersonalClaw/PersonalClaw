@@ -1,7 +1,7 @@
 """Workflow operations — the ONE implementation the chat tools and HTTP routes share.
 
 Every workflow operation lives here as a plain function returning a plain dict. The chat
-tools (Slice 6a) call it in-process; the REST handlers (Slice 7a) will call the same
+tools call it in-process; the REST handlers call the same
 functions and serialize the same dicts. That is deliberate: two surfaces over one engine
 must not grow two behaviours, and "the tool did X but the API did Y" is the bug class this
 prevents by construction.
@@ -97,7 +97,7 @@ def _service_failure(code: str, message: str, **extra: Any) -> dict[str, Any]:
     the third vocabulary (``WF_UPPER_SNAKE``), not a wire code, and this helper
     must not return a ``web.Response``. It was named ``_err`` — the same name as
     twelve Response-returning handler helpers — which made a copy-paste between
-    the two layers a type error waiting to happen (PL-8).
+    the two layers a type error waiting to happen.
     """
     return {"ok": False, "code": code, "message": message, **extra}
 
@@ -148,7 +148,7 @@ async def list_defs_surfacing(*, now: float = 0.0) -> dict[str, Any]:
     """The templates list WITH its surfacing state — freshness, scope, packs, route, reachability.
 
     `list_defs` deliberately returns a thin projection (name/description/source/version/tags/
-    provider). Measured (S61b): that projection drops `metadata` entirely, so a templates list built
+    provider). Measured: that projection drops `metadata` entirely, so a templates list built
     on it CANNOT render a freshness gradient, a scope chip, or a surfacing toggle no matter what the
     def declares — the fields would be present on disk and invisible to every surface. This is the
     read the UX consumes.
@@ -206,7 +206,7 @@ async def list_defs_surfacing(*, now: float = 0.0) -> dict[str, Any]:
         )
         doctor_entries.append(channels.doctor_entry(name, metadata))
 
-    # Overdue-first, matching the list the plan describes; `sort_key` owns the rule so the API and
+    # Overdue-first; `sort_key` owns the rule so the API and
     # any other surface cannot disagree about the order.
     order = {
         name: channels.sort_key(
@@ -233,7 +233,7 @@ async def get_def(name: str) -> dict[str, Any]:
     """One definition in full, with secret values stripped to `_has*` flags.
 
     Stripped on the way OUT, always: a def read is rendered in a UI and echoed into a chat
-    turn, and a credential that reaches either is a credential leaked to both (WF2-R14).
+    turn, and a credential that reaches either is a credential leaked to both.
     """
     if not name:
         return _service_failure("WF_DEF_NAME_REQUIRED", "a definition name is required")
@@ -258,7 +258,7 @@ async def get_def(name: str) -> dict[str, Any]:
 
 
 def _default_eligibility(name: str) -> dict[str, Any]:
-    """R6a: may this template become its kind's default? (LOOPS-EVOLUTION R6 criterion 1).
+    """May this template become its kind's default?
 
     Reads every `judge_verdict` this template's runs recorded to the ledger and asks the
     nodding-loop detector. A gate that has never rejected across enough real runs blocks the
@@ -395,7 +395,7 @@ async def author_def(
     `strict` rejects on WARNINGS too. Authoring is exactly when a warning is cheap to fix,
     and a template that ships with a known smell propagates it to every run.
 
-    `metadata` is the def's declared surfacing/matching block. Measured (S61b): there was NO write
+    `metadata` is the def's declared surfacing/matching block. Measured: there was NO write
     path for it — the parameter did not exist, so every `DefMetadata` field (including the
     `surface_mode`, `cadence_days` and `packs` the surfacing channels read) could be loaded from
     disk and never SET through the API. A field with a read path and no write path is a field only a
@@ -404,7 +404,7 @@ async def author_def(
     `runtime_hints`, `defaults` and `on_overlap` are the same failure for three more fields a
     definition has, found when the dashboard editor saved a copy of a shipped template: nine of
     them carry `runtime_hints` (the judge rubric, the WIP invariant), and a copy saved through
-    here came back without any of it (F-29).
+    here came back without any of it.
 
     `based_on` names the definition this save was EDITED FROM — the definition itself when
     absent — and `based_on_version` one recorded version of it. The editor starts from a read,
@@ -571,7 +571,7 @@ async def save_accepted_diff(
 async def set_a2a_published(
     name: str, published: bool, *, saved_by: str = PUBLISH
 ) -> dict[str, Any]:
-    """Flip one template's ``metadata.a2a_published`` (EXTERNAL-ACCESS §5, EA-8), as a new version
+    """Flip one template's ``metadata.a2a_published``, as a new version
     saved by *saved_by*: the publish switch (``versions.PUBLISH``), unless the request that pressed
     it proved an app or an agent. No automation follows the version it writes, which re-saves the
     steps of the one before it without showing them.
@@ -648,7 +648,7 @@ async def start_run(
     """Instantiate a def and start driving it.
 
     A caller idempotency key returns the EXISTING run rather than minting a second one — a
-    retried tool call is a retry, not a new request (WF2-R1).
+    retried tool call is a retry, not a new request.
 
     Work done for an owner-allowed automation's run starts only what that run may start
     (`automation_version.held_start`); a batch's start (`batch_start`) is not held to its work.
@@ -1112,7 +1112,7 @@ def status(run_id: str) -> dict[str, Any]:
         # a cap, which its owner lifts by raising it as she resumes (`resume_run`).
         **run_budget.shown(run),
         elapsed_secs=run.elapsed_seconds,
-        # The containing project, so the run view can offer per-project controls (the R14
+        # The containing project, so the run view can offer per-project controls (the
         # judge-guidance override writes through the project, which is what reaches this
         # run's worker and judge sessions). Empty for an unscoped run — the view hides the
         # control rather than writing to a project that does not exist.
@@ -1145,7 +1145,7 @@ def status(run_id: str) -> dict[str, Any]:
 
 
 def set_policy_overrides(run_id: str, overrides: dict[str, Any]) -> dict[str, Any]:
-    """Replace a run's sparse ``SupervisorPolicy`` overlay (PP-16 seam 4f).
+    """Replace a run's sparse ``SupervisorPolicy`` overlay.
 
     REPLACE semantics — the store's contract: the dict IS the new overlay, so ``{}``
     clears every override and the run falls back to its kind/template defaults.
@@ -1241,14 +1241,14 @@ def output(run_id: str, node_id: str) -> dict[str, Any]:
 
 
 def inspect_node(run_id: str, node_id: str) -> dict[str, Any]:
-    """The §5 reconstructability set for one node (WF2-A2), as far as it has got.
+    """The reconstructability set for one node, as far as it has got.
 
     Read-only forensics over data the controller already persisted: from this payload alone
     a reader can see what a node *saw* (`resolved_prompt` + `resolved_inputs`), what it
     *produced* (`output`, or an `artifact_ref` when the value was offloaded), how many tries
     it took (`attempts`), the ledger slice that records the trajectory (`ledger_events`),
     and whether the output was served from the resume cache rather than a fresh run
-    (`cached`). The acceptance bar §5 states is that prompt → tools → output is
+    (`cached`). The bar is that prompt → tools → output is
     reconstructable from these events alone; this is the surface that exposes it.
 
     **A node that has not finished answers too, with its live state** (`state`): what it has
@@ -1264,7 +1264,7 @@ def inspect_node(run_id: str, node_id: str) -> dict[str, Any]:
 
     SECRETS: this returns the persisted values VERBATIM — the resolved prompt is stored by the
     controller through `store.write_output`, which does NOT run the journal's redactor, so this
-    dict is NOT safe to emit as-is. Redaction is the HTTP surface's job (WF2-A2 secrets contract);
+    dict is NOT safe to emit as-is. Redaction is the HTTP surface's job;
     keeping the read un-redacted mirrors `output()`/`status()`, which also hand back stored state
     verbatim to their one in-process caller.
 
@@ -1378,7 +1378,7 @@ def inspect_node(run_id: str, node_id: str) -> dict[str, Any]:
         )
 
     # output — the node's terminal value, unless it was offloaded. An artifact pointer (a
-    # future WV-11 ref that is not an `outputs/` path) or a spilled oversize/binary payload is
+    # ref that is not an `outputs/` path) or a spilled oversize/binary payload is
     # returned as `{"artifact_ref": ...}` rather than inlined: the whole point of the spill is
     # that the blob does not ride in the response, and a 5MB output (or a base64 screenshot)
     # inline would flood whatever renders this.
@@ -1414,7 +1414,7 @@ def inspect_node(run_id: str, node_id: str) -> dict[str, Any]:
         # typed failure and fix instruction rather than a bare count.
         attempts=[e for e in node_events if e.get("kind") == journal_mod.STEP_ATTEMPT],
         ledger_events=node_events,
-        # cached — served from the resume/rewind cache (WF2-A1) rather than a fresh run. The
+        # cached — served from the resume/rewind cache rather than a fresh run. The
         # `step_cached` event is the record; "did my edit actually re-run this?" is answerable
         # from here, which is the question the event exists to answer.
         cached=any(e.get("kind") == journal_mod.STEP_CACHED for e in node_events),
@@ -1433,7 +1433,7 @@ def _serialized_bytes(value: Any) -> int:
 
 
 async def observe(run_id: str, duration_ms: int = DEFAULT_OBSERVE_MS) -> dict[str, Any]:
-    """Watch a run for a bounded window and return what changed (WF2-R11).
+    """Watch a run for a bounded window and return what changed.
 
     Cheaper and safer than a status-polling loop in chat: one call, one clamped wait, a
     timestamped delta. The clamp is the point — an unbounded subscribe in a chat turn is a
@@ -1525,7 +1525,7 @@ def edit_run(
     """Queue a mutation batch on a live run.
 
     Requires a LIVE controller: mutation is only safe at the controller's drain point, and
-    editing a run nobody is driving would write state with no one to apply it (WF2-R10).
+    editing a run nobody is driving would write state with no one to apply it.
     `owner_allowed` is the owner's own yes to a step the edit would let do more (her ``confirm``
     on her own edit); without it such an edit is refused (`mid_flight.posture_refusal`).
     """
@@ -1581,8 +1581,7 @@ def cancel_run(run_id: str, *, supervisor: Any = None, reason: str = "") -> dict
 
     The intent is written to disk rather than applied in memory, so a cancel issued while
     the gateway is down is still honoured on restart. For a run that has LAUNCHED, the
-    controller (or the watchdog) writes the terminal status — a handler must never do it
-    (WF2-R10).
+    controller (or the watchdog) writes the terminal status — a handler must never do it.
 
     🔴 A PRELAUNCH run is the exception, and it has to be, because nothing else would ever
     write its terminal status. It has no controller to see the intent, and the watchdog's
@@ -1594,7 +1593,7 @@ def cancel_run(run_id: str, *, supervisor: Any = None, reason: str = "") -> dict
     a 409 pointing at a dead end. Every draft run ever created was permanently
     undeletable, so the leak accumulated.
 
-    Writing the terminal status here does NOT weaken WF2-R10; it is the same reasoning
+    Writing the terminal status here does NOT weaken that rule; it is the same reasoning
     ``overlap.drain`` already relies on when it FAILs an unlaunchable queued run —
     *"writing a terminal status outside a tick loop is safe for exactly the reason the
     watchdog's orphan reaper is safe — a DRAFT run has no controller"*. The cancel intent
@@ -1631,20 +1630,20 @@ async def delete_run(
 
     Refused while a run can still move. Deleting a live run would leave its controller writing
     journal entries and terminal status to a row that no longer exists — the single-writer
-    discipline (WF2-R10) assumes the row outlives the writer. Cancel first, then delete: two
+    discipline assumes the row outlives the writer. Cancel first, then delete: two
     deliberate steps for two genuinely different intents.
 
     Removes the run DIRECTORY as well as the row. A row-only delete would leave the journal,
     outputs and continuations on disk forever, invisible to every surface — the run would look
     gone while still costing the disk and still holding a live resume token.
 
-    ASYNC because teardown runs a subprocess (WORK-CONTAINERS §4.1), and it must run BEFORE the
+    ASYNC because teardown runs a subprocess, and it must run BEFORE the
     directory goes away — that is the whole reason teardown exists. A scratch workspace lives
     UNDER the run dir, so the `rmtree` below would take it out; running teardown after that would
     execute `docker compose down` against a path that no longer holds the compose file. The one
     caller (`handlers.api_run_delete`) is already async.
 
-    `keep_open` is the §4.1 override for when the workspace IS the deliverable: the run row and
+    `keep_open` is the override for when the workspace IS the deliverable: the run row and
     directory go, the workspace stays. Teardown still runs — keeping the directory is not keeping
     the processes.
     """
@@ -1708,7 +1707,7 @@ async def delete_run(
 async def teardown_workspace(
     run: Any, *, reason: str, keep_open: bool = False, runner: Any = None
 ) -> Any:
-    """Tear a run's workspace down before its directory is deleted (WORK-CONTAINERS §4.1).
+    """Tear a run's workspace down before its directory is deleted.
 
     The shared performer for BOTH deletion paths — the explicit delete here and retention expiry
     in `watchdog.prune_runs`. One function rather than two call sites doing the same thing,
@@ -1784,12 +1783,12 @@ def _run_workspace_dir(run: Any) -> str:
 
 
 def drop_status(run_id: str) -> dict[str, Any]:
-    """The run's file-drop policy + what has already been dropped (WORK-CONTAINERS §2.5).
+    """The run's file-drop policy + what has already been dropped.
 
     Returns OK with `enabled: false` for a run whose template declared no drop, rather than an
     error:
     "this run does not accept files" is a fact the UI renders as a disabled affordance, and a 4xx
-    would make an intentional configuration look like a broken request (§2.5's honest disabled
+    would make an intentional configuration look like a broken request (an honest disabled
     status).
     """
     from personalclaw.workflows import filedrop
@@ -1855,7 +1854,7 @@ def accept_dropped_file(
 
 
 def outbox(run_id: str) -> dict[str, Any]:
-    """The run's published-artifact listing — the §2.5 outbox, newest-first.
+    """The run's published-artifact listing — the run's outbox, newest-first.
 
     A read over what `apply_publish` journalled, so the listing and the publishes cannot disagree.
     Each row carries its artifact `kind`; the FE resolves the preview through the `contentTypes`
@@ -1870,11 +1869,11 @@ def outbox(run_id: str) -> dict[str, Any]:
 
 
 def workspace_review(run_id: str) -> dict[str, Any]:
-    """The code-run cockpit's diff panel + the two reintegration verbs (WORK-CONTAINERS §4.1).
+    """The code-run cockpit's diff panel + the two reintegration verbs.
 
     Pure read: it shells out for `git status --porcelain` and a `merge-tree` conflict probe,
-    neither of which mutates either tree. Reintegration is OFFERED, never performed — the plan's
-    explicit ruling, and the reason this is a GET rather than a POST.
+    neither of which mutates either tree. Reintegration is OFFERED, never performed — by
+    design, and the reason this is a GET rather than a POST.
     """
     from personalclaw.workflows import provisioning
 
@@ -1939,7 +1938,7 @@ def pause_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:
 
 
 def steer_run(run_id: str, text: str) -> dict[str, Any]:
-    """Queue a mid-run steering instruction (LOOPS-EVOLUTION R14).
+    """Queue a mid-run steering instruction.
 
     Recorded as an intent in the run's folder (`store.queue_steering`) and consumed at the next
     iteration boundary, exactly like a pause: the tick loop is the single writer, and injecting
@@ -1986,8 +1985,8 @@ def resolve_confirmation(
     """Resolve a pending confirmation by VERB — the backend the DagView's Approve/Deny needs.
 
     Rides `resume_run` rather than reaching into the controller: there is ONE place a resume
-    token is consumed (the claim primitive lives with the token, and S57 measured a read-then-
-    unlink version letting multiple callers consume one approval in 36 of 40 races). A second
+    token is consumed (the claim primitive lives with the token, and a read-then-unlink version
+    was measured letting multiple callers consume one approval in 36 of 40 races). A second
     resolve path would be a second chance to double-approve.
 
     What this adds over `resume_run` is the VERB vocabulary: `approve | reject | skip | quit`,
@@ -2347,9 +2346,9 @@ def manifest() -> dict[str, Any]:
         # never use, so the library would be dead weight.
         macros=macros.macro_names(),
         shared_blocks=blocks.block_names(),
-        # The legacy loop-kind aliases (LOOPS-EVOLUTION R10a). In the manifest because the
+        # The legacy loop-kind aliases. In the manifest because the
         # picker and any authoring model both need to know that `kind: goal` still resolves
-        # — and because listing them here is what makes the Phase-4 retirement measurable
+        # — and because listing them here is what makes their retirement measurable
         # rather than a guess about who still refers to loops by kind.
         loop_aliases=loop_aliases.alias_manifest(),
     )
@@ -2483,7 +2482,7 @@ def _nodes_of(run_id: str) -> list[dict[str, Any]]:
             row["model_substituted"] = list(inst.model_substituted)
         if inst.declined:  # "You declined write_file (notes/plan.md).", omitted when she did not
             row["declined"] = declines.caption(inst.declined)
-        # Cache-origin (WF2-A1), so "did my edit actually re-run anything?" is answerable from
+        # Cache-origin, so "did my edit actually re-run anything?" is answerable from
         # the run's own node list rather than by opening a per-node drawer on each row in turn.
         #
         # TERMINAL-ONLY, and only when True. `NodeInstance.cached` is stamped at dispatch, so

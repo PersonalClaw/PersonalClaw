@@ -454,9 +454,9 @@ def test_a_dissimilar_title_is_never_scored_however_close_the_vectors(store):
 # ── The HTTP routes the UI drives ───────────────────────────────────────
 #
 # Everything above proves the STORE. The frontend cannot call the store — it calls
-# `GET /api/knowledge/items/{id}/duplicates` and `POST …/merge`, and until KL-6 there was no
-# consumer of either, so neither route had a test. These cover the layer the merge button
-# actually crosses:
+# `GET /api/knowledge/items/{id}/duplicates` and `POST …/merge`, and until the merge button
+# there was no consumer of either, so neither route had a test. These cover the layer that
+# button actually crosses:
 #
 #   * The survivor is the PATH id and the loser is the BODY id, in that direction. Swapping them
 #     deletes the document the user was looking at, and a store-level test cannot catch it

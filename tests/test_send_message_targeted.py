@@ -243,7 +243,7 @@ class TestFallbackToOwnerDM:
             )
 
 
-# ── api_channel_profile tests (#7) ──
+# ── api_channel_profile tests ──
 
 
 class TestUnfurlControl:

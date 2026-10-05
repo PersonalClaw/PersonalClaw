@@ -1,6 +1,6 @@
 /** The tile band under safe mode: INERT LINKS.
  *
- *  §6 names "tiles rendered as inert links" as part of the recovery route. The band itself
+ *  Safe mode renders tiles as inert links as part of the recovery route. The band itself
  *  is L0 code, so the route was never compromised — but a tile's BODY is a generated
  *  artifact that may be a genui tree, it polls a refresh endpoint on a timer, and it
  *  carries controls that re-fire a workflow server-side. None of that belongs on the

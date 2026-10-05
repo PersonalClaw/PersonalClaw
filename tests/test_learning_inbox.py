@@ -1,6 +1,6 @@
 """The Proposal Inbox and the accept gate.
 
-The criterion 1 has two halves: one inbox across all six kinds with provenance, evidence manifests
+The requirement has two halves: one inbox across all six kinds with provenance, evidence manifests
 and risk-tier metadata — **and the model cannot accept its own proposals under any trust mode**. The
 second is load-bearing, and `test_an_agent_can_never_accept` is its regression.
 
@@ -59,7 +59,7 @@ def _prop(pid="p1", **kw):
     return _Prop(**base)
 
 
-# ── §7 criterion 1: the accept gate ──
+# ── the accept gate ──
 
 
 def test_an_agent_can_never_accept():
@@ -82,7 +82,7 @@ def test_an_agent_can_never_reject_either():
 
 
 def test_the_engine_cannot_accept_either():
-    """Not an oversight. S56 gives the engine authority to record a task outcome because it OBSERVED
+    """Not an oversight. The engine has authority to record a task outcome because it OBSERVED
     the work — that is not authority to install autonomously-authored behaviour. An engine that
     could accept would make every gate upstream of it decorative.
     """
@@ -106,7 +106,7 @@ def test_an_unknown_actor_is_denied_rather_than_assumed_human():
 
 
 def test_the_gate_takes_no_trust_parameter():
-    """§7: "under ANY trust mode".
+    """Under ANY trust mode.
 
     A gate that a mode could relax is a gate whose invariant is a default. There is deliberately no
     parameter to pass.
@@ -117,7 +117,7 @@ def test_the_gate_takes_no_trust_parameter():
 
 
 def test_an_already_resolved_proposal_cannot_be_re_decided():
-    """Re-deciding would overwrite a recorded decision — and §2.2 learns from those."""
+    """Re-deciding would overwrite a recorded decision — and the flywheel learns from those."""
     for status in ("accepted", "rejected", "superseded"):
         gate = require_human(action="accept", actor="user", status=status)
         assert not gate.allowed
@@ -169,7 +169,7 @@ def test_a_refused_action_produces_an_audit_row():
 def test_the_inbox_covers_every_proposal_kind():
     """One surface for every kind. A second kind list is how a surface silently stops showing one.
 
-    Derived from `Kind` itself, not a hardcoded count: the three project_* kinds (LEA-12) join the
+    Derived from `Kind` itself, not a hardcoded count: the three project_* kinds join the
     original six, and a surface that enumerated a stale number would drop the newest kind — the
     exact failure this test exists to catch.
     """
@@ -182,7 +182,7 @@ def test_the_inbox_covers_every_proposal_kind():
 
 
 def test_a_row_carries_everything_needed_to_decide():
-    """§6.1 names these, and each absence produces a specific bad review."""
+    """Each of these is required, and each absence produces a specific bad review."""
     row = row_from_proposal(_prop())
     payload = row.to_dict()
     for field_name in (
@@ -226,7 +226,7 @@ def test_the_projection_survives_an_older_record():
 def test_a_row_carries_the_evidence_TIER_not_only_the_count():
     """The count cannot distinguish a MEASUREMENT from a co-occurrence.
 
-    EVALUATION-SUBSTRATE §3.1 files a retirement whose evidence is a paired on/off ablation and
+    Evaluation files a retirement whose evidence is a paired on/off ablation and
     stamps `evidence_strength="ablation"` to say so. Before this projection carried the field, the
     tier was write-only across the whole queue — NINE `enqueue` call sites in eight modules stamped
     one and nothing anywhere read it — so the reviewer deciding a retirement saw `2 evidence
@@ -246,8 +246,8 @@ def test_a_row_carries_the_evidence_TIER_not_only_the_count():
 
 
 def test_a_manual_only_row_is_never_bulk_acceptable():
-    """§3.1 stamps `manual_only` on destructive edits, and bulk-plus-destructive is the combination
-    that turns an ergonomic affordance into an accident."""
+    """The refiner stamps `manual_only` on destructive edits, and bulk-plus-destructive is the
+    combination that turns an ergonomic affordance into an accident."""
     assert "manual_only" not in BULK_ACCEPTABLE_TIERS
     row = row_from_proposal(_prop(), risk_tier="manual_only")
     assert not row.bulk_acceptable
@@ -417,7 +417,7 @@ def test_the_view_is_a_projection_and_writes_nothing():
 def store(tmp_path, monkeypatch):
     """Point the proposal store at tmp_path.
 
-    Patches the accessors rather than `config_dir`, matching this program's convention: the module
+    Patches the accessors rather than `config_dir`, matching this suite's convention: the module
     resolves them per call, so patching the accessor is what actually redirects it — and nothing can
     reach the real home.
     """
@@ -464,7 +464,7 @@ def test_the_real_accept_allows_a_human(store):
 
 
 def test_an_agent_cannot_accept_even_a_proposal_it_filed(store):
-    """ "Its own proposals" is the phrase §7 uses, and the gate does not need to know who filed it —
+    """ "Its own proposals" is the wording, and the gate does not need to know who filed it —
     an agent may never accept anything, which is the stronger and simpler property."""
     _filed(store, "own", provenance="agent:refiner")
     with pytest.raises(store.AcceptError):

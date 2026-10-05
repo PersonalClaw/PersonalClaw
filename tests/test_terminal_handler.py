@@ -57,7 +57,7 @@ def _make_session(session_id="s1", alive=True, ws=None, disconnect=None, master_
 
     `master_fd` defaults to **-1**, not a made-up number. `_kill_session` does
     `os.close(sess.master_fd)` for any fd >= 0, and a hardcoded `99` is not this test's fd — it is
-    whatever the process happens to have there. Measured (S61i): in a bare interpreter fd 99 is
+    whatever the process happens to have there. Measured: in a bare interpreter fd 99 is
     closed, so the delete path raised `OSError: Bad file descriptor`; under xdist with aiohttp,
     coverage and a live `TestServer` a process can easily hold fd 99, and then this test CLOSES
     SOMEONE ELSE'S SOCKET. That is the mechanism behind
@@ -948,7 +948,7 @@ class TestTerminalSession:
         assert sess.created_at > 0
 
 
-# ── P25: tmux-backed persistence gating ──
+# ── tmux-backed persistence gating ──
 
 
 class TestPersistence:

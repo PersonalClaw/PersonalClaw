@@ -159,7 +159,7 @@ def strip_comments(text: str) -> StrippedSource:
     1. STRING-AWARE, and ``//`` beats ``/*``. A ``/*`` inside a string or a line comment
        must not open a block, because a tracker that opens one there leaves state stuck
        open and silently stops catching real raw hexes for the rest of the file — the ONLY
-       way this change could weaken the gate instead of fixing it. All three shapes ship in
+       way comment tracking could weaken the gate instead of fixing it. All three shapes ship in
        the host frontend today (``'/*EDITMODE-BEGIN*/'``; ``'… #/settings/* subpages'``;
        a ``/*`` quoted inside a ``//`` comment).
     2. Template literals are a LINE-LOCAL quote, and only when the line closes them
@@ -540,7 +540,7 @@ def main(argv: list[str] | None = None) -> int:
     """CLI for the apps-repo CI: ``python -m personalclaw.apps.quality <tree>``.
 
     Exit 1 on any violation, and exit 1 on a tree with no ``*/app.json`` at all —
-    a checker that silently checked nothing is the failure mode this atom is about.
+    a checker that silently checked nothing is the failure mode this command guards against.
     """
     ap = argparse.ArgumentParser(
         prog="python -m personalclaw.apps.quality",

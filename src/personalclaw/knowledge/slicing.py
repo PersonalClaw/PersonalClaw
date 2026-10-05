@@ -48,7 +48,7 @@ from personalclaw.knowledge.readers import PdfLine, PdfStructure, read_pdf_struc
 
 # ══ THRESHOLDS ═══════════════════════════════════════════════════════════════════
 #
-# Every tunable number in this module lives HERE and nowhere else. §5 makes that a
+# Every tunable number in this module lives HERE and nowhere else. That is a
 # requirement rather than a style preference, from the paperloom doc-vs-code drift
 # lesson: a threshold written inline is a threshold that gets copied, and two copies
 # of "1.1" drift the day someone tunes one of them. If you need a number below,
@@ -286,7 +286,7 @@ class FetchedSource:
 
 def source_cache_dir() -> Path:
     """Where cached originals live: a ``sources/`` subdirectory of the EXISTING knowledge
-    files dir. §5 says "no new cache root" — the durability inventory already claims
+    files dir. There is deliberately no new cache root — the durability inventory already claims
     ``workspace/knowledge/files`` as a tree, so a subdirectory inherits its backup and
     export treatment instead of needing its own entry."""
     from personalclaw.knowledge import knowledge_files_dir
@@ -305,7 +305,7 @@ def _pointer_path(ref: SourceRef) -> Path:
 
     Content-addressing alone cannot serve a re-ingest: computing a content hash requires
     the content, which is the very thing we are trying not to fetch. So the cache is two
-    levels — originals keyed by CONTENT hash (§5's requirement, and it dedupes two refs
+    levels — originals keyed by CONTENT hash (a requirement, and it dedupes two refs
     that resolve to identical bytes onto one file), plus a tiny pointer keyed by the
     normalized REFERENCE that records which digest that reference resolved to. The
     pointer is what makes the second ingest cost zero network.
@@ -485,7 +485,7 @@ def structure_from_text(text: str) -> PdfStructure:
 
     Every synthesized line carries size 0, which makes the font tier contribute nothing
     (0 is never > 0 × the ratio) rather than contribute garbage — the cascade then falls
-    through to the header-regex tier exactly as §5 intends. One page, because a text
+    through to the header-regex tier exactly as intended. One page, because a text
     document has no pagination to honour.
     """
     body = str(text or "")
@@ -532,7 +532,7 @@ def body_font_size(lines: tuple[PdfLine, ...]) -> float:
 
 
 def detect_sections(structure: PdfStructure) -> tuple[Section, ...]:
-    """Detect *structure*'s sections by the §5 cascade. Pure and deterministic.
+    """Detect *structure*'s sections by the detection cascade. Pure and deterministic.
 
     Three strategies, the first two UNIONED:
 
@@ -676,7 +676,7 @@ class Reference:
 class SliceResult:
     """Everything the primitive derived from one document, deterministically.
 
-    ``full_text`` is the ``full`` slice of §5 — computed and read here (reference
+    ``full_text`` is the ``full`` slice — computed and read here (reference
     extraction and the kept-pages floor both need it) but never persisted as a row: it is
     byte-identical to the item's ``content``. It never reaches a model.
     """
@@ -694,7 +694,7 @@ class SliceResult:
     def slice_for(self, role: str) -> Slice | None:
         """The cut for *role*, or None.
 
-        ``full`` is synthesized here rather than stored in ``slices``: §5's four-role
+        ``full`` is synthesized here rather than stored in ``slices``: the four-role
         model is complete, but the full text is already the item's ``content``, so it is
         RETRIEVABLE without ever becoming a duplicate row (``slice_rows`` iterates
         ``PERSISTED_SLICES``, which excludes it).
@@ -821,7 +821,7 @@ def _page_ranges(
 def _kept_page_ranges(
     document: DocumentText, bibliography_start: int
 ) -> tuple[tuple[int, int], ...]:
-    """§5's floor: the first ``KEEP_FIRST_PAGES`` and last ``KEEP_LAST_PAGES``
+    """The kept-pages floor: the first ``KEEP_FIRST_PAGES`` and last ``KEEP_LAST_PAGES``
     PRE-BIBLIOGRAPHY pages, always retained regardless of what detection found.
 
     "Pre-bibliography" is load-bearing: the last pages of a paper are its bibliography,
@@ -845,7 +845,7 @@ def _kept_page_ranges(
 def _clamped_brief(
     document: DocumentText, sections: tuple[Section, ...], bibliography_start: int
 ) -> str:
-    """``brief`` = abstract + intro + conclusion, clamped into the §5 fraction band."""
+    """``brief`` = abstract + intro + conclusion, clamped into the fraction band."""
     ranges = _merge_ranges(
         [(s.start, min(s.end, bibliography_start)) for s in sections if s.role in BRIEF_ROLES]
     )
@@ -919,7 +919,7 @@ _TITLE_SPLIT = re.compile(r"[.;]\s+|[\"“”]")
 def extract_references(
     full_text: str, bibliography_start: int
 ) -> tuple[tuple[Reference, ...], int]:
-    """Extract the bibliography's references by the §5 four-tier cascade.
+    """Extract the bibliography's references by the four-tier cascade.
 
     Returns ``(references, unkeyed_count)``.
 
@@ -939,7 +939,7 @@ def extract_references(
 
     An entry satisfying none of the four is NOT emitted with a made-up key; it is counted
     as unkeyed. A fabricated citation key is worse than an admitted gap, because a later
-    linking pass (KNOWLEDGE-SYNTHESIS) would treat it as real.
+    linking pass would treat it as real.
     """
     text = str(full_text or "")
     if bibliography_start >= len(text):
@@ -1096,7 +1096,7 @@ def slice_rows(result: SliceResult) -> list[dict[str, Any]]:
     """*result*'s slices as ``extracted_contents`` row payloads, in ``PERSISTED_SLICES``
     order — the ONE place a slice's row shape is defined.
 
-    Rows land on the SAME item. No chunk rows, no child items: §5's slices are role-sized
+    Rows land on the SAME item. No chunk rows, no child items: the slices are role-sized
     views of one document, and the repo removed the chunk-item model on purpose.
     """
     rows: list[dict[str, Any]] = []
@@ -1123,8 +1123,8 @@ def slice_rows(result: SliceResult) -> list[dict[str, Any]]:
 def reference_metadata(result: SliceResult) -> dict[str, Any]:
     """*result*'s structural findings, for the item's ``file_metadata``.
 
-    §5 stores references and stops there: cross-item reference LINKING is
-    KNOWLEDGE-SYNTHESIS's relate-on-persist step, so this emits the extracted records and
+    Slicing stores references and stops there: cross-item reference LINKING is
+    knowledge synthesis's relate-on-persist step, so this emits the extracted records and
     resolves nothing.
     """
     return {

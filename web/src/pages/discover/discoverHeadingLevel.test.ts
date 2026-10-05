@@ -93,7 +93,7 @@ describe("Discover's area headings sit one rung under the page title", () => {
     //     `<h3` tag; the rendered outline still carries the same h3 rung. Panel-level, correctly
     //     nested: the classification above still holds.
     // 2026-09-04, re-done again:
-    //   · `settings/VoiceProfilesSection` JOINED it — the MI-5 Voices section renders its
+    //   · `settings/VoiceProfilesSection` JOINED it — the Voices section renders its
     //     "Where each voice speaks" sub-heading under the `settingsUI` `Section` h2, so h3 is
     //     the rung nesting calls for (`H1 > H2 > H3`), and it takes its size from
     //     `data-type="label-s"` rather than the tag. Same shape as `VoicePanel`'s own

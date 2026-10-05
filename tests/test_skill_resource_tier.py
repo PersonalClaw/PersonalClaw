@@ -1,4 +1,4 @@
-"""The skill RESOURCE tier (WF2LEA-10 / amendment E1.1).
+"""The skill RESOURCE tier.
 
 A skill may declare files beside its ``SKILL.md`` in a ``resources:`` frontmatter
 block. ``skill_invoke`` then returns the body plus an L0 CATALOG of those

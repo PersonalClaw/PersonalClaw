@@ -1,4 +1,4 @@
-"""Predict-then-verify, auto-filed reverts, the incognito gate (LEARN-R16 / §7).
+"""Predict-then-verify, auto-filed reverts, the incognito gate.
 
 The last spoke: everything upstream FILES proposals, and this measures what happened after a human
 accepted one. The rule is predict-then-verify rather than measure-after — an accepted proposal
@@ -125,7 +125,7 @@ def test_the_verdict_carries_its_reasoning():
 
 
 def test_a_regression_nobody_predicted_is_surfaced():
-    """§3.1: "the scariest class, surfaced loudly"."""
+    """The scariest class, surfaced loudly."""
     result = _attr(["schema"], {"schema": 0.5, "code": 0.1}, {"schema": 0.0, "code": 0.8})
     assert result.unattributed_regressions == ["code"]
 
@@ -230,7 +230,7 @@ def test_a_revert_proposal_serializes():
 
 
 def test_trust_is_aggregated_per_source():
-    """§3.1: "the flywheel learns which of its own proposers to believe"."""
+    """The flywheel learns which of its own proposers to believe."""
     trust = {
         t.source: t for t in proposer_trust([("refiner", "HARMFUL"), ("detector", "EFFECTIVE")])
     }
@@ -291,7 +291,7 @@ def test_the_permission_gate_refuses_a_restricted_session_on_every_cadence():
     """The half that IS closed, asserted across the whole cadence enum rather than spot-checked.
 
     Probed with both an idle turn and a busy one with a correction: neither can teach an incognito
-    session, which is the property §7 names.
+    session, which is the property the gate exists for.
     """
     from personalclaw.learning.gate import Cadence, LearningGate
 
@@ -320,10 +320,10 @@ def test_a_permitted_session_still_gates_on_worthwhileness():
 
 
 def test_every_cadence_is_routed_through_the_gate():
-    """Criterion 10. A gate cannot suppress a path nobody routes through it.
+    """A gate cannot suppress a path nobody routes through it.
 
-    Before WF2LEA-4, `SESSION_END` and `RUN_END` were declared with ZERO live call sites — the
-    coverage gap the checker reported. WF2LEA-4 wired the last two: `SESSION_END` through the
+    `SESSION_END` and `RUN_END` were once declared with ZERO live call sites — the
+    coverage gap the checker reported. The last two are wired now: `SESSION_END` through the
     dashboard consolidation envelope and `RUN_END` through `controller._finish`. So the gap set is
     now EMPTY, and pinning it at empty makes adding a fourth cadence (or removing a call site) a
     deliberate edit here rather than a silent hole.

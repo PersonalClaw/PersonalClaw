@@ -11,8 +11,8 @@ import type { RouteProps } from '../../app/useQueryState'
  *  Library/Graph/Intents + type/provider filter + search via ?query),
  *  `#/knowledge/new` (type-grid → per-type authoring), `#/knowledge/item/<id>`
  *  (the dedicated full-screen item detail page), and `#/knowledge/sources`
- *  (+ `/sources/new`) — the watched sources that fill the library on their own
- *  (WATCHED-SOURCES §2.4). `#/knowledge/reports` is the scheduled research reports that
+ *  (+ `/sources/new`) — the watched sources that fill the library on their own.
+ *  `#/knowledge/reports` is the scheduled research reports that
  *  write their findings back into the library. */
 export function KnowledgeSection({ sub, navigate, query, setQuery, navEpoch }: RouteProps) {
   const parts = (sub || '').split('/')

@@ -2,8 +2,8 @@
 
 This is the thin adapter that replaced ``personalclaw/autonudge.py``. The OLD module was two
 things fused: a per-session nudge STORE (``autonudge.json``) and a private TICK ENGINE (one
-``asyncio`` timer per loop). Half 1 of WF2AUT-11 shipped ``kind:idle`` + ``idle_poll`` for user
-automations; this module is half 2 — the loop tick engine now rides the same substrate:
+``asyncio`` timer per loop). ``kind:idle`` + ``idle_poll`` came first, for user
+automations; with this module the loop tick engine now rides the same substrate:
 
 * **State** lives in the trigger store: each nudge loop is a ``Trigger{kind: "idle"}`` row whose
   spec carries ``message`` (the marker that routes the fire to this adapter instead of the wake
@@ -19,7 +19,7 @@ automations; this module is half 2 — the loop tick engine now rides the same s
   which keeps the OLD timer's fire path verbatim in meaning: stop-sentinel → remove; ``max_cycles``
   → deactivate; delivered-only counting via ``idle_poll.record_delivery``.
 * **Backpressure keeps its exact call-site contracts.** ``notify_turn_complete`` re-arms by
-  restamping ``armed_at`` (the timer re-arm, as state — the translation half 1 already ratified
+  restamping ``armed_at`` (the timer re-arm, as state — the translation ``idle_poll`` already makes
   for ``notify_activity``) and still deactivates after ``_MAX_CONSECUTIVE_ERRORS`` consecutive
   errored turns; ``notify_user_input`` restamps too (the cancel, as state — the turn the input
   starts restamps again on completion, so the arm point converges on turn-end exactly as the

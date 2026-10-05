@@ -237,10 +237,10 @@ export function chainEntryStatus(
   return null
 }
 
-/** The contract chips a model row shows (LMMV §2.2/§2.3), as pure data so the mapping
+/** The contract chips a model row shows, as pure data so the mapping
  *  is unit-testable independently of rendering:
  *   - `deprecated`/`sunset` status → an informational chip (the model stays bindable).
- *   - a non-commercial license → a warning chip surfaced AT BIND TIME (Success Criterion 7).
+ *   - a non-commercial license → a warning chip surfaced AT BIND TIME.
  *   - `integrity: "truncated"` → a danger chip whose row offers Repair (re-download).
  *   - `runs_here: false` → a model a model server lists (an Ollama instance) that runs off this
  *     machine, one it answers from its cloud: its prompts leave this machine and it is not free.
@@ -512,7 +512,7 @@ function LocalRuntimeSection() {
   )
 }
 
-/** HuggingFace token cascade (LMMV §5). Shows the three sources — the saved credential, the
+/** HuggingFace token cascade. Shows the three sources — the saved credential, the
  *  process environment, and a `huggingface-cli login` file — each with HuggingFace's own
  *  whoami verdict (valid + username, or not), a MASKED preview (the value never crosses the
  *  wire), and an "active" badge on the first valid one. The set/clear field writes SOURCE 1
@@ -667,7 +667,7 @@ function ModelTest({ useCase, model }: { useCase: string; model: AvailableModel 
   )
 }
 
-/** Loaded models + memory pressure (LMMV §7) — "what is occupying my RAM right now".
+/** Loaded models + memory pressure — "what is occupying my RAM right now".
  *
  *  Answers the question no surface answered before: a model stays resident after its
  *  binding moves elsewhere, and a sidecar adds a whole child process. Rows are ordered
@@ -971,7 +971,7 @@ function ModelRow({ useCase, model: m, on, saving, held, localProviders, listed,
   // machine yet has nothing to run (its Download is the step), and a use case or provider with no
   // Test says why (`untestable`).
   const untestable = testRefusal(useCase, m)
-  // Gated pre-warn (LMMV §5): the server set `token_ready:false` on a gated row when no
+  // Gated pre-warn: the server set `token_ready:false` on a gated row when no
   // valid HF token is configured, so we warn BEFORE the user clicks Download. Absent =
   // the cascade couldn't answer → no nag.
   const needsToken = m.gated === true && m.token_ready === false

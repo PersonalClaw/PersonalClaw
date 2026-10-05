@@ -1,8 +1,8 @@
-"""HTTP handlers for /api/lexicon/* — the user-facing Vocabulary surface (core LEX.6).
+"""HTTP handlers for /api/lexicon/* — the user-facing Vocabulary surface.
 
 List terms (source-badged: graph / manual / learned), add a manual term (+aliases), prune
 (disable) / delete, rebuild from the knowledge graph, and view + toggle learned corrections'
-auto_apply. The Minutes app's transcript-edit UX also POSTs corrections here (LEX.5), gated
+auto_apply. The Minutes app's transcript-edit UX also POSTs corrections here, gated
 by its ``/api/lexicon`` permission.
 
 The graph terms follow the knowledge graph by themselves (``current_lexicon``), so the list is
@@ -148,8 +148,8 @@ async def api_lexicon_corrections(request: web.Request) -> web.Response:
 
 
 async def api_lexicon_add_correction(request: web.Request) -> web.Response:
-    """POST /api/lexicon/corrections {heard, meant, always?} — record a learned fix
-    (LEX.5). Called by the Vocabulary UI's add-a-fix form."""
+    """POST /api/lexicon/corrections {heard, meant, always?} — record a learned fix.
+    Called by the Vocabulary UI's add-a-fix form."""
     try:
         body = await request.json()
     except Exception:

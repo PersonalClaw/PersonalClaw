@@ -371,7 +371,7 @@ _LOOP_STOP_TITLE = {
 def _announce_loop_end(state: Any, run: Any, status: Any, *, refused: bool = False) -> str:
     """Tell the user a run started AS A LOOP has ended, as a loops-table loop always has.
 
-    🔴 A General loop is a workflow run (PP-16), and the workflow engine told nobody when one
+    🔴 A General loop is a workflow run, and the workflow engine told nobody when one
     ended. Measured 2026-09-25 on a live drive: an unattended General loop finished, another was
     cancelled, a third stopped at its cycle ceiling with "This run stopped and needs a decision" —
     and there was not one notification or inbox row for any of them. A loop you start unattended

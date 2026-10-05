@@ -2,7 +2,7 @@
 """Aggregate report for the platform-hardening drift/inert gates.
 
 The family shipped three independent gates, each a generator + committed baseline +
-shrink/byte-compare ratchet test; ``PHF-14`` added three more (the STRUCTURAL ratchets),
+shrink/byte-compare ratchet test; three more joined it (the STRUCTURAL ratchets),
 registered here rather than beside here so that one structural red never hides the other
 five — six gates, one table, every failure visible in a single run:
 
@@ -23,7 +23,7 @@ five — six gates, one table, every failure visible in a single run:
 Each is its own pytest test that fails independently. A dev running them one at a time — or a
 fail-fast runner — fixes one, re-runs, hits the next, fixes, re-runs… This aggregate runs ALL
 SIX, collects EVERY failure, and prints ONE table so all failures are visible in a single
-run. That is the §6 "aggregate, don't short-circuit" ergonomic: unlike ``harness/cli.py``'s
+run. That is the "aggregate, don't short-circuit" ergonomic: unlike ``harness/cli.py``'s
 task runner (which stops at the first failing command), this NEVER short-circuits — a gate
 that drifts, or even one that raises, is captured as a structured failure while every other
 gate still runs.
@@ -103,7 +103,7 @@ def _regressions_gate(name: str, gen: object) -> GateResult:
 
 
 def _structural_gate(ratchet: str) -> GateResult:
-    """One PHF-14 structural ratchet: ok iff its VACUITY assertion holds AND no counter ROSE.
+    """One structural ratchet: ok iff its VACUITY assertion holds AND no counter ROSE.
 
     Vacuity comes first deliberately. A structural ratchet that inspected fewer files than the
     census counted would otherwise report a spotless tree it never looked at — the most common

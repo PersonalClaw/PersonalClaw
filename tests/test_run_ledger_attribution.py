@@ -1,4 +1,4 @@
-"""(MULTI-TENANCY-ENTITY): run-ledger attribution — `owner_username` + `origin_harness`.
+"""Run-ledger attribution — `owner_username` + `origin_harness`.
 
 The audit reserved this at design time because the run store is cheap to touch now and expensive
 to retrofit once it federates: a run record must be able to say WHO authored it and WHICH machine

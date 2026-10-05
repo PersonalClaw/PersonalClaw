@@ -151,7 +151,7 @@ def test_a_read_only_critic_and_a_tool_bearing_executor_share_one_room(enabled):
 
 
 def test_a_custom_allowlist_admits_only_its_own_names(enabled):
-    """``tool_grants=custom`` is the per-member TOOL ALLOWLIST the change names."""
+    """``tool_grants=custom`` is the per-member TOOL ALLOWLIST."""
     from personalclaw.guardrails.policy import tool_grant_denial
     from personalclaw.rooms.turn import session_key
 
@@ -220,7 +220,7 @@ def test_the_axes_a_member_may_not_declare_are_refused_by_name_with_a_reason(ena
 
 
 def test_no_hook_based_profile_is_reachable_as_a_member_posture(enabled):
-    """The trap §C5 names: ``REVIEW_ONLY``/``HEADLESS`` look like "a read-only member".
+    """The trap: ``REVIEW_ONLY``/``HEADLESS`` look like "a read-only member".
 
     Both carry ``approval="hook_based"``, which lets a hook approve and removes the human. A
     member is never assigned one WHOLESALE — it is the room's base narrowed on an axis — and
@@ -482,8 +482,8 @@ def _drive_every_member(sessions, room_id, *, approver=None) -> list[str]:
     **Deliberately not routed through a round helper.** The unit is the MEMBER turn — the
     posture, the grant gate and the spend ceiling are all resolved per member inside
     :func:`~personalclaw.rooms.turn.run_member_turn` — while WHO speaks and in what order
-    belongs to `AR-5`. A test that drove the round would assert two changes at once and would
-    break the moment that change replaces the drain, which is exactly what it is doing.
+    belongs to the arbiter. A test that drove the round would assert two changes at once and
+    would break the moment the arbiter replaces the drain, which is exactly what it is doing.
 
     Nothing is caught here: a member that refuses its own turn must surface, not be logged
     away. The round's own ``except Exception`` is its documented "one member's failure does not
@@ -645,7 +645,7 @@ def test_a_refused_tool_is_legible_on_the_transcript_not_a_silent_drop(enabled):
 
 
 def test_with_no_approver_bound_the_tool_is_refused_and_says_so(enabled):
-    """`AR-8` binds the channel. Until then a tool inside a member's profile still has nobody
+    """With no approval channel bound, a tool inside a member's profile still has nobody
     to approve it, so it is refused — and the refusal names that as the reason rather than
     looking like a grant problem the author could fix by widening the profile."""
     room = store.create_room("No channel")
@@ -662,7 +662,7 @@ def test_with_no_approver_bound_the_tool_is_refused_and_says_so(enabled):
 
 
 def test_a_member_claiming_to_approve_grants_nothing(enabled):
-    """The adversarial fixture §C5 names: approval-shaped output is TEXT, never a grant.
+    """The adversarial fixture: approval-shaped output is TEXT, never a grant.
 
     The critic writes a literal approval for a destructive command and the executor then asks
     for exactly that tool. Nothing parses the transcript for a decision, so the executor's
@@ -744,7 +744,7 @@ def test_the_member_spend_scope_binds_and_always_restores_the_run_identity(enabl
     assert current_run_budget().is_unlimited
 
 
-# ── the resolved view AR-8 renders from ────────────────────────────────────
+# ── the resolved view a UI renders from ────────────────────────────────────
 
 
 def test_describe_members_answers_the_resolved_posture_per_member(enabled):

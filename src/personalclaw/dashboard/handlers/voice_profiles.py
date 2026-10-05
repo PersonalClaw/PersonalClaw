@@ -311,7 +311,7 @@ async def api_voice_bindings_put(request: web.Request) -> web.Response:
     """PUT /api/voice/bindings {surface, profile_id} — bind one surface.
 
     A clone-kind profile bound to an agentic/off-machine surface without verified
-    consent returns a ``warning`` (§1.3 warns, never blocks: local synthesis is not
+    consent returns a ``warning`` (it warns, never blocks: local synthesis is not
     an ethics checkpoint).
     """
     try:
@@ -345,7 +345,7 @@ async def api_voice_bindings_delete(request: web.Request) -> web.Response:
 async def api_voice_migrate(request: web.Request) -> web.Response:
     """POST /api/voice/migrate {name?} — profile from the current voice, then default.
 
-    The explicit action §6 requires: it captures the active flat TTS selection into a
+    An explicit action: it captures the active flat TTS selection into a
     new design-kind profile and binds it ``default``. Nothing calls this on a
     startup/first-run path, so migration only ever happens on a user's click. An empty
     body is fine — the button carries no fields beyond an optional name.

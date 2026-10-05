@@ -1,7 +1,7 @@
 """The gateway's signature on a request it sends an app's backend: the one wire contract.
 
 An app backend binds on loopback with no auth of its own: the port is a network boundary, not
-an authorization one (``docs/architecture/app-platform.md`` §2.1). So every request the gateway
+an authorization one (``docs/architecture/app-platform.md``). So every request the gateway
 sends a backend — its reverse proxy, and an agent's or a trigger's ``call_app_route`` — carries
 an HMAC over the app's secret (``apps.app_secret.proxy_signature``), and the backend's SDK
 middleware (``sdk.security.require_proxy_signature``) verifies it fail-closed. Both sides build

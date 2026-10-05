@@ -5,9 +5,9 @@ import { join } from 'node:path'
 import type { WorkflowNodeState, WorkflowRunDetailData } from '../../lib/api'
 import { foldEvent, foldEvents, foldSnapshot } from './workflowFold'
 
-// ── issue 2769 / WV-10: a cached node has to LOOK different from a re-run one ─────────────────
+// ── issue 2769: a cached node has to LOOK different from a re-run one ─────────────────────────
 //
-// `WF2-A1` emits `cached` on `workflow_node_done` for one stated reason (`workflows/journal.py`):
+// A cache hit emits `cached` on `workflow_node_done` for one stated reason (`workflows/journal.py`):
 // *"did my edit actually re-run anything?" is the first question a user asks after a mid-flight
 // edit, and the answer has to come from the ledger, not from reading logs.* The flag reached the
 // frontend and stopped: `workflowFold.ts` DECLARED `cached?` on the event envelope, the fold
@@ -15,8 +15,8 @@ import { foldEvent, foldEvents, foldSnapshot } from './workflowFold'
 // (`NodeInspectorDrawer`) read a different source — the `/inspect` endpoint — from behind a
 // per-node drawer. So answering a run-level question meant opening every node in turn.
 //
-// The completion clause names the missing half explicitly: *"cached nodes render a visually
-// distinct badge (`workflowFold.ts` `cached?` finally read)"*.
+// The missing half is the badge: cached nodes render a visually distinct badge, which is where
+// `workflowFold.ts`'s `cached?` is finally read.
 //
 // 🪤 THE FALSE FIX IS TO CARRY THE FLAG FORWARD. Only a cache HIT publishes `cached`
 // (`controller.py` — one of seven `workflow_node_done` sites carries it), so a node that re-runs

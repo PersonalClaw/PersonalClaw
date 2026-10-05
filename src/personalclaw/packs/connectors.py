@@ -71,7 +71,7 @@ def missing_marker(name: str) -> str:
 
 @dataclass
 class CatalogEntry:
-    """One known connector in the catalog (§3.3): how to configure it, what it needs.
+    """One known connector in the catalog: how to configure it, what it needs.
 
     ``category`` is the substitution axis — a substitute must share it. ``transport`` +
     ``command``/``url`` are the MCP-server template written on configure. ``required_credentials``
@@ -107,7 +107,7 @@ class CatalogEntry:
         )
 
 
-#: The bundled starter catalog (§3.3 "seeded with a bundled starter set"). Provider-agnostic
+#: The bundled starter catalog the store is seeded with. Provider-agnostic
 #: by construction: each entry is a CATEGORY of capability (filesystem/search/fetch/database)
 #: with a generic reference MCP server, never a vendor's proprietary service. A pack author
 #: substitutes their own same-category connector; this is only the floor so a fresh install
@@ -157,7 +157,7 @@ def seed_catalog(home: Path | None = None, *, force: bool = False) -> list[Catal
     """Write the bundled starter catalog to ``<home>/connector_catalog.json`` if absent.
 
     Returns the entries now on disk. Idempotent: an existing catalog is left untouched (the
-    user may have extended it) unless ``force`` — the done_when's "store seeded". Writes
+    user may have extended it) unless ``force``. Writes
     atomically so a crash never leaves a torn catalog.
     """
     from personalclaw.atomic_write import atomic_write
@@ -174,7 +174,7 @@ def seed_catalog(home: Path | None = None, *, force: bool = False) -> list[Catal
 def load_catalog(home: Path | None = None) -> list[CatalogEntry]:
     """Load the connector catalog, seeding the bundled set on first read.
 
-    A missing store is seeded (so ``done_when`` "catalog seeded" holds the first time any
+    A missing store is seeded (so the catalog exists the first time any
     code reads it); a present-but-unreadable store falls back to the seed set rather than
     an empty catalog (fail toward a usable floor, never crash the import).
     """
@@ -200,7 +200,7 @@ def catalog_lookup(name: str, home: Path | None = None) -> CatalogEntry | None:
 
 
 def catalog_by_category(category: str, home: Path | None = None) -> list[CatalogEntry]:
-    """Every catalog entry in ``category`` — the substitution candidate set (§3.3)."""
+    """Every catalog entry in ``category`` — the substitution candidate set."""
     return [e for e in load_catalog(home) if e.category == category]
 
 
@@ -209,7 +209,7 @@ def catalog_by_category(category: str, home: Path | None = None) -> list[Catalog
 
 @dataclass
 class ConnectorResolution:
-    """The outcome of resolving one ``connectors.json`` declaration (§3.3).
+    """The outcome of resolving one ``connectors.json`` declaration.
 
     ``mode`` is ``configure`` | ``substitute`` | ``skip``. ``server_name`` is the mcp.json
     key written (configure) or the substitute's name (substitute); empty on skip. ``marker``
@@ -336,7 +336,7 @@ def resolve_connector(
     substitute: str | None = None,
     home: Path | None = None,
 ) -> ConnectorResolution:
-    """Resolve one pack ``connectors.json`` declaration via ``mode`` (§3.3).
+    """Resolve one pack ``connectors.json`` declaration via ``mode``.
 
     ``declaration`` is ``{name, category, ...}``. ``mode``:
 
@@ -409,7 +409,7 @@ def resolve_requirements(
     *,
     home: Path | None = None,
 ) -> list[ConnectorResolution]:
-    """Resolve every ``connectors.json`` declaration, defaulting to ``skip`` (§3.3).
+    """Resolve every ``connectors.json`` declaration, defaulting to ``skip``.
 
     ``choices`` maps a connector name to its resolution input
     ``{mode, credentials?, substitute?}``; a declaration with no choice degrades to ``skip``
@@ -449,11 +449,11 @@ def resolve_for_import(
     whole pack install because one connector could not be configured: a resolution failure
     degrades to a ``skip`` with the ``connector_missing:<name>`` marker AND the error text
     recorded, so the dependent components still install and the pack detail page shows
-    exactly which connector is unavailable and why (§3.3 degraded-completion). Seeds the
+    exactly which connector is unavailable and why (degraded completion). Seeds the
     catalog on first touch so the store exists after any import that resolves a connector.
     """
     if declarations:
-        seed_catalog(home)  # acceptance criteria 1: the catalog store is seeded on first use
+        seed_catalog(home)  # the catalog store is seeded on first use
     choices = choices or {}
     out: list[ConnectorResolution] = []
     for decl in declarations:

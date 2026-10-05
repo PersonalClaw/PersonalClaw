@@ -1,9 +1,9 @@
 """The seam: `route_refs` actually consults the learned stage.
 
-Three thirds of MRT-5 were built on fenced branches and every one of them was green in
-isolation. What no branch could show is that `policy.route_refs` reaches the scoring stage at
-all — `policy.py` said "``learned`` lands here too until MRT-5 scores the fold" and the whole
-change is the removal of that sentence. A learned stage nothing calls is the "declared mode
+All three parts of learned routing were built on fenced branches and every one of them was
+green in isolation. What no branch could show is that `policy.route_refs` reaches the scoring
+stage at all — `policy.py` said ``learned`` "lands here too" until the fold was scored, and the
+whole change is the removal of that sentence. A learned stage nothing calls is the "declared mode
 without a runtime" this change exists to close, so it is asserted here rather than assumed.
 
 Every test drives the REAL `route_refs` against a real fold on a `tmp_path` home. Nothing here
@@ -125,7 +125,7 @@ def test_a_corrupt_fold_degrades_rather_than_raising(home: Path) -> None:
 
 
 def test_the_learned_stage_writes_nothing(home: Path) -> None:
-    """SC #8: routing must not write memory.db/knowledge.db — or anything else. A read path that
+    """Routing must not write memory.db/knowledge.db — or anything else. A read path that
     creates state is a read path that can corrupt it."""
     _policy(home, "chat", "learned")
     _fold(home, {"cloudy:big": (20, 0.40), "ollama:small": (20, 0.95)})

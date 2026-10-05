@@ -40,7 +40,7 @@ import { filesUnder, readSource } from '../../test/sourceTree'
 // 🔑 WHY A BORDERED ADVISORY ROW AND NOT A BULLET. The bullets are headed "Permissions the
 // gateway enforces". A module that is importable in-process has no chokepoint to enforce
 // at, so a bullet would read as a capability the platform polices — the one thing that is
-// false about it. `network` (EI-12 D2) and dashboard code (#492) are in the same position
+// false about it. `network` and dashboard code (#492) are in the same position
 // and already resolved it the same way, with their own row stated either way. This row
 // joins them, and deliberately does NOT borrow their "advisory only" phrase: their
 // declaration is unenforced, whereas these packages really do install.

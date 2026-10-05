@@ -89,7 +89,7 @@ describe('a type WITH an editor renderer gets it instead of Monaco', () => {
   })
 })
 
-// ── The registry-wide half, and §C6: off is today's preview, not a grey editor ──
+// ── The registry-wide half: off is today's preview, not a grey editor ──────────
 
 describe('the renderer slot is claimed by the office types and nothing else', () => {
   beforeEach(() => { registerBuiltinContentTypes(); resetDocumentEditingForTests() })
@@ -115,7 +115,7 @@ describe('the renderer slot is claimed by the office types and nothing else', ()
     }
   })
 
-  it('off leaves the office types with no edit capability — the pre-DFE-5 registration', () => {
+  it('off leaves the office types with no edit capability — the preview-only registration', () => {
     for (const id of DOCUMENT_EDITING_TYPE_IDS) {
       expect(getContentType(id)?.edit, id).toBeUndefined()
     }

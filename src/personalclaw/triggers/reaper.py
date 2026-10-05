@@ -12,9 +12,9 @@ in `_executing` + `_running_tasks`, the reaper interval cut to 50ms, eight sweep
     reaped_jobs             : set()
 
 Nothing was reaped, nothing could be. `start_reaper()` still returned successfully and still logged
-nothing wrong, so the 30-minute deadline the plan calls "defense-in-depth over ALL trigger-fired
-runs" (§ "Unattended LLM turns", risk table "hung run") was a control that was present, reviewed,
-and enforcing nothing — the exact failure class this program keeps finding.
+nothing wrong, so the 30-minute deadline, meant as defense-in-depth over ALL trigger-fired
+runs against a hung run, was a control that was present, reviewed,
+and enforcing nothing — the exact failure class this codebase keeps turning up.
 
 **Why a new module instead of repairing the old loop.** The state the old reaper needs
 (`_job_start_times`, `_job_jitter`, `_reaped_jobs`, `_active_session_keys`) is all process-local, so
@@ -82,7 +82,7 @@ logger = logging.getLogger(__name__)
 REAPER_INTERVAL_SECS = 60.0
 
 #: A run's deadline. Matches `schedule._JOB_TIMEOUT_SECS` and `subagent._TIMEOUT_SECS` (both 1800)
-#: — the plan keeps the reaper "as defense-in-depth over ALL trigger-fired runs", so the number a
+#: — the reaper is defense-in-depth over ALL trigger-fired runs, so the number a
 #: user already reasons about for a cron has to be the number a store-backed trigger gets.
 RUN_DEADLINE_SECS = 1800.0
 
@@ -121,7 +121,7 @@ def overdue(
     A pure read, separate from the reap so the doctor and a test can ask the question without
     causing an effect. Sorted by id for a stable, reproducible sweep order.
 
-    Deliberately reads through S97's `running_ids`, so an EXPIRED claim is already invisible here:
+    Deliberately reads through `claims.running_ids`, so an EXPIRED claim is already invisible here:
     the 1h self-expiry is the outer backstop and this deadline is the inner one, and a reaper that
     re-reaped self-expired claims would log a kill for a run nothing is holding.
     """
@@ -353,7 +353,7 @@ def terminalize_orphans_sync(
     now: float = 0.0,
     base_dir: Path | str | None = None,
 ) -> list[dict[str, Any]]:
-    """Terminalize every live claim whose OWNING PROCESS is gone. NEVER raises (WF2AUT-16).
+    """Terminalize every live claim whose OWNING PROCESS is gone. NEVER raises.
 
     🔴 THE DEFECT THIS CLOSES: an orphaned run read as HUNG until a DEADLINE elapsed.
     `guardrails/self_destruct.py` states it in its own words — *"the ScheduleRunStore row never

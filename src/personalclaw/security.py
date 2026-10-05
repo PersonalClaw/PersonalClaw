@@ -2243,7 +2243,7 @@ def outside_fences(text: str) -> str:
     return "".join(kept)
 
 
-#: Chat-template role/control tokens, neutralised in untrusted text (§7/R4 rule b).
+#: Chat-template role/control tokens, neutralised in untrusted text.
 #:
 #: These are not prose — each is a wire-format marker a runtime uses to delimit turns, so untrusted
 #: text carrying one can forge a role boundary that no XML fence can describe. Grouped by the family
@@ -2289,7 +2289,7 @@ _ROLE_TOKEN_SUBS: tuple[tuple[str, str], ...] = (("|", "∣"), ("/", "⁄"))
 
 
 def strip_role_tokens(text: str) -> str:
-    """Neutralise chat-template role tokens in `text` (§7/R4 rule b).
+    """Neutralise chat-template role tokens in `text`.
 
     Breaks each token rather than deleting it, so the payload still reads the same to a human and
     an automation summarising its input does not silently lose a span. A token with no `|` or `/`
@@ -2338,7 +2338,7 @@ def fence_untrusted(
     markers neutralised before wrapping, so the fence can't be closed early. An empty /
     whitespace-only input is returned unchanged (nothing to fence).
 
-    Also neutralises **chat-template role tokens** (AUTOMATION-SUBSTRATE §7/R4 rule b).
+    Also neutralises **chat-template role tokens**.
     The XML fence is a convention the model is ASKED to respect; a role token is part of
     the wire format the runtime uses to mark who is speaking, so it can forge a turn
     boundary the fence cannot describe. Measured before this existed: every one of
@@ -2348,7 +2348,7 @@ def fence_untrusted(
     API rejects or escapes stray control tokens, while a local runtime applying its own
     chat template will happily honour them.
 
-    Carries **provenance attributes** (§7/R4 rule c): ``source_type`` (the CLASS of
+    Carries **provenance attributes**: ``source_type`` (the CLASS of
     origin — ``web_watch``, ``file``, ``inbox``), ``source_id`` (which one — a url, a
     path, a message id) and ``transformation_path`` (how it got here — ``poll``,
     ``digest``, ``extract``). ``source=`` is kept and unchanged, because thirteen call
@@ -2476,7 +2476,7 @@ def _emit_deny_exception_event(tool_name: str, deny_pattern: str) -> bool:
 #   and must not be circumvented or rephrased; NO recovery hint (a hint would
 #   invite bypass probing). The agent should pick a different task or stop.
 #
-# The per-(tool|params) failure breaker (rel-consecutive-failure-breaker) is the
+# The per-(tool|params) failure breaker is the
 # hard loop cap behind this — this only shapes the single observation.
 
 DENY_KIND_USER = "user"  # interactive: the user declined this call

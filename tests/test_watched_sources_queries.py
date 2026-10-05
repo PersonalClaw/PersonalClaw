@@ -261,7 +261,7 @@ async def test_poll_emits_query_matched_for_a_matching_item(store, tmp_path):
 
 @pytest.mark.asyncio
 async def test_matching_spends_zero_tokens(store, tmp_path, monkeypatch):
-    """SC#10's "zero tokens": no LLM entry point may be reached during matching."""
+    """Matching spends zero tokens: no LLM entry point may be reached during matching."""
     calls: list[str] = []
 
     def _explode(*_a, **_k):

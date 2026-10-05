@@ -1,5 +1,5 @@
-"""`GET /api/models/chat` is the ONE chat-model list (#33 — collapsed the
-duplicate `/api/models`).
+"""`GET /api/models/chat` is the ONE chat-model list (the duplicate `/api/models` was
+collapsed into it).
 
 Pins the superset response shape every consumer depends on: each entry carries
 both ``model_name`` (web composer pill + legacy provider adapters read this)

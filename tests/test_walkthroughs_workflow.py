@@ -1,6 +1,6 @@
 """The walkthroughs' job guards must admit a run that carries NO ``inputs`` at all.
 
-``clean-machine-walkthroughs.yml`` gained a ``schedule:`` trigger (#3353 §3), and a schedule
+``clean-machine-walkthroughs.yml`` gained a ``schedule:`` trigger (#3353), and a schedule
 walks straight into a trap the file's own header forbids. The ``inputs`` context is populated
 only for ``workflow_dispatch`` / ``workflow_call``; on a ``schedule`` event ``inputs.which`` is
 **null**. The guards as written before the schedule landed were ``inputs.which == 'all' ||

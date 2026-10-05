@@ -1,6 +1,6 @@
 /** Editing or rewinding an EARLIER user turn replaces every exchange below it.
  *
- *  Measured (day-56b `s24E`): the inline editor resent a middle turn without `rewind`, the
+ *  Measured: the inline editor resent a middle turn without `rewind`, the
  *  server answered `{"rewound": 0}`, and the later turn was gone from disk — nothing on screen
  *  said it would be, and nothing afterwards could bring it back. Both halves live here so the
  *  two surfaces that do this (Edit & resend, Rewind to here) decide it the same way and tell the

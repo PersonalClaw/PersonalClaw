@@ -1,4 +1,4 @@
-"""The Decision Journal over HTTP — PA-6.
+"""The Decision Journal over HTTP.
 
 **ONE endpoint, and that is the design:**
 
@@ -50,7 +50,7 @@ JOURNAL_LIMIT = 200
 
 
 async def api_decision_journal(request: web.Request) -> web.Response:
-    """GET /api/knowledge/decisions — §5.3's journal view and §2.5's calibration strip.
+    """GET /api/knowledge/decisions — the journal view and the calibration strip.
 
     Off the event loop: both reads open ``knowledge.db`` and walk item rows, which is real
     file work. A read that RAISES becomes a 500 carrying the code, never an empty journal —

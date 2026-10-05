@@ -311,7 +311,7 @@ def test_a_small_window_gets_no_widget_guidance_on_a_follow_up_either():
 
 def test_a_request_only_model_is_sent_the_request_and_nothing_else(monkeypatch):
     """What is assembled, measured and recorded is what the model receives — so no skill is
-    recorded as "used" by a model that was never shown it (item 4)."""
+    recorded as "used" by a model that was never shown it."""
     builder = ContextBuilder()
     monkeypatch.setattr(builder.skills, "get_surfaced_skills", lambda _text: ["git-review"])
     monkeypatch.setattr(builder.skills, "load_skill", lambda _name: "# git review\nsteps")

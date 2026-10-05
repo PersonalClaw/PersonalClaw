@@ -1,5 +1,4 @@
-"""HTTP tests for GET /api/projects/{id}/work + the claim/release POSTs
-(WORK-CONTAINERS §1/§5.2/§6.1).
+"""HTTP tests for GET /api/projects/{id}/work + the claim/release POSTs.
 
 The load-bearing claims:
 

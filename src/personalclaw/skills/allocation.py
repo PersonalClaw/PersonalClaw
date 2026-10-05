@@ -74,7 +74,7 @@ logger = logging.getLogger(__name__)
 #:   heavy    8,000 — nearly twice the largest thing we ship. A skill only spends this by
 #:                    SAYING so, which is the whole point: the cost is declared, and a
 #:                    reviewer reading the frontmatter can see which skills are expensive.
-#: Numbers, not a knob: the change asks for a declared tier per skill, and a global override
+#: Numbers, not a knob: each skill declares its tier, and a global override
 #: would let one config edit re-crowd the window that the tiers exist to protect.
 CONTEXT_TIERS: dict[str, int] = {"light": 1_000, "standard": 3_000, "heavy": 8_000}
 
@@ -182,7 +182,7 @@ class SkillAllocation:
     """What one turn's skill allocation produced."""
 
     #: ``(skill name, block text)`` in the allocator's chosen order. Each becomes its own
-    #: labelled `skill: <name>` component, so CE2-8 can name it in a refusal.
+    #: labelled `skill: <name>` component, so a refusal can name it.
     blocks: list[tuple[str, str]] = field(default_factory=list)
     decisions: list[SkillDecision] = field(default_factory=list)
     #: One human-readable line per non-admitted skill, for the assembly notice channel.
@@ -250,7 +250,7 @@ def reduced_block(name: str, summary: str, resources: list[SkillResource]) -> st
 
     Returns ``""`` when the skill declared neither — there is nothing to reduce TO, and
     inventing a summary from the body's first N characters is the byte-boundary cut this
-    atom exists to refuse. The caller reports that as REFUSED with the reason named.
+    allocator exists to refuse. The caller reports that as REFUSED with the reason named.
     """
     if not summary and not resources:
         return ""
@@ -304,7 +304,7 @@ def allocate_skills(
     candidate competes on, so a confirmed skill outranks a passively surfaced one at equal
     query overlap rather than by virtue of being appended first.
 
-    ``session`` is recorded on the surfacing events this turn produces (LEARN-R4 / §2.5). It
+    ``session`` is recorded on the surfacing events this turn produces. It
     is an argument rather than something the recorder looks up because only the caller knows
     which session a turn belongs to, and an event with no session cannot be de-duplicated
     against the other nine retrievals of the same attention.
@@ -435,10 +435,10 @@ def _record_surfacing_events(
     query: str,
     session: str,
 ) -> None:
-    """Log this turn's offers to LEARN-R4's `surfacing_events`. Never raises.
+    """Log this turn's offers to `surfacing_events`. Never raises.
 
-    **Here because this is the only point that holds both halves of an event.** §2.5 requires
-    `used` to be derived MECHANICALLY, and `SkillAllocation.loaded` is exactly such a
+    **Here because this is the only point that holds both halves of an event.** `used` must
+    be derived MECHANICALLY, and `SkillAllocation.loaded` is exactly such a
     derivation — content that reached the prompt, with REFUSED deliberately excluded because
     "crediting a use to a skill the agent never saw would train the ranker on the allocator's
     failures". A separate marking pass would have to re-derive that judgement from a stored id

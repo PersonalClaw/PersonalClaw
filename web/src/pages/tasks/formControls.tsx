@@ -214,7 +214,7 @@ export function ChecklistEditor<T extends { description?: string }>({ items, onC
           onReorder={(next) => onChange(next.map((k) => k.it))}
           renderItem={({ it, i }) => (
             <div className={`${rowClass} mb-1.5`}>
-              {/* Checked-locks-drag (R15). A completed step's position is history — reordering it
+              {/* Checked-locks-drag. A completed step's position is history — reordering it
                   would rewrite the record of what happened in what order, which is the one thing a
                   checklist is FOR. The grip stays visible but inert so the row still reads as part
                   of the same list rather than looking broken. */}

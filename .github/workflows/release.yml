@@ -35,7 +35,7 @@ jobs:
       # again. It REFUSES a ref it cannot classify (no `v`, not X.Y.Z, or build
       # metadata), which is why it runs before the 10-minute build rather than after:
       # a mistyped tag fails here instead of part-publishing.
-      - name: Classify the release tag (one parser — RUM-8)
+      - name: Classify the release tag (one parser)
         id: ver
         run: python3 scripts/release_tags.py --ref "$GITHUB_REF_NAME" --github-output >> "$GITHUB_OUTPUT"
       # Nothing ships without a licence record: every tracked font, image and binary here,
@@ -64,7 +64,7 @@ jobs:
           uv build --out-dir dist
       - name: Verify the wheel contract (SPA packaged + Node-free serve)
         run: |
-          # Full C4 contract (scripts/verify_wheel.py): inspects the wheel's contents and
+          # Full wheel contract (scripts/verify_wheel.py): inspects the wheel's contents and
           # metadata against this checkout (every declared package, dashboard and
           # bundled-app file, nothing else, a true RECORD), asserts the SPA is in the
           # wheel, installs it into a scratch venv from the wheel alone (this runner
@@ -136,7 +136,7 @@ jobs:
     # The client is published; this job is the seam it fills in
     # (it builds + publishes packages/personalclaw-client-py).
     #
-    # LOCKSTEP VERSIONING (owner policy 2026-07-22): the client's version always
+    # LOCKSTEP VERSIONING: the client's version always
     # equals core's — bumped in every release-prep commit whether or not the client
     # changed (enforced by tests/test_version_consistency.py). skip-existing is
     # belt-and-suspenders for re-runs of a tag whose client already published:
@@ -245,7 +245,7 @@ jobs:
       matrix:
         include:
           # `smoke` is the per-image liveness command run INSIDE the container on
-          # BOTH arches (PLATFORM-REACH A2.1). It differs per image because the
+          # BOTH arches. It differs per image because the
           # images differ: gateway ships the `personalclaw` CLI; web is nginx and
           # has no such binary, so it proves its own server binary instead. A
           # single hardcoded `personalclaw --version` would fail on web.
@@ -281,8 +281,8 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # Which tags this release may MOVE is a property of the tag, not a constant
-      # (RUM-8). Stable publishes `:X.Y.Z`, the moving minor `:X.Y` and `:latest`;
+      # Which tags this release may MOVE is a property of the tag, not a constant.
+      # Stable publishes `:X.Y.Z`, the moving minor `:X.Y` and `:latest`;
       # a prerelease publishes `:X.Y.Z-rc.N` and ONLY `:beta`. The tag list is
       # rendered by the same `scripts/release_tags.py` the tag-parse test asserts,
       # so a `tags:` block can no longer say something the test does not check —
@@ -290,7 +290,7 @@ jobs:
       # release candidate. `:X.Y` and `:beta` are the tags `self_update.select_image`
       # resolves for the `stable`/`beta` channels and `docs/guides/containers.md`
       # documents; before this step nothing created them.
-      - name: Plan this tag's image tags (RUM-8)
+      - name: Plan this tag's image tags
         id: imagetags
         env:
           IMAGE: ghcr.io/personalclaw/personalclaw-${{ matrix.name }}
@@ -343,7 +343,7 @@ jobs:
           name: image-sbom-${{ matrix.name }}
           path: image-sboms/*.spdx.json
           if-no-files-found: error
-      # RELEASE-BLOCKING per-arch smoke (A2.1). The build above publishes a
+      # RELEASE-BLOCKING per-arch smoke. The build above publishes a
       # multi-arch manifest; a manifest that merely *builds* can still ship an
       # arch that cannot start. So pull each arch explicitly and run the image's
       # own liveness command inside it — arm64 executes under the QEMU emulation
@@ -455,7 +455,7 @@ jobs:
     # which we are not ready for right now.")
     #
     # SIGNING AND PRODUCING AN INSTALLER ARE ORTHOGONAL, and conflating them is why this
-    # job did not exist. Q26 descoped desktop SIGNING, and that
+    # job did not exist. Desktop SIGNING was descoped, and that
     # was read as descoping the mac artifact itself — so `release.yml` mentioned `macos`
     # zero times while `desktop/package.json` had carried a working `dist` script
     # (`electron-builder --mac`, target `dmg`) the whole time. Nothing here needs an Apple
@@ -552,11 +552,11 @@ jobs:
           path: desktop/dist/*.dmg
 
   desktop-linux:
-    # Linux desktop shell — UNSIGNED AppImage + .deb (DC-6, owner ruling 2026-08-27:
-    # ship the Linux target now; Windows stays deferred — the native port is a no-go
+    # Linux desktop shell — UNSIGNED AppImage + .deb (the Linux target ships now;
+    # Windows stays deferred — the native port is a no-go
     # per docs/research/windows-native-audit.md:302 and no Windows signing
     # secrets exist). The macOS dmg is built by `desktop-mac` above and is also
-    # unsigned, by the same owner ruling; the difference is that Gatekeeper consumes a
+    # unsigned, on purpose; the difference is that Gatekeeper consumes a
     # signature and Linux has no equivalent gate, so here
     # "unsigned" is the platform norm, not a downgrade — docs/guides/desktop.md says
     # what that means for users. x86-64 only (this runner's arch); arm64 desktop is
@@ -653,8 +653,8 @@ jobs:
         with:
           name: release-notes
       - name: Create GitHub Release
-        # The stability flags come from `scripts/release_tags.py` via the build job
-        # (RUM-8), not from a shell suffix test. The expression that used to sit here
+        # The stability flags come from `scripts/release_tags.py` via the build job,
+        # not from a shell suffix test. The expression that used to sit here
         # — `[ "$REF" != "${REF%rc*}" ] && echo --prerelease` — only ever recognized
         # `rc`, so `v0.3.0-beta.2` was published as a full, non-prerelease Release and
         # `stable`'s `select_target` then offered it to every user as an upgrade.

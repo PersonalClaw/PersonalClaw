@@ -8,14 +8,14 @@ and `triggers/` `tick_once`. Each held a capability the others structurally coul
 every new admission rule landed wherever its author happened to be standing. Three of the four are
 now this module; `triggers/` stays out on purpose (it answers whether to START, on a wall clock).
 
-This module is the seam that makes them one mechanism. `PP-11` introduced **nothing new**: `Lane`,
+This module is the seam that makes them one mechanism. Its first step added **nothing new**: `Lane`,
 `ContainerConcurrency` and `Wip` are exactly the three rules `frontier()` already applied, moved
 behind a named interface and composed explicitly. That restraint was the point — a refactor that
 also changed behaviour could not be verified, because there is no oracle for *"did the scheduler
 still decide the same thing"*. The oracle is `tests/test_workflows_frontier_golden.py`, whose
 fixtures were captured before a line of this existed.
 
-`PP-12` is where capability lands, on the seam already proven inert: `Lease` (exclusive occupancy of
+Then capability lands, on the seam already proven inert: `Lease` (exclusive occupancy of
 a named external resource — the pool's capability), and `Dwell`/`MetricGate` (a bake floor and a
 metric gate that rolls a step back — the loop's). Both reuse the proven implementation rather than
 re-deriving it: `Lease` decides with `pool.acquire`, the same compare-and-swap decision the task
@@ -25,7 +25,7 @@ implementation of anything. `default_policies(state=None)` returns the three, so
 declaring none of the new keys runs the same code it always did — additivity by construction,
 re-proven by the golden file.
 
-`PP-13` retires the last duplicate: `pool.py`'s private `frontier`/`next` projection. What the pool
+The last duplicate retires too: `pool.py`'s private `frontier`/`next` projection. What the pool
 knew that this module did not was an ORDER — priority, blocking-count, overdue, then recency then id
 — and that is not a policy, because a policy answers *how many* while an order answers *which
 first*. So it lands as `rank_key`, a comparator, and `ready()` is the two of them composed: the
@@ -56,7 +56,7 @@ what makes `rewind` tractable and replay meaningful; a policy that consulted the
 decide differently on replay and the journal's guarantees would be worthless. Enforced by an AST
 rail in `tests/test_workflows_frontier_golden.py`, not by convention.
 
-A lease TTL and a bake floor both imply a clock, which is exactly the rail `PP-12` had to satisfy
+A lease TTL and a bake floor both imply a clock, which is exactly the rail both had to satisfy
 rather than route around. It is satisfied by taking `now` as a PARAMETER (`AdmissionState`), the
 way `pool.acquire(..., now=)` and `loop.tick.evaluate(cfg, state, now)` already do: the impurity
 moves to the single caller that owns a clock and the run's persisted state, and every `capacity()`
@@ -90,7 +90,7 @@ class Scope(str, Enum):
     #: One fan-out container's in-flight items, keyed by the container's instance path.
     CONTAINER = "container"
     #: One named EXTERNAL resource an item holds for its whole body, keyed by the resource name
-    #: (PP-12). Not the container bucket: two different fan-outs — in two different runs — can
+    #: Not the container bucket: two different fan-outs — in two different runs — can
     #: contend for one endpoint, and a per-container count cannot express that. This is the bucket
     #: whose occupancy lives on disk rather than in the run's own state.
     RESOURCE = "resource"
@@ -179,7 +179,7 @@ class AdmissionPolicy:
 @dataclass(frozen=True)
 class Limits:
     """Per-lane concurrency caps, as a config carries them. A single total is accepted and split, so
-    a config carrying one number keeps working (WF2-R21 back-compat).
+    a config carrying one number keeps working (back-compat).
 
     Parsing lives here rather than in the `Lane` policy because a cap read from `config.json` and a
     cap the policy enforces are different jobs: one is lenient about what a user typed, the other is
@@ -215,7 +215,7 @@ class Limits:
 
 @dataclass(frozen=True)
 class Lane(AdmissionPolicy):
-    """Typed-lane caps as an admission policy (WF2-R21). A `foreach` over minute-long local-model
+    """Typed-lane caps as an admission policy. A `foreach` over minute-long local-model
     actions saturates the `io` lane while `llm` stages keep flowing; excess is deferred, not
     dropped — the next tick admits it."""
 
@@ -259,7 +259,7 @@ class ContainerConcurrency(AdmissionPolicy):
 
 @dataclass(frozen=True)
 class Wip(AdmissionPolicy):
-    """The run-level WIP=1 invariant (`single_active_feature`, LOOPS-EVOLUTION R5b: +37% feature
+    """The run-level WIP=1 invariant (`single_active_feature`: +37% feature
     completion). Caps EVERY fan-out in the run to one in-flight item, whatever each `foreach`
     declared for itself.
 
@@ -284,7 +284,7 @@ class Wip(AdmissionPolicy):
 
 @dataclass(frozen=True)
 class AdmissionState:
-    """The clock-and-disk inputs the `PP-12` policies read, gathered ONCE by the caller.
+    """The clock-and-disk inputs the state-reading policies read, gathered ONCE by the caller.
 
     **This is how `Lease(ttl)` gets a TTL without breaking `frontier()`'s purity.** A TTL implies a
     clock and a lease implies persisted occupancy, and the frontier may consult neither. So `now`
@@ -295,8 +295,8 @@ class AdmissionState:
 
     The impurity does not vanish — it MOVES, to the one caller that already owns a clock and the
     run's persisted state (`controller.RunController`). `frontier()` never builds one of these,
-    which is also the structural half of this atom's additivity claim: `default_policies()` with no
-    state returns exactly the three `PP-11` policies, so a spec declaring none of the new keys does
+    which is also the structural half of the additivity claim: `default_policies()` with no
+    state returns exactly the three original policies, so a spec declaring none of the new keys does
     not merely behave as before — it runs the same code.
     """
 
@@ -323,15 +323,15 @@ class AdmissionState:
 
 @dataclass(frozen=True)
 class Lease(AdmissionPolicy):
-    """Exclusive occupancy of a named external resource — a `lease:` declaration (PP-12).
+    """Exclusive occupancy of a named external resource — a `lease:` declaration.
 
     The capability neither lane caps nor `max_concurrency` can express: a resource each ITEM HOLDS
     for the length of its body, shared across containers, runs and processes. `max_concurrency: 1`
     serializes one fan-out inside one run; it says nothing about the second run that starts while
     the first is mid-flight, and nothing at all after a restart.
 
-    **The decision is `pool.acquire`, unchanged.** Not a second lease implementation: `S57`
-    measured an `unlink`-based single-use claim failing 36 of 40 races, and a lease that loses a
+    **The decision is `pool.acquire`, unchanged.** Not a second lease implementation: an
+    `unlink`-based single-use claim was measured failing 36 of 40 races, and a lease that loses a
     race is worse than no lease because both holders believe they own the work. So this policy
     calls the same decision function the task pool's claim path calls, and the WRITE stays where
     the compare-and-swap lives (`pool.claim_task`, a `single_flight` flocked read-modify-write).
@@ -372,12 +372,12 @@ class Lease(AdmissionPolicy):
 
 @dataclass(frozen=True)
 class Dwell(AdmissionPolicy):
-    """A bake floor before a step may start — `min_dwell_secs` (PP-12).
+    """A bake floor before a step may start — `min_dwell_secs`.
 
     Dwell exists only in `loop/tick.evaluate` today, consumed by exactly one kind, so a workflow
     cannot say "let the deploy settle for ten minutes before the smoke test". The threshold is
     parsed by the loop's OWN parser (`step_config_from_phase`), not re-read here: two parsers for
-    `min_dwell_secs` is exactly the four-dialect problem this program exists to end, and that parser
+    `min_dwell_secs` is exactly the four-dialect problem this module exists to end, and that parser
     already ignores garbage so a typo degrades to "no dwell" instead of a stalled run.
 
     Abstains once the window has elapsed rather than returning 1 — an elapsed bake floor has no
@@ -504,7 +504,7 @@ def compose(policies: tuple[AdmissionPolicy, ...], request: AdmissionRequest) ->
     """Tightest wins; a tie goes to the higher `rank`.
 
     Minimum rather than first-match or last-match because that is the only composition an added
-    policy cannot loosen — the property that lets `PP-12` add `Lease` without re-auditing these
+    policy cannot loosen — the property that let `Lease` be added without re-auditing these
     three. Abstentions (`None`) are skipped entirely rather than treated as an infinite cap, so a
     bucket no policy speaks to stays genuinely unbounded.
     """
@@ -536,12 +536,13 @@ def default_policies(
     judged by the same list. Constructing them per-node is how a run-level invariant becomes
     per-node-optional by accident.
 
-    **`state=None` returns exactly `PP-11`'s three policies.** That is not a convenience default: it
-    is this atom's additivity guarantee made structural. `frontier()` is pure and cannot build an
-    `AdmissionState`, so the frontier's list is unchanged by construction and `PP-11`'s golden file
-    is a real proof rather than a coincidence. The `PP-12` policies answer scopes the frontier
-    never asks about (`RESOURCE`, `STEP`), so even the widened list leaves every lane and container
-    verdict identical — asserted, not assumed, in `test_workflows_admission_policies.py`.
+    **`state=None` returns exactly the three original policies.** That is not a convenience
+    default: it is this module's additivity guarantee made structural. `frontier()` is pure and
+    cannot build an `AdmissionState`, so the frontier's list is unchanged by construction and the
+    frontier golden file is a real proof rather than a coincidence. The state-reading policies
+    answer scopes the frontier never asks about (`RESOURCE`, `STEP`), so even the widened list
+    leaves every lane and container verdict identical — asserted, not assumed, in
+    `test_workflows_admission_policies.py`.
     """
     base: tuple[AdmissionPolicy, ...] = (
         Lane(limits=limits),
@@ -601,7 +602,7 @@ class ReadyItem:
     ranking. The adapter that fills it is where the clock and the disk live (`tasks/registry.py`),
     which is what keeps this module's purity rail satisfiable.
 
-    `unblocked` keeps the retired projection's polarity verbatim. This atom's whole bar is "the same
+    `unblocked` keeps the retired projection's polarity verbatim. The whole bar is "the same
     ready set, in the same order"; flipping the sense of the boolean the equivalence turns on would
     add a way to be silently wrong — a polarity bug flips both sides of a test written after the
     rename — for no gain at all.

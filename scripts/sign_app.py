@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Maintainer tool — sign an app bundle so the Store verifies it at install (SH-3).
+"""Maintainer tool — sign an app bundle so the Store verifies it at install.
 
 Three subcommands:
 

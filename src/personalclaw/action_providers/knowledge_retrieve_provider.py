@@ -385,14 +385,14 @@ def _apply_filters(
 def _passage_window(content: str, line_range: Any, cap: int) -> tuple[str, bool]:
     """The capped content window for one hit, CENTERED ON THE MATCHED PASSAGE.
 
-    KL-18 (research draft T02): the payload used to be ``content[:cap]`` — the
+    The payload used to be ``content[:cap]`` — the
     document HEAD — while the retriever had already computed exactly where the
     match lives (``line_range``, 1-based inclusive, from ``_attach_locator``).
     For any match deeper than the cap the model received text that never
     matched: a neighbor, presented as evidence.
 
     Returns ``(text, windowed)``. The join is the 1-based-inclusive slice
-    ``lines[start-1:end]`` — the off-by-one T02 warns about is using
+    ``lines[start-1:end]`` — the off-by-one to avoid is using
     ``lines[start:end]``, which drops the first matched line and appends the
     line after the passage. When the passage is shorter than the cap the
     window extends FORWARD from the passage start (following context), never

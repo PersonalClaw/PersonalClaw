@@ -1,7 +1,7 @@
 """Resolving the workflow config knobs the modules actually use.
 
-The four fields §8 names are wired through all four config points, and that is exactly where this
-program has repeatedly shipped a control that is present and inert: `materialize`, `confirmation`
+The four workflow fields are wired through all four config points, and that is exactly where this
+codebase has repeatedly shipped a control that is present and inert: `materialize`, `confirmation`
 and `pool` each carry their own module constant, so a field could be set, persisted, echoed back by
 `to_dict` and displayed in Settings while the runtime went on using 20 / 7 days / 900s.
 

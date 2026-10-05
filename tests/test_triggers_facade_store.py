@@ -1,11 +1,11 @@
-"""`/api/triggers` surfaces store-only kinds (file/web_watch/idle/…) — §6 additive slice.
+"""`/api/triggers` surfaces store-only kinds (file/web_watch/idle/…), additively.
 
-S92 made file/web_watch/idle/… automations creatable in chat and S93 made `file` ones fire, but
+File/web_watch/idle/… automations were creatable in chat and `file` ones fired, but
 `GET /api/triggers` read only the three LEGACY backends (schedule crons, lifecycle hooks, event
 triggers). So a chat-created file automation was **present and inert on the Automations page**:
 created, fired, and unlistable — the user could not see, pause, run, or delete it in the UI.
 
-These tests pin the additive read-plus-safe-mutation slice: the `store` namespace lists those
+These tests pin the additive read-plus-safe-mutation surface: the `store` namespace lists those
 kinds and routes toggle/run/delete through the `tools.py`. This is NOT the class-B re-point of
 the schedule/event backends onto the store — those legacy paths are untouched here.
 """
@@ -29,7 +29,7 @@ from personalclaw.triggers.store import TriggerStore
 def home(tmp_path, monkeypatch):
     """A tmp home the handler reads for BOTH stores.
 
-    The handler resolves its trigger store AND (since S105) its run store through its own
+    The handler resolves its trigger store AND its run store through its own
     module-level `config_dir`, which is the single redirect point `conftest._isolate_trigger_store`
     also patches. Patching only the loader left `_runs_store()` pointing at the fixture's own tmp
     home — measured: every run-record read returned 0 rows.
@@ -137,7 +137,7 @@ def _run(coro):
 
 
 def test_a_chat_created_file_automation_is_LISTED(home, state):
-    """🔴 THE gap. Before this slice, a file automation created via the chat tools fired but
+    """🔴 THE gap. Before this change, a file automation created via the chat tools fired but
     never appeared in `GET /api/triggers` — invisible on its own management page."""
     _file_automation(home)
     resp = _run(T.api_triggers(_req("GET", "/api/triggers", state)))
@@ -448,7 +448,7 @@ def _notify_spy(monkeypatch):
 
 
 def test_a_HAND_RUN_notify_links_its_note_back_to_the_trigger(home, state, monkeypatch):
-    """The manual twin of the autonomous path's link (B8): `Run now` on a notify trigger raises the
+    """The manual twin of the autonomous path's link: `Run now` on a notify trigger raises the
     user's note, and that note has to lead back to the trigger exactly as a scheduled fire's does —
     it is the only notification the fire makes. Driven through the REAL notify provider."""
     from types import SimpleNamespace as NS
@@ -704,7 +704,7 @@ def test_a_manual_run_APPENDS_a_history_row_saying_you_ran_it_and_advances_last_
 
 
 def test_a_manual_run_does_NOT_spend_the_max_fires_budget(home, state, monkeypatch):
-    """🔴 DEVIATION from a literal reading of #308's brief, and the reason for it.
+    """🔴 A departure from a literal reading of #308, and the reason for it.
     `Trigger.run_count` is not a display counter for a store/schedule trigger — it is the
     `max_fires` fire-budget meter (`service._budget_remaining` reads it, written only at the
     autonomous fire-GRANT), and `tools.MANUAL_NEVER_BYPASSES` pins `budget` among the gates a manual
@@ -1009,7 +1009,7 @@ def test_a_legacy_job_is_visible_through_the_MIGRATION_not_a_fallback(home, stat
     empty — the fallback that retires with `ScheduleService`'s CRUD.
 
     The property it protected still holds, by a better mechanism: a home whose migration has not run
-    must not show zero schedules. Boot imports every legacy job unconditionally, and S110 made that
+    must not show zero schedules. Boot imports every legacy job unconditionally, and the import is
     complete — a row the conversion REFUSES (an empty or unknown `schedule.kind`, which
     `ScheduleService` loads happily) used to be `continue`d and so existed only in the legacy file.
     It is now written disabled, so there is no job the fallback could have shown that the store
@@ -1044,7 +1044,7 @@ def test_a_legacy_job_is_visible_through_the_MIGRATION_not_a_fallback(home, stat
 
 
 def test_a_legacy_job_the_conversion_REFUSES_is_still_imported(home, state):
-    """🔴 THE S110 FINDING. A `crons.json` row with an empty `schedule.kind` LOADS in
+    """🔴 THE FINDING. A `crons.json` row with an empty `schedule.kind` LOADS in
     `ScheduleService` but the conversion refuses it — and it used to be dropped, so it lived only
     in the legacy file. Deleting the fallbacks (the point of the cutover) would have made the
     user's job vanish from the list with no error anywhere.
@@ -1143,9 +1143,9 @@ def test_create_writes_to_the_store(home, state):
 
 
 def test_a_created_schedule_is_ARMED(home, state):
-    """🔴 THE defect this session found first: `tools.create` persisted `next_fire_at=""`, and
-    `due_ids` only surfaces rows that HAVE one — so every cron created through the chat tools (since
-    S92) or this API would never fire. Arming at creation is the difference between "runs tonight"
+    """🔴 THE first defect found here: `tools.create` persisted `next_fire_at=""`, and
+    `due_ids` only surfaces rows that HAVE one — so every cron created through the chat tools
+    or this API would never fire. Arming at creation is the difference between "runs tonight"
     and "runs after the user restarts the gateway"."""
     _create_schedule(state)
     trigger = _store(home).get("clock:nightly").trigger
@@ -1699,8 +1699,9 @@ def test_a_one_shot_is_not_plotted_as_a_recurrence(home, state):
 
 
 def test_skip_dates_and_the_triggers_own_zone_still_annotate(home, state):
-    """AUTO-A3's struck columns. The SCHEDULER compares skip dates against the date in the trigger's
-    OWN zone, so a grid on server time would strike the wrong column for a job that declares one."""
+    """Skip dates render as struck columns. The SCHEDULER compares skip dates against the date in
+    the trigger's OWN zone, so a grid on server time would strike the wrong column for a job that
+    declares one."""
     _create_schedule(
         state, name="Nightly", cron="0 9 * * *", timezone="UTC", skip_dates=["2027-01-16"]
     )
@@ -1797,7 +1798,7 @@ def test_the_last_result_comes_from_the_RUN_STORE(home, state):
     output, and a copy on the trigger was a second truth that could disagree with it. The run store
     is keyed by a plain id, so it serves a store-backed trigger and a legacy job identically.
 
-    S105 note: this reads the REAL store rather than a mocked service method — the mock would have
+    Note: this reads the REAL store rather than a mocked service method — the mock would have
     kept passing after the re-point without the read happening at all."""
     _append_run(home, summary="backup done")
     assert _run(T._last_result_for(state, "clock:nightly")) == "backup done"
@@ -1928,7 +1929,7 @@ def test_the_run_store_is_held_directly_not_through_the_service(home, state):
 
 
 def test_the_helper_is_named_runs_store_to_avoid_shadowing():
-    """🔴 A REAL BUG this session hit: the triggers module already had `async def _run_store(raw,
+    """🔴 A REAL BUG: the triggers module already had `async def _run_store(raw,
     request)` (the manual-fire path, now `trigger_runs._run_store`), so defining a second
     `_run_store()` silently SHADOWED it — driven, the history endpoint raised "missing 2 required
     positional arguments". Python reports a same-name redefinition only at the call site, so the
@@ -1941,7 +1942,7 @@ def test_the_helper_is_named_runs_store_to_avoid_shadowing():
 
 
 def test_the_last_run_status_is_read_from_the_store(home, state):
-    """T7's honest badge: the PERSISTENT status survives restarts and keeps `launched` distinct from
+    """The honest badge: the PERSISTENT status survives restarts and keeps `launched` distinct from
     `ok`, where a trigger's own field would report a fire-and-forget run as a success."""
     _append_run(home, status="launched")
     del state.crons.last_run_status  # no legacy service involvement
@@ -2027,7 +2028,7 @@ def test_deleting_a_trigger_drops_its_runs_through_the_store(home, state):
 
 
 def test_the_facade_no_longer_calls_any_run_method_on_the_service():
-    """🔴 The property this session establishes, asserted on the SOURCE: a call that came back would
+    """🔴 The property this establishes, asserted on the SOURCE: a call that came back would
     re-couple the facade to a class the cutover is retiring, and no behavioural test would notice.
     """
     import inspect
@@ -2043,7 +2044,7 @@ def test_the_facade_no_longer_calls_any_run_method_on_the_service():
 def test_the_store_projection_EMITS_the_lifecycle_state():
     """🔴 THE DEFECT. `_serialize_store` emitted `health` and NOT `state`, so
     `Trigger.state` — `active | paused | autopaused | parked | quarantined | retired` — reached no
-    surface at all. Every lifecycle transition this program built was therefore invisible on the one
+    surface at all. Every lifecycle transition was therefore invisible on the one
     page a user manages automations from: autopause, park/unpark and the injection
     quarantine all decided a state nothing could render.
 
@@ -2074,8 +2075,8 @@ def test_health_and_state_are_BOTH_on_the_wire():
 
 
 def test_an_ACTIVE_trigger_still_reports_active():
-    """The default path is unchanged — every trigger authored before this session projects the same
-    way, with `state: "active"` added rather than anything reinterpreted."""
+    """The default path is unchanged — every trigger authored before `state` existed projects the
+    same way, with `state: "active"` added rather than anything reinterpreted."""
     from personalclaw.triggers.models import Trigger
     from personalclaw.triggers.store import LoadedTrigger
 
@@ -2186,16 +2187,16 @@ async def test_an_UNRECOGNISED_prefix_falls_back_to_SCHEDULE_not_a_fake_reason()
 
 @pytest.mark.asyncio
 async def test_a_STORE_trigger_RUN_can_be_OPENED(home, monkeypatch):
-    """🔴 THE DEFECT, one route past S166. `api_trigger_history_detail` gated on
-    `kind != _SCHEDULE` and 404'd everything else — so the list route S166 had just fixed handed the
+    """🔴 THE DEFECT, one route past the list fix. `api_trigger_history_detail` gated on
+    `kind != _SCHEDULE` and 404'd everything else — so the list route, just fixed, handed the
     UI a `run_id` that the detail route immediately denied. Driven:
 
         LIST   -> total=1 run_id='fire-1785909121906'
         DETAIL -> 404 {'error': 'not found'}
 
     The expander opens on nothing. `get_run(raw, run_id)` already worked with a store key (verified
-    against a real `file:notes` row), so the gate was the entire defect — the same shape as S166,
-    which is why sweeping the SIBLING route mattered rather than stopping at the first fix.
+    against a real `file:notes` row), so the gate was the entire defect — the same shape as the list
+    route's, which is why sweeping the SIBLING route mattered rather than stopping at the first fix.
     """
     import time as _time
     import types as _types

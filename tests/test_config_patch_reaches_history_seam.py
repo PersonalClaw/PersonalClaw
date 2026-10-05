@@ -151,7 +151,7 @@ async def test_the_patch_still_persists_the_value(tmp_config, seen_writes) -> No
     # This assertion used to read `len(data) > 20`, i.e. "the PATCH writes the full normalized
     # config". That was never the PATCH path's doing: `AppConfig.load()` further down the
     # handler used to rewrite the whole file as a migration write-back side effect, and the
-    # normalization was ITS footprint. PHF-15 made `load()` a pure read, so what lands on disk
+    # normalization was ITS footprint. Since `load()` became a pure read, what lands on disk
     # is now only what this handler actually wrote.
     assert sorted(data) == sorted(_seed_config()), (
         "the PATCH added or dropped a top-level key. It read-modify-writes the raw document "

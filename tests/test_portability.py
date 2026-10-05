@@ -743,7 +743,7 @@ def _seed_automations(pc, *, names=("Nightly backup",), armed=True):
 class TestAutomationsInASnapshot:
     """🔴 THE DEFECT. `create_export_zip` carried `crons.json` and `hooks.json` and NOT
     `triggers.json` — the store that has been the sole source of automations, and the
-    only one since S112 deleted `ScheduleService`.
+    only one since `ScheduleService` was deleted.
 
     Driven before the fix, against a home holding two automations, an event trigger and run history:
     the snapshot captured **`config.json` alone**. So `personalclaw snapshot` silently lost every
@@ -760,7 +760,7 @@ class TestAutomationsInASnapshot:
         assert "triggers.json" in manifest["contents"]
 
     def test_event_triggers_are_captured(self, fake_personalclaw_home):
-        """Named in the plan's own recon note as missing alongside the trigger store."""
+        """Missing from the snapshot alongside the trigger store, before the fix."""
         _seed_automations(fake_personalclaw_home)
         with patch("personalclaw.portability.config_dir", return_value=fake_personalclaw_home):
             zip_bytes, _ = create_export_zip()
@@ -891,7 +891,7 @@ class TestAutomationsInASnapshot:
         assert mine.next_fire_at, "and must keep its armed fire"
 
     def test_the_legacy_cron_file_still_travels(self, fake_personalclaw_home):
-        """§6 keeps `crons.json` read-only on disk so `automation verify-migration` can diff both
+        """`crons.json` stays read-only on disk so `automation verify-migration` can diff both
         sides — a snapshot that dropped it would break that command after a move."""
         _seed_automations(fake_personalclaw_home)
         with patch("personalclaw.portability.config_dir", return_value=fake_personalclaw_home):
@@ -907,11 +907,11 @@ class TestAutomationsInASnapshot:
 #: rather than silently joining a backlog nobody re-measures.
 #:
 #: 🔴 Found by cross-checking `durability.inventory.INVENTORY` (57 entries) against both snapshot
-#: paths while closing §7 item 9: **25 of 57 declared state files travelled in neither.** The
-#: automation domain is closed by this session; the remaining 22 belong to DURABILITY-AND-SYNC,
-#: whose §1 promises "every byte of state is enumerated in one inventory" and whose plan owns the
-#: export shards. Hand-listing them here would be a silent, unreviewed scope grab into that plan.
-#: 🔴 Re-measured in S178 and it went from **24 entries to 4**. The old check grepped `snapshot.py`
+#: paths: **25 of 57 declared state files travelled in neither.** The automation domain was
+#: closed here; the remaining 22 belonged to backup and sync, whose promise is "every byte of
+#: state is enumerated in one inventory" and which owns the export shards, so they were left to
+#: it rather than hand-listed here.
+#: 🔴 Re-measured later, it went from **24 entries to 4**. The old check grepped `snapshot.py`
 #: for each literal path, which went stale the moment coverage became inventory-DERIVED: 18 of the
 #: 24 were verified to round-trip through a real archive and come back, and 3 more are carried by an
 #: ancestor's tree copy. A ratchet that over-reports is not the safe direction — the list becomes
@@ -929,7 +929,7 @@ _SNAPSHOT_COVERAGE_GAPS: frozenset[str] = frozenset(
         # platform: local model blobs and generated ACP adapters, both regenerated on demand.
         "models",
         "acp_adapters",
-        # work: the two index stores S179 declared. Both say so in their own docstrings —
+        # work: the two derived index stores. Both say so in their own docstrings —
         # `session_search` "holds no truth of its own … better rebuilt than restored", `codegraph`
         # re-parses on mtime — and a real home held 5478 codegraph databases. Declaring them was the
         # fix (nothing claimed them); backing them up would ship a cache in every snapshot.
@@ -946,7 +946,7 @@ _SNAPSHOT_COVERAGE_GAPS: frozenset[str] = frozenset(
         # tokens_total}, no prompt or candidate text) feeding the learning/eval question "did
         # sampling help?". Claimed so `audit_home` sees it, deliberately not backed up: it
         # holds no user content to lose and restoring last week's spread would say nothing
-        # about this week's bindings. The change's own criterion specifies snapshot-excluded.
+        # about this week's bindings.
         "sampling_outcomes",
         # work: the turn-bound file checkpoint store. The one survivor here that is NOT
         # rebuildable — the pre-edit bytes exist nowhere else once the agent has overwritten
@@ -1037,7 +1037,7 @@ def _snapshot_covered_ids(tmp: Path) -> set[str]:
 
 
 def test_every_automation_state_file_is_in_a_snapshot(tmp_path: Path):
-    """🔴 The automation domain must be COMPLETE. This session's whole point: `triggers.json` was
+    """🔴 The automation domain must be COMPLETE. This change's whole point: `triggers.json` was
     declared in the inventory and carried by neither snapshot path, so `personalclaw snapshot` lost
     every automation the user had."""
     from personalclaw.durability import inventory as inv

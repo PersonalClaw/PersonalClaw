@@ -1,5 +1,5 @@
-/** Bridge for the tool card's "Show full result" affordance (tool-io-rendering
- *  TC4). A projected tool result retains its raw in the per-session store; this
+/** Bridge for the tool card's "Show full result" affordance.
+ *  A projected tool result retains its raw in the per-session store; this
  *  asks the host (ChatPage, which knows the active session) to fetch + display
  *  the full result via /api/chat/sessions/{session}/tool-result/{rid}. Decoupled
  *  through an event so the leaf ToolCard needn't thread the session id. */

@@ -422,14 +422,14 @@ def test_the_cli_tells_an_author_the_holder_is_unfilled(
 
 
 @pytest.mark.parametrize("provider_type", ALL_TYPES)
-def test_generated_manifest_declares_the_plan32_seams(provider_type: str, tmp_path: Path) -> None:
+def test_generated_manifest_declares_its_seams(provider_type: str, tmp_path: Path) -> None:
     app = _generate(provider_type, tmp_path)
     data = json.loads((app / "app.json").read_text(encoding="utf-8"))
     assert data["name"] == app.name
     assert data["version"] == "0.1.0"
     assert data["displayName"]
     assert data["description"]
-    # Plan 32: the two CLI seams, pointing at emitted code.
+    # The two CLI seams, pointing at emitted code.
     assert data["cli"] == {"setup": "app_cli:setup", "doctor": "app_cli:doctor"}
     # Nothing to declare for its log lines: they are recognised by the code that logs them.
     assert "loggerRoots" not in data

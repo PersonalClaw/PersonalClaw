@@ -1,4 +1,4 @@
-"""skill-agent-local-tier: an agent's own skills override global/bundled for it.
+"""An agent's own skills override global/bundled for it.
 
 Precedence: bundled ⊂ user-global ⊂ agent-local (higher wins), scoped to the one
 agent. The agent-local dir is ~/.personalclaw/agents/<slug>/skills/.

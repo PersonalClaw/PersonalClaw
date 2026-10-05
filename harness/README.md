@@ -3,13 +3,12 @@
 **The harness, not the agent (and not the human's memory), owns verification.**
 
 This is repo-inner dev infrastructure that mechanizes the project's verification *culture*
-(campaign/LEDGER validation, auto-memory gotchas, hard-won bug-class knowledge) into
+(campaign validation, auto-memory gotchas, hard-won bug-class knowledge) into
 machine-checked, versioned, shared institutional knowledge. It lives beside `src/`,
 `tests/`, and `scripts/`, and is **not** part of the shipped wheel (`pyproject` finds
 packages only under `src/`).
 
-It is built across the plan
-sessions. Landed so far (Sessions 1–3):
+The layout:
 
 ```
 harness/
@@ -26,12 +25,12 @@ harness/
   replay.py      # event-trace replay + metrics (dup rate, order, fanout, latency)
   baselines.py   # baseline gating (hard thresholds + drift; missing-scenario-fails)
   fanout_measure.py # token-matched fan-out vs single-agent verdict (sub-5pt == inconclusive)
-  worktree_bench.py # worktree fan-out hydration baseline + HARNESS-CRAFT §1.1 measure-first gate
+  worktree_bench.py # worktree fan-out hydration baseline + measure-first gate
   named_home.py     # the one way a dev tool names its home and finds that home's gateway:
                     #   no home named, or the default one, is refused
   cli.py         # python -m harness  validate | explain | run [--diff] | scan [--diff] | replay
   traces/        # recorded NDJSON event traces + baselines.json
-  exemplars/     # (Session 4) per-slice runnable exemplars
+  exemplars/     # per-slice runnable exemplars
 ```
 
 The recorder half lives in **core** (`personalclaw.trace_recorder`, env-gated by
@@ -39,12 +38,12 @@ The recorder half lives in **core** (`personalclaw.trace_recorder`, env-gated by
 The metrics/baseline half lives here. The FE-fold replay driver is
 `web/src/harness/replayFold.ts` (+ `.test.ts`).
 
-Later sessions add: resume-audit + MCP record/replay-as-fake-server (Session 4), and —
-once the Workflows-v2 engine lands — the Self-QA Companion (§3).
+Later work adds: resume-audit + MCP record/replay-as-fake-server, and —
+once the workflows engine lands — the Self-QA Companion.
 
-## Event-trace replay (Session 3)
+## Event-trace replay
 
-Turns the K42/K44/K45 stream-coalescer bug class into a *replayable* regression:
+Turns the stream-coalescer bug class into a *replayable* regression:
 
 1. **Record** — set `PERSONALCLAW_TRACE_DIR=<dir>` and drive the gateway; taps at
    `SseRegistry.publish`, `DashboardState._broadcast`, `inbox_service._ingest`, and
@@ -60,7 +59,7 @@ Turns the K42/K44/K45 stream-coalescer bug class into a *replayable* regression:
 
 ### Workflow journal-format gate
 
-Two WF2 scenarios gate the **journal → SSE projection** format before any engine consumer
+Two workflow scenarios gate the **journal → SSE projection** format before any engine consumer
 relies on it — `traces/workflow-journal-projection/` (a clean 3-node run) and
 `traces/rewind-during-stream/` (a rewind bumps the epoch mid-stream; a stale in-flight event
 must be dropped). Both are in `baselines.REQUIRED_SCENARIOS`, so **their absence from disk
@@ -68,13 +67,13 @@ fails the run outright** (not merely "one fewer scenario"). Each baseline pins a
 — the terminal state the pure Python **event-fold** (`replay.fold_workflow`, the mirror of
 `web/src/pages/workflows/workflowFold.ts`) reconstructs. The fold compare is EXACT, not a
 threshold: a journal/projection format change that breaks the event-fold law (a renamed event
-kind, a dropped guard, a changed terminal state) changes the fold and fails the compare
-(Success Criterion #4). No engine change was needed to record these — the workflow SSE tap at
+kind, a dropped guard, a changed terminal state) changes the fold and fails the compare.
+No engine change was needed to record these — the workflow SSE tap at
 `SseRegistry.publish` already covers the `workflow:<run_id>` key.
 
 ## Token-matched fan-out measurement
 
-`harness/fanout_measure.py` implements WORK-CONTAINERS amendment (e): **before any widening of the
+`harness/fanout_measure.py` implements one rule: **before any widening of the
 fan-out concurrency ceiling, a token-matched local comparison against the single-agent path on the
 same work, with a sub-5-point delta reported as `inconclusive`.**
 
@@ -119,15 +118,15 @@ refusals:
 }
 ```
 
-6. **Record the verdict in the plan's execution log verbatim, `inconclusive` included.** The exit
+6. **Record the verdict verbatim, `inconclusive` included.** The exit
    code is **0 for every honest verdict** — a non-zero on `inconclusive` would make the honest answer
-   look like a broken run, and amendment (e)'s risk register names "a plan that only ever reports
-   wins is not measuring" as the failure mode. Only a malformed observation file exits non-zero (2).
+   look like a broken run, and a measurement that only ever reports
+   wins is not measuring. Only a malformed observation file exits non-zero (2).
 
 Do not lower `INCONCLUSIVE_BAND_POINTS` to make a result presentable. The band is the literature's
 noise floor, not a preference.
 
-## The scanner (Session 2)
+## The scanner
 
 Seven pure-static checks, each with a stable check-id a rule spec references via its
 `scanner:` frontmatter. Every check is calibrated to produce **zero ERROR findings on a
@@ -163,17 +162,16 @@ Run on the repo venv, from the repo root:
 .venv/bin/python -m harness validate --fast  # shape only (skip pytest collection)
 .venv/bin/python -m harness explain T1.foo    # what commands/rules/tests a task owes
 .venv/bin/python -m harness run T1.foo         # execute the task's required profiles
-.venv/bin/python -m harness run --diff         # diff-aware selection (Session 2)
-.venv/bin/python -m harness scan               # boundary scanner (Session 2)
-.venv/bin/python -m harness fanout-measure obs.json  # token-matched fan-out verdict (WF2WOR-9)
+.venv/bin/python -m harness run --diff         # diff-aware selection
+.venv/bin/python -m harness scan               # boundary scanner
+.venv/bin/python -m harness fanout-measure obs.json  # token-matched fan-out verdict
 ```
 
 ## The three spec kinds
 
 Each spec is markdown with a YAML frontmatter block. **Specs reference stable anchors only
 — test node-ids, path globs, and scanner check-ids — never source line numbers.** Line
-numbers drift on every edit (they were already all stale in the plan that spawned this
-harness); node-ids and globs do not. `validate` enforces that the anchors resolve, which
+numbers drift on every edit; node-ids and globs do not. `validate` enforces that the anchors resolve, which
 is the spec-rot guard.
 
 - **rule** (`type: ai-coding-rule`) — one architectural invariant. Frontmatter:
@@ -186,11 +184,11 @@ is the spec-rot guard.
 - **task** (`type: task`) — one fix/feature's contract. Frontmatter: `id, type, title,
   intent, touchedAreas, scenario?, requiredProfiles[], requiredRules[], requiredTests[],
   acceptance:{positive[], negative[]}`. **The `negative` acceptance clause is mandatory** —
-  it is the "must NOT happen" half that prose LEDGER entries always drop.
+  it is the "must NOT happen" half that prose task notes always drop.
 
-## The same-PR rule (Session 2)
+## The same-PR rule
 
 Every recurring constraint or fixed bug adds/updates a rule or scenario spec **in the same
 commit** as the fix. This moves the "every fixed bug becomes permanent" memory-note habit
 out of private, decaying auto-memory and into the versioned, greppable repo. Enforcement is
-diff-aware and arrives with the scanner in Session 2.
+diff-aware and comes with the scanner.

@@ -1,4 +1,4 @@
-/** Stream-key equivalence between loop cockpits and template runs (LOOPS-EVOLUTION R10c).
+/** Stream-key equivalence between loop cockpits and template runs.
  *
  *  The loop cockpit keys its per-run SSE on `loop:<id>`. A template run streams under a
  *  run-scoped key. Comparing those with `===` is a proven regression class here, and a
@@ -46,7 +46,7 @@ export function keysEquivalent(
  *  the colon form. */
 const WORKER_PREFIX = 'loop-'
 
-/** Does this worker/stream session key belong to the loop cockpit for `loopId`? (R10c)
+/** Does this worker/stream session key belong to the loop cockpit for `loopId`?
  *
  *  The cockpit follows a running loop over TWO channels: the per-loop SSE (already
  *  loop-scoped server-side) and the shared activity WS, whose events carry a `session`

@@ -91,7 +91,7 @@ def _token(args: argparse.Namespace) -> None:
     names, once it has shown it serves this home. The home's local secret goes to no other.
 
     A ``--ttl`` that is not a lifetime, or one over the 90-day limit, is refused HERE, with the
-    sentence saying why — before the gateway is asked for anything (ledger 285).
+    sentence saying why — before the gateway is asked for anything.
     """
     ttl = parse_duration(args.ttl)
     if ttl is None or ttl > MAX_SESSION_TTL_SECS:
@@ -458,7 +458,7 @@ def _restart(port: int | None) -> None:
 
 # Every InstallKind `_update` maps to a branch. The dispatch is exhaustive over
 # `self_update.INSTALL_KINDS` and has NO default arm that falls back to the git
-# pipeline: before DIST-13 this command WAS the git pipeline, so a pip/pipx/uv-tool
+# pipeline: this command used to BE the git pipeline, so a pip/pipx/uv-tool
 # user got "PERSONALCLAW_PROJECT_DIR not set" and exit 1 — a dead end with the
 # per-kind machinery one module away. A kind added later must be mapped here
 # consciously; `test_cli_update_kinds` reds until it is.
@@ -488,7 +488,7 @@ def _refresh_agent_config(cwd: str) -> None:
 def _refuse_dirty_tree(tracked: list[str], operation: str) -> None:
     """Print which tracked edits block *operation* and exit non-zero.
 
-    RUM-4 advances a checkout by ``git checkout <tag>`` or a fast-forward — both
+    The updater advances a checkout by ``git checkout <tag>`` or a fast-forward — both
     non-destructive, so a dirty tree is refused, never discarded. There is no
     "discard my work?" prompt any more: the safe answer is always to keep the
     edits and ask the user to commit or stash. Exits 1 because the update the user
@@ -502,7 +502,7 @@ def _refuse_dirty_tree(tracked: list[str], operation: str) -> None:
 
 
 def _update_git(proj: str) -> None:
-    """Advance a git checkout to its release (RUM-4): ride release tags by channel.
+    """Advance a git checkout to its release: ride release tags by channel.
 
     The ``updates`` channel decides the cadence, replacing the retired
     ``update_dev_mode`` bool: ``stable``/``beta`` (and any pin) ride release TAGS —
@@ -669,7 +669,7 @@ async def _update_until_ctrl_c(git_dir: str, target: str) -> str:
 def _update_pip() -> None:
     """Upgrade a wheel install (pip / pipx / uv tool) in the running environment.
 
-    Rides the ``updates`` channel/pin (RUM-6): the wheel installed is
+    Rides the ``updates`` channel/pin: the wheel installed is
     ``personalclaw==<resolve_wheel_target(channel, pin)>`` — the release the
     channel/pin selects — NOT a blind ``releases/latest``. A pin installs exactly
     that version; ``stable``/``beta`` resolve their channel's newest release; the
@@ -781,7 +781,7 @@ def _update_desktop() -> None:
     app has no interpreter to upgrade — the backend is a frozen PyInstaller bundle).
 
     What the shell then does is a RE-DOWNLOAD, not an in-app update: the electron-updater
-    half of `DC-1` is unbuilt (no electron-updater dependency in ``desktop/package.json``,
+    half of desktop updates is unbuilt (no electron-updater dependency in ``desktop/package.json``,
     nothing in the shell checks for a release), so "accept the update it offers" named an
     offer that never arrives (#2673). Restore that wording when the updater lands, not
     before — the rail in ``tests/test_desktop_install_kind.py`` reds when it does.
@@ -862,7 +862,7 @@ def _install(args: list[str]) -> None:
 def _pin_before_update(to: str) -> None:
     """`--to <version>`: pin ``updates.pin`` so this and every later apply target it.
 
-    RUM-9's rollback entry point, and it is a PIN rather than a one-shot install for
+    The rollback entry point, and it is a PIN rather than a one-shot install for
     the reason the pin exists: a bare downgrade would be undone by the next scheduled
     check, which would resolve the channel's newest release and offer to jump straight
     back to the version the user just left. Pinning first means the resolvers already

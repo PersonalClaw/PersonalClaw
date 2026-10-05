@@ -290,7 +290,7 @@ async def test_tool_output_that_merely_describes_an_error_is_still_a_success():
 def _prose_failure_returns(source: str) -> list[int]:
     """Line numbers of ``return`` statements whose literal text starts with ``Error``.
 
-    Scanned with ``ast``, not a text regex, for two measured reasons. BRIEF §15: a rail that
+    Scanned with ``ast``, not a text regex, for two measured reasons. The first: a rail that
     greps raw source matches the COMMENT documenting the fix — including this file's own
     module docstring — so the commit that closes a defect is the commit the rail reds. An AST
     walk cannot see a comment at all, so the rail measures the program rather than the
@@ -298,8 +298,7 @@ def _prose_failure_returns(source: str) -> list[int]:
 
     The second reason is coverage: seven of these sites are parenthesised implicit
     concatenations spanning four lines, where the ``return`` line is just ``return (``. A
-    ``return\\s+"Error`` regex reads ZERO on all seven — the exact shape of false green §12
-    describes.
+    ``return\\s+"Error`` regex reads ZERO on all seven — the exact shape of a false green.
     """
     import ast
 

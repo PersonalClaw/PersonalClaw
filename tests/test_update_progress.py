@@ -266,7 +266,7 @@ class TestUpdateEndpoints:
         reexec_called: list[bool] = []
 
         async def fake_reexec(state, *, auth_mode=""):  # type: ignore[no-untyped-def]
-            # accepts the #46 auth_mode kwarg the handler now threads through
+            # accepts the auth_mode kwarg the handler now threads through
             reexec_called.append(True)
 
         monkeypatch.setattr(upd, "_graceful_reexec", fake_reexec)
@@ -755,7 +755,7 @@ class TestPackageRoot:
 
 
 class TestReexecPreservesAuthMode:
-    """#46: the restart _graceful_reexec asks for must carry the live auth mode into the new
+    """The restart _graceful_reexec asks for must carry the live auth mode into the new
     image's env, so a Restart never silently flips auth-none → token-required (the original
     launcher's env may not survive the re-exec / reparent to PID 1). The exec itself — the
     gateway starting that image after its own stop — is `test_restart_runs_the_full_stop`."""

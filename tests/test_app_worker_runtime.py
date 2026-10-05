@@ -1,6 +1,6 @@
 """The supervision half: what `apps/worker_runtime.py` promises about processes.
 
-`permissions.backgroundTasks` shipped in APE-1 with the manifest itself admitting the gap —
+`permissions.backgroundTasks` shipped with the manifest itself admitting the gap —
 `apps/manifest.py:405`: "unlike ``backgroundTasks`` above, whose host still does not exist".
 These tests are the host's contract, and they are deliberately split by what the claim is
 ABOUT:
@@ -865,9 +865,9 @@ def test_disable_through_app_manager_reaches_the_worker_teardown(
     _stub_background: types.ModuleType,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`disable()` must reach `_stop_worker` — the half of V1 the sweep cannot serve.
+    """`disable()` must reach `_stop_worker` — the uninstall half the sweep cannot serve.
 
-    `reap_orphans` is proven above in isolation, but the V1 clause is about UNINSTALL, and the
+    `reap_orphans` is proven above in isolation, but this guarantee is about UNINSTALL, and the
     sweep cannot deliver it: a worker re-parented to init is in no supervisor's table, and
     nothing would look for it once the app directory is gone. So the teardown has to run on the
     disable path, while the entry path is still resolvable.

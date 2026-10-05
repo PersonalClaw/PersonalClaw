@@ -104,7 +104,7 @@ def broadcast_kill(kill: Any, *, state: Any = None) -> None:
 
 
 def broadcast_grants(pending: int, *, state: Any = None) -> None:
-    """Signal that the pending per-task grant set changed (BA-9). Best-effort; never raises.
+    """Signal that the pending per-task grant set changed. Best-effort; never raises.
 
     ``pending`` is how many grants await an answer right now, and it is DIAGNOSTIC — a number a
     developer can read in the socket log. The panel must refetch ``GET /api/browse/status`` rather
@@ -121,12 +121,12 @@ def broadcast_grants(pending: int, *, state: Any = None) -> None:
 
 
 def surface_auth_expired(url: str, *, state: Any = None) -> None:
-    """Raise the persistent banner for a newly-expired site (BA-5 §(c)).
+    """Raise the persistent banner for a newly-expired site.
 
     Called at the ``auth_state=expired`` write, NOT on every dependent tick: the banner is a
     projection of the ``.meta.json`` state (which ``handoff.mark_expired`` already persisted), so a
     re-hit is idempotent. It carries no field a credential could occupy — the agent never handles
-    credentials (§5.2, unchanged).
+    credentials.
 
     It raises no Inbox row. It used to raise one per site, "Sign-in needed", which resumed nothing:
     beside a workflow run's own answerable row it asked the same question twice, and a trigger's

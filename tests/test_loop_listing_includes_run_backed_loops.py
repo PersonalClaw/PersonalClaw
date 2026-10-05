@@ -3,7 +3,7 @@
 A General loop was working while the Loops list said "No loops yet", Home said
 "0 loops running" / "No active work", and Mission Control's Working lane said "Nothing is running".
 Every one of those surfaces reads `GET /api/loops`, and that route read the loops TABLE alone —
-while a ported kind (`general`) had stopped writing a loops row at PP-16 and become a `WorkflowRun`.
+while a ported kind (`general`) had stopped writing a loops row and become a `WorkflowRun`.
 
 So the route now answers for both homes, and a run-backed row carries `run_id` so a surface can tell
 which cockpit and which lifecycle it holds. The detail, action, delete and nudge routes answer for a

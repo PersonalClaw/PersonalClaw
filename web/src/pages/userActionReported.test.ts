@@ -5,9 +5,9 @@ import { join } from 'node:path'
 // ── The last of the swallowed-write census: a USER-INITIATED action that failed silently ───────────
 //
 // Eight contracts in, the family is down to singletons that share no page and no helper — only the
-// property that a person clicked something and was told nothing. Seven fixed here, three more added
-// by the 2026-09-05 product-surface audit; **two deliberately
-// left alone**, which is the half of this cycle worth reading.
+// property that a person clicked something and was told nothing. Seven fixed here, three more found
+// in a product-surface sweep; **two deliberately
+// left alone**, which is the half of this change worth reading.
 //
 // FIXED — someone clicked, so a failure is theirs to know about:
 //   LoopComposer      `fileUpload`          attached design files silently dropped; the design pass
@@ -111,12 +111,12 @@ describe('a user-initiated write that fails tells the user', () => {
     expect(tick, 'and it is the un-forced call').not.toContain('force: true')
   })
 
-  it('the VIEW-RENDER side effect still swallows — its own comment rules on it', () => {
+  it('the VIEW-RENDER side effect still swallows — its own comment says why', () => {
     const raw = F('pages/artifacts/ArtifactViewer.tsx')
-    // 🪤 The ruling wraps across two comment lines ("… or surface\n  // an error toast"), so a
+    // 🪤 The decision wraps across two comment lines ("… or surface\n  // an error toast"), so a
     // contiguous literal never matches. Normalise the comment whitespace first.
     const flat = raw.replace(/\n\s*\/\/\s*/g, ' ')
-    expect(flat, 'the ruling must stay recorded next to the code').toMatch(
+    expect(flat, 'the decision must stay recorded next to the code').toMatch(
       /must never block the open or surface an error toast/,
     )
     const scan = strip(raw).replace(/=>/g, '⇒')
@@ -154,7 +154,7 @@ describe('a user-initiated write that fails tells the user', () => {
   })
 
   it('the optimistic rename reports rather than reverting', () => {
-    // Same ruling as `selectionPersistReported`: tell, do not fight input the user may still be editing.
+    // Same decision as `selectionPersistReported`: tell, do not fight input the user may still be editing.
     const chat = strip(F('pages/ChatPage.tsx'))
     const at = chat.indexOf('api.renameSession(')
     const around = chat.slice(Math.max(0, at - 200), at + 200)
@@ -163,7 +163,7 @@ describe('a user-initiated write that fails tells the user', () => {
   })
 
   it('a failed rewind reports as an error, not as something the assistant said', () => {
-    // AUD-A9, and a singleton here because the FIXED ratchet's window cannot reach it: the two
+    // A singleton here because the FIXED ratchet's window cannot reach it: the two
     // rewind api calls share one try/catch whose catch sits past the scan window. The catch used
     // to append `Rewind failed: ${String(e)}` as an ASSISTANT TURN — "ApiError: <raw message>"
     // in the assistant's voice, permanently in the transcript. A failure is unrequested bad news,

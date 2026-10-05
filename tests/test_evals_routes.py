@@ -246,7 +246,7 @@ def test_the_study_routes_offer_no_way_to_START_or_REGISTER_a_study():
 def test_the_study_route_never_publishes_the_locked_checks_or_the_rubric_text(
     evals_on, tmp_path, monkeypatch
 ):
-    """🔴 §2.2 at the HTTP boundary, over a REAL study rather than a stubbed payload.
+    """🔴 The locked checks at the HTTP boundary, over a REAL study rather than a stubbed payload.
 
     A stub would only prove the handler forwards what it is given. This registers a study
     with real locked checks and asserts the serialized response carries none of their
@@ -596,7 +596,7 @@ def test_the_runs_provenance_survives_the_wire_in_all_THREE_states(evals_on, mon
     * an object — the cells called that named model;
     * ``None`` — the run RECORDED that no provider was bound, so every cell resolved the offline
       ``scripted`` replay and no number in the table is a model measurement;
-    * the key ABSENT — the report predates provenance recording (ES-17 added the field without
+    * the key ABSENT — the report predates provenance recording (the field was added without
       moving ``report_schema``), so provenance is unrecorded. The route must NOT invent the key
       here: an added ``null`` would turn "we never recorded it" into "we recorded that no model
       ran", which is the absent-versus-declared-false collapse.

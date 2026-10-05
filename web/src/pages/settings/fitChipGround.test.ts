@@ -6,7 +6,7 @@
  *  to stop moving under it, which is a different change." It filed the hovered reading as an open
  *  finding rather than nudging the ink budget.
  *
- *  OU-14 made one instance of that finding FIRE. The fit chip sits on a row painted
+ *  A downloadable chat model made one instance of that finding FIRE. The fit chip sits on a row painted
  *  `--color-surface-high` when a model is not downloaded, inside a bento card that itself lifts to
  *  `hover:bg-surface-high` — and that route had never carried a downloadable chat model before, so
  *  no fit chip had ever rendered there. axe reported it as a serious `color-contrast` violation on

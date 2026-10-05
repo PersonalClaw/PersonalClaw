@@ -1,4 +1,4 @@
-"""Heat-earned promotion, wired (LEARN-R6f / WF2LEA-9 part 1).
+"""Heat-earned promotion, wired.
 
 `usage.promotion_ready` shipped as a correct multi-gate with NO caller anywhere in the
 tree — the exact inert shape this program keeps finding, and the worse half of it: the

@@ -1,4 +1,4 @@
-"""P1: vendor-neutral ACP CLI launch-argv resolver.
+"""Vendor-neutral ACP CLI launch-argv resolver.
 
 Pins the resolution precedence (env override → PATH → node-manager globs → npx
 fallback → None) and the ``.js → [node, script]`` shebang-dodge. The resolver is

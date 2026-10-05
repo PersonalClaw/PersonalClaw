@@ -1,5 +1,5 @@
 """F4: the three agent shapes are intentional layers, all carrying the
-per-agent ``provider`` field (E2-P5) so a marketplace-imported agent is a
+per-agent ``provider`` field so a marketplace-imported agent is a
 first-class peer of a config-defined one.
 
   - config.loader.AgentProfile      — the persisted agent in config.json agents{}

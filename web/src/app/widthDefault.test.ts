@@ -5,7 +5,7 @@ import { WIDTH_PRESETS, DEFAULT_WIDTH_PRESET } from './appearance'
 
 // ── Two declared defaults for one setting, and the reachable one was not the documented one ──
 //
-// Found while driving cycle 132's rejected `resetAll` claim. The app declared its default content width
+// Found while driving a rejected `resetAll` claim. The app declared its default content width
 // twice and they disagreed:
 //
 //   `empty.widthPreset = 'full'`              → 100%, edge to edge

@@ -18,7 +18,7 @@ Method names fall into two strata:
   optional: extension notifications from agents that don't speak them
   simply never arrive. Extension *requests* are NOT graceful, though —
   an agent that doesn't implement one answers JSON-RPC ``-32601`` on the
-  turn's terminal frame, which fails the whole turn (`O23`). So every
+  turn's terminal frame, which fails the whole turn. So every
   extension request is gated on a declared capability (``CAP_*`` below)
   and the caller degrades to a core-ACP path instead. Keeping them here
   lets the same client code drive both vendor-neutral agents and
@@ -74,7 +74,7 @@ METHOD_AGENT_SWITCHED = "_vendor.dev/agent/switched"
 # claude-code adapter 0.60.0 advertises exactly
 # ``_meta, auth, loadSession, mcpCapabilities, promptCapabilities, providers,
 # sessionCapabilities`` and answers ``commands/execute`` with JSON-RPC ``-32601``, which
-# ends the whole turn (ACP-AGENT-PARITY `O23`/`G4`). The module docstring above used to
+# ends the whole turn. The module docstring above used to
 # claim such requests "fail gracefully"; they do not, so the client refuses to send one
 # an agent never claimed to understand and the caller substitutes a plain prompt.
 CAP_COMMANDS = "_vendor.dev/commands"
@@ -177,16 +177,16 @@ class AcpEvent:
     request_id: str | int = ""
     options: list[dict[str, str]] = field(default_factory=list)
     tool_input: str = ""
-    #: The SAME input as :attr:`tool_input`, kept structured (ACP-AGENT-PARITY §2.5
-    #: gap 7). ``translate.py`` receives a real ``rawInput`` object and used to
+    #: The SAME input as :attr:`tool_input`, kept structured.
+    #: ``translate.py`` receives a real ``rawInput`` object and used to
     #: ``json.dumps`` it away, so ``chat_runner``'s schema-driven field renderer
     #: (``_redact_tool_input_obj``) saw a ``str``, returned ``None``, and every ACP
     #: tool card fell back to the flat string preview no matter how well the CLI
     #: described its call. ``None`` when the frame carried no object — an ACP frame
     #: with a bare string ``rawInput`` must NOT be dressed up as a one-key dict.
     tool_input_obj: dict[str, Any] | None = None
-    #: A file edit the frame DECLARED, as ``{"path", "before", "after"}``
-    #: (ACP-AGENT-PARITY §2.5 gap 7). The native file-change chip is driven off a name
+    #: A file edit the frame DECLARED, as ``{"path", "before", "after"}``.
+    #: The native file-change chip is driven off a name
     #: set (``_WRITE_FILE_TOOLS``) plus a disk read plus arg-shape knowledge, none of
     #: which transfers to a CLI whose edit tool is named and shaped however it likes.
     #: An ACP ``diff`` content block (or a ``strReplace``-style ``rawInput``) already

@@ -1,6 +1,6 @@
 """Line-anchored review findings, human triage, accepted-subset dispatch.
 
-The change's criterion is SC9: *"a workflow review stage emits line-anchored findings; the triage
+The behaviour under test: *"a workflow review stage emits line-anchored findings; the triage
 panel validates anchors against the real diff; the user accepts 2 of 5; the accepted pair
 auto-dispatches to the originating worker which applies them; rejected findings land in the
 calibration record; nothing was auto-written without acceptance"*.

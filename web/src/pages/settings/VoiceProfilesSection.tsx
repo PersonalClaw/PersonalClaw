@@ -45,7 +45,7 @@ function surfaceKey(namespace: string, name: string): string {
  *  what a user would have read, so the copy lives here, where copy belongs. An
  *  unrecognised code falls through to the code itself rather than to silence: an
  *  unmapped warning is still a warning, and dropping it would hide the one thing
- *  §1.3 wants said out loud. */
+ *  that must be said out loud. */
 const BIND_WARNING_COPY: Record<string, string> = {
   unverified_clone_consent:
     'This is a cloned voice with no consent on record. It will still speak — recording consent on the profile is what makes that provenance explicit.',
@@ -73,8 +73,7 @@ export function cloneRequirement(engine: VoiceEngine | undefined, engines: Voice
   return `${cause} Cloning needs an engine that can clone from a reference clip. ${fix}`
 }
 
-/** Voice profiles + per-surface bindings + the one-click migration (MULTIMODAL-IO
- *  §1/§3/§6, change MI-5).
+/** Voice profiles + per-surface bindings + the one-click migration.
  *
  *  Two tables, because they answer two different questions: the profile manager is
  *  "which voices exist", and the bindings table is "which one actually speaks, where".

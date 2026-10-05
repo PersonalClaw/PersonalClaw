@@ -1,4 +1,4 @@
-"""The governance ceiling: ceiling ∩ profile under tightest-wins (PHF-8 / §5 SH5.1+SH5.3).
+"""The governance ceiling: ceiling ∩ profile under tightest-wins.
 
 Four groups, one per acceptance criteria:
 

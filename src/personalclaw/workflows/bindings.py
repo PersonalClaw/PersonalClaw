@@ -92,8 +92,7 @@ class BindingContext:
     has_last: bool = False
     #: sibling node id → the outputs it has accumulated across iterations. A LIST, because a
     #: watcher reads a sibling that is still producing: a single "current output" would show
-    #: only the newest cycle and the synthesizer would never see a trend
-    #: (KNOWLEDGE-SYNTHESIS §4.2).
+    #: only the newest cycle and the synthesizer would never see a trend.
     sibling_outputs: dict[str, list[Any]] | None = None
     #: The prior successful cycle/run of this template, for diff-aware synthesis. `has_previous`
     #: distinguishes "the first run, legitimately" from "the reference is wrong" — the first is a
@@ -119,7 +118,7 @@ class BindingContext:
     #: is text the run was given.
     input_secrets: dict[str, tuple[str, ...]] | None = None
     #: The node's OWN output, exposed as `output.*` — for `success_when` only, which is
-    #: evaluated AFTER the node produced it (LOOPS-EVOLUTION R5f). Deliberately absent
+    #: evaluated AFTER the node produced it. Deliberately absent
     #: everywhere else: a prompt that could read its own output does not have one yet, and
     #: `has_self_output` keeps "the node produced nothing" distinguishable from "this root
     #: is not available here" instead of resolving to a silent empty string.

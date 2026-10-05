@@ -159,7 +159,7 @@ def test_ceilings_round_trip_through_create_and_read(tmp_path, monkeypatch) -> N
 
 
 def test_legacy_row_migrates_to_uncapped_defaults(tmp_path, monkeypatch) -> None:
-    """A pre-`AG-14` database gains the columns via _ensure_columns with uncapped
+    """An older database gains the columns via _ensure_columns with uncapped
     defaults, so an old loop behaves exactly as before."""
     monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "loops.db")
     conn = store._connect()  # creates the modern schema

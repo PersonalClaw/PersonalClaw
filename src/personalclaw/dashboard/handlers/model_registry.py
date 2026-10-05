@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 def _sel_log(
     op: str, outcome: str, resources: str, request: "web.Request", error: str = ""
 ) -> None:
-    """Record a model-binding mutation in the security event log (#45 — every
+    """Record a model-binding mutation in the security event log (every
     state-changing provider op is auditable, mirroring the app-lifecycle handlers).
     Best-effort: never let an audit failure break the request."""
     try:
@@ -326,7 +326,7 @@ def _step_down_name(
 
 
 async def _hf_token_ready() -> bool | None:
-    """Whether a gated download can proceed without pre-warning for a token (LMMV §5).
+    """Whether a gated download can proceed without pre-warning for a token.
 
     Delegates to the HF-token cascade's server-side pre-warn policy. Best-effort: returns
     ``None`` when the cascade can't answer, so the caller leaves ``token_ready`` off the row
@@ -491,7 +491,7 @@ async def api_models_available(request: web.Request) -> web.Response:
     # header can never quote different capacities.
     host, budget_bytes, hide_unrunnable = await asyncio.to_thread(_fit_probe)
 
-    # Gated pre-warn (LMMV §4.3/§5): a gated model row carries a server-side ``token_ready``
+    # Gated pre-warn: a gated model row carries a server-side ``token_ready``
     # computed from the HF-token cascade, so the UI can warn BEFORE the user clicks Download
     # when no valid token is present — instead of letting the download fail. Computed at most
     # once per response (only when a gated row is actually present) and whoami-cached, so a
@@ -638,7 +638,7 @@ async def api_models_active_set(request: web.Request) -> web.Response:
     """PUT /api/models/active/{use_case} — set the active model CHAIN for a use-case.
 
     Body: {models: ["provider_name:model_id", ...]} — an ordered fallback chain
-    for EVERY use case (MODEL-USE-CASES-V2): position 0 is the default, later
+    for EVERY use case: position 0 is the default, later
     entries are fallbacks resolution walks when an earlier provider's breaker is
     open or its build fails. Order is preserved verbatim.
 
@@ -818,7 +818,7 @@ async def api_models_active_set(request: web.Request) -> web.Response:
     active[use_case] = [str(m) for m in models]
     save_active_models(active)
 
-    # Audit the binding change (#45): repointing a use-case to a different model is
+    # Audit the binding change: repointing a use-case to a different model is
     # a security-relevant state change — record who set what.
     _sel_log(
         "models.active_set",

@@ -1,9 +1,9 @@
-"""Criterion 10, end to end: a THIRD-PARTY `type: "sync"` app registers, configures through
+"""End to end: a THIRD-PARTY `type: "sync"` app registers, configures through
 the standard provider routes, and syncs — with zero core changes.
 
 `test_sync_transport_contract.py` already pins the pieces at unit level (the type is in
 `PROVIDER_TYPES`, `SyncTypeHandler` registers and deregisters an instance). What it cannot
-show is the criterion's actual claim, which is about an app the core has never heard of:
+show is the actual claim, which is about an app the core has never heard of:
 
 * the transport arrives as an `app.json` + a Python file INSIDE the app's own directory —
   nothing in `src/personalclaw` names it, so "zero core changes" is a property of the
@@ -155,7 +155,7 @@ def registered(installed_app):
 
 def test_the_manifest_type_needs_no_core_change(registered):
     """The type is already in the closed set, so a third-party manifest is admissible as
-    shipped. If this ever fails, criterion 10 needs a core change and is not met."""
+    shipped. If this ever fails, a third-party sync app needs a core change."""
     from personalclaw.apps.manifest import PROVIDER_TYPES
 
     assert "sync" in PROVIDER_TYPES
@@ -196,7 +196,7 @@ def _providers_app() -> web.Application:
 
 @pytest.mark.asyncio
 async def test_it_configures_through_the_standard_provider_routes(registered):
-    """The criterion's "configures via the standard provider settings routes" clause, driven.
+    """The "configures via the standard provider settings routes" clause, driven.
 
     No durability-specific config endpoint is involved: the list, the schema and the config
     PATCH are the generic `/api/providers` ones.

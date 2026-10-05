@@ -1,7 +1,7 @@
-"""Parking the triggers bound to an app-contributed source (AUTO-A4, decision 9 semantics).
+"""Parking the triggers bound to an app-contributed source.
 
-The plan's requirement: "enable/disable of the app registers/unregisters the source, and triggers
-bound to a vanished source park with a typed reason, never silently die."
+The requirement: enable/disable of the app registers/unregisters the source, and triggers
+bound to a vanished source park with a typed reason, never silently die.
 
 **Reuses `triggers/autopause.py` rather than inventing a second mechanism.** The decision comes
 from `autopause.evaluate(exit_type=TRANSPORT_UNAVAILABLE)` — so the state, the health rollup, the

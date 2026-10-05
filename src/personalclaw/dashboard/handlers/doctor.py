@@ -36,7 +36,7 @@ from personalclaw.safety_flags import confirm_granted
 
 logger = logging.getLogger(__name__)
 
-# Full-report cache (§11 risk mitigation: 30s TTL so the dashboard rollup poll
+# Full-report cache (a 30s TTL so the dashboard rollup poll
 # reuses one run instead of re-probing every capability each tick).
 _DOCTOR_TTL = 30.0
 _doctor_cache: Optional[dict[str, Any]] = None
@@ -234,9 +234,9 @@ async def api_doctor_simulate_surfacing(request: web.Request) -> web.Response:
 # and "simulate a trigger" side by side, so a user can see what an automation WOULD do before
 # granting it unattended operation.
 #
-# 🔴 EVERY FACT BELOW IS READ FROM A SHIPPED RESOLVER, never re-derived. §3.3 is explicit that
-# the execution machinery belongs to AUTOMATION-SUBSTRATE (AUTO-R15 / `automation_dry_run`)
-# and that this plan's remainder is only the unified RENDERING of it. A second next-fire
+# 🔴 EVERY FACT BELOW IS READ FROM A SHIPPED RESOLVER, never re-derived. The execution
+# machinery belongs to the automation engine (`automation_dry_run`), and this module's part
+# is only the unified RENDERING of it. A second next-fire
 # calculator or a second capability evaluator here would be a surface that disagrees with the
 # scheduler — the exact drift `schedule_view.describe_cadence` was written to end.
 #
@@ -249,9 +249,9 @@ async def api_doctor_simulate_surfacing(request: web.Request) -> web.Response:
 #                       `unfenced_actions` (the same three the firepath capability gate calls)
 #   observe_mode      → `triggers.tools.run(dry_run=True, runner=None)`, which is exactly what
 #                       `mcp_automation`'s `automation_dry_run` dispatches to, plus the
-#                       T9 honesty check `ActionProvider.supports_dry_run`
+#                       dry-run honesty check `ActionProvider.supports_dry_run`
 
-#: The five facts §3.3 names, as data so a test can assert the response is TOTAL over them
+#: The five facts, as data so a test can assert the response is TOTAL over them
 #: rather than spot-checking three and trusting the rest. A fact dropped from the payload
 #: reddens the rail instead of quietly becoming a blank row on the trust surface.
 WOULD_EXECUTE_FACTS: tuple[str, ...] = (
@@ -381,7 +381,7 @@ def _capability_fact(trigger: Any) -> dict[str, Any]:
 
     Runs the firepath capability gate's own three calls rather than reading `capabilities` and
     calling it a day: the interesting answer is not what the row DECLARES, it is whether the
-    declaration covers the action. Decision 7's read-only default is part of that — a read-only
+    declaration covers the action. The read-only default grant is part of that — a read-only
     provider is granted with no `capabilities` block at all, and rendering such a trigger as
     "nothing permitted" would send users widening allowlists they never needed.
     """
@@ -412,7 +412,7 @@ def _capability_fact(trigger: Any) -> dict[str, Any]:
 
 
 def _observe_mode_fact(store: Any, trigger: Any) -> dict[str, Any]:
-    """Fact 5 — AUTOMATION-SUBSTRATE's dry fire, plus the T9 honesty verdict.
+    """Fact 5 — the automation engine's dry fire, plus the dry-run honesty verdict.
 
     `tools.run(dry_run=True, runner=None, yours=False)` is the local answer `automation_dry_run`
     gives (`mcp_automation`: "`automation_dry_run` needs no turn and is answered locally"): the
@@ -420,8 +420,8 @@ def _observe_mode_fact(store: Any, trigger: Any) -> dict[str, Any]:
     returns BEFORE the runner is consulted, which is the property that makes this safe to offer
     from a browser button.
 
-    `supports_dry_run` is the T9 rule: only the spawn-based LLM providers have an observe mode,
-    so for `bash`/`run-script`/`webhook` this is a PREVIEW of what would run and says so. A
+    `supports_dry_run` is the dry-run rule: only the spawn-based LLM providers have an observe
+    mode, so for `bash`/`run-script`/`webhook` this is a PREVIEW of what would run and says so. A
     panel that labelled a deterministic provider's description "observe-mode result" would be
     promising a safety property the provider does not have.
     """
@@ -435,7 +435,7 @@ def _observe_mode_fact(store: Any, trigger: Any) -> dict[str, Any]:
     # Same idiom as `proposals_contract`: the registry is populated lazily on first action
     # execution, so a read-only surface that skipped this would report EVERY built-in provider
     # as unknown and label every observe mode "preview" — a false negative that reads as a
-    # deliberate T9 refusal.
+    # deliberate observe-mode refusal.
     _ensure_default_providers_registered()
     provider_name = str(_inline_action(trigger).get("provider") or "")
     provider = get_action_provider(provider_name) if provider_name else None
@@ -461,9 +461,9 @@ def _observe_mode_fact(store: Any, trigger: Any) -> dict[str, Any]:
 async def api_doctor_simulate_automation(request: web.Request) -> web.Response:
     """POST /api/doctor/simulate/automation {trigger_id} — what this automation WOULD do.
 
-    The §3.3 would-execute description, beside the surfacing simulator: resolved next-fire,
+    The would-execute description, beside the surfacing simulator: resolved next-fire,
     the rendered `action_config` with `$vars` substituted, the target session key, the
-    capability grants, and the observe-mode result from AUTOMATION-SUBSTRATE's dry fire.
+    capability grants, and the observe-mode result from the automation engine's dry fire.
     Read-only by construction — nothing executes, no credential is resolved, no model is
     called, and the trigger row is never written."""
     from personalclaw.http_errors import json_error
@@ -492,7 +492,7 @@ async def api_doctor_simulate_automation(request: web.Request) -> web.Response:
                 "kind": trigger.kind,
                 "enabled": bool(trigger.enabled),
                 "state": str(getattr(trigger, "state", "") or ""),
-                # AUTO-R15's typed issue records, verbatim — including `closest`, which is the
+                # The typed issue records, verbatim — including `closest`, which is the
                 # whole point of that contract: an agent that wrote `debounce_seconds` is told
                 # which key it meant instead of being told its trigger is invalid.
                 "ok": bool(row.ok),

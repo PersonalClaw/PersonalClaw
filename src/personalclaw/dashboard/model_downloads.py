@@ -7,7 +7,7 @@ each download into a background **job** that streams progress over the SSE
 substrate (``dashboard/sse.py``):
 
 - :class:`ModelDownloadJob` — one in-flight or finished download in the ONE
-  canonical wire shape (LMMV §4.1): ``kind`` / ``state`` / ``progress`` /
+  canonical wire shape: ``kind`` / ``state`` / ``progress`` /
   ``downloaded_bytes`` vs ``total_bytes`` / ``speed_bps`` / ``eta_s`` / ``reason``.
 - :class:`ModelDownloadRegistry` — owns the jobs, dedupes by ``(kind, model)``,
   runs the blocking fetch off the event loop, and polls bytes-on-disk to publish
@@ -58,7 +58,7 @@ def registry_key(job_id: str) -> str:
 
 @dataclass
 class ModelDownloadJob:
-    """One bundled-model download — the ONE canonical wire shape (LMMV §4.1).
+    """One bundled-model download — the ONE canonical wire shape.
 
     ``kind`` names WHAT is being fetched (``weights`` for a model's weights,
     ``sidecar-install`` for a runtime/tooling install). ``state`` is the coarse
@@ -211,8 +211,8 @@ def _expected_size_bytes(name: str, model: str) -> int:
     fractional MiB: a model declaring ``138.102539`` MiB produced a 144,703,488-byte total
     against a 144,811,072-byte file — so the bar reached 100% about 105 KiB early, and the
     size the user agreed to before clicking disagreed with the denominator they then watched.
-    ``size_mb`` is a float precisely so a provider can state an exact size (OU-14 measured
-    this live), and losing it here silently overrode the provider that was being careful.
+    ``size_mb`` is a float precisely so a provider can state an exact size (as measured
+    live), and losing it here silently overrode the provider that was being careful.
     """
     for m in _list_models_for_provider(name):
         if getattr(m, "name", None) == model:
@@ -226,8 +226,8 @@ def _is_downloaded(name: str, model: str) -> bool:
     Two sources, provider first: the provider's own ``downloaded`` flag is authoritative when
     it says yes, because only the provider knows layouts specific to its backend.
 
-    When it says NO, the shared layout probe gets a second opinion
-    (LOCAL-MODEL-MANAGER-V2 §4.4). That asymmetry is the point: a false NO makes the user
+    When it says NO, the shared layout probe gets a second opinion.
+    That asymmetry is the point: a false NO makes the user
     re-download gigabytes they already have, and it is the common failure — a provider that
     checks its own `save()` layout misses a model the HF hub fetched into
     `models--{org}--{name}/`, where the model id never appears literally. A false YES would be
@@ -253,7 +253,7 @@ def _is_downloaded(name: str, model: str) -> bool:
 
 
 def _is_truncated(name: str, model: str) -> bool:
-    """Whether ``model``'s on-disk copy is present but INCOMPLETE (LMMV §2.3).
+    """Whether ``model``'s on-disk copy is present but INCOMPLETE.
 
     Read off the provider's own catalog row, which is where the truncation verdict already
     lives — this asks the same question the FE's ``integrity`` chip renders, so the Repair
@@ -384,7 +384,7 @@ class ModelDownloadRegistry:
         run.tasks.add(asyncio.ensure_future(self._drive(run)))
         return job, None
 
-    # ── sidecar installs (LMMV §3.2) ────────────────────────────────────────
+    # ── sidecar installs ────────────────────────────────────────────────────
     # A sidecar install (venv + pip + weights check) is a background job with the same
     # lifecycle as a weights fetch, so it rides THIS registry and the same SSE hub rather
     # than a second one. It differs only in ``kind`` and in carrying step detail, which

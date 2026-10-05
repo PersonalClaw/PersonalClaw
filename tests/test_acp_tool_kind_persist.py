@@ -1,13 +1,14 @@
-"""AAP-8 §2.5 gap 7, the `tool_kind` half — the declared kind reaches the PERSISTED row.
+"""The declared `tool_kind` reaches the PERSISTED row.
 
 **Where it died, measured before anything was changed.** `translate.py` emits the kind
 correctly (`extract_tool_event` reads `update["kind"]`, redacts it, puts it on
 `AcpEvent.tool_kind`) and `chat_runner` computed `_kind` from it and broadcast it on the
 live `tool_call` WS frame — but the `session.append("tool", …, meta={…})` beside that
 broadcast wrote only `tool_call_id`/`purpose`/`input`. So the kind was **emitted and then
-dropped one line before persistence**, which is why `acp-parity.md:219` reads
-`tool_kind: null` on every row of a re-drive whose `meta.input` was populated: the two
-values are computed six lines apart and only one of them was ever written.
+dropped one line before persistence**, which is why the structured tool-input row of
+`docs/agents/acp-parity.md` read `tool_kind: null` on every row of a re-drive whose
+`meta.input` was populated: the two values are computed six lines apart and only one of
+them was ever written.
 
 That distinction decided the fix. Had the kind been absent on the inbound frame the
 repair would have been a decoder change; it is present, so the repair is one key on the
@@ -44,7 +45,7 @@ from personalclaw.history import ConversationLog
 from personalclaw.hooks import ToolHookResult
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TOOL_CALL, LLMEvent
 
-# ── the run_chat harness (same shape as AAP-6's) ──────────────────────────────
+# ── the run_chat harness ──────────────────────────────────────────────────────
 
 
 async def _async_iter(items):
@@ -171,8 +172,8 @@ class TestTheDeclaredKindReachesThePersistedRow:
         assert rows, f"{provider}: the turn persisted no tool row at all"
         meta = rows[0].get("meta") or {}
         # Vacuity floor for the row itself: `input` is the half that ALREADY worked
-        # (acp-parity.md:219), so if it is missing the turn did not reach the append and
-        # the kind assertion below would be measuring nothing.
+        # (the parity doc's structured tool-input row), so if it is missing the turn did not
+        # reach the append and the kind assertion below would be measuring nothing.
         assert meta.get("input"), f"{provider}: the row has no input — this turn proved nothing"
         assert meta.get("kind") == frame["kind"], f"{provider}: meta={meta!r}"
 
@@ -197,7 +198,7 @@ class TestTheDeclaredKindReachesThePersistedRow:
     @pytest.mark.asyncio
     async def test_a_frame_that_declared_no_kind_persists_the_unknown_placeholder(self, tmp_path):
         """`unknown` is the decoder's OWN placeholder for "this frame declared none"
-        (`SeenToolCall`), and `G10` requires that absence stay representable rather than
+        (`SeenToolCall`), and that absence must stay representable rather than
         resolving to something permissive. So it is persisted, not stripped: a reader can
         tell "declared nothing" from "never measured"."""
         state, client = _make_state(tmp_path)

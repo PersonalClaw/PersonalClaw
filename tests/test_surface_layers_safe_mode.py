@@ -166,8 +166,8 @@ class TestTheCliFlag:
         those lines exist and are ordered — read off the source, not by starting a gateway
         inside a unit test.
 
-        The config read is `_boot_config()`, not `AppConfig.load()`: PHF-15 moved the
-        migration write-back out of `load()` into that named boot step, which is now the
+        The config read is `_boot_config()`, not `AppConfig.load()`: the
+        migration write-back moved out of `load()` into that named boot step, which is now the
         first thing in `_gateway` that touches the config file.
         """
         import inspect

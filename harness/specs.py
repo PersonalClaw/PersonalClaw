@@ -10,8 +10,8 @@ followed by a free-text body written FOR a coding agent. Three kinds live under
 
 **Design rule that prevents spec rot:** specs reference *stable anchors* only — pytest/
 vitest node-ids, path globs, and scanner check-ids — never source line numbers. Line
-numbers drift on every edit (they were already all stale in the plan that spawned this
-harness); node-ids and globs do not. ``validate`` enforces that the anchors resolve.
+numbers drift on every edit; node-ids and globs do not. ``validate`` enforces that the
+anchors resolve.
 """
 
 from __future__ import annotations
@@ -33,8 +33,8 @@ KIND_TASK = "task"
 _TYPE_TO_SUBDIR = {KIND_RULE: "rules", KIND_SCENARIO: "scenarios", KIND_TASK: "tasks"}
 _SUBDIR_TO_TYPE = {v: k for k, v in _TYPE_TO_SUBDIR.items()}
 
-# id shape: kebab/underscore slug (rules), or T<session>.<n> / V<session> for task-ish
-# ids the roadmap already uses. We keep it permissive but non-empty and space-free.
+# id shape: kebab/underscore slug (rules), or a dotted task-ish id such as
+# ``T1.example-config-field``. We keep it permissive but non-empty and space-free.
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
@@ -198,7 +198,7 @@ def validate_spec(spec: Spec, known_ids: set[str] | None = None) -> list[Validat
         acc = spec.meta.get("acceptance")
         if isinstance(acc, dict):
             if not acc.get("negative"):
-                err("task acceptance is missing the mandatory 'negative' clause (§1.1)")
+                err("task acceptance is missing the mandatory 'negative' clause")
         elif acc is not None:
             err("task 'acceptance' must be a mapping with 'positive'/'negative' lists")
 

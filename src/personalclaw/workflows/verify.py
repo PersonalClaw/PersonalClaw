@@ -297,7 +297,7 @@ async def run_verify_block(block: dict[str, Any], *, default_cwd: str = "") -> b
     engine records the node's failure in the rule's words).
 
     🔴 This is the callable `dispatch_gate` needs for every `verify_command` /
-    `verify_script` gate — and until WF2LOO-10 the gateway wired NOTHING into
+    `verify_script` gate — and the gateway once wired NOTHING into
     `EngineServices.verify`, so in production every such gate returned INTERNAL "no
     verifier wired for this gate". Two shipped templates ended on a verification gate that
     could not run. The engine-side contract was complete; the last mile was missing.

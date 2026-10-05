@@ -8,15 +8,15 @@ outright — *"an explicit dismiss persists forever"* — which makes the behavi
 but Discover is the product's only feature-discovery surface, so a reflex click permanently
 removed it with no list, no count of what was hidden, and no way back.
 
-What this file pins, per the ruling on the issue:
+What this file pins:
 
 * **Clear-all, not per-id.** The user is never shown *which* ids are stored (a hidden-tips
   list is out of scope), so a per-id control would ask them to choose from an invisible set.
 * **The control gates on ``restorable_count``, never on ``dismissed_count``.** The two hide
   reasons in ``select_visible`` are independent, so a tip that was dismissed AND whose area
   has since been engaged stays hidden either way. Gating on ``dismissed_count`` ships a
-  button that rewrites the settings file and changes nothing the user can see — the ruling
-  names this explicitly. ``test_discover.py`` owns the count's arithmetic; this file owns
+  button that rewrites the settings file and changes nothing the user can see.
+  ``test_discover.py`` owns the count's arithmetic; this file owns
   the route.
 * **The route is reachable.** A writer with no registration is the same bug as no writer.
 

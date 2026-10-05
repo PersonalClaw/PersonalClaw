@@ -1,4 +1,4 @@
-"""Tests for the fresh-session resumability audit + MCP replay-as-fake-server (Session 4).
+"""Tests for the fresh-session resumability audit + MCP replay-as-fake-server.
 
 The resume-audit proves a persisted loop can answer done/verified/next/how-to-verify from
 disk ALONE (no in-memory session) — the audit that would have caught the dead-resume bugs.

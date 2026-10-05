@@ -4,15 +4,15 @@ Five operations against the inbox a triage proposal can bind arguments to: ``arc
 ``mark_read``, ``mute_thread``, ``dismiss`` and ``reply_draft``. Registered like every other
 native action, so once it exists it is usable by ALL trigger kinds, not only by triage.
 
-**Every operation is reversible, and that is the reason this provider exists at all.** §1.6
-makes reversibility the definition of the trivial-capable class: an action the user can take
+**Every operation is reversible, and that is the reason this provider exists at all.**
+Reversibility is the definition of the trivial-capable class: an action the user can take
 back in one click is one the machine may perform unattended. So each execution returns an
 opaque ``reversal`` handle carrying the PRIOR state, and :meth:`reverse` restores it. A handle
 is base64 rather than a colon-joined string because two of the three things it has to carry —
 an item id (``{channel}_{ts}``, and a channel name may contain anything) and a previous draft
 (free text) — cannot be delimited by any character reserved in the handle grammar.
 
-**``reply_draft`` writes a DRAFT and never sends.** That is §1.6 bound 2 expressed in the
+**``reply_draft`` writes a DRAFT and never sends.** That bound is expressed in the
 provider rather than trusted to the caller: even a user's own always-approve rule for
 ``reply_draft`` reaches this code, and this code has no send path. Graduating a pattern to an
 actual send is a separate per-rule toggle over a send-capable provider, and it is deliberately
@@ -60,7 +60,7 @@ HANDLE_KIND = "inbox-op"
 
 #: Status-setting ops, and the status each sets. `archive` lands on HANDLED rather than
 #: DISMISSED: the two are different terminal states in `ItemStatus`, and archiving is the
-#: "I dealt with this" one. `dismiss` is here too even though §1.3 floors it at `high` (so it
+#: "I dealt with this" one. `dismiss` is here too even though it is floored at `high` (so it
 #: never auto-executes without a taught rule) — the provider still has to be able to perform
 #: it when a user's own rule or a hand-written trigger asks.
 _STATUS_OPS: dict[str, str] = {

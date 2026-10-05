@@ -546,7 +546,7 @@ class TestSubagentReaper:
 
     @pytest.mark.asyncio
     async def test_a_failed_reaper_audit_write_raises(self) -> None:
-        """A genuine SEL write failure must surface, not vanish (SH6.3).
+        """A genuine SEL write failure must surface, not vanish.
 
         The audit write here is the only record that the reaper SIGKILLed a subagent.
         It used to sit under ``except Exception: logger.exception(...)``, so a

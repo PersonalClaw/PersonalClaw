@@ -8,7 +8,7 @@
     python scripts/learning_benchmark.py --run --task sk_grill --trials 5
     python scripts/learning_benchmark.py --reproduce <baseline_run_id> --run
 
-Protocol: `docs/research/learning-benchmark-protocol.md` (PROTOCOL v1, owner-signed
+Protocol: `docs/research/learning-benchmark-protocol.md` (PROTOCOL v1, frozen
 before any run). This script implements the arms, the metrics, the verdict rule and §8's
 publication rules; it does not restate any of them.
 
@@ -461,7 +461,9 @@ def main(argv: list[str] | None = None) -> int:
             "it every cell resolves the offline scripted fixture and measures nothing"
         ),
     )
-    p.add_argument("--reproduce", default="", help="baseline run id to judge this run against (V4)")
+    p.add_argument(
+        "--reproduce", default="", help="baseline run id to judge this run against (protocol §8)"
+    )
     p.add_argument("--against", default="", help="with --check-reproduction: the re-run's run id")
     args = p.parse_args(argv)
 

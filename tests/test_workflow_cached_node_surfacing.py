@@ -1,6 +1,6 @@
-"""Cache-origin reaches the run's own node list, not only the SSE stream (issue 2769 / WV-10).
+"""Cache-origin reaches the run's own node list, not only the SSE stream (issue 2769).
 
-`WF2-A1` emits `cached` on `workflow_node_done` for one stated reason (`workflows/journal.py`):
+The engine emits `cached` on `workflow_node_done` for one stated reason (`workflows/journal.py`):
 *"did my edit actually re-run anything?" is the first question a user asks after a mid-flight
 edit, and the answer has to come from the ledger, not from reading logs.* The flag rode the live
 event stream and nothing else — so the answer existed for as long as the tab stayed open and

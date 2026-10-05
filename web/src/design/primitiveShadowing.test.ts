@@ -51,7 +51,7 @@ const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && 
 //     ui/motion/ContextMenu wraps a child and opens at the POINTER on contextmenu/long-press;
 //     FileTree's takes explicit {x,y} because the file row opens it from a "⋯" button at a
 //     computed anchor. Both clamp to the viewport (the local one says it mirrors the shared
-//     clamp, and bug #32 is referenced in the shared one). Converging them means giving the
+//     clamp, and the shared one says the same of it). Converging them means giving the
 //     shared component an imperative open-at-coords mode — a new abstraction with one adopter.
 //   Spark    (dashboard/widgets/SystemHealth) DISTINCTION — pure name coincidence. ui/Spark is
 //     the BRAND MARK (the claw, scheme-gradient painted); SystemHealth's is an SVG SPARKLINE

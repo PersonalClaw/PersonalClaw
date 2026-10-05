@@ -13,8 +13,8 @@ of the log's own.
 
 ``require_proxy_signature`` is the INBOUND authentication an app backend applies to
 every request. An app backend binds on loopback with no auth of its own — the port is
-a *network* boundary, not an *authorization* one (see
-``docs/architecture/app-platform.md`` §2.1). The gateway reverse-proxy signs every
+a *network* boundary, not an *authorization* one (see ``docs/architecture/app-platform.md``
+§"Inbound authentication"). The gateway reverse-proxy signs every
 request it forwards with an HMAC over a per-app secret; this middleware verifies that
 signature **fail-closed** so a local process that finds the port cannot bypass the
 gateway proxy (and therefore session auth + the app-permission middleware). The signer
@@ -94,7 +94,7 @@ def _deny(request: web.Request, reason: str) -> None:
     """Record a denial without leaking the secret or the presented signature.
 
     An app backend is a separate process without core's ``sel()`` (the SecurityEventLog
-    is a gateway singleton), so the honest equivalent of the plan's "denials log to SEL"
+    is a gateway singleton), so the honest equivalent of logging denials to the SEL
     is a structured stderr warning in the app process. Neither the secret nor the
     signature value is logged — only the method + path + a category reason.
     """

@@ -30,7 +30,7 @@ _GB = 1024 * _MB
 # unknown → "other".
 UPLOAD_CATEGORIES = ("video", "audio", "image", "document", "archive", "other")
 
-# Default per-category byte caps. Rationale is in large-file-upload-rethink.md §3.
+# Default per-category byte caps, each with its rationale beside it.
 _DEFAULT_LIMITS: dict[str, int] = {
     "video": 2 * _GB,  # the driving requirement — screen recordings + real footage
     "audio": 1 * _GB,  # long/lossless recordings, below video

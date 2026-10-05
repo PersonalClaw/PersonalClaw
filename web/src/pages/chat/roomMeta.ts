@@ -85,7 +85,7 @@ export function roomLine(room: RoomRecord, msg: RoomMessage): RoomLine {
  *  messages are usually DIFFERENT members, so that collapse would print one member's words
  *  under another's name. The fix is not to make the merge speaker-aware — it is that a room
  *  has no merge at all, because a room's messages are authored turns and never fragments of
- *  one. AGENT-ROOMS names this as the likeliest room-specific UI defect; this is the shape
+ *  one. This is the likeliest room-specific UI defect; this is the shape
  *  that cannot have it, and `roomMeta.test.ts` pins it. */
 export function roomLines(detail: RoomDetail): RoomLine[] {
   return detail.messages

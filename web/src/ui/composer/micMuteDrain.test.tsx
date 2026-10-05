@@ -9,7 +9,7 @@ import { useMicRecorder } from './useMicRecorder'
  * hands-free segment is not merely paused — its captured audio, INCLUDING the final-flush
  * tail that `MediaRecorder.stop()` delivers, is thrown away and never transcribed, so the
  * assistant's own voice cannot loop back in as input. That is the whole point of the
- * `drain()` half of §4.2 (`useMicRecorder.ts` drain + the `discarded` branch of `onstop` +
+ * `drain()` half of the mute (`useMicRecorder.ts` drain + the `discarded` branch of `onstop` +
  * the mute effect): without it the queued speech is merely delayed, then arrives a moment
  * later as a spurious user turn.
  *

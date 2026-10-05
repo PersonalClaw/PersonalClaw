@@ -1,4 +1,4 @@
-"""The dashboard-as-views registry (AMBIENT-SURFACES §1 / A2-1).
+"""The dashboard-as-views registry.
 
 One JSON store under the home — ``dashboard_views.json`` — holds the composable
 home: named VIEWS over one widget registry. A view is an ordered list of tile
@@ -67,9 +67,9 @@ _STORE_FILENAME = "dashboard_views.json"
 #: A tile size is a HINT to the band's flow layout, not coordinates.
 _SIZES = ("s", "m", "l", "full")
 #: Who added a tile. An ``agent`` row is a PROPOSAL (renders with an accept/dismiss
-#: chip); the agent never silently rearranges the user's home (§1.3 propose-don't-pin).
+#: chip); the agent never silently rearranges the user's home (propose-don't-pin).
 _ADDED_BY = ("user", "agent")
-#: How a tile stays fresh. ``view`` (a bound AUTOMATION-SUBSTRATE trigger) is NOT here until
+#: How a tile stays fresh. ``view`` (a bound automation trigger) is NOT here until
 #: its runtime is — see :class:`TileRefresh`.
 _REFRESH_MODES = ("manual", "ttl")
 
@@ -122,9 +122,9 @@ class ViewNotFoundError(Exception):
 
 @dataclass
 class TileDataNode:
-    """One data source feeding a live tile's skeleton (AMBIENT-SURFACES §2.1).
+    """One data source feeding a live tile's skeleton.
 
-    The plan's "bound data workflow (degenerate case: one action node)" — so a data node
+    A "bound data workflow" in its degenerate case (one action node) — so a data node
     IS an action-provider dispatch, and a tile's ``data`` list is the whole workflow. Its
     ``id`` is the binding name: a node with ``id: "runs"`` fills ``{{nodes.runs.output}}``
     in the skeleton.
@@ -142,18 +142,18 @@ class TileDataNode:
 
 @dataclass
 class TileRefresh:
-    """How a tile stays fresh (§1.1 ``refresh``, §2.1 the layout/data split).
+    """How a tile stays fresh.
 
     ``mode``:
 
     * ``manual`` — only the tile's refresh button (the default; a pinned static artifact).
     * ``ttl`` — re-render when ``ttl_secs`` have elapsed since the last refresh. The
-      pre-substrate cadence; ``0`` means "use ``AmbientConfig.default_refresh_ttl_secs``".
+      trigger-free cadence; ``0`` means "use ``AmbientConfig.default_refresh_ttl_secs``".
 
-    ``mode: "view"`` (a bound AUTOMATION-SUBSTRATE view trigger) is deliberately absent: it
-    is a later IN-PLACE ttl→view upgrade (EXT:AUTOMATION-SUBSTRATE step 8), and a declared
-    mode with no runtime is the failure shape this repo has been burned by. Adding it when
-    the substrate lands changes this literal and the dispatch in ``tile_refresh``, nothing else.
+    ``mode: "view"`` (a bound automation view trigger) is deliberately absent: it
+    is a later IN-PLACE ttl→view upgrade, and a declared
+    mode with no runtime is the failure shape this repo has been burned by. Adding it
+    later changes this literal and the dispatch in ``tile_refresh``, nothing else.
 
     ``skeleton`` is the slug of the artifact holding the ``{{...}}`` body — a SEPARATE
     artifact from the tile's own ``ref``. That split is the point: the skeleton is authored
@@ -400,8 +400,8 @@ def _is_preset(view_id: str) -> bool:
 
 
 def create_view(name: str, icon: str | None = None) -> DashboardView:
-    """Create an empty user view. The compose-editor (later) fills its tiles; S1 ships
-    presets, so a fresh user view starts empty and composable against this schema."""
+    """Create an empty user view. The compose-editor (later) fills its tiles; the built-in
+    views are presets, so a fresh user view starts empty and composable against this schema."""
     import uuid
 
     name = name.strip()
@@ -467,7 +467,7 @@ def add_tile(view_id: str, ref: str, size: str = "m", added_by: str = "user") ->
     """Pin an artifact tile to a view (the pin-to-dashboard / propose path).
 
     Only ``artifact:<slug>`` refs are addable — first-party ``core:`` widgets stay
-    hard imports and are never registry entries (§1.2). Adding to a preset writes to
+    hard imports and are never registry entries. Adding to a preset writes to
     the view's overlay, never the locked core composition. Bounded by ``max_tiles``.
 
     REFUSED while ``ambient.tiles_enabled`` is off, rather than written to a surface that
@@ -507,7 +507,7 @@ def add_tile(view_id: str, ref: str, size: str = "m", added_by: str = "user") ->
 
 
 def set_tile_refresh(view_id: str, ref: str, patch: dict) -> DashboardTile:
-    """Bind (or unbind) a tile's refresh (§2.1). Returns the tile as stored.
+    """Bind (or unbind) a tile's refresh. Returns the tile as stored.
 
     Validation happens in :func:`_refresh_from_dict`, so an unrecognized mode lands as
     ``manual`` rather than being rejected — the same fail-open the reader uses, applied at

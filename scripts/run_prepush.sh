@@ -47,8 +47,8 @@ ZERO=0000000000000000000000000000000000000000
 needs_gate=0
 needs_lint=0
 # Is any outgoing ref RELEASE-relevant (`main`, a release branch, or a tag)? Those keep the
-# full local render-smoke chain; ordinary topic branches let CI be the gate. Ruling recorded
-# above the gate block below.
+# full local render-smoke chain; ordinary topic branches let CI be the gate. The reasoning is
+# recorded above the gate block below.
 release_ref=0
 if [ -t 0 ]; then
   # Manual invocation from a terminal (no ref ranges on stdin) — run the full
@@ -301,7 +301,7 @@ fi
 # set is a bypass that gets set. Reverting is one line — drop this `release_ref` test.
 if [ "$release_ref" -eq 0 ]; then
   echo "pre-push: frontend changes outgoing on a topic branch — CI is the render-smoke gate"
-  echo "          (owner ruling 2026-09-18; main/release/tags still run it locally)."
+  echo "          (main/release/tags still run it locally)."
   skip_frontend_checks "topic branch: CI is the render-smoke gate"
   finish_report
 fi

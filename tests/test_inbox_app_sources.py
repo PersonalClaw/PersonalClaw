@@ -4,7 +4,7 @@ Before this, ``inbox`` was served by an ``EntitySeamHandler``: the manifest
 factory RAN at enable-time and its instance was discarded, and resolution read only
 the ``personalclaw.message_source_providers`` entry-point group — which an installed
 app cannot contribute to. So a manifest declaring ``{"type": "inbox", ...}`` validated,
-installed clean, and then did nothing (the #47 class).
+installed clean, and then did nothing (the declared-but-dead class).
 
 Driven here with a real ``MessageSourceProvider`` fixture app written to disk and put
 through the actual install → enable → poll → disable path, plus the poll catalog's
@@ -177,7 +177,7 @@ def test_bundled_filesystem_inbox_is_a_live_consumer_of_this_path():
     declares ``type: inbox``, so its factory's instance is what the real handler
     registers, and the drop folder the inbox polls while ``inbox.enabled`` is on.
     (The provider is stateless, so sharing that instance is equivalent to building a
-    fresh one from the entry-point class — the pre-INU-8 behaviour.)"""
+    fresh one from the entry-point class — the earlier behaviour.)"""
     import json as _json
 
     from personalclaw.inbox_providers.filesystem_source import create_provider

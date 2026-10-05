@@ -1,4 +1,4 @@
-// Shared motion/interaction primitives (component-redesign Slice 0). Import from
+// Shared motion/interaction primitives. Import from
 // here so per-component work is composition, not reinvention.
 export { Expandable } from './Expandable'
 export { Bud } from './Bud'

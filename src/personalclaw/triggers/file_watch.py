@@ -1,6 +1,6 @@
-"""The `file` trigger kind's runtime — poll, dedup, delta payload (AUTO §7 crit 2).
+"""The `file` trigger kind's runtime — poll, dedup, delta payload.
 
-Criterion 2: "*When a file in ~/notes changes, summarize it into my knowledge base*" is creatable in
+The goal: "*When a file in ~/notes changes, summarize it into my knowledge base*" is creatable in
 chat in one message.
 
 **Measured before writing.** The `file` kind is fully DECLARED — it is in `models.KINDS`, its spec
@@ -16,16 +16,16 @@ pass so startup does not report "everything changed", and deletions detected as 
 now". `watchdog` is not a dependency of this project and adding one for a trigger kind would be a
 platform-specific runtime (inotify/FSEvents/kqueue) in a package that currently runs anywhere.
 
-**What this module adds over that watcher, and why each is required by the plan:**
+**What this module adds over that watcher, and why each is required:**
 
-* **Glob roots, not directory roots.** The table specifies `{paths: [globs]}`. `~/notes/**` has to
+* **Glob roots, not directory roots.** The spec is `{paths: [globs]}`. `~/notes/**` has to
   expand, and `~` has to expand too — a trigger authored in chat will contain a tilde.
-* **CONTENT-HASH dedup, keyed on `(path, content_hash)`** — the plan says explicitly "not path-only
-  (R12)". A path-only key re-fires when a file is touched, rewritten identically, or saved twice by
+* **CONTENT-HASH dedup, keyed on `(path, content_hash)`** — explicitly not path-only.
+  A path-only key re-fires when a file is touched, rewritten identically, or saved twice by
   an editor; the hash makes a no-op save a no-op fire.
-* **A changed-file DELTA payload**, so "fired workflows foreach only over new items". The fire
+* **A changed-file DELTA payload**, so fired workflows foreach only over new items. The fire
   carries the specific paths, not "something under ~/notes changed".
-* **A `vcs` preset** watching `.git/refs/heads/*` for on-commit automations, also from the table.
+* **A `vcs` preset** watching `.git/refs/heads/*` for on-commit automations.
 
 Pure mechanics: this decides WHAT changed and whether it is new. Firing the action is the trigger
 service's job, exactly as `project_occurrences` computes a week without dispatching anything.
@@ -126,8 +126,8 @@ def content_hash(path: Path) -> str:
 class WatchState:
     """What a watch has already seen. Serialized onto the trigger's state by the caller.
 
-    `hashes` is `path -> content_hash`, which IS the dedup key the plan requires: "(path,
-    content_hash), not path-only (R12)". Keeping a map rather than a set of composite strings lets
+    `hashes` is `path -> content_hash`, which IS the dedup key: `(path,
+    content_hash)`, not path-only. Keeping a map rather than a set of composite strings lets
     a changed file replace its own entry instead of accumulating one row per version.
     """
 
@@ -163,8 +163,8 @@ class WatchState:
 class Delta:
     """One poll's result: what changed, and whether the watch is complete.
 
-    Separate `added`/`modified`/`removed` rather than one list, because §2 says fired workflows
-    "foreach only over new items" — a summarize-on-change automation wants added and modified, and
+    Separate `added`/`modified`/`removed` rather than one list, because fired workflows
+    foreach only over new items — a summarize-on-change automation wants added and modified, and
     a cleanup automation wants removed. One merged list would force every consumer to re-derive
     this.
     """
@@ -261,7 +261,7 @@ def fire_payload(delta: Delta, *, trigger_id: str = "", trigger_name: str = "") 
     file tools, under the normal capability checks; passing file bodies through a trigger payload
     would route arbitrary disk content into an action's arguments — the same rule the lifecycle
     payloads
-    follow (S82).
+    follow.
     """
     return {
         "trigger_id": trigger_id,
@@ -287,7 +287,7 @@ def should_fire(delta: Delta) -> bool:
 
 
 def vcs_patterns(repo_root: str | Path) -> list[str]:
-    """§2's `vcs` preset — the globs that move on commit, rooted at `repo_root`.
+    """The `vcs` preset — the globs that move on commit, rooted at `repo_root`.
 
     `.git/HEAD` is included alongside `refs/heads/*` because a branch SWITCH moves HEAD without
     touching any ref, and an on-commit automation that ignored it would fire on the next commit

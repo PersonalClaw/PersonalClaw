@@ -52,7 +52,8 @@ from personalclaw.llm.base import (  # noqa: F401
 from personalclaw.llm.branded_specs import BrandedProviderSpec  # noqa: F401
 
 # What a model app's factory reads from its build kwargs — the per-call sampling temperature and
-# the output cap — so it is read ONE way. Five first-party apps each copied these lines (#124).
+# the output cap — so it is read ONE way. Five first-party apps each copied these lines
+# (PersonalClawApps #124).
 from personalclaw.llm.build_kwargs import output_cap, per_call_temperature  # noqa: F401
 from personalclaw.llm.capabilities import (  # noqa: F401
     Capability,

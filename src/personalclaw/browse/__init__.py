@@ -11,7 +11,7 @@ agent can act on, plus the sentinel action language it emits back:
   * ``sentinels`` — ``parse_sentinel`` turns an LLM's text (``CLICK <ref>``, ``TYPE <ref>(v)``,
     …) into typed ``Action`` objects that round-trip back to their sentinel line.
 
-BA-3 adds the driver that consumes all three:
+The driver that consumes all three:
 
   * ``loop`` — ``run_browse_loop``: navigate (through the egress gate) → extract → FENCE →
     decide → act, bounded by ``max_steps``, the model budget and stuck detection, verifying
@@ -19,7 +19,7 @@ BA-3 adds the driver that consumes all three:
   * ``page`` — ``CdpPageDriver``: the non-navigation half of the wire (click / fill / submit /
     scroll / back / screenshot-to-a-PATH), addressing elements by the stable identity.
 
-BA-10 adds the one action that is NOT addressed by identity, for the page shape that has none:
+One action is NOT addressed by identity, for the page shape that has none:
 
   * ``vision`` — grounding a described control to a point on the step's screenshot through the
     EXISTING ``image_modality`` capability, so a ``<canvas>`` or image-map becomes clickable via a

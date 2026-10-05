@@ -161,7 +161,7 @@ def test_the_sdk_surface_is_closed_under_its_own_signatures():
     the OTHER direction of the same relation — which of the exports a published signature
     NAMES, its only mechanically-checkable reader for a facade whose real consumers are in
     another repository. One walk, so the two halves cannot drift into two definitions of
-    "published signature"; that module's docstring carries the rulings.
+    "published signature"; that module's docstring carries the rules.
     """
     gaps = surface_closure().gaps
     assert not gaps, (
@@ -236,8 +236,8 @@ def test_the_promoted_names_resolve_and_the_private_ones_are_gone(name):
     alias in place would have shipped both spellings forever — which is how the private
     name got onto the surface to begin with.
 
-    `run_chat` was promoted here by the same change and is STILL on the facade. EA-7 wants
-    it gone — it is a second route past the sender-trust gate, and the chokepoint
+    `run_chat` was promoted here by the same change and is STILL on the facade. It should
+    go — it is a second route past the sender-trust gate, and the chokepoint
     (`personalclaw.channel_inbound`) is only a chokepoint if it is the only route — but four
     shipping channel apps import it from this path, and the apps repo cannot land
     atomically with core, so the removal is sequenced after they migrate. That gap is

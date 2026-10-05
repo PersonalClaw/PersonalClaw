@@ -1,7 +1,7 @@
 """A legacy automation file is imported once per home, and what it would run waits for the owner.
 
 Measured on `main` (47bcbcce8) in a scratch home before any of this was written, reproducing the
-apps-tests lane's finding and then looking for the same shape next to it:
+`event_triggers.json` defect and then looking for the same shape next to it:
 
 * `event_triggers.json` holding one row that runs `bash`: after a boot the store held
   `event:<id>` switched ON, `created_by: user`, `capabilities: {"providers": ["bash"]}`. Planting
@@ -175,7 +175,7 @@ def _body(resp: web.Response) -> dict:
     return json.loads(resp.body.decode())
 
 
-# ── 🔴 clause 2: nothing the owner did not give ──
+# ── 🔴 nothing the owner did not give ──
 
 
 def test_a_legacy_row_that_runs_bash_arrives_switched_off_with_nothing_granted(home):
@@ -335,7 +335,7 @@ def test_a_name_from_the_file_cannot_become_markup_in_the_review_item(home):
     assert _literal("`edge`") == "`` `edge` ``"
 
 
-# ── 🔴 clause 1: at most once per home ──
+# ── 🔴 at most once per home ──
 
 
 def test_the_file_is_renamed_and_a_file_that_comes_back_is_not_read(home):
@@ -386,7 +386,7 @@ def test_a_home_that_imported_under_the_earlier_name_does_not_import_again(home)
     assert TriggerStore(base_dir=home).get("event:deploy-hook") is None
 
 
-# ── 🔴 clause 3: idempotent ──
+# ── 🔴 idempotent ──
 
 
 def test_a_crash_midway_writes_nothing_twice(home, monkeypatch):

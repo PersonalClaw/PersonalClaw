@@ -6,7 +6,7 @@ import { STREAM_SETTLED_GRACE_MS, resolveStalledStream } from './streamStall'
 const quiet = STREAM_SETTLED_GRACE_MS + 1
 
 describe('resolveStalledStream', () => {
-  // The measured defect. CI run 36091495547 (`e2e-a11y`, sessionMap.spec.ts SSM-13, and
+  // The measured defect. CI run 36091495547 (`e2e-a11y`, sessionMap.spec.ts's no-Index-tab test, and
   // again on retry1) left a chat claiming the stream for 84 seconds over a turn that had
   // already finished: the reply was fully rendered, the session's ledger row had landed
   // ("unpriced · 51 tokens"), and the page still showed "Assistant is responding…" with the

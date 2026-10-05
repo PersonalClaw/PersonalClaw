@@ -1,6 +1,6 @@
-"""Hazard-site audit for the two spawns PLATFORM-HARDENING-FLOORS §1.1 named (SH1.5).
+"""Hazard-site audit for the two spawns named as fork-wedge candidates.
 
-§1.1 named two spawn sites as candidates for the *pre-existing* form of the fork-wedge bug —
+Two spawn sites were named as candidates for the *pre-existing* form of the fork-wedge bug —
 a spawn reached off a thread while the event loop / another thread holds locks, that could
 wedge holding inherited fds:
 
@@ -8,10 +8,10 @@ wedge holding inherited fds:
       (``BackendSupervisor.start`` is called from ``_check_and_revive`` on a 30s timer).
   (b) ``action_providers/bash_provider.py`` — a bash-action spawn on the event-loop thread.
 
-The audit outcome (recorded here as executable assertions, per the acceptance criteria "a regression
-test for a proven wedge, or a recorded finding that the sites are safe and why"):
+The audit outcome (recorded here as executable assertions — a regression
+test for a proven wedge, or a recorded finding that the sites are safe and why):
 
-**Both sites are SAFE — and PHF-1 makes them safer.** The wedge in §1.1 is specifically a
+**Both sites are SAFE — and the post-exec ceiling makes them safer.** The wedge is specifically a
 ``preexec_fn`` hazard: only ``preexec_fn`` forces the ``fork()``-of-a-multithreaded-process
 that can wedge before ``exec`` while holding inherited fds. Neither site ever passed
 ``preexec_fn`` (there are zero on the whole tree — see ``test_spawn_preexec_guard``), so
@@ -22,7 +22,7 @@ shim), which is why it does NOT reintroduce the hazard at either site:
     with no ``preexec_fn`` — the ceiling is applied by the shim in the exec'd child, so the
     watchdog thread's ``Popen`` cannot run agent bytecode pre-exec and cannot wedge on a
     lock. (A ``preexec_fn`` here would fork the whole gateway from the daemon thread — the
-    exact hazard §1.1 warned about — which is why we route via argv, not preexec_fn.)
+    exact hazard named above — which is why we route via argv, not preexec_fn.)
   * (b) the bash action spawn goes through ``create_subprocess_limited`` (async, no
     preexec_fn), so it stays on ``posix_spawn`` and the event loop is never blocked on a
     forked child's errpipe read.
@@ -86,12 +86,12 @@ def test_backend_respawn_uses_argv_shim_not_preexec_fn():
     assert "spawn_shim_argv" in calls, "backend respawn must ceiling-wrap via spawn_shim_argv"
     assert not _func_passes_preexec_fn(node), (
         "backend respawn must NOT pass preexec_fn — that would fork the gateway from the "
-        "watchdog daemon thread (the §1.1 wedge hazard)"
+        "watchdog daemon thread (the fork-wedge hazard)"
     )
 
 
 def test_backend_respawn_is_reached_from_watchdog_thread():
-    """Corroborates that this IS the watchdog-thread path §1.1 named (revive → start)."""
+    """Corroborates that this IS the watchdog-thread path the module names (revive → start)."""
     src = (_src_root() / "apps" / "backend_runtime.py").read_text(encoding="utf-8")
     assert "_check_and_revive" in src and "start_backend_watchdog" in src
 

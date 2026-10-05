@@ -193,7 +193,7 @@ def _shipped_default_level() -> int:
 
     ``AgentConfig.log_level`` defaults to ``"WARNING"`` and ``cli.py`` applies it whenever
     ``--verbose`` is absent. Read here so this rail keeps meaning "visible as shipped" if that
-    default ever changes — and so it reds today for an INFO-only line, which is what `G47`
+    default ever changes — and so it reds today for an INFO-only line, which is what was
     literally asked for and would have been inert.
     """
     from personalclaw.config.loader import AgentConfig

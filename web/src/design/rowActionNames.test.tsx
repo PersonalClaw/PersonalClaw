@@ -64,7 +64,7 @@ describe('every row-scoped RowAction names its row', () => {
     ['pages/dashboard/widgets/TasksWidget.tsx', 1, 0],
     ['pages/dashboard/widgets/PinnedArtifacts.tsx', 1, 0],
     ['pages/dashboard/widgets/ActiveWork.tsx', 2, 1],   // the composer's Send is a singleton
-    // doctor + update + health-unknown + doctor-off: one each, no rows. The third is ux-673's
+    // doctor + update + health-unknown + doctor-off: one each, no rows. The third is the
     // "Health unknown" row and the fourth says the Doctor is switched off — singletons like their
     // siblings (the strip has no rows to name), so `named` stays 0.
     ['pages/dashboard/widgets/SystemHealth.tsx', 0, 4],
@@ -146,7 +146,7 @@ describe('the two list surfaces name their row controls too', () => {
 //   · POSITION is what actually separates one row from the next in a chronological list, and it is
 //     human where `entry.sha` would be a machine code read out loud (`change 2 of 3 — …`).
 //   · The deeper problem — three rows a SIGHTED user cannot tell apart either — is the backend's commit
-//     subject, and it is logged as an owner call rather than papered over here.
+//     subject, and it is left as its own question rather than papered over here.
 
 describe('the hand-rolled row actions a primitive-shaped census could not see', () => {
   /** [the verb as written, the expression that must carry the row]. */
@@ -204,11 +204,11 @@ describe('the hand-rolled row actions a primitive-shaped census could not see', 
   it('camelCase, because ui/Button spreads no rest', () => {
     // 🪤 `aria-label` on our own components compiles and reaches NOTHING — TS does not
     // excess-property-check a dashed JSX attribute. `ui/ariaPropForwarding` forbids it globally; this
-    // asserts the panel this cycle touched did not reintroduce it.
+    // asserts the panel fixed here did not reintroduce it.
     expect(panel(), 'the dashed spelling silently vanishes on ui/Button').not.toMatch(/<Button[^>]*aria-label=/)
   })
 
-  // ── 2026-08-19 (ux-716): the same defect at ELEVEN instances, one card component ────────────────
+  // ── 2026-08-19: the same defect at ELEVEN instances, one card component ─────────────────────────
   //
   // `#/settings/providers` renders one `ProviderCard` per provider. **11 buttons, and
   // every one of them was named "Configure"** — one duplicate group of 11, each opening a DIFFERENT
@@ -298,7 +298,7 @@ describe('the hand-rolled row actions a primitive-shaped census could not see', 
     return out
   }
 
-  it('finds the population, and the five this cycle named are in it', () => {
+  it('finds the population, and the five named here are in it', () => {
     const all = rowActions()
     expect(all.length, 'the row-action scan must resolve its population').toBeGreaterThanOrEqual(10)
     const named = all.filter((r) => r.named)
@@ -306,7 +306,7 @@ describe('the hand-rolled row actions a primitive-shaped census could not see', 
     expect(named.map((r) => r.rel)).toContain('pages/settings/DurabilityPanel.tsx')
   })
 
-  it('the panel this cycle fixed has no unnamed row action left', () => {
+  it('the panel fixed here has no unnamed row action left', () => {
     const mute = rowActions().filter((r) => !r.named && r.rel === 'pages/settings/DurabilityPanel.tsx')
     expect(mute, `still sharing one name across rows:\n${mute.map((m) => m.text).join('\n')}`).toEqual([])
   })

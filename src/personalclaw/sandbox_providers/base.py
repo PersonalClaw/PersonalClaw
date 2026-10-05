@@ -35,7 +35,7 @@ class SandboxUnavailableError(RuntimeError):
     Carried by a container/VM tier's :meth:`SandboxProvider.wrap` when its runtime is absent
     (no Docker daemon, stopped Lima instance …). The message is WHAT/WHY/FIX-shaped so a
     consumer can surface it verbatim: unattended code runs park needs-input on it rather than
-    dropping to the host ``none`` provider (EXECUTION-ISOLATION §1.1 failure-honesty rule —
+    dropping to the host ``none`` provider (the failure-honesty rule —
     a silent host downgrade would run agent-influenced code with none of the isolation the
     caller asked for).
     """
@@ -64,23 +64,23 @@ class SandboxSpec:
     ``sandbox.*`` config at exec time" — the same fail-open-to-defaults behaviour a raw
     ``create_subprocess_limited`` has, so a broken config never blocks a spawn.
 
-    The remaining fields are the **confinement policy** a container/VM tier (EI-2 ``docker``,
-    EI-4 ``lima``) translates to its native knobs; the in-core ``none`` provider ignores them,
+    The remaining fields are the **confinement policy** a container/VM tier (``docker``,
+    ``lima``) translates to its native knobs; the in-core ``none`` provider ignores them,
     so every existing caller that constructs ``SandboxSpec(mode=…, profile=…)`` is unchanged.
 
-    * ``workspace_dir`` — the WORK-R3 worktree/scratch dir the tier bind-mounts. Empty means
+    * ``workspace_dir`` — the worktree/scratch dir the tier bind-mounts. Empty means
       "use the launch ``cwd``" (what the live ACP/subagent consumer already passes to
       :meth:`SandboxHandle.exec`), so ``docker`` works with zero consumer changes.
     * ``allowed_write_paths`` — host paths (besides the workspace) the child may write. A tier
       mounts exactly these read-write; anything else is outside the boundary and a write to it
       fails because the path is not mounted.
-    * ``egress_tier`` — ``off``/``listed``/``registry``/``all`` (AUTONOMY-GUARDRAILS §4.2).
+    * ``egress_tier`` — ``off``/``listed``/``registry``/``all``.
       ``off`` maps to ``--network none``; ``all`` leaves the default network. The finer tiers
       are advisory at the docker layer (host egress-rail allowlisting is net/policy scope).
-    * ``env`` — the container's environment, already secret-filtered by WORK-R19. This is the
+    * ``env`` — the container's environment, already secret-filtered upstream. This is the
       ONLY environment the container receives; the host's environment is never copied in.
-    * ``safety_profile`` — AUTONOMY-GUARDRAILS §3 profile name (drives the §5.2 tool surface).
-    * ``expose_ports`` — container ports mapped to the host for the §6.2 localhost preview.
+    * ``safety_profile`` — the guardrails safety profile name (drives the ``pclaw-tool`` surface).
+    * ``expose_ports`` — container ports mapped to the host for a localhost preview.
     * ``grant_paths`` — host paths explicitly granted into the sandbox (e.g. a model dir). NOT
       mounted unless listed, so an ungranted sandbox cannot see — let alone delete — them.
     """

@@ -1,14 +1,14 @@
 """`TriggerService` — the one scheduler's TICK.
 
-"One asyncio loop — **the existing single re-armed `_arm_timer` task generalized** … The task
+One asyncio loop — **the existing single re-armed `_arm_timer` task generalized**. The task
 computes the earliest `next_fire_at` across all clock/idle triggers and sleeps until it
 (capped at 30s
 for external-edit pickup via mtime `_sync`), coalescing same-second firings so N triggers
 replacing one
-60s heartbeat don't wake the laptop N times."
+60s heartbeat don't wake the laptop N times.
 
-**Why this is buildable now.** S83 and S86 recorded "the store and the service are one unbuilt
-foundation"; S87 showed that was half wrong (the service needs the store, not the reverse) and
+**Why this is buildable now.** The store and the service looked like "one unbuilt
+foundation"; that was half wrong (the service needs the store, not the reverse), and the store
 shipped
 `triggers.json`. With the store in place every dependency this file needs is present and was
 verified
@@ -26,7 +26,7 @@ wake is, and — for each due trigger — walking the fire path and recording th
 row. It is
 `async` and side-effect-free apart from the store writes it is explicitly asked to make.
 
-It does NOT own EXECUTION. §3.2 is explicit that "the scheduler never executes directly": a
+It does NOT own EXECUTION. The scheduler never executes directly: a
 fired trigger
 enqueues onto the target session's inbox plus a wakeup signal, and a **WakeupDispatcher**
 claims and drives
@@ -79,11 +79,11 @@ from personalclaw.triggers.models import (
 
 logger = logging.getLogger(__name__)
 
-#: Wake-up ceiling, in seconds. §3: "capped at 30s for external-edit pickup via mtime
-#: `_sync`". The cap is
+#: Wake-up ceiling, in seconds: capped at 30s for external-edit pickup via mtime
+#: `_sync`. The cap is
 #: not a scheduling nicety — it IS the propagation contract for a store another process can
 #: write, which
-#: the MCP gotcha makes mandatory.
+#: MCP tools mutating the store from a separate process make mandatory.
 MAX_SLEEP_SECS = 30.0
 
 #: Floor on a computed sleep. A zero or negative delay would spin the loop; the mechanism is
@@ -96,9 +96,9 @@ MIN_SLEEP_SECS = 0.5
 class DueFire:
     """One trigger that passed every gate and is ready to DISPATCH.
 
-    Carries the decision, not a result: §3.2 says the scheduler never executes. The caller
+    Carries the decision, not a result: the scheduler never executes. The caller
     enqueues this
-    onto the session inbox, and the crash-safety §3.2 promises comes from that payload
+    onto the session inbox, and the promised crash-safety comes from that payload
     surviving — which
     is only true if this object is handed over rather than run here.
     """
@@ -129,8 +129,8 @@ class DueFire:
 class TickResult:
     """Everything one tick decided. The whole return value, so a caller needs no second query.
 
-    `ledger_rows` is present for EVERY evaluated trigger, fired or suppressed — §7 criterion
-    8's "zero
+    `ledger_rows` is present for EVERY evaluated trigger, fired or suppressed —
+    "zero
     silent drops" is a property of the tick, not of the caller remembering to log.
     """
 
@@ -234,7 +234,7 @@ def to_iso(epoch: float) -> str:
 def _interval_secs(trigger: Trigger) -> float:
     """The trigger's interval, or 0 when it is not an interval kind.
 
-    Reads `spec['interval_secs']` — the key S87 had to add to `SPEC_KEYS['clock']` alongside the
+    Reads `spec['interval_secs']` — the key that had to be added to `SPEC_KEYS['clock']` beside the
     `interval` clock kind, because the migration emits it for every legacy `every` cron and nothing
     accepted it.
     """
@@ -250,7 +250,7 @@ def _interval_secs(trigger: Trigger) -> float:
 def _created_at(trigger: Trigger) -> float:
     """The trigger's creation epoch, for the recurrence ANCHOR.
 
-    §3.1 anchors recomputes to `created_at` so they do not re-phase to "now". `Trigger` has no
+    Recomputes anchor to `created_at` so they do not re-phase to "now". `Trigger` has no
     `created_at` field (checked — it carries `created_by`), so the caller's `now` is the
     honest fallback:
     inventing an anchor would silently re-phase every trigger on its first recompute, which is
@@ -269,7 +269,7 @@ def _created_at(trigger: Trigger) -> float:
 def plan_boot(triggers: list[Trigger], *, now: float) -> list[tuple[str, float, str]]:
     """What boot does to each trigger's `next_fire_at`. Returns `(id, new_next_fire_at, reason)`.
 
-    §3.1's "exactly-one-upcoming invariant … recovered/re-armed on gateway boot" plus the boot
+    The exactly-one-upcoming invariant, recovered/re-armed on gateway boot, plus the boot
     stagger.
     Delegates to `scheduling.boot_recovery`, which owns the +60s push and the deterministic
     per-id jitter —
@@ -279,7 +279,7 @@ def plan_boot(triggers: list[Trigger], *, now: float) -> list[tuple[str, float, 
     arming one
     would resurrect it at the next tick.
 
-    **🔴 A trigger with NO `next_fire_at` is ARMED from its spec first (S96).** Measured: a migrated
+    **🔴 A trigger with NO `next_fire_at` is ARMED from its spec first.** Measured: a migrated
     cron lands `enabled=True` with an empty `next_fire_at`, and `boot_recovery` can only RECOVER an
     existing fire — handed 0.0 it returns 0.0, so the trigger stayed inert forever and `due_ids`
     never surfaced it. `arm.next_fire` computes the first fire from the spec (cron/interval/at/
@@ -323,7 +323,7 @@ def plan_boot(triggers: list[Trigger], *, now: float) -> list[tuple[str, float, 
         #
         # What changes is the ANCHOR, not the jitter: the drop path resumes from the trigger's own
         # next real slot (`arm.next_fire`) instead of from `now`, and keeps the same deterministic
-        # per-id spread on top of it. §3.1 requires both — "recovered/re-armed on gateway boot" AND
+        # per-id spread on top of it. Both are required — "recovered/re-armed on gateway boot" AND
         # a stagger so a restart does not fire everything in one second — and dropping the jitter
         # satisfies only the first. Six co-phased hourly triggers all resume to exactly
         # `now + 3600` without it, so the stampede returns one interval later instead of being
@@ -349,9 +349,9 @@ def plan_boot(triggers: list[Trigger], *, now: float) -> list[tuple[str, float, 
 def due_ids(triggers: list[Trigger], *, now: float, window_secs: float = 1.0) -> list[str]:
     """Which triggers are due, COALESCED into one wake.
 
-    §3: "coalescing same-second firings so N triggers replacing one 60s heartbeat don't wake
+    Same-second firings coalesce, so N triggers replacing one 60s heartbeat don't wake
     the laptop N
-    times". `coalesce_wakes` owns the window; this assembles its input from the store's rows.
+    times. `coalesce_wakes` owns the window; this assembles its input from the store's rows.
 
     A trigger with no `next_fire_at` is skipped rather than treated as due-now. An unarmed
     trigger means
@@ -382,7 +382,7 @@ def due_ids(triggers: list[Trigger], *, now: float, window_secs: float = 1.0) ->
 def sleep_for(triggers: list[Trigger], *, now: float) -> float:
     """Seconds until the next wake — capped at `MAX_SLEEP_SECS`, floored at `MIN_SLEEP_SECS`.
 
-    The cap is the store-propagation contract (§3/§6), not a nicety: another process can write
+    The cap is the store-propagation contract, not a nicety: another process can write
     `triggers.json`, and a loop sleeping until a far-future fire would not notice for hours.
     The floor
     stops a due-now trigger from spinning the loop.
@@ -397,23 +397,23 @@ def sleep_for(triggers: list[Trigger], *, now: float) -> float:
 
 
 def next_after_completion(trigger: Trigger, *, completed_at: float, now: float) -> float:
-    """The next fire after a run settles — from COMPLETION, anchored to creation (§3.1).
+    """The next fire after a run settles — from COMPLETION, anchored to creation.
 
-    Two rules, both load-bearing and both from §3.1: computed from completion time (never the
+    Two rules, both load-bearing: computed from completion time (never the
     missed slot,
     which produces a re-fire storm when a run overruns its interval) and anchored to the
     trigger's own
     creation grid (so a recompute does not re-phase a 9am job to whenever the last run
     happened to end).
 
-    **🔴 EVERY clock kind reschedules here now (S96).** This returned 0.0 for
+    **🔴 EVERY clock kind reschedules here now.** This returned 0.0 for
     `cron`/`at`/`sequence` on the premise that "the recurrence engine" owned them — but no
     such engine existed, so measured: a cron fired once and then kept `next_fire_at` at its
     ELAPSED slot, which every later tick read as still-due. Not merely inert: a fire storm on
     one past slot. `arm.next_fire` is the one recurrence computation (spec → next fire) and it
     owns all four kinds, so there is no second path to disagree with. A `cron` recomputes from
     ITS OWN expression (never from completion, which would drift a 9am job later every day);
-    an `interval` keeps §3.1's completion-anchored rule.
+    an `interval` keeps the completion-anchored rule.
     """
     from personalclaw.triggers.arm import next_fire
     from personalclaw.triggers.scheduling import recompute_from_completion
@@ -447,10 +447,10 @@ async def tick(
        (`recover`): a slot the process slept through is reviewed, or caught up once, never run
        late on its own.
     3. Coalesce the due set.
-    4. For each due trigger: **persist the next fire FIRST** (§3.1 persist-before-execute),
+    4. For each due trigger: **persist the next fire FIRST** (persist-before-execute),
     then walk
-       S86's fire path.
-    5. Record a ledger row for every evaluated trigger, fired or not (§7 crit 8).
+       the fire path.
+    5. Record a ledger row for every evaluated trigger, fired or not.
     6. Compute the next sleep from the rows as they now stand.
 
     *catching_up* is the caller's map of staggered catch-ups, held across ticks
@@ -492,7 +492,7 @@ async def tick(
     # other user authored, so a foreign row is never in `triggers` and never in `by_id`: `due_ids`
     # cannot return its id, and the `by_id.get(trigger_id)` below could not resolve it if it did.
     # A foreign row therefore cannot tick — it is absent from the candidate set, not declined by a
-    # gate downstream, which is the difference §2.2 spells out in parentheses.
+    # gate downstream — the difference between "cannot tick" and "is skipped".
     triggers = provider.armable(store)
     by_id = {t.id: t for t in triggers}
 
@@ -503,7 +503,7 @@ async def tick(
     # triggers wanting `local-llm` in the same wake cannot both be told it is free.
     slot_map = claims.slot_holders(store, now=now, base_dir=base_dir)
 
-    # 🔴 UNPARK, before the due set is computed (§3.7 / decision 9). A parked trigger has
+    # 🔴 UNPARK, before the due set is computed. A parked trigger has
     # `state != ACTIVE`, so `fires_automatically` is False and `due_ids` filters it out — so
     # unparking AFTER that walk would never bring anything back. `autopause.unpark_due` has always
     # implemented this decision and had NO caller, and `retry_after` was never persisted, so a
@@ -571,7 +571,7 @@ async def tick(
             store.upsert(trigger)
             result.rescheduled.append(trigger.id)
 
-        # 🔴 `payload_text` is deliberately LEFT EMPTY here (§7/R4 rule a), and that is
+        # 🔴 `payload_text` is deliberately LEFT EMPTY here, and that is
         # correct rather than the omission it looks like. A clock trigger carries no external
         # content: at tick time there is a schedule and no payload. The screen's real input
         # arrives with a POLLED payload — web_watch items, file changes, an event's value — which
@@ -596,9 +596,9 @@ async def tick(
             # taken slot, so it is written here — and the row stays, switched off, to be run again.
             store.upsert(trigger)
         row["scheduled_for"] = scheduled_for
-        # 🔴 `ran_late`, which only the MANUAL missed-fire card ever wrote. §1.3 added
-        # the outcome and `scheduled_for` together — "a run that started 40 minutes after its
-        # slot is a different story from one on time that took 40 minutes" — and
+        # 🔴 `ran_late`, which only the MANUAL missed-fire card ever wrote. The outcome and
+        # `scheduled_for` were added together — a run that started 40 minutes after its
+        # slot is a different story from one on time that took 40 minutes — and
         # `validate_record` even refuses a `ran_late` row without a slot. But the tick recorded a
         # plain `ran` however overdue the fire was: measured, 40 minutes past its slot with the
         # lateness computable on that very row.
@@ -704,7 +704,7 @@ async def admit_fire(
     slot_map: dict[str, str] | None = None,
     source: str = "",
 ) -> Admission:
-    """Walk ONE trigger through S86's fire path and record what it decided (§3).
+    """Walk ONE trigger through the fire path and record what it decided.
 
     THE admission, shared by every caller that decides a fire: the clock tick for a due trigger,
     the event router (`triggers.event_fire`) for a matched event, and the dashboard's doors a fire
@@ -716,8 +716,8 @@ async def admit_fire(
     exact shape of the four "defaulted and never supplied" defects the comments below record.
 
     Everything a gate reads is gathered UP FRONT into `FireContext`, so `firepath.evaluate` stays
-    pure. On a suppression the typed row is persisted (§7 crit 8 — S171: "every suppressed fire
-    appears as a typed ledger row with a reason — zero silent drops"). On a grant the claim is
+    pure. On a suppression the typed row is persisted (every suppressed fire
+    appears as a typed ledger row with a reason — zero silent drops). On a grant the claim is
     written — the CALLER releases it when the run settles — and the two meters are advanced
     (`run_record.count_fire`, their one writer):
 
@@ -780,12 +780,12 @@ async def admit_fire(
         # `overlap` exists to prevent. The gate was present, reviewed, and enforcing nothing.
         existing_claim=claims.read_claim(trigger.id, now=now, base_dir=base_dir),
         # 🔴 WHAT THE TRIGGER ACTUALLY ASKS FOR. This was omitted, so `evaluate`'s
-        # `if ctx.requested:` was always false and the frozen-capability fence — decision 7's
-        # enforcement point — had never run on a single real fire. Exactly the `existing_claim`
-        # defect one line up, in the gate directly below it.
+        # `if ctx.requested:` was always false and the frozen-capability fence — the read-only
+        # default's enforcement point — had never run on a single real fire. Exactly the
+        # `existing_claim` defect one line up, in the gate directly below it.
         requested=screen.requested_capabilities(trigger),
         action_config=screen.action_config(trigger),
-        # 🔴 THE BUDGET, actually supplied (§7 crit 8 / §3.6). `tick` never set
+        # 🔴 THE BUDGET, actually supplied. `tick` never set
         # either budget field, so `if ctx.budget_remaining is not None` was always False and the
         # budget gate had NEVER refused a real fire — the third instance of this exact shape
         # after the `existing_claim` and the `requested`. `gates.max_fires` was the
@@ -849,7 +849,7 @@ def _run_store(base_dir: Any) -> Any:
 
     Resolved per call rather than held on the module, matching `dispatch.spool_path`: a
     module-level store binds to whatever home was set when the module first loaded, and this
-    program has paid for that shape once already.
+    codebase has paid for that shape once already.
     """
     from personalclaw.config.loader import config_dir
     from personalclaw.schedule_history import ScheduleRunStore
@@ -860,15 +860,15 @@ def _run_store(base_dir: Any) -> Any:
 async def persist_suppression(
     row: dict[str, Any], *, now: float, base_dir: Any = None, name: str = "", source: str
 ) -> None:
-    """Write a SUPPRESSED fire's typed row to the run store (§7 crit 8 — S171), saying what started
+    """Write a SUPPRESSED fire's typed row to the run store, saying what started
     the fire it held (*source*, `triggers.run_source`).
 
     Called by `admit_fire` for every gate refusal, and by the event router for the one refusal it
     makes before admission (the cross-trigger storm guard) — so both rows land in the same ledger in
     the same shape.
 
-    🔴 WHY THIS EXISTS. Criterion 8 is *"every suppressed fire appears as a typed ledger row
-    with a reason — zero silent drops"*, and `tick` builds exactly that row for every
+    🔴 WHY THIS EXISTS. Every suppressed fire must appear as a typed ledger row
+    with a reason — zero silent drops — and `tick` builds exactly that row for every
     evaluated trigger. It then returned it, and **no caller persisted it**:
     `TickResult.ledger_rows` has no consumer outside this module, so `loop.tick_once`'s own
     comment ("`tick` already persisted each next fire and wrote a ledger row") was half true
@@ -877,16 +877,16 @@ async def persist_suppression(
     Measured: six ticks of a quiet-hours trigger produced six `skipped_gate` rows in memory
     and ZERO rows in the store, so the history a user reads had no record any of it
     happened. That is indistinguishable from a scheduler that never woke, which is the
-    silent drop the criterion bans.
+    silent drop that is banned.
 
-    Follows S136's `_record_blocked_fire` shape deliberately: that session established that
+    Follows `gateway._record_blocked_fire`'s shape deliberately: there
     a suppressed fire earns a `ScheduleRun` row keyed by trigger id, with the typed outcome
     in `trigger` and `status`. Reusing the shape means the runs feed projects these exactly
     as it already projects a blocked one, instead of needing a second reader.
 
     Only SUPPRESSIONS. A granted fire's row is written by `run_record.record_run`
     once the run settles; writing one here too would double-count every success in
-    `count_since` — the rate meter S152 built, which reads this very store.
+    `count_since` — the rate meter, which reads this very store.
 
     Never raises. The fire's decision has already been made and acted on, so losing its
     bookkeeping is strictly better than turning a correct suppression into a crashed tick.
@@ -927,7 +927,7 @@ async def record_dismissal(
     now: float = 0.0,
     base_dir: Any = None,
 ) -> None:
-    """Persist a dismissed review card as the typed row `missed.resolve_missed` names (§3.4).
+    """Persist a dismissed review card as the typed row `missed.resolve_missed` names.
 
     `skipped_missed` is a suppression — nothing ran — so it takes the suppression row's shape and
     store: a dismissed card that left no trace would be a silent drop with a UI on it. *source* is
@@ -942,11 +942,11 @@ async def record_dismissal(
 
 
 async def _fires_in_window(trigger: Any, *, now: float, base_dir: Any = None) -> int | None:
-    """Fires recorded in the last hour, or None when the ledger could not be read (S152).
+    """Fires recorded in the last hour, or None when the ledger could not be read.
 
     Returns None — not 0 — on ANY failure. Zero would hand a runaway trigger a fresh allowance
     every time the ledger hiccuped, which is the opposite of what a rate cap is for. The gate treats
-    None as fail-open (§1.4's storm-guard class) but the distinction is kept so a future session can
+    None as fail-open (the storm-guard class) but the distinction is kept so a later change can
     tighten it without first re-deriving why the two cases differ.
 
     Skipped entirely when the trigger declares no hourly cap: this is a file read on the fire path,
@@ -970,7 +970,7 @@ async def _fires_in_window(trigger: Any, *, now: float, base_dir: Any = None) ->
 
 
 def _unpark_ready(store: Any, triggers: list[Any], *, now: float, persist: bool) -> list[str]:
-    """Return PARKED triggers to ACTIVE once their cooldown has elapsed (§3.7 / decision 9 — S159).
+    """Return PARKED triggers to ACTIVE once their cooldown has elapsed.
 
     🔴 WHY THIS EXISTS. `autopause.unpark_due` implements the clock decision and had **no caller**,
     and `evaluate`'s `retry_after` was never persisted — so parking was a one-way door.
@@ -1022,7 +1022,7 @@ def _unpark_ready(store: Any, triggers: list[Any], *, now: float, persist: bool)
 
 
 def _since_last_fire(trigger: Any, *, now: float) -> float | None:
-    """Seconds since this trigger last fired, or None when it never has (S151).
+    """Seconds since this trigger last fired, or None when it never has.
 
     None rather than 0.0, and rather than a large number: "never fired" is a different
     fact from "fired long ago", and only None lets the spacing gate tell "nothing to
@@ -1041,7 +1041,7 @@ def _since_last_fire(trigger: Any, *, now: float) -> float | None:
 
 
 def _target_active_kwargs(trigger: Any, *, now: float, base_dir: Any) -> dict[str, Any]:
-    """The `FireContext` liveness kwargs for one trigger (§3.5 / WF2AUT-9).
+    """The `FireContext` liveness kwargs for one trigger.
 
     Computes the `skip_if_active` signal ONCE, up front, so `firepath.evaluate` never runs I/O
     mid-walk. Returned as a dict so the two fields (`target_active`, `target_active_reason`) unpack
@@ -1061,11 +1061,11 @@ def _target_active_kwargs(trigger: Any, *, now: float, base_dir: Any) -> dict[st
 
 
 def _budget_remaining(trigger: Any) -> float | None:
-    """Fires this trigger may still make, or None when it declares no cap (§3.6 — S133).
+    """Fires this trigger may still make, or None when it declares no cap.
 
     🔴 WHY THIS EXISTS. `firepath`'s budget gate reads `ctx.budget_remaining`, and `tick` never set
     it — so `if ctx.budget_remaining is not None` was always False and the gate had never refused a
-    real fire. Third instance of the same shape: S97's `existing_claim`, S116's `requested`, this.
+    real fire. Third instance of the same shape: `existing_claim`, `requested`, this.
     The user-visible cost was `gates.max_fires`, which is declared in `GATE_KEYS`, validated,
     carried by `LEGACY_FIELD_MAP` — and bounded nothing. Measured: `max_fires: 2` produced 8 fires
     in 8 slots, identical to no cap at all.
@@ -1231,17 +1231,17 @@ def retire_after_run(store: Any, trigger: Any, *, status: str, from_review: bool
 def boot(store: Any, *, now: float = 0.0, persist: bool = True) -> dict[str, Any]:
     """Re-arm every trigger at gateway boot. Returns what changed.
 
-    §3.1's "exactly-one-upcoming invariant, recovered/re-armed on gateway boot". Sync because
+    The exactly-one-upcoming invariant, recovered/re-armed on gateway boot. Sync because
     it runs
     before the loop exists and touches no async gate — the fire path is not walked here, since
     boot arms
     triggers rather than firing them.
 
-    Also returns the missed-fire REVIEW rather than acting on it: §3.4 is "review, don't lie
+    Also returns the missed-fire REVIEW rather than acting on it: the rule is "review, don't lie
     and don't
     storm", and a boot that silently caught up would be the storm. The caller surfaces the review.
 
-    🔴 THE REVIEW IS SNAPSHOT BEFORE RE-ARMING (S142), and that ordering is the whole function.
+    🔴 THE REVIEW IS SNAPSHOT BEFORE RE-ARMING, and that ordering is the whole function.
     `plan_boot`'s recovery pushes an overdue `next_fire_at` into the stagger window, IN PLACE on the
     same `Trigger` objects. Measured with the review taken afterwards: a trigger overdue by an hour
     (61 missed minutely slots) reported **0 review rows** — because the missed anchor is derived
@@ -1312,7 +1312,7 @@ def catch_up_at_boot(triggers: list[Trigger], *, now: float) -> list[dict[str, A
     """Which triggers get an automatic catch-up fire at this boot or wake, and why the rest do not.
 
     A thin adapter over `missed.catch_up_plan` so `recover` reports one shape and the storm guards
-    live in exactly one place. Returns EVERY candidate including the refused ones: §3.4's rule is
+    live in exactly one place. Returns EVERY candidate including the refused ones: the rule is
     that a `catch_up: true` trigger which did NOT catch up needs an explanation as much as one that
     did, and a list of only the winners cannot answer "why not mine".
 
@@ -1338,10 +1338,10 @@ def catch_up_at_boot(triggers: list[Trigger], *, now: float) -> list[dict[str, A
 
 
 def drain_spooled_fires(*, limit: int = 500) -> tuple[list[Any], int]:
-    """Drain the sync-context spool (§3.2). Returns `(envelopes, dropped)`.
+    """Drain the sync-context spool. Returns `(envelopes, dropped)`.
 
-    §3: "sync-context fires spool to `~/.personalclaw/trigger-spool.jsonl`, drained on next
-    tick". Exposed
+    Sync-context fires spool to `~/.personalclaw/trigger-spool.jsonl`, drained on the next
+    tick. Exposed
     from the service rather than called inside `tick()` because the spool is a SEPARATE wake
     source: a
     tick with no due clock trigger must still drain it, and burying the drain inside the

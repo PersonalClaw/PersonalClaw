@@ -47,7 +47,7 @@ class ActionServices:
     """Handles native action providers need. Wired once at dashboard startup."""
 
     state: DashboardStateProtocol
-    # The subagent manager invoke-agent (E3-P3) and run-prompt spawn agent tasks through. Its
+    # The subagent manager invoke-agent and run-prompt spawn agent tasks through. Its
     # spawn schedules the task and returns, so neither waits on the agent it starts.
     subagents: "SubagentManager | None" = None
     # The workflow supervisor (`WorkflowWatchdog`) run-workflow starts runs through.

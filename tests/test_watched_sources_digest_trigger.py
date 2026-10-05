@@ -1,8 +1,8 @@
 """The missing half: the morning digest's CALLER.
 
 `tests/test_watched_sources_digest.py` proves `run_morning_digest` works when something calls
-it. The execution log records that nothing did: *"the digest is invocable and fully tested,
-but nothing in the shipped product calls it yet"*. Measured on `main` at `0169f8d4`: `git grep
+it. Nothing did: the digest was invocable and fully tested,
+but nothing in the shipped product called it. Measured on `main` at `0169f8d4`: `git grep
 run_morning_digest -- src/` returned TWO hits, both inside `source_digest.py` (the definition
 and a docstring mention). Zero callers.
 
@@ -19,7 +19,7 @@ same defect one level up:
 * a SECOND fire posts nothing, which is what `digest_cursor.json` is for;
 * and `_init_cron` — the boot path — really contains the call.
 
-No frozen clock anywhere. WS-7 recorded a measured false green from one: `_due_delay` compares
+No frozen clock anywhere. A frozen clock once produced a measured false green: `_due_delay` compares
 against the store's wall-clock `last_poll_at`, so a clock pinned at `t=1_000_000` leaves every
 source permanently "not due" and every later `tick()` a silent no-op that reads as success. The
 ingest here does ONE tick against a source that has never been polled (so it is due on the real
@@ -248,7 +248,7 @@ def test_the_bundled_trigger_is_registered_and_ARMED(trigger_store, monkeypatch)
     inline = (trigger.workflow or {}).get("inline") or {}
     assert inline.get("provider") == "source-digest"
     # EMPTY config: no prompt text on this path for a template author to edit, which is the
-    # security reasoning WS-7 chose a callable over a bundled template for.
+    # security reasoning behind choosing a callable over a bundled template.
     assert inline.get("config") == {}
     # The digest's OUTPUT is a notification; a cron-result toast about it would be a
     # notification about your notification.
@@ -356,7 +356,7 @@ async def test_the_digest_RUNS_through_the_stored_trigger(trigger_store, tmp_pat
 
 @pytest.mark.asyncio
 async def test_mute_all_still_suppresses_through_the_trigger(trigger_store, tmp_path, monkeypatch):
-    """🔴 VACUITY GUARD for the clause above, and the proof the gate is not bypassed.
+    """🔴 VACUITY GUARD for the property above, and the proof the gate is not bypassed.
 
     A caller that pushed its own notification instead of going through
     `DashboardState.notify` → `notification_allowed()` would deliver here.
@@ -368,7 +368,7 @@ async def test_mute_all_still_suppresses_through_the_trigger(trigger_store, tmp_
     settings.mkdir(parents=True, exist_ok=True)
     (settings / "notifications.json").write_text(json.dumps({"mute_all": True}))
     # PRECONDITION, asserted not assumed: an isolation leak must fail HERE rather than
-    # masquerading as a security-control bypass (WS-7 measured exactly that confusion).
+    # masquerading as a security-control bypass (exactly that confusion was once measured).
     assert entity_routes.notification_allowed(notification_kinds.INFO) is False
 
     store = await _ingest([SourceItem(guid="g1", title="Release 2.0", content="stable")])

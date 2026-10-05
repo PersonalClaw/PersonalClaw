@@ -1,9 +1,9 @@
 """Rails for the computer-use DISPATCH — the composition the screens were waiting for.
 
-`DCU-2` shipped ``policy.check_app``, ``policy.check_input_target`` and
-``gate.require_computer_use`` as three correct, tested functions with **zero production
-callers** (its own audit censused them; ``test_computer_use_call_sites.py`` is the marker it
-left behind). `DCU-4` is the caller. So the question this file has to answer is not "do the
+The screens ``policy.check_app``, ``policy.check_input_target`` and
+``gate.require_computer_use`` shipped as three correct, tested functions with **zero production
+callers** (their own audit censused them; ``test_computer_use_call_sites.py`` is the marker it
+left behind). The dispatch is the caller. So the question this file has to answer is not "do the
 screens work" — the sibling suites already drive them directly — but the four things only a
 composition can get wrong:
 
@@ -14,7 +14,7 @@ composition can get wrong:
    can fail — run against a deliberately mis-ordered chain, it flags it.
 2. **The refusal reaches the caller through the dispatch**, not by a test calling a screen
    directly. Every refusal case here goes in at :func:`service.computer_dispatch`.
-3. **The SEL row on the ALLOWED path, asserted separately from the refused one.** The `DCU-2`
+3. **The SEL row on the ALLOWED path, asserted separately from the refused one.** The original
    audit's sharpest finding: a test asserting "a SEL record exists" passes when only the
    refusal writes one. Two tests, and both drive a REAL
    :class:`~personalclaw.sel.SecurityEventLog` at a tmp ``base_dir`` — the sibling gate suite
@@ -246,9 +246,9 @@ def test_the_dispatch_calls_the_screens_in_source_order():
 
 @pytest.mark.parametrize("tool", sorted(ct.TOOL_NAMES))
 def test_with_the_keystone_absent_every_tool_refuses(tool, monkeypatch):
-    """The clause, now exercisable over a real tool population for the first time — its
-    own execution log records that the clause was *"armed but unexercised until DCU-4"* because
-    the tool set was empty. All seven refuse, and the refusal names the enable step."""
+    """The keystone, now exercisable over a real tool population for the first time — it was
+    armed but unexercised until the dispatch landed, because the tool set was empty. All seven
+    refuse, and the refusal names the enable step."""
     _fake_driver(monkeypatch)
     with pytest.raises(enable_state.ComputerUseDisabled) as excinfo:
         _run(service.computer_dispatch(tool, {"app": ARMED_APP}))
@@ -257,7 +257,7 @@ def test_with_the_keystone_absent_every_tool_refuses(tool, monkeypatch):
 
 
 def test_a_non_allowlisted_app_is_refused_through_the_dispatch(tmp_path, monkeypatch):
-    """`DCU-2` clause 1, from the driving path rather than by calling ``check_app`` directly."""
+    """The app allowlist, from the driving path rather than by calling ``check_app`` directly."""
     _arm(tmp_path, ARMED_APP)
     calls = _fake_driver(monkeypatch)
     with pytest.raises(policy.ComputerUsePolicyRefusal) as excinfo:
@@ -267,7 +267,7 @@ def test_a_non_allowlisted_app_is_refused_through_the_dispatch(tmp_path, monkeyp
 
 
 def test_typing_into_a_secure_field_is_refused_through_the_dispatch(tmp_path, monkeypatch):
-    """`DCU-2` clause 2, from the driving path. The driver is asked for the re-walk (a read)
+    """The secure-field screen, from the driving path. The driver is asked for the re-walk (a read)
     and NOT for the type (the action) — asserted, because "refused" has to mean the keystrokes
     never happened, not that an exception was raised somewhere afterwards."""
     _arm(tmp_path, ARMED_APP)
@@ -845,7 +845,7 @@ def test_mcp_core_aggregates_the_computer_use_surface():
 
 
 def test_the_driver_spawn_goes_through_the_ceiling_helper():
-    """The clause. ``create_subprocess_limited`` is the repo's single seam that prepends the
+    """The ceiling. ``create_subprocess_limited`` is the repo's single seam that prepends the
     post-exec ceiling shim; a raw ``create_subprocess_exec`` here would spawn an unbounded
     child. Asserted structurally AND censused: ``tests/test_spawn_ceiling_audit.py`` classifies
     this site, so dropping the ceiling later reds there too."""
@@ -875,8 +875,8 @@ def test_the_real_spawn_answers_in_the_typed_envelope(tmp_path, monkeypatch):
     process, so ``PERSONALCLAW_HOME`` is set here for the child to resolve a scratch home.
 
     **Re-scoped.** This asserted ``ERR_DRIVER_UNAVAILABLE`` specifically, which was
-    only true while no platform driver module existed; a macOS driver now does. The clause §3
-    floor 6 actually states is platform-independent — the answer is either a real result or a
+    only true while no platform driver module existed; a macOS driver now does. The rule that
+    actually matters is platform-independent — the answer is either a real result or a
     typed refusal naming a reason, and *"never a silent no-op or a simulated success"* — and that
     is what is asserted here. The macOS-specific end states (the accessibility-permission refusal
     on an ungranted machine, a real indexed tree on a granted one) are owned by
@@ -941,15 +941,15 @@ def test_every_acting_tool_declares_the_app_screen():
 
 
 def test_only_text_writing_tools_declare_the_input_target_screen():
-    """§3 floor 3 scopes ``check_input_target`` to *"any type/set-value"*. Pinned so a future
+    """``check_input_target`` is scoped to *"any type/set-value"*. Pinned so a future
     text-writing tool cannot ship without it, and so the screen is not quietly extended to
     tools whose roles it would reject (a press on a button is not a write into a field)."""
     screened = sorted(spec.name for spec in ct.TOOL_SURFACE if spec.screen_input_target)
     assert screened == ["computer_set_value", "computer_type"], screened
 
 
-def test_the_declared_surface_is_exactly_the_plans_seven_tools():
-    """The surface is the plan's list, in the plan's words — not a superset somebody grew."""
+def test_the_declared_surface_is_exactly_the_seven_tools():
+    """The surface is the designed list of seven, by name — not a superset somebody grew."""
     assert sorted(ct.TOOL_NAMES) == [
         "computer_click",
         "computer_list_apps",
@@ -975,11 +975,11 @@ def test_an_unknown_tool_is_refused_after_the_keystone_not_before(tmp_path, monk
     assert "computer_click" in excinfo.value.error.suggestions
 
 
-# ── 8. the pointer paths §3 floor 2 reserves ─────────────────────────────────
+# ── 8. the reserved pointer paths ────────────────────────────────────────────
 
 
 def test_auto_never_resolves_to_a_pointer_method():
-    """§3 floor 2: ``auto`` resolves to an accessibility press whenever an element index is
+    """``auto`` resolves to an accessibility press whenever an element index is
     present, and the pointer methods must be named by the model. Asserted over every shape an
     absent method can arrive in, because "auto" is also what a missing value means."""
     for params in ({}, {"click_method": ""}, {"click_method": "   "}, {"click_method": "auto"}):
@@ -1006,7 +1006,7 @@ def test_an_unknown_click_method_refuses_rather_than_falling_back(tmp_path, monk
 
 
 def test_a_pointer_click_is_audited_under_its_own_operation(tmp_path, monkeypatch, sel_rows):
-    """§2 wants the pointer paths distinguishable in the audit. They are: the real-cursor warp
+    """The pointer paths must be distinguishable in the audit. They are: the real-cursor warp
     records ``computer_click:global``, so it is one field filter away from every ordinary
     click — and it still passes the keystone and the app allowlist to get there."""
     _arm(tmp_path, ARMED_APP)

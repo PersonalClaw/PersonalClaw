@@ -128,7 +128,7 @@ class TestLadder:
         assert au.rung_rank(spec.ceiling) < au.rung_rank(au.RUNG_AUTONOMOUS)
 
 
-# ── acceptance criteria 1: the evidence bar ───────────────────────────────────
+# ── the evidence bar ──────────────────────────────────────────────────────────
 
 
 class TestEligibilityIsEarned:
@@ -166,7 +166,7 @@ class TestEligibilityIsEarned:
         assert "rejection" in elig.reason
 
     def test_a_thumbs_down_counts_as_a_rejection(self):
-        """FEEDBACK-SIGNAL is the second evidence source: a 👎 on this type's
+        """The feedback signal is the second evidence source: a 👎 on this type's
         output is attributed by ``producer_id`` and blocks the promotion."""
         from personalclaw.feedback import record_feedback
 
@@ -261,7 +261,7 @@ class TestEligibilityIsEarned:
         assert au.promotion_eligibility("local.rename").next_rung == au.RUNG_AUTONOMOUS
 
 
-# ── acceptance criteria 2: demotion is immediate, with a cooldown ─────────────
+# ── demotion is immediate, with a cooldown ────────────────────────────────────
 
 
 class TestDemotionIsImmediate:
@@ -359,7 +359,7 @@ class TestPromotionIsAlwaysAClick:
         assert "guardrails.autonomy_demoted" in ops
 
 
-# ── acceptance criteria 3: the incident clamp ─────────────────────────────────
+# ── the incident clamp ────────────────────────────────────────────────────────
 
 
 class TestIncidentClamp:
@@ -405,7 +405,7 @@ class TestIncidentClamp:
         assert "incident" in elig.reason
 
 
-# ── acceptance criteria 4: the record is derived, never cached ────────────────
+# ── the record is derived, never cached ───────────────────────────────────────
 
 
 class TestTheRecordIsNeverCached:

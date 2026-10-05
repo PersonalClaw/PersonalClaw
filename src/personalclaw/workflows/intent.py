@@ -6,7 +6,7 @@ a deep grill on the first is as wrong as skipping it on the second.
 
 **Keyword heuristics, zero tokens, offline-safe.** A model call here would put a cost and a
 failure mode in front of every plan, including the ones whose whole answer is "this is trivial".
-The tuple is also the bucketing key the LEARNING-FLYWHEEL uses for outcome learning, so it has to
+The tuple is also the bucketing key the learning flywheel uses for outcome learning, so it has to
 be reproducible — the same intent must classify the same way next week, which a sampled model
 cannot promise.
 

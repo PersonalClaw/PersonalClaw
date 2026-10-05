@@ -1,4 +1,4 @@
-"""Tests for the event-trace replay substrate (Session 3): recorder, metrics, baselines.
+"""Tests for the event-trace replay substrate: recorder, metrics, baselines.
 
 The recorder half lives in core (`personalclaw.trace_recorder`); the metrics/baseline half
 lives in the harness. These prove: recording is off by default (zero overhead), redaction
@@ -31,10 +31,9 @@ def test_recorder_writes_ndjson_and_redacts(tmp_path: Path, monkeypatch) -> None
     assert trace_recorder.is_recording() is True
     # A payload string containing a credential the redactor recognizes (an AWS access key
     # id) must be redacted at write. NOTE: security.redact() is narrower than "all
-    # secrets" — it catches AWS keys + exfil URLs but not e.g. bare `sk-`/`ghp_` tokens
-    # (recorded as a DISCOVERY in the execution log). The recorder
-    # applies whatever redact() catches; this asserts the recorder wires it in, using a
-    # value redact() genuinely recognizes.
+    # secrets" — it catches AWS keys + exfil URLs but not e.g. bare `sk-`/`ghp_` tokens.
+    # The recorder applies whatever redact() catches; this asserts the recorder wires it in,
+    # using a value redact() genuinely recognizes.
     trace_recorder.record(
         "mcp", "srv", "call_tool", {"arguments": {"aws": "AKIAIOSFODNN7EXAMPLE here"}}
     )
@@ -116,7 +115,7 @@ def test_fingerprint_fallback_when_no_seq() -> None:
 
 
 def test_shipped_scenarios_pass_baseline() -> None:
-    """The checked-in replay fixtures pass their baselines (Success Criterion #4 shape)."""
+    """The checked-in replay fixtures pass their baselines."""
     results = baselines.check_baselines()
     assert results, "there should be shipped replay scenarios"
     failed = [r for r in results if not r.ok]

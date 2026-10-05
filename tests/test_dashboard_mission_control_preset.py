@@ -1,8 +1,8 @@
 """The locked Mission Control preset.
 
-AS-1 shipped the dashboard-as-views registry with ONE preset and a comment reserving
-the second for AS-8 (gated on INBOX-NOTIFICATIONS-UNIFICATION, now done). This covers
-the server third of the acceptance clause: a **locked** "Mission Control" view whose
+The dashboard-as-views registry first shipped with ONE preset and a comment reserving
+the second for this one (gated on unifying the inbox and notifications, now done). This covers
+the server third of the feature: a **locked** "Mission Control" view whose
 DECLARED composition is the four attention lanes, in triage order.
 
 The lane refs asserted here are a CONTRACT with the frontend — ``attentionLanes.ts`` /

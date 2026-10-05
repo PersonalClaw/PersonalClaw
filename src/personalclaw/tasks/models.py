@@ -30,7 +30,7 @@ class TaskStatus(enum.Enum):
     DONE = "done"
     CANCELLED = "cancelled"
     BLOCKED = "blocked"
-    #: A branch the run declined, or work a rewind made unnecessary (R12).
+    #: A branch the run declined, or work a rewind made unnecessary.
     #: ONE new member, not a status explosion: the WHY of a block lives in
     #: `Task.blocked_kind`, and per-surface display labels are configuration. Measured
     #: before adding it: `from_dict` coerced an unknown status to OPEN, so a skipped task
@@ -265,7 +265,7 @@ def normalize_note(item: Any, *, stamp: bool = False) -> dict:
 
 @dataclass
 class WorkflowTaskBinding:
-    """What ties a Task to the run that owns it (TASKS-SOPS §1). `managed` is the load-bearing
+    """What ties a Task to the run that owns it. `managed` is the load-bearing
     flag, and it has three real configurations rather than two: * `managed=True` — the engine
     drives the status. A user write is rejected at the façade. * `managed=False` WITH a
     binding — a task the workflow PRODUCED as output. Provenance is recorded so the board can
@@ -323,8 +323,8 @@ class Task:
     # reads back as "" — no attribution, i.e. today's behavior. Distinct from
     # `assignee`, which is who should DO it.
     author: str = ""
-    # WHICH HARNESS minted this record, as an origin-attribution handle
-    # (MULTI-TENANCY-ENTITY TSE2-2). A locally-minted task is stamped with this
+    # WHICH HARNESS minted this record, as an origin-attribution handle.
+    # A locally-minted task is stamped with this
     # home's `durability` `machine_id` at CREATE; a record served by a shared/
     # multi-tenant provider carries the origin of the harness that minted it.
     # Additive with an empty default: a task written before this field existed —
@@ -356,7 +356,7 @@ class Task:
     #: The run/node this task projects, when any. `None` = standalone.
     workflow_binding: "WorkflowTaskBinding | None" = None
     #: WHY a blocked task is blocked, as a field rather than a status explosion. An unknown
-    #: kind degrades to a plain `blocked` badge on every surface (R12).
+    #: kind degrades to a plain `blocked` badge on every surface.
     blocked_kind: str = ""  # "" | needs_input | capability | transient | dependency
     #: A short human line about current state — what the node is doing right now.
     preview: str = ""
@@ -403,7 +403,7 @@ class Task:
         return d
 
     def belongs_to(self, username: str) -> bool:
-        """Whether this task is ``username``'s work (TEAM-SHARED-ENTITIES §2.1). Assignee decides
+        """Whether this task is ``username``'s work. Assignee decides
         when there is one; an UNASSIGNED task falls back to its author, because "I wrote it
         and nobody picked it up" is still my work. With no username configured every task
         belongs to the owner — a single-user install must behave exactly as it does today, and
@@ -1023,7 +1023,7 @@ class Project:
     # or loop scoped under it (distinct from agent_instructions_template, which is
     # operating-procedure guidance; the brief is the WHAT/WHY of the project).
     brief: str = ""
-    # WHICH HARNESS minted this project (MULTI-TENANCY-ENTITY TSE2-2). Stamped with this
+    # WHICH HARNESS minted this project. Stamped with this
     # home's `durability` `machine_id` at CREATE; empty on a project written before the field
     # existed, which reads as "this harness's". A sidecar for cross-harness attribution — the
     # `p-<hex8>` id format is untouched.

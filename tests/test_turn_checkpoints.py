@@ -2,8 +2,8 @@
 
 Every claim here is measured on the STORED BYTES or on a post-restore hash, never on a
 config value or an exclusion list. That distinction is the point: an exclusion list can be
-correct while the store still holds the secret (DAS-10 shipped exactly that defect), and a
-cap constant can be right while nothing enforces it.
+correct while the store still holds the secret (an earlier version shipped exactly that defect),
+and a cap constant can be right while nothing enforces it.
 """
 
 from __future__ import annotations
@@ -700,7 +700,7 @@ def test_a_file_a_command_changed_before_its_backup_comes_back_only_as_far_as_th
 
 
 def test_three_files_mangled_through_the_real_tools_restore_byte_identical(ws):
-    """SC8 end to end through the tool surface an agent actually calls."""
+    """Rewind end to end through the tool surface an agent actually calls."""
     tc.begin_turn(SESSION, cwd=ws)
     tc.begin_turn(SESSION, cwd=ws)
     originals = {str(ws / n): _sha(ws / n) for n in ("alpha.py", "beta.txt", "gamma.json")}

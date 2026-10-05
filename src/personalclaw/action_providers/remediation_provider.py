@@ -3,24 +3,23 @@
 **What this replaces.** The engine used to hang off the heartbeat as
 `HeartbeatService._maybe_remediate`, carrying its own private scheduler in a
 `_remediation_next_ts` float and its own private ownership protocol (a bool return that decided
-whether `_legacy_maintenance` ran that tick). §4.3 always said that form was provisional: *"Once
-AUTOMATION-SUBSTRATE lands, the engine IS one trigger (adaptive clock kind, `created_by: system`)
-on the Automations page … Before that, it hangs off the heartbeat loop as one job."* The substrate
-has landed, so the heartbeat job is DELETED and this is the engine's only driver — one mechanism,
-not two.
+whether `_legacy_maintenance` ran that tick). That form was always provisional: once the
+automation engine existed, the remediation engine was to be one trigger (adaptive clock kind,
+`created_by: system`) on the Automations page. The automation engine has landed, so the
+heartbeat job is DELETED and this is the engine's only driver — one mechanism, not two.
 
 **What re-homing actually buys.** Nothing here re-implements scheduling, capability fencing,
 ledgering or delivery: the trigger tick arms the clock, `triggers/screen.py` freezes the grant,
 `run_record.record_run` writes the run record, and `delivery.report_run` → `state.notify` →
-`notification_rules` routes the outcome. That last one is the second clause — *"the runs-inbox
-'learned overnight' digest picks them up like any other run"* — and it is satisfied by NOT having a
+`notification_rules` routes the outcome. That last one is how the runs-inbox "learned overnight"
+digest picks these runs up like any other run — and it is satisfied by NOT having a
 private notification path: a remediation run reaches the digest queue through exactly the code that
 carries every other automation's run, so a user whose rule for that kind is `digest` gets it in the
 grouped item without anything here knowing the digest exists.
 
 **The adaptive half.** `triggers/arm.cadence_next_fire` picks between two declared cadences using
 `spec.health_state`, and stays pure. This provider is the ONE writer of that state, and it re-arms
-after the run rather than letting the tick's pre-fire arm stand: the tick arms BEFORE dispatch (§3.1
+after the run rather than letting the tick's pre-fire arm stand: the tick arms BEFORE dispatch (for
 crash safety), so it can only ever see the PREVIOUS run's state, and a degradation that had to wait
 a full healthy sleep before shortening the tick would defeat the cadence entirely.
 """
@@ -184,7 +183,7 @@ def reconcile_remediation_trigger(store: Any) -> None:
     `health_state` is deliberately NOT converged — it is run-produced state, and resetting it on
     every boot would make a degraded install sleep for the healthy interval after a restart.
 
-    Writes the unified trigger store directly, never `crons.json` — S108's bug, recorded in
+    Writes the unified trigger store directly, never `crons.json` — the bug recorded in
     `reconcile_digest_cron`'s docstring: the boot import runs BEFORE reconciliation, so a row
     written to the legacy file stays inert until the next boot.
 
@@ -226,8 +225,8 @@ def reconcile_remediation_trigger(store: Any) -> None:
                 kind="clock",
                 created_by="system",
                 # `delivery: inbox` — unlike the digest and the recap, whose OUTPUT is itself a
-                # notification, a remediation run's output is a ledger row nobody is watching. §4.4
-                # asks for these runs to reach the runs-inbox digest "like any other run", and a
+                # notification, a remediation run's output is a ledger row nobody is watching. These
+                # runs must reach the runs-inbox digest "like any other run", and a
                 # `none` destination is muted at `delivery.deliver` before any rule is consulted.
                 delivery="inbox",
             )
@@ -247,7 +246,7 @@ def reconcile_remediation_trigger(store: Any) -> None:
         switch_from_config(trigger, bool(cfg.enabled))
         trigger.workflow = {"inline": {"provider": PROVIDER_NAME, "config": {}}}
         # The engine prunes, re-indexes and (in the judgment lane) spends, unattended, forever. The
-        # frozen grant is decision 7's requirement; a system-created trigger's opt-in is the code
+        # frozen grant is required; a system-created trigger's opt-in is the code
         # path that created it.
         trigger.capabilities = _screen.capabilities_for_action(trigger)
         armed = _arm(trigger)

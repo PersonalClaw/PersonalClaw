@@ -43,7 +43,7 @@ def test_health_score_subtracts_reachable_penalties():
 
 
 def test_an_unreachable_deficit_still_counts_against_the_score():
-    """Settings B16: the score counted only what the engine could fix, so a home with failures
+    """The score counted only what the engine could fix, so a home with failures
     nothing automatic can clear read 100. Whether the engine can ACT is `fixable_penalty`'s
     question; the score answers how healthy the home is."""
     ds = [
@@ -223,7 +223,7 @@ _ABSORBED = {
     "memory.prune-history": "history_over_retention",
     "sel.prune": "sel_prunable_entries",
     "skills.age": "skill_aging_due",
-    # PR2-11 remainder: the inbox's own 6h maintenance loop, retired into the engine.
+    # The inbox's own 6h maintenance loop, retired into the engine.
     "inbox.maintenance": "inbox_maintenance_backlog",
 }
 
@@ -232,7 +232,7 @@ def test_absorbed_maintenance_jobs_registered():
     """Every maintenance pass retired from the heartbeat has a registered engine job in
     the deterministic ($0) lane.
 
-    Load-bearing since PR2-8 deleted `_legacy_maintenance`: the heartbeat no longer keeps a
+    Load-bearing since `_legacy_maintenance` was deleted: the heartbeat no longer keeps a
     duplicate copy of these passes, so if one disappears from this registry there is nothing
     left running it and the loss is silent (an absent prune is invisible by nature)."""
     jobs = {j.id: j for j in rem.all_jobs()}

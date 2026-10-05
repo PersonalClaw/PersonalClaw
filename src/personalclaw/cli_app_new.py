@@ -13,7 +13,7 @@ Two halves, and the split is the point:
   with no published SDK ABC (``agent``, ``task``, ``workflow``, ``duty_gate`` today) gets an
   honestly-labelled duck-typed stub instead of a fabricated import — apps import core ONLY
   via ``personalclaw.sdk.*``, so the generator refuses to teach a boundary violation.
-  (``notification`` left that list with `TSE2-5`: ``sdk/notification.py`` now publishes
+  (``notification`` has left that list: ``sdk/notification.py`` now publishes
   ``NotificationDeliveryProvider``, so the stub is derived like any other contract's.)
 * **The generated suite CALLS the type's conformance kit** when the type ships one
   (``channel`` today — see :data:`_CONFORMANCE_KITS`). A suite that asserts only the
@@ -669,7 +669,7 @@ def _manifest_dict(
         "icon": "Blocks",
         "license": "MIT",
         "tags": [type_name],
-        # Plan 32 CLI seams — a setup step and a doctor probe, both in app_cli.py.
+        # App CLI seams — a setup step and a doctor probe, both in app_cli.py.
         "cli": {"setup": "app_cli:setup", "doctor": "app_cli:doctor"},
         "provider": {
             "type": type_name,

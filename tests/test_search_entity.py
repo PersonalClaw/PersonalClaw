@@ -1,4 +1,4 @@
-"""WS1 — the Search entity core: ABC + normalized shapes, use-case store, and
+"""The Search entity core: ABC + normalized shapes, use-case store, and
 use-case→provider resolution (mirrors the Model bridge).
 
 Uses a fake in-process provider so no network/credential is needed.

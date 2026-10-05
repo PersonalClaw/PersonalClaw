@@ -4,7 +4,7 @@ import { SidePanel } from './SidePanel'
 
 // ── The docked inspector is a named landmark region ────────────────────────────────────────────
 //
-// Measured on `#/tasks` with a task detail open (cycle 198): the SidePanel root had `role`,
+// Measured on `#/tasks` with a task detail open: the SidePanel root had `role`,
 // `aria-label` and `aria-labelledby` all null, and its title "Ship the release" was a bare <span>
 // (0 headings, 0 landmarks on the page). A screen-reader user entering the panel got a stream of
 // controls with no region to navigate to and no programmatic name for what the panel was — the app's
@@ -20,7 +20,7 @@ describe('SidePanel is a named landmark region', () => {
   })
 
   it('the region contains a heading named by its title, so heading-nav reaches it', () => {
-    // Cycle 198 named the region; cycle 199 made the title a HEADING (an <h2>), so a screen reader can
+    // The region is named by its title, and that title is a HEADING (an <h2>), so a screen reader can
     // jump to the panel by heading navigation — measured before: the panel had 0 headings. Verified in
     // the browser that h2 renders byte-identically to the old span (preflight resets h2 margins/weight;
     // `data-type="title-l"` sets size/line-height/wght), so this is a pure semantic upgrade.

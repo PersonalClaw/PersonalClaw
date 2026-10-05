@@ -76,7 +76,7 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
   }, [agent.triggers])
   // The agent-scoped-SOP list was here (workflows whose scope_ref matched this
   // agent's binding id, via the used-by reverse index). Both the endpoint and the
-  // scope_ref model are gone with the old feature (WORKFLOWS-V2 Phase 1); v2
+  // scope_ref model are gone with the old feature; v2
   // definitions are not agent-scoped, so there is nothing equivalent to show.
 
   // Seeded from the agent as the list shows it when the editor opens (or another agent is picked) —

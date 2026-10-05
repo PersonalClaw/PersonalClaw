@@ -19,9 +19,9 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // No accent token appears on the line at all, so neither regex can fire. `ui/RungChip` was one of
 // these, and `lib/rungs.ts` maps `autonomous → var(--color-primary)`, so the chip that says "runs on
 // its own" drew coral ink on a 14% coral tint: **3.97:1 in light** against a 4.5 floor — measured live
-// on `#/triggers` (7 chips desktop, 6 at 390px) and exactly the 14% row of cycle 146's own table.
-// Dark was never affected (5.52), the asymmetry that cycle explained: a tint lifts a light backdrop
-// TOWARD a dark accent until the two converge.
+// on `#/triggers` (7 chips desktop, 6 at 390px) and exactly the 14% row of `accentChip.test.ts`'s
+// table. Dark was never affected (5.52), the asymmetry that file explains: a tint lifts a light
+// backdrop TOWARD a dark accent until the two converge.
 //
 // 🔑 ONE TONE, NOT A SWEEP. Recomputed for all four rungs as ink over a 14% tint of themselves on
 // `--color-surface`:
@@ -31,7 +31,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //
 // Only the coral rung moves. The other three keep the tint, so the fix cannot be "route rung chips
 // through the container pair" — semantic and neutral tones have no `<tone>-container` sibling, which is
-// the same reason cycle 146 left 47 semantic sites alone.
+// the same reason `accentChip.test.ts` left 47 semantic sites alone.
 //
 // 🔑 AND THE CONTAINER FILL IS GROUND-INDEPENDENT, which the tint never was. `color-mix(… ,
 // transparent)` composites against whatever surface the chip lands on, so the same chip measured
@@ -41,7 +41,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // 🪤 THE POPULATION IS 43 SITES AND IS NOT SWEPT HERE — stated so it is recorded debt, not a silent
 // cap. A regex cannot decide these: whether `${x.tone}` reaches coral depends on the registry behind
 // `x`, and most of them resolve to semantic tones that pass. Converging them is per-registry work.
-// The measured, drivable ones, for whoever takes the next slice:
+// The measured, drivable ones, for whoever takes the next registry:
 //
 //   pages/notifications/NotificationsPage.tsx:162   `toneChipBg(km.tone)` + `km.tone` ink, 16%.
 //                                                   13 of its kinds are coral, and this home holds 36
@@ -50,8 +50,8 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //                                                   the surface census (default state) reports clean.
 //   pages/schedule/ScheduleDetail.tsx:194,195       scheduleMeta `cron` and `agent` are both coral.
 //   ui/Segmented.tsx:136                            **DEFERRED ON PURPOSE**: interactive, and its coral
-//                                                   branch carries a hover. Exactly why cycle 146 held
-//                                                   `ui/Button` and `pages/code/CodeCockpitPage` back
+//                                                   branch carries a hover. Exactly why
+//                                                   `ui/Button` and `pages/code/CodeCockpitPage` stay
 //                                                   in `CLASS_TINT_ALLOWED` — a container fill has no
 //                                                   hover shade in the token set, and inventing one is
 //                                                   a visual-language decision, not a contrast fix.
@@ -142,11 +142,11 @@ describe('a rung chip inks coral through the container pair, not a tint of itsel
   })
 })
 
-// ── Cycle 175: the SECOND adopter, so the rule moved to `design/accent` ───────────────────────────
+// ── The SECOND adopter, so the rule moved to `design/accent` ──────────────────────────────────────
 //
-// Cycle 172 kept the coral remap inline in `RungChip` and recorded that it should move to
-// `design/accent` "when the NEXT cycle converges NotificationsPage/ScheduleDetail — with real
-// adopters, not speculatively". That cycle is this one.
+// The coral remap first lived inline in `RungChip`, with a note that it should move to
+// `design/accent` once NotificationsPage/ScheduleDetail converged too — with real
+// adopters, not speculatively. This is that move.
 //
 // 🔑 THE SECOND SITE, MEASURED LIVE. `NotificationsPage`'s kind chip in the detail panel paints
 // `toneChipBg(km.tone)` (a 16% tint) under `km.tone` ink. Driven at `#/notifications` with a row
@@ -158,7 +158,7 @@ describe('a rung chip inks coral through the container pair, not a tint of itsel
 // 🪤 AND THE FIRST ATTEMPT TO MEASURE IT INVENTED A NUMBER. The tint resolves to
 // `color(srgb 0.784314 0.270588 0.180392 / 0.16)`; a probe that pulls the first three numbers out of
 // that string reads 0.78/0.27/0.18 as RGB — near-black — and reports ~1.27:1 on anything. Same bug had
-// already faked a finding on an `oklab()` backdrop the cycle before. `probes/lib/color.mjs` now owns
+// already faked a finding on an `oklab()` backdrop once before. `probes/lib/color.mjs` now owns
 // the conversion (srgb components are 0-1, NOT 0-255) and REFUSES to guess on notations it cannot
 // parse rather than returning a plausible lie.
 //
@@ -171,7 +171,7 @@ describe('a rung chip inks coral through the container pair, not a tint of itsel
 //
 // 🪤 `strength` stays a parameter. The two adopters ship 14% and 16%, and those percentages apply
 // only to tones that already pass — collapsing them would repaint passing chips for no accessibility
-// reason. The coral branch has no strength at all, which is the half cycle 146 cared about.
+// reason. The coral branch has no strength at all, the half the accent-chip fix cared about.
 //
 // 🪤 `toneChipBg`'s ICON-ONLY consumers are still NOT migrated, and that is the distinction this rail
 // exists to protect: `NotificationBell` and `NotificationsPage`'s list tile tint a square behind an
@@ -207,7 +207,7 @@ describe('toneChipSkin is the one rule the tone-registry chips share', () => {
     expect(rung, 'the inline ternary it replaced must be gone').not.toMatch(/\? accentChip\s*\n/)
     const notif = read('pages/notifications/NotificationsPage.tsx')
     expect(notif, 'the LABELLED kind chip').toMatch(/style=\{toneChipSkin\(km\.tone, 16\)\}/)
-    // Cycle 176: BOTH of ScheduleDetail's summary chips — the schedule KIND and the exec MODE.
+    // BOTH of ScheduleDetail's summary chips — the schedule KIND and the exec MODE.
     const sched = read('pages/schedule/ScheduleDetail.tsx')
     expect(sched, 'the schedule-kind chip').toMatch(/style=\{toneChipSkin\(km\.tone, 16\)\}/)
     expect(sched, 'the exec-mode chip').toMatch(/style=\{toneChipSkin\(mm\.tone, 16\)\}/)
@@ -216,7 +216,7 @@ describe('toneChipSkin is the one rule the tone-registry chips share', () => {
   })
 
   it('the prompt SOURCE pills go through it too — the default source is coral', () => {
-    // Cycle 177, the fourth adopter. `sourceTone` is a FUNCTION, not a `tone:` field, which is why a
+    // The fourth adopter. `sourceTone` is a FUNCTION, not a `tone:` field, which is why a
     // registry grep for `tone: 'var(--color-primary)'` missed it entirely — and it returns coral for
     // `user`/undefined, i.e. the DEFAULT. In this validation home that is 47 of 47 prompts, so the
     // failing state was every prompt on the surface, measured at **3.85:1** (12px) in light.
@@ -249,7 +249,7 @@ describe('toneChipSkin is the one rule the tone-registry chips share', () => {
   })
 
   it('the last two coral-capable registry chips go through it too', () => {
-    // Cycle 178 closes the family's registry sweep. NEITHER of these was reachable with this
+    // These close the family's registry sweep. NEITHER of these was reachable with this
     // validation home's data, so they are SOURCE-verified only — stated rather than implied:
     //   · `InboxDetail`'s kind chip renders only in the ELSE of the classification branch, and all
     //     45 inbox items here HAVE a classification (39 needs_reply, 6 fyi). Measured, not assumed.
@@ -257,7 +257,7 @@ describe('toneChipSkin is the one rule the tone-registry chips share', () => {
     //     chip that DID render is line 84, which already uses `accentChip` and measured **13.1:1**
     //     live. So this convergence is onto a form proven in the same file.
     // The pairing they used — coral ink over a 16% tint of itself — is the one measured at
-    // **3.85:1** on four other sites this session, which is why they are converged rather than left.
+    // **3.85:1** on four other sites above, which is why they are converged rather than left.
     const inbox = read('pages/inbox/InboxDetail.tsx')
     expect(inbox, 'the kind chip').toMatch(/style=\{toneChipSkin\(km\.tone, 16\)\}/)
     expect(inbox).not.toMatch(/color-mix\(in srgb, \$\{km\.tone\}/)
@@ -268,7 +268,7 @@ describe('toneChipSkin is the one rule the tone-registry chips share', () => {
 
   it('only the coral-capable registries were touched — the census that removed work', () => {
     // 🔑 TWO censuses are needed, and running only the first is why this family looked smaller than
-    // it was for four cycles:
+    // it was through four passes:
     //   1. a `tone:` FIELD in a registry table      → grep "tone: 'var(--color-primary)'"
     //   2. a `return 'var(--color-primary)'` inside a tone FUNCTION → invisible to (1)
     // Census (2) is what found `promptMeta.sourceTone` and `agentMeta.providerMeta`.
@@ -305,10 +305,10 @@ describe('toneChipSkin is the one rule the tone-registry chips share', () => {
   })
 })
 
-// ── Cycle 616: THE SOURCE_TONE REGISTRY — the slice this rail's worklist asked for ────────────────
+// ── THE SOURCE_TONE REGISTRY — the next registry this rail's worklist asked for ───────────────────
 //
 // The header above records 43 registry-tone sites as debt and names the drivable ones "for whoever
-// takes the next slice". This is one, and it was found the way the header predicted a registry site
+// takes the next registry". This is one, and it was found the way the header predicted a registry site
 // would have to be found — by driving the surface, not by a regex, because `${tone}` puts no accent
 // token on the line.
 //
@@ -318,9 +318,9 @@ describe('toneChipSkin is the one rule the tone-registry chips share', () => {
 //     3.97:1 (need 4.5) 12px/400 — span.shrink-0.rounded-pill.px-2 "bundled"
 //
 // `skillMeta.SOURCE_TONE` maps **`bundled` AND `native`** to `var(--color-primary)`, so the chip drew
-// coral ink on a 14% tint of itself — the exact 14% row of cycle 146's table and the exact number
-// `ui/RungChip` measured. Dark was never affected (5.9), the same asymmetry: a tint lifts a light
-// backdrop TOWARD a dark accent until ink and background converge.
+// coral ink on a 14% tint of itself — the exact 14% row of `accentChip.test.ts`'s table and the
+// exact number `ui/RungChip` measured. Dark was never affected (5.9), the same asymmetry: a tint lifts
+// a light backdrop TOWARD a dark accent until ink and background converge.
 //
 // 🔑 TWO CALL SITES, ONE REGISTRY, so this is a complete per-registry slice rather than half a family:
 // the list chip at 14% and the inspector's header chip at 16%. Both route through `toneChipSkin`, which
@@ -361,7 +361,7 @@ describe('the skill source chip routes its registry tone through the helper', ()
 
   it("the inspector's semantic sibling keeps its raw tint", () => {
     // `always loaded` is warn at 16% and measures 4.54-4.71. Routing it through the coral container
-    // would be a redesign — the same call cycle 146 made when it left 47 semantic sites alone.
+    // would be a redesign — the same call `accentChip.test.ts` made for its 47 semantic sites.
     expect(INSPECTOR).toMatch(/background: 'color-mix\(in srgb, var\(--color-warn\) 16%, transparent\)', color: 'var\(--color-warn\)'/)
   })
 

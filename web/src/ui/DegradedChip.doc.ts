@@ -1,7 +1,7 @@
 import type { UiDoc } from './uiDoc'
 
-// Doc object for DegradedChip — the shell-corner no-model degraded-mode indicator
-// (PLATFORM-RESILIENCE §5). Self-polls, takes no props, renders nothing when healthy.
+// Doc object for DegradedChip — the shell-corner no-model degraded-mode indicator.
+// Self-polls, takes no props, renders nothing when healthy.
 const doc: UiDoc = {
   name: 'DegradedChip',
   keywords: ['degraded', 'no-model', 'offline', 'fallback', 'floor', 'resilience', 'model', 'shell'],

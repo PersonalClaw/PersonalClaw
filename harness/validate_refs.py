@@ -6,11 +6,11 @@ running tooling:
 
 - ``requiredTests`` node-ids actually collect (``pytest --collect-only``), so a rename
   that orphans a test's node-id is caught the moment ``validate`` runs — this is the
-  spec-rot guard from the plan's Risk table.
+  spec-rot guard.
 - ``requiredProfiles`` name real profiles.
-- ``scanner`` check-ids on rule specs name real scanner checks (once the scanner lands in
-  Session 2; until then an unknown check-id is a warning, not an error, so Session-1
-  seed rules can forward-reference their check).
+- ``scanner`` check-ids on rule specs name real scanner checks (with no scanner
+  available, a check-id is a warning, not an error, so a seed rule can
+  forward-reference its check).
 
 Kept separate so ``validate`` can offer a ``--fast`` mode (shape only, no pytest
 collection) for the inner loop, and the full mode for the same-PR gate.
@@ -166,8 +166,8 @@ def validate_refs(
 
     ``check_tests=False`` skips the pytest collection round-trip (the ``--fast`` path).
     ``known_scanner_checks`` is the set of scanner check-ids; when ``None`` (scanner not
-    yet available) a ``scanner:`` reference is a *warning*, letting Session-1 seed rules
-    name their check before Session 2 implements it.
+    yet available) a ``scanner:`` reference is a *warning*, letting a seed rule
+    name its check before the scanner implements it.
     """
     issues: list[ValidationIssue] = []
     profiles = profile_names()

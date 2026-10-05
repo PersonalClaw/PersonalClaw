@@ -1,14 +1,14 @@
-"""Unattended threading (gap 3) + the runtime-agnostic loop breaker (gap 5).
+"""Unattended threading + the runtime-agnostic loop breaker.
 
-AAP-5 made the host the permission authority, so ``bypassPermissions`` is clamped to
+The host is the permission authority, so ``bypassPermissions`` is clamped to
 ``default`` at every door, on an unattended session too: its asks fail fast instead of
 parking on a human. The one widening is work whose owner let its CLI approve its own calls
 (``self_approval``), so every widening test here is paired with the floor that must stay
-clamped: that pairing is the point, because the way this could quietly undo AAP-5 is to
+clamped: that pairing is the point, because the way this could quietly undo host authority is to
 widen both.
 
 The breaker half is driven the same way the gate tests are: ``run_chat`` over a
-synthetic ACP event stream, not a predicate call. Phase 1's `G6` measured six
+synthetic ACP event stream, not a predicate call. A live measurement found six
 consecutive ACP tool failures producing no warn, no block and no circuit trip, so a
 unit call on the counter would have passed *before* this change too and proved
 nothing.
@@ -54,7 +54,7 @@ class TestAcpClientModeDoor:
     """The widening and its floor, on the same door, in the same class."""
 
     def test_interactive_session_still_clamps_bypass(self):
-        """THE regression that matters: the clamp must survive AAP-6.
+        """THE regression that matters: the clamp must survive the self-approval widening.
 
         An ordinary interactive session passes no ``self_approval``, so the default has
         to be the safe one. If this ever goes green-to-red, the plumbing has been wired
@@ -180,7 +180,7 @@ class TestBridgeThreadsThePostureToAcp:
         assert p._client._mode == HOST_AUTHORITY_MODE
 
     def test_factory_without_the_kwarg_stays_clamped(self):
-        """The pre-AAP-6 behaviour, kept as the floor: no flag → the clamp."""
+        """The original behaviour, kept as the floor: no flag → the clamp."""
         from personalclaw.llm.acp_agent import _factory
 
         p = _factory(entry=self._entry(), acp_mode="bypassPermissions")
@@ -410,7 +410,7 @@ class TestFailureBitIsRuntimeAgnostic:
         assert _ok_bit({"status": "completed", "rawOutput": shallow}) is False
 
 
-# ── the run_chat harness (same shape as AAP-5's) ────────────────────────────
+# ── the run_chat harness ────────────────────────────────────────────────────
 
 
 async def _async_iter(items):
@@ -452,7 +452,7 @@ def _make_state(tmp_path):
     return state, client
 
 
-def _session(key="chat-1-aap6", *, trust=False):
+def _session(key="chat-1-unattended", *, trust=False):
     s = _ChatSession(key)
     s._trust = trust
     s.acp_provider = "acp:kiro-cli"
@@ -492,7 +492,7 @@ def _decoded_result(frame: dict, call_id: str) -> LLMEvent:
     ``extract_tool_update_events`` then ``acp_event_to_agent_event`` — the two hops the
     live stream takes. Built this way on purpose: ``_fail_cycle`` below hands
     ``chat_runner`` a hand-written ``tool_meta={"ok": False}``, which tests the counter
-    but would keep passing if no runtime on earth ever produced that bit. `G6` shipped
+    but would keep passing if no runtime on earth ever produced that bit. The breaker once shipped
     exactly that way. These events carry only what the CLI actually said.
     """
     msg = JsonRpcMessage(
@@ -545,7 +545,7 @@ def _fail_cycle(n):
     return out
 
 
-# ── gap 3: which sessions count as unattended, and what that changes ─────────
+# ── which sessions count as unattended, and what that changes ────────────────
 
 
 class TestUnattendedClassification:
@@ -559,7 +559,7 @@ class TestUnattendedClassification:
         The clamp is what the CLI sees."""
         state, client = _make_state(tmp_path)
         _set_stream(client, [LLMEvent(kind=EVENT_COMPLETE, stop_reason="end_turn")])
-        await _drive(state, _session("chat-1-aap6"))
+        await _drive(state, _session("chat-1-unattended"))
         kw = state.sessions.get_or_create.call_args.kwargs
         assert kw["unattended"] is False
         assert kw["acp_mode"] is None
@@ -644,7 +644,7 @@ class TestUnattendedFailFast:
                 LLMEvent(kind=EVENT_COMPLETE, stop_reason="end_turn"),
             ],
         )
-        session = _session("chat-1-aap6")
+        session = _session("chat-1-unattended")
 
         async def _answer():
             for _ in range(400):
@@ -662,11 +662,11 @@ class TestUnattendedFailFast:
         assert not any("auto-denied" in t for t in _texts(session))
 
 
-# ── gap 5: the breaker, driven over a real failing-tool ACP stream ───────────
+# ── the breaker, driven over a real failing-tool ACP stream ──────────────────
 
 
 class TestAcpLoopBreaker:
-    """`G6` measured that six consecutive failures produced nothing. Each rung is
+    """A live measurement found that six consecutive failures produced nothing. Each rung is
     driven through run_chat, and the vacuity floor (a passing stream produces no
     breaker text at all) is asserted so a rail that matches everything can't read as
     a pass."""
@@ -878,7 +878,7 @@ class TestBreakerFiresOnRealRuntimeFrames:
 
     @pytest.mark.asyncio
     async def test_kiro_completed_nonzero_exit_reaches_the_warn_rung(self, tmp_path):
-        """`G151`, end to end. Before the derivation this stream produced NOTHING: ten
+        """End to end. Before the derivation this stream produced NOTHING: ten
         such calls were measured live against kiro with no warn, no block, no trip."""
         state, client = _make_state(tmp_path)
         _set_stream(client, _real_frame_cycle(WARN_THRESHOLD, KIRO_FAILED_FRAME))
@@ -965,7 +965,7 @@ def _kiro_narrated_cycle(n):
 
 
 class TestBreakerIdentityIgnoresAdapterNarration:
-    """`G152`, the half that survived the failure-bit fix. Four identical failing calls
+    """The half that survived the failure-bit fix. Four identical failing calls
     each arrived correctly signed ``ok: False`` and the breaker STILL said nothing,
     because ``params_key`` bucketed on kiro's per-call ``__tool_use_purpose`` and gave
     each call its own streak of one."""

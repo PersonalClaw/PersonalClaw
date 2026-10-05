@@ -1,8 +1,8 @@
 """The projected Task WRITE, and the actor asymmetry it depends on.
 
-S61f wired the projection call site but wrote nothing — it emitted the event and recorded
+The projection call site was wired first but wrote nothing — it emitted the event and recorded
 the binding.
-This session makes the Task real, which is the first point in the whole program where running a
+This write makes the Task real, which is the first point anywhere in the engine where running a
 workflow puts a row on the user's board.
 
 The write is the ENGINE actor in the three-actor matrix, and the asymmetry is the entire
@@ -82,7 +82,7 @@ async def _tasks() -> list:
 
 
 def test_running_a_workflow_puts_a_ROW_ON_THE_BOARD():
-    """The first point in the program where the projection is a product feature rather than a
+    """The first point where the projection is a product feature rather than a
     mechanism: a user runs a template and sees the steps."""
 
     async def go():
@@ -202,7 +202,7 @@ def test_a_NON_ENGINE_field_is_still_writable():
 
 
 def test_an_UNMANAGED_task_is_not_governed_by_the_matrix():
-    """A standalone manual task must stay fully editable — the plan is explicit that they remain
+    """A standalone manual task must stay fully editable — by design they remain
     independent."""
 
     async def go():
@@ -301,9 +301,9 @@ def test_the_dedup_set_is_recorded_BEFORE_the_write_is_scheduled():
 
 
 def test_completion_DRAINS_the_projection_write():
-    """The defect this session found and fixed. A projected Task write is scheduled on the loop from
-    the SYNC settle path, and `run_to_completion` used to return with it still pending — so
-    a caller
+    """The defect found and fixed while wiring the write. A projected Task write is scheduled on
+    the loop from the SYNC settle path, and `run_to_completion` used to return with it still
+    pending — so a caller
     that awaited the run and then closed its loop LOST the board row entirely, with the run
     reporting
     `complete` and the ledger showing no `task_materialized`. The row is the user-visible half of

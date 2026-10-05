@@ -93,7 +93,7 @@ class ArtifactFolderStore:
 
     Reads re-load from disk on every call rather than caching, so a store
     constructed fresh against the same path sees everything a previous instance
-    wrote (the reload contract PEP-6 requires) without a cache-invalidation seam.
+    wrote, without a cache-invalidation seam.
     """
 
     def __init__(self, root: Path | str | None = None) -> None:
@@ -185,7 +185,7 @@ class ArtifactFolderStore:
     def _validate_parent(self, folders: _FolderRecords, folder_id: str, parent_id: str) -> str:
         """Refuse a nesting that can't exist. Raises before anything is written.
 
-        Two refusals, both required by PEP-6: a parent that does not exist, and a
+        Two refusals: a parent that does not exist, and a
         parent that is the folder itself or one of its own descendants (a cycle
         would strand every folder in the loop out of the tree walk forever).
         """

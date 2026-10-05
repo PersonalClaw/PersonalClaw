@@ -1,4 +1,4 @@
-"""The `view` kind — pull-on-view refresh (R10 / §7 item 8).
+"""The `view` kind — pull-on-view refresh.
 
 **🔴 THE DEFECT THIS CLOSES.** `view` is the FOURTH declared kind found with no runtime, after
 `file`, `web_watch` and `run_completed`. It is in `KINDS`, `SPEC_KEYS`
@@ -7,13 +7,13 @@ Automations page renders it. `surface_binding` is referenced by **exactly one** 
 in the entire tree — its own declaration in `SPEC_KEYS`. Nothing reads it, so nothing could
 ever fire a `view` trigger.
 
-**Why this one is not a poll, and why that is the point.** Its own words: *"Pull-on-view (R10):
-fires when a bound surface (dashboard tile, artifact open) renders past TTL; within TTL serve
-cache … Sidesteps the 1440-run-dirs critique by never firing unviewed."* A minutely clock
+**Why this one is not a poll, and why that is the point.** Pull-on-view
+fires when a bound surface (dashboard tile, artifact open) renders past TTL; within TTL it serves
+cache, and it sidesteps the 1440-run-dirs critique by never firing unviewed. A minutely clock
 trigger produces 1440 run directories a day whether or not anyone looks; a `view` trigger
 fires only when a human actually opens the thing. So the runtime is a function a RENDER calls,
-not a background loop — adding a poll here would reintroduce exactly the cost R10 exists to
-avoid.
+not a background loop — adding a poll here would reintroduce exactly the cost pull-on-view exists
+to avoid.
 
 **The TTL is the whole control.** Two renders inside the window must serve cache and cost
 nothing; the first render past it refreshes. That makes the trigger's expense proportional to
@@ -23,7 +23,7 @@ attention rather than to wall-clock time.
 on a tile someone leaves open in a dashboard that re-renders on every websocket nudge would
 refresh once a minute forever — so `MIN_REFRESH_INTERVAL_SECS` is a floor beneath any
 author-supplied TTL, the same reasoning `web_poll` applies to `poll_interval` and for the same
-reason S109 recorded: a declared floor that no code reads is not a floor.
+reason: a declared floor that no code reads is not a floor.
 
 **Freshness is a SIDECAR**, matching `file_poll` and `web_poll`: last-refresh state is
 high-churn, and writing it onto the trigger entity would rewrite `triggers.json` on every
@@ -31,7 +31,7 @@ render and race every unrelated edit.
 
 **What this does NOT own:** the refresh's own execution (the caller hands the payload to the
 shared dispatch, so a `view` fire passes the same gates as every other kind), and the
-per-refresh token cost §3 mentions for the runs-inbox freshness column — that number comes
+per-refresh token cost for the runs-inbox freshness column — that number comes
 from the executor's run record, not from the decision to refresh.
 """
 
@@ -53,8 +53,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_TTL_SECS = 600.0
 
 #: The floor beneath any author-supplied TTL. A dashboard re-renders on every websocket nudge, so a
-#: TTL of 1 would mean a refresh per nudge — an LLM turn per keystroke elsewhere in the UI. S109
-#: recorded the R1 interval floor being declared but read by no code; this one applies at the
+#: TTL of 1 would mean a refresh per nudge — an LLM turn per keystroke elsewhere in the UI. The
+#: clock's interval floor was once declared but read by no code; this one applies at the
 #: point of decision.
 MIN_REFRESH_INTERVAL_SECS = 60.0
 
@@ -65,7 +65,7 @@ _SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
 class Freshness:
     """When a bound surface last refreshed, and how often it has.
 
-    `refreshes` is carried for the runs-inbox freshness column §3 asks for: "this tile has refreshed
+    `refreshes` is carried for the runs-inbox freshness column: "this tile has refreshed
     12 times" is the number that tells a user whether a binding is worth its cost.
     """
 
@@ -180,7 +180,8 @@ def on_render(
 ) -> ViewDecision:
     """Decide one render: refresh past TTL, else serve cache. THE runtime for the `view` kind.
 
-    Called by a surface as it renders — never by a loop. That is R10's whole point: a `view` trigger
+    Called by a surface as it renders — never by a loop. That is pull-on-view's whole point: a
+    `view` trigger
     must cost nothing when nobody is looking, and a background poll would reintroduce the 1440-run
     directories a day that this kind exists to avoid.
 
@@ -236,8 +237,8 @@ def renders(
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     """`(payloads, served_cache)` for one render of `surface`.
 
-    Both returned, so the caller can dispatch the refreshes AND report the cache hits — §7 criterion
-    8's zero-silent-drops rule applies to a skipped refresh exactly as to a skipped fire.
+    Both returned, so the caller can dispatch the refreshes AND report the cache hits — the
+    zero-silent-drops rule applies to a skipped refresh exactly as to a skipped fire.
 
     A binding whose action it is not allowed to run (`triggers.grants`) is not refreshed: it serves
     what it last rendered, and the reason says what is missing. Asked before `on_render`, which

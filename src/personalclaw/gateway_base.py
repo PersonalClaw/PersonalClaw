@@ -115,7 +115,7 @@ def pid_is_alive(pid: int) -> bool:
 
     PUBLIC because it is the project's one owner-liveness predicate, and a second copy is how two
     surfaces start disagreeing about whether a process is gone. `triggers.claims.orphaned_ids`
-    (WF2AUT-16's boot pass) asks exactly this question about the process that granted a claim.
+    (the boot pass) asks exactly this question about the process that granted a claim.
 
     A non-positive pid is "we cannot tell", and it answers False — NOT alive — because the two
     callers want opposite fallbacks and each states its own: the runtime record refuses to trust a

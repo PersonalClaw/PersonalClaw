@@ -1,7 +1,7 @@
-"""Two-phase progressive skill disclosure (skill-progressive-disclosure, #29).
+"""Two-phase progressive skill disclosure.
 
 Phase 1 = the agent's context carries a compact INDEX; Phase 2 = the agent pulls a
-full body on demand via the skill_invoke tool (which also records the use, #25)."""
+full body on demand via the skill_invoke tool (which also records the use)."""
 
 from __future__ import annotations
 

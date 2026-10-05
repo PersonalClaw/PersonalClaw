@@ -6,7 +6,7 @@ import { api, type Artifact, type PinnedArtifact } from '../../../lib/api'
 import { SlotEmptyState, WidgetRow, RowAction } from './kit'
 import type { RouteProps } from '../../../app/useQueryState'
 
-/** Pinned artifacts — the dashboard's pin surface (R13).
+/** Pinned artifacts — the dashboard's pin surface.
  *
  *  **Why one widget and not a tile registry.** The dashboard has NO tile registry: the bento grid
  *  and per-user layout persistence were deliberately retired, and widgets are hard-imported by
@@ -48,7 +48,7 @@ export function PinnedArtifacts({ navigate }: RouteProps) {
     } catch (e) {
       // 🪤 `setPins([])` here made a failed PINS read say "No pinned artifacts. Pin one from its page
       // to keep it here." — inviting a user who already has pins to go create their first. Found by
-      // this cycle's own rail, which flagged the shape in the outer catch after the inner one was
+      // the fix's own rail, which flagged the shape in the outer catch after the inner one was
       // fixed: the same widget had the same defect on its OTHER read.
       setPinsErr(e)
     }

@@ -281,7 +281,7 @@ def test_the_unreachable_reason_names_a_next_step(tmp_path, monkeypatch):
     """A blocker sentence that only restates the block ("no embedder") leaves a reader exactly
     where "not fixable yet" did. Each one has to point somewhere — a page, a person, an action.
 
-    A failed Doctor check is a deficit too now (settings B16), and its blocker is the check's own
+    A failed Doctor check is a deficit too now, and its blocker is the check's own
     remedy, whose action is often a command to run — so a backticked command counts as one."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     from personalclaw.resilience.remediation import measure_deficits

@@ -1,4 +1,4 @@
-"""Pack export core — dependency-closure + two-layer redaction (AGENT-PACKS §2.1-2.2).
+"""Pack export core — dependency-closure + two-layer redaction.
 
 Every test binds an ISOLATED home: ``PERSONALCLAW_HOME`` env var AND a patched
 ``config_dir`` (stores bind config_dir at import; the env var is the robust lever). No test
@@ -119,7 +119,7 @@ def bound_home(pack_home):
             yield pack_home
 
 
-# ── acceptance criteria 1: build_pack writes a schema_version=1 .pclaw ZIP ──
+# ── build_pack writes a schema_version=1 .pclaw ZIP ──
 
 
 def test_build_pack_writes_schema_v1_zip(bound_home, tmp_path):
@@ -137,7 +137,7 @@ def test_build_pack_writes_schema_v1_zip(bound_home, tmp_path):
     assert manifest["provenance"]["content_hash"]  # non-forgeable provenance present
 
 
-# ── criterion 2: closure walker resolves a multi-hop reference + demotes an unresolvable edge ──
+# ── closure walker resolves a multi-hop reference + demotes an unresolvable edge ──
 
 
 def test_closure_resolves_multi_hop(bound_home):
@@ -182,7 +182,7 @@ def test_template_missing_agent_edge_becomes_requirement(tmp_path):
     assert any((r.kind, r.id) == ("agent", "ghost") for r in preview.requirements)
 
 
-# ── acceptance criteria 3: structural layer never opens a secret file ──
+# ── structural layer never opens a secret file ──
 
 
 def test_structural_layer_never_ships_secret_files(bound_home, tmp_path):
@@ -245,7 +245,7 @@ def test_denied_store_reader_returns_none(bound_home):
     assert _read_denied_safe(bound_home, "prompts/cfo-intro.yaml") is not None
 
 
-# ── acceptance criteria 4: a credential-bearing component is BLOCKED ──
+# ── a credential-bearing component is BLOCKED ──
 
 
 def test_component_with_planted_credential_is_blocked(tmp_path):
@@ -268,7 +268,7 @@ def test_component_with_planted_credential_is_blocked(tmp_path):
     assert not (home / "x.pclaw").exists()  # nothing written on a refused build
 
 
-# ── acceptance criteria 5: preview renders before write (no file written on preview) ──
+# ── preview renders before write (no file written on preview) ──
 
 
 def test_preview_writes_nothing(bound_home, tmp_path):
@@ -283,7 +283,7 @@ def test_preview_writes_nothing(bound_home, tmp_path):
     assert "components" in tree and "requirements" in tree and "blocked" in tree
 
 
-# ── acceptance criteria 6: golden-pack round-trip greps clean of planted canaries ──
+# ── golden-pack round-trip greps clean of planted canaries ──
 
 
 def test_golden_pack_greps_clean_of_canaries(bound_home, tmp_path):

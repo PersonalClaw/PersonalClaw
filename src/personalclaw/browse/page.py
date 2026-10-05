@@ -1,7 +1,7 @@
 """The real CDP page driver behind :class:`~personalclaw.browse.loop.PageDriver`.
 
 Everything the browse loop does to a page that is NOT navigation, spoken over the same
-:class:`~personalclaw.browse.cdp.CdpTransport` BA-2 already owns. Navigation is absent by
+:class:`~personalclaw.browse.cdp.CdpTransport` the session owns. Navigation is absent by
 design and stays with :class:`~personalclaw.browse.cdp.GatedCdpSession`, which pre-flights
 every URL through the egress guard — a driver able to navigate would be a second, ungated
 route to the network.
@@ -134,7 +134,7 @@ def _js(body: str, *, ref: ElementRef, extra: dict[str, str] | None = None) -> s
 class CdpPageDriver:
     """A :class:`~personalclaw.browse.loop.PageDriver` over one CDP page target.
 
-    Holds the transport BA-2's session holds — the same connection, a different verb set —
+    Holds the transport the gated session holds — the same connection, a different verb set —
     so there is exactly one socket per page and exactly one gate in front of navigation.
     """
 
@@ -232,7 +232,7 @@ class CdpPageDriver:
             raise PageActionError("SUBMIT: there is no form on this page")
 
     async def click_at(self, x: float, y: float) -> None:
-        """BA-10: click a viewport COORDINATE with a located CDP input event.
+        """Click a viewport COORDINATE with a located CDP input event.
 
         Three events, in the order a real pointer produces them: a ``mouseMoved`` so a canvas that
         tracks hover has a cursor where the click lands, then the press and the release. A bare

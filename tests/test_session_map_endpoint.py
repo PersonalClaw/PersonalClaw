@@ -133,7 +133,7 @@ class TestMarksAndLength:
             "assistant",
         ]
         assert [m["visibleIndex"] for m in marks] == [0, 1, 1, 2, 3, 3, 3]
-        # Every field SSM-1 declares non-null is present and typed on every mark.
+        # Every field a mark declares non-null is present and typed on every mark.
         for i, m in enumerate(marks):
             assert m["markIndex"] == i
             assert m["kind"] in SESSION_MARK_KINDS
@@ -457,16 +457,16 @@ class TestTelemetryShapeIsHonest:
         assert not [m for m in s.messages if (m.get("meta") or {}).keys() & stamped]
 
 
-# ── the summary label: SSM-3 ─────────────────────────────────────────────────────
+# ── the summary label ────────────────────────────────────────────────────────────
 #
-# The clause is "``meta.summary`` is non-empty and distinct from the raw first line",
+# The rule is "``meta.summary`` is non-empty and distinct from the raw first line",
 # and BOTH halves are cheatable on their own. Non-empty passes on the string "turn";
 # distinct-from-the-first-line passes on ANY other message's text — including a verbatim
 # copy of the user's request pasted onto the assistant mark, which does no summarizing at
 # all. So the assertions below pin the two things that make the label worth persisting:
 # it names WHAT THE TURN DID (information no raw transcript line contains), and it reads
 # the WHOLE request rather than its opening words (the filler opener is gone). A summary
-# that merely echoed another line would satisfy the clause and fail here.
+# that merely echoed another line would satisfy the rule and fail here.
 
 
 def _seed_tool_turn(state, name: str = "s20") -> _ChatSession:
@@ -513,7 +513,7 @@ def _seed_tool_turn(state, name: str = "s20") -> _ChatSession:
 
 class TestSummaryLabel:
     def test_a_seeded_turn_gets_a_label_that_is_non_empty_and_not_the_raw_first_line(self, _state):
-        """The clause, with its two cheap readings closed off."""
+        """The rule, with its two cheap readings closed off."""
         session = _seed_tool_turn(_state, "s20")
 
         summary = summarize_session_turn(session)
@@ -720,7 +720,7 @@ async def test_run_chat_stamps_the_summary_before_the_save(tmp_path, monkeypatch
 
 class TestMirrorsTheFrontendContract:
     def test_mark_kind_vocabulary_matches_sessionMap_ts(self):
-        """A kind added on one side only would give SSM-4 two vocabularies."""
+        """A kind added on one side only would give the session map two vocabularies."""
         src = (_REPO_ROOT / "web/src/pages/chat/sessionMap.ts").read_text(encoding="utf-8")
         # Split on the ARRAY opener, not on the identifier: the declaration's own
         # `SessionMarkKind[]` type annotation carries a `]` that would truncate the block.

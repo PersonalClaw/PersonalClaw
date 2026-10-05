@@ -1,6 +1,6 @@
 # Visual-regression + a11y harness (`e2e/`)
 
-The **safety rail** for the Design-System Consistency plan: every consistency fix must show **zero unintended visual diff** against a captured baseline, and every route must stay **WCAG 2 AA clean** (no serious/critical axe violations). Mirrors the personalclaw.dev pattern — `@playwright/test` + `toHaveScreenshot` with **platform-qualified baselines**.
+The **safety rail** for the dashboard's look and accessibility: every change must show **zero unintended visual diff** against a captured baseline, and every route must stay **WCAG 2 AA clean** (no serious/critical axe violations). Mirrors the personalclaw.dev pattern — `@playwright/test` + `toHaveScreenshot` with **platform-qualified baselines**.
 
 ## What it covers
 
@@ -20,10 +20,10 @@ So `playwright.config.ts` runs **two** web servers, and needs nothing configured
 
 **Auth stays ON.** No `PERSONALCLAW_AUTH_MODE=none`: that flag swaps `csrf_middleware` for `_dev_user_middleware`, so an a11y/CSRF-adjacent finding made under it would not describe a real user. `auth.setup.ts` performs the gateway's real `/?token=` handshake through the preview origin (`vite.config.ts`'s token-proxy plugin relays the `Set-Cookie`), asserts the **shell** mounted, and writes the cookie jar every spec reuses.
 
-`e2e/.auth/` is gitignored (it holds a live token). To drive an **already-running** gateway instead:
+`e2e/.auth/` is gitignored (it holds a live token). To drive an **already-running** gateway instead, start one on a scratch `PERSONALCLAW_HOME` and a port of its own (never your install's: the suite drives real turns and writes the home it reaches), then pass that port and the token from its `PERSONALCLAW_READY:` line:
 
 ```bash
-PW_TOKEN=<owner token> PW_NO_SERVER=1 PW_BASE_URL=http://localhost:10000 npm run e2e
+PW_TOKEN=<its owner token> PW_NO_SERVER=1 PW_BASE_URL=http://localhost:<its port> npm run e2e
 ```
 
 Two failure modes this closes, both of which read as success:
@@ -43,11 +43,11 @@ Two failure modes this closes, both of which read as success:
 
 First-time setup on a fresh machine/CI: `npx playwright install chromium`.
 
-## The workflow the plan mandates
+## The workflow
 
 1. **Before touching a surface**, ensure its baseline exists (`npm run e2e:visual` green).
-2. Make the consistency fix.
-3. `npm run e2e` — expect **zero diff**. If a fix forces a **real** visual change: implement it, run `npm run e2e:update` for that surface, and **record the new baseline in the plan's `## Execution log`** for owner review. Never silently keep or revert a visual change.
+2. Make the change.
+3. `npm run e2e` — expect **zero diff**. If a change forces a **real** visual change: implement it, run `npm run e2e:update` for that surface, and **say in the change's description which baselines moved and why**, so review sees it. Never silently keep or revert a visual change.
 
 ## Notes
 

@@ -123,9 +123,9 @@ class TestRunCrud:
 
 
 class TestPolicyOverridesLegacySchema:
-    """PP-16 seam 4d adds `runs.policy_overrides` ADDITIVELY, and this measures the upgrade.
+    """`runs.policy_overrides` arrived ADDITIVELY, and this measures the upgrade.
 
-    Unlike 4c's retirement (no DROP path; a stale column stays inert), an ADDED column must
+    Unlike retiring `task_list_id` (no DROP path; a stale column stays inert), an ADDED column must
     exist before the column-named INSERT runs, so `_connect` carries `_ensure_columns` — the
     ALTER-TABLE-ADD ladder `loop/store.py` established — with the SAME default the fresh DDL
     declares, so a migrated row behaves exactly like a fresh one.
@@ -163,7 +163,7 @@ class TestRetiredTaskListId:
     """`runs.task_list_id` is retired with NO migration, by decision.
 
     The field was declared, persisted, and completely inert — no writer set a real value and no
-    reader consumed it (`loop_run_map`'s finding 3). `_connect` has no DROP path on purpose, the
+    reader consumed it. `_connect` has no DROP path on purpose, the
     same posture as the `total_cycles` in `loop/store.py`: a home created before this change
     keeps the column, and this rail measures rather than assumes that new code stays correct on
     such a home.

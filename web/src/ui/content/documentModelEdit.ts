@@ -209,7 +209,7 @@ export function withStyle(
 
 /** Blocks this editor can edit as text. A table / image / pagebreak has no single text
  *  body, and inventing one would let a save flatten it — those blocks are shown, named,
- *  and left exactly as parsed (DFE-7/8 own their real controls). */
+ *  and left exactly as parsed. */
 export const TEXT_BLOCK_KINDS: ReadonlyArray<DocumentBlock['kind']> = ['heading', 'paragraph', 'code']
 
 export function isTextBlock(block: DocumentBlock): boolean {

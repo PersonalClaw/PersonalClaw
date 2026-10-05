@@ -4,8 +4,8 @@ import { prefersReducedMotion } from '../../design/motion'
 import { MORPH_FAMILY, familySpring } from './vocabulary'
 
 /** "Bud off" spawn — a spawned panel/form emerges FROM its trigger like a liquid
- *  droplet splitting off, instead of appearing from nowhere (§Goal 3 liquid,
- *  §Goal 4 morph-don't-mount). The panel grows from the edge SHARED with the
+ *  droplet splitting off, instead of appearing from nowhere (the liquid and
+ *  morph-don't-mount goals). The panel grows from the edge SHARED with the
  *  trigger (`from`: the trigger's side) via a `scaleY` from that origin while its
  *  corner radius relaxes from a fat pill → the settled panel radius — so it reads
  *  as a blob stretching off the button and firming into a surface. Content fades

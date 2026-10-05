@@ -7,15 +7,15 @@ proposal — it never edits anything.
 
 The shape:
 
-1. :func:`pick_component` takes ONE row from the registry, round-robin (§3.1 step 1's
+1. :func:`pick_component` takes ONE row from the registry, round-robin (the
    one-at-a-time rule, applied to measurement as well as to removal).
 2. :func:`run_ablation` replays that component's benchmark through the matrix runner
    with an ``arm_mask`` axis — ``on`` / ``off`` (/ ``cheap``). The toggle is a
    :class:`~personalclaw.evals.overlay.ComponentOverlay` applied ONLY inside the spawned
    child (:func:`personalclaw.evals.overlay.apply_in_child`).
 3. :func:`classify` turns the per-arm means into ``keep`` / ``remove`` / ``lighten``.
-4. A ``remove`` verdict's report is attached to a LEARN-R9 ``retirement`` proposal as the
-   ablation-grade evidence R9 requires (:func:`file_retirement_proposal`).
+4. A ``remove`` verdict's report is attached to a ``retirement`` proposal as the
+   ablation-grade evidence a retirement requires (:func:`file_retirement_proposal`).
 
 **The load-bearing negative: the live spec/config is never mutated.** Editing the real
 config to toggle a component off and editing it back is the obvious implementation and it
@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 # ── the three-way verdict ────────────────────────────────────────────────────
 #: The component earns its keep: switching it off measurably degrades the benchmark.
 KEEP = "keep"
-#: No delta. This is the verdict that files a LEARN-R9 retirement proposal.
+#: No delta. This is the verdict that files a retirement proposal.
 REMOVE = "remove"
 #: A delta exists, but a deliberately cheaper variant matches the full one.
 LIGHTEN = "lighten"
@@ -64,7 +64,7 @@ INCONCLUSIVE = "inconclusive"
 DEFAULT_EPSILON = 0.02
 
 #: The proposals-queue evidence tier a report carries. Distinct from ``"correlated"``
-#: on purpose: R9 asks for **ablation-grade** evidence, and a paired on/off measurement is
+#: on purpose: a retirement needs **ablation-grade** evidence, and a paired on/off measurement is
 #: a different claim from a co-occurrence. Nothing else in the queue writes this tier.
 ABLATION_EVIDENCE_STRENGTH = "ablation"
 
@@ -74,7 +74,7 @@ ABSENT = "<absent>"
 
 
 class LiveStateMutatedError(RuntimeError):
-    """An ablation run altered the live spec/config. §3.1 forbids this outright."""
+    """An ablation run altered the live spec/config. That is forbidden outright."""
 
 
 # ── the registry ─────────────────────────────────────────────────────────────
@@ -317,7 +317,7 @@ def live_state_unchanged(extra_refs: list[str] | None = None) -> Iterator[dict[s
         drift = _drift(before, live_state_digest(extra_refs))
         if drift:
             raise LiveStateMutatedError(
-                "ablation run mutated live spec/config (forbidden by §3.1): " + ", ".join(drift)
+                "ablation run mutated live spec/config (forbidden): " + ", ".join(drift)
             ) from failure
 
 
@@ -352,7 +352,7 @@ def classify(
 
 @dataclass
 class AblationReport:
-    """One component's keep/remove/lighten report — the §3.1 deliverable."""
+    """One component's keep/remove/lighten report."""
 
     component_id: str
     kind: str
@@ -603,7 +603,7 @@ def run_ablation(
     return report
 
 
-# ── the LEARN-R9 attachment (the call site, not just the mechanism) ──────────
+# ── the retirement attachment (the call site, not just the mechanism) ────────
 
 
 def _proposal_body(report: AblationReport) -> str:
@@ -624,14 +624,14 @@ def _proposal_body(report: AblationReport) -> str:
 
 
 def file_retirement_proposal(report: AblationReport):
-    """Attach a no-delta report to a LEARN-R9 ``retirement`` proposal. Returns
+    """Attach a no-delta report to a ``retirement`` proposal. Returns
     ``(verdict, proposal)``; ``(SKIP, None)`` when the report is not a ``remove``.
 
-    This is the §3.1 step-3 call site: R9 requires *ablation-grade* evidence for a
-    retirement and nothing previously generated any. The proposal carries
+    This is the filing call site: a retirement requires *ablation-grade* evidence, and
+    nothing previously generated any. The proposal carries
     :data:`ABLATION_EVIDENCE_STRENGTH` — a distinct tier from the queue's default
     ``"correlated"``, because a paired on/off measurement is a different claim from a
-    co-occurrence, and R9's gate is on the strength, not on the presence, of evidence.
+    co-occurrence, and the retirement gate is on the strength, not on the presence, of evidence.
     """
     from personalclaw.learning import proposals
 

@@ -1,8 +1,8 @@
-"""The monthly usage recap's DELIVERY (the clause the fold shipped without).
+"""The monthly usage recap's DELIVERY (the half the fold shipped without).
 
 `usage_recap(month)` renders and is pinned verbatim by `test_routing_usage.py`. This file covers
-the other half of the clause: "delivers ONE digest-mode notification honoring quiet hours/mute via
-the rules engine + system cron". Three properties, each of which is a GATE and therefore worthless
+the other half: it delivers ONE digest-mode notification, honoring quiet hours/mute via
+the rules engine + system cron. Three properties, each of which is a GATE and therefore worthless
 untested:
 
 1. **Exactly one per month.** The mark is checked before rendering, so a monthly cron that fires
@@ -12,7 +12,7 @@ untested:
    nobody, so inside the window it still waits in the digest queue — and a rule that pings is
    held back.
 3. **The system cron exists and is ARMED.** A registered-but-unarmed trigger never runs; that is
-   the exact S108 defect `digest_provider`'s tests were rewritten to catch.
+   the exact defect `digest_provider`'s tests were rewritten to catch.
 
 Every delivery assertion here is paired with a VACUITY control: a suppression test that would pass
 on a recap that never rendered proves nothing, so each one is run twice — once suppressed, once not
@@ -180,7 +180,7 @@ def test_the_cron_defaults_to_the_month_that_just_closed(home, stub_rates, monke
 
 
 def test_the_recap_is_delivered_as_ONE_digest_mode_notification(home, stub_rates, monkeypatch):
-    """The clause's core: one notification, mode `digest`, body == the pinned renderer's output."""
+    """The core: one notification, mode `digest`, body == the pinned renderer's output."""
     fold = _seed_fold(home)
     _wire_state(monkeypatch, home)
 
@@ -442,7 +442,7 @@ def test_the_recap_cron_is_not_duplicated(home):
 
 def test_the_recap_cron_carries_the_write_capable_grant(home):
     """Emitting a notification puts something in front of the user unattended, so the fence needs
-    the frozen grant (decision 7). Without it the trigger validates and then refuses to fire."""
+    the frozen grant. Without it the trigger validates and then refuses to fire."""
     from personalclaw.triggers import screen
 
     store = _store(home)

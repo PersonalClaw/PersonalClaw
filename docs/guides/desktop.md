@@ -20,8 +20,9 @@ running. Its menu is live, refreshed every few seconds from the local gateway:
 - **Loops running** — a submenu of the loops currently `running`; each entry deep-links
   to that loop. Paused, blocked and awaiting-input loops are *not* counted here — they
   are active, but nothing is working on them.
-- **Quick Capture Note** — opens the Inbox ready to capture. *(The note-writing half is
-  not built yet; today this is a shortcut to the Inbox.)*
+- **Quick Capture Note** — opens the Inbox with its note composer open, the same one the
+  Inbox header's **Capture a note** opens. What you write is saved as your own Inbox
+  item, up to 4,000 characters; if the save fails, your text stays in the composer.
 - **Open Dashboard**, **Open at Login**, and **Quit PersonalClaw**.
 
 When the count beside the icon and the "● Listening" capture indicator want the same

@@ -1,17 +1,18 @@
 """The verification call site, and the tristate it must not collapse.
 
-`verified_done` was built in S56 as pure decision functions. Like `materialize` before
-S61f, it had no
+`verified_done` was built as pure decision functions. Like `materialize` before it was
+wired, it had no
 caller — a projected node's `done_criterion` was never executed by a run.
 
-The defect this session found in its OWN first draft is the one worth reading: the
+The defect this change found in its OWN first draft is the one worth reading: the
 criterion evaluator
 returns a TRISTATE (`True` / `False` / `None` = could not run), and the emitter wrote
 `bool(passed)`.
 `bool(None)` is `False`, so a criterion whose binary was missing reported **"your check failed"** —
-sending the user to debug their code when the problem is their environment. §1 projects those two to
-DIFFERENT blocked kinds (`needs_input` vs `capability`) precisely because they need different fixes,
-so collapsing them at the emitter threw away the distinction the taxonomy exists to make.
+sending the user to debug their code when the problem is their environment. The projection maps
+those two to DIFFERENT blocked kinds (`needs_input` vs `capability`) precisely because they need
+different fixes, so collapsing them at the emitter threw away the distinction the taxonomy exists
+to make.
 
 Measured on real runs: a passing criterion, a failing one, and a missing binary now produce three
 distinguishable outcomes.
@@ -83,9 +84,9 @@ def test_a_FAILING_criterion_verifies_false():
 
 
 def test_an_UNRUNNABLE_criterion_is_NOT_reported_as_a_failure():
-    """The defect this session fixed in its own draft. `bool(None)` is `False`, so a missing binary
+    """The defect this change fixed in its own draft. `bool(None)` is `False`, so a missing binary
     reported "your check failed" — sending the user to debug their code when the problem is their
-    environment. §1 gives the two different blocked kinds for exactly that reason."""
+    environment. The projection gives the two different blocked kinds for exactly that reason."""
     _run(_spec([_action("ghost", "definitely-not-a-real-binary-xyz")]))
     row = _verified()[0]
     assert row["unrunnable"] is True
@@ -178,8 +179,9 @@ def test_a_readable_file_is_returned_as_text(tmp_path):
 
 
 def test_the_projection_maps_the_tristate_to_DIFFERENT_blocked_kinds():
-    """The reason the collapse mattered: §1 sends a failed check and an unrunnable one to different
-    remedies. `capability` points at the environment; the other points at the work."""
+    """The reason the collapse mattered: the projection sends a failed check and an unrunnable
+    one to different remedies. `capability` points at the environment; the other points at the
+    work."""
     from personalclaw.tasks.models import TaskStatus
     from personalclaw.workflows import verified_done as vd
 
@@ -232,6 +234,7 @@ def test_a_VERIFICATION_FAILURE_does_not_fail_the_run(monkeypatch):
 def test_verification_is_awaited_by_the_completion_DRAIN():
     """Tracked in the same in-flight set as the writes, so `run_to_completion` drains it —
     otherwise a
-    caller that closed its loop would lose the verification exactly as S61g lost the board row."""
+    caller that closed its loop would lose the verification exactly as an untracked task write
+    loses the board row."""
     _run(_spec([_action("good", "true")]))
     assert _verified()

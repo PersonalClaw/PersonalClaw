@@ -1,7 +1,7 @@
-"""PathGuard — realpath + symlink matching for the `paths` capability (decision 7).
+"""PathGuard — realpath + symlink matching for the `paths` capability.
 
-**🔴 THE DEFECT THIS CLOSES.** `paths` has been a first-class member of `CAPABILITY_KEYS` since
-S69, fail-closed like every other key, and rendered as a fence in the UI. But `capability_allows`
+**🔴 THE DEFECT THIS CLOSES.** `paths` has been a first-class member of `CAPABILITY_KEYS`,
+fail-closed like every other key, and rendered as a fence in the UI. But `capability_allows`
 compares it with `_matches_entry` — **string matching**, built for tool names like
 `mcp__github__*`. Paths are not strings for security purposes. Driven before a line was written,
 against the real function:
@@ -32,8 +32,8 @@ as permitted. The fence was not weak, it was measuring the wrong thing.
   separator immediately after the root.
 * **Sensitive paths are refused even when explicitly allowlisted.** `security.is_sensitive_path`
   already knows the credential locations; an allowlist entry naming one is far likelier to be a
-  mistake (or an injected edit) than an intention, and `bypass_immune` in decision 7's own text
-  reserves checks no allowlist may silence.
+  mistake (or an injected edit) than an intention, and these checks are `bypass_immune`: no
+  allowlist may silence them.
 
 **Fail-CLOSED, unlike the kill switch.** An unresolvable path denies. That asymmetry is deliberate
 and matches the reasoning from the other side: a stuck-closed kill switch stops work the user
@@ -120,10 +120,10 @@ def path_allowed(allowlist: object, candidate: str) -> tuple[bool, str]:
     if not real:
         return False, f"{candidate!r} could not be resolved to a real path, so it is refused"
 
-    # 🔴 bypass_immune (decision 7): a sensitive path is refused even when the allowlist names it.
+    # 🔴 bypass_immune: a sensitive path is refused even when the allowlist names it.
     # An entry pointing at `~/.ssh` or `~/.aws` is far likelier to be a mistake — or an edit
-    # nobody intended — than a genuine grant, and decision 7 explicitly reserves checks no
-    # allowlist may silence. Checked BEFORE the allowlist so a match cannot short-circuit it.
+    # nobody intended — than a genuine grant, and these checks are reserved so that no
+    # allowlist may silence them. Checked BEFORE the allowlist so a match cannot short-circuit it.
     from personalclaw.security import is_sensitive_path
 
     if is_sensitive_path(real):

@@ -1,8 +1,8 @@
-"""The refiner's acceptance discipline (LEARN-R2 / §3.1).
+"""The refiner's acceptance discipline.
 
 The flagship spoke, and the one with the most ways to go wrong: an optimizer editing templates
-run outcomes will random-walk them under judge noise unless the acceptance rules are strict. §3.1's
-"acceptance discipline" section is longer than its mechanism section; each gate is asserted here.
+run outcomes will random-walk them under judge noise unless the acceptance rules are strict. The
+"acceptance discipline" outweighs the mechanism; each gate is asserted here.
 
 **Measured before writing.** Every prerequisite was already in place — `journal.LEDGER_KINDS`
 carries
@@ -312,7 +312,7 @@ def test_an_empty_diff_is_refused():
 
 
 def test_a_single_critic_run_can_never_accept():
-    """§3.1: "single-run judge acceptance is indistinguishable from noise"."""
+    """Single-run judge acceptance is indistinguishable from noise."""
     verdict = judge([_score(1.0)], baseline=0.0)
     assert not verdict.accepted
     assert str(CRITIC_RUNS) in verdict.reason
@@ -495,7 +495,7 @@ def test_a_manifest_is_falsifiable_or_it_is_just_an_assertion():
 
 
 def test_manifest_confidence_is_derived_not_self_reported():
-    """A self-reported confidence is the same ornamental signal §2.5 rejects for helpfulness."""
+    """A self-reported confidence is the same ornamental signal rejected for helpfulness."""
     decision = evaluate_diff(ops=_OK_OPS, **_GOOD)
     manifest = build_manifest(
         cluster=Cluster(signature="s", runs=["r1"]), decision=decision, measured_at="2024-01-01"
@@ -530,7 +530,7 @@ def test_canary_verdicts(before, after, runs, expected):
 
 
 def test_a_harmful_verdict_is_reachable_because_it_files_a_revert():
-    """§3.1 auto-FILES a revert proposal for HARMFUL — through the queue, never silently."""
+    """HARMFUL auto-FILES a revert proposal — through the queue, never silently."""
     assert canary_verdict(before=1.0, after=0.0, runs=10) == "HARMFUL"
 
 

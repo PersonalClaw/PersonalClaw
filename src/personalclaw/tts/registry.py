@@ -206,7 +206,7 @@ def active_voice_params(*, surface: str = "", profile_id: str = "") -> dict | No
     turns ``voice`` into whatever it needs (Piper a local ``.onnx``, OpenAI a
     hosted model id), so callers stay provider-agnostic.
 
-    Profile-aware (MULTIMODAL-IO §3.2): ``surface`` (``channel:webui``,
+    Profile-aware: ``surface`` (``channel:webui``,
     ``agent:<slug>``, …) and an ``profile_id`` override walk the four-level chain
     (explicit > binding > default > built-in). When a profile wins, its provider /
     model / speed shadow the flat selection and the dict grows a SUPERSET of keys —
@@ -217,9 +217,9 @@ def active_voice_params(*, surface: str = "", profile_id: str = "") -> dict | No
     empty store reproduces today's flat output rather than merely approximating it.
 
     The conditioning keys are carried, not consumed: threading ``ref_audio``/``seed``
-    into ``TtsProvider.synthesize`` needs the capability flags MI-2 adds, and handing
-    a reference clip to a non-cloning engine would be the silent wrong-voice
-    synthesis the plan forbids.
+    into ``TtsProvider.synthesize`` needs the capability flags :func:`route_synthesis`
+    checks first, and handing a reference clip to a non-cloning engine would be a silent
+    wrong-voice synthesis.
     """
     from personalclaw.providers.use_cases import load_use_case_settings, use_case_enabled
     from personalclaw.voice.bindings import resolve_profile_id
@@ -289,7 +289,7 @@ def active_voice_params(*, surface: str = "", profile_id: str = "") -> dict | No
 # A voice PROFILE can carry a reference clip (clone kind) or a text/param
 # description (design kind); `active_voice_params` resolves those into its dict but
 # deliberately does not consume them — handing a reference clip to a non-cloning engine
-# would be the silent wrong-voice synthesis the plan forbids. This section is where that
+# would be a silent wrong-voice synthesis. This section is where that
 # refusal lives: a synth surface calls `route_synthesis`, which enforces the provider's
 # declared capability BEFORE any audio is produced.
 
@@ -375,7 +375,7 @@ async def route_synthesis(
     non-cloning engine raises :class:`CloningUnsupportedError` — HTTP 409 — rather than
     synthesizing in the wrong voice), refuses a voice the provider cannot speak with now
     (:class:`TtsNotReady`), then dispatches to ``provider.synthesize`` with the
-    conditioning set MI-1 threaded into the ABC signature. A backend ignores any knob it
+    conditioning set threaded into the ABC signature. A backend ignores any knob it
     does not use via ``**opts``, so piper/OpenAI are unchanged.
     """
     from personalclaw.guardrails.media_call import MediaCall, metered_media_call

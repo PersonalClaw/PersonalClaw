@@ -1,6 +1,6 @@
 // Builds web/dist/ui-docs.json — the documentation-as-data artifact the gateway
-// serves and the Python UiDocsToolProvider (ui_search/ui_get) reads
-// (Platform-Legibility §5). Two inputs are fused here:
+// serves and the Python UiDocsToolProvider (ui_search/ui_get) reads.
+// Two inputs are fused here:
 //
 //   1. The hand-authored SEMANTIC layer: every `web/src/ui/<Name>.doc.ts` default-
 //      exports a UiDoc (or UiDoc[]) with keywords / prose / per-prop descriptions /

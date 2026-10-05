@@ -2,7 +2,7 @@
 
 One function assembles the whole digest card, and the reason it is a pure function over
 already-persisted data — the run row, the triage node's output, that run's ledger slice — is
-that everything the card shows was recorded by PA-2/PA-3 as it happened. Nothing here
+that everything the card shows was recorded by the triage run as it happened. Nothing here
 re-derives a verdict, re-runs a gate, or asks a model anything; the "strictly read-only on
 view" is a property of this module, not a rule someone has to remember.
 
@@ -11,10 +11,10 @@ separate, named state, because a card that draws an empty list for all three tel
 opposite of the truth in two of the three cases:
 
 ``uninstalled``  the "Morning triage" template pack was never installed. There is no schedule,
-                 so nothing was ever going to run. The card's job here is to offer §5.4's
+                 so nothing was ever going to run. The card's job here is to offer the
                  install, not to report an empty digest.
 ``off``          installed, but ``proactive.triage_enabled`` is false. The schedule is dormant
-                 and criterion 10 requires it to READ as dormant-but-kept.
+                 and it must READ as dormant-but-kept.
 ``never_run``    installed and enabled, but no digest has completed yet — the first one has not
                  come round. An empty digest and an unrun digest are different facts.
 ``ready``        a digest exists. Only now are the section lists meaningful.
@@ -129,7 +129,7 @@ def _item_index(output: Mapping[str, Any]) -> dict[str, dict]:
 def answered_ordinals(events: Sequence[Mapping[str, Any]]) -> dict[str, dict]:
     """Ordinal → the ``triage_reply`` row that already answered it, for THIS run.
 
-    The idempotency index (criterion 9). Derived from the run's ledger rather than kept in
+    The idempotency index. Derived from the run's ledger rather than kept in
     memory, so a gateway restart between delivery and reply loses nothing: the second reply
     finds the first one's row and acks instead of acting twice.
     """
@@ -168,7 +168,7 @@ def build_digest_view(
     error: str = "",
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Assemble §5.1's digest card from what the last digest run persisted.
+    """Assemble the digest card from what the last digest run persisted.
 
     ``run`` is the run summary row, ``output`` the triage node's ``summary()`` JSON, ``events``
     that run's ledger slice. The state precedence is deliberate: an error outranks everything

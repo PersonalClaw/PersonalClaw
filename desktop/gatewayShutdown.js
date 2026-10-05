@@ -2,7 +2,7 @@
  * Graceful gateway shutdown.
  *
  * The desktop shell SPAWNS the gateway (`main.js` `startGateway`), so quitting the
- * app is the one moment the backend's data can be torn in half. The pre-DC-4 quit
+ * app is the one moment the backend's data can be torn in half. The earlier quit
  * path was `gatewayProcess.kill("SIGTERM"); gatewayProcess = null;` inside a
  * SYNCHRONOUS `before-quit` handler — it sent the signal and then let Electron exit
  * immediately, which means:

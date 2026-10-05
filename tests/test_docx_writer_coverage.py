@@ -24,7 +24,7 @@ Three rules this file lives by:
    goes red. `test_the_census_covers_every_model_field` makes a NEW model field a
    compile-time-ish failure too: it must be measured before it can be added.
 
-Deliberately NOT re-measured here: the run-level properties DFE-2 already pins in
+Deliberately NOT re-measured here: the run-level properties already pinned in
 `tests/test_docx_run_fidelity.py` (bold / italic / code font / hyperlink text + URL +
 relationship + rPr schema order, the `ParagraphStyle` numerics, the page margins, the
 `Cell` table paths, and the legacy-equivalence golden). Overlap is waste. What was
@@ -55,7 +55,7 @@ from personalclaw.documents.model import (
 from personalclaw.documents.writers.docx_writer import render_docx
 
 _MONOSPACE = "Courier New"
-_URL = "https://example.invalid/dfe3"
+_URL = "https://example.invalid/doc"
 
 #: One twentieth of a point, in EMU. `w:pgSz` and `w:pgMar` are stored in twips, so a page
 #: dimension cannot read back at exact EMU — see `_measure_page_size`.
@@ -120,9 +120,9 @@ def test_the_vacuity_floor_is_real():
 
 # ------------------------------------------------- POSITIVE: every block kind's shape
 #
-# DFE-2 asserts each kind "renders something" (its marker appears in the visible text
-# or the raw XML). That rules out a dropped block but not a MISRENDERED one: a table
-# emitted as prose passes it. These rows pin what each kind actually becomes.
+# The fidelity suite asserts each kind "renders something" (its marker appears in the
+# visible text or the raw XML). That rules out a dropped block but not a MISRENDERED one: a
+# table emitted as prose passes it. These rows pin what each kind actually becomes.
 
 
 def test_a_heading_block_becomes_a_heading_styled_paragraph_at_its_level():

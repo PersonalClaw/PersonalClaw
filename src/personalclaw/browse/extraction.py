@@ -12,7 +12,7 @@ This module is the complement: it walks the DOM and emits a compact representati
   * a Forms DSL — every form field with its type/required hints;
 
 and it assigns each interactive element a **stable ``ElementRef``**. The ref is derived from
-durable identity (``sha1(role + accessible_name + form_id)``, plan amendment 2026-07-26(a)),
+durable identity (``sha1(role + accessible_name + form_id)``),
 NOT a positional counter — so a re-snapshot after an *unrelated* DOM mutation keeps unchanged
 elements' refs, and an agent's "CLICK <ref>" still names the same button after the page
 updates elsewhere. Positional indexes hit a TOCTOU every dynamic page defeats; identity refs
@@ -39,7 +39,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from personalclaw.browse.credentials import WITHHELD, is_credential_input, screen_url
 from personalclaw.knowledge.connectors.base import html_to_text
 
-#: §1.1 hard cap — ~800-1000 tokens of prose. The compression layer (compress.py) tightens
+#: Hard cap — ~800-1000 tokens of prose. The compression layer (compress.py) tightens
 #: this further to fit the whole representation under a token budget; this is the text-body
 #: ceiling on its own.
 MAX_TEXT_CHARS = 4000
@@ -91,7 +91,7 @@ _BLANKLINES_RE = re.compile(r"\n{3,}")
 
 @dataclass(frozen=True)
 class ElementRef:
-    """A stable handle to one interactive DOM element (plan amendment 2026-07-26(a)).
+    """A stable handle to one interactive DOM element.
 
     ``ref`` is ``sha1(role + accessible_name + form_id)[:8]`` — stable across re-snapshots
     because it depends only on the element's own identity, never on its position. Colliding
@@ -324,7 +324,7 @@ def _make_ref(role: str, name: str, form_id: str, ordinal: int = 0) -> str:
 
 
 def _clean_link(href: str) -> str | None:
-    """Apply the §1.2 link filter; return the cleaned URL or None if it is not navigable."""
+    """Apply the link filter; return the cleaned URL or None if it is not navigable."""
     href = href.strip()
     if not href or href.startswith("#"):
         return None  # empty or fragment-only anchor
@@ -357,7 +357,7 @@ def _strip_images(html: str) -> str:
     """Replace every ``<img>`` with an ``[IMAGE: alt]`` placeholder BEFORE text conversion.
 
     html2text would otherwise render an image as ``![alt](src)`` — and a ``data:`` base64 src
-    would then ride straight into the text body. Stripping to a placeholder (§1.1) is what
+    would then ride straight into the text body. Stripping to a placeholder is what
     keeps base64 out of the extracted prose."""
 
     def repl(m: re.Match[str]) -> str:
@@ -473,9 +473,9 @@ def _field_state_repr(e: ElementRef) -> str:
 
 
 def render_links_dsl(links: tuple[ElementRef, ...] | list[ElementRef]) -> str:
-    """The §1.2 Links DSL — each link a ref-addressable line ``[ref] label → target``.
+    """The Links DSL — each link a ref-addressable line ``[ref] label → target``.
 
-    The target is SCREENED here (BA-4) rather than on the :class:`ElementRef`, and the split is
+    The target is SCREENED here rather than on the :class:`ElementRef`, and the split is
     deliberate. ``page.CdpPageDriver``'s locator prelude finds a link by
     ``el.getAttribute("href") === TARGET`` first, so screening the stored target would demote every
     click to the label-only fallback and pick the wrong element on a page with two identically
@@ -486,7 +486,7 @@ def render_links_dsl(links: tuple[ElementRef, ...] | list[ElementRef]) -> str:
 
     **What this screen actually covers, measured rather than assumed.** ``_clean_link``'s
     ``_KEEP_PARAMS`` is an ALLOWLIST (``q``/``s``/``search``/``page``), so no credential can survive
-    in a link's QUERY — that half was already closed before BA-4 and this screen is redundant there.
+    in a link's QUERY — that half is closed by the allowlist, so this screen is redundant there.
     It is the FRAGMENT that ``_clean_link`` passes through untouched, and the fragment is precisely
     where the OAuth *implicit* flow returns ``#access_token=…``. Driven before keeping the call:
     ``/r#access_token=TOK123`` reached the rendered target verbatim. So this is one live screen over
@@ -501,7 +501,7 @@ def render_links_dsl(links: tuple[ElementRef, ...] | list[ElementRef]) -> str:
 
 
 def render_forms_dsl(forms: tuple[FormRepr, ...] | list[FormRepr]) -> str:
-    """The §1.3 Forms DSL — one block per form, each field a ref-addressable line."""
+    """The Forms DSL — one block per form, each field a ref-addressable line."""
     if not forms:
         return ""
     lines = ["## Forms"]

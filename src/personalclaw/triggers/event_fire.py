@@ -15,7 +15,7 @@ attaches ONE `EventRouter` to it at boot, and for each event the router:
    the run record, autopause, delivery, chaining. The claim is released when that returns.
 
 Beside the per-trigger gates there is one guard across ALL event triggers: at most
-`STORM_MAX_FIRES` fires per `STORM_WINDOW_SECS`. It is the feedback-loop backstop (decision 5a) —
+`STORM_MAX_FIRES` fires per `STORM_WINDOW_SECS`. It is the feedback-loop backstop —
 an action that writes memory re-emits an event, and while `overlap: skip` and a debounce stop one
 trigger feeding itself, only a global cap stops two triggers feeding each other. A fire it refuses
 leaves a `skipped_gate` row naming the cap, never a silent drop.
@@ -40,7 +40,7 @@ from personalclaw.event_triggers import BusEvent, fire_payload
 
 logger = logging.getLogger(__name__)
 
-#: The cross-trigger storm guard: at most this many event fires per window (decision 5a). The value
+#: The cross-trigger storm guard: at most this many event fires per window. The value
 #: the retired `event_triggers` engine enforced, carried over unchanged.
 STORM_WINDOW_SECS = 60.0
 STORM_MAX_FIRES = 30

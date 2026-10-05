@@ -1,16 +1,16 @@
-"""One full sync cycle: pull → merge → export → push (DAS-6c-ii-i).
+"""One full sync cycle: pull → merge → export → push.
 
-The orchestrator that assembles every piece built in 6c-i … 6c-ii-h into the loop §4.1 names —
+The orchestrator that assembles every sync piece into one loop —
 ``pull → merge-import remote rows → export local union → push`` — against a resolved transport:
 
     registry = read the shared registry.json from the remote     (transport.pull of REGISTRY_KEY)
-    pull_from_peers(transport, home, registry, cursor,            # 6c-ii-e + the 6c-ii-h db_merger
+    pull_from_peers(transport, home, registry, cursor,            # the pull engine + the DB merger
                     db_merger=make_db_merger(home), ancestors=…)  # merged against each peer's base
     ancestors.publish(…) per record store                         # what it publishes, what is gone
-    export_shards(home, out, for_sync=True, agreements=…,         # 6b + 6c-ii-g (DB copies),
+    export_shards(home, out, for_sync=True, agreements=…,         # the shard export (+ DB copies),
                   deletions=…)                                    # and this home's deletes
     unless the export holds what the store's newest copy does     # durability.published
-        publish_export(transport, out, registry, outbox, …)       # 6c-ii-f (+ CAS registry bump)
+        publish_export(transport, out, registry, outbox, …)       # push (+ CAS registry bump)
     retire_superseded(transport, …)                               # the copies a newer one replaced
 
 Everything below the orchestration was already unit-tested in isolation; this module owns only
@@ -22,7 +22,7 @@ cycle tries again — but a key the transport refused to remove is named in the 
 ``refused``, as any refused key is, since only a link someone put in this machine's own folder of
 the store is refused there. It is clock-free (``now`` is passed in) and does not
 own scheduling — the ``stale_after_secs`` staleness window and the "is sync enabled / which
-transport" resolution live in the service layer (6c-ii-j) that calls this. A transport error at
+transport" resolution live in the service layer that calls this. A transport error at
 any step is caught and reported in the :class:`SyncCycleReport`, never raised, so one bad cycle
 never kills the durability service loop. A key the transport refused (``KeysRefused``) is named in
 the report's ``refused`` too, whichever step it stopped.
@@ -243,7 +243,7 @@ def run_sync_cycle(
     ``self_id`` is this machine's id (``shards.machine_id(home)``); ``now`` is the cycle's time,
     ISO-8601 — when a copy it sends landed, and what the store's older copies are measured
     against (``durability.published``). ``encrypt`` is the ``durability.sync_encrypt``
-    tri-state (``auto``/``on``/``off``) resolved against the transport's own default (§4.4).
+    tri-state (``auto``/``on``/``off``) resolved against the transport's own default.
     Never raises: any transport failure lands in the report so the service loop survives.
     """
     report = SyncCycleReport()

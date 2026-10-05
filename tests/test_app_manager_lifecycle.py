@@ -1,4 +1,4 @@
-"""App Platform lifecycle core (A1) — install / enable / disable / uninstall.
+"""App Platform lifecycle core — install / enable / disable / uninstall.
 
 Drives apps.app_manager against a real fixture app on disk (isolated config dir),
 covering: clean install + onInstall hook runs + installed.json written; the
@@ -222,7 +222,7 @@ class TestUninstall:
         assert app_manager.force_uninstall("ghost") is False
 
 
-# ── path-traversal guard on app_dir (defense-in-depth, #44) ──────────────────
+# ── path-traversal guard on app_dir (defense-in-depth) ───────────────────────
 
 
 def test_app_dir_rejects_path_traversal():
@@ -257,7 +257,7 @@ def test_config_path_helpers_are_traversal_safe():
 
 
 class TestPlatformGate:
-    """P21 Gap B: an app that must install on the user's local machine (installMode=
+    """An app that must install on the user's local machine (installMode=
     client) or that doesn't support this server's OS short-circuits to a client-install
     result WITHOUT committing to the live tree; a normal server app is unaffected."""
 

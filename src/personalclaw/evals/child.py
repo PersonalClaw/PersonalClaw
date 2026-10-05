@@ -12,7 +12,7 @@ the same path), run ONE cell's scenario, and emit its raw result as a
 sentinel-prefixed JSON line on stdout for the parent to read back. The parent
 process's ``os.environ`` is never mutated — that is the whole point.
 
-ES-6 adds one more thing this child does before the run: it stages the Loop-2 gate's
+One more thing this child does before the run: it stages the Loop-2 gate's
 before/after ARM (:mod:`personalclaw.evals.gate`) into its throwaway home, so the candidate
 artifact under test exists only inside this cell.
 
@@ -51,7 +51,7 @@ def parse_descriptor(text: str) -> dict:
     Shape: ``{"matrix_id", "coords": {axis: value}, "subject", "scorer",
     "scenario_path", "fixture_home", "pin"}``. The workspace and the throwaway home
     are NOT in here — they arrive via ``PERSONALCLAW_WORKSPACE`` /
-    ``PERSONALCLAW_HOME`` in this process's env (the §1.3 isolation seam)."""
+    ``PERSONALCLAW_HOME`` in this process's env (the isolation seam)."""
     data = json.loads(text)
     if not isinstance(data, dict):
         raise ValueError("descriptor must be a JSON object")
@@ -241,7 +241,7 @@ def resolve_scenario(descriptor: dict):
 def seed_fixture_home(fixture_home: str) -> None:
     """Seed the cell's ``PERSONALCLAW_HOME`` from the named ``tests_fixtures/`` seed.
 
-    This is the "over named seeded fixture homes" half of ES-2: the scenario declares
+    This is what "over named seeded fixture homes" means for a scenario: the scenario declares
     a fixture by name, and the run starts from that known state instead of from
     whatever the invoking user's home contains. ``seed()``'s own rails still apply —
     most importantly it refuses to write ``~/.personalclaw``, so a misconfigured cell

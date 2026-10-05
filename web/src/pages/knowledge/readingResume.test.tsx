@@ -4,9 +4,9 @@ import { ReadingView } from './ReadingView'
 import { api, type KnowledgeItem } from '../../lib/api'
 import { getReadingPosition, setReadingPosition } from './readingPosition'
 
-// ── "Resumes at the persisted reading position" (its own acceptance clause) ─────────────────
+// ── "Resumes at the persisted reading position" ─────────────────
 //
-// 🔑 THIS FILE IS THE WRITER RAIL. `KL-7` shipped a progress ring that REPORTS the fraction;
+// 🔑 THIS FILE IS THE WRITER RAIL. The progress ring REPORTS the fraction;
 // nothing persisted it. A continue-reading shelf reading a position nobody writes greps
 // identically to a working one and is empty forever — so the assertions here are about the
 // WRITE happening at a real call site and the RESTORE landing, not about the ring rendering.

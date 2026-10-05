@@ -252,7 +252,7 @@ class TestTranscribeAudio:
 
 
 # ---------------------------------------------------------------------------
-# L0 — rich transcript contract (segments + word timestamps + detailed path)
+# Rich transcript contract (segments + word timestamps + detailed path)
 # ---------------------------------------------------------------------------
 
 
@@ -273,7 +273,7 @@ class TestTranscriptContract:
         d = r.to_dict()
         assert d["text"] == "hello world" and d["language"] == "en"
         assert d["segments"][0]["words"][0]["word"] == "hello"
-        assert d["segments"][0]["speaker"] is None  # filled later by fusion (L1)
+        assert d["segments"][0]["speaker"] is None  # filled later by speaker fusion
 
     @pytest.mark.asyncio
     async def test_default_detailed_wraps_flat_text(self):

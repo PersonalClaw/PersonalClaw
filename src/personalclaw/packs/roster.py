@@ -26,7 +26,7 @@ until a human surfaces them. A pack that could enable its whole staged roster on
 would be arming a team nobody hired.
 
 The roster itself is staged at ``packs/staged/<pack>/roster.json`` (the same propose-don't-write
-staging area §3.1 uses for triggers and config), rewritten to the FRESH ids a commit assigned,
+staging area triggers and config use), rewritten to the FRESH ids a commit assigned,
 so a deploy months later resolves the personas that actually landed.
 """
 

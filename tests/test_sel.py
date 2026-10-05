@@ -749,7 +749,7 @@ class TestCallerScopeAttribution:
     running when it was written, read from ``guardrails.audit``'s one shared caller seam.
 
     This is what lets an audit distinguish a ladder step that RAN (and declined) from one
-    that NEVER FIRED. Before AAPX-1 the two were the same observation from the log: two
+    that NEVER FIRED. Before ``caller_scope``, the two were the same observation from the log: two
     calls from the same session were byte-for-byte identical in every caller-attribution
     field, because the only such field was the session-key ``caller_identity``.
     """
@@ -763,7 +763,7 @@ class TestCallerScopeAttribution:
         return {k: v for k, v in row.items() if k not in self._VOLATILE}
 
     def _log_identical_call(self, log, *, ladder_ran: bool) -> None:
-        """Log ONE call that is identical in every pre-AAPX-1 field; the only difference is
+        """Log ONE call that is identical in every older field; the only difference is
         whether a ladder subsystem scope was active (``ladder_ran``) or not."""
         import contextlib
 
@@ -788,7 +788,7 @@ class TestCallerScopeAttribution:
         assert len(rows) == 2
         a, b = rows
 
-        # Vacuity floor: the two rows ARE the same call in every field the pre-AAPX-1 schema
+        # Vacuity floor: the two rows ARE the same call in every field the older schema
         # captured — same session (⇒ caller_identity + inferred source), same op/kind/outcome.
         # Any distinguishability must therefore come from the new per-call caller surface,
         # not an incidentally different input.
@@ -804,8 +804,8 @@ class TestCallerScopeAttribution:
         assert a["caller_identity"] == "dashboard:slot0"
 
         # THE CLAIM. With everything else equal, the two rows are still distinguishable.
-        # On origin/main the two projections are identical (==) and this FAILS; after
-        # AAPX-1 the surfaced caller differs and it PASSES.
+        # On origin/main the two projections are identical (==) and this FAILS; with
+        # ``caller_scope`` the surfaced caller differs and it PASSES.
         assert self._attribution(a) != self._attribution(b)
 
         # Concretely, the discriminator is the bound subsystem: exactly one row carries it.

@@ -66,7 +66,7 @@ def session_policy(node_config: dict[str, Any] | None) -> str:
 
 @dataclass
 class Handoff:
-    """What one iteration tells the next (WF2-R6).
+    """What one iteration tells the next.
 
     The four fields are not arbitrary — each answers a question the next iteration would otherwise
     have to re-derive from a transcript it no longer has:
@@ -135,7 +135,7 @@ class Handoff:
 
 @dataclass
 class Carryover:
-    """Typed facts that survive a session reset (WF2-R6).
+    """Typed facts that survive a session reset.
 
     Structure, not narrative — that is the entire point. A prose handoff summarized twice loses the
     line spans and the file names; a list of `{path, lines}` does not, because there is nothing in
@@ -205,7 +205,7 @@ class Carryover:
 
 @dataclass
 class Decision:
-    """A settled choice and WHY (WF2-R6).
+    """A settled choice and WHY.
 
     `rejected` is the load-bearing field. Compaction keeps "we used Postgres" and drops "we
     rejected SQLite because the write concurrency did not fit", so a resumed or forked run

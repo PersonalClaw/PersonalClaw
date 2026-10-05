@@ -16,7 +16,7 @@ vi.mock('../../lib/api', async (orig) => {
 
 // ── The third variant of the cursor family: a listbox nobody was told about ─────────────────────
 //
-// Cycles 136-138 gave the app's five row/pick-one popups a real cursor (focus). The composer's two
+// The app's five row/pick-one popups have a real cursor (focus). The composer's two
 // typeahead menus were deliberately excluded there, because focus must STAY in the editor — moving it
 // would break typing. That left them with a cursor and no channel to announce it. Measured on `#/chat`
 // with the slash menu open (11 options) and again with the mention menu (12):
@@ -33,7 +33,7 @@ vi.mock('../../lib/api', async (orig) => {
 // 🔑 THE POINT: `aria-selected` on an element the user is not focused on announces nothing. The only
 // channel that reaches a screen reader while focus stays in a text editor is `aria-activedescendant`
 // ON THE FOCUSED ELEMENT — which is why the slash menu's perfectly correct `role="option"` +
-// `aria-selected` (shipped by cycle 130's popup-roles work) still left the cursor silent, and why axe
+// `aria-selected` (shipped by the popup-roles work) still left the cursor silent, and why axe
 // reported zero: every attribute it can check was already right.
 //
 // 🪤 NOT `role="combobox"` + `aria-expanded`. `aria-expanded` is not an allowed attribute on `textbox`

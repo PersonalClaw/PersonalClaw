@@ -1,8 +1,8 @@
 """Workspace provisioning I/O — the performer for the plan and the decisions.
 
-S49 shipped `workspace.plan_provisioning` and S52 shipped `worktrees.pending_setup` /
-`plan_teardown`, both deliberately pure: they decide, and the caller performs. Neither had a
-production caller, which made the whole §4.1 mechanism a declared-but-inert layer — a run's
+`workspace.plan_provisioning` and `worktrees.pending_setup` /
+`plan_teardown` are deliberately pure: they decide, and the caller performs. Neither had a
+production caller, which made the whole workspace mechanism a declared-but-inert layer — a run's
 `workspace:` block was parsed nowhere, so every run silently ran in place regardless of what its
 template declared. This module is the performer, and `controller._prepare` is its caller.
 
@@ -18,8 +18,8 @@ Three things are structural rather than incidental:
   deciding whether the first is alive. It rides `concurrency.lock_path` (the same sanitized-
   prefix-plus-digest convention every other PClaw lock uses) with a PID line, so a stale holder
   self-heals on a `os.kill(pid, 0)` probe rather than wedging the run forever.
-* **Setup NEVER blocks the run; teardown NEVER blocks deletion.** Both asymmetries are S49/S52
-  contracts (`SetupResult.blocked_run` is False by construction) and both are honored by
+* **Setup NEVER blocks the run; teardown NEVER blocks deletion.** Both asymmetries are the pure
+  planners' contracts (`SetupResult.blocked_run` is False by construction) and both are honored by
   recording the failure and continuing. A setup block that could fail a run would be a liability
   to declare, and a user would stop declaring it.
 
@@ -219,7 +219,7 @@ _DURABLE_POLL_SECS = 0.3
 
 
 def _durable_enabled() -> bool:
-    """The §5.1 gate, read at use — the same flag+binary AND the recovery sweep consults.
+    """The durable gate, read at use — the same flag+binary AND the recovery sweep consults.
 
     Fail-open OFF: an unreadable gate means the step runs as a bare subprocess, exactly as it
     did before durable sessions existed. Durability is an enhancement to a run, never a
@@ -252,9 +252,9 @@ async def _run_step_durable(
     ``env -i`` (``sandbox.exact_env_argv``) rather than handed ``-e`` additions to it.
 
     The mechanism: ``tmux new-session -d`` hands the step to the tmux DAEMON, so a gateway
-    killed mid-`npm install` leaves the install running — and the boot sweep's §5.1 pre-step
+    killed mid-`npm install` leaves the install running — and the boot sweep's durable pre-step
     recomputes *name*, finds the session alive, and suspends the run instead of tombstoning
-    it. That is SC5's spawn half: the sweep finally has a writer to reattach to.
+    it. That is durability's spawn half: the sweep finally has a writer to reattach to.
 
     The exit code and output come back through two content-addressed files next to the step's
     own setup marker (same digest recipe, so the plumbing inherits the marker's edit-reruns
@@ -386,7 +386,7 @@ async def run_step(
     `runner` is the injection seam `EngineServices.teardown_runner` already established, so a
     controller test never runs a real subprocess.
 
-    `durable_session` (EI-6 §5.1) names the run's durable tmux session; non-empty AND the
+    `durable_session` names the run's durable tmux session; non-empty AND the
     durable gate on → the step executes inside that session (`_run_step_durable`) so it
     outlives this gateway, with the bare subprocess below as the unconditional fallback. The
     injected `runner` seam still wins outright — a test double is a request to run nothing.
@@ -571,14 +571,14 @@ class Provisioned:
 def declares_workspace(spec: dict[str, Any]) -> bool:
     """Whether a spec asks for a managed workspace at all.
 
-    **A spec with no `workspace:` block provisions NOTHING.** §4.1's framing is that the
+    **A spec with no `workspace:` block provisions NOTHING.** The framing is that the
     workspace is a DECLARATION rather than a convention, and the declaration is what opts a run
     in. Provisioning every run into a scratch dir instead would (a) create an unused directory
     under every run and (b) — measured, by
     `test_an_adopted_run_resumes_without_re_running_finished_work` — make every stale RUNNING run
     look like an isolated substrate to the boot sweep, so a crash-survivor whose journal-backed
     work is perfectly resumable would be SUSPENDED and await a manual Resume instead of being
-    adopted. The sweep's DEVIATION note is explicit that inline runs stay owned by adoption; a
+    adopted. The sweep's docstring is explicit that inline runs stay owned by adoption; a
     default-on workspace would have silently taken every run out of that path.
     """
     return isinstance(spec, dict) and isinstance(spec.get(WORKSPACE_KEY), dict)
@@ -592,11 +592,11 @@ def resolve_spec(
     The default fills in the MODE for a block that declared one of the other fields — a template
     that says `{preserve_patterns: [...], setup: "npm ci"}` and nothing about isolation. A
     DECLARED mode always wins: a config knob that overrode an explicit declaration would make a
-    template's own isolation statement advisory, and §4.1's whole point is that the declaration
+    template's own isolation statement advisory, and the whole point is that the declaration
     is binding.
 
     An unparseable `workspace_default_mode` falls back to `scratch` rather than to `in_place`:
-    S49's ruling is that `in_place` is never a default, and a config typo must not be the thing
+    The rule is that `in_place` is never a default, and a config typo must not be the thing
     that puts a destructive step against the user's real tree.
     """
     raw = spec.get(WORKSPACE_KEY) if isinstance(spec, dict) else None
@@ -633,7 +633,7 @@ async def provision(
     """Stand the workspace up: create → preserve → setup, in that order.
 
     The order is asserted by the code path, not by a comment, because both inversions are silent.
-    `preserve` before `setup` is S49's measured rule; `setup` before the first node is what makes
+    `preserve` before `setup` is a measured rule; `setup` before the first node is what makes
     a marker-guarded block idempotent across resume (this whole function runs again on resume,
     and `pending_setup` is what makes the second pass cheap).
 
@@ -701,11 +701,11 @@ async def provision(
 async def _provision_container(
     spec: WorkspaceSpec, out: Provisioned, *, run_id: str, from_snapshot: str = ""
 ) -> None:
-    """Wrap the scratch dir in the declared container, or record why not (WF2WOR-12 §4.4).
+    """Wrap the scratch dir in the declared container, or record why not.
 
     Every non-success is a DEGRADATION, never a refusal: the pre-container behaviour — an
     isolated scratch dir with the reason on the run record — is what a template that declared
-    `mode: container` gets on a machine with no backend, exactly as it did before this atom
+    `mode: container` gets on a machine with no backend, exactly as it did before container mode
     landed. The run stays startable; the cockpit says why it is not containerized.
     """
     from personalclaw.workflows.container_env import detect_backend, parse_manifest
@@ -1070,7 +1070,7 @@ async def _run_setup(
 ) -> None:
     """Execute the pending setup steps, marking each done as it succeeds.
 
-    Marker-guarded per step and content-addressed (S49's `setup_marker`), so an EDITED step
+    Marker-guarded per step and content-addressed (`setup_marker`), so an EDITED step
     re-runs while an unchanged one is skipped — the property that makes setup safe to re-run on
     every resume, which is the contract.
 
@@ -1354,7 +1354,7 @@ def inspect_run(run: Any) -> worktrees.WorktreeState:
     """The live worktree state for one run: alive, dirty, changed files, preserved path.
 
     Shells out for the porcelain ONCE, here, so `inspect_worktree` stays testable without a repo
-    (S52's split) and the whole system has one place that asks git what changed.
+    and the whole system has one place that asks git what changed.
     """
     run_id = str(getattr(run, "id", "") or "")
     state = workspace_state(run)
@@ -1373,7 +1373,7 @@ def inspect_run(run: Any) -> worktrees.WorktreeState:
 def stamp_preserved_path(run: Any, state: worktrees.WorktreeState) -> bool:
     """Record `preserved_workspace_path` on the run. True when the record changed.
 
-    Non-empty only when the workspace is alive AND dirty (S52's rule): pointing a user at a
+    Non-empty only when the workspace is alive AND dirty: pointing a user at a
     clean directory is a false lead, and a record carrying a path that means nothing is worse
     than one carrying no path.
     """
@@ -1391,7 +1391,7 @@ def stamp_preserved_path(run: Any, state: worktrees.WorktreeState) -> bool:
 def reintegration(run: Any, *, workspace_dir: str = "") -> dict[str, Any]:
     """The cockpit's diff panel + the two reintegration verbs for one run.
 
-    Reintegration is OFFERED, never performed — the plan's explicit ruling. A run that
+    Reintegration is OFFERED, never performed, by design. A run that
     auto-merged would decide for the user, and the decision is the whole reason the work was
     isolated.
 

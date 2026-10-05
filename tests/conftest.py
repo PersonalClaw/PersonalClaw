@@ -403,7 +403,7 @@ def _isolate_real_home_writers(tmp_path_factory, monkeypatch):
     * neither → the resolution would be the real home purely by default. Redirect.
 
     Deliberately NOT done, both previously rejected in this repo and re-rejected here:
-    a global ``$PERSONALCLAW_HOME`` for pytest jobs (CRE-6 removed exactly that: it takes
+    a global ``$PERSONALCLAW_HOME`` for pytest jobs (removed once already: it takes
     precedence over ``Path.home()`` inside ``config_dir``, so it defeats the tests that
     assert env precedence and the ones that assert the default resolution), and a blanket
     ``Path.home`` patch (see ``_isolate_session_map`` — it breaks the real-home safety
@@ -923,7 +923,7 @@ def _isolate_single_flight_locks(tmp_path_factory, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _forbid_real_model_roots(monkeypatch):
-    """Make the bound-model-deletion incident unreproducible BY CONSTRUCTION (LMMV SC-10).
+    """Make the bound-model-deletion incident unreproducible BY CONSTRUCTION.
 
     ``local_models/layouts.py`` is the one seam every download probe and the single
     deletion sweep go through, so wrapping its entry points for the whole suite is enough
@@ -969,7 +969,7 @@ def _forbid_real_model_roots(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _reset_knowledge_store_singleton():
-    """Drop the process-wide ``KnowledgeStore`` between tests (SH6.2).
+    """Drop the process-wide ``KnowledgeStore`` between tests.
 
     ``knowledge.get_knowledge_store()`` memoizes one store in a module global, resolved
     from ``config_dir()`` on FIRST use — so the first test in a worker to touch it pins
@@ -993,7 +993,7 @@ def _reset_knowledge_store_singleton():
 
 @pytest.fixture(autouse=True)
 def _close_sqlite_connections(monkeypatch):
-    """Close every SQLite connection a test opens, at that test's teardown (SH6.2).
+    """Close every SQLite connection a test opens, at that test's teardown.
 
     Measured on this tree before the fixture: one full suite run printed **1,596**
     ``ResourceWarning: unclosed database in <sqlite3.Connection …>`` lines, attributed

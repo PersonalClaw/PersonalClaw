@@ -1,22 +1,22 @@
-"""`TriggerService`'s tick — §3 / §3.1.
+"""`TriggerService`'s tick.
 
 "One asyncio loop — the existing single re-armed `_arm_timer` task generalized … computes the
 earliest `next_fire_at` … sleeps until it (capped at 30s for external-edit pickup via mtime
 `_sync`),
 coalescing same-second firings."
 
-**Buildable because S87 shipped the store.** S83/S86 recorded "the store and the service are one
-unbuilt foundation"; that was half wrong — the service needs the store, not the reverse. Every
+**Buildable because the store shipped first.** The store and the service looked like "one unbuilt
+foundation"; that was half wrong — the service needs the store, not the reverse. Every
 dependency was verified importable before this file existed.
 
-**The boundary this file defends:** §3.2 says "the scheduler never executes directly".
+**The boundary this file defends:** the scheduler never executes directly.
 `tick()` returns
 the fires that passed every gate; a WakeupDispatcher runs them. A service that both decided
 and executed
 would make crash-safety untestable, since the safety comes from the payload surviving in an
 inbox.
 
-Every test drives a REAL `TriggerStore` on `tmp_path`. The type-seam defect this session found
+Every test drives a REAL `TriggerStore` on `tmp_path`. The type-seam defect found here
 (`next_fire_at` is `str` on the entity, `float` in `scheduling`) is invisible to a mocked store.
 """
 
@@ -74,7 +74,7 @@ def _tick(store, **over):
 
 
 def test_an_iso_timestamp_converts_to_an_epoch():
-    """🔴 THE defect this session found, by driving a tick against a real store.
+    """🔴 THE defect found by driving a tick against a real store.
 
     `Trigger.next_fire_at` is declared `str` — the entity keeps every timestamp as ISO, which
     is right
@@ -189,8 +189,8 @@ def test_the_next_fire_is_PERSISTED_before_the_fire_is_handed_out(store):
 
 
 def test_the_persisted_value_is_the_ISO_the_schema_declares(store):
-    """Leaving a float in a `str` field would hand the next reader the same `TypeError` this session
-    fixed."""
+    """Leaving a float in a `str` field would hand the next reader the same `TypeError` that was
+    fixed here."""
     store.save_all([_trigger(next_at=NOW - 10)])
     _tick(store)
     raw = store.get("t1").trigger.next_fire_at
@@ -267,7 +267,7 @@ def test_a_zero_interval_does_not_schedule_an_immediate_refire():
 
 
 def test_the_sleep_is_capped_for_external_edit_pickup(store):
-    """§3 caps at 30s "for external-edit pickup via mtime `_sync`" — the cap IS the propagation
+    """The sleep caps at 30s for external-edit pickup via mtime `_sync` — the cap IS the propagation
     contract for a store another process can write, not a scheduling nicety."""
     store.save_all([_trigger(next_at=NOW + 86_400)])
     assert _tick(store).next_sleep == SVC.MAX_SLEEP_SECS
@@ -292,8 +292,8 @@ def test_a_disabled_trigger_does_not_hold_the_loop_awake(store):
 
 
 def test_same_second_triggers_coalesce_into_one_wake(store):
-    """§3: "coalescing same-second firings so N triggers replacing one 60s heartbeat don't wake the
-    laptop N times". All five are still DUE — coalescing is about the wake, not about dropping
+    """Coalescing same-second firings, so N triggers replacing one 60s heartbeat don't wake the
+    laptop N times. All five are still DUE — coalescing is about the wake, not about dropping
     fires.
     """
     store.save_all([_trigger(f"t{i}", next_at=NOW - 1) for i in range(5)])
@@ -302,7 +302,7 @@ def test_same_second_triggers_coalesce_into_one_wake(store):
     assert len(result.ledger_rows) == 5
 
 
-# ── §7 crit 8: zero silent drops ──
+# ── zero silent drops ──
 
 
 def test_a_suppressed_trigger_still_produces_a_typed_row(store):
@@ -378,8 +378,8 @@ def test_boot_leaves_a_disabled_trigger_unarmed(store):
 
 
 def test_boot_returns_the_missed_REVIEW_rather_than_catching_up(store):
-    """§3.4 is "review, don't lie and don't storm". A boot that silently caught up would BE the
-    storm."""
+    """Missed fires are "review, don't lie and don't storm". A boot that silently caught up would
+    BE the storm."""
     store.save_all([_trigger(next_at=NOW - 86_400)])
     report = SVC.boot(store, now=NOW)
     assert "review" in report
@@ -490,7 +490,7 @@ def test_a_DROPPED_missed_slot_resumes_ON_ITS_OWN_GRID(store):
 
 
 def test_the_grid_resume_KEEPS_the_stagger(store):
-    """§3.1 requires both halves: recovered on boot AND spread so a restart does not fire everything
+    """Both halves are required: recovered on boot AND spread so a restart does not fire everything
     in one second. Driven — six co-phased hourly triggers all resume to exactly `now + 3600` without
     the jitter, so the stampede returns one interval later instead of being prevented."""
     store.save_all([_trigger(f"t{i}", next_at=NOW - 7200, interval=3600) for i in range(6)])
@@ -521,7 +521,7 @@ def test_a_boot_sweep_leaves_NOTHING_immediately_due(store):
 
 
 def test_drain_spooled_fires_returns_what_the_spool_holds(tmp_path, monkeypatch):
-    """The service-level accessor criterion 7's crash-safety hangs off."""
+    """The service-level accessor the spool's crash-safety hangs off."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     from personalclaw.config import loader
 
@@ -684,7 +684,7 @@ def test_a_LEGACY_park_with_no_cooldown_reads_as_DUE(store, tmp_path):
     """`unpark_due`'s documented contract: *"a missing/zero `retry_after` reads as due, so
     a park written before this field existed cannot strand a trigger forever."* Fail-OPEN:
     a missing cooldown must not become an infinite one, which is the state every row
-    written before S159 is in.
+    written before `retry_after` existed is in.
     """
     _parkable(store, tmp_path)
     _park(store, retry_after=0.0)
@@ -820,8 +820,8 @@ def _stored(tmp_path, tid):
 
 
 def test_a_SUPPRESSED_fire_is_PERSISTED_not_only_returned(store, tmp_path, monkeypatch):
-    """🔴 THE DEFECT. §7 criterion 8 is "every suppressed fire appears as a typed ledger row with a
-    reason — zero silent drops", and `tick` builds exactly that row. It then RETURNS it, and nothing
+    """🔴 THE DEFECT. Every suppressed fire must appear as a typed ledger row with a
+    reason — zero silent drops — and `tick` builds exactly that row. It then RETURNS it, and nothing
     stored it: `TickResult.ledger_rows` has no consumer outside `service.py`.
 
     Six ticks of a quiet-hours trigger produced six `skipped_gate` rows in memory and ZERO
@@ -846,8 +846,8 @@ def test_a_DRY_RUN_persists_nothing(store, tmp_path, monkeypatch):
 
 def test_a_GRANTED_fire_is_NOT_written_here(store, tmp_path, monkeypatch):
     """`run_record.record_run` owns the row for a fire that actually ran, once it settles.
-    Writing one here too would double-count every success in `count_since` — the rate meter S152
-    built, which reads this very store."""
+    Writing one here too would double-count every success in `count_since` — the rate
+    meter, which reads this very store."""
     from personalclaw.triggers import claims
 
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
@@ -923,11 +923,11 @@ def test_a_SUPPRESSED_row_lands_in_the_TICKS_home_not_the_AMBIENT_one(homes):
     """🔴 THE DEFECT. `persist_suppression` built its `ScheduleRunStore` from `config_dir()` while
     the tick around it ran under `base_dir`, so a tick driven against an isolated home appended its
     suppression rows to whatever home the environment happened to name — in practice the operator's
-    real `~/.personalclaw/cron-history/`. `tick`'s own docstring had already ruled on this for the
+    real `~/.personalclaw/cron-history/`. `tick`'s own docstring had already settled this for the
     sibling sidecar: "a claim describing one store must not live in another". The ledger is the same
     kind of sidecar and was never wired to the same rule.
 
-    Both legs matter. The POSITIVE leg fails if the row goes missing (the criterion-8 silent drop
+    Both legs matter. The POSITIVE leg fails if the row goes missing (the silent drop
     this writer exists to prevent); the NEGATIVE leg fails if it goes to the ambient home instead.
     A fix that satisfies one by breaking the other is not a fix."""
     home, decoy = homes

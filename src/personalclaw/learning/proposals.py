@@ -91,19 +91,19 @@ _COOLDOWN_DAYS = (7, 30, 90, 365)
 class Kind(str, Enum):
     """The proposal kinds. Closed, so a typo cannot invent an unlisted one.
 
-    The three ``project_*`` kinds (LEA-12) are the review's typed output: a self-updating
+    The three ``project_*`` kinds are the review's typed output: a self-updating
     project context that PROPOSES rather than writes, so a run's learnings reach the
     project's overview/ledger/inlined-file/skill only through the same human gate every
     other kind clears.
 
-    ``KNOWLEDGE_DRAFT`` (KNOWLEDGE-SYNTHESIS §3.3/§3.4, WF2KNO-8) is the same bargain for
+    ``KNOWLEDGE_DRAFT`` is the same bargain for
     the knowledge store: a gap-healing or schema-edit draft reaches
     ``workspace/knowledge`` only after a human accepts it. Before this kind existed the
     gap-healing template had no way to file one — ``enqueue`` SKIPS an unlisted kind and
     logs at debug — so the template wrote a TTL'd probe straight into the store instead,
     which is the self-citation anti-pattern the template's own doctrine warns about.
 
-    ``PROMPT`` and ``AGENT`` (AGENT-PACKS §4.3, AP-4) are the prompt-card importer's other two
+    ``PROMPT`` and ``AGENT`` are the prompt-card importer's other two
     typed outputs. A pasted card maps onto a ``PromptTemplate``, a ``WorkflowDef`` (already
     ``TEMPLATE``) or an ``AgentDefinition``, and each has to reach its own store through this
     gate — filing all three as ``TEMPLATE`` would label an agent "New template proposed" in
@@ -146,7 +146,7 @@ class Verdict(str, Enum):
 
 @dataclass
 class ChangeManifest:
-    """Why this change, and what it is predicted to fix (LEARN-R16).
+    """Why this change, and what it is predicted to fix.
 
     Validation is lenient-but-recording: a missing or thin manifest yields
     ``manifest_valid=False`` on the record and a warning in the inbox, never a
@@ -225,8 +225,8 @@ class Proposal:
     evidence_strength: str = "correlated"
     confidence: float = 0.0
     tags: list[str] = field(default_factory=list)
-    #: The Loop-2 gate's ``{before, after, pin}`` for this change (ES-6 —
-    #: :mod:`personalclaw.evals.gate`). EMPTY means no gate run stands behind this proposal,
+    #: The Loop-2 gate's ``{before, after, pin}`` for this change
+    #: (:mod:`personalclaw.evals.gate`). EMPTY means no gate run stands behind this proposal,
     #: which the card renders as "ungated" — never as a zero score, and never as a reason to
     #: refuse the accept. `accept` deliberately does not read this field: a gate that could
     #: block would stop a user shipping a change because the *gate* broke.
@@ -435,7 +435,7 @@ def get(pid: str) -> Proposal | None:
 def newest_gate_for_target(target: str) -> dict | None:
     """The most recent gate report attached to ANY proposal for ``target``, or ``None``.
 
-    ES-9's Loop-2 column: the Learning tab's per-subject row shows the newest gate
+    The Loop-2 column: the Learning tab's per-subject row shows the newest gate
     verdict a change to this subject earned, whatever became of the proposal — an
     accepted change's gate run is exactly the "before" the field trend is measured
     against, so pending-only would hide the row's most load-bearing entry.
@@ -862,7 +862,7 @@ def _surface_in_inbox(prop: Proposal) -> None:
             logger.debug("proposal inbox surface: no dashboard state", exc_info=True)
 
         title = _KIND_LABELS.get(prop.kind, "Proposal")
-        # The row carries the C6 payload, so approving it dispatches through the
+        # The row carries the proposals-contract payload, so approving it dispatches through the
         # ONE proposals contract (`apply.skill_promotion` → this module's `accept`) instead
         # of the inbox handler hard-wiring this queue by name. `refs["learning_proposal"]`
         # stays for the existing readers — the contract is additive, not a replacement.
@@ -965,9 +965,9 @@ def reject(pid: str, *, actor: str = "user") -> bool:
     The remembering is the point: the record outlives the row, so the same content
     is skipped rather than re-filed on the next pass.
 
-    ``actor`` is gated for a subtler reason than accepting (S75): an agent that could
+    ``actor`` is gated for a subtler reason than accepting: an agent that could
     reject would clear its own bad proposals out of the queue before a human ever
-    read them — and the rejection exemplars §2.2 learns from would silently stop
+    read them — and the rejection exemplars the flywheel learns from would silently stop
     accumulating. Returns False on a refusal rather than raising, matching the
     not-found path: a caller that cannot reject and a row that does not exist are
     the same outcome from the caller's side.
@@ -996,7 +996,7 @@ def reject(pid: str, *, actor: str = "user") -> bool:
 
 
 def attach_gate(pid: str, report: dict) -> bool:
-    """Persist a Loop-2 gate report onto a PENDING proposal (ES-6). Returns True if it landed.
+    """Persist a Loop-2 gate report onto a PENDING proposal. Returns True if it landed.
 
     The proposal file is the read surface — the inbox row and the detail view both project from
     it — so persisting here is what lets the card render ``{before, after, pin}`` without
@@ -1015,7 +1015,7 @@ def attach_gate(pid: str, report: dict) -> bool:
 
 
 def attach_replay(pid: str, report: dict) -> bool:
-    """Persist a replay report onto a PENDING proposal (EA-6). Returns True if it landed.
+    """Persist a replay report onto a PENDING proposal. Returns True if it landed.
 
     The sibling of :func:`attach_gate`, with the same three deliberate properties and the same
     reasons: the proposal file is the read surface so the card can render the A/B without
@@ -1085,7 +1085,7 @@ def accept(pid: str, *, installer=None, actor: str = "user") -> Proposal:
     :class:`NoProposalInstallerError` for the same reason: no decision is recorded, so the
     proposal is still in the queue when an installer for it lands.
 
-    ``actor`` gates the call (LEARNING-FLYWHEEL §7 — S75). Measured before it existed:
+    ``actor`` gates the call. Measured before it existed:
     NOTHING here knew who was accepting, so "the model cannot accept its own
     proposals" held only because no agent tool happened to call this — an absence,
     not a control, and one new MCP tool would have removed it silently. It defaults

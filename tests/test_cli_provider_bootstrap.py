@@ -32,16 +32,16 @@ from personalclaw.apps.native_contract import namespaced_module_name
 from personalclaw.providers import loader
 from personalclaw.providers.registry import get_provider_registry, reset_provider_registry
 
-_APP = "es3-bootstrap-probe"
+_APP = "bootstrap-probe-app"
 
 # A second probe app whose provider.py registers a REAL embedding scanner on import —
 # the exact seam bedrock-models uses. Its provider is named + typed so an active
 # ``embedding`` binding resolves to it end to end (registry → get_active_embed_fn →
 # get_knowledge_embedder → the retrieval bench's vector arm).
-_EMBED_APP = "es3-embed-probe"
-_EMBED_PROVIDER = "es3-embed-app"
-_EMBED_TYPE = "es3-embed"
-_EMBED_MODEL = "es3-embed-model"
+_EMBED_APP = "bootstrap-embed-probe"
+_EMBED_PROVIDER = "bootstrap-embed-app"
+_EMBED_TYPE = "bootstrap-embed"
+_EMBED_MODEL = "bootstrap-embed-model"
 _EMBED_VECTOR = [0.11, 0.22, 0.33, 0.44]
 
 
@@ -56,11 +56,11 @@ def _install_provider_app(*, enabled: bool, receipt: Path) -> None:
             {
                 "name": _APP,
                 "version": "1.0.0",
-                "displayName": "ES-3 Bootstrap Probe",
+                "displayName": "Bootstrap Probe",
                 "description": "test-only provider app",
                 "provider": {
                     "type": "model",
-                    "providerType": "es3-probe",
+                    "providerType": "bootstrap-probe",
                     "implementation": "provider:create_provider",
                     "capabilities": ["embedding"],
                 },
@@ -202,7 +202,7 @@ def test_register_extension_providers_starts_no_app_process(monkeypatch):
     assert seen == [False]
 
 
-# ── The end-to-end target of #2912 / ES-3 ────────────────────────────────────────────
+# ── The end-to-end target of #2912 ───────────────────────────────────────────────────
 #
 # The tests above prove the app MODULE is imported + its provider lands in the provider
 # registry. That is necessary but not the thing the issue is about: an app-registered
@@ -226,7 +226,7 @@ def _install_embedding_provider_app(*, enabled: bool) -> None:
             {
                 "name": _EMBED_APP,
                 "version": "1.0.0",
-                "displayName": "ES-3 Embedding Probe",
+                "displayName": "Embedding Probe",
                 "description": "test-only embedding-provider app",
                 "provider": {
                     "type": "model",
@@ -261,7 +261,7 @@ def _install_embedding_provider_app(*, enabled: bool) -> None:
         f"        return {_EMBED_PROVIDER!r}\n\n"
         "    @property\n"
         "    def display_name(self):\n"
-        '        return "ES-3 Embedding Probe"\n\n'
+        '        return "Embedding Probe"\n\n'
         "    async def is_available(self):\n"
         "        return True\n\n"
         '    async def embed(self, text, model=""):\n'

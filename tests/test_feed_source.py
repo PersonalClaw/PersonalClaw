@@ -1,6 +1,6 @@
 """Feed-source, cross-source dedupe, raw-mode FeedItemGraph.
 
-Every clause of the change's acceptance criterion is asserted as a COUNT or a structural fact, never
+Every property the change promises is asserted as a COUNT or a structural fact, never
 as "the poll succeeded":
 
 * **zero duplicates** — three items polled twice is `COUNT(*) == 3` after BOTH polls, never
@@ -155,7 +155,7 @@ def _also_seen_in(store, item_id) -> list:
     return list(meta.get("also_seen_in") or [])
 
 
-# ── SC#3 first half: polling the same feed twice → ZERO duplicates (a COUNT) ─────────
+# ── Polling the same feed twice → ZERO duplicates (a COUNT) ──────────────────────────
 
 
 @pytest.mark.asyncio
@@ -198,12 +198,12 @@ async def test_an_item_with_no_feed_guid_is_still_gated_by_its_composed_guid(sto
     assert _count(store, sid) == 3
 
 
-# ── SC#3 second half: HN + RSS → ONE item with BOTH attributions ────────────────────
+# ── HN + RSS → ONE item with BOTH attributions ──────────────────────────────────────
 
 
 @pytest.mark.asyncio
 async def test_same_story_via_hn_and_rss_becomes_one_item_with_both_attributions(store):
-    """The merge clause, asserted as a count AND as the attribution list.
+    """The merge property, asserted as a count AND as the attribution list.
 
     Either assertion alone is insufficient: the count alone cannot distinguish a merge from
     a silently-dropped second sighting, and the attribution alone cannot catch a second row
@@ -407,7 +407,7 @@ async def test_a_users_own_bookmark_is_never_silently_annotated(store):
     assert _count(store, sid) == 1
 
 
-# ── §3.2 conditional GET ────────────────────────────────────────────────────────────
+# ── conditional GET ─────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -450,7 +450,7 @@ async def test_an_http_error_is_a_soft_failure_that_keeps_the_cursor(store):
     assert store.get_source(sid)["health_status"] == "degraded"
 
 
-# ── §3.1 parsers + presets ──────────────────────────────────────────────────────────
+# ── parsers + presets ───────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio

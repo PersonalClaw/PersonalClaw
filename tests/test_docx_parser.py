@@ -901,7 +901,7 @@ def test_the_default_templates_asymmetric_margins_are_now_REPRESENTED():
 
     python-docx's default template ships 1.00in top/bottom and 1.25in left/right. A single
     `margin_in` could not hold that, so **every document this repo generated parsed as
-    lossy** — the editor's §C5 warning fired on our own output, which is the fastest way to
+    lossy** — the editor's loss warning fired on our own output, which is the fastest way to
     teach people to click through a warning that sometimes matters. Four fields make the
     template's own geometry representable, so the report is now EMPTY.
     """
@@ -942,7 +942,7 @@ def test_a_page_size_the_model_cannot_hold_is_reported():
 def test_a_word_construct_fixture_reports_every_loss_honestly():
     """A composite of constructs WORD EMITS, injected as raw XML — NOT a file Word saved.
 
-    ⚠️  READ THIS BEFORE CITING IT. The change's acceptance criterion asks for "a Word-authored
+    ⚠️  READ THIS BEFORE CITING IT. The goal is "a Word-authored
     fixture reporting its losses honestly". No Microsoft Word exists in this environment
     and no owner-supplied `.docx` is committed to the repo, so this fixture is the closest
     honest substitute: the OOXML constructs Word writes (footnote reference, comment
@@ -955,9 +955,9 @@ def test_a_word_construct_fixture_reports_every_loss_honestly():
         `w:rsid*` revision ids, `mc:AlternateContent` fallbacks, `w:proofErr`, theme
         fonts, a `settings.xml` this repo never writes, or Word's own numbering shapes.
 
-    Closing the literal clause needs an owner-supplied `.docx` saved by Word, committed as
+    Meeting the goal literally needs an owner-supplied `.docx` saved by Word, committed as
     a fixture, and asserted here. Until then this test is deliberately named for what it
-    is, so nobody reads the suite as evidence the clause is met.
+    is, so nobody reads the suite as evidence the goal is met.
     """
     doc = Document()
     doc.add_heading("Quarterly Review", level=0)

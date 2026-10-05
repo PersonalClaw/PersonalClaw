@@ -1,4 +1,4 @@
-"""Token-matched fan-out measurement (WORK-CONTAINERS amendment (e)).
+"""Token-matched fan-out measurement.
 
 **"Prove it helps" has an honest version and a dishonest one, and the difference is the
 denominator.** The dishonest version compares a fan-out to a single agent and reports the score
@@ -11,9 +11,9 @@ So this module refuses to report a winner unless the two arms spent within
 :data:`TOKEN_MATCH_TOLERANCE` of each other. A `not_token_matched` verdict is not a failure of the
 fan-out; it is the measurement declining to answer a question it did not ask.
 
-**"The two arms spent the same" is not one quantity, and the design decides which.** Amendment (e)
-matches budget by giving the cheaper arm more samples, so its arms' trial counts are unequal on
-purpose and the gate divides TOTALS. A PAIRED design runs both arms over identical work the same
+**"The two arms spent the same" is not one quantity, and the design decides which.** The fan-out
+design matches budget by giving the cheaper arm more samples, so its arms' trial counts are unequal
+on purpose and the gate divides TOTALS. A PAIRED design runs both arms over identical work the same
 number of times, so its totals are commensurable only while the counts match and its gate must
 divide PER TRIAL. :data:`SPEND_TOTAL` / :data:`SPEND_PER_TRIAL` make the caller say which, and
 :func:`compare` records the answer on the :class:`Comparison` — a ratio whose denominator has to be
@@ -23,7 +23,7 @@ missing trials.
 **And a matched comparison still usually cannot see anything.** The literature's own noise floor
 exceeds most of its reported architecture deltas: run-to-run variance is 1-3 points, format errors
 cause >50% of failures in some harnesses, a scorer swap moved one result 79.0 -> 25.6, and the
-benchmarks behind these claims run n=24-100. Amendment (e) draws the only conclusion available:
+benchmarks behind these claims run n=24-100. The fan-out design draws the only conclusion available:
 **a sub-5-point delta is reported as `inconclusive`.** Two consequences that are easy to get wrong
 and are therefore mechanized here rather than left to the reader:
 
@@ -45,9 +45,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-#: Amendment (e), verbatim: "Treat any sub-5-point delta as unresolved — including our own future
-#: measurements." Not a tunable. Lowering it to make a result presentable is the exact move the
-#: amendment's risk section calls out ("a plan that only ever reports wins is not measuring").
+#: Any sub-5-point delta is unresolved — including our own future
+#: measurements. Not a tunable. Lowering it to make a result presentable is the exact move this
+#: guards against: a measurement that only ever reports wins is not measuring.
 INCONCLUSIVE_BAND_POINTS = 5.0
 
 #: How closely the two arms' token spends must agree to count as token-matched. 5% is tight enough
@@ -65,7 +65,7 @@ MIN_TRIALS_PER_ARM = 3
 #: WHICH quantity the token-match gate divides. A property of the experiment's DESIGN, which is why
 #: it is a named vocabulary and not a number — there is no honest default that fits both designs:
 #:
-#: * :data:`SPEND_TOTAL` is the fan-out design's basis and this module's default. Amendment (e)
+#: * :data:`SPEND_TOTAL` is the fan-out design's basis and this module's default. That design
 #:   matches budget by giving the cheaper arm more samples (see
 #:   :data:`TOKEN_MATCH_TOLERANCE`: "you add single-agent samples until the budget is consumed"), so
 #:   the two arms' trial counts are DELIBERATELY unequal and the question really is what the whole
@@ -86,7 +86,7 @@ SPEND_BASES = frozenset({SPEND_TOTAL, SPEND_PER_TRIAL})
 
 #: The arm names. Fixed rather than free-form: the comparison is always fan-out against the
 #: single-agent path on IDENTICAL work, and an observation file naming its arms something else is
-#: measuring a different question than the one amendment (e) requires before a width increase.
+#: measuring a different question than the one the fan-out design asks before a width increase.
 ARM_FANOUT = "fanout"
 ARM_SINGLE = "single"
 
@@ -309,7 +309,7 @@ def compare(work: str, fanout: Arm, single: Arm, *, spend_basis: str = SPEND_TOT
 
     ``spend_basis`` names WHICH spend the token gate compares, and it has no honest default that
     fits every design — see :data:`SPEND_TOTAL` and :data:`SPEND_PER_TRIAL`. It defaults to totals
-    because that is amendment (e)'s own design, where the arms' trial counts are unequal on purpose.
+    because that is the fan-out design, where the arms' trial counts are unequal on purpose.
     A paired caller must pass :data:`SPEND_PER_TRIAL`, and the basis is recorded on the answer so a
     published ratio names its denominator instead of leaving it to be inferred.
     """
@@ -421,7 +421,7 @@ def compare(work: str, fanout: Arm, single: Arm, *, spend_basis: str = SPEND_TOT
 def measure_file(path: str | Path) -> Comparison:
     """Load an observation file and verdict it.
 
-    The observation file carries no basis and is not given one: its shape is amendment (e)'s
+    The observation file carries no basis and is not given one: its shape is the fan-out design's
     fan-out/single pair, whose arms are budget-matched by adding samples, so totals are the basis
     that design asks for.
     """

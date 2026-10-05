@@ -103,7 +103,7 @@ describe('FindBar painter (#546)', () => {
 // ── The promotion itself: this primitive does not know what it is searching ────────
 //
 // The bar shipped for a year as `pages/chat/FindBar.tsx` over `ChatTurn[]` and a
-// `Map<turnIndex, HTMLDivElement>`. KL-16 mounts it in the knowledge reader too, so
+// `Map<turnIndex, HTMLDivElement>`. The knowledge reader mounts it too, so
 // "works when driven by something that is not chat" is the contract, and these drive it
 // with article-shaped rows: no ChatTurn, no chat import, nothing from pages/.
 

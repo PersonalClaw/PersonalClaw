@@ -407,7 +407,7 @@ export function InboxDetail({ item, owner = '', sortingHeld = '', onChanged, nav
         {/* Mute thread writes to the muted-THREADS set, keyed off a channel thread id. A
             non-channel item has no thread, so the button would silently do nothing. */}
         {channelBacked && <Button size="sm" variant="ghost" onClick={() => patch({ mute_thread: true }, 'mute')} disabled={!!busy} disabledReason={BUSY_REASON}><BellOff size={14} /> Mute thread</Button>}
-        {/* P11: favorite toggle — a strong engagement signal (boosts this channel/sender
+        {/* Favorite toggle — a strong engagement signal (boosts this channel/sender
             in the ranking when engagement ranking is enabled) + a persisted star. Uses the
             dedicated /favorite endpoint so the signal is recorded, not just the flag set. */}
         <Button size="sm" variant="ghost" onClick={fav} disabled={!!busy} disabledReason={BUSY_REASON}>

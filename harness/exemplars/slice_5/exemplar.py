@@ -1,6 +1,6 @@
-"""Slice 5 exemplar — the human-input contract: gates surface, and time out to FAILED.
+"""Workflow exemplar — the human-input contract: gates surface, and time out to FAILED.
 
-Slice 5 added the typed ask payload, gate timeouts, and the needs-input path. This exemplar
+The contract is the typed ask payload, gate timeouts, and the needs-input path. This exemplar
 drives the two ends of a gate's life against the real controller:
 
 1. an unanswered `approval` gate does not wedge and does not silently pass — the run

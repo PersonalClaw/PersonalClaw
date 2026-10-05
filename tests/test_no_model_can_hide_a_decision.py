@@ -1,6 +1,6 @@
 """A decision the user owes is always listed and always notified: no model's verdict can hide it.
 
-INU-6 lets a notification rule opt a kind into a second-opinion model pass, and a clear
+A notification rule can opt a kind into a second-opinion model pass, and a clear
 ``REFUTED`` files the row as ``filtered`` and withholds its notification. That is right for a
 proposal, a claim a model can check. It was also on for the kind every pending APPROVAL rides:
 the approval registry raises its Inbox row as ``system/agent_request``, and that kind was
@@ -139,8 +139,8 @@ def store(tmp_path):
 def test_the_refuting_model_still_filters_a_proposal(store, refuting_model, monkeypatch):
     """Without this, every assertion below could pass because the opt-in was never read.
 
-    A proposal is a claim, so INU-6 keeps checking it: the same stored opt-in and the same
-    refuting model file it as ``filtered`` and withhold its notification.
+    A proposal is a claim, so the second-opinion pass keeps checking it: the same stored
+    opt-in and the same refuting model file it as ``filtered`` and withhold its notification.
     """
     _verify_on("skills/proposal")
     state = MagicMock()

@@ -1,4 +1,4 @@
-"""PipelineExecutor — runs a conditional DAG over one item (#30).
+"""PipelineExecutor — runs a conditional DAG over one item.
 
 Walks the graph in topological order. A node runs only if **all its incoming edges
 are satisfied** (an edge is satisfied when its source ran successfully AND, for a

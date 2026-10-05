@@ -19,7 +19,7 @@ callers recomputed independently, which is how two capture paths in the same tur
 came to disagree. What stays here is what is genuinely this module's own: the
 correction heuristic, the environment-failure deny-filter, and the capture itself.
 
-Writes flow through ``write_lesson`` (→ the contradiction judge from #18), so a
+Writes flow through ``write_lesson`` (→ the contradiction judge), so a
 captured correction is deduped + contradiction-checked like any other lesson.
 
 The heuristic + guardrail are pure, testable functions; the actual capture
@@ -75,7 +75,7 @@ _ENV_FAILURE_RE = re.compile(
     # Transport + throttling vocabulary. Measured against real failure text: the list above
     # caught 1 of 4 environment failures, so "connection refused", ECONNRESET and rate-limit noise
     # would all have become DURABLE LESSONS — the exact outcome this guardrail exists to prevent.
-    # LEARNING-FLYWHEEL §3.3 routes every `step_failed` through here, which makes the gap worse
+    # The learning loop routes every `step_failed` through here, which makes the gap worse
     # than it was: a flaky network would teach the agent to refuse a valid action later.
     r"connection (?:refused|reset|aborted|closed)|"
     r"econnrefused|econnreset|econnaborted|etimedout|ehostunreach|enetunreach|enotfound|"
@@ -181,8 +181,8 @@ def detect_stumble(
 
     ``used_skills`` must be the skills whose content actually REACHED the prompt (the
     ``ADMITTED``/``REDUCED`` allocation, which is what ``chat_runner`` already narrows for
-    the LV-2 chip) — not the candidate index. The candidate list is every indexed skill, so
-    passing it would make "a skill was loaded" true on every turn.
+    the "used N skills" chip) — not the candidate index. The candidate list is every indexed
+    skill, so passing it would make "a skill was loaded" true on every turn.
 
     ``tool_outcomes`` is the turn's ``(tool, outcome)`` sequence in ORDER, as drained from
     the provider. Order is load-bearing: `failure_retry` is a failure *followed by* another
@@ -238,7 +238,7 @@ def _denied_without_recovery(outcomes: list[tuple[str, str]]) -> str:
 
 
 def record_procedural_outcomes(service, outcomes, *, scope_ref: str | None = None) -> int:
-    """Mine this turn's ``(tool, outcome)`` pairs into procedural memory (M5d).
+    """Mine this turn's ``(tool, outcome)`` pairs into procedural memory.
 
     ``outcome`` comes from the runtime's drain and must be a member of
     ``memory_service.PROCEDURAL_OUTCOMES``; an unknown value is DROPPED and logged
@@ -293,7 +293,7 @@ class Learned:
 
 
 def capture_preference_facet(service, user_message: str) -> Learned | None:
-    """No-LLM preference-facet capture (C15): run the cheap heuristic detector over the
+    """No-LLM preference-facet capture: run the cheap heuristic detector over the
     user message and upsert a typed, decaying facet when it fires — a "never do X" →
     veto (routed to write_lesson), a standing style preference → a style facet. Reinforces
     on recurrence via upsert. Best-effort; returns what was learned, or None.
@@ -500,7 +500,7 @@ def capture_slot_lines(
     source: str = "after_turn_review",
     on_trim_needed=None,
 ) -> int:
-    """Append reflection output into a memory slot. Append-only (MGAV-8). Returns lines written.
+    """Append reflection output into a memory slot. Append-only. Returns lines written.
 
     The reflection half of the slots feature: the after-turn pass observes something worth
     keeping as standing state and offers it here. Three constraints, all delegated to
@@ -570,12 +570,12 @@ def run_after_turn_review(
     Scope (deliberately narrow for v1): the high-signal **correction** case — a
     user correction + the agent's adjusted behavior become a lesson, UNLESS it's
     an environment-failure claim (guardrail). The write goes through
-    ``write_lesson`` so it's deduped + contradiction-judged (#18). The broader
+    ``write_lesson`` so it's deduped + contradiction-judged. The broader
     LLM skill-ladder review layers on later; this lands the timely memory win
     + the guardrail that protects the whole learning loop.
 
     Also runs the two no-LLM detectors on EVERY reviewed turn (not just corrections):
-    the preference-facet detector (C15) — a standing style preference becomes a typed
+    the preference-facet detector — a standing style preference becomes a typed
     decaying facet that the ambient USER PROFILE block renders, a veto a lesson — and the
     glossary detector, which offers an explicitly-defined project term to the
     workspace-scoped `glossary` slot.
@@ -618,9 +618,8 @@ def run_after_turn_review(
 # The deferred skill half of the after-turn review. A bounded one-shot LLM call
 # inspects a learning-worthy turn and, following a preference LADDER (bias toward
 # refining what exists over minting new), decides at most ONE skill action. Every
-# create/refine it proposes routes through the propose-only review QUEUE
-# (skill-evolution-proposal-only) — it NEVER writes a skill live, preserving the
-# "autonomous synthesis proposes, humans install" invariant.
+# create/refine it proposes routes through the propose-only review QUEUE — it NEVER writes
+# a skill live, preserving the "autonomous synthesis proposes, humans install" invariant.
 
 _LADDER_SCHEMA_HINT = (
     '{"action": "none|refine|support_file|create|template", '
@@ -701,7 +700,7 @@ async def _review_template_candidate(decision: dict, *, session_key: str) -> str
     The other four branches enqueue a SKILL proposal directly. This one does not decide anything
     itself — it hands the candidate to ``learning.template_gate``, which owns the chain and its
     typed refusal ledger. A refusal is a real result here: it returns None (no chip) but the reason
-    is recorded, which is the whole point of §3.2's negative space.
+    is recorded, which is the whole point of recording the negative space.
     """
     from personalclaw.learning.detectors import Candidate
     from personalclaw.learning.template_gate import evaluate
@@ -749,11 +748,11 @@ async def _review_template_candidate(decision: dict, *, session_key: str) -> str
 #: emitted at. This dict IS the enumeration — the verdicts and the
 #: severity decision live in one place rather than in a second enum plus a lookup.
 #:
-#: 🔴 WHY WARNING AND NOT ALL-INFO, WHICH IS WHAT `G47` ASKED FOR. The shipped
+#: 🔴 WHY WARNING AND NOT ALL-INFO, WHICH IS WHAT WAS FIRST ASKED FOR. The shipped
 #: default log level is **WARNING**, not INFO — ``AgentConfig.log_level`` defaults to
 #: ``"WARNING"`` (``config/loader.py``) and ``cli.py`` applies it when ``--verbose`` is
 #: absent. So an INFO line would have been an INERT fix: still invisible on a default
-#: install, which is the exact property `G47` reports. The verdicts that mean THE PASS
+#: install, which is the exact defect being fixed. The verdicts that mean THE PASS
 #: PRODUCED NOTHING AND COST MONEY are therefore WARNING (visible as shipped), and the
 #: verdicts that mean the pass worked — including ``no_action``, the common one — are INFO.
 #:
@@ -784,7 +783,7 @@ _LADDER_VERDICT_LEVEL: dict[str, int] = {
 
 
 def _log_ladder_verdict(verdict: str, elapsed_ms: float, session_key: str, detail: str) -> None:
-    """Emit EXACTLY ONE line per ladder pass, carrying its verdict (`G47`).
+    """Emit EXACTLY ONE line per ladder pass, carrying its verdict.
 
     Before this, a pass had eight silent exits: the failure path was ``logger.debug`` and the
     ``action == "none"`` path — the common one — logged nothing at all, so a ladder pass that
@@ -813,7 +812,7 @@ async def run_skill_ladder_review(
     """Forked-LLM skill-axis review (5-tier ladder). Enqueues at most one skill or
     template PROPOSAL (never writes live) and returns a short summary for the chip, or None.
 
-    Attributed and LOGGED (`G47`): the pass runs inside ``audit.caller_scope("skill_ladder")``
+    Attributed and LOGGED: the pass runs inside ``audit.caller_scope("skill_ladder")``
     so every model attempt it makes carries its subsystem on the ledger row, and it emits
     exactly one terminal line naming its verdict and its elapsed time. Both halves are the
     same defect — an expensive unattended pass that can be dead in production with no surface

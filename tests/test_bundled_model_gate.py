@@ -9,7 +9,7 @@ has to stay honest in a tree that has not fetched the weight.
 
 **Clause 1 — the licence-allowlist rail.** An explicit allowlist, default-DENY for anything
 unlisted, and a refusal that NAMES the licence. The negative controls are the near-misses that
-made this change's licence constraint necessary in the first place — Gemma Terms, the Llama
+made the licence constraint necessary in the first place — Gemma Terms, the Llama
 community licence, LFM's "Open License", CC-BY-NC, OpenRAIL, research-only — every one of which
 reads as permissive on a model card. Crucially, they are refused by the DEFAULT, not by a
 denylist entry: :func:`test_the_refusal_is_the_default_not_a_denylist` proves an unlisted
@@ -23,13 +23,13 @@ bundled: over budget, a ZERO measurement, and an undeclared ceiling. Plus the tw
 refusals — a weight the record does not declare, and a record the wheel does not carry — and the
 digest mismatch that stops a record from describing a different artifact.
 
-**Clause 3 — the end-to-end drive.** ``scripts/ou14_zero_config_drive.py`` on a throwaway
+**Clause 3 — the end-to-end drive.** ``scripts/zero_config_first_turn_drive.py`` on a throwaway
 ``PERSONALCLAW_HOME``, bootstrapping providers the way a real process does and COMPLETING one
 chat turn. Its teeth are
 :func:`test_the_drive_contradicts_a_declared_bundle_with_nothing_runnable`: hand the drive a
 sign-off record whose weight is installed and with no runnable provider behind it, and it must
 report a CONTRADICTION. A drive that said MET there would be a rubber stamp, and this clause is
-the only one of the four the escalation judged uncheatable — so it is the one that must not be
+the only one of the four that cannot go green with nothing bundled — so it must not be
 cheatable here either.
 
 **What a green run here does NOT mean.** It cannot judge whether a licence is *genuinely*
@@ -72,7 +72,7 @@ from personalclaw.bundled_model import (
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-_DRIVE = _REPO_ROOT / "scripts" / "ou14_zero_config_drive.py"
+_DRIVE = _REPO_ROOT / "scripts" / "zero_config_first_turn_drive.py"
 _VERIFY_WHEEL = _REPO_ROOT / "scripts" / "verify_wheel.py"
 
 #: Licences that MUST be refused, each with the reason it is a trap rather than an obvious no.
@@ -134,12 +134,12 @@ def _wheel(tmp_path: Path, members: dict[str, bytes], name: str = "demo-0.0.1-py
 def test_the_permitted_allowlist_is_pinned_member_for_member() -> None:
     """Widening the allowlist must be an explicit, reviewable edit in the same commit.
 
-    The owner's sign-off binds the set to genuinely OSI-permissive licences — Apache-2.0 or
+    The sign-off binds the set to genuinely OSI-permissive licences — Apache-2.0 or
     MIT. Pinning it here means a PR that quietly adds a third entry reds with this test naming
-    it, rather than shipping a licence nobody ruled on.
+    it, rather than shipping a licence nobody signed off on.
     """
     assert set(PERMITTED_LICENCES) == {"apache-2.0", "mit"}, (
-        f"the permitted-licence allowlist is {sorted(PERMITTED_LICENCES)}. The owner's "
+        f"the permitted-licence allowlist is {sorted(PERMITTED_LICENCES)}. The "
         "sign-off binds it to Apache-2.0 or MIT. Changing it is a governance decision: say "
         "what was added, why it is genuinely OSI-permissive, and update this pin in the same "
         "commit."
@@ -220,7 +220,7 @@ def test_an_artifact_exactly_at_the_budget_is_admitted() -> None:
 def test_a_zero_measurement_is_refused_because_that_is_the_vacuity() -> None:
     """A size gate that passes when nothing shipped reports 'nobody measured' as 'in budget'.
 
-    This is the exact cheat the escalation found in three of its four clauses, so it is
+    This is the exact cheat three of the four clauses were found open to, so it is
     pinned as a refusal rather than left to a reader's judgment.
     """
     decision = size_decision(0, 1000)
@@ -239,8 +239,8 @@ def test_an_undeclared_budget_cannot_admit_anything(budget: int) -> None:
 # ── the WHEEL gate: it must carry NO weight, and stay small ────────────────────────────────────
 #
 # 🔴 This whole section asserts the OPPOSITE of what it asserted on 2026-09-23, when the wheel was
-# required to CARRY the signed-off weight. The owner settled the shape the day after — "the
-# intention was always to ship the wheel without the weight and fetch it on first run" — so a
+# required to CARRY the signed-off weight. The shape was settled the day after — the
+# intention was always to ship the wheel without the weight and fetch it on first run — so a
 # weight in the wheel is now the defect. Both directions are pinned here on a REAL zip, because a
 # gate left pointing the old way would have refused every release, and one pointing neither way
 # would let a 138 MiB weight back into a ~9 MiB wheel where PyPI's 100 MiB per-file limit turns it
@@ -443,7 +443,7 @@ def test_the_repository_record_signs_off_a_complete_permissive_bundle() -> None:
     declaration = repo_declaration(_REPO_ROOT)
     assert declaration is not None, (
         f"no bundled model is signed off in {rail.DECLARATION_RELPATH} — "
-        "OU-14's whole point is that one is"
+        "the zero-config floor's whole point is that one is"
     )
     assert declaration.model_id == "unsloth/SmolLM2-135M-Instruct-GGUF"
     assert licence_decision(declaration.licence).permitted, declaration.licence
@@ -611,7 +611,7 @@ def _load_by_path(path: Path, name: str):
 
 
 def _drive_module():
-    return _load_by_path(_DRIVE, "_ou14_drive_under_test")
+    return _load_by_path(_DRIVE, "_zero_config_drive_under_test")
 
 
 def _run_drive(cwd: Path | None = None) -> tuple[int, dict[str, object]]:
@@ -633,7 +633,7 @@ def _run_drive(cwd: Path | None = None) -> tuple[int, dict[str, object]]:
 
 
 def test_the_drive_is_consistent_and_credential_free_whatever_this_tree_carries() -> None:
-    """Clause 4, driven — and written to hold in BOTH trees, without skipping in either.
+    """The real-turn clause, driven — and written to hold in BOTH trees, without skipping in either.
 
     A CI checkout has no weight (it is not in git); a release build and a dev tree that ran
     ``make bundled-model`` do. Those are genuinely different observations, so the invariants
@@ -642,7 +642,7 @@ def test_the_drive_is_consistent_and_credential_free_whatever_this_tree_carries(
     present, a completed turn with real text.
 
     Written this way rather than with a skip because the weight-present arm is precisely the
-    arm OU-14 is about: ``pytest.skip`` on a CI runner would silently retire it.
+    arm the zero-config floor is about: ``pytest.skip`` on a CI runner would silently retire it.
     """
     code, obs = _run_drive()
     assert obs["bundle_declared"] is True, obs
@@ -774,7 +774,7 @@ def test_the_drive_verdict_cannot_be_talked_into_met(
     assert want_phrase.lower() in why.lower(), why
 
 
-@pytest.mark.parametrize("named", ["the default home", "/usr/pclaw-ou14-probe-home"])
+@pytest.mark.parametrize("named", ["the default home", "/usr/pclaw-zero-config-probe-home"])
 def test_the_drive_refuses_the_default_home(named, tmp_path: Path, monkeypatch, unset_env) -> None:
     """A probe that writes to the default home is an accident, not an observation. So is one
     handed a system directory: the resolver refuses it as a home and uses the default home in its
@@ -788,7 +788,7 @@ def test_the_drive_refuses_the_default_home(named, tmp_path: Path, monkeypatch, 
     unset_env("PERSONALCLAW_HOME")
     default = tmp_path / "user" / ".personalclaw"
     home = str(default) if named == "the default home" else named
-    monkeypatch.setattr(sys, "argv", ["ou14_zero_config_drive.py", "--home", home])
+    monkeypatch.setattr(sys, "argv", ["zero_config_first_turn_drive.py", "--home", home])
     module = _drive_module()
     with pytest.raises(SystemExit, match="resolves to the default home"):
         module.main()
@@ -813,7 +813,7 @@ _PROBE = _REPO_ROOT / "scripts" / "installed_bundled_model_probe.py"
 
 
 def _verify_wheel_module():
-    return _load_by_path(_VERIFY_WHEEL, "_verify_wheel_ou14")
+    return _load_by_path(_VERIFY_WHEEL, "_verify_wheel_under_test")
 
 
 def _probe_module():

@@ -1,14 +1,14 @@
-"""Tests for the token-matched fan-out measurement (WORK-CONTAINERS amendment (e)).
+"""Tests for the token-matched fan-out measurement.
 
-The property under test is a REFUSAL, not a calculation. Amendment (e) exists because the fan-out
+The property under test is a REFUSAL, not a calculation. The measurement exists because the fan-out
 literature's own noise floor exceeds most of its reported architecture deltas — run-to-run variance
 1-3 points, a scorer swap moving one result 79.0 -> 25.6, n=24-100 benchmarks, and no paper
 token-matching its single-agent baseline. So the thing that must be true of this module is that it
 declines to report a win it cannot see: a sub-5-point delta is `inconclusive`, an unmatched token
 spend is `not_token_matched`, and one trial per arm is not a measurement at all.
 
-The failure mode these tests guard is a measurement that only ever reports wins, which the
-amendment's own risk register names as the way this row gets useless.
+The failure mode these tests guard is a measurement that only ever reports wins, which is
+the way a measurement like this becomes useless.
 """
 
 import json
@@ -35,11 +35,11 @@ def _trials(scores: list[float], tokens_each: int) -> dict:
     return {"trials": [{"score": s, "tokens": tokens_each} for s in scores]}
 
 
-# ── the inconclusive band (the acceptance criteria) ──
+# ── the inconclusive band ──
 
 
 def test_a_THREE_point_delta_reports_INCONCLUSIVE_and_NOT_a_win():
-    """The criterion, exactly. Three points is inside the band the literature reports for its OWN
+    """The band, exactly. Three points is inside the band the literature reports for its OWN
     results, so calling it a fan-out win would be reading noise as topology."""
     result = fm.compare(
         "identical work",
@@ -162,18 +162,18 @@ def test_the_report_names_the_TOKENS_PER_POINT_of_each_arm():
 
 # ── the spend basis: which denominator the gate divides (#2587) ──
 #
-# "The two arms spent the same" is not one quantity. Amendment (e) matches budget by giving the
-# cheaper arm more samples, so ITS arms' trial counts are unequal on purpose and TOTALS are the
+# "The two arms spent the same" is not one quantity. The fan-out design matches budget by giving
+# the cheaper arm more samples, so ITS arms' trial counts are unequal on purpose and TOTALS are the
 # question. A PAIRED design runs both arms over identical work the same number of times, so its
 # totals are commensurable only while the counts match. The default stays totals: this module's own
 # experiment is the fan-out one, and a paired caller must say so.
 
 
 def test_the_DEFAULT_basis_is_TOTALS_because_this_modules_own_design_matches_BUDGET():
-    """Amendment (e)'s shape, and the reason per-trial cannot be the default here: three fan-out
+    """The fan-out shape, and the reason per-trial cannot be the default here: three fan-out
     trials at 10,000 against ten single-agent samples at 3,000 is 30,000 both ways, which is what
     "at equal token spend" MEANS in that design. Dividing by trial count would refuse the
-    comparison the amendment exists to make."""
+    comparison the design exists to make."""
     result = fm.compare(
         "identical work",
         _arm("fanout", [70.0, 70.0, 70.0], 10_000),
@@ -237,7 +237,7 @@ def test_the_published_payload_NAMES_the_basis_it_divided():
 
 
 def test_the_note_says_WHICH_spend_it_measured():
-    """§8-style: the sentence travels with the number. "differs by 26%" is a different claim per
+    """The sentence travels with the number. "differs by 26%" is a different claim per
     trial than in total, and a reader cannot tell them apart from the percentage."""
     unmatched = dict(
         work="identical work",
@@ -277,7 +277,7 @@ def test_an_UNKNOWN_basis_is_refused_even_when_a_GATE_would_short_circuit_first(
 
 
 def test_an_observation_FILE_is_measured_on_the_fanout_designs_basis(tmp_path):
-    """The file shape is a `fanout`/`single` pair, which IS amendment (e)'s design, so
+    """The file shape is a `fanout`/`single` pair, which IS the fan-out design, so
     `measure_file` does not offer a basis to choose — and the answer says which one it used."""
     assert fm.SPEND_BASES == {fm.SPEND_TOTAL, fm.SPEND_PER_TRIAL}
     path = _observations(
@@ -373,7 +373,7 @@ def test_a_well_formed_file_ROUND_TRIPS_to_a_verdict(tmp_path):
 
 def test_the_CLI_exits_ZERO_on_an_INCONCLUSIVE_verdict(tmp_path, capsys):
     """A non-zero exit on the honest answer would make "inconclusive" look like a broken run, and
-    the amendment's risk register says the failure mode to guard is a harness that only reports
+    the failure mode to guard is a harness that only reports
     wins."""
     path = _observations(
         tmp_path, _trials([63.0, 63.0, 63.0], 10_000), _trials([60.0, 60.0, 60.0], 10_000)

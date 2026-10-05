@@ -4,7 +4,7 @@ import { WorkflowDefEditor } from './WorkflowDefEditor'
 import { WorkflowRunDetail } from './WorkflowRunDetail'
 import { WorkflowsListPage } from './WorkflowsListPage'
 
-/** Workflows — the route root (WORKFLOWS-V2 Slice 7b).
+/** Workflows — the route root.
  *
  *  Selection state IS the URL, matching the other entity sections:
  *    · `#/workflows`                  → the list (runs by default)

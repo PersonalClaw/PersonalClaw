@@ -1,7 +1,7 @@
 """The trigger-store seam — the ``trigger`` provider type's contract.
 
-§3 asks for a ``TriggerStore`` interface extracted from the unified service's persistence
-("list/get/upsert/delete + change-notification"), with the native implementation wrapping
+This is a ``TriggerStore`` interface extracted from the unified service's persistence
+(list/get/upsert/delete + change-notification), with the native implementation wrapping
 ``triggers.json`` and all of its preserved conventions. That native implementation already exists
 and keeps its shipped name: :class:`personalclaw.triggers.store.TriggerStore`. This module is the
 ABSTRACTION it now satisfies, so a provider app can supply rows from somewhere else — a team
@@ -13,7 +13,7 @@ backend, a synced file, a fixture — without the service knowing.
 The two types sit adjacent in ``PROVIDER_TYPES`` and are easy to conflate. They contribute
 different halves of an automation, and neither can substitute for the other:
 
-* ``trigger_source`` (AUTOMATION-SUBSTRATE AUTO-A4, :mod:`personalclaw.trigger_sources`) supplies
+* ``trigger_source`` (:mod:`personalclaw.trigger_sources`) supplies
   the **stimulus**. It is a live observer the app runs: ``start``/``stop``, pushing typed
   :class:`~personalclaw.trigger_sources.base.SourceEvent` payloads onto the one event bus under a
   namespaced source, which the owner's OWN ``kind: event`` trigger rows then match. The app decides
@@ -31,8 +31,8 @@ into one type would leave no way to say that.
 What a ``trigger`` provider may and may not do
 ----------------------------------------------
 
-**It contributes rows, never execution.** §3: "A trigger provider contributes trigger rows, never
-execution — the local ``TriggerService`` does all firing". The provider is asked for rows and is
+**It contributes rows, never execution.** The local ``TriggerService`` does all
+firing. The provider is asked for rows and is
 never handed a fire, a payload, a run or a credential. Every gate the local machine applies —
 capability allowlist, budget, quiet hours, kill switch, injection screen — applies unchanged,
 because the row travelled but the fire path did not.
@@ -65,7 +65,7 @@ class TriggerStoreProvider(ABC):
     name :class:`personalclaw.triggers.store.TriggerStore` where its callers already point — a
     rename there would be churn across the gateway and CLI for no semantic gain.
 
-    Five methods, which is exactly §3's list. ``load`` is the read primitive (it returns rows WITH
+    Five methods, matching the list above. ``load`` is the read primitive (it returns rows WITH
     their parse issues, because a broken row must stay visible), ``list_triggers`` is the flat
     listing view, and ``changed_on_disk`` is the change-notification: "another writer has touched
     this store since you last read it". A provider backed by a network store answers it from an
@@ -122,7 +122,8 @@ def armable(store: Any) -> list["Trigger"]:
     * broken rows are dropped (``parse_trigger`` already forced them ``enabled=False``, so they
       were inert anyway — dropping them here just stops seven call sites each re-deriving the
       ``row.ok`` check), and
-    * foreign rows are dropped (``author != owner``), which is §2.2's structural requirement.
+    * foreign rows are dropped (``author != owner``), which is the owner filter's structural
+      requirement.
 
     Every arm/fire selection inside this package calls this — the clock walk and boot re-arm in
     ``service``, the ``file``/``idle``/``web_watch``/``view`` poll loops, and the chain lookups.
@@ -139,7 +140,7 @@ def armable(store: Any) -> list["Trigger"]:
     source and the write destination MUST be the same object: read from one store and write to
     another and you get either two rows under one id in two files, diverging, or a
     ``next_fire_at`` that never advances — due again on the very next tick, a fire storm and not
-    a missed fire. So TSE-5 wired both ends: ``tick`` and ``boot`` substitute
+    a missed fire. So both ends are wired: ``tick`` and ``boot`` substitute
     :func:`personalclaw.triggers.routing.routed` for their store before calling this, which is how a
     provider's row gets here at all, and :meth:`personalclaw.triggers.store.TriggerStore.upsert`
     routes that row's write back to the provider that served it — at the store, not at the arm

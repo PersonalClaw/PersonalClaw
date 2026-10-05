@@ -819,7 +819,7 @@ def usage_key(loop_id: str) -> str:
 
 
 def loop_spend(loop_id: str) -> dict:
-    """What one loop cost, read from the per-turn ledger (MRT-3).
+    """What one loop cost, read from the per-turn ledger.
 
     Lives here because this module owns every session key a loop spends under, and the figure is
     exactly "the spend booked against those keys". A loop's worker turns reach
@@ -845,7 +845,7 @@ def loop_spend(loop_id: str) -> dict:
     carry no ``tokens`` and no ``cost_usd``, so making it work would mean copying turn dollars
     into a second store — one dollar in two records, in a subsystem whose own money doctrine
     (``routing/usage.py`` module docstring) is that a total which can double-count is worse than
-    one that admits a gap. See MODEL-ROUTING-TELEMETRY's MRT-3 log for the recorded deviation.
+    one that admits a gap.
     """
     from personalclaw import usage_ledger
     from personalclaw.constants import dashboard_history_key

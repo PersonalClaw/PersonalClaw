@@ -1,7 +1,7 @@
-"""Success Criterion 4 / DAS-6d-iii — two machines converge over a REAL folder.
+"""Two machines converge over a REAL folder.
 
 The earlier sync-cycle tests proved convergence through an in-MEMORY fake transport. This proves
-the plan's Criterion 4 verbatim over a REAL on-disk transport (the dir-sync algorithm — insert-only
+the convergence promise verbatim over a REAL on-disk transport (the dir-sync algorithm — insert-only
 files, rename-lock CAS on registry.json) driving core's real run_sync_cycle end to end:
 
     "a task created on A and a knowledge item added on B both exist on both after one sync cycle
@@ -136,7 +136,7 @@ def _task_ids(home: Path) -> set[str]:
 
 def _knowledge_event(home: Path, rows: list[dict]) -> None:
     # A JSONL append stream (notifications is a real jsonl_append entry) — the "knowledge item
-    # added on B" side of the criterion, as an append-dedup stream.
+    # added on B" side of the promise, as an append-dedup stream.
     home.mkdir(parents=True, exist_ok=True)
     d = home / "notifications.jsonl"
     d.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
@@ -153,7 +153,7 @@ def _notif_ids(home: Path) -> set[str]:
     return ids
 
 
-class TestCriterion4OverRealFolder:
+class TestConvergenceOverRealFolder:
     def test_task_on_a_and_knowledge_on_b_converge(self, tmp_path):
         remote = tmp_path / "shared"
         a, b = tmp_path / "A", tmp_path / "B"

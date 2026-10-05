@@ -4,7 +4,7 @@ The platform records what it DID and never what LANDED. That single shape is wha
 output nobody reads, unmeasured routing edges, and the declared-but-inert class this repo keeps
 rediscovering by AST audit rather than at runtime.
 
-The mechanism to fix it already existed and was scoped to one feature: LEARN-R18's
+The mechanism to fix it already existed and was scoped to one feature: a
 `pending_outcome` / `outcome_resolved` pair, openable only by a decision-producing workflow node,
 with `instance_path`/`node_id`/`epoch` welded into the record shape. This module is that same pair
 with the decision assumptions lifted out of it, so ANY producer may open a question:
@@ -16,7 +16,7 @@ with the decision assumptions lifted out of it, so ANY producer may open a quest
 * a **proposal** or a **declared control** — we asked for something, or we declared a rail; did it
   ever fire (`PRODUCER_PROPOSAL`, `PRODUCER_CONTROL`).
 
-There is exactly ONE outcome facility, and this is it. The `PA-4` decision
+There is exactly ONE outcome facility, and this is it. The decision
 journal lands here as a producer (`PRODUCER_DECISION` with its own `context` fields), not as a
 second decision-shaped pair beside this one — the whole point of generalizing was to make that
 second facility unnecessary before it is written.
@@ -42,8 +42,8 @@ it (:data:`SOURCE_CONSUMPTION`). Naming the source on the question is what lets 
 grade all three without a per-producer branch, and what keeps ledger- and consumption-sourced
 questions resolvable on a box with no vector store.
 
-`PP-10` reads this facility rather than counting alongside it: a work unit whose last
-:data:`DORMANCY_CYCLES` published artifacts all resolved `UNCONSUMED` is :data:`DORMANT`
+The consumer-liveness sweep reads this facility rather than counting alongside it: a work unit
+whose last :data:`DORMANCY_CYCLES` published artifacts all resolved `UNCONSUMED` is :data:`DORMANT`
 (:func:`dormancy_verdict`), which becomes a PROPOSAL to pause or retire it and never an automatic
 stop — "nobody looked yet" and "nobody will ever look" are different facts and only the user knows
 which.
@@ -62,7 +62,7 @@ from personalclaw.ledger.kinds import OUTCOME_RESOLVED, PENDING_OUTCOME
 
 # ── who may open a question ──
 
-#: The original producer: a run node that chose something (LEARN-R18, and the journal).
+#: The original producer: a run node that chose something (and the decision journal).
 PRODUCER_DECISION = "decision"
 #: A `publish:` declaration that landed an artifact — the bet is that somebody consumes it.
 PRODUCER_PUBLISH = "publish"
@@ -177,7 +177,7 @@ def slug_from_metric(metric: str) -> str:
 def dormancy_verdict(resolutions: list[dict[str, Any]], *, cycles: int = DORMANCY_CYCLES) -> str:
     """Grade one work unit's recent consumption resolutions, oldest first.
 
-    Pure, and deliberately conservative in three directions, because the atom this implements is
+    Pure, and deliberately conservative in three directions, because the sweep this serves is
     one whose failure mode is nagging rather than missing something:
 
     * **A touch anywhere in the window wins.** One recent read means somebody is reading, so the
@@ -469,7 +469,7 @@ class OutcomeLedger:
         """Close a question with ground truth. Cites `pending_event_id`, always.
 
         Carries the resolution's `decay_profile` on the record so a consumer grading the evidence
-        later — `PP-10`'s dormancy sweep, the curator — reads the ageing rule off the ledger
+        later — the dormancy sweep, the curator — reads the ageing rule off the ledger
         instead of re-deriving it and picking a different one. `answer` rides along for a question
         that declared an `answer_field`: which answer it was, whether or not it carried a number.
         """

@@ -59,19 +59,19 @@ publishes an unbounded namespace rather than one signature, so rooting it would 
 closure's scope depend on a core module's internals. That a module is exported at all is a
 separate question about this facade, not a gap in this walk.
 
-TWO RULINGS THAT NARROW IT, both deliberate and both pinned by tests:
+TWO RULES THAT NARROW IT, both deliberate and both pinned by tests:
 
 * **A type that names only ITSELF does not clear itself.** ``AppManifest.from_dict()``
   returns ``AppManifest`` and ``EgressPolicy.with_overrides()`` returns ``EgressPolicy``;
   a self-referential constructor is present on most dataclasses in this tree, so counting it
   would clear nearly every type and leave the counter meaning nothing. 34 exports carry a
-  self-edge and the ruling is LOAD-BEARING for three — ``channel.AppConfig``,
+  self-edge and the rule is LOAD-BEARING for three — ``channel.AppConfig``,
   ``channel.Stats``, ``manifest.AppManifest``: each carries a self-edge, each is still
   reported. ``net.EgressPolicy`` was a fourth until #3511, when admitting function roots gave
   it three real readers (``net.evaluate(policy)``, ``net.fetch(policy)``,
-  ``net.egress_policy_for() -> EgressPolicy``) and it left the set WITHOUT this ruling moving
+  ``net.egress_policy_for() -> EgressPolicy``) and it left the set WITHOUT this rule moving
   — which is why the three are pinned by name in ``test_inert_surface_baseline.py`` rather
-  than counted. A count would have read that clear as the ruling weakening.
+  than counted. A count would have read that clear as the rule weakening.
 * **No name is published twice meaning two different types.** Widening to function roots
   required ``triggers.tools.ToolResult`` — the return of three published ``sdk.channel``
   functions — while ``sdk.tool.ToolResult`` was already
@@ -87,7 +87,7 @@ TWO RULINGS THAT NARROW IT, both deliberate and both pinned by tests:
   two ``ToolResult``s — the next sdk module to face ``triggers.tools`` re-mints the collision,
   and a traceback then disagrees with the docs about what the type is called. Keeping it OUT of
   the facade was the third option and the wrong one here: it would have left three published
-  ``sdk.channel`` functions with an unnameable return, which is the defect rather than a ruling
+  ``sdk.channel`` functions with an unnameable return, which is the defect rather than a decision
   about it. The only types held out of the 22 are the three the ``personalclaw.dashboard.``
   exemption covers, for a reason that has nothing to do with naming.
 

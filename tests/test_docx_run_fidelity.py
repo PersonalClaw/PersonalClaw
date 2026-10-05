@@ -124,11 +124,11 @@ def _part_names(data: bytes) -> list[str]:
         return sorted(archive.namelist())
 
 
-# --------------------------------------------------------------------------- the clause
+# ------------------------------------------------------------------- run-level fidelity
 
 
 def test_a_bold_run_reads_back_bold_via_python_docx():
-    """The clause, round-tripped through the file rather than the model."""
+    """Bold, round-tripped through the file rather than the model."""
     data = render_docx(
         _model(_block("paragraph", runs=[_Run("plain "), _Run("strong", bold=True)]))
     )
@@ -218,7 +218,7 @@ def test_a_bold_link_run_reads_back_bold():
 
 
 def _legacy_docx(model: DocumentModel) -> bytes:
-    """The pre-DFE-2 render, transcribed call-for-call from the writer this change changes.
+    """The old render, transcribed call-for-call from the writer this change changes.
 
     Not a golden file: the SAME model driven through the SAME python-docx calls, so any
     element the runs path adds to a runs-less block turns up as an XML diff.
@@ -534,11 +534,11 @@ def test_the_parity_check_notices_a_drifted_double() -> None:
 
 
 def test_markdown_bold_survives_markup_model_bytes_and_read_back() -> None:
-    """The clause across the ENTIRE chain, which nothing else in the repo joins.
+    """Run fidelity across the ENTIRE chain, which nothing else in the repo joins.
 
     Every test above starts from a hand-built double, and the markup suite stops at the
     model. Neither can catch a break BETWEEN the parser's `Run` and the writer that consumes
-    it, and that seam is the only place the change's promise actually lives.
+    it, and that seam is the only place the promise actually lives.
     """
     model = document_from_markdown(f"Some **strong** words and a [link]({_URL}).")
     assert type(model.blocks[0].runs[0]) is Run, "the chain must carry the SHIPPED Run"

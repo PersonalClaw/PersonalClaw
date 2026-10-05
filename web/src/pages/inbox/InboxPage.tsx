@@ -126,7 +126,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
   }, [items, filter, kind, q, ownerFilter, me])
   const open = items?.find((it) => it.id === openId) ?? null
 
-  // P11: fire the "open" engagement signal when the user opens an item's panel. Once per
+  // Fire the "open" engagement signal when the user opens an item's panel. Once per
   // distinct id (a ref-guard so re-renders / a reopen of the same panel don't re-fire).
   // Fire-and-forget + backend-gated — a no-op unless engagement ranking is enabled.
   const openedRef = useRef<string | null>(null)
@@ -452,7 +452,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
         </>
       }
     >
-      {/* The inbox body is one ENTRANCE GROUP (FLUID-MOTION §S3 T3.2): the source-health
+      {/* The inbox body is one ENTRANCE GROUP: the source-health
           banner lands, then the queue — context first, then the work, rather than the
           two arriving in the same frame. This surface has exactly those two regions, and
           the group sits above BOTH the `status` fetch and the items fetch, so the live
@@ -496,8 +496,8 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
           )
         })()}
 
-        {/* `data-tour="inbox"` — the product tour's inbox stop points at the queue column
-            (ONBOARDING-UX T5.1). The wrapper, not the list, so an empty inbox still anchors.
+        {/* `data-tour="inbox"` — the product tour's inbox stop points at the queue column.
+            The wrapper, not the list, so an empty inbox still anchors.
             The region wraps it rather than replacing it: the tour anchor and the centered
             column stay one element, so neither the tour nor the layout learns about motion. */}
         <EntranceRegion>
@@ -676,8 +676,8 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
                     measured on this surface: **39 rows → 3 distinct names**, 35 of them "Proposals"
                     (36 buttons whose whole computed name is a kind word). A screen-reader user tabbing
                     the inbox heard "Proposals, button" thirty-five times while every row's own text
-                    identified it. Same defect cycle 141 measured for rows named by kind, and the helper
-                    cycle 142 built for it — join the identifying parts, drop repeats, cap at 55 — is
+                    identified it. Same defect already measured for rows named by kind, and the helper
+                    built for it — join the identifying parts, drop repeats, cap at 55 — is
                     what `#/notifications` already uses for exactly this. The sender stays first for a
                     channel-backed row (that IS its identity); the message line distinguishes the rest.
 

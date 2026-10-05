@@ -50,7 +50,7 @@ def store(tmp_path):
     it resolves `knowledge_db_path()` -> `config_dir()` -> `PERSONALCLAW_HOME` on every call.
     Pointing that at `tmp_path` is what keeps the real `~/.personalclaw` out of this suite.
 
-    🔴 Its OWN `MonkeyPatch`, not the shared `monkeypatch` fixture. Measured on KL-14: sharing
+    🔴 Its OWN `MonkeyPatch`, not the shared `monkeypatch` fixture. Measured: sharing
     it means a test that calls `monkeypatch.undo()` for something of its own also undoes this
     `setenv`, and the next `similarity_pass` opens and rewrites the developer's real library.
     Home isolation must not be revocable by a test.
@@ -311,7 +311,7 @@ def test_the_same_pair_never_becomes_two_rows(store):
     assert store.count_similarity_edges() == 1, _edge_rows(store)
 
 
-# ── the clause that bites: a recompute must not eat another pass's edge ─────────
+# ── the worst bite: a recompute must not eat another pass's edge ────────────────
 
 
 @pytest.mark.parametrize("author_is_lower_id", [True, False])

@@ -1,4 +1,4 @@
-"""E2-P4.5: native default agent seed + default-name resolution."""
+"""Native default agent seed + default-name resolution."""
 
 from __future__ import annotations
 
@@ -80,7 +80,7 @@ def test_global_agent_provider_defaults_native():
 def test_agent_profile_has_provider_field():
     from personalclaw.config.loader import AgentProfile
 
-    # Per-agent provider override (P5 field, brought forward in P4.5).
+    # Per-agent provider override.
     assert AgentProfile().provider == ""  # empty inherits the global default
     assert AgentProfile(provider="acp:claude").provider == "acp:claude"
 
@@ -99,7 +99,7 @@ def test_default_agent_name_falls_back_to_native():
 
 def test_normalize_agent_name_canonicalizes_default():
     # All the spellings of "the default agent" collapse to one scope key, so
-    # agent-scoped memory (persona, commitments) writes + reads agree (M5e).
+    # agent-scoped memory (persona, commitments) writes + reads agree.
     assert normalize_agent_name(None) == DEFAULT_NATIVE_AGENT_NAME
     assert normalize_agent_name("") == DEFAULT_NATIVE_AGENT_NAME
     assert normalize_agent_name("personalclaw") == DEFAULT_NATIVE_AGENT_NAME
@@ -113,8 +113,8 @@ def test_normalize_agent_name_canonicalizes_default():
 # Regression: the setter wrote ANY name to config.json → the write "succeeded"
 # (ok:true) but the next AppConfig.load() re-migration reconciled the dangling name
 # back to the real default, so the change silently didn't stick. It now rejects an
-# unknown agent up-front (same set-time-validation principle as models #16 / search
-# #17). Empty string is allowed (reset to system default).
+# unknown agent up-front (same set-time-validation principle as models and search).
+# Empty string is allowed (reset to system default).
 
 
 def _acfg(monkeypatch, tmp_path, agents: dict):
@@ -165,7 +165,7 @@ async def test_default_agent_empty_allowed(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_default_agent_missing_key_is_400_not_silent_clear(monkeypatch, tmp_path):
-    """C11 regression: a body WITHOUT 'agent' (typo'd key, wrong contract —
+    """Regression: a body WITHOUT 'agent' (typo'd key, wrong contract —
     e.g. {"name": "..."}) used to coerce to "" and silently CLEAR the default
     agent while returning ok:true. Missing key must be a 400; reset stays the
     explicit {"agent": ""}."""

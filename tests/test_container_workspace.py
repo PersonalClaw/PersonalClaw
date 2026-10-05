@@ -1,4 +1,4 @@
-"""Container workspace mode (WF2WOR-12 / WORK-R20) — the four load-bearing claims.
+"""Container workspace mode — the four load-bearing claims.
 
 * **The typed manifest refuses ambiguity at parse time** — image XOR build, the engine-owned
   mount point protected, `privileged` refused — because a malformed manifest discovered inside

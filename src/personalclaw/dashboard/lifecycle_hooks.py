@@ -39,7 +39,7 @@ def register_lifecycle_hooks(app: web.Application) -> None:
     app.on_startup.append(_transports_startup)
 
     async def _control_bridge_startup(app_: web.Application) -> None:
-        """Bind the loopback control bridge on its own random port (EXTERNAL-ACCESS §4).
+        """Bind the loopback control bridge on its own random port.
 
         Its OWN runner, not a route here: the dashboard's port is knowable and a control
         surface on a knowable port is a port-scan away from being probed. A mount refusal
@@ -105,7 +105,7 @@ def register_lifecycle_hooks(app: web.Application) -> None:
     app.on_startup.append(_settle_learning_from_text_not_typed_startup)
 
     async def _record_running_version_startup(app_: web.Application) -> None:
-        """RUM-9: remember which version ran last, so a rollback has a target.
+        """Remember which version ran last, so a rollback has a target.
 
         The ONE writer of ``updates.last_version``. It fires here — once per gateway
         start, before anything can serve ``/api/update/check`` — because a version
@@ -152,7 +152,7 @@ def register_lifecycle_hooks(app: web.Application) -> None:
     app.on_startup.append(_prompt_providers_startup)
 
     async def _projection_rules_startup(app_: web.Application) -> None:
-        """Install the user's tool-output projection rules (TokenJuice OP6) into the
+        """Install the user's tool-output projection rules (TokenJuice) into the
         projection engine so a large output of a user-taught type keeps its salient
         slice instead of a blunt cut. Fail-soft — a bad rule is skipped, never fatal."""
         try:
@@ -180,8 +180,8 @@ def register_lifecycle_hooks(app: web.Application) -> None:
     app.on_startup.append(_projection_rules_startup)
 
     async def _skill_catalogs_startup(app_: web.Application) -> None:
-        """Register the operator's configured skill catalogs (``packs.skill_catalogs``,
-        AP-6) on the shared skills registry so the Skills store can browse them.
+        """Register the operator's configured skill catalogs (``packs.skill_catalogs``)
+        on the shared skills registry so the Skills store can browse them.
 
         Each catalog registers at COMMUNITY tier and installs through the same
         ``install_guarded`` chokepoint as every other marketplace. Fail-soft per
@@ -199,8 +199,7 @@ def register_lifecycle_hooks(app: web.Application) -> None:
     app.on_startup.append(_skill_catalogs_startup)
 
     async def _app_sources_seed_startup(app_: web.Application) -> None:
-        """Seed the shipped app-registry git source into ``app-sources.json`` — once, ever
-        (ECOSYSTEM-TOOLING T2.2).
+        """Seed the shipped app-registry git source into ``app-sources.json`` — once, ever.
 
         This is the "first run" site: the seed writes one removable row and a marker, so
         removing the source in the Store persists across every later start. Gated by
@@ -448,8 +447,7 @@ def register_lifecycle_hooks(app: web.Application) -> None:
     app.on_cleanup.append(_mcp_descriptions_relay_shutdown)
 
     async def _mcp_client_shutdown(app_: web.Application) -> None:
-        """Stop the idle sweeper + drain all live MCP connections on gateway stop
-        (rel-mcp-server-pooling #46)."""
+        """Stop the idle sweeper + drain all live MCP connections on gateway stop."""
         try:
             from personalclaw.mcp_client import get_mcp_client_registry
 
@@ -481,7 +479,7 @@ def register_lifecycle_hooks(app: web.Application) -> None:
     app.on_cleanup.append(_app_processes_shutdown)
 
     async def _discovery_shutdown(app_: web.Application) -> None:
-        """Send the mDNS goodbye and release the socket on gateway stop (COMPANION-APPS C3).
+        """Send the mDNS goodbye and release the socket on gateway stop.
 
         Without it, a restart leaves other devices caching this gateway's address for two
         minutes pointing at a port nothing is listening on. Registered HERE rather than beside

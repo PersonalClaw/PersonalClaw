@@ -920,7 +920,7 @@ class RunnerRow:
     evidence: HealthEvidence | None
     capabilities: dict[str, Any] | None
     adapter: AdapterVerification
-    #: The WORK-R8 lease currently held on this runner, or None when free. Already
+    #: The lease currently held on this runner, or None when free. Already
     #: expiry-filtered by ``runner_lifecycle.lease_for`` — a row never carries a holder that
     #: idle-release has taken back.
     lease: dict[str, Any] | None = None
@@ -964,7 +964,7 @@ class RunnerRow:
                 "verified": self.adapter.verified,
                 "detail": self.adapter.detail,
             },
-            # Who holds this runner right now (EI-6 §3.1(5)), or null when free. `null` is
+            # Who holds this runner right now, or null when free. `null` is
             # a positive statement: the lease was read and either absent or past its
             # idle-release window. There is no "maybe held" shape.
             "lease": self.lease,

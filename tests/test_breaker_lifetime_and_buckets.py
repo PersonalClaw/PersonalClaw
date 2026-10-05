@@ -1,30 +1,30 @@
-"""ACP-AGENT-PARITY §2.3 gap 5 — the two reasons clause 2 could not close.
+"""The two reasons a failing-tool ACP session could not trip the breaker on claude-code.
 
-The prior tick left clause 2 (*"a deliberately failing-tool ACP session trips the circuit
-and aborts the turn with the standard breaker message"*) met on kiro and codex and blocked
-on claude-code, with two findings recorded rather than fixed:
+The requirement (*"a deliberately failing-tool ACP session trips the circuit
+and aborts the turn with the standard breaker message"*) was met on kiro and codex and blocked
+on claude-code, with two defects recorded rather than fixed:
 
-* **``G154`` (HIGH) — the bucket fragmented.** claude-code sends ``description`` on every
+* **The bucket fragmented.** claude-code sends ``description`` on every
   Bash call, and a model enumerating its own retries writes "Run boom command (1 of 4)" …
   "(4 of 4)". Four byte-identical commands therefore produced four streaks of one and no
   rung fired. Deliberately NOT fixed by stripping ``description`` outright, because for a
   tool whose payload IS a description that merges genuinely different calls and the breaker
   starts aborting healthy turns. Fixed here by dropping annotation keys **only when a
-  behavioural key survives beside them** — the narrow reading the finding asked for.
-* **``G155`` (MEDIUM) — the circuit rung was unreachable by construction.** ``_acp_breaker``
+  behavioural key survives beside them** — the narrow reading of the defect.
+* **The circuit rung was unreachable by construction.** ``_acp_breaker``
   was a local in ``_run_chat``, i.e. per TURN, while ``CIRCUIT_THRESHOLD = 30`` is defined by
   ``LoopBreaker`` itself as "this **run's** total failures". An unattended loop repeating a
-  failing tool for twenty turns reset the counter every turn and never tripped. Recorded as
-  an E3 (the lifetime is a design decision, not an implementation detail). The
+  failing tool for twenty turns reset the counter every turn and never tripped. The lifetime is
+  a design decision, not an implementation detail. The
   host-side analogue of a native run is the SESSION, so the breaker lives there.
 
 Both fixes are measured on identity and counting rather than on wording, so a later change
 to the notice text cannot make these vacuous.
 
-**The third finding, and the reason this file grew a config class.** With the lifetime fixed,
+**The third problem, and the reason this file grew a config class.** With the lifetime fixed,
 the rung was reachable in principle and still *undrivable in practice*: ``CIRCUIT_THRESHOLD``
 was a bare module constant with no ``os.getenv`` and no config read anywhere in
-``loop_breaker.py``, so proving clause 2 on a real instance needed **more than thirty genuine
+``loop_breaker.py``, so proving the trip on a real instance needed **more than thirty genuine
 tool failures in one run** and there was no way to ask for a lower bar. (Positive control for
 that zero: two siblings in the same package, ``guardrails/ceiling.py`` and
 ``guardrails/writes.py``, DO read env — so the absence was specific to this file, not a grep
@@ -58,7 +58,7 @@ def _claude_call(n: int) -> dict:
 
 class TestAnnotationKeysNoLongerFragmentTheBucket:
     def test_four_enumerated_retries_are_one_bucket(self):
-        """`G154` verbatim. Before this, four identical commands → four keys → no rung."""
+        """The fragmented bucket. Before this, four identical commands → four keys → no rung."""
         keys = {params_key("Bash", _claude_call(n)) for n in (1, 2, 3, 4)}
         assert len(keys) == 1, f"still fragmenting: {keys}"
 
@@ -78,7 +78,7 @@ class TestAnnotationKeysNoLongerFragmentTheBucket:
         assert a != c
 
     def test_a_description_only_tool_keeps_keying_on_its_description(self):
-        """The reason the prior tick refused a blanket strip: for a tool whose payload IS
+        """The reason a blanket strip was refused: for a tool whose payload IS
         a description, the description is the behaviour. Two different descriptions must
         stay two buckets, or the breaker starts aborting healthy turns."""
         one = params_key("TodoWrite", {"description": "add auth"})
@@ -115,7 +115,7 @@ class TestTheBreakerLivesForTheSession:
     def test_the_session_owns_one_breaker_instance(self):
         from personalclaw.dashboard.state import _ChatSession
 
-        s = _ChatSession("dashboard:aap6")
+        s = _ChatSession("dashboard:breaker")
         assert isinstance(s._acp_breaker, LoopBreaker)
         assert s._acp_breaker is s._acp_breaker  # a stable instance, not a property
 
@@ -130,7 +130,7 @@ class TestTheBreakerLivesForTheSession:
         assert b._acp_breaker.total_failures == 0
 
     def test_failures_accumulate_across_turns_so_the_circuit_is_reachable(self):
-        """`G155` verbatim: an unattended loop failing the same tool for twenty turns.
+        """The unreachable rung: an unattended loop failing the same tool for twenty turns.
         Simulated as twenty turns of two failures — a per-turn breaker would have reported
         2 every time and never tripped; the session-scoped one reaches the ceiling."""
         from personalclaw.dashboard.state import _ChatSession
@@ -147,7 +147,7 @@ class TestTheBreakerLivesForTheSession:
 
     def test_a_fresh_breaker_per_turn_would_not_have_tripped(self):
         """The counter-factual, asserted so the fix's necessity is visible in the suite
-        rather than only in the plan's log."""
+        rather than only in prose."""
         for _turn in range(20):
             per_turn = LoopBreaker()
             per_turn.record("Bash:{}", True)
@@ -199,7 +199,7 @@ def _write_home(tmp_path, monkeypatch, cfg: dict):
 
 class TestTheCircuitCeilingIsConfigurable:
     """The ceiling is the ONE rung an operator can retune, and the round trip is what makes
-    the clause drivable on a shared instance instead of only in a unit test."""
+    the circuit trip drivable on a shared instance instead of only in a unit test."""
 
     def test_the_default_is_unchanged_so_no_existing_run_aborts_sooner(self, tmp_path, monkeypatch):
         """This change adds a seam; it does not re-tune the breaker. An empty config must
@@ -210,7 +210,7 @@ class TestTheCircuitCeilingIsConfigurable:
 
     def test_a_lowered_ceiling_trips_the_circuit_at_that_number(self, tmp_path, monkeypatch):
         """The whole point: with the ceiling at 3, four failures abort the run — so the
-        clause can be driven on a real instance without manufacturing 31 broken tool calls."""
+        trip can be driven on a real instance without manufacturing 31 broken tool calls."""
         _write_home(
             tmp_path, monkeypatch, {"guardrails": {"loop_breaker": {"circuit_threshold": 3}}}
         )

@@ -612,7 +612,7 @@ Schedule YOURSELF to do something ONCE at a later time, then stop. Use when you 
 }
 ```
 
-**Example — Wake a parked monitor run for its next check (WF2LOO-9):**
+**Example — Wake a parked monitor run for its next check:**
 
 ```json
 {

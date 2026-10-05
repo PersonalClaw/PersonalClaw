@@ -1,6 +1,6 @@
 """``run-workflow`` action provider — start a v2 workflow run from a trigger.
 
-Deleted with the old workflow feature (WORKFLOWS-V2 Phase 1) and re-registered here
+Deleted with the old workflow feature and re-registered here
 against the v2 engine. It is re-added to ``ALLOWED_HOOK_PROVIDERS`` **in the same
 commit**: a provider registered in one set but not the other is exactly the mismatch
 that lets a trigger validate, save, and then fail at fire time with nothing actionable.

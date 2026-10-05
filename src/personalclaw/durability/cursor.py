@@ -1,4 +1,4 @@
-"""The consumed-only pull cursor (DAS-6c-ii-b).
+"""The consumed-only pull cursor.
 
 When the cycle pulls a peer's shards it merges them, and only then may it record "I have
 now seen this peer up to seq N". The cursor is that durable per-peer high-water mark — the

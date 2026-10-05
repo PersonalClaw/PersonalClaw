@@ -109,7 +109,7 @@ def total_chars(messages: list[dict]) -> int:
 # ``tool_result_get(result_id="r_…")`` (see builtin_tools projection wiring). Compaction
 # must carry that id into the digest so a projected result stays RECOVERABLE after it's
 # pruned — otherwise the raw_ref is lost and tool_result_get can never reach it (the
-# no-double-loss rule, plan OP4).
+# no-double-loss rule).
 _RESULT_ID_RE = re.compile(r'tool_result_get\(result_id="(r_[^"]+)"\)')
 
 
@@ -123,7 +123,7 @@ def prune_tool_outputs(messages: list[dict]) -> list[dict]:
     would break tool-pairing) — only shrinks content.
 
     A digested result that carried a projection's ``result_id`` keeps that id in the
-    digest, so ``tool_result_get`` still recovers the raw AFTER compaction (OP4 — no
+    digest, so ``tool_result_get`` still recovers the raw AFTER compaction (no
     double-loss: projection defers at dispatch, compaction must not turn that into a
     permanent loss by dropping the recovery handle).
     """
@@ -430,7 +430,7 @@ def _drop_orphan_tool_results(messages: list[dict]) -> list[dict]:
 
 
 def is_resume_account(msg: dict) -> bool:
-    """True for a message carrying a CE2-10 resume account.
+    """True for a message carrying a resume account.
 
     Keyed on the fence constant the account module owns, not a literal copied here: two copies of
     the fence would let the writer and the carrier drift, and the failure mode is silent — the

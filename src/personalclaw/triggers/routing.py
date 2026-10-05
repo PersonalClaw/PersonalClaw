@@ -1,6 +1,6 @@
 """Write-back routing — a provider-served row reschedules into the store that served it.
 
-TSE-4 built the read half of the ``trigger`` provider seam and stopped, deliberately, at a named
+The read half of the ``trigger`` provider seam came first and stopped, deliberately, at a named
 gap: a registered store's rows were LISTED but never ARMED, because the arm path PERSISTS.
 ``service.tick`` writes ``next_fire_at``, ``run_count`` and the health rollup back with
 ``store.upsert(...)``, and ``store`` there was the native one. So arming a provider's row had

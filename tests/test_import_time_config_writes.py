@@ -123,7 +123,7 @@ def test_the_probe_can_see_a_write(tmp_path: Path) -> None:
     original defect used — but `load()` is now a pure read, so driving it here would assert
     that a write happens which no longer does, and this leg would fail for the very reason the
     fix is correct. It now drives `load_and_persist_migrations()`, the explicit entry point
-    that PHF-15 made the ONLY writer. The leg's purpose is unchanged: a real write, observed.
+    that is now the ONLY writer. The leg's purpose is unchanged: a real write, observed.
     """
     home = _seed_home(tmp_path)
     before = _config_state(home)

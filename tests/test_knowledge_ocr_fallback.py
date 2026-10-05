@@ -294,7 +294,7 @@ def test_an_ocred_scan_is_not_reported_unsearchable(tmp_path, spy):
     """Found by driving a REAL ingest through the gateway, not by a unit test.
 
     The ``no_extractable_text`` verdict keys on a pooled node that reported success and
-    produced no text. On a scan, ``document_read`` is exactly that — and before KOCR-1
+    produced no text. On a scan, ``document_read`` is exactly that — and before the OCR fallback
     nothing else could supply the words, so the verdict was right. Now the OCR node does,
     and the first gateway run of this path stored the OCR'd text as the item's content while
     simultaneously telling the user no text could be extracted from it. Two surfaces, one
@@ -365,7 +365,7 @@ def test_text_layer_extraction_is_byte_identical_to_the_prior_algorithm():
 
     text, _meta = FileReader().read(str(TEXT_LAYER_PDF))
 
-    assert text == expected, "the OCR atom changed what a normal PDF extracts"
+    assert text == expected, "the OCR fallback changed what a normal PDF extracts"
 
 
 def test_a_text_layer_pdf_never_reaches_the_ocr_node(tmp_path, spy):
@@ -684,7 +684,7 @@ class TestTheRailIsNotVacuous:
         assert spy.pages_seen > 0, "the spy cannot observe an invocation at all"
 
     def test_the_engine_backend_is_not_reachable_without_a_registered_engine(self, no_engine):
-        """The removability clause of KOCR-2 read from core's side: the ``ocr``/``engine``
+        """Removability, read from core's side: the ``ocr``/``engine``
         backend EXISTS in the registry but is not runnable, so a user with no OCR app gets
         the graceful skip rather than a node that fails."""
         from personalclaw.knowledge.pipeline.registry import backends_for, get_node, node_available

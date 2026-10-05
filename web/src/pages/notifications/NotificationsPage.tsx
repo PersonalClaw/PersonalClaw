@@ -217,7 +217,7 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
               <ApprovalDecision approvalId={open.approval} onDecided={() => { if (!open.acked) void ack(open) }} />
             )}
             <div className="flex flex-wrap gap-s border-t border-outline-variant/40 pt-l">
-              {/* The note's own deep link (R18 `statusUrl`) — a trigger fire opens that trigger's
+              {/* The note's own deep link (`statusUrl`) — a trigger fire opens that trigger's
                   panel, a run opens the run. Same shape as "Open loop" below: reading the thing a
                   note is about is what the note was for, so following it marks it read. */}
               {openLink && (
@@ -345,7 +345,7 @@ function Row({ n, index, now, onOpen, onAck, onUnack, onDelete }: { n: Notificat
       // this surface: no row is ever a tab stop (measured `tabindex` = null on every one), so the
       // only keyboard route to `Open` was Shift+F10 on one of the hover actions — and those are
       // `opacity-0` until hover/focus-within, so nothing advertises it. Same shape the tasks list
-      // carried before cycle 159; same fix, through the same primitive.
+      // used to carry; same fix, through the same primitive.
       tabIndex={-1}
       className="group relative flex items-center gap-m rounded-lg bg-surface-container px-m py-2.5 cursor-pointer hover:bg-surface-high transition-colors has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary"
       onClick={onOpen}>
@@ -372,7 +372,7 @@ function Row({ n, index, now, onOpen, onAck, onUnack, onDelete }: { n: Notificat
             🪤 `n.title` ALONE IS NOT THE ROW, and re-measuring proved it: naming from the title left
             35x "…: Refine a skill" and 26x "…: Loop progress", because the title is a KIND here, not
             an identity. The row shows title + the body's first line, and so does the name — capped,
-            because the other half of this cycle fixed a tile named by 695 characters of its body. */}
+            because the other half of this change fixed a tile named by 695 characters of its body. */}
         <InvestigateButton kind="notification" id={n.ts} backLink="#/notifications" size={34}
           label={`Investigate in chat: ${subject}`} />
         {n.acked

@@ -1,4 +1,4 @@
-"""Routing proposals — propose-don't-write, cooldown, basis, SEL (MRT-5 §6.3-6.4).
+"""Routing proposals — propose-don't-write, cooldown, basis, SEL.
 
 The central claim under test is negative: the learned stage's proposal path leaves
 ``routing_policy.json`` **byte-identical**. Asserting "the table grew no new key" would pass for

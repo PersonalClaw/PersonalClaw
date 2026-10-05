@@ -36,7 +36,7 @@ def _identity_report_cadence(value: object) -> str:
 
 
 def _judge_axis(value: object) -> str:
-    """Normalize ``loops.judge_use_case`` on load (WF2LOO-17).
+    """Normalize ``loops.judge_use_case`` on load.
 
     Fail-SAFE, not fail-open: an unknown/blank axis collapses to ``reasoning``
     rather than to the worker's ``loops`` axis, because the failure mode we are
@@ -55,7 +55,7 @@ def _judge_axis(value: object) -> str:
 
 
 def _stagnation_window(value: object) -> int:
-    """Normalize ``loops.stagnation_window`` on load (WF2LOO-18).
+    """Normalize ``loops.stagnation_window`` on load.
 
     Clamped to [2, 50] and fail-safe to the default: a garbage or missing value keeps the
     stall detector at its shipped sensitivity rather than disabling it. The floor of 2 is
@@ -150,7 +150,7 @@ class LoopsConfig:
 
 @dataclass
 class LearningConfig:
-    """Per-turn self-improvement review (learn-after-turn-review).
+    """Per-turn self-improvement review.
 
     After a learning-worthy turn (a correction signal, or ≥min_tool_calls), a
     bounded background review may persist a memory fact. Distinct from
@@ -334,7 +334,7 @@ class LearningConfig:
 
 @dataclass
 class EvalsConfig:
-    """The offline eval substrate (EVALUATION-SUBSTRATE §10).
+    """The offline eval substrate.
 
     Off by default: the substrate runs nothing until a study/benchmark/matrix is
     invoked. Everything it produces is a file under ``~/.personalclaw/evals/``;
@@ -414,11 +414,11 @@ class EvalsConfig:
 
 @dataclass
 class ProactiveConfig:
-    """Proactive triage + the decision journal (PROACTIVE-ASSISTANT §"Config Map").
+    """Proactive triage + the decision journal.
 
     Two switches are OFF by default and stay that way: ``triage_enabled`` (nothing
     collects or spends until you ask for a digest) and ``auto_execute_enabled``
-    (the digest proposes; it does not act). That pairing is the plan's soul
+    (the digest proposes; it does not act). That pairing is the core
     guardrail — proactive behaviors propose, they never silently write — so the
     defaults are fail-closed on purpose. Do not "helpfully" flip them.
     """
@@ -491,7 +491,7 @@ class ProactiveConfig:
 
 @dataclass
 class FeedbackConfig:
-    """Feedback Signal (plan 58) — 👍/👎 capture on AI judgment outputs + the
+    """The feedback signal — 👍/👎 capture on AI judgment outputs + the
     deterministic per-producer accuracy thresholds. No LLM anywhere; zero telemetry."""
 
     enabled: bool = field(
@@ -529,7 +529,7 @@ class FeedbackConfig:
 
 @dataclass
 class PlanningConfig:
-    """Planner entry surfaces (WORKFLOWS-V2-UNIVERSAL-PLANNING UP-R18) — the watched
+    """Planner entry surfaces — the watched
     scratchpad. Empty by default: an unset path reads no files at all, so ambient capture
     is something the user opts into by naming one local file, never a default that starts
     scanning their notes."""

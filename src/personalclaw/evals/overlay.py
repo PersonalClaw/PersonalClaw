@@ -4,7 +4,7 @@ The ablation runner measures a harness component by running the same benchmark w
 that component ON and OFF. The obvious implementation — edit the live spec/config,
 run, edit it back — is FORBIDDEN: a crash between the two edits leaves the operator's
 configuration silently altered, and "the runner never edits anything" is
-the plan's rule.
+the rule.
 
 So a toggle is an **overlay that exists only inside the child process**:
 
@@ -65,7 +65,7 @@ ARM_AXIS = "arm_mask"
 KIND_SKILL = "skill"
 #: A named surfacing heuristic from ``learning.surfacing.ABLATABLE``.
 KIND_SURFACING = "surfacing_heuristic"
-#: A boolean/scalar config field (a runtime hint, a §2.4-slot allocator stage — each is
+#: A boolean/scalar config field (a runtime hint, a slot-allocator stage — each is
 #: reached through the config field that switches it). OFF = the field's ``off_value``.
 KIND_CONFIG_FLAG = "config_flag"
 KINDS: tuple[str, ...] = (KIND_SKILL, KIND_SURFACING, KIND_CONFIG_FLAG)
@@ -188,10 +188,10 @@ def throwaway_home() -> Path:
     """The throwaway per-cell home this child was pointed at — or refuse.
 
     The refusal is the load-bearing rail: an overlay applied against the operator's real
-    home is precisely the "live config mutated" failure §3.1 forbids, and it is a spawn
+    home is precisely the forbidden "live config mutated" failure, and it is a spawn
     bug (missing env), not something the child can safely paper over.
 
-    PUBLIC because a second child-side stager needs the identical rail: ES-6's gate arm
+    PUBLIC because a second child-side stager needs the identical rail: the gate's arm
     (:mod:`personalclaw.evals.gate`) writes a candidate artifact into the same throwaway home,
     and a private copy of this check would be a second answer to "may I write here" — which is
     exactly one answer too many for a guard whose whole job is to have no exceptions.

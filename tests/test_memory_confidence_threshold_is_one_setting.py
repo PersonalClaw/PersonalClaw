@@ -1,4 +1,4 @@
-"""Settings B10 — the learned-fact confidence has ONE setting, and it is the one the gate reads.
+"""The learned-fact confidence has ONE setting, and it is the one the gate reads.
 
 Settings → Providers → Vector Memory offered a "Confidence Threshold" (0–1). It saved into the
 app's provider config and nothing read it: `memory_providers.registry.create_default_provider`

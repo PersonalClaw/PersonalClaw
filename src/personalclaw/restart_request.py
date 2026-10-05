@@ -98,7 +98,7 @@ def request_restart(*, auth_mode: str = "") -> RestartRequest:
     The fresh one is :func:`relaunch_argv`. Its program is checked first: when it is gone or cannot
     be run, the gateway would stop and never come back, so this raises
     :class:`RestartUnavailable` instead and the gateway keeps serving. *auth_mode* is the RUNNING
-    gateway's resolved auth mode, pinned into the new one's environment (#46): the launcher's
+    gateway's resolved auth mode, pinned into the new one's environment: the launcher's
     environment may not have survived (the shell that exported ``=none`` exits and the process is
     reparented), and a restart must never change whether sign-in is required.
 

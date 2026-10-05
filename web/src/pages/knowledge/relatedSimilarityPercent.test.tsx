@@ -13,7 +13,7 @@ const rel = (over: Partial<KnowledgeItem> & Record<string, unknown>): KnowledgeI
 
 // ── Related rows show a similarity %, and the retrieval score is surfaced ──────────────────────────
 //
-// KL-13 replaced the unthresholded shared-entity COUNT with a cosine-similarity edge, so the row
+// The unthresholded shared-entity COUNT was replaced with a cosine-similarity edge, so the row
 // badge must read the retrieval `score` the API already returns and render it as a percentage — the
 // count is only the fallback for a response that predates the edge table. The shipped code
 // (KnowledgeDetailPage RelatedSection) does this; this pins the score→% branch, which no other test

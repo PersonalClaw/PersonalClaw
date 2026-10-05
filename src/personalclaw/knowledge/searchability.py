@@ -14,7 +14,7 @@ did not land*. Measured on ``origin/main`` before this module existed:
   whole semantic half of retrieval silently absent.
 
 Both are the AnythingLLM #6143 shape ("the embedding step silently writes nothing… RAG
-retrieval returns no sources, while the app reports success") and PersonalClaw's own OU-3
+retrieval returns no sources, while the app reports success") and PersonalClaw's own
 finding that model-dependent write paths fail OPEN and silently.
 
 **The contract.** One vocabulary, in one file, read by all three surfaces so they can
@@ -33,7 +33,7 @@ unretrievable is a *state* the surfaces report, so it lives in the status vocabu
 store already carries (``queued`` / ``processing`` / ``done`` / ``partial`` / ``failed``
 / ``unreachable``) rather than in ``http_errors.HTTP_ERROR_CODES``.
 
-**RET-4 extends the vocabulary with one READ-TIME reason.** :data:`STALE_INDEX` names an
+**The vocabulary also has one READ-TIME reason.** :data:`STALE_INDEX` names an
 item holding a vector (a passage's, or the whole-item one) the embedding model bound now did not
 write (:mod:`personalclaw.knowledge.embedding_fingerprint`). It is minted by a comparison at
 query time rather than persisted at ingest, because the fact that changed is the *bound
@@ -305,7 +305,7 @@ def verdict_for_ingest(
     text — the node LIED, which is a different fact from a node that was skipped because
     its model is absent. An image uploaded with no vision model skips its extractors, so it
     is a *declared* degradation and is deliberately not flagged here; a PDF whose
-    ``document_read`` returned ``done`` with empty text is the silent failure this atom
+    ``document_read`` returned ``done`` with empty text is the silent failure this check
     exists for.
     """
     if any(empty_success_extractors):
@@ -380,7 +380,7 @@ class SearchOutcome:
     The pair is the whole point: an empty ``results`` with an empty ``degradations`` is a
     library that genuinely holds nothing matching, and an empty ``results`` WITH a
     degradation is a library that holds the answer and cannot reach it. Those are
-    different facts, and collapsing them into "no results" is the defect RET-2 attacks.
+    different facts, and collapsing them into "no results" is the defect this module attacks.
     """
 
     results: list[dict]

@@ -1,6 +1,6 @@
-"""MULTI-TENANCY-ENTITY TSE2-4 — the knowledge PUSH half, end to end.
+"""Team knowledge sharing — the PUSH half, end to end.
 
-WORK-CONTAINERS §1.6 shipped ``sharing_policy`` as a *cross-container* filter: a ``shared``
+``sharing_policy`` first shipped as a *cross-container* filter: a ``shared``
 item showed up in another of the owner's projects. It had no way OUT. This suite is the
 round trip that makes "shared" mean shared, driven through the production call sites rather
 than by calling the new method directly:

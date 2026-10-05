@@ -9,7 +9,7 @@ re-benchmarks, and files **exactly ONE digest notification** — never N.
 
 The "exactly one" is the load-bearing part. A rebind that touched three use cases and
 queued nine re-benchmarks is one event to a human; twelve notifications for it is the
-failure mode §3.2 names outright ("never N notifications"). :func:`check` therefore calls
+failure mode this module exists to prevent ("never N notifications"). :func:`check` therefore calls
 the notifier at most once per invocation, and not at all when nothing changed.
 
 Baselines are per-fingerprint rows in ``results.tsv`` (the ledger already carries a
@@ -31,8 +31,8 @@ from personalclaw.evals import pinning, store
 
 logger = logging.getLogger(__name__)
 
-#: The bindings §3.2 names as trust-invalidating. ``eval_judge`` is included because the
-#: plan names it — but see :data:`WATCHED_USE_CASES`.
+#: The bindings whose change invalidates trust. ``eval_judge`` is listed too — but see
+#: :data:`WATCHED_USE_CASES`.
 PLAN_WATCHED_USE_CASES: tuple[str, ...] = ("chat", "reasoning", "background", "eval_judge")
 
 
@@ -51,7 +51,7 @@ def _bindable(names: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(name for name in names if name in VALID_USE_CASES)
 
 
-#: The bindings actually watched — the plan's list, minus any that cannot be bound.
+#: The bindings actually watched — the list above, minus any that cannot be bound.
 WATCHED_USE_CASES: tuple[str, ...] = _bindable(PLAN_WATCHED_USE_CASES)
 
 #: Trials per queued re-benchmark. "Small budget" means a smoke-sized replay
@@ -107,7 +107,7 @@ def save_state(state: dict) -> None:
 def fingerprint_now() -> tuple[dict[str, str], str]:
     """``(per-use-case fingerprint, its short digest)`` for the CURRENT bindings.
 
-    Reuses the ES-2 pin machinery (:func:`personalclaw.evals.pinning.model_fingerprint` and
+    Reuses the pin machinery (:func:`personalclaw.evals.pinning.model_fingerprint` and
     :meth:`~personalclaw.evals.pinning.RunPin.model_fp`) rather than hashing
     ``active_models.json`` here — the ledger's ``model_fp`` column is written from the pin,
     so a second digest of the same facts would compare unequal to every row it exists to
@@ -171,7 +171,7 @@ def baselines_by_fingerprint(rows: list[dict] | None = None) -> dict[str, dict[s
     under ``""``: an unattributable score is not a baseline for anything.
 
     ``mean`` is ``None`` when no row for that (fingerprint, scenario) carried a numeric
-    score — the §1.2 rule that an absent measurement is never a zero, applied to the ledger
+    score — the rule that an absent measurement is never a zero, applied to the ledger
     read as well as to the run.
     """
     ledger = store.read_results() if rows is None else rows
@@ -423,7 +423,7 @@ def check(
             changes=[c.to_dict() for c in changes],
         )
 
-    # §4.4 mechanical revocation: every standing autonomy grant's evidence window was
+    # Mechanical revocation: every standing autonomy grant's evidence window was
     # measured under the OLD bindings, so a trust-invalidating rebind voids it. The
     # re-benchmarks queued below are how trust gets re-EARNED. A failed revocation is
     # logged loudly but must not lose the queue or the digest.

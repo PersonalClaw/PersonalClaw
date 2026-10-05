@@ -166,7 +166,7 @@ class TestEnumValidator:
 
     @pytest.mark.asyncio
     async def test_nested_3part_path_writes_correctly(self, tmp_config) -> None:
-        """P25: `dashboard.terminal.persist` is a 3-part nested path — the writer must
+        """`dashboard.terminal.persist` is a 3-part nested path — the writer must
         create the intermediate `dashboard`/`terminal` objects and set the leaf, NOT
         clobber `data['dashboard']` with the bool. Guards the nested-path writer."""
         async with TestClient(TestServer(_make_app())) as c:
@@ -448,7 +448,7 @@ class TestEgressValidator:
             assert "evil" not in saved
 
 
-# ── Projection-rules validator (tools.projection_rules, TokenJuice OP6) ──────
+# ── Projection-rules validator (tools.projection_rules, TokenJuice) ──────────
 
 
 class TestProjectionRulesValidator:
@@ -562,8 +562,8 @@ class TestProjectionRulesValidator:
             assert resp.status == 400
 
 
-# ── P11 engagement-ranking flag: the full config-flag thread (PATCH → config.json →
-#    AppConfig.load reads it back). Guards the [[feedback_config_flag_two_maps]] footgun —
+# ── Engagement-ranking flag: the full config-flag thread (PATCH → config.json →
+#    AppConfig.load reads it back). Guards the two-maps footgun —
 #    a flag missing from the load-map silently reads its default forever. ──
 
 
@@ -611,7 +611,7 @@ class TestEngagementRankingFlag:
         assert loaded.to_dict()["inbox"]["engagement_ranking_enabled"] is True
 
 
-# ── agent.bot_name at the WRITE boundary. The file must match what load() produces (S05 C6), and
+# ── agent.bot_name at the WRITE boundary. The file must match what load() produces, and
 #    the answer must match the file: this route used to answer 200 for `Chloé's Aide` with
 #    `Chlos Aide` already in the body, and Settings showed "Saved" beside the typed value. ──
 

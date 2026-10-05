@@ -1,4 +1,4 @@
-"""SDK: the diarization provider ABC + result types (core L1).
+"""SDK: the diarization provider ABC + result types.
 
 Stable re-export of ``DiarizationProvider`` (INFERENCE: ``diarize``) / ``DiarizationModel``
 / ``SpeakerTurn`` + ``LocalModelProvider`` (MANAGEMENT). A LOCAL diarization app subclasses

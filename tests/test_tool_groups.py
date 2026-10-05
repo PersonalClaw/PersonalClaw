@@ -9,7 +9,7 @@ makes hiding schemas safe:
 2. inactive groups leave a stub line, not silence;
 3. `tool_search` reaches across groups and names the activation step.
 
-Plus the no-regression lock (Success Criterion #10): with grouping off, the tool
+Plus the no-regression lock: with grouping off, the tool
 schema block is BYTE-IDENTICAL to the ungrouped assembly.
 """
 
@@ -204,7 +204,7 @@ def test_star_means_all_groups(monkeypatch):
     assert g.resolve_default_groups("loops") is None
 
 
-# ── no regression: the byte-identical default path (Success Criterion #10) ──
+# ── no regression: the byte-identical default path ──
 
 
 @pytest.mark.asyncio
@@ -287,7 +287,7 @@ async def test_reset_tools_cannot_deactivate_core():
 
 @pytest.mark.asyncio
 async def test_reset_tools_returns_newly_activated_instructions():
-    """Usage guidance arrives exactly when the tools do (the R12 router shape)."""
+    """Usage guidance arrives exactly when the tools do."""
     model = _ScriptedModel([[AgentEvent(kind=EVENT_COMPLETE)]])
     rt = NativeAgentRuntime(
         definition=_defn(),
@@ -321,7 +321,7 @@ async def test_reset_tools_rejects_bad_payload_and_names_unknown_groups():
 
 @pytest.mark.asyncio
 async def test_group_change_takes_effect_next_turn_not_mid_turn():
-    """§3 prefix corollary: the tool block is rewritten at the NEXT turn boundary,
+    """Prefix corollary: the tool block is rewritten at the NEXT turn boundary,
     so the in-flight turn's schema (and its cache prefix) is untouched."""
     model = _ScriptedModel(
         [

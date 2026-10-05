@@ -155,7 +155,7 @@ class HybridRetriever:
         chat context-injection. The Archived UI view sets it True so a search *within*
         that view can find archived items (matching the no-query Archived list).
 
-        ``arms`` masks which of :data:`ARMS` contribute (EVALUATION-SUBSTRATE §5.1's
+        ``arms`` masks which of :data:`ARMS` contribute (the evaluation
         ablation knob). ``None`` — the default every production caller uses — runs all
         three, so the live ranking is unchanged by construction. A masked arm is not
         merely dropped from fusion: its query is **never issued**, so an ablation cell
@@ -163,7 +163,7 @@ class HybridRetriever:
         returns ``[]``: that is the harness's control cell, and a control that came back
         with hits is how you learn the mask was not applied.
 
-        ``rerank`` (KBVS-2) controls the post-fusion relevance stage. ``None`` — every
+        ``rerank`` controls the post-fusion relevance stage. ``None`` — every
         production caller — reads ``knowledge.rerank_enabled`` (off by default).
         ``True``/``False`` FORCE the stage on or off regardless of config: the
         retrieval bench's own knob, so it can measure the reranked arm on every run
@@ -272,7 +272,7 @@ class HybridRetriever:
                     "score": score,
                     "provider": item.get("provider", "native"),
                     "match_type": "+".join(types),
-                    # P12: citation locator (source_type/section/line_range/deep_link),
+                    # Citation locator (source_type/section/line_range/deep_link),
                     # derived from the item's own content + the query terms already computed
                     # above, narrowed to the winning chunk's passage when the vector arm
                     # rolled one up for this item.
@@ -289,7 +289,7 @@ class HybridRetriever:
         include_archived: bool = False,
         arms: "tuple[str, ...] | list[str] | set[str] | None" = None,
     ) -> SearchOutcome:
-        """:meth:`search`, plus the typed reasons the library could not answer (RET-2).
+        """:meth:`search`, plus the typed reasons the library could not answer.
 
         The hits are byte-identical to :meth:`search` — this adds a report, it does not
         change ranking. The degradations are grouped from the items the ingest runner
@@ -301,7 +301,7 @@ class HybridRetriever:
         answer "nothing found" when the truth is "found nothing it can reach" — the
         ``knowledge_search`` tool — use this.
 
-        **RET-4 adds one derived reason to the persisted ones.** ``stale_index`` names items
+        **One derived reason joins the persisted ones.** ``stale_index`` names items
         holding a vector the model bound now did not write — a passage's, or the whole-item one:
         :meth:`_vector_search` refused to score those vectors (scoring them would produce a
         meaningless number), so a search that returns nothing because of them must say so.
@@ -319,7 +319,7 @@ class HybridRetriever:
 
         ``None`` (every production caller) reads the live config — off unless an
         operator turned it on. ``True``/``False`` FORCE the stage regardless of config:
-        the retrieval bench's own knob (KBVS-2), so it can measure the reranked arm on
+        the retrieval bench's own knob, so it can measure the reranked arm on
         every run independent of whatever ``config.json`` currently says, and a test can
         force it on deterministically.
         """
@@ -557,8 +557,7 @@ class HybridRetriever:
         The return type is deliberately still ``[(item_id, rank)]`` — the fusion contract.
         Chunks are an indexing detail that must not leak into ``_rrf_fuse``: a chunk hit is
         rolled up to its parent item BEFORE ranking, so the fused arm sees exactly the list
-        shape it always saw and fusion needs no change at all (KNOWLEDGE-LIBRARY §Risks:
-        "do not redesign fusion").
+        shape it always saw and fusion needs no change at all.
 
         **Roll-up rule: MAX.** An item's vector score is the single best above-floor
         similarity found for it, across its chunk vectors and its own whole-item vector.
@@ -570,7 +569,7 @@ class HybridRetriever:
         - max is the only aggregate that leaves the score on the *identical* scale as the
           old item-level cosine, so ``_VECTOR_MIN_SIMILARITY`` keeps its calibrated
           meaning. Any averaging aggregate would silently re-scale that threshold, and
-          retuning a threshold is out of scope for this task (escalation E6).
+          retuning a threshold is out of scope here.
 
         Because the whole-item scan is kept unchanged and merely maxed against the chunk
         scan, an item with no chunk rows (or whose chunks are not embedded yet, mid-backfill)
@@ -580,7 +579,7 @@ class HybridRetriever:
         signal, which no chunk carries and which the keyword arm can only reach by literal
         term match.
 
-        **KL-11: the scan is a fallback, not the plan.** When ``sqlite-vec`` loads, the chunk
+        **The scan is a fallback, not the plan.** When ``sqlite-vec`` loads, the chunk
         arm asks a ``vec0`` index for the k nearest chunk vectors and the item arm orders by
         ``vec_distance_cosine``, so neither arm reads every BLOB into Python. Both are pure
         candidate generation — ``_consider`` still scores — so the exact scan and the ANN path
@@ -589,7 +588,7 @@ class HybridRetriever:
         the streamed exact scan above: slower on a large library, identical in what it returns,
         announced once at INFO and reported by the Doctor.
 
-        **KBVS-1: the chunk arm can be served by the user's OWN vector store.** When exactly
+        **The chunk arm can be served by the user's OWN vector store.** When exactly
         one ``vector_store`` provider app is enabled, that backend replaces ``vec0`` as the
         chunk arm's candidate generator *and* supplies the similarity — core keeps the floor,
         the MAX roll-up, the liveness/freshness join and the rank hand-off to RRF, so the fused
@@ -621,7 +620,7 @@ class HybridRetriever:
         def _roll_up(item_id: str, sim: float, locator: dict | None) -> float:
             """Apply the floor and the MAX roll-up for one already-computed similarity.
 
-            Split out of :func:`_consider` so the EXTERNAL vector-store arm (KBVS-1), which
+            Split out of :func:`_consider` so the EXTERNAL vector-store arm, which
             gets its similarity from the backend instead of computing one, shares this exact
             floor and this exact roll-up. The backend owns the cosine; core owns everything
             that turns a similarity into an item's rank, and there is one implementation of
@@ -704,7 +703,7 @@ class HybridRetriever:
             """The live, active, in-scope chunk rows for *chunk_ids*, keyed by chunk id.
 
             The one join both candidate-generated chunk arms use, so the archived filter, the
-            ``status = 'active'`` filter and RET-4's fingerprint-freshness filter cannot fork
+            ``status = 'active'`` filter and the fingerprint-freshness filter cannot fork
             between the local ``vec0`` index and an external store. A candidate absent from the
             result is a harmless extra: the generator still lists a chunk the live table no
             longer offers.
@@ -994,7 +993,7 @@ def _bytes_to_floats(blob: bytes) -> list[float]:
     return []
 
 
-# ── P12 citation locators ───────────────────────────────────────────────────────
+# ── citation locators ───────────────────────────────────────────────────────────
 # A retrieval hit gains WHERE-in-the-item its match sits, so a consumer can cite +
 # deep-link into the source instead of just naming the document. The result stays
 # item-shaped: the locator is derived at read time from the item's own content +

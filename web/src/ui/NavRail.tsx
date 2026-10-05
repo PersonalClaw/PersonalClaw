@@ -80,7 +80,7 @@ export function NavRail({
   activeId: string
   onSelect: (id: string) => void
   collapsed: boolean
-  /** Progressive disclosure over the rail (C4). Omit it and the rail renders exactly the
+  /** Progressive disclosure over the rail. Omit it and the rail renders exactly the
    *  items it is given, with no expander — the shape every non-shell caller wants. */
   disclosure?: NavDisclosureControl
   /** Mobile: render the rail as a fixed OVERLAY drawer (out of layout flow) instead
@@ -221,7 +221,7 @@ export function NavRail({
           "starter" and "everything". Expert keeps Platform / Capabilities / Apps untouched. */}
       {topItems.map((item) => renderItem(item, !disclosure || disclosure.expanded))}
 
-      {/* Progressive disclosure (C4) — the last row of scroll order, so it reads as "…and the
+      {/* Progressive disclosure — the last row of scroll order, so it reads as "…and the
           rest" rather than as a section of its own. `aria-expanded` because it genuinely
           reveals adjacent content (the repo's own distinction: a MODE toggle reveals nothing
           and gets `aria-pressed` instead — see ui/rawToggleState.test.ts).

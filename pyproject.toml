@@ -63,7 +63,7 @@ dependencies = [
     "numpy>=1.21,<3",
     "snowballstemmer>=1.0",
     # 🔴 packaging is a CORE dep because the APP INSTALLER cannot run without it.
-    # `apps/app_manager.py::_reject_core_dependency_conflicts` (EI-12 D3) imports
+    # `apps/app_manager.py::_reject_core_dependency_conflicts` imports
     # `packaging.requirements` + `packaging.utils` to prove an app's declared
     # `pythonDependencies` cannot move a gateway dependency, and it fails CLOSED — no
     # evaluator means it refuses the install. Undeclared, that refusal fired for EVERY app
@@ -141,7 +141,7 @@ dependencies = [
     # the SDK LAZILY and raise MissingSDKError naming the exact remedy when absent.
     # The SDKs ship via the branded provider apps' manifest `pythonDependencies`
     # (verified: apps/app_manager.py::_install_python_deps installs them into the
-    # shared venv — plan 32 T2.1), and the `[openai]` / `[anthropic]` extras remain
+    # shared venv), and the `[openai]` / `[anthropic]` extras remain
     # the documented install path for pip/uv users. This keeps a bare
     # `pip install personalclaw` lean without breaking any provider that's actually used.
     "httpx>=0.27",
@@ -273,7 +273,7 @@ dev = [
     # The `openai` SDK is a TEST-ENVIRONMENT dependency, not a core one. Two suites are
     # `pytest.importorskip("openai")`-gated and were therefore SILENTLY UNVERIFIED in CI
     # (`uv sync --locked --extra dev` never installed it): test_openai_sdk_drive.py —
-    # whose own docstring says the skip leaves "Success Criteria 2 UNVERIFIED here" — and
+    # whose own skip reason says the SDK drive is then "UNVERIFIED here" — and
     # test_evals_cell_provider.py's protocol-client test. Worse, an eval CELL cannot run
     # without it at all: evals/cell_provider.py::_register_cell_type binds every cell
     # through llm/branded_specs.py::build_protocol_provider, whose non-`anthropic` branch
@@ -391,7 +391,7 @@ personalclaw = [
     "evals/benchmarks/judge/*.json",
     "tests_fixtures/**/*",
     "skills/bundled/*/SKILL.md",
-    # Progressive-disclosure companions a bundled SKILL.md links to (HC-4's
+    # Progressive-disclosure companions a bundled SKILL.md links to (e.g.
     # check-work/references/qa-boundary.md). Without this line the wheel ships a skill
     # whose own text points at a file that isn't there — a dangling reference, not a
     # degradation, so the line is load-bearing.
@@ -434,8 +434,8 @@ personalclaw = [
     # derivation removes. Same load-bearing reasoning as the LICENSE/README lines above:
     # non-`.py` files beside `app.json` are DROPPED unless a glob names them.
     "apps/native/*/prompts/*.yaml",
-    # 🔴 The bundled default chat model's WEIGHT IS DELIBERATELY NOT HERE (OU-14, owner
-    # decision 2026-09-24: "ship the wheel without the weight and fetch it on first run").
+    # 🔴 The bundled default chat model's WEIGHT IS DELIBERATELY NOT HERE: the wheel
+    # ships without the weight and fetches it on first run.
     # There is no `*.gguf` glob and there must not be one: the weight is 138 MiB, which is
     # over PyPI's 100 MiB per-file limit, and a ~147 MiB wheel for every install is a cost
     # most users would pay for a model they replace on day one. It is fetched ONCE into

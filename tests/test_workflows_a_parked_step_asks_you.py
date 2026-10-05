@@ -273,7 +273,7 @@ async def test_denying_a_parked_step_ends_it_as_declined() -> None:
 
 
 async def test_once_you_confirm_the_sign_in_the_browse_step_does_not_ask_again() -> None:
-    """Plan §5.2: "on user confirmation … the run resumes with the now-authenticated session". The
+    """On user confirmation the run resumes with the now-authenticated session. The
     pre-run check reads the profile's own `.meta.json`, which a human signing in never writes, so
     re-running it after your answer parked on the same check by construction. The dispatch your
     answer starts goes on to the run, which OBSERVES the session (`record_login` on a completed run,

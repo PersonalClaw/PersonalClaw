@@ -361,7 +361,7 @@ async def test_capturing_a_note_actually_delivers_through_notify(tmp_path):
 
 
 def test_a_note_is_not_verifiable_so_the_skeptic_cannot_hide_it():
-    """INU-6 files a REFUTED claim as FILTERED and withholds its notification. A note is not
+    """The skeptic files a REFUTED claim as FILTERED and withholds its notification. A note is not
     a claim about the world — it is what the user said — so a model that "refuted" one would
     hide the user's own words from them. `verifiable=False` is what makes the rules PUT
     refuse `verify:true` for this kind, so the hazard is unreachable, not merely unconfigured.

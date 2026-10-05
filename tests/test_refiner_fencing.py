@@ -1,18 +1,17 @@
-"""Criterion 4's adversarial test for the REFINER path (§3.1 TRUST / §7.4).
+"""The adversarial test for the REFINER path.
 
-The criterion, verbatim: "Content inside `fence_untrusted` provably never becomes a
-lesson/skill/template — and the adversarial test covers the REFINER path: injection planted in a run
-transcript or `run_feedback` comment must not surface as a proposal (let alone an accepted diff)."
+The property: content inside `fence_untrusted` provably never becomes a
+lesson/skill/template, and on the REFINER path an injection planted in a run
+transcript or `run_feedback` comment must not surface as a proposal (let alone an accepted diff).
 
 **Measured before writing.** The refiner path had NO screen and NO fence: grepped `refiner.py` for
 `screen(`, `fence_untrusted` and `triggers.screen` — none present. With an injection planted in
 a `step_failed` error, the text flowed straight into the cluster SIGNATURE, which is exactly what a
-refiner prompt carries as its evidence. The TRUST clause makes fencing the caller's
-responsibility
-and names the refiner as "the 5th" call site; it had not been built.
+refiner prompt carries as its evidence. Fencing is the caller's responsibility, and the
+refiner is the fifth such call site; it had not been built.
 
-The suite is an attack corpus rather than examples, and it asserts the property at BOTH layers the
-criterion names: the payload must not reach a cluster (so it cannot choose the target), and must
+The suite is an attack corpus rather than examples, and it asserts the property at BOTH layers:
+the payload must not reach a cluster (so it cannot choose the target), and must
 not reach a prompt.
 """
 
@@ -63,12 +62,12 @@ def _events(text, *, kind="step_failed", field="error", node="fetch", n=4):
     return [{"kind": kind, "node_id": node, "run_id": f"r{i}", field: text} for i in range(n)]
 
 
-# ── criterion 4: injection must not surface as a proposal ──
+# ── injection must not surface as a proposal ──
 
 
 @pytest.mark.parametrize("attack", TRANSCRIPT_ATTACKS)
 def test_injection_in_a_run_transcript_never_reaches_a_cluster(attack):
-    """The criterion's first named vector.
+    """The first vector: a run transcript.
 
     Dropped rather than fenced-and-passed: a fenced event still influences cluster RANK, so an
     attacker
@@ -82,7 +81,7 @@ def test_injection_in_a_run_transcript_never_reaches_a_cluster(attack):
 
 @pytest.mark.parametrize("attack", FEEDBACK_ATTACKS)
 def test_injection_in_a_run_feedback_comment_never_reaches_a_cluster(attack):
-    """The criterion's second named vector — `gate_rejected{user_comment}`, its own example."""
+    """The second vector: a `run_feedback` comment — `gate_rejected{user_comment}`."""
     clusters, verdicts = cluster_safely(_events(attack, kind="gate_rejected", field="user_comment"))
     assert clusters == []
     assert all(v.blocked for v in verdicts)
@@ -94,7 +93,7 @@ def test_a_blocked_payload_never_reaches_a_PROMPT(attack):
 
     `fenced_evidence` is what a refiner prompt would carry, so a blocked payload producing zero
     rows is
-    the property that makes the criterion true at the model boundary too.
+    the property that makes the guarantee true at the model boundary too.
     """
     assert fenced_evidence(_events(attack)) == []
 
@@ -207,7 +206,7 @@ def test_model_bound_evidence_IS_fenced():
 
 def test_every_surviving_field_is_fenced_not_only_the_flagged_ones():
     """Fencing only suspicious text would mean the screen's MISSES arrive as instructions — the
-    composition rule S69 established at the trigger boundary."""
+    composition rule already established at the trigger boundary."""
     rows = fenced_evidence(
         [
             {

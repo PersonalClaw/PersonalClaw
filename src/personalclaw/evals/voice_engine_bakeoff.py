@@ -1,6 +1,6 @@
 """The voice-clone ENGINE bake-off.
 
-Answers the one question MI-2 §2.2 deferred: *for a local, macOS-first, cloning-first
+Answers one question: *for a local, macOS-first, cloning-first
 personal assistant, which zero-shot voice-clone engine do we ship in
 ``apps/voice-clone-tts`` — k2-fsa OmniVoice or FunAudioLLM CosyVoice — and why is the
 other rejected?* It scores the two candidates over a fixed criteria matrix and prints a
@@ -19,7 +19,7 @@ carries a :class:`Provenance`. Two things are kept strictly apart:
 * the ``raw`` published value — LITERATURE, cited to a real URL, or UNKNOWN when the
   vendor does not publish it (never invented); and
 * the ``score`` in ``[0, 1]`` — the reviewer's JUDGMENT mapping of that evidence onto
-  *this* product's use case, documented in the companion plan doc.
+  *this* product's use case.
 
 Provenance is per-cell: literature and judgment cells carry citations, and the
 ``measured`` cells (footprint, load RSS) come from the project's Apple-silicon
@@ -178,11 +178,10 @@ class BakeoffReport:
         }
 
 
-# ── the criteria matrix (MI-6 names latency, quality, footprint, license, platform, ─────
-# install; language coverage is added because a 600-vs-9 gap is decision-grade for a
+# ── the criteria matrix (latency, quality, footprint, license, platform, install, ─────
+# and language coverage, because a 600-vs-9 gap is decision-grade for a
 # general assistant). Weights encode PersonalClaw's use case — LOCAL, macOS-first,
-# cloning-first — and are documented in the voice-engine-bakeoff design note, which is
-# internal and not published in this repository.
+# cloning-first.
 
 CRITERIA: list[Criterion] = [
     Criterion(
@@ -244,7 +243,7 @@ def candidates() -> list[EngineCandidate]:
     """The two engines, grounded in their published READMEs / model cards / papers.
 
     Raw values are literature (cited) or explicitly UNKNOWN; scores are the reviewer's
-    judgment mapping onto PClaw's use case (see the companion plan doc for each rationale).
+    judgment mapping onto PClaw's use case.
     """
     omnivoice = EngineCandidate(
         key="omnivoice",
@@ -375,11 +374,11 @@ def run_bakeoff() -> BakeoffReport:
         "cloning-first personal assistant it wins on the load-bearing axes: a documented "
         "Apple-Silicon/MPS path, a single-package install, broad language coverage, and "
         "cloning as the primary trained task with a save/load clone-prompt API that maps "
-        "onto the plan's precomputed-clone-prompt LRU and locked-voice conditioning seams."
+        "onto precomputed-clone-prompt LRU and locked-voice conditioning seams."
     )
     rejection_notes = (
-        f"{loser.name} — REJECTED (not shipped as a second app; notes kept here per MI-2 "
-        "§2.2). It is the stronger engine on two axes and the call is not lopsided: it "
+        f"{loser.name} — REJECTED (not shipped as a second app; notes kept here). "
+        "It is the stronger engine on two axes and the call is not lopsided: it "
         "edges published clone quality (CER/SS numbers vs OmniVoice's qualitative claim) "
         "and streaming first-packet latency (~150 ms), and its community and CUDA/vLLM "
         "deployment story are more mature. It loses for THIS product because (1) its "
@@ -461,7 +460,7 @@ def measure_fixture_rtf(
             engine,
             True,
             "engine + fixtures present but weights not confirmed; pass weights_present=True "
-            "to run inference (deferred to the MI-6 follow-up)",
+            "to run inference (deferred to a follow-up)",
             fixtures=len(wavs),
         )
 
@@ -479,7 +478,7 @@ def measure_fixture_rtf(
 
 def format_report(report: BakeoffReport) -> str:
     """Render the scorecard + verdict as plain text for the CLI / a copy into the doc."""
-    lines: list[str] = ["Voice-clone engine bake-off (MI-6) — OmniVoice vs CosyVoice", ""]
+    lines: list[str] = ["Voice-clone engine bake-off — OmniVoice vs CosyVoice", ""]
     names = [c.name for c in report.candidates]
     lines.append(f"{'Criterion':<40}{'wt':>5}  " + "  ".join(f"{n:<26}" for n in names))
     lines.append("-" * (47 + 28 * len(names)))
@@ -507,7 +506,7 @@ def main(argv: list[str] | None = None) -> int:
 
     Always exits 0 — a spike tool degrades with a clear message, it does not fail a build.
     """
-    parser = argparse.ArgumentParser(description="MI-6 voice-clone engine bake-off")
+    parser = argparse.ArgumentParser(description="Voice-clone engine bake-off")
     parser.add_argument("--json", action="store_true", help="emit the report as JSON")
     parser.add_argument(
         "--measure",

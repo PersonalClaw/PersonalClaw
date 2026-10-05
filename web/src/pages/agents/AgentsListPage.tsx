@@ -135,7 +135,7 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
     } finally { setSyncing(false) }
   }
 
-  // Filesystem-as-truth (#44): an agent profile edited on disk / by an agent
+  // Filesystem-as-truth: an agent profile edited on disk / by an agent
   // live-refreshes the list. Hold off while a detail panel is open so a reload
   // can't clobber an in-flight view/edit; reopening picks up the change.
   useConfigFsWatch(open === null, (path) => {

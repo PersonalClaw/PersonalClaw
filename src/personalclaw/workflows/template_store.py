@@ -1,4 +1,4 @@
-"""Persistence for the template pipeline's state (UP-R9).
+"""Persistence for the template pipeline's state.
 
 `template_pipeline` is deliberately PURE — it decides, it does not remember. That split is what
 makes the mining and anti-nag rules testable without a home directory, and it is also why the

@@ -44,7 +44,7 @@ describe('stream-key equivalence', () => {
   })
 })
 
-describe('belongsToLoop — cockpit live-follow (R10c)', () => {
+describe('belongsToLoop — cockpit live-follow', () => {
   it('matches the legacy hyphen worker key exactly', () => {
     expect(belongsToLoop('loop-abc', 'abc')).toBe(true)
   })
@@ -56,7 +56,7 @@ describe('belongsToLoop — cockpit live-follow (R10c)', () => {
   })
 
   it('matches a coexistence run-scoped key for the same container', () => {
-    // The whole point of R10c: once a loop runs as a template its worker streams under a
+    // The whole point of this match: once a loop runs as a template its worker streams under a
     // run-scoped colon key, and a raw `===` against `loop-abc` matched none of them.
     expect(belongsToLoop('run:abc', 'abc')).toBe(true)
     expect(belongsToLoop('workflow:run:abc', 'abc')).toBe(true)

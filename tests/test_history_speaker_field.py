@@ -1,6 +1,6 @@
 """The additive per-message ``speaker`` field on `ConversationLog.append`.
 
-`AGENT-ROOMS` makes exactly three additive changes to shared surfaces, and this is the one
+Agent rooms make exactly three additive changes to shared surfaces, and this is the one
 that touches the file format every ordinary session already writes. That makes it the one
 place where rooms can damage something that has nothing to do with rooms, so the rails here
 are mostly about what must NOT change:
@@ -9,7 +9,7 @@ are mostly about what must NOT change:
   file gains a field and no reader gains a branch;
 * an existing pre-``speaker`` file reads back byte-identical, because there is no backfill;
 * ``append`` still writes ``agent`` to the metadata line on CREATION only — the regression
-  this row exists to prevent, since a per-message field is exactly the kind of change that
+  these rails exist to prevent, since a per-message field is exactly the kind of change that
   invites someone to "also" make ``agent`` per-message.
 
 The positive half is one line: a room message round-trips its speaker through
@@ -50,7 +50,7 @@ def test_an_empty_speaker_is_identical_to_not_passing_one(tmp_path):
 
 
 def test_a_pre_speaker_file_reads_back_byte_identical(tmp_path):
-    """Its own acceptance criteria. There is no backfill, so reading must not rewrite."""
+    """Its own rail. There is no backfill, so reading must not rewrite."""
     log = ConversationLog(base_dir=tmp_path)
     log.append("legacy", "user", "written before rooms existed")
     log.append("legacy", "assistant", "and the reply")
@@ -111,7 +111,7 @@ def test_speaker_does_not_disturb_the_existing_provenance_fields(tmp_path):
 
 
 def test_agent_still_reaches_metadata_on_creation_only(tmp_path):
-    """The regression T1.2 exists to prevent: a per-message field must not make `agent` one.
+    """The regression these rails exist to prevent: a per-message field must not make `agent` one.
 
     `append`'s contract is that `agent` lands in the metadata line when the FILE is created
     and is ignored afterwards (`update_metadata` is the way to change it). Adding a

@@ -3,12 +3,12 @@
 Classifies each new commit's user-visible impact and writes one ledger record per commit, then
 hands the impactful ones forward as structured output the template branches on.
 
-**Why an action node rather than the `infer` node the plan sketched.** Two properties the plan's
-own §3.2 asks for are only obtainable from code. The skip must be *recorded with its rationale*,
+**Why an action node rather than an `infer` node.** Two properties triage needs are only
+obtainable from code. The skip must be *recorded with its rationale*,
 and only a node with the run id can write the run ledger — an `infer` node returns text, and the
 engine's own `step_skipped` row carries no reason (`journal.step_skipped` takes no rationale), so
 a model-authored triage leaves the "why did nothing run?" question unanswered in the one place
-the plan says it must be answered. And the classification must be *assertable*: a test-only
+it must be answered. And the classification must be *assertable*: a test-only
 commit skipped for the right reason and a companion that never fired both produce zero findings,
 so a prompt whose only checkable property is "some string came back" cannot tell them apart.
 

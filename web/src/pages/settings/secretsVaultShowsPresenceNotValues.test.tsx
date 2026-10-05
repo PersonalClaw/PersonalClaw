@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-// ── EI-10 · the secrets vault shows PRESENCE, and renders its three scopes as three things ──
+// ── The secrets vault shows PRESENCE, and renders its three scopes as three things ──
 //
 // The backend guarantees no value can reach this panel (`SecretPresenceWire` has no value field,
 // and `/api/secrets` builds rows from key names only). That makes the FRONTEND's job a different

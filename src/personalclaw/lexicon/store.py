@@ -1,8 +1,7 @@
-"""Lexicon SQLite store (core LEX.2) — the personal vocabulary + learned corrections.
+"""Lexicon SQLite store — the personal vocabulary + learned corrections.
 
 Its own ``lexicon.db`` (separate from knowledge.db) so it is trivially rebuildable from
-the graph and keeps concerns apart (design open-question #2, leaning-that-way resolved to
-its own file). Two tables:
+the graph and keeps concerns apart. Two tables:
 
 * ``terms``       — canonical vocabulary (from graph entities / manual / learned), each
   with its Double Metaphone keys, an ``entity_type``, a ``weight`` (recency × frequency ×

@@ -37,7 +37,7 @@ describe("summarizePresence", () => {
   it("picks running loops out of {loops:[...]} and ignores every other status", () => {
     const payload = {
       loops: [
-        { id: "l1", status: "running", name: "Ship DC-4" },
+        { id: "l1", status: "running", name: "Ship the release" },
         { id: "l2", status: "paused", name: "Paused one" },
         { id: "l3", status: "complete", name: "Done" },
         { id: "l4", status: "RUNNING", task: "Case-insensitive" },
@@ -50,7 +50,7 @@ describe("summarizePresence", () => {
       ["l1", "l4"],
       "only `running` is a running loop — paused/blocked/needs_input are active, not running"
     );
-    assert.equal(p.running[0].label, "Ship DC-4");
+    assert.equal(p.running[0].label, "Ship the release");
     assert.equal(p.running[1].label, "Case-insensitive", "a loop without a name falls back to its task");
   });
 
@@ -104,7 +104,7 @@ describe("buildTrayMenuTemplate", () => {
     };
   };
 
-  it("renders every clause the change names, and inspects a non-zero number of rows", () => {
+  it("renders every row the menu promises, and inspects a non-zero number of rows", () => {
     const a = actions();
     const template = buildTrayMenuTemplate({
       presence: { approvals: 3, running: [{ id: "l1", label: "Loop one" }], connected: true },
@@ -113,7 +113,7 @@ describe("buildTrayMenuTemplate", () => {
     });
 
     // VACUITY FLOOR: deleting the feature must not make this suite pass by matching
-    // nothing. A menu shorter than this cannot carry the change's five commitments.
+    // nothing. A menu shorter than this cannot carry the menu's five commitments.
     assert.ok(template.length >= 10, `expected a full menu, got ${template.length} rows`);
     assert.ok(clickableRows(template).length >= 5, "at least five rows must actually do something");
 
@@ -194,7 +194,7 @@ describe("buildTrayMenuTemplate", () => {
     assert.equal(header.enabled, false);
   });
 
-  it("renders AMBIENT-SURFACES tiles when supplied and adds NOTHING when absent", () => {
+  it("renders ambient tiles when supplied and adds NOTHING when absent", () => {
     const without = buildTrayMenuTemplate({});
     const withTiles = buildTrayMenuTemplate({ tiles: [{ label: "Next meeting: 3pm" }] });
     assert.ok(!labels(without).includes("Next meeting: 3pm"));
@@ -417,7 +417,7 @@ describe("makeTrayPresence", () => {
 
 // ── The quick-capture row must reach a capability, not a bare navigation ───────────────────
 //
-// DC-4 shipped the row and its deep link; nothing read the flag, so the menu item opened the
+// The tray first shipped the row and its deep link; nothing read the flag, so the menu item opened the
 // inbox and wrote nothing. Measured at the time: `capture=1` appeared in exactly one place in
 // the product (`main.js`) and zero places in `web/src`.
 //
@@ -498,7 +498,7 @@ describe("main.js quick-capture deep link agrees with the SPA that reads it", ()
 
   it("the shell still mints no endpoint of its own", () => {
     // The capability is core's. A shell that started POSTing would be a consumer defining
-    // its owner's contract — the thing DC-4 correctly refused to do.
+    // its owner's contract — the thing the tray correctly refused to do.
     assert.ok(
       !/\/api\/inbox/.test(mainCode),
       "the desktop shell must reach the inbox through the SPA, not by calling the API",

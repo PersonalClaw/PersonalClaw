@@ -1,4 +1,4 @@
-"""M5e: self_persona (always-on agent self-model) + commitment (guardrailed,
+"""self_persona (always-on agent self-model) + commitment (guardrailed,
 off-by-default proactive check-ins)."""
 
 from __future__ import annotations

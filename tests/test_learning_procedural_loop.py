@@ -1,6 +1,6 @@
 """The procedural-memory loop, driven end to end.
 
-M5d shipped half a loop. `MemoryService.record_procedural` had TWO live writers
+Procedural memory shipped as half a loop. `MemoryService.record_procedural` had TWO live writers
 (`after_turn_review.record_procedural_outcomes` off the dashboard turn path and
 `learning/run_end.py` off a workflow's terminal failures) and
 `MemoryService.procedural_priors()` had **zero production callers** — a repo-wide grep

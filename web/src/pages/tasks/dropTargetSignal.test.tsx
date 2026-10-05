@@ -66,7 +66,7 @@ describe('the drop target is signalled by more than a background tint', () => {
 
 // ── The other half of the same transient: the card you picked up ───────────────────────────────
 //
-// Cycle 186 measured the OUTER draggable and read `opacity: 1`, which suggested a card gave no
+// An earlier probe measured the OUTER draggable and read `opacity: 1`, which suggested a card gave no
 // picked-up feedback at all. Wrong element. The feedback lives on the inner `motion.div` and it is
 // rich — measured mid-drag on `#/tasks?view=board`:
 //
@@ -85,7 +85,7 @@ describe('the drop target is signalled by more than a background tint', () => {
 // "tidy-up" that swapped this for `shadow-2xl` would look harmless and would quietly enlarge that
 // family, so the token form is asserted rather than assumed.
 //
-// 🪤 PROBE HYGIENE, LEARNED THE EXPENSIVE WAY. Cycle 186's synthetic `dragstart` was never paired with
+// 🪤 PROBE HYGIENE, LEARNED THE EXPENSIVE WAY. That probe's synthetic `dragstart` was never paired with
 // a `dragend`, so `dragId` stayed set and the board sat STUCK in the drag state across ticks — the next
 // probe then read a stale state as a fresh measurement, and only an identical before/during pair
 // (`changed: false`) exposed it. A synthetic drag probe must fire `dragend` in the same script, and a

@@ -51,8 +51,8 @@ export interface PushNotification {
   url: string
   /** Approvals interrupt; everything else does not. */
   requireInteraction: boolean
-  /** The cue voice an open client should play for this push, or absent for a silent one
-   *  (MOBILE-COMPANION MC-6). Read from the per-kind rules, never from the wire. */
+  /** The cue voice an open client should play for this push, or absent for a silent one.
+   *  Read from the per-kind rules, never from the wire. */
   sound?: PushCue
 }
 
@@ -97,8 +97,8 @@ export function deepLinkFor(kind: string, itemId: string): string {
 /** The notification to show for *payload*. Text comes from COPY, never from the wire.
  *
  *  The VOICE is the one part that is a user PREFERENCE, so it is read from the per-kind rules
- *  (*soundByKind*, keyed by the same wire kind as COPY) rather than a fixed table
- *  (MOBILE-COMPANION MC-6). No map, an unconfigured kind, or an unknown voice ⇒ no cue: the push
+ *  (*soundByKind*, keyed by the same wire kind as COPY) rather than a fixed table.
+ *  No map, an unconfigured kind, or an unknown voice ⇒ no cue: the push
  *  stays silent. Validated against the closed set here too, so a stale map can never hand the
  *  client an unplayable voice. */
 export function notificationFor(

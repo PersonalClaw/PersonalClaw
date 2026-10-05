@@ -63,7 +63,7 @@ function flatten(node: WorkflowNode, depth = 0, label = ''): FlatNode[] {
   return out
 }
 
-/** The maturity badge (R11). Level and label come from the backend; the tone rises with it so a
+/** The maturity badge. Level and label come from the backend; the tone rises with it so a
  *  glance says "proven" vs "draft" — a check that has never rejected a bad run is not yet proven,
  *  and the badge is honest about that. */
 function MaturityBadge({ maturity }: { maturity: WorkflowMaturity }) {

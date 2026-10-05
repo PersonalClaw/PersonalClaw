@@ -54,7 +54,7 @@ _FORWARDED_RE = re.compile(r"\b(X-Forwarded-[A-Za-z-]+|X-Real-IP|Forwarded)\b")
 #: slip past. MEASURED, not hypothesised: with only the `.get` form, adding a real
 #: `request.headers["X-Forwarded-For"]` fallback to `_resolved_client_ip` left all four tests in
 #: this file GREEN — the gateway would have started trusting a header these docs call ignored,
-#: invisibly, which is precisely the defect RUA-6 exists to prevent. The `(?!\s*=)` excludes
+#: invisibly, which is precisely the defect this file exists to prevent. The `(?!\s*=)` excludes
 #: assignments: `resp.headers["X-Accel-Buffering"] = "no"` SETS a response header, it does not
 #: trust an incoming one.
 _HEADER_READ_RES = (
@@ -176,7 +176,7 @@ def test_the_remote_access_guide_names_exactly_the_headers_the_code_reads():
 
 
 def test_x_forwarded_for_is_not_read_anywhere():
-    """The measurement RUA-6 rests on, pinned. If a future change starts honouring
+    """The measurement this fix rests on, pinned. If a future change starts honouring
     `X-Forwarded-For`, this reds and forces the docs + the hop-count policy to land with it —
     rather than the header quietly becoming a second, list-shaped source of the client IP."""
     read = _forwarded_headers_read_by_code()

@@ -1,4 +1,4 @@
-"""Per-(source, kind) notification rules (INBOX-NOTIFICATIONS-UNIFICATION C2/C3).
+"""Per-(source, kind) notification rules.
 
 Before this, notification policy was one global switch: mute-all, a minimum severity, and
 quiet hours. Every emitter was treated identically, so "stop telling me about heartbeats
@@ -25,7 +25,7 @@ their meaning and this file cannot become a way to bypass them.
 **Conditions generalize the inbox's own alert fields.** The keyword and name-mention
 semantics are lifted verbatim from ``inbox.evaluate_alert`` — case-insensitive substring
 for keywords, whole-word matching on name parts of 3+ characters — so the behavior users
-already configured survives the move to rules (S3 backfills those fields into conditions).
+already configured survives the move to rules (a backfill carries those fields into conditions).
 
 **Every failure path is fail-OPEN.** A missing file, malformed JSON, a bad mode, a corrupt
 rule: all fall back to the registry default, which is ``immediate``. This mirrors the
@@ -64,7 +64,7 @@ def config_dir() -> Path:
 
 logger = logging.getLogger(__name__)
 
-#: Delivery targets. ``native`` is LIVE as of DESKTOP-CAPABILITIES `DC-5` (see
+#: Delivery targets. ``native`` is LIVE (see
 #: :func:`native_delivery`) and ``push`` is LIVE — a rule
 #: carrying it sends a content-free ``{kind, item_id}`` ping through
 #: :mod:`personalclaw.push`. ``channel_dm`` sends the note to the owner's DM on the first
@@ -99,7 +99,7 @@ NATIVE_TARGET = "native"
 NATIVE_CAPABILITY = "native_notifications"
 
 
-#: Digest defaults. 08:00 local, matching the plan's morning-digest intent.
+#: Digest defaults. 08:00 local, for a morning digest.
 DEFAULT_DIGEST_SCHEDULE = "0 8 * * *"
 
 #: The digest queue. Append-only JSONL, trimmed at 2x the cap so a digest that never runs
@@ -183,7 +183,7 @@ class Rule:
 
 
 def native_delivery(rule: Rule | None, capability: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Whether an ``immediate`` note should be raised as a native OS notification (DC-5).
+    """Whether an ``immediate`` note should be raised as a native OS notification.
 
     This is the whole ``native`` target decision, in one pure function so the rule half is
     testable without a gateway and the Electron half without a rule. It answers three
@@ -423,7 +423,7 @@ def ensure_target(source: str, kind: str, target: str) -> bool:
 
     Returns True when a rule was written.
 
-    This exists so MOBILE-COMPANION `MC-5` has no hidden second switch. Tapping **Turn on
+    This exists so phone push has no hidden second switch. Tapping **Turn on
     push** on the phone is an unambiguous statement of intent ("wake me for this"), and if
     the user then had to go find Settings → Notifications and tick a box before anything
     arrived, the button would read as broken. So that tap CONFIGURES the rule.
@@ -711,7 +711,7 @@ def run_digest(state: Any = None) -> str:
     # ``DashboardState.notify`` already withholds a foreign-addressed note before the ``digest``
     # branch — so this filter is not that decision repeated, it is the one the QUEUE FILE needs.
     # ``digest_queue.jsonl`` is durable state under the home: it can hold rows appended by a
-    # build that predates the addressee, and DURABILITY-AND-SYNC can put a teammate's rows in a
+    # build that predates the addressee, and backup and sync can put a teammate's rows in a
     # synced home. Filtering at drain is what makes "a foreign note is never summarized at the
     # local owner" a property of the digest rather than of one writer's good behaviour.
     entries = notification_addressing.locally_addressed(entries)

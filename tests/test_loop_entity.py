@@ -1,4 +1,4 @@
-"""Unified Loop entity + kind-strategy registry (Slice 1 of the loops/projects
+"""Unified Loop entity + kind-strategy registry (the first step of the loops/projects
 unification). Additive foundation — nothing wires it yet; these pin the shared
 spine + the per-kind seam before the engine ports onto them."""
 
@@ -158,7 +158,7 @@ class TestKindRegistry:
         for retired in ("is_done_signal", "has_done_check", "budget_stop_genuine"):
             assert not hasattr(s, retired), (
                 f"{kind} strategy still carries {retired!r} — the supervisor was retired from "
-                f"the plugin seam by PP-16 seam 3; a kind that re-grows one ships two paths."
+                f"the plugin seam; a kind that re-grows one ships two paths."
             )
         loop = Loop(id="x", name="n", kind=kind, task="t")
         policy = policy_for_kind(kind, loop.kind_config)

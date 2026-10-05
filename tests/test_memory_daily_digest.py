@@ -1,6 +1,6 @@
-"""mem-tree (descoped): daily-digest nodes + provenance-first recall.
+"""Daily-digest nodes + provenance-first recall.
 
-The two genuinely-new mem-tree capabilities, layered on the existing memory seam
+The two genuinely-new capabilities, layered on the existing memory seam
 (the durable job cadence + content-addressing + entity graph already existed, so
 they're reused, not rebuilt). Digests are deterministic + idempotent (keyed by
 date, LLM-free by default); recall carries provenance.

@@ -1,14 +1,12 @@
 """Share one chat as a redacted, read-only artifact.
 
-T3.3 asked for two halves — "Markdown/JSON export (redacted) **+ optional read-only
-shared artifact (never auto-published)**". Only export shipped (see the plan's execution
-log, headed "T3.3 — export."), while the SM plan (internal, not in this repo)'s SM-8 evidence line
-already claimed the share half existed. This module is that half.
+Sharing a chat has two halves: a Markdown/JSON export (redacted) **+ an optional read-only
+shared artifact (never auto-published)**. Export shipped first; this module is the share half.
 
 **"Share" here means inside the owner's own instance.** It creates an artifact in the
 owner's artifact library on an explicit authenticated request. It does NOT publish
 anything: no public URL, no share token, no unauthenticated route. Exposing a conversation
-outside the machine belongs to EXTERNAL-ACCESS and is the owner's decision, not a
+outside the machine belongs to external access and is the owner's decision, not a
 side effect of a "Share" menu item.
 
 Three properties, and what makes each true rather than claimed:
@@ -30,7 +28,7 @@ and there is no path that turns an artifact back into chat history.
 **Never auto-published** — :func:`share_session` is called from exactly one place, the
 explicit ``POST /api/chat/sessions/{session}/share`` handler. No heartbeat tick, no
 post-turn hook, no "share on archive" convenience. ``tests/test_session_share.py`` proves
-it with an AST census of every call site in ``src/personalclaw``, in the style of SM-5's
+it with an AST census of every call site in ``src/personalclaw``, like session-organize's
 "never auto-applies" sweep; a future caller that "just shares it while we're here" reds
 that test instead of quietly publishing conversations.
 """

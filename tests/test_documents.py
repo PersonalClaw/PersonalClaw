@@ -3,8 +3,8 @@
 The central question for generated files is VALIDITY, and a subtly-invalid .docx that our
 own reader accepts but Word rejects is the worst outcome. So the strongest proof available
 in-process is a round trip through `knowledge/readers.py` — the same code that ingests
-user-uploaded documents. That is necessary but NOT sufficient: the plan's V-task requires
-opening the output in a real application before the session may close.
+user-uploaded documents. That is necessary but NOT sufficient: validity also needs the output
+opened in a real application.
 """
 
 from __future__ import annotations
@@ -1048,7 +1048,7 @@ class TestDocumentNameDedup:
         assert audited[-1][2].startswith("oversized ")
 
     # ── #3309: the dedup lookup was Project-blind ─────────────────────────────
-    # DHT-5 (above) resolved a repeat NAME through `find_similar`, but that scan ran
+    # The dedup above resolved a repeat NAME through `find_similar`, but that scan ran
     # `self.list(kind=kind)` with no Project, so it saw EVERY Project's library. Project B
     # creating "Weekly Note" therefore found Project A's artifact, updated it in place and
     # left `project_id: project-a` — A silently held B's bytes (recoverable only from
@@ -1165,9 +1165,9 @@ class TestDocumentNameDedup:
         assert "In A" in self._docx_text(prov, "filed")
 
 
-# ── The V1 gate, as a rail: generate with the TOOL, parse it back, diff ──
+# ── The round-trip gate, as a rail: generate with the TOOL, parse it back, diff ──
 # `test_docx_roundtrip.py` calls `render_docx` directly, so the seam between the tool
-# the agent actually invokes and the parser is joined by nothing. That is the DFE-2
+# the agent actually invokes and the parser is joined by nothing. That is the
 # hazard's shape: a round trip that never travels the real call site cannot see a
 # regression introduced there — a tool that quietly picked a different writer, dropped
 # the title, or stored bytes other than the ones it rendered would leave every existing

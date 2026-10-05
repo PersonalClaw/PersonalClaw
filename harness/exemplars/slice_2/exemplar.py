@@ -1,9 +1,9 @@
-"""Slice 2 exemplar — engine-owned completion via the `required_artifacts` gate.
+"""Workflow exemplar — engine-owned completion via the `required_artifacts` gate.
 
 A 3-node run whose middle node CLAIMS success but writes no file. The engine's artifact
 gate (`apply_artifact_gate`, applied at the single dispatch seam so every node kind
 inherits it) refuses the claimed completion and fails the node — so the run ends FAILED
-rather than COMPLETE, and the third node never runs. This is the mechanism Slice 2 added:
+rather than COMPLETE, and the third node never runs. This is the mechanism under test:
 completion is the engine's decision, checked against the filesystem, not the node's
 self-report. "A node said it wrote the file" is a weaker claim than a passing node looks.
 

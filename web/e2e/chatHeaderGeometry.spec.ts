@@ -6,8 +6,8 @@ import { gotoRoute } from './helpers'
 // The chat header is the busiest header in the product: a back button, the chat's title and its
 // regenerate affordance, up to six chips about the conversation (screen share, the app that started
 // it, the project, where it was branched from, what it investigates, what it has cost), and a
-// cluster of nine controls — all between two shell corners that float over the same band. #3632's
-// lane measured the row full below ~1300px, and this rail measured the rest, on `0b487d9c7`, with a
+// cluster of nine controls — all between two shell corners that float over the same band. #3632
+// measured the row full below ~1300px, and this rail measured the rest, on `0b487d9c7`, with a
 // branched chat whose title and parent title are both long and whose cost chip is showing:
 //
 //   • it overlapped at EVERY width, 1440 included. "Branched from <parent title>" had no bound, so

@@ -2,7 +2,7 @@
 ``/api/apps/{name}/config`` — one file, one ``x-meta.sensitive`` flag, one policy.
 
 It did not. ``tests/test_app_api.py::test_sensitive_config_field_is_write_only`` pinned the
-rule on the Apps route (#43) while the Providers route — the one the Settings → Providers
+rule on the Apps route while the Providers route — the one the Settings → Providers
 schema form actually calls — returned the stored secret verbatim on GET and echoed it back
 on PATCH. For the bundled ``slack-channel`` app that meant its Bot Token and App Token in
 every panel-open response, in the form's React state, and revealable on screen through the

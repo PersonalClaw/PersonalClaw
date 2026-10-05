@@ -1,4 +1,4 @@
-"""App permission enforcement (A5) — server-side defense-in-depth.
+"""App permission enforcement — server-side defense-in-depth.
 
 Covers the PermissionChecker decision logic (api prefix/wildcard, events,
 mcpTools, coarse flags — ``memory`` among them since #3501 deleted its inert
@@ -125,7 +125,7 @@ class TestCheckerLogic:
         assert c.can_use_cron() and c.can_use_network() and not c.can_use_storage()
 
     def test_network_declaration_reaches_the_consent_wire(self):
-        """D2. ``network`` is unenforced, so the ONLY thing it does is reach the
+        """``network`` is unenforced, so the ONLY thing it does is reach the
         Store's install-consent surface — the advisory row there is rendered from this
         dict (``handlers/apps.py`` → ``AppPermissionsWire`` → ``PermissionList``).
 
@@ -240,7 +240,7 @@ async def _ok(request: web.Request) -> web.Response:
 
 @asynccontextmanager
 async def _client(tmp_path, *, app_identity: str, permissions: dict):
-    """A minimal app with the A5 middleware, simulating an app-scoped request by
+    """A minimal app with the permission middleware, simulating an app-scoped request by
     setting request['app'] in a stub middleware ahead of enforcement."""
     name = "demo"
     appdir = tmp_path / "apps" / name
@@ -410,9 +410,9 @@ async def test_none_mode_adopts_app_claim_and_enforces(tmp_path):
 #
 # These two follow the same to_dict/from_dict parity pattern as every permission above,
 # and differ from all of them in one honest respect: NOTHING ENFORCES THEM TODAY. No core
-# code hosts an app worker (APE-3 does) and no platform event is delivered to any app,
-# declared or not (the ``app_events.py`` registry does not exist). So this section
-# pins the round trip and the consent leg, and deliberately adds no ``can_use_*``
+# code hosts an app worker (that is the worker runtime's job) and no platform event is
+# delivered to any app, declared or not (the ``app_events.py`` registry does not exist). So
+# this section pins the round trip and the consent leg, and deliberately adds no ``can_use_*``
 # accessor: an accessor with no call site would be an enforcement point that enforces
 # nothing, and the change that builds the runtime should add the check WHERE it gates.
 
@@ -435,7 +435,7 @@ def test_background_and_event_grants_round_trip():
 
 def test_undeclared_and_empty_background_grants_emit_no_key():
     """The omission half, and it is not cosmetic: the consent surface distinguishes
-    "declared" from "did not declare" (EI-12 D2), so a spurious ``backgroundTasks: false``
+    "declared" from "did not declare", so a spurious ``backgroundTasks: false``
     would render as a grant the app never asked for."""
     for data in ({}, {"backgroundTasks": False, "eventSubscriptions": []}):
         d = Permissions.from_dict(data).to_dict()
@@ -455,8 +455,8 @@ def test_event_subscription_names_survive_verbatim():
 
 def test_event_subscriptions_do_not_widen_the_ws_event_allowlist():
     """The two vocabularies stay separate on purpose. ``events`` is the gateway's WS
-    event-type allowlist (``can_use_event``); ``eventSubscriptions`` is the platform
-    registry APE-2 will own. Declaring a platform subscription must not silently grant the
+    event-type allowlist (``can_use_event``); ``eventSubscriptions`` belongs to the platform
+    event registry. Declaring a platform subscription must not silently grant the
     WS event type of the same name, or the filter would inherit a second, wider path
     to the same data."""
     c = _checker(eventSubscriptions=["session.created"])

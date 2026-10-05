@@ -1,6 +1,6 @@
 """The budgeted optimize-harness search.
 
-The criterion this file answers has six clauses, and most of them are the kind that reads as
+The search's contract has six clauses, and most of them are the kind that reads as
 satisfied while being quietly false, so each is railed with its own negative:
 
 * **"nothing live mutates during the search"** is proven by OBSERVATION, not by asserting
@@ -1065,7 +1065,7 @@ class TestTemplateCallSites:
         for agent in agents:
             assert is_reserved_agent(agent), f"{agent} is not a reserved built-in agent"
         assert agents == {TEMPLATE_REFINER_AGENT_NAME}, (
-            "the search's only agent must be the propose-only refiner — §8.3's tool-scoping "
+            "the search's only agent must be the propose-only refiner — the refiner's tool-scoping "
             "is what stops the optimizer applying its own winner"
         )
 

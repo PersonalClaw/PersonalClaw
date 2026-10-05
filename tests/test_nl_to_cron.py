@@ -1,4 +1,4 @@
-"""Natural-language → cron, or one instant (#39)."""
+"""Natural-language → cron, or one instant."""
 
 from __future__ import annotations
 
@@ -116,7 +116,7 @@ def test_no_model_is_said_as_no_model():
 
 # ── tool dispatch (automation_create's `when` → validated cron → a store trigger) ──
 #
-# These drove `schedule_natural` until S109 retired the alias. The NL→cron bridge did not go away —
+# These drove `schedule_natural` until the alias was retired. The NL→cron bridge did not go away —
 # it moved to `tools.create`'s injected `cadence_to_cron` seam, which is the same contract with a
 # testable seam instead of a module-level monkeypatch.
 

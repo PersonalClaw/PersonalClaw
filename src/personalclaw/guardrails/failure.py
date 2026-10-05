@@ -639,7 +639,7 @@ class SecretLeakBlocked(GuardError):
 
 
 class PromptInjectionBlocked(GuardError):
-    """An outbound prompt was refused because it matched an INJECTION pattern (§2.2 — S156).
+    """An outbound prompt was refused because it matched an INJECTION pattern.
 
     Distinct from :class:`SecretLeakBlocked` on purpose. Both are non-retryable, but for
     opposite reasons: a secret must not be re-sent, while an injection must not be given a
@@ -648,7 +648,7 @@ class PromptInjectionBlocked(GuardError):
     declared, listed in ``NON_RETRYABLE``, and recordable by nothing until this existed.
 
     Carries the matched pattern ``group`` because a block that cannot be explained cannot be
-    appealed — the same rule §1.3 sets for the fire-path screen's ledger row.
+    appealed — the same rule the fire-path screen's ledger row follows.
     """
 
     mode = FailureMode.INJECTION_BLOCKED

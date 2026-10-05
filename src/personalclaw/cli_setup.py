@@ -125,11 +125,11 @@ def _ask(prompt: str) -> str:
 
 
 def _print_dashboard_pointer() -> None:
-    """Point at the dashboard's guided first run — one line (ONBOARDING-UX T1.4).
+    """Point at the dashboard's guided first run — one line.
 
     The dashboard is the canonical onboarding surface: it installs a model provider,
     binds a chat model and runs a real first success without leaving the flow. This
-    wizard stays credentials-first and unchanged — the plan's open question ("should
+    wizard stays credentials-first and unchanged — the open question ("should
     ``setup`` gain full parity?") is answered "no, the dashboard owns it" — so setup
     does not duplicate that flow, it says where the flow is.
 
@@ -175,7 +175,7 @@ def _setup(
     print("PersonalClaw Setup\n")
     print(f"  {DATA_WARNING.replace(chr(10), chr(10) + '  ')}\n")
 
-    # Non-interactive mode/provider/credential flags (R8.8, R12.1). They are what an unattended
+    # Non-interactive mode/provider/credential flags. They are what an unattended
     # install runs, so a refused one exits 1 rather than letting the script carry on.
     if mode or provider or credential:
         if not _setup_noninteractive(mode=mode, provider=provider, credential=credential):
@@ -256,7 +256,7 @@ def _setup_noninteractive(
     provider: str = "",
     credential: str = "",
 ) -> bool:
-    """Apply non-interactive setup flags (R8.8, R12.1). False when one was refused.
+    """Apply non-interactive setup flags. False when one was refused.
 
     ``--mode docker`` prints the README's ``docker run`` quick-start (``container_host``).
     ``--mode service`` prints a ``personalclaw service install`` hint.

@@ -767,7 +767,7 @@ def test_a_missing_fixture_set_names_what_ships():
 
 
 def test_the_shipped_set_carries_all_three_fixture_families():
-    """§6 names three: real judged runs, deliberately-bad null probes, and forbidden-
+    """Three families: real judged runs, deliberately-bad null probes, and forbidden-
     success-mode cases. A set missing one silently drops a column of the table."""
     fixture_set = jb.load_fixture_set("starter")
     kinds = {f.kind for f in fixture_set.fixtures}

@@ -1,8 +1,8 @@
 """Drift rail for the RENDERED not-gateable residual block.
 
-§2.2 requires the residual not-gateable set to be enumerated ONCE, in
-:data:`personalclaw.acp.permission_authority.NOT_GATEABLE`, and requires §2.7's
-parity doc to *render* that registry rather than re-derive it in prose. Before
+The residual not-gateable set is enumerated ONCE, in
+:data:`personalclaw.acp.permission_authority.NOT_GATEABLE`, and the
+parity doc must *render* that registry rather than re-derive it in prose. Before
 this rail the doc carried a hand-written table beside the registry, and it had
 already drifted: the "Measurement behind it" column stated sweep facts
 ("44 audited tool events…") that appear nowhere in the registry, and the
@@ -14,7 +14,7 @@ Three things are asserted, and the third is the one that matters most:
 1. **Drift.** Re-rendering the doc from the live registry is a no-op.
 2. **Idempotence.** Rendering twice is the same as rendering once.
 3. **Vacuity floor.** A rail that matches nothing reads as clean, which is the
-   exact failure mode §2.2 exists to prevent. So: the markers must exist exactly
+   exact failure mode this rail exists to prevent. So: the markers must exist exactly
    once, the block must be non-empty, EVERY registry key must appear in it,
    the rendered provider count must equal the registry's size, every entry's
    ``reason`` AND ``observation`` prose must be present, and the section must
@@ -171,7 +171,7 @@ def test_no_handwritten_table_survives_in_the_residual_section(doc_text: str) ->
 
     A markdown table row inside this section but outside the markers is a
     hand-written enumeration reappearing next to the generated one — the exact
-    drift §2.2 forbids. Scoped to the section: the doc's other tables are fine.
+    drift the single registry forbids. Scoped to the section: the doc's other tables are fine.
     """
     heading = "## The not-gateable residual, per provider"
     start = doc_text.index(heading)
@@ -191,8 +191,8 @@ def test_renderer_absorbs_a_new_field_a_new_state_and_a_new_provider(
 ) -> None:
     """A registry that grows must render with no edit to the renderer.
 
-    The sibling correcting this registry is adding a third residual state (two
-    providers declare "measured EMPTY" while Phase 1 recorded ``ungated`` runtime
+    A correction to this registry can add a third residual state (two
+    providers declared "measured EMPTY" while live drives recorded ``ungated`` runtime
     rows for both). A renderer that enumerated field names would break, or worse
     would silently drop the new state — relocating the drift instead of removing
     it. So the renderer reflects over dataclass fields by SHAPE, and this pins it.
@@ -214,13 +214,13 @@ def test_renderer_absorbs_a_new_field_a_new_state_and_a_new_provider(
         **NOT_GATEABLE,
         "gemini-cli": FutureCoverage(
             provider="gemini-cli",
-            measurement="AAP-9 sweep - never driven",
+            measurement="a future sweep - never driven",
             state=ResidualState.CONTRADICTED_BY_RUNTIME,
             entries=(
                 FutureEntry(
                     tool="brand_new_tool",
                     reason="a reason the renderer has never seen",
-                    observation="O999: the observation that proved it",
+                    observation="the observation that proved it",
                     severity="turn-aborting",
                     title_patterns=("never rendered",),
                 ),
@@ -234,7 +234,7 @@ def test_renderer_absorbs_a_new_field_a_new_state_and_a_new_provider(
     assert "- **`gemini-cli`**" in block
     assert "State: declared empty but runtime rows disagree" in block
     assert "Severity: turn-aborting" in block
-    assert "O999: the observation that proved it" in block
+    assert "the observation that proved it" in block
     # ...and collection-shaped matching machinery still does not leak into prose
     assert "never rendered" not in block
     assert "title_patterns" not in block and "Title patterns" not in block

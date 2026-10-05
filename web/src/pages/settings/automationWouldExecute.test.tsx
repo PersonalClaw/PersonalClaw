@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 
 // ── The automation would-execute description ───────────────────────────────────────────────────
 //
-// §3.3 asks for five facts, RENDERED on the trust surface beside the surfacing simulator:
+// The description is five facts, RENDERED on the trust surface beside the surfacing simulator:
 // resolved next-fire, the rendered `action_config` with `$vars` substituted, the target session
 // key, the capability grants, and the observe-mode result. The backend suite pins the payload;
 // this suite pins that a user can READ them — the endpoint existed for the surfacing half for a
@@ -84,7 +84,7 @@ async function describeIt(over: Record<string, unknown> = {}, opts: { triggers?:
   return { r, calls, body: () => r.container.textContent ?? '' }
 }
 
-describe('the five facts §3.3 names are all on screen', () => {
+describe('the five would-execute facts are all on screen', () => {
   it('renders a labelled row for every one of the five', async () => {
     const { body } = await describeIt()
     const text = body()
@@ -209,7 +209,7 @@ describe('fact 5 — the observe-mode result', () => {
     expect(body()).toContain('Gates enforced: incident, screen, capability')
   })
 
-  it('VACUITY (T9 honesty): a deterministic provider is labelled a PREVIEW, not an observe run', async () => {
+  it('VACUITY (preview honesty): a deterministic provider is labelled a PREVIEW, not an observe run', async () => {
     const { body } = await describeIt({
       observe_mode: {
         provider: 'bash', provider_known: true, supported: false, mode: 'preview', executed: false,
@@ -233,7 +233,7 @@ describe('fact 5 — the observe-mode result', () => {
   })
 })
 
-describe('AUTO-R15 issue records reach the surface', () => {
+describe('trigger issue records reach the surface', () => {
   it('renders the closest-match suggestion beside the problem', async () => {
     const { body } = await describeIt({
       trigger: {

@@ -155,7 +155,7 @@ class TestTheStepRelay:
         assert seen[-1][2] == "DONE", "the last action reaches the mirror"
 
     def test_a_run_with_no_sink_still_runs(self):
-        """CONTROL: `on_step=None` is the pre-BA-5 behaviour, so the relay is additive — the loop
+        """CONTROL: `on_step=None` is the pre-mirror behaviour, so the relay is additive — the loop
         completes identically whether or not anyone is watching."""
         page = _FakePage({PLAIN_URL: "<html><body><h1>Catalog</h1></body></html>"}, url=PLAIN_URL)
         result = _loop(page, _Decide("DONE"), on_step=None)

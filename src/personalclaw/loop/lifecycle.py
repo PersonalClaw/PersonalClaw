@@ -1,4 +1,4 @@
-"""Scratch-workspace lifecycle for loops (auto-campaign-scratch-workspace).
+"""Scratch-workspace lifecycle for loops.
 
 A loop owns a scratch dir (``config_dir()/loop/<id>/`` — its findings, briefs, and
 document deliverable). By default that dir PERSISTS after the loop finishes (never

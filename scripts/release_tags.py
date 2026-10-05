@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """What a release tag publishes — the ONE parser `release.yml` and its test share.
 
-`release.yml` triggers on `tags: ["v*"]`, and until RUM-8 it derived the answer
+`release.yml` triggers on `tags: ["v*"]`, and it used to derive the answer
 three different times in three different shell dialects:
 
 * `build`  — `version=${GITHUB_REF_NAME#v}`;
@@ -30,8 +30,7 @@ So the rule lives here, once, and both the workflow and
 re-implemented the rule in order to check it would pass while the workflow did
 something else — which is precisely the bug above.
 
-**The scheme** (tag convention §3.6; the consumer half is
-`self_update.select_image`):
+**The scheme** (the consumer half is `self_update.select_image`):
 
 | Ref | GitHub Release | Image tags |
 |---|---|---|

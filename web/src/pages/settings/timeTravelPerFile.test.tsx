@@ -12,7 +12,7 @@ import {
   type DurabilityHistoryTimeline,
 } from '../../lib/api'
 
-// ── Time travel: restoring ONE FILE, not the whole root (DAS-9 crit. 6) ──
+// ── Time travel: restoring ONE FILE, not the whole root ──
 //
 // `rollback`/`revert` used to operate on a whole root only, so "put that one memory note back"
 // meant reverting everything recorded alongside it. The subset closes that, and it introduces the

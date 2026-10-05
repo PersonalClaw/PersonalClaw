@@ -1,5 +1,4 @@
-"""The refusal a platform PersonalClaw *intends* to support gives before its driver exists
-(ยง3.6).
+"""The refusal a platform PersonalClaw *intends* to support gives before its driver exists.
 
 **Why this is not the refusal :mod:`~personalclaw.computer_use.driver_host` already had.** When
 ``resolve_driver`` finds nothing importable it answers ``ERR_COMPUTER_USE_DRIVER_UNAVAILABLE``,
@@ -7,7 +6,7 @@ and that code's meaning is *this build has no driver for this platform at all* โ
 answer for a platform outside ``DRIVER_MODULES`` entirely (FreeBSD, an unknown
 ``platform.system()``), and the answer for a mapped platform whose driver has no handler for the
 requested operation.
-Windows and Linux are a different situation and flattening the two is the dishonesty this change
+Windows and Linux are a different situation and flattening the two is the dishonesty this module
 exists to remove: PersonalClaw fully intends to drive those desktops, the accessibility API each
 will use is already chosen (UIA / AT-SPI), and *no action the operator takes on that machine
 changes the answer today*. So they get their own registered code, their own WHY naming the API

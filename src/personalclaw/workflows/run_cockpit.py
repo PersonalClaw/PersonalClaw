@@ -20,12 +20,12 @@ from personalclaw.workflows.service import _nodes_of, _ok, _service_failure
 
 
 def introspect(run_id: str) -> dict[str, Any]:
-    """The nine-question introspection projection for one run (WORK-CONTAINERS §6.4, R6).
+    """The nine-question introspection projection for one run.
 
     Everything here is a PROJECTION over the journal this run already wrote —
     `introspection.py` holds the arithmetic and this function holds the reads. No metrics
-    store, per the plan's own words: "pass-rate, failure distribution and latency
-    percentiles are queries over this".
+    store: pass-rate, failure distribution and latency
+    percentiles are queries over this.
 
     The template card aggregates ACROSS runs of the same template, which is why this reads
     the sibling runs' ledgers too: "what is costing money" is a question about the template,
@@ -159,8 +159,8 @@ def introspect(run_id: str) -> dict[str, Any]:
             ),
         },
         # "what happens next if I say nothing" — a WAITING run does nothing until answered; a
-        # terminal run is done. Stated rather than implied: the question the plan promotes to a
-        # criterion is exactly the one every other surface leaves to inference.
+        # terminal run is done. Stated rather than implied: this is
+        # exactly the question every other surface leaves to inference.
         "next": _next_if_silent(run, nodes, open_asks),
         "proof": proof.to_dict(),
     }
@@ -195,7 +195,7 @@ def introspect(run_id: str) -> dict[str, Any]:
 
 
 def ledger_rails(run_id: str) -> dict[str, Any]:
-    """The two ledger rails for one run (PP-16 seam 4, the ledger-rails third).
+    """The two ledger rails for one run.
 
     The run-side answer to the loop cockpit's findings rail and verdict/ROI rail. Both are pure
     PROJECTIONS over the ledger this run already wrote — `introspection.py` holds the arithmetic,
@@ -245,7 +245,7 @@ def ledger_rails(run_id: str) -> dict[str, Any]:
 
 
 def run_deliverable(run_id: str) -> dict[str, Any]:
-    """The run's DOCUMENT deliverable and working log (PP-16 unit 1).
+    """The run's DOCUMENT deliverable and working log.
 
     The run-side answer to `GET /api/loops/{id}/report`, which serves `store.read_deliverable` +
     `store.read_log` off one route. Same two slots, the same kind-declared filenames and the same
@@ -265,7 +265,7 @@ def run_deliverable(run_id: str) -> dict[str, Any]:
     says which.
 
     **No money field, deliberately** — issue #2566: `run_totals` reports `cost_usd 0.0` for a loop
-    because `LoopJournal.cycle` writes no money keys, and PP-16 sends loop-backed runs through every
+    because `LoopJournal.cycle` writes no money keys, and loop-backed runs go through every
     run-side surface. A cost here would read `$0.00` for work that cost real money, on the one page
     a user opens to find out what the document cost.
 
@@ -312,7 +312,7 @@ def run_deliverable(run_id: str) -> dict[str, Any]:
 
 
 def template_trajectory(name: str) -> dict[str, Any]:
-    """The trajectory-signature distribution and regression signal for one template (PP-7).
+    """The trajectory-signature distribution and regression signal for one template.
 
     Queryable WITHOUT a run in hand: given a template name, this reads its recent runs' ledgers,
     projects each to its trajectory signature, and reports the distribution of signature classes,
@@ -349,11 +349,11 @@ def template_trajectory(name: str) -> dict[str, Any]:
 
 
 def touched_items(run_id: str) -> list[dict[str, Any]]:
-    """What this run TOUCHED, newest-first — the live touched-items feed (§6.5 / R13).
+    """What this run TOUCHED, newest-first — the live touched-items feed.
 
     Unions the two run-attributed mutation records that exist today:
 
-    * ``publishes.jsonl`` — every artifact this run published, versioned or converged (§2.5).
+    * ``publishes.jsonl`` — every artifact this run published, versioned or converged.
     * the file-drop manifest — every file handed INTO the run.
 
     Both are already run-scoped, which is the whole reason the feed is buildable: attribution is
@@ -362,9 +362,9 @@ def touched_items(run_id: str) -> list[dict[str, Any]]:
     overlapped.
 
     **The knowledge half is absent, not omitted.** Knowledge mutations carry no run attribution
-    (S47's lineage covered artifacts only), so a knowledge row here would have to be guessed from
+    (publish lineage covers artifacts only), so a knowledge row here would have to be guessed from
     timing — and a feed that says "this run wrote that memory" on a coincidence is worse than a
-    feed that does not mention memory. See the plan's §6.5 note; closing it is a journal-format
+    feed that does not mention memory. Closing it is a journal-format
     change, not a rendering one.
     """
     from personalclaw.workflows import filedrop
@@ -419,7 +419,7 @@ def _template_gates(
 
     The fake-check badge needs a SAMPLE: `FAKE_CHECK_MIN_RUNS` gate resolutions is a claim
     about the gate's history, and computing it from one run would leave the badge permanently
-    unarmed — the exact "declared but can never fire" shape this atom exists to close. Takes the
+    unarmed — the exact "declared but can never fire" shape this function exists to close. Takes the
     pre-read ledgers so the run-economics, said-no and edge-distribution projections share one read
     of each sibling rather than three.
     """

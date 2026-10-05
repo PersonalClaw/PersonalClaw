@@ -1,6 +1,6 @@
-"""`PP-16`'s "one adoption/reaping path", asserted at the CALL SITES.
+"""The "one adoption/reaping path" rule, asserted at the CALL SITES.
 
-The change's acceptance criterion names six unifications; this file owns one of them. Before this,
+Loops and workflow runs now share one boot-adoption path. Before this,
 restart-adoption was implemented twice and — the part that actually cost a user something —
 *invoked* two different ways:
 
@@ -82,7 +82,7 @@ def test_there_is_exactly_one_boot_adoption_primitive():
     beside it — a second generic reaper is how the two nouns drifted in the first place."""
     assert callable(concurrency.boot_sweep), "the shared boot-adoption primitive is missing"
     assert not hasattr(concurrency, "reap_orphans"), (
-        "personalclaw.concurrency exposes BOTH boot_sweep and reap_orphans. PP-16's clean break "
+        "personalclaw.concurrency exposes BOTH boot_sweep and reap_orphans. The clean break "
         "retires the second one; a caller that finds two primitives will pick one at random."
     )
 
@@ -92,8 +92,8 @@ def test_both_watchdogs_sweep_through_the_shared_primitive():
     for rel in ("loop/watchdog.py", "workflows/watchdog.py"):
         body = _text(rel)
         assert "concurrency.boot_sweep(" in body, (
-            f"{rel} no longer calls concurrency.boot_sweep. PP-16's 'one adoption/reaping path' "
-            f"clause means both work-unit nouns partition, isolate and count their crash "
+            f"{rel} no longer calls concurrency.boot_sweep. The 'one adoption/reaping path' "
+            f"rule means both work-unit nouns partition, isolate and count their crash "
             f"survivors through ONE primitive; a private loop here re-forks the path."
         )
 
@@ -123,7 +123,7 @@ def test_the_gateway_has_no_loop_boot_adoption_hook():
         "re-anchor this scan rather than deleting it"
     )
     assert "reap_orphaned_loops" not in body, (
-        "gateway.py awaits a loop boot-adoption hook again. PP-16 moved that sweep into "
+        "gateway.py awaits a loop boot-adoption hook again. That sweep moved into "
         "LoopWatchdog's first poll: a hook here cannot be retried when it raises (its except "
         "swallows the failure and the watchdog starts anyway, leaving loops RUNNING with no "
         "worker) and it blocks startup on N planner passes."
@@ -135,7 +135,7 @@ def test_the_retired_entry_point_is_gone_from_the_manager():
     (`ignore_missing_imports`), so the deletion is asserted against the imported module."""
     assert not hasattr(loop_manager, "reap_orphaned_loops"), (
         "loop.manager.reap_orphaned_loops is back. Boot adoption belongs to the watchdog that "
-        "owns the noun; a second entry point on the manager is the shape PP-16 retired."
+        "owns the noun; a second entry point on the manager is the retired shape."
     )
     assert hasattr(loop_watchdog.LoopWatchdog, "_boot_sweep"), (
         "LoopWatchdog._boot_sweep is missing — the sweep did not land in its new home, so the "
@@ -153,7 +153,7 @@ def test_the_loop_boot_sweep_loads_the_kind_registry_itself():
     (`test_loop_manager.py::TestBootSweep::test_brownfield_orphan_with_missing_workspace_pauses_not_rearms`)
     is **order-dependent**: under `-n0`, some earlier test in the same process has already loaded
     the registry, so it goes green while the defect is present. It only reds under xdist — which
-    is how the defect was in fact found while landing this slice. A guard whose verdict depends on
+    is how the defect was in fact found while landing this change. A guard whose verdict depends on
     which worker picked up the test is not a guard, so the property gets its own rail.
     """
     body = _text("loop/watchdog.py")

@@ -82,7 +82,7 @@ class TestScheduleTriggerChannel:
         request.json = AsyncMock(return_value=_schedule_body(channel="codechat:C0EXAMPLE01"))
         resp = await api_trigger_create(request)
         assert resp.status == 200
-        # 🔴 SUPERSEDED CONTRACT (S101 write re-point): the channel is `delivery` on the store row
+        # 🔴 SUPERSEDED CONTRACT (write re-point): the channel is `delivery` on the store row
         # (LEGACY_FIELD_MAP: `channel → delivery`), not an `add_job` kwarg.
         from personalclaw.dashboard.handlers.triggers import _trigger_store
 

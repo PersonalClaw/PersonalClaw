@@ -32,8 +32,8 @@ from dataclasses import dataclass
 #: The longest any sign-in, link or token may last: 90 days.
 MAX_LIFETIME_SECS = 90 * 86400
 
-#: How long a BROWSER sign-in lasts when ``auth.session_ttl`` says nothing: 30 days
-#: (REMOTE-USER-AUTH S1). Sessions survive a restart, so a long default would mean a browser
+#: How long a BROWSER sign-in lasts when ``auth.session_ttl`` says nothing: 30 days.
+#: Sessions survive a restart, so a long default would mean a browser
 #: cookie that outlives the reason it was issued, and a stolen one stays good that long. 30 days
 #: is long enough that a daily-driven instance never prompts you, and short enough that an
 #: abandoned session ages out. ``auth.session_ttl`` overrides it, up to the limit, for every door

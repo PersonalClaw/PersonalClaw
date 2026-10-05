@@ -171,7 +171,7 @@ def test_the_arbiter_imports_no_model_layer_at_all():
 def test_the_arbiter_holds_no_second_mention_parser():
     """One parser, in ``rooms.turn``. Two would be two answers to "who was named".
 
-    The ledger homed ``_MENTION_RE`` in ``turn`` so that `AR-5` imports it; a regex here that
+    ``_MENTION_RE`` lives in ``turn`` so that the arbiter imports it; a regex here that
     disagreed by one character would feed one member and enqueue another.
     """
     source = Path(arbiter.__file__).read_text(encoding="utf-8")
@@ -357,8 +357,8 @@ def test_one_speaker_at_a_time_never_two_in_flight(enabled):
 def test_a_members_mention_gives_its_peer_a_turn_the_human_never_asked_for(enabled):
     """The agent-to-agent exchange the clause needs to exist before a budget can bound it.
 
-    `AR-3` restricted the turn path to one pass over the roster BECAUSE no budget existed and
-    said so in its own docstring; this is that restriction lifted, with :func:`drain_round`'s
+    The turn path was once restricted to one pass over the roster BECAUSE no budget existed,
+    and said so in its own docstring; this is that restriction lifted, with :func:`drain_round`'s
     ceiling standing in its place.
     """
     room = _room_with({"analyst": "all", "skeptic": "mention"})

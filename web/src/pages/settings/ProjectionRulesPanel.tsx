@@ -21,7 +21,7 @@ const STRATEGIES: { id: ProjectionStrategy; label: string; blurb: string }[] = [
   { id: 'code', label: 'Code', blurb: 'keep signatures + docstrings + line map' },
 ]
 
-/** User-teachable tool-output projection rules (TokenJuice, OP6).
+/** User-teachable tool-output projection rules (TokenJuice).
  *
  *  When a tool returns a large output, PersonalClaw projects it to a token-cheap
  *  preview keyed to its content type (log error lines, diff hunks, test failures…)

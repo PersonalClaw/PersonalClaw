@@ -1,18 +1,18 @@
 """WHERE the three screens are consulted — one dispatch, and nothing else.
 
-This file shipped with `DCU-2` as an **inertness marker**: the three screens
+This file shipped with the screens as an **inertness marker**: the three screens
 (``policy.check_app``, ``policy.check_input_target``, ``gate.require_computer_use``) existed,
 were correct, were tested by being driven directly — and had ZERO production callers, because
-the chain they sit in was the deliverable. The census asserted the population was zero
+the chain they sit in was not built yet. The census asserted the population was zero
 and said so out loud, so the inertness could not be silent.
 
-**`DCU-4` landed, so the census flipped from "nobody calls these" to "exactly this calls
+**The chain landed, so the census flipped from "nobody calls these" to "exactly this calls
 these".** It is the same scanner and the same three vacuity floors; only the expected
 population changed, from empty to the one file that owns the composition. What it now defends
 is the property that replaced the old one:
 
 * a **new** caller of any screen reds, naming the file — because a second place that decides
-  whether an app may be driven is a second policy that can drift from this one. `DCU-4`'s
+  whether an app may be driven is a second policy that can drift from this one. The
   chain lives in ONE central dispatch precisely so there is one order to get right.
 * a **lost** caller reds too, because the map is asserted by equality. Deleting the
   ``check_input_target`` call from the dispatch would otherwise turn this file green again by
@@ -41,7 +41,7 @@ import pathlib
 
 SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
-#: The three functions `DCU-2` ships as the chain's steps 2, 4 and 5, plus the step 4b.
+#: The three functions that are the chain's steps 2, 4 and 5, plus the step 4b.
 #: One census for all four: "how many places decide whether this drive may happen" is a single
 #: question, and a screen kept out of it would be the one that silently grows a second caller.
 _SCREENS = frozenset({"check_app", "check_input_target", "check_autonomy", "require_computer_use"})
@@ -119,7 +119,7 @@ _EXPECTED_CALL_SITES: dict[str, list[str]] = {
 }
 
 
-def test_the_dcu2_screens_are_consulted_only_by_the_dispatch():
+def test_the_screens_are_consulted_only_by_the_dispatch():
     """THE CALL-SITE CENSUS — the flipped form of the inertness marker.
 
     Asserted by **equality**, in both directions:
@@ -138,9 +138,9 @@ def test_the_dcu2_screens_are_consulted_only_by_the_dispatch():
     """
     sites = _production_call_sites()
     assert sites == _EXPECTED_CALL_SITES, (
-        f"the population of `DCU-2` screen call sites changed: {sites}. Expected exactly "
+        f"the population of screen call sites changed: {sites}. Expected exactly "
         f"{_EXPECTED_CALL_SITES} — the screens are defined in "
-        f"{sorted(set(_DEFINED_IN.values()))} and `DCU-4` composes them in ONE dispatch. If you "
+        f"{sorted(set(_DEFINED_IN.values()))} and the chain composes them in ONE dispatch. If you "
         "added a caller, assert the CALL SITE too (refusal through the dispatch path, and a SEL "
         "row on the allowed path as well as the refused one, separately). If you removed one, "
         "the chain just lost a screen."
@@ -178,7 +178,7 @@ def test_the_scanner_detects_a_caller():
 def test_the_scanner_does_not_count_prose_as_a_call_site():
     """A docstring naming a screen is not a caller — and this is not hypothetical: both
     ``policy.py`` and ``gate.py`` name these functions in their own module docstrings, so a
-    text-shaped scanner would report `DCU-2` as already wired on a tree where nothing calls
+    text-shaped scanner would report the screens as already wired on a tree where nothing calls
     anything. Proves the census reads code, not comments."""
     prose = (
         '"""Runs check_app then check_input_target, then require_computer_use."""\n'
@@ -191,6 +191,6 @@ def test_the_scanner_does_not_count_prose_as_a_call_site():
 def test_the_census_actually_reads_the_shipped_modules():
     """Second vacuity floor, for the *corpus* rather than the matcher: an empty or
     mis-rooted ``SRC`` glob would also report zero call sites. Asserts the census really
-    walked the two files `DCU-2` shipped."""
+    walked the two files the screens live in."""
     scanned = {str(p.relative_to(SRC)) for p in SRC.rglob("*.py")}
     assert {"computer_use/policy.py", "computer_use/gate.py"} <= scanned

@@ -134,7 +134,7 @@ export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
             />
           )
         ) : (
-          // The hub's ENTRANCE GROUP (FLUID-MOTION §S3 T3.2) — the intro and each area
+          // The hub's ENTRANCE GROUP — the intro and each area
           // band cascade in rather than the whole catalog appearing at once. On THIS
           // surface the regions ARE the data, so the group sits on the loaded column
           // rather than above the branch (the replay rule in `ui/motion/Entrance`);
@@ -144,7 +144,7 @@ export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
           // the skeleton and the group is never remounted. Areas are keyed by name,
           // never by index or count, so re-fetching cannot remount a surviving band.
           <EntranceGroup className="flex flex-col gap-2xl">
-            {/* The copy pass: Discover is named as the disclosure arm beside the S2
+            {/* The copy pass: Discover is named as the disclosure arm beside the
                 starter rail, so the two mechanisms read as one idea — the rail holds a
                 surface back until you reach it, and this is where you find out it exists. */}
             <EntranceRegion>

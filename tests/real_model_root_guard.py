@@ -1,4 +1,4 @@
-"""Detection for the model-root rail (LOCAL-MODEL-MANAGER-V2 Success Criterion 10).
+"""Detection for the model-root rail.
 
 The bound-model-deletion incident was a test that ran a real delete against a real cache
 root and removed a model the developer had actually downloaded. The fix cannot be "every
@@ -166,7 +166,7 @@ def assert_safe(function_name: str, cache_root: object) -> None:
     raise AssertionError(
         f"layouts.{function_name}() was called with a REAL model root: {cache_root!r} "
         f"(inside {root}). Tests must pass tmp_path — this is the bound-model-deletion "
-        f"rail (LMMV Success Criterion 10), not a style preference. If a test genuinely "
+        f"rail, not a style preference. If a test genuinely "
         f"needs to exercise root resolution, assert on the returned PATHS instead of "
         f"calling a layouts function against the real root."
     )

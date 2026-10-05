@@ -60,7 +60,7 @@ def staged_trigger_ids(stage: str, home: Path | None = None) -> list[str]:
 
 
 def deploy_triggers(stage: str, home: Path | None = None) -> dict[str, list[str]]:
-    """Make a pack's staged triggers visible in Automations — DISABLED (§3.1, AP-7).
+    """Make a pack's staged triggers visible in Automations — DISABLED.
 
     The trigger sibling of :func:`packs.roster.deploy_roster`. Reads every
     ``packs/staged/<stage>/triggers/*.json`` the import staged, and for each one that still

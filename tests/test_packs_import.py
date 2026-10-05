@@ -113,7 +113,7 @@ def importer_home(tmp_path, monkeypatch):
     return home
 
 
-# ── pack surgery helpers (for kinds AP-1 doesn't export: triggers, config_subset) ──
+# ── pack surgery helpers (for kinds build_pack doesn't export: triggers, config_subset) ──
 
 
 def _read_pack(path: Path) -> tuple[dict, dict[str, bytes]]:
@@ -178,7 +178,7 @@ def _tree_hash(home: Path) -> str:
     return h.hexdigest()
 
 
-# ── acceptance criteria 1: inspect is a pure dry-run (NO writes) ────────────────
+# ── inspect is a pure dry-run (NO writes) ─────────────────────────────────────
 
 
 def test_inspect_is_pure_dry_run(built_pack, importer_home):
@@ -202,7 +202,7 @@ def test_inspect_is_pure_dry_run(built_pack, importer_home):
     assert {c["kind"] for c in payload["components"]} >= {"skill", "agent", "template", "prompt"}
 
 
-# ── acceptance criteria 2 + 5: leaves-first commit; skills via install_guarded → lock ─────
+# ── leaves-first commit; skills via install_guarded → lock ────────────────────
 
 
 def test_import_commits_leaves_first_with_skill_lock(built_pack, importer_home):
@@ -214,7 +214,7 @@ def test_import_commits_leaves_first_with_skill_lock(built_pack, importer_home):
     assert (importer_home / "agents" / "cfo" / "agent.json").is_file()
     assert (importer_home / "workflows" / "defs" / "cfo-monthly" / "workflow.json").is_file()
     assert (importer_home / "prompts" / "cfo-intro.yaml").is_file()
-    # criterion 5: the skill committed THROUGH install_guarded → a .pclaw-lock.json baseline.
+    # The skill committed THROUGH install_guarded → a .pclaw-lock.json baseline.
     lock = importer_home / "skills" / "cfo-report" / ".pclaw-lock.json"
     assert lock.is_file()
     recorded = json.loads(lock.read_text())
@@ -223,7 +223,7 @@ def test_import_commits_leaves_first_with_skill_lock(built_pack, importer_home):
     assert not (importer_home / "packs" / ".installing").exists()
 
 
-# ── acceptance criteria 3: DANGEROUS refused regardless of consent; WARNING consent-gated ─
+# ── DANGEROUS refused regardless of consent; WARNING consent-gated ────────────
 
 
 @pytest.fixture
@@ -233,7 +233,7 @@ def dangerous_pack(tmp_path, monkeypatch):
     monkeypatch.setenv("PERSONALCLAW_HOME", str(author))
     sk = author / "skills" / "evil"
     sk.mkdir(parents=True)
-    # A bidi override in SKILL.md — DANGEROUS on the frontmatter surface. Ships through AP-1
+    # A bidi override in SKILL.md — DANGEROUS on the frontmatter surface. Ships through the export
     # (not a credential), refused on import.
     (sk / "SKILL.md").write_text(
         f"---\nname: evil\ndescription: hides steering {_BIDI}text\n---\n# Evil\n"
@@ -290,7 +290,7 @@ def test_warning_skill_needs_consent(warning_pack, importer_home):
     assert (importer_home / "skills" / "risky" / "SKILL.md").is_file()
 
 
-# ── acceptance criteria 4: fault mid-import unwinds to byte-identical pre-import state ─────
+# ── fault mid-import unwinds to byte-identical pre-import state ───────────────
 
 
 def test_fault_mid_import_rolls_back_byte_identical(built_pack, importer_home, monkeypatch):
@@ -323,7 +323,7 @@ def test_fault_mid_import_rolls_back_byte_identical(built_pack, importer_home, m
     assert not (importer_home / "packs").exists()
 
 
-# ── acceptance criteria 6: content_hash mismatch is refused (integrity recompute) ─────────
+# ── content_hash mismatch is refused (integrity recompute) ────────────────────
 
 
 def test_content_hash_mismatch_refused(built_pack, importer_home):
@@ -341,7 +341,7 @@ def test_content_hash_mismatch_refused(built_pack, importer_home):
     assert not (importer_home / "skills").exists()
 
 
-# ── acceptance criteria 6b: fresh-id rewriting on PARSED objects updates a referrer ───────
+# ── fresh-id rewriting on PARSED objects updates a referrer ───────────────────
 
 
 def test_fresh_id_rewrite_updates_referencing_template(built_pack, importer_home):
@@ -367,11 +367,11 @@ def test_fresh_id_rewrite_updates_referencing_template(built_pack, importer_home
     assert stage["config"]["agent"] == "cfo-imported-1"
 
 
-# ── acceptance criteria 7: triggers land DISABLED + staged; config_subset staged ──────────
+# ── triggers land DISABLED + staged; config_subset staged ─────────────────────
 
 
 def test_trigger_lands_disabled_and_staged(built_pack, importer_home):
-    # AP-1 doesn't export triggers, so graft one on (honestly — content_hash re-derived).
+    # build_pack doesn't export triggers, so graft one on (honestly — content_hash re-derived).
     _add_member(
         built_pack,
         "trigger",
@@ -418,7 +418,7 @@ def test_config_subset_only_editable_keys_staged(built_pack, importer_home):
     assert "not.an.editable.key" not in body  # a non-editable key is dropped, never applied
 
 
-# ── acceptance criteria (lint): an unresolved reference blocks import ───────────
+# ── lint: an unresolved reference blocks import ───────────────────────────────
 
 
 def test_unresolved_reference_refused(built_pack, importer_home):

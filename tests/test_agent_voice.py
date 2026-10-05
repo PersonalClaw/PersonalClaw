@@ -1,4 +1,4 @@
-"""Agent soul/voice layer (#42) — separate persona, injected high-priority."""
+"""Agent soul/voice layer — separate persona, injected high-priority."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def test_compose_empty_prompt_with_voice():
     assert "VOICE" in out and "Witty." in out  # the voice header + the persona
 
 
-# ── marketplace AgentDefinition round-trip (S6 loader-allowlist gotcha) ──
+# ── marketplace AgentDefinition round-trip (loader-allowlist gotcha) ──
 
 
 def test_marketplace_voice_round_trips():

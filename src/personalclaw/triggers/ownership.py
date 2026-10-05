@@ -1,10 +1,10 @@
 """Who may ARM a trigger — the owner filter.
 
 Once a ``trigger`` provider can contribute rows (see :mod:`personalclaw.triggers.provider`), the
-store is no longer guaranteed to hold only rows this machine's owner wrote. §2.2 states the rule
-without wiggle room: the harness **"arms and fires ONLY the owner's triggers — the filter is
+store is no longer guaranteed to hold only rows this machine's owner wrote. The rule has no
+wiggle room: the harness **arms and fires ONLY the owner's triggers — the filter is
 ``author == owner username`` at arm time, enforced structurally (a foreign row cannot tick, not
-'is skipped')"**.
+'is skipped')**.
 
 **Structural means the foreign row is never in the candidate set**, not that a gate declines it
 later. :func:`personalclaw.triggers.provider.armable` is the one row source every arm/fire

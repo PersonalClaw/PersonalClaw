@@ -46,11 +46,11 @@ def _openpyxl(data: bytes):
     return load_workbook(io.BytesIO(data))
 
 
-# ── clause 1: a formula stays a formula ──────────────────────────────────────
+# ── a formula stays a formula ────────────────────────────────────────────────
 
 
 def test_a_formula_stays_a_formula_through_the_round_trip() -> None:
-    """The change's headline clause. ``=SUM(A1:A2)`` must come back as a FORMULA — in the
+    """The headline case. ``=SUM(A1:A2)`` must come back as a FORMULA — in the
     ``formula`` field, not as a string sitting in ``value``."""
     model = SheetModel(
         sheets=[
@@ -117,7 +117,7 @@ def test_from_rows_leaves_a_formula_looking_value_a_literal() -> None:
     assert model.sheets[0].cells[0][0].value == "=SUM(A1)"
 
 
-# ── clause 2: a number format survives download/read-back ────────────────────
+# ── a number format survives download/read-back ──────────────────────────────
 
 
 @pytest.mark.parametrize("code", ["0.0%", "#,##0.00", '#,##0.00" kg"', "0.00E+00"])
@@ -156,7 +156,7 @@ def test_an_unformatted_cell_reads_back_unformatted() -> None:
     assert back.number_format == ""
 
 
-# ── clause 3: a cell edit survives download/read-back ────────────────────────
+# ── a cell edit survives download/read-back ──────────────────────────────────
 
 
 def test_a_cell_edit_survives_download_and_read_back() -> None:
@@ -196,7 +196,7 @@ def test_a_cell_edit_survives_download_and_read_back() -> None:
 
 def test_an_edited_formula_is_still_a_formula_after_the_save() -> None:
     """Editing a formula through the codec must not degrade it into text — the grid edits
-    formulas AS formulas, which is the clause's whole point."""
+    formulas AS formulas, which is the whole point."""
     loaded, _ = parse_xlsx(render_xlsx(_one(SheetCell(formula="=1+1"))))
 
     payload = sheet_to_dict(loaded)
@@ -512,7 +512,7 @@ def test_a_kind_with_no_codec_resolves_to_none() -> None:
     ``pdf`` is the discriminating case rather than a made-up kind: it SHIPS A WRITER
     (`writers/pdf_writer.py`), so a table that answered "editable" from the writer
     registry would say yes here. There is no pdf parser and no pdf model, so the route
-    must refuse it. (``pptx`` was this test's example until `DFE-8` gave it a parser.)"""
+    must refuse it. (``pptx`` was this test's example until it gained a parser.)"""
     assert get_codec("pdf") is None
     assert get_codec("png") is None
     assert "pdf" not in MODEL_KINDS

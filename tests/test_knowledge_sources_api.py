@@ -1,13 +1,13 @@
 """The HTTP surface behind the Sources UI.
 
-WS-2..WS-5 shipped the store, the poll engine and three providers, and
+The store, the poll engine and three providers shipped first, and
 ``store.create_source`` had **zero non-test callers**: no route, no CLI, no UI. These tests
-cover the endpoints that end that, and each one is written against the clause of the change's
-acceptance criteria it belongs to rather than against "the request returned 200":
+cover the endpoints that end that, and each one is written against the requirement it
+belongs to rather than against "the request returned 200":
 
 * **lists all source kinds with health status** — the catalog is asserted to report
-  ``previewable`` HONESTLY (true for the web kind, false for feed and dir), because WS-3
-  deliberately kept ``preview`` off the ABC and a uniform-looking preview would be a lie
+  ``previewable`` HONESTLY (true for the web kind, false for feed and dir), because
+  ``preview`` was deliberately kept off the ABC and a uniform-looking preview would be a lie
   about two of the three providers;
 * **drives the paste-URL preview/tune/save create flow** — a preview returns items AND the
   detector that won, save is refused by the provider's own ``validate_spec`` (not by a
@@ -18,7 +18,7 @@ acceptance criteria it belongs to rather than against "the request returned 200"
   rendered from anything else would be decoration;
 * **offers listing-page/render-tier remediation affordances** — the two are asserted to stay
   DISTINCT in both kind and guidance text, and to carry OPPOSITE actions. Collapsing them is
-  the mutation this file exists to red: WS-3 measured the discrimination precisely because
+  the mutation this file exists to red: the discrimination was measured precisely because
   the fixes are opposite.
 
 Plus the FE/BE parity rail: the TypeScript status map and kind-form switch are asserted
@@ -495,7 +495,7 @@ def test_every_declared_default_item_type_survives_the_guard(store, registered, 
     """A guard that rejected a provider's OWN default would break source creation.
 
     Every `default_item_type` in `_kind_descriptor` is asserted admissible — including the
-    generic descriptor an app-contributed provider (WS-8 connector pack) falls through to,
+    generic descriptor an app-contributed provider (a connector pack) falls through to,
     which no enrolled provider exercises and which would otherwise be the one default that
     could rot into a 400 nobody could act on.
     """
@@ -669,7 +669,7 @@ def test_an_already_allowed_render_tier_is_advice_not_a_button(store, registered
 def test_a_failing_source_still_says_when_it_will_be_retried(store, registered):
     """`record_poll`'s `next_poll_at` was written on the
     SUCCESS path only, so the two rows carrying a remediation were exactly the two with no
-    "next check" to show — the same shape WS-3 fixed for `last_escalations`."""
+    "next check" to show — the same shape already fixed for `last_escalations`."""
     from personalclaw.knowledge.source_engine import SourceEngine
 
     _, created = _create(store, name="SPA", provider="watched-page", spec={"url": PAGE_URL})

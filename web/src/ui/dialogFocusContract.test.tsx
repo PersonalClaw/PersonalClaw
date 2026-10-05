@@ -84,7 +84,7 @@ describe('the rail: aria-modal implies a focus trap', () => {
   })
 
   it('the rail is not vacuously green — it finds the aria-modal surfaces', () => {
-    // Two cycles ago a rail matched NOTHING and reported a clean sweep, because
+    // An earlier rail matched NOTHING and reported a clean sweep, because
     // `expect(offenders).toEqual([])` cannot tell "nothing is broken" from "my matcher is broken".
     const modal = files.filter((f) => /aria-modal="true"/.test(f.src)).map((f) => f.rel).sort()
     expect(modal).toEqual([

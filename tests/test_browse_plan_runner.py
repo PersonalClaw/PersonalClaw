@@ -1,4 +1,4 @@
-"""Tests for the production content tick runner (BROWSE-AUTOMATION §(d)/A3)."""
+"""Tests for the production content tick runner."""
 
 from __future__ import annotations
 

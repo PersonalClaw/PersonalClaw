@@ -46,8 +46,8 @@ logger = logging.getLogger(__name__)
 #: on its third run would train authors to distrust the detector.
 NODDING_MIN_RUNS = 8
 
-#: Consecutive identical scores that mark a loop as stuck. Five is the plan's proven
-#: value: three still happens on genuinely plateaued-then-improving work.
+#: Consecutive identical scores that mark a loop as stuck. Five, because
+#: three still happens on genuinely plateaued-then-improving work.
 STUCK_IDENTICAL_SCORES = 5
 
 #: Consecutive outright failures before auto-pause.
@@ -98,7 +98,7 @@ class VerdictRecord:
     prompt_version: str = ""
     created_at: str = ""
     #: The per-sample verdicts behind the median aggregation, as `engine.dispatch_gate`
-    #: writes them into `judge_evidence.samples` (LEARN-R10d).
+    #: writes them into `judge_evidence.samples`.
     #:
     #: This — not `overall` — is the judge's PREDICTED CONFIDENCE, because it is the
     #: thing the write path actually records. Nothing anywhere writes `overall`
@@ -276,11 +276,11 @@ def assess_all_gates(
 def may_become_default(
     records: list[VerdictRecord], *, template: str, min_runs: int = NODDING_MIN_RUNS
 ) -> tuple[bool, str]:
-    """R6a: may this template become its kind's default replacement?
+    """May this template become its kind's default replacement?
 
     A template is blocked when ANY of its judge gates is a nodding loop — a 100% pass rate
-    over ≥ `min_runs` real verdicts is statistical proof of a check that does not check
-    (LOOPS-EVOLUTION R6 criterion 1). Returns `(allowed, reason)`; the reason is empty when
+    over ≥ `min_runs` real verdicts is statistical proof of a check that does not check.
+    Returns `(allowed, reason)`; the reason is empty when
     allowed, else names the offending gate so it can surface as the template's warning badge.
     A template with too few verdicts to judge is NOT blocked — the detector reports UNPROVEN
     rather than punishing a template for being new.
@@ -417,7 +417,7 @@ def divergence_exemplars(
     return out
 
 
-#: Predicted-confidence buckets for the MAE report (LEARN-R10d). Four is enough to see
+#: Predicted-confidence buckets for the MAE report. Four is enough to see
 #: whether the judge is miscalibrated at the CONFIDENT end — which is the interesting
 #: question, because a hedged wrong answer costs a cycle and a confident one ships.
 MAE_BUCKETS: tuple[tuple[float, float], ...] = ((0.0, 0.25), (0.25, 0.5), (0.5, 0.75), (0.75, 1.0))
@@ -430,7 +430,7 @@ def _bucket_label(low: float, high: float) -> str:
 def mae_buckets(
     verdicts: list[VerdictRecord], divergences: list[DivergenceRecord]
 ) -> dict[str, Any]:
-    """(predicted confidence, ground-truth outcome) error per bucket — LEARN-R10d.
+    """(predicted confidence, ground-truth outcome) error per bucket.
 
     **Predicted** is sample agreement (see `VerdictRecord.agreement`): a unanimous panel
     predicts 1.0, a 2-1 split predicts 0.67. Expressed as P(pass) so a confident REJECT
@@ -440,7 +440,7 @@ def mae_buckets(
     correct — treating silence as agreement would compute an MAE that falls as the user
     stops paying attention, which is the opposite of a calibration signal. So the report
     carries `labelled`/`unlabelled` and every bucket's `mae` is None until a real label
-    lands in it. R10d's own instruction is to report now and correct only once volume
+    lands in it. The rule is to report now and correct only once volume
     justifies; a fabricated 0.0 would look like justification.
     """
     labels: dict[tuple[str, str], bool] = {}

@@ -13,7 +13,7 @@ import { BUSY_REASON } from '../../ui/unavailable'
  *
  *  The question this answers with numbers: does the graph arm earn its complexity, does
  *  vector beat keyword on THIS user's corpus, and what would a reranker have to beat. The
- *  two stores are rendered as two tables because §5.1 runs them separately and never shares
+ *  two stores are rendered as two tables because they are benchmarked separately and never share
  *  a corpus — a merged table would be the one shape that boundary forbids.
  *
  *  **Nothing is re-decided here.** Each arm's marginal contribution, its verdict and the
@@ -182,8 +182,8 @@ function StoreReport({ store, report, k }: { store: string; report: RetrievalSto
 }
 
 /** Which labels produced these numbers. A P@5 with no visible ground-truth provenance is a
- *  number without a claim attached — and this harness mines a SUBSTITUTE for one of §5.2's
- *  named sources, so the mix is part of reading the score. An absent census (a run written
+ *  number without a claim attached — and this harness mines a SUBSTITUTE for one of the three
+ *  ground-truth sources, so the mix is part of reading the score. An absent census (a run written
  *  before it existed) says so, and never renders as "0 queries from every source". */
 function Provenance({ sources }: { sources?: Record<string, number> }) {
   if (!sources) {

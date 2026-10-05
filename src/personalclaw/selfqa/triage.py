@@ -8,7 +8,7 @@ whether the companion spends a scenario on it:
 - ``none`` — no runtime surface at all (docs, CI config). Ledger-only skip.
 
 The classification is **deterministic over the commit's changed paths**, which is a deliberate
-narrowing of the plan's `infer` node. Two reasons. A path classifier costs nothing per commit,
+narrowing of an LLM `infer` node. Two reasons. A path classifier costs nothing per commit,
 so the watcher can run on a tight interval without a token budget. And it is falsifiable: a
 test can commit one file and assert the exact verdict and rationale, where a prompt can only be
 asserted as "some string came back". Judgment is still needed to decide *what to do* with an

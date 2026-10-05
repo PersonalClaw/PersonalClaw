@@ -2,8 +2,8 @@
 fixed intent → sub-goals → quorum → execution_plan step set, each step's brief, and the
 artifact JSON parser. No store/orchestration deps (those live in loop.plan_walkthrough);
 just the deterministic, unit-testable pieces the goal Walkthrough delegate wraps. Lives
-in the unified loop package so the goal kind doesn't reach into legacy loops/ (cutover
-Slice 2e). Legacy loops.plan_walkthrough re-exports these until it's deleted."""
+in the unified loop package so the goal kind doesn't reach into legacy loops/.
+Legacy loops.plan_walkthrough re-exports these until it's deleted."""
 
 from __future__ import annotations
 

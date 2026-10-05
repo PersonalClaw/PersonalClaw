@@ -364,13 +364,13 @@ async def judge_verdict(prompt: str, *, loop_id: str) -> str:
     """One-shot judge over the JUDGE axis (the robust bridge path, not the
     config-only one_shot helper) — ``loops.judge_use_case``, 'reasoning' by default,
     which is deliberately NOT the ``loops`` axis the graded worker rides
-    (MODEL-USE-CASES-V2; falls back to chat when unbound). The judge has NO write
+    (falls back to chat when unbound). The judge has NO write
     tools — any tool call it attempts is rejected. Returns the collected text (or ''
     on failure). Used by the code stage gate + any kind needing a conservative LLM
     verdict.
 
     The judge axis is NON-INTERACTIVE, so a >1-entry chain bound to it gets the
-    call-failure advance (MODEL-USE-CASES-V2 T2.4) through the ONE shared walk in
+    call-failure advance through the ONE shared walk in
     ``llm_helpers``: a provider failure from entry N rebuilds from N+1 instead of
     returning no verdict at all. That matters more here than almost anywhere else — an
     unrendered verdict is a can't-judge, and a can't-judge is what

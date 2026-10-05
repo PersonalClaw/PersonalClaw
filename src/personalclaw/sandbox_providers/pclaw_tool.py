@@ -1,4 +1,4 @@
-"""The ``pclaw-tool`` shim: how an agent inside a sandbox calls a host tool (§5.2).
+"""The ``pclaw-tool`` shim: how an agent inside a sandbox calls a host tool.
 
 A single static script, copied into the sandbox by the sandbox handle, that the agent invokes
 like an ordinary CLI::
@@ -159,7 +159,7 @@ def shim_env(
 
     Note what is absent: no token, no URL, no host, no port. A sandbox launched with exactly this
     environment plus the two inherited fds can call host tools and still contains no credential
-    material, which is the property success criterion 7(b) asks about.
+    material, which is the property the shim exists for.
     """
     env = {
         ENV_REQUEST_FD: str(request_fd),

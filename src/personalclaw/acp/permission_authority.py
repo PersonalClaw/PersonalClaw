@@ -4,7 +4,7 @@ An ACP CLI decides *for itself* which of its tools ask the client for permission
 Everything it does not ask about runs before the host ever sees a decision point,
 so the host's deny-list, task-mode gate and blocking PreToolUse hooks — all of
 which hang off ``session/request_permission`` — simply never run for it. That is
-gap 2, the safety hole, and `G27` measured it: on kiro, seven of thirteen tool
+the safety hole, and it was measured: on kiro, seven of thirteen tool
 calls in one turn (its native ``todo_list``) executed with no permission request
 at all, each labelled ``risk: "destructive"`` by the host, in the same turns where
 the read, the write and the ``rm`` each raised a card.
@@ -23,7 +23,7 @@ This module owns the three host-side answers:
    auto-approve pattern is decided on that command as well, never on the title.
 3. :data:`NOT_GATEABLE` — the residual set the host provably cannot gate, per
    provider, each entry carrying the observation that proved it. The honest half
-   of §2.2: a gate that silently fails to cover a tool is worse than a documented
+   of host authority: a gate that silently fails to cover a tool is worse than a documented
    hole, because the card's absence reads as "nothing dangerous happened". Every
    provider is enumerated — including the ones whose residual set measured EMPTY,
    so "no entry" can never be confused with "not measured".
@@ -294,7 +294,7 @@ def command_probe(title: str, command: str) -> str:
     """The extra name the deny-list must be evaluated against, or ``""``.
 
     The permission frame's ``title`` is a truncated human string — ``"unknown"``
-    when the adapter sends no title at all (`G18`) — while the real shell command
+    when the adapter sends no title at all — while the real shell command
     lives in the cached ``tool_call`` input. Returns the command in the
     ``"Running: "`` form the hook chain reads as a command (so ``denied_command``,
     ``is_denied`` and ``is_sensitive_bash_command`` see it), or ``""`` when there is
@@ -318,7 +318,8 @@ class ResidualState(str, Enum):
     Two members, both entry-scoped: the third registry state ("measured, residual
     set empty") is a statement about a PROVIDER, carried by ``entries=()``, so it
     would be nonsense as an entry's own state. The values are prose because they
-    are read by operators: §2.7's parity doc renders this field verbatim.
+    are read by operators: the parity doc (``docs/agents/acp-parity.md``) renders this
+    field verbatim.
     """
 
     ACCEPTED = "measured, accepted — a documented limitation; the host labels it and stays quiet"
@@ -390,13 +391,13 @@ class ProviderCoverage:
         return tuple(e for e in self.entries if not e.accepted)
 
 
-#: Per-provider residual not-gateable set (SC #3). Keyed by the normalized
+#: Per-provider residual not-gateable set. Keyed by the normalized
 #: provider key (see :func:`normalize_provider`).
 NOT_GATEABLE: dict[str, ProviderCoverage] = {
     "kiro-cli": ProviderCoverage(
         provider="kiro-cli",
         measurement=(
-            "AAP-3 sweep (K13, K15) + AAP-5 live re-drive 2026-08-18: one turn, "
+            "Earlier sweep + live re-drive 2026-08-18: one turn, "
             "6 tool calls, 1 gated, 5 ungated (4x todo_list + 1 file read)"
         ),
         entries=(
@@ -408,7 +409,7 @@ NOT_GATEABLE: dict[str, ProviderCoverage] = {
                     "gate — deny-list, task-mode, PreToolUse — can run for it."
                 ),
                 observation=(
-                    "G27: seven of thirteen tool calls in one turn ('Creating task "
+                    "Seven of thirteen tool calls in one turn ('Creating task "
                     "list: …', 'Completing #1/#2/#3') executed with no permission "
                     "request, each labelled risk='destructive' by the host, in the "
                     "same turns where the read, the write and the rm each raised a card."
@@ -427,7 +428,7 @@ NOT_GATEABLE: dict[str, ProviderCoverage] = {
                     "is never offered for a decision."
                 ),
                 observation=(
-                    "AAP-5 live re-drive 2026-08-18 against real kiro-cli: in one "
+                    "Live re-drive 2026-08-18 against real kiro-cli: in one "
                     "turn 'Creating todo_probe.txt' raised a card while "
                     "'Reading todo_probe.txt:1-10' (kind='read') did not — 6 tool "
                     "calls, 1 gated, 5 ungated. kiro reports it with kind 'read', so "
@@ -444,9 +445,9 @@ NOT_GATEABLE: dict[str, ProviderCoverage] = {
     "claude-code": ProviderCoverage(
         provider="claude-code",
         measurement=(
-            "AAP-5 Phase-1 SEL re-read (O96): 7 persisted rows with "
+            "SEL re-read: 7 persisted rows with "
             "outcome='ungated', provider='claude-code', across 4 sessions and 2 "
-            "tool titles. RETRACTS the earlier AAP-1 zero-residual claim, which "
+            "tool titles. RETRACTS the earlier zero-residual claim, which "
             "runtime disproved: chat_runner records "
             "'ungated_declared' whenever not_gateable_entry() matched, so a plain "
             "'ungated' row is proof the registry held nothing for that title."
@@ -463,7 +464,7 @@ NOT_GATEABLE: dict[str, ProviderCoverage] = {
                     "we are willing to go quiet about."
                 ),
                 observation=(
-                    "O97: the execute-kind share of O96's 7 'ungated' rows carries "
+                    "The execute-kind share of the SEL re-read's 7 'ungated' rows carries "
                     "title='Terminal' and reason='no session/request_permission for "
                     "this tool_call'."
                 ),
@@ -478,8 +479,8 @@ NOT_GATEABLE: dict[str, ProviderCoverage] = {
                     "blessed it, and an unblessed hole stays loud."
                 ),
                 observation=(
-                    "O98: 'Read File' is the second of the two titles in O96's 7-row "
-                    "'ungated' set for provider='claude-code'."
+                    "'Read File' is the second of the two titles in the SEL re-read's "
+                    "7-row 'ungated' set for provider='claude-code'."
                 ),
             ),
         ),
@@ -487,9 +488,9 @@ NOT_GATEABLE: dict[str, ProviderCoverage] = {
     "codex": ProviderCoverage(
         provider="codex",
         measurement=(
-            "AAP-5 Phase-1 live drive (O99-O102): 4 plain 'ungated' rows on "
+            "Live drive: 4 plain 'ungated' rows on "
             "provider='codex' — a read, an in-workspace write, an out-of-workspace "
-            "write and a network call. RETRACTS the earlier AAP-2 zero-residual claim."
+            "write and a network call. RETRACTS the earlier zero-residual claim."
         ),
         entries=(
             NotGateable(
@@ -500,18 +501,18 @@ NOT_GATEABLE: dict[str, ProviderCoverage] = {
                     "its whole native tool surface — reads, writes, shell, network — "
                     "can execute before the host has a decision point. NOT accepted: "
                     "an out-of-workspace write that completed with no card is the "
-                    "exact shape §2.2 exists to make loud."
+                    "exact shape host authority exists to make loud."
                 ),
                 observation=(
-                    "O99-O101: four plain 'ungated' rows in one AAP-5 Phase-1 drive — "
+                    "Four plain 'ungated' rows in one live drive — "
                     "a read, an in-workspace write, an out-of-workspace write "
-                    "('printf … > /private/tmp/aap2b-outside-probe.txt', which "
+                    "('printf … > /private/tmp/outside-probe.txt', which "
                     "EXECUTED) and a network call ('curl https://example.com'). "
-                    "Vacuity floor for the same drive (O102): codex DOES escalate on "
+                    "Vacuity floor for the same drive: codex DOES escalate on "
                     "retry, and 'git push' was escalated and correctly deny-listed — "
                     "so 'escalates almost nothing' measures codex, not a dead harness."
                 ),
-                # Deliberately empty: Phase 1 recorded codex's ACTIONS, not the
+                # Deliberately empty: that drive recorded codex's ACTIONS, not the
                 # tool_call titles it sent, so there is no measured string to match on.
                 # This entry is therefore documentation-shaped — it makes
                 # gated_universally False and enumerates the hole with its evidence,

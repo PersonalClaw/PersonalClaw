@@ -1,7 +1,7 @@
 """The run-side PLURAL tasks projection.
 
-The ruling's operative sentence: "a run that projects to tasks carries the PLURAL shape,
-matching the live field." Seam 4c did the destructive half (the inert singular
+The rule: a run that projects to tasks carries the PLURAL shape,
+matching the live field. The destructive half is done (the inert singular
 `WorkflowRun.task_list_id` is gone); this rails the constructive half —
 `materialize.task_list_ids_for_run`, the DERIVED `{node_id: task_list_id}` map that gives the
 loop row's `task_list_ids` column a destination when the row retires.
@@ -9,7 +9,7 @@ loop row's `task_list_ids` column a destination when the row retires.
 **Why derived and not stored.** Both halves of every entry already persist on the Task rows
 themselves: the `workflow_binding` carries `(run_id, node_id)` and `Task.task_list_id` is the
 structural parent. A stored run-side column would be a second copy of the truth — the exact
-shape whose singular form seam 4c deleted so it could never be mis-filled.
+shape whose singular form was deleted so it could never be mis-filled.
 
 **Railed in both directions, plus the measured reality.** The projection returns the plural
 mapping from REAL persisted bindings (written and re-read through the actual native store, not
@@ -62,7 +62,7 @@ def _bound(node_id: str, list_id: str, *, run_id: str = "run-a", managed: bool =
 
 @pytest.mark.asyncio
 async def test_the_plural_mapping_derives_from_persisted_bindings(tmp_path):
-    """The whole ruling, end to end: tasks written through the real store, re-read by a FRESH
+    """The whole rule, end to end: tasks written through the real store, re-read by a FRESH
     provider (so every fact crossed the JSON files), project to the plural `{node_id: list_id}`
     map — and a second run's task does not leak into the first run's answer, because the run id
     filter is the projection's whole reason to exist.
@@ -153,7 +153,7 @@ def test_a_managed_binding_wins_over_produced_provenance() -> None:
 
 
 def test_a_run_with_no_bindings_projects_empty() -> None:
-    """The other direction of the ruling. No tasks, no iterable at all, only standalone tasks,
+    """The other direction of the rule. No tasks, no iterable at all, only standalone tasks,
     or only ANOTHER run's tasks — every one is `{}`, never a partial or invented mapping. A
     projection that manufactured entries would be a board pointing at lists that hold nothing
     of the run's.
@@ -181,7 +181,7 @@ def test_an_empty_run_id_never_harvests_malformed_bindings() -> None:
 
 def test_the_field_map_row_names_this_projection() -> None:
     """`loop_run_map`'s `task_list_ids` row must stay PROJECTION and must name the shipped
-    function — the map is the retirement plan's source of truth, and a row pointing at a
+    function — the map is the source of truth for the loop row's retirement, and a row pointing at a
     destination that was renamed or deleted is a migration instruction that sends the reader
     to nothing. Both drift directions: the note names the symbol, and the symbol must exist.
     """

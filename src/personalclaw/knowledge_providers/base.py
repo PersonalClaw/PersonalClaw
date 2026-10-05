@@ -1,11 +1,11 @@
 """Abstract base for Knowledge providers.
 
-WATCHED-SOURCES §1.1 ("one contract, four shapes"): a knowledge provider is
+One contract, four shapes: a knowledge provider is
 either a plain :class:`KnowledgeProvider` (search/get over an owned corpus) or a
 poll-capable :class:`KnowledgeSourceProvider` that a scheduler drives to pull new
 items from an external feed. The poll shape is defined here (the contract owner)
-ahead of the engine that consumes it (the ``SourceEngine``) — the roadmap's
-contract-owner-before-consumer rule.
+ahead of the engine that consumes it (the ``SourceEngine``) — contract owner
+before consumer.
 """
 
 from abc import ABC, abstractmethod
@@ -90,18 +90,18 @@ SOURCE_HEALTH = frozenset(
 
 @dataclass
 class SourceItem:
-    """One item pulled from an external feed during a poll (WATCHED-SOURCES §1.1).
+    """One item pulled from an external feed during a poll.
 
     ``guid`` is the feed-stable de-duplication key (RSS guid, HN object id, commit
     sha, …) — the engine keys ``UNIQUE(source_id, guid)`` on it so the same story
     seen twice is one item. ``url``/``published_at`` are optional provenance the
     engine records; ``also_seen_in`` lets a provider declare cross-source
-    attribution (SC#3, e.g. the same story via HN and RSS) without the engine
+    attribution (e.g. the same story via HN and RSS) without the engine
     re-deriving it.
 
-    ``change`` is the sighting's KIND, from :data:`SOURCE_CHANGES` (WS-5). An
+    ``change`` is the sighting's KIND, from :data:`SOURCE_CHANGES`. An
     append-only feed only ever emits :data:`CHANGE_CREATED` (the default, so the
-    §1.1 contract is unchanged); a MUTABLE corpus — a watched local directory — also
+    poll contract is unchanged); a MUTABLE corpus — a watched local directory — also
     emits :data:`CHANGE_MODIFIED` for an edited item and :data:`CHANGE_DELETED` for
     one that vanished. The provider observes the change; the ENGINE owns what
     persisting it means, so no provider can decide to hard-delete a user's item.
@@ -119,7 +119,7 @@ class SourceItem:
 
 @dataclass
 class SourcePollResult:
-    """The outcome of one :meth:`KnowledgeSourceProvider.poll` (WATCHED-SOURCES §1.1).
+    """The outcome of one :meth:`KnowledgeSourceProvider.poll`.
 
     ``items`` are the (possibly-new) items pulled this cycle; the engine dedups
     them by ``(source_id, guid)`` — a provider need not track what it already
@@ -129,7 +129,7 @@ class SourcePollResult:
     soft failure the engine can surface without treating the source as dead.
 
     ``escalations`` are the human-readable markers of any tier a poll had to climb — or was
-    refused. §2.3 requires an escalation to be RECORDED, because an escalation nobody can
+    refused. An escalation must be RECORDED, because an escalation nobody can
     see is indistinguishable from a cheap poll, and the render tier is the expensive one.
     They are recorded on the poll record whether the poll succeeded or not.
 
@@ -149,7 +149,7 @@ class SourcePollResult:
 
 @dataclass
 class SourcePreview:
-    """A dry run of a source's extraction, for the paste-URL create flow (§2.4).
+    """A dry run of a source's extraction, for the paste-URL create flow.
 
     Preview answers the only question that matters before saving a source: *would this spec
     produce the items I expect?* So it returns the items it WOULD have written plus which
@@ -160,7 +160,7 @@ class SourcePreview:
     request budget, because a preview is a real fetch at somebody else's server and
     pretending otherwise is how a tuning loop becomes a hammer.
 
-    ``guidance`` is the remediation to show when ``items`` is empty: §2.1's
+    ``guidance`` is the remediation to show when ``items`` is empty: the
     pick-a-listing-page advice for a page that rendered fine and simply is not a listing, or
     the render-tier advice for a JS shell. ``error`` is a hard failure (an egress denial, an
     invalid spec) as distinct from an empty extraction, which is a tuning problem.
@@ -199,7 +199,7 @@ class KnowledgeProvider(ABC):
         return None
 
     async def push(self, item: KnowledgeItem) -> KnowledgeItem | None:
-        """Send an owner-shared item OUT to this provider's corpus (MULTI-TENANCY-ENTITY TSE2-4).
+        """Send an owner-shared item OUT to this provider's corpus.
 
         The OUTBOUND counterpart of :meth:`ingest`, and deliberately its mirror image: ingest
         takes content the harness received and files it here; push takes an item the harness
@@ -239,10 +239,10 @@ ENGINE_POLL_KWARGS = ("spec", "policy", "max_items")
 
 
 class KnowledgeSourceProvider(KnowledgeProvider):
-    """A knowledge provider that a scheduler can POLL for new items (§1.1).
+    """A knowledge provider that a scheduler can POLL for new items.
 
     Adds the pull contract on top of the search/get corpus contract: the engine
-    (WS-2) arms a single loop over every poll-capable provider, calls
+    arms a single loop over every poll-capable provider, calls
     :meth:`poll` with the last persisted ``cursor``, dedups the returned items by
     ``(source_id, guid)``, and persists the new cursor. ``poll_interval_seconds``
     lets a provider advertise how often it wants to be polled (the engine clamps
@@ -250,7 +250,7 @@ class KnowledgeSourceProvider(KnowledgeProvider):
     plain :class:`KnowledgeProvider`; implementing this is what enrolls it in the
     polling loop.
 
-    **The per-source spec, and why the engine has to hand it over (AECO-2).** Every
+    **The per-source spec, and why the engine has to hand it over.** Every
     poll-capable provider in core is constructed with a
     :class:`~personalclaw.knowledge.store.KnowledgeStore` handle, so it reads its own
     source row — and with it the row's validated ``spec`` — for itself. An APP-bundled
@@ -307,7 +307,7 @@ def resolve_source_spec(
 ) -> tuple[dict[str, Any], str]:
     """One source's spec resolved over a provider's per-install defaults, fail-CLOSED.
 
-    The merge every multi-source provider needs and none should hand-roll (AECO-2): an app
+    The merge every multi-source provider needs and none should hand-roll: an app
     has per-install settings (the app's own ``settingsSchema``) AND, now, a per-source
     ``spec``, and the two have to compose the one way that makes a second source possible —
     the row wins where it says something, the install fills in the rest.

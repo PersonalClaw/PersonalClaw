@@ -55,7 +55,7 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
   const [refusal, setRefusal] = useState<OpenRefusal | null>(null)
   const limitReason = standing(refusal, tabs)?.limit ? refusal?.text : undefined
   const [restored, setRestored] = useState(false)
-  // P25: opt-in tmux-backed persistence — when on, terminal sessions survive a
+  // Opt-in tmux-backed persistence — when on, terminal sessions survive a
   // gateway restart (the shell lives in a detached tmux daemon, re-attached on
   // reconnect). null = still loading; the toggle is hidden until known.
   const [persist, setPersist] = useState<boolean | null>(null)
@@ -75,7 +75,7 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
   // answer that omits the key is UNAVAILABLE, which `persistAvailableFrom` owns — see
   // `lib/persistClaim`, which owns both this fact and every sentence derived from it.
   const [persistAvailable, setPersistAvailable] = useState<boolean | null>(null)
-  // EI-4 §1.3(3): the sandbox tiers a new session may open inside, and the current pick. The
+  // The sandbox tiers a new session may open inside, and the current pick. The
   // host ("none") is the default; a container/VM tier appears only when its provider app is
   // enabled, so the picker is hidden entirely when host is the only option (nothing to choose).
   const [providers, setProviders] = useState<SandboxProvider[]>([])
@@ -293,7 +293,7 @@ function TermTabChip({ tab, active, inSplit, onSelect, onClose, onRename }: {
     //       is optimising the scanner at the user's expense, so it was rejected.
     //
     // So the residual is named rather than chased: a closable tab is `nested-interactive` by
-    // construction unless its close control stops being a control. What this cycle DID fix is
+    // construction unless its close control stops being a control. What this change DID fix is
     // everything that kept the strip from being operable at all — see the tablist above.
     <div role="tab" aria-selected={on} tabIndex={on ? 0 : -1}
       onClick={onSelect} title={tab.cwd || tab.id}

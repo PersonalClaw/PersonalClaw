@@ -11,8 +11,8 @@
  *    indicator follows the RENDERER's report and nothing else, and that a toggled
  *    capture is bounded by the timeout.
  *  - NOT proven here: that macOS actually delivers the chord to us. `globalShortcut`
- *    is a stub below. A real key press on a real machine is V3's job and has not been
- *    performed — see the plan's execution log.
+ *    is a stub below. A real key press on a real machine is a manual check and has not been
+ *    performed.
  */
 
 const { test, describe } = require("node:test");
@@ -213,7 +213,7 @@ describe("the shell forwards the press and never opens the microphone", () => {
   test("a press does NOT move the indicator by itself", () => {
     // The indicator must describe the microphone, not our intent. If a press lit it,
     // a renderer that refused the capture (mic denied) would leave a lit indicator over
-    // a dead stream — the exact lie the clause exists to prevent.
+    // a dead stream — the exact lie this rule exists to prevent.
     const { ptt, indicator, shortcuts } = harness();
     ptt.bind("Alt+F13");
     shortcuts.fire("Alt+F13");
@@ -365,7 +365,7 @@ describe("system audio is refused honestly, not half-shipped", () => {
   test("no source file captures system audio", () => {
     for (const f of ["main.js", "capabilities.js", "pushToTalk.js", "preload.js"]) {
       const src = readFileSync(join(__dirname, "..", f), "utf8");
-      // The census that keeps T3.3 honest: the doc says mic-only, so there must be no
+      // The census that keeps the mic-only claim honest: the doc says mic-only, so there must be no
       // system-audio capture call anywhere for the doc to be wrong about.
       assert.ok(
         !/desktopCapturer|audioLoopback|systemAudio\s*[:=]\s*true/.test(src),

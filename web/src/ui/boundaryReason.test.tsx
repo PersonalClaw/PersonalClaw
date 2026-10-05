@@ -26,7 +26,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //     `aria-disabled` instead → `still: true, tabbable: true`.
 //
 // The canonical form is the one `Button.disabledReason` and `unavailableWhen()` already
-// implement (cycles 56-60): `aria-disabled` instead of the native attribute, so the control
+// implement: `aria-disabled` instead of the native attribute, so the control
 // keeps its tab stop and announces itself unavailable, with the reason on `title` and the click
 // refused in code. This rail extends that rule from validity gates to POSITION boundaries.
 //
@@ -36,7 +36,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // label already reads "No insights yet", and `aria-expanded` is dropped when `!hasMore`, so it
 // is not acting as a disclosure. A tab stop there would be a dead stop announcing a fact the
 // visible text already carries. Emptiness gates are out of this rail's population on purpose;
-// widening it to cover them would be a different ruling, not a stricter version of this one.
+// widening it to cover them would be a different rule, not a stricter version of this one.
 //
 // The two ICON-BUTTON primitives are a separate population, covered by its own rail at the
 // bottom of this file. `IconButton` and `SquareIconButton` map `disabled` to `aria-disabled`
@@ -119,7 +119,7 @@ const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !
 const BOUNDARY = /\b(?:atStart|atEnd)\b|\b(?:index|idx|i)\s*(?:===\s*0|<=\s*0)|===\s*(?:\w+\.)?(?:length|count|total)\s*-\s*1|\bparent\s*===\s*path\b/
 
 /** Complete opening tags, tracking {} depth so a `>` inside an attribute value cannot truncate
- *  the match. (The lesson from cycle 61: a regex that cannot parse half its inputs still prints
+ *  the match. (The lesson: a regex that cannot parse half its inputs still prints
  *  a confident distribution — so this asserts its own extraction rate below.) */
 function boundaryGated(): Array<{ file: string; line: number; tag: string; src: string }> {
   const out: Array<{ file: string; line: number; tag: string; src: string }> = []

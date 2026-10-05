@@ -45,8 +45,8 @@ What this REPLACED — a walk of the real home at session end comparing mtimes a
 session start — and why that could not do this job:
 
 * it could not say which test, or even which process, did it. It fired on ANY change in the
-  window: on 2026-09-25 it failed one lane's run for a ``session_search.db`` write made by
-  another lane's scratch script, with ~13 pytest runs sharing the machine;
+  window: on 2026-09-25 it failed one test run for a ``session_search.db`` write made by
+  another process's scratch script, with ~13 pytest runs sharing the machine;
 * it saw only what CHANGED, and the leaks this guard found on its first full run were READS:
   18,761 of the owner's ``apps/`` and ``config.json`` by app watchdog threads that outlived
   the tests which booted a gateway, and the owner's ``skills/``, ``hooks/`` and ``mcp.json``

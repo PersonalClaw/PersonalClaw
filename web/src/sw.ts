@@ -143,8 +143,8 @@ sw.addEventListener('fetch', (event) => {
 // for a blocked run is the one failure this feature exists to prevent.
 //
 // The notification is SILENT + vibrate. A service worker cannot play audio, so
-// the OS notification carries no sound; the per-kind VOICE (from plan-42's rules
-// field) is handed to an open client, which is the only thing that can play it.
+// the OS notification carries no sound; the per-kind VOICE (from the notification
+// rules) is handed to an open client, which is the only thing that can play it.
 
 sw.addEventListener('push', (event) => {
   let parsed: unknown = null

@@ -7,7 +7,7 @@ transport against, and a clause every existing channel happened to honour (fence
 non-owner content, throttle the edit stream) was nowhere written down as an obligation.
 
 ``assert_channel_contract`` is that written-down obligation, executable. Given a live
-provider instance it drives the clauses the plan's §C4 names:
+provider instance it drives these clauses:
 
 1. **identity + info** — ``name``/``display_name`` are non-empty strings and ``info()``
    projects them plus the capability dict.
@@ -39,9 +39,9 @@ provider instance it drives the clauses the plan's §C4 names:
    an approval gives it included, not only ``in_progress`` and ``complete``.
 9. **vendor-seam completeness (ADVISORY)** — the only clause that WARNS instead of
    failing: a provider whose owning ``app.json`` registers a ``channel`` provider but not
-   the companion seams gets a ``UserWarning`` naming the missing one (amendment 2026-07-26
-   rule 1). Two arms, reported SEPARATELY because they are two different facts and two
-   different pieces of work: a missing ``inbox`` message source, and — since ``CE-10`` — a
+   the companion seams gets a ``UserWarning`` naming the missing one. Two arms, reported
+   SEPARATELY because they are two different facts and two different pieces of work:
+   a missing ``inbox`` message source, and a
    missing ``trigger_source``. Suppress either with ``no_inbox_source_reason=`` /
    ``no_trigger_source_reason=`` when the vendor genuinely has no such semantics. See
    ``_warn_on_incomplete_vendor_seams`` for why an advisory rather than a failure, and
@@ -58,12 +58,11 @@ Failures name the violated obligation, not just the expression, because the read
 usually an app author who has never seen this file.
 
 --------------------------------------------------------------------------------
-Export-path decision (T7.1 "export path decision recorded") — DEVIATION from the
-change's literal ``tests/channel_conformance.py``
+Export-path decision — why the kit is not ``tests/channel_conformance.py``
 --------------------------------------------------------------------------------
-The plan (line 52) names ``tests/channel_conformance.py`` in core, "exported for
-app use". That path cannot satisfy the change's own acceptance criteria ("all four apps pass the kit
-in **apps-repo CI**"), for two verified reasons:
+The obvious home is ``tests/channel_conformance.py`` in core, exported for app use.
+That path cannot meet the kit's own requirement (all four apps pass the kit in
+**apps-repo CI**), for two verified reasons:
 
 * **``tests/`` is not in the distribution.** ``pyproject.toml`` line 183-184 declares
   ``[tool.setuptools.packages.find] where = ["src"]`` — only ``src/personalclaw`` is
@@ -332,7 +331,7 @@ def assert_channel_contract(
         suppresses clause 9's inbox advisory and *is* the documented exemption — the guide's
         "Vendor completeness" section names it, so the reason lives in the app's own test
         rather than as a manifest key nothing else reads.
-    :param no_trigger_source_reason: the same exemption for the ``trigger_source`` arm (CE-10)
+    :param no_trigger_source_reason: the same exemption for the ``trigger_source`` arm
         — why this vendor produces nothing an automation could be triggered by. A SEPARATE
         parameter rather than one shared "seams I skip" string, because an app that has a
         real reason to skip one arm rarely has a reason to skip the other, and a single
@@ -853,7 +852,7 @@ def _assert_consumes_fenced_text(provider: ChannelTransportProvider) -> None:
     )
 
 
-# ── §C3 delivery obligations (SHOULD level) ─────────────────────────────────
+# ── Delivery obligations (SHOULD level) ─────────────────────────────────────
 
 
 def _assert_delivery_obligations(provider: ChannelTransportProvider, delivery: Any) -> None:
@@ -861,14 +860,14 @@ def _assert_delivery_obligations(provider: ChannelTransportProvider, delivery: A
     _require(
         callable(getattr(delivery, "deliver_text", None)),
         clause,
-        "deliver_text is MUST for every channel (§C3) — it is how a plain reply reaches "
+        "deliver_text is MUST for every channel — it is how a plain reply reaches "
         f"the user; {type(delivery).__name__} has none.",
     )
     for name in SHOULD_DELIVERY_METHODS:
         _require(
             callable(getattr(delivery, name, None)),
             clause,
-            f"{name} is SHOULD for a conversational channel (§C3) and "
+            f"{name} is SHOULD for a conversational channel and "
             f"{type(delivery).__name__} does not provide it. If this channel genuinely "
             "cannot, say so in its capabilities and document the gap in its README — "
             "do not silently omit the method core will call.",
@@ -908,7 +907,7 @@ def _assert_streaming(
         _require(
             callable(getattr(delivery, name, None)),
             clause,
-            f"declares edits=True, so the streaming trio is SHOULD (§C3) and {name} "
+            f"declares edits=True, so the streaming trio is SHOULD and {name} "
             "MUST be present once the trio is offered — a partial trio leaves core "
             "holding a stream ts nothing can finish.",
         )
@@ -1285,16 +1284,16 @@ def _warn_on_incomplete_vendor_seams(
 ) -> None:
     """Advise when a channel app leaves a companion seam unregistered.
 
-    The obligation is CHANNEL-EXPANSION's vendor-completeness pattern (amendment
-    2026-07-26, rule 1): ONE vendor app registers EVERY seam that vendor touches. Two arms
+    The obligation is the vendor-completeness pattern: ONE vendor app registers EVERY seam
+    that vendor touches. Two arms
     are mechanically checkable, and they are checked and reported SEPARATELY:
 
     * **``inbox``** — a channel-only app can converse but its messages never reach the
       Inbox, so nothing that arrives while no session is live is surfaced to the owner.
-    * **``trigger_source``** (CE-10) — a channel app without one produces no automation
+    * **``trigger_source``** — a channel app without one produces no automation
       events, so a user cannot make anything happen when a message arrives. This arm did
       not exist when the clause shipped: the advisory's own prose said "a trigger source
-      *once that seam exists*", the seam then shipped as ``WF2AUT-8``, and nothing here
+      *once that seam exists*", the seam then shipped, and nothing here
       started checking it. Adoption sat at 0/4 for that whole window with the advisory
       silent about it, which is why the arm is now real rather than narrated.
 
@@ -1307,7 +1306,7 @@ def _warn_on_incomplete_vendor_seams(
     telegram-channel and discord-channel channel-only, slack-channel complete, mail-inbox
     not a channel at all. Giving a clause teeth before the population satisfies it is an
     outage, not a gate. The trigger-source arm is added at the point where the population
-    DOES satisfy it (CE-10 brought all four apps to a declared source) — and it stays
+    DOES satisfy it (by then all four apps declared a source) — and it stays
     advisory anyway, because the thing with teeth is the apps repo's own
     ``check_trigger_source_adoption.py`` sweep, which can see the whole population where a
     per-app kit call can only ever see one app.
@@ -1350,7 +1349,7 @@ def _warn_on_incomplete_vendor_seams(
             consequence=(
                 "so nothing that arrives on your channel can drive an automation — a "
                 "`kind: event` trigger bound to app:<your-app>:<event> can never fire. The "
-                "seam is LIVE (WF2AUT-8): your provider's start(emit) hands core typed "
+                "seam is LIVE: your provider's start(emit) hands core typed "
                 "SourceEvents and core namespaces, fences and matches them"
             ),
             suppressor="no_trigger_source_reason='<why this vendor produces nothing an "

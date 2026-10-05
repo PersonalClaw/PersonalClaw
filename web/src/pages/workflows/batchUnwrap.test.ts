@@ -4,16 +4,16 @@ import { foldEvent, foldEvents, foldSnapshot } from './workflowFold'
 import type { WorkflowRunDetailData } from '../../lib/api'
 import realFrames from './__fixtures__/realBatchFrames.json'
 
-// ── Coalesced delivery, from the consumer's side (WF2-R11 batch-5) ──────────
+// ── Coalesced delivery, from the consumer's side ────────────────────────────
 //
 // The backend batches one tick's per-node chatter into ONE frame so a 20-node fan-out costs
 // one write and one render instead of twenty. The property that makes that safe: batching is
 // a TRANSPORT concern. Unwrapping a batch must yield the same event sequence, in order, with
-// the same envelopes the FE would have received as individual frames — so the Slice 8a fold
+// the same envelopes the FE would have received as individual frames — so the fold
 // law is untouched by whether the wire batched.
 //
 // If that equivalence breaks, the symptom is not a crash: it's a widget that quietly folds a
-// different sequence than the server sent, which is the K42/K44/K45 bug class again.
+// different sequence than the server sent, which is the stream-coalescer bug class again.
 
 const snap = (over: Partial<WorkflowRunDetailData> = {}): WorkflowRunDetailData => ({
   run_id: 'a1b2c3d4',
@@ -153,7 +153,7 @@ describe('real captured batch frames', () => {
   }
 
   it('the capture really is coalesced — 26 events in 3 frames', () => {
-    // The claim the whole slice rests on. If a refactor stopped batching, this drops to 26
+    // The claim coalesced delivery rests on. If a refactor stopped batching, this drops to 26
     // frames and the assertion says so instead of the saving quietly disappearing.
     expect(fixture.frames).toHaveLength(3)
     const batch = fixture.frames.find((f) => f.event === WORKFLOW_BATCH_EVENT)

@@ -5,8 +5,8 @@ import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The 106 unexplained disabled buttons, triaged ────────────────────────────────────────
 //
-// The ledger carried "triage the 108 unexplained `disabled` Buttons (busy-only vs genuinely
-// blocked)" for eleven cycles. Done, and the split is the whole point:
+// "Triage the 108 unexplained `disabled` Buttons (busy-only vs genuinely blocked)" was a
+// long-standing open item. Done, and the split is the whole point:
 //
 //   143  <Button disabled={…}>  in the tree
 //    37  already carry a disabledReason
@@ -25,7 +25,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // paths must refuse the click"* — so a busy gate given a reason keeps its tab stop AND still cannot be
 // fired. Nothing became re-clickable, and the 87 sites were not correct; they were silent.
 //
-// 🪤 THE SHAPE OF THE MISTAKE IS THE INTERESTING PART: cycle ux-796 retracted the FIRST justification
+// 🪤 THE SHAPE OF THE MISTAKE IS THE INTERESTING PART: a correction retracted the FIRST justification
 // (that the state was already announced), and put this second one in its place for the same 87 sites,
 // with the same absence of an assertion. An exemption that survives the loss of its reason by acquiring
 // a new one is not an exemption, it is a habit. Both are now asserted against the primitive rather than
@@ -38,7 +38,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // The busy class now carries `BUSY_REASON` (74 sites, one shared sentence, deliberately neutral about
 // whose action is running because a shared flag usually cannot say).
 //
-// 🔴 CORRECTION (cycle ux-796) — THIS PARAGRAPH USED TO JUSTIFY the busy class on the grounds that
+// 🔴 CORRECTION — THIS PARAGRAPH USED TO JUSTIFY the busy class on the grounds that
 // the state was already announced to assistive tech, and used that as the exemption criterion for
 // all 87. **That justification was false, and this rail never checked it.** `Button` publishes
 // `aria-busy={loading || undefined}` — from the `loading` prop, never from `disabled` — so a
@@ -135,7 +135,7 @@ describe('a disabled Button that a user could unblock says how', () => {
     // top of this file: *"giving it one would make an in-flight action re-clickable."*
     //
     // **That ground is false, and this rail never checked it either.** It is the SECOND unchecked
-    // justification for the same exemption: cycle ux-796 retracted the first one (that the state was
+    // justification for the same exemption: a correction retracted the first one (that the state was
     // already announced) and put this one in its place, for the same 87 sites, with the same absence of
     // an assertion. `Button` suppresses the click in code:
     //

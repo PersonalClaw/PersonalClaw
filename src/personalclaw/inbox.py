@@ -109,7 +109,7 @@ class ItemStatus(str, Enum):
     source); it stays because those items exist on disk and it means something the other
     four don't.
 
-    FILTERED (INU-6) is a fifth terminal-until-restored state: a verifiable kind whose rule
+    FILTERED is a fifth terminal-until-restored state: a verifiable kind whose rule
     opted into verification was REFUTED by the second-opinion pass, so its row was persisted
     but its notification withheld. Restore flips it back to PENDING and fires the withheld
     notification once — so a false positive is recoverable, never a silent drop. A decision
@@ -140,7 +140,7 @@ class ItemStatus(str, Enum):
 #: without resolving anything, and the destructive `dismiss-all` confirm sized itself from the
 #: same field — it offered to "dismiss all 33 pending items" and swept 37 (issue 493).
 #:
-#: SEEN is IN, and that is the whole ruling: "I have looked at this" is not "I have dealt with
+#: SEEN is IN, and that is the whole decision: "I have looked at this" is not "I have dealt with
 #: this". Attention state must change when the user ACTS, never because they read a row — a count
 #: that falls when you look at it teaches the user the count means nothing. The read/unread
 #: distinction is real and keeps its own surface: the row-level accent rail and unread dot key off
@@ -359,7 +359,7 @@ class InboxItem:
     #: none was. What lets the detail panel say "Sent" of a handled row's text, which a row marked
     #: handled with an unsent draft must not.
     replied_at: float = 0.0
-    # P11: whether the user favorited this item — a strong positive engagement signal
+    # Whether the user favorited this item — a strong positive engagement signal
     # feeding the engagement-ranking multiplier (tolerant from_dict makes it back-compat).
     favorited: bool = False
     # What kind of attention this item wants. Defaults to `message` so every item written
@@ -373,10 +373,10 @@ class InboxItem:
     #: "mimetype", "size"}`` and ``"file"`` when kept, or ``"not_kept"`` saying why. Set when the
     #: row is made and never by a client, so it is not an updatable field.
     attachments: list = field(default_factory=list)
-    # ── Attribution (built on TSE2-1) ────────────────────────────────────────────────
+    # ── Attribution ──────────────────────────────────────────────────────────────────
     # WHO this item is for, and WHICH harness minted it. Same two fields, same names and
     # same defaults as `WorkflowRun` (`workflows/models.py:942-943`) — a shared inbox that
-    # invented its own attribution vocabulary would be a second dialect of a question TSE2-1
+    # invented its own attribution vocabulary would be a second dialect of a question `WorkflowRun`
     # already answered. Stamped once, in `InboxStore.add`, from the same two primitives
     # (`identity.current_username()` and `durability.shards.machine_id`).
     #
@@ -610,7 +610,7 @@ class InboxState:
 
     def _stale_dismissed(self, retention_hours: float) -> set[str]:
         """Dismissed IDs older than *retention_hours* — the set behind both the count and
-        the prune, so the read-only magnitude the remediation engine measures (PR2-11) and
+        the prune, so the read-only magnitude the remediation engine measures and
         the mutation it drives can never disagree. Snapshots ``dismissed`` first: the count
         runs on the engine's worker thread while the loop may add a dismissal."""
         cutoff = time.time() - (retention_hours * 3600)
@@ -625,7 +625,7 @@ class InboxState:
         return stale
 
     def count_prunable_dismissed(self, retention_hours: float = 168.0) -> int:
-        """How many dismissed IDs a prune would drop right now — read-only (PR2-11)."""
+        """How many dismissed IDs a prune would drop right now — read-only."""
         return len(self._stale_dismissed(retention_hours))
 
     def prune_dismissed(self, retention_hours: float = 168.0) -> int:
@@ -719,7 +719,7 @@ class InboxStore:
     def add(self, item: InboxItem) -> None:
         """Store *item*, stamping attribution when it carries none.
 
-        The ONE creation seam, mirroring TSE2-1's single stamping point in
+        The ONE creation seam, mirroring the workflow store's single stamping point in
         ``workflows/store.py:264-271``. Every source — the native push sink, the poll
         providers, digests, app-raised proposals — arrives here, so attribution cannot be
         forgotten by one of them.
@@ -813,14 +813,14 @@ class InboxStore:
 
     def _expired_ids(self, retention_days: int) -> list[str]:
         """IDs of items older than *retention_days* — the list behind both the count and the
-        delete, so the read-only magnitude the remediation engine measures (PR2-11) and the
+        delete, so the read-only magnitude the remediation engine measures and the
         mutation it drives share one definition. Snapshots ``items`` first: the count runs on
         the engine's worker thread while the loop may ingest a new item."""
         cutoff = time.time() - (retention_days * 86400)
         return [item_id for item_id, item in list(self.items.items()) if item.created_at < cutoff]
 
     def count_expired(self, retention_days: int = 90) -> int:
-        """How many items a retention cleanup would delete right now — read-only (PR2-11)."""
+        """How many items a retention cleanup would delete right now — read-only."""
         return len(self._expired_ids(retention_days))
 
     def cleanup_by_retention(self, retention_days: int = 90) -> int:
@@ -829,7 +829,7 @@ class InboxStore:
         The single inbox retention mechanism (source-agnostic — items from the
         native push sink, poll providers, and digests age out uniformly). Driven
         by the remediation engine's ``inbox.maintenance`` job when auto-cleanup is
-        enabled (PR2-11); the InboxService no longer runs its own maintenance loop.
+        enabled; the InboxService no longer runs its own maintenance loop.
         """
         from personalclaw import attachments
 
@@ -851,7 +851,7 @@ def evaluate_alert(item: InboxItem, user_name: str = "") -> str:
     """Why *item* deserves an immediate notification, or "" if it doesn't.
 
     Now reads the ``inbox/alert`` notification RULE's conditions rather than the retired
-    ``alert_keywords``/``alert_on_name_mention`` inbox fields (plan 42 S3). The matching
+    ``alert_keywords``/``alert_on_name_mention`` inbox fields. The matching
     semantics are unchanged — `Conditions.matches` was lifted from this function's own
     body — so a user whose keywords were backfilled sees identical behavior; what changed
     is that the same conditions are now expressible for every notification kind, not just
@@ -878,11 +878,11 @@ def redact_item(item: dict) -> dict:
     """Redact LLM-generated fields, and stamp the feedback-producer meta, on one item dict.
 
     **Lives here, below the HTTP surface, because it is not an HTTP concern.** It moved down from
-    `dashboard/handlers_inbox` when PA-3's `inbox-op` provider needed it: an auto-executed archive
+    `dashboard/handlers_inbox` when the `inbox-op` provider needed it: an auto-executed archive
     has to push the mutated row over the websocket, and every OTHER writer of that same event
     redacts first, so the provider importing the handler module would have been a core→HTTP edge
     (caught by `structural-import-direction`) *and* the alternative — a second redaction path —
-    would have been the R18 duplicate that eventually diverges. `handlers_inbox._redact_item` is
+    would have been the duplicate that eventually diverges. `handlers_inbox._redact_item` is
     now an alias for this function, so there is exactly one implementation.
     """
     # `redact_for_display`, the mask a saved or sent draft is restored from
@@ -1009,7 +1009,7 @@ def emit_attention_item(
     common failure being two notifications for one event, or an inbox row with no delivery
     at all. Routing both through here means the notification is a *view* of the item.
 
-    ``source``/``kind`` are the registered notification pair (delivery policy, S1);
+    ``source``/``kind`` are the registered notification pair (delivery policy);
     ``item_kind`` is the inbox row's own type and defaults to ``kind`` since for the
     attention kinds they coincide (``needs_input`` is both).
 
@@ -1079,7 +1079,7 @@ def emit_attention_item(
         "item_kind": resolved_kind,
         **raiser,
     }
-    # INU-6 second-opinion gate. Runs ONLY for a verifiable kind whose rule opted into
+    # The second-opinion gate. Runs ONLY for a verifiable kind whose rule opted into
     # verify — every other emit is byte-for-byte unchanged and makes NO model call. The row is
     # published now, marked `checking`, and its notification waits in `verify_withheld` for the
     # verdict, which a worker fetches (`notification_verify.verify_in_background`) and

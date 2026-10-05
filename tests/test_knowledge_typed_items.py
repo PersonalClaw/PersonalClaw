@@ -1,4 +1,4 @@
-"""P6b — typed knowledge items: first-class fields, source-level typed create,
+"""Typed knowledge items: first-class fields, source-level typed create,
 tags-as-array serialization, the /items + /providers endpoints, and the native
 knowledge_* agent tools."""
 
@@ -77,7 +77,7 @@ class TestTypedStore:
         assert {"url", "is_pinned", "provider", "insights"} <= cols
         # The legacy CHUNK column is gone (one item = one logical doc, no chunk_index).
         assert "chunk_index" not in cols
-        # WATCHED-SOURCES §3.3 reclaims source_id/guid with NEW meaning (a polled item's
+        # Watched sources reclaim source_id/guid with NEW meaning (a polled item's
         # origin identity), so both exist again — but a native item leaves them NULL and
         # the reopen does not drop them (the legacy DROP keys on chunk_index alone).
         assert "source_id" in cols and "guid" in cols
@@ -92,7 +92,7 @@ def _app(store, enqueued=None):
     from personalclaw.knowledge_providers.native import create_native_provider
 
     # create_item now routes through the native provider (registers + enqueues for
-    # node-graph ingestion, #30). Provide one over the test store; ``enqueued`` (if
+    # node-graph ingestion). Provide one over the test store; ``enqueued`` (if
     # given) collects re-enrich enqueues from the update handler.
     sink = enqueued if enqueued is not None else []
     provider = create_native_provider(store, enqueue=sink.append)
@@ -901,7 +901,7 @@ class TestKnowledgeTools:
             assert s.success and "empty" in s.output.lower()
 
 
-# ── P3: structured insights (cross-cutting intelligence layer) ──
+# ── structured insights (cross-cutting intelligence layer) ──
 
 
 class _FakePool:
@@ -978,7 +978,7 @@ class TestGenerateIntelligence:
         assert resp.status == 404
 
 
-# ── P2: media classification + previewable media items + file serving ──
+# ── media classification + previewable media items + file serving ──
 
 
 class TestMediaClassify:

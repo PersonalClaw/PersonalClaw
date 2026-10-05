@@ -1,12 +1,12 @@
-"""V3 — the tunnel clauses, driven over a REAL TLS tunnel.
+"""The paired-device socket admission, driven over a REAL TLS tunnel.
 
 The build half (commit `57102588`) is merged: `ws.py:_check_ws_origin` admits an
 `Origin`-less upgrade when the authorizing session carries a paired `device` row, and
 `tests/test_remote_wss_auth.py` pins that admission and its fail-closed edges. What that
 suite does NOT do is *transport*: it drives `aiohttp`'s in-process test client straight at the
 app, so no socket ever carried TLS, nothing sat between client and gateway, and no connection
-was ever killed mid-session. The change's criterion is written as an **observation** over a
-tunnel, which is why the change stayed `todo`. This file closes as much of that as is honestly
+was ever killed mid-session. What matters is an **observation** over a
+tunnel, which that suite cannot make. This file closes as much of that as is honestly
 closable on one machine.
 
 **WHAT IS REAL HERE** — stated up front, because an overclaim would be worse than a gap:
@@ -21,14 +21,14 @@ closable on one machine.
 * Killing the tunnel really destroys live sockets, and the reconnect is a genuinely new TLS
   handshake against a newly bound port.
 * Authentication is **cookie-borne**, which is what the companion guide mandates for a native
-  client and what no existing `CA-7` test exercised — every test in the older file authenticates
+  client and what no existing test exercised — every test in the older file authenticates
   with `?token=`, the one mechanism the guide forbids.
 
-**WHAT IS NOT REAL** — the honest gap, unchanged from the change's log:
+**WHAT IS NOT REAL** — the honest gap:
 
 * The tunnel is **loopback**. There is no public DNS name, no publicly-trusted CA, and no
   internet path. The topology (client → owner's tunnel → gateway, TLS terminated at the tunnel)
-  is real; the *remoteness* is not. A clause needing a genuinely remote peer is still unobserved.
+  is real; the *remoteness* is not. A property needing a genuinely remote peer is still unobserved.
 * The client is a native `aiohttp` client, not a shipped desktop/mobile shell. It is native in
   the sense the admission cares about: it has no document, so it sends no `Origin`.
   (Corrected: this used to add "the repo still has none (`desktop/main.js` holds one
@@ -391,12 +391,12 @@ async def _status(rig: _Rig, token: str, *, origin: str | None = None) -> int:
     return 101
 
 
-# ── the acceptance criteria, clause by clause ────────────────────────────────────────────────
+# ── the properties under test, one by one ────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
 async def test_a_native_client_reaches_the_gateway_over_a_real_tls_tunnel(tmp_path: Path) -> None:
-    """Clause 1: a native client reaches the gateway over a tunnel using its device session.
+    """A native client reaches the gateway over a tunnel using its device session.
 
     Every leg is asserted rather than assumed: the URL really is `wss://`, the socket really
     carried TLS, the upgrade really completed, the gateway really saw the TUNNEL as its peer
@@ -443,7 +443,7 @@ async def test_the_device_session_is_what_admitted_it_not_the_tunnels_loopback_p
 async def test_no_new_origin_exemption_was_needed_to_reach_it_over_the_tunnel(
     tmp_path: Path,
 ) -> None:
-    """The change's security clause as a DIFFERENTIAL, which is the only non-vacuous way to say it.
+    """The security claim as a DIFFERENTIAL, which is the only non-vacuous way to say it.
 
     "No new origin exemption" is a claim about a difference: pairing a device must not change
     *which origins* are allowed to complete the upgrade. So the same origins are probed twice —
@@ -453,7 +453,7 @@ async def test_no_new_origin_exemption_was_needed_to_reach_it_over_the_tunnel(
     what was added to the set; this one cannot.
 
     The single admitted difference is the `Origin`-less case, asserted last, and that is exactly
-    the seam `CA-7` opened.
+    the seam the device admission opened.
 
     **Read the `pc.example.com` probe as the load-bearing one.** `is_loopback` is forced False
     for every handshake, so `127.0.0.1` here stands in for a genuinely remote address — which is
@@ -482,9 +482,9 @@ async def test_no_new_origin_exemption_was_needed_to_reach_it_over_the_tunnel(
 
 @pytest.mark.asyncio
 async def test_killing_the_tunnel_mid_session_drops_the_socket_promptly(tmp_path: Path) -> None:
-    """Clause 2, first half: the drop is observed, and it is prompt rather than a hang.
+    """Graceful degradation, first half: the drop is observed, and it is prompt rather than a hang.
 
-    A client left hanging on a dead tunnel is the ungraceful failure this clause exists to rule
+    A client left hanging on a dead tunnel is the ungraceful failure this test exists to rule
     out — it is what produces a UI stuck on "connected" with no traffic.
 
     **The drop arrives in one of two shapes, and a native client must handle both.**
@@ -513,7 +513,7 @@ async def test_killing_the_tunnel_mid_session_drops_the_socket_promptly(tmp_path
 
 @pytest.mark.asyncio
 async def test_the_same_device_session_reconnects_once_the_tunnel_returns(tmp_path: Path) -> None:
-    """Clause 2, second half: the session survives the transport's death.
+    """Graceful degradation, second half: the session survives the transport's death.
 
     This is the property that makes "reconnects gracefully" true, and it is not free: a session
     invalidated by the drop, consumed on first use, or bound to the dead connection would force
@@ -581,7 +581,7 @@ async def test_the_reconnect_survives_the_changed_client_ip_a_real_tunnel_produc
 
 @pytest.mark.asyncio
 async def test_no_cloud_middle_tier_the_only_hop_is_the_owners_own_tunnel(tmp_path: Path) -> None:
-    """Success Criterion 3 as a rail: client → owner's tunnel → gateway, and nothing else.
+    """No cloud middle tier, as a rail: client → owner's tunnel → gateway, and nothing else.
 
     Asserted as a closed accounting of the path rather than a comment: across the whole session
     the gateway saw exactly one peer, that peer is the tunnel on the owner's own loopback, and

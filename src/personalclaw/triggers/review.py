@@ -8,7 +8,7 @@ crash or a restart left with no ending. A stop closes the runs it cuts off itsel
 the next start announces them in its one notice. None is re-run on its own, deliberately: running
 the 3am backup at 9am is sometimes right and sometimes exactly wrong, and a run a restart
 interrupted may already have done part of its work, so running it again is the user's decision
-(§3.4 "review, don't auto-run"). A card says which it was (`ReviewCard.cause`), because "while
+("review, don't auto-run"). A card says which it was (`ReviewCard.cause`), because "while
 PersonalClaw was not running" is false about a laptop whose lid was shut.
 
 They used to end at a notification that said "Review them and choose what to run now" with
@@ -297,7 +297,7 @@ _WHILE: dict[str, str] = {
 
 
 def boot_notice(report: dict[str, Any], cards: list[ReviewCard]) -> dict[str, Any] | None:
-    """The ONE notice about what a boot or a wake found, or None when it found nothing (§3.4).
+    """The ONE notice about what a boot or a wake found, or None when it found nothing.
 
     *cards* are the ones kept for the Triggers page (`cards_from_boot`, plus at a boot
     `cards_from_orphans` and the runs the stop before it cut off, `take_unannounced`), so the

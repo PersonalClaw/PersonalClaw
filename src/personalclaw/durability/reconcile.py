@@ -1,4 +1,4 @@
-"""Reconcile a peer's rows into the live store (DAS-6c-ii-d).
+"""Reconcile a peer's rows into the live store.
 
 The bridge that turns "I pulled a peer's shards" into "the peer's rows are now in my live
 store", composing the three pure pieces already built:
@@ -17,7 +17,7 @@ mid-reconcile is caught and reported as a `payload-bad` verdict so one poison en
 abort the whole pull; the caller advances its cursor past it rather than looping.
 
 Reads the local rows exactly as ``shards.export_shards`` would, so the merge sees the same
-row shapes on both sides — the invariant that makes convergence hold (criterion 4). And writes
+row shapes on both sides — the invariant that makes convergence hold. And writes
 back only what the merge changed, over files still as they were read (``writeback.apply_rows``):
 a file the store wrote in between is left for the next pull, and not agreed on until then. A peer
 row that names a file the store does not hold (``shards.store_file`` — a path outside it, a
@@ -471,9 +471,9 @@ def reconcile_entry(
     and a sync carries no tree. Consumes a ``replace_only`` entry and writes nothing: it is
     restored whole or not at all, and never merged (``merge.merge_rows`` refuses one). A row
     kind that throws mid-merge is caught and reported ``payload-bad`` so a single bad entry
-    advances the cursor past itself rather than wedging every later seq (§4.1).
+    advances the cursor past itself rather than wedging every later seq.
 
-    **Conflict handling (DAS-7, §4.2).** With ``ancestors`` (what this home and the peer last
+    **Conflict handling.** With ``ancestors`` (what this home and the peer last
     agreed on in this family, :meth:`ancestors.Ancestors.of`) and a ``queue``, every id whose
     local AND remote row both moved since the ancestor is recorded for review and then
     **HELD**: its remote row is dropped before the merge, so the local bytes are untouched and

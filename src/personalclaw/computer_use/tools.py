@@ -2,9 +2,9 @@
 
 **Two things live here and nothing else: the DECLARATION of the seven tools, and the
 transport that carries a call to the gateway.** No decision is made in this file. That is the
-whole content of the plan's "thin shim" claim: *"the OS driver needs the gateway's
+whole content of the "thin shim" claim: the OS driver needs the gateway's
 policy, enable-state, and SEL — replicating those in a subprocess would fork the security
-surface. The shim resolves session identity and forwards; it holds no OS handles."*
+surface. The shim resolves session identity and forwards; it holds no OS handles.
 
 **Why "thin" has to be enforced, not asserted.** This module runs inside
 ``personalclaw mcp-core``, a separate process an ACP CLI spawns. Any screen implemented here
@@ -24,14 +24,14 @@ is wrong twice. First, ``mcp_core._aggregated_call_tool`` routes a call by askin
 category module whether it *lists* the name: an empty list would make ``computer_click`` fall
 through to core's own dispatch and answer "unknown tool", replacing the WHAT/WHY/FIX
 refusal (which names the enable file, the exact bytes and the restart) with a dead end. The
-keystone's whole criterion is *"every computer-use tool refuses with a WHAT/WHY/FIX message
-pointing to the out-of-band enable step"*; a tool that cannot be reached cannot refuse
+keystone's whole contract is that every computer-use tool refuses with a WHAT/WHY/FIX message
+pointing to the out-of-band enable step; a tool that cannot be reached cannot refuse
 legibly. Second, a conditional tool population is a second code path whose disabled branch no
 production caller ever exercises. So the surface is constant and the *answer* is what changes,
 which is also the honest thing to show a model: the description says the capability is
 operator-armed and off until then.
 
-**The tool names are the plan's** ("The tool surface"): ``computer_list_apps``,
+**The tool names are fixed**: ``computer_list_apps``,
 ``computer_snapshot``, ``computer_click``, ``computer_type``, ``computer_set_value``,
 ``computer_scroll``, ``computer_perform_action``. They are NOT defined here as Python
 functions, deliberately: ``tests/test_computer_use_enable_state.py``'s keystone ratchet binds
@@ -80,9 +80,9 @@ class ToolSpec:
     #: proved fresh (TTL) and re-walked (fingerprint) before the element is touched.
     screen_index: bool = True
     #: Step 4 — this tool writes text into a destination, so ``policy.check_input_target``
-    #: must pass. Scoped to text writers because that is exactly what the plan scopes it to:
-    #: *"Secure/password fields and sensitive text screened (check_input_target) before any
-    #: type/set-value."*
+    #: must pass. Scoped to text writers because that is exactly the scope:
+    #: secure/password fields and sensitive text are screened (check_input_target) before any
+    #: type/set-value.
     screen_input_target: bool = False
     #: True when the tool changes the desktop. Reads (list/snapshot) are still keystoned,
     #: screened and audited; this flag exists so the ordering rail can assert that every
@@ -101,7 +101,7 @@ _ELEMENT_PARAMS: dict[str, Any] = {
     },
 }
 
-#: The seven tools, in the order §2 lists them.
+#: The seven tools, in the order the module docstring lists them.
 TOOL_SURFACE: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="computer_list_apps",
@@ -256,7 +256,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     """Forward one call to the gateway and render the answer. NO decision happens here.
 
     ``mcp_core._post`` is the transport, and it is what "resolves session identity" means in
-    §2: it attaches the internal secret and the resolved ``X-Session-Key`` so the gateway can
+    practice: it attaches the internal secret and the resolved ``X-Session-Key`` so the gateway can
     attribute the attempt. Reusing it rather than minting an identity path here is the point —
     a second identity resolver in the one process that must hold no authority is exactly the
     kind of thing that later grows an exemption.

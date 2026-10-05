@@ -1,8 +1,8 @@
 /** The subject a row-scoped control names: enough of the row to tell it from its siblings, and no
  *  more than that.
  *
- *  🔑 ONE RULE, TWO FAILURE MODES, both measured in Chrome's computed accessibility tree during
- *  cycles 139-142. **Too little:** 83 notification rows sharing three names ("Delete", "Mark
+ *  🔑 ONE RULE, TWO FAILURE MODES, both measured in Chrome's computed accessibility tree.
+ *  **Too little:** 83 notification rows sharing three names ("Delete", "Mark
  *  unread", "Investigate in chat"), and 30 task checkboxes all saying "Select task". **Too much:**
  *  five artifact tiles named by 438-695 characters of their own rendered markdown, and — from the
  *  first fix's own output — dashboard row actions at **107 characters** each, sixteen of them.
@@ -32,7 +32,7 @@
  *  rows adopted this: names arrived as `"skills — Refine a skill\n\nloop-worker — When pr…"`, because
  *  an Action Center entry's `sub` carries the newlines of the message it came from. The visible row is
  *  ONE truncated line, so the name has to be one line too — and a `\n\n` inside the 55-character
- *  budget spends it on nothing. Same correction cycle 161 made for the inbox row, moved to where the
+ *  budget spends it on nothing. Same correction the inbox row got, moved to where the
  *  rule lives so every consumer inherits it.
  */
 export function rowSubject(parts: (string | null | undefined)[], cap = 55): string {

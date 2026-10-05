@@ -1,7 +1,7 @@
 """The ad-hoc→template gate at its CALL SITE.
 
 ``detectors.gate`` shipped with zero production callers: the chain decided nothing, and its typed
-``Skip`` reasons — the counts §3.2 says "are what say which gate earns its keep" — had no writer.
+``Skip`` reasons — the counts that "say which gate earns its keep" — had no writer.
 The load-bearing tests here are the two that would have caught that:
 ``test_the_ladder_fifth_branch_reaches_the_gate`` (a real turn reaches the chain) and
 ``test_every_negative_decision_writes_a_typed_row`` (every refusal leaves a row).
@@ -63,7 +63,7 @@ def _skipped_rows(store):
     return [{"cadence": r[0], "detail": r[1]} for r in rows]
 
 
-# ── the clause that ends the inert-module problem ──
+# ── the call site that ends the inert-module problem ──
 
 
 def test_the_gate_has_a_production_caller():
@@ -204,7 +204,7 @@ def test_an_accepted_candidate_is_filed_as_a_pending_proposal(store, no_filing):
 
 
 def test_the_consult_band_files_nothing(store, no_filing):
-    """§3.2 pays for a model only in the middle band, and this call site has no model.
+    """The chain pays for a model only in the middle band, and this call site has no model.
 
     It must not promote on an inconclusive score, and must not record it as a refusal it was not.
     """
@@ -251,7 +251,7 @@ def test_a_refusal_survives_a_recording_failure(tmp_path, monkeypatch):
     assert outcome.recorded is False
 
 
-# ── the reason counts §3.2 tunes against ──
+# ── the reason counts the thresholds are tuned against ──
 
 
 def test_skip_counts_reads_back_only_this_gates_reasons(store):
@@ -306,7 +306,7 @@ def _ladder(raw, monkeypatch, *, defs=None):
 def test_the_ladder_fifth_branch_reaches_the_gate(store, no_filing, monkeypatch):
     """The call site itself: a template-action turn is scored and FILED, with a chip back.
 
-    This is the test that fails if the fifth branch is removed — the clause's whole point is that a
+    This is the test that fails if the fifth branch is removed — the change's whole point is that a
     real turn now reaches ``detectors.gate``.
     """
     raw = (

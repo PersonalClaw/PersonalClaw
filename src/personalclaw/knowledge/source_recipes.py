@@ -66,7 +66,7 @@ RECIPE_KEYS = frozenset(
 
 @dataclass
 class SourceRecipe:
-    """One bundled recipe (§7.2)."""
+    """One bundled recipe."""
 
     id: str
     display_name: str
@@ -269,7 +269,7 @@ def resolve_spec(recipe: SourceRecipe, groups: dict[str, str]) -> dict[str, Any]
 
 
 def recipes_for_url(url: str) -> list[RecipeMatch]:
-    """Every recipe whose pattern matches ``url``, spec already resolved (§7.2).
+    """Every recipe whose pattern matches ``url``, spec already resolved.
 
     This is the "check if your site is already covered" answer. Order is recipe-id sorted
     (stable and explainable) rather than a relevance score — with a handful of bundled

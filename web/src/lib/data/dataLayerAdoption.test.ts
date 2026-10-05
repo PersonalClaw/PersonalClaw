@@ -258,7 +258,7 @@ describe('§4 the stale-paint label is adopted and its adoption only grows', () 
   })
 
   it('the surfaces that PASS a stale flag are a growing set, floor pinned', () => {
-    // Same ratchet shape DSC-13 used for its windowing adoption: a count that may only rise.
+    // Same ratchet shape `windowedListAdoption.test.ts` uses for windowing: a count that may only rise.
     // 24 of the 28 settings bento tiles plus three list surfaces at the time of writing; the four
     // remaining tiles read no server data at all (identity, appearance, log level, a static card).
     const n = passesStale().length

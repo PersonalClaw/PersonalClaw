@@ -1,4 +1,4 @@
-"""mem-fs-mirror: the memory → markdown vault projection.
+"""The memory → markdown vault projection.
 
 Covers the load-bearing behaviors: safe (fence-proof) frontmatter, wikilink
 derivation from real record fields, idempotent + incremental sync, and pruning

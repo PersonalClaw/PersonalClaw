@@ -144,7 +144,7 @@ src/personalclaw/tests_fixtures/**/*.db-shm
 
 # Per-worktree pytest bootstrap. A linked worktree has no venv of its own, and an editable
 # install in the main checkout means a bare `import personalclaw` from a worktree resolves to
-# the MAIN checkout's src — so a lane writes a small runner that strips the editable finder
+# the MAIN checkout's src — so a small runner is written there that strips the editable finder
 # and re-points sys.path before collecting. It is scaffolding for one session, never repo
 # content, and `git add -A` would sweep it in (it did, once, during this rule's own change).
 /.lane_pytest.py

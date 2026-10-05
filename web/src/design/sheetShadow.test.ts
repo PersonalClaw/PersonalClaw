@@ -35,13 +35,13 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //
 // Converging them is mechanical to WRITE and not mechanical to DECIDE: it changes the shadow under
 // six shipped surfaces, one of which (`NavRail`) appears on every route, so every visual baseline
-// moves. `personalclaw-ux` §9 puts that squarely in the owner's hands — unifying two divergent
-// shipped patterns that change the visual language.
+// moves. That makes it a design decision, not a mechanical fix — unifying two divergent
+// shipped patterns changes the visual language.
 //
-// 🔑 WHAT A RATCHET BUYS WHILE A RULING IS PENDING: the family cannot grow. A pending decision
+// 🔑 WHAT A RATCHET BUYS WHILE THE DECISION IS PENDING: the family cannot grow. A pending decision
 // usually means the drift keeps accruing and the eventual convergence is bigger than the one that
-// was costed. Pinning the population makes the cost of the ruling fixed, and makes any NEW floating
-// sheet pick the scheme-aware token by default — the outcome the ruling would most likely order
+// was costed. Pinning the population makes the cost of the decision fixed, and makes any NEW floating
+// sheet pick the scheme-aware token by default — the outcome the decision would most likely reach
 // anyway, applied only where it costs nothing.
 //
 // 🪤 THE FAMILY WAS SEVEN AND IS NOW SIX, AND THAT IS WHY THE COUNT IS RE-MEASURED HERE RATHER THAN
@@ -86,7 +86,7 @@ describe('the sheet-shadow ratchet (scheme-blind shadows may only shrink)', () =
 
   it('the baseline shrinks honestly — a converged file must leave the list', () => {
     // Without this, the list would keep naming files that no longer have the defect, and the next
-    // reader would cost the ruling against a population that is already smaller. This is exactly
+    // reader would cost the decision against a population that is already smaller. This is exactly
     // how `SessionSkillsReview.tsx` went unnoticed for a month.
     const stale = BASELINE.filter((rel) => !users().includes(rel))
     expect(

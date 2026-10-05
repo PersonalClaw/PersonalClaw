@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
 // ── Playwright visual-regression + a11y harness ────────────────────────────
-// The S2/S3 SAFETY RAIL for the design-system consistency plan: every
+// The SAFETY RAIL for design-system consistency work: every
 // consistency fix must show ZERO unintended visual diff against a captured
 // baseline. Mirrors the personalclaw.dev pattern — @playwright/test +
 // toHaveScreenshot with platform-qualified baselines (the -<platform> suffix
@@ -9,8 +9,8 @@ import { defineConfig, devices } from '@playwright/test'
 // cause false failures).
 //
 // Baselines live in e2e/__screenshots__/ (committed). Regenerate a touched
-// surface's baseline INTENTIONALLY with `npm run e2e:update` and record the
-// change in the plan's Execution log for owner review — never silently keep
+// surface's baseline INTENTIONALLY with `npm run e2e:update` and say in the
+// change's description which baselines moved and why — never silently keep
 // or revert a real visual change.
 //
 // 🪤 `e2e:update` regenerates from a VISUAL-ONLY run, and `npm run e2e` runs the

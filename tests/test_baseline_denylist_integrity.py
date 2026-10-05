@@ -15,7 +15,7 @@ What the sha256 buys and what it does not:
   file against the fingerprint captured at import and refuses to adopt the new content.
 * It does NOT stop the owner of the machine. Someone who can rewrite the installed
   package before the process starts owns the baseline. This is anti-drift and
-  anti-LLM-tamper, not anti-owner — exactly the plan's threat model.
+  anti-LLM-tamper, not anti-owner — exactly the intended threat model.
 """
 
 import ast
@@ -113,7 +113,7 @@ class TestPackagedSource:
         very pyproject block (``scripts/backend_bundle_manifest.py``), so the assertion is on
         the derived payload rather than on a second literal the spec used to carry — a literal
         beside a growing list is what let eleven other globs drift out of the bundle.
-        ``tests/test_backend_bundle_manifest.py`` owns the general rail; this is the SH-6
+        ``tests/test_backend_bundle_manifest.py`` owns the general rail; this is the denylist
         file's own named one.
         """
         import importlib.util

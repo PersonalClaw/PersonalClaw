@@ -1,4 +1,4 @@
-"""The versioned sync registry — ``registry.json`` (DAS-6c-ii-a).
+"""The versioned sync registry — ``registry.json``.
 
 One small shared object at the sync root records, per machine, the high-water mark of
 what that machine has published::
@@ -22,7 +22,7 @@ compares is stable), bump the local machine's seq on a fresh export, and diff tw
 registries to see who moved. It performs NO I/O and knows
 nothing of a transport: the CAS write itself is
 :meth:`sync_transports.base.SyncTransportProvider.cas_registry`, and the retry loop that
-composes this model with that transport is DAS-6c-ii-b. Keeping the model I/O-free is what
+composes this model with that transport is the push engine's. Keeping the model I/O-free is what
 makes the CAS contract testable without a remote and keeps a lost-race retry free — the
 same inputs always canonicalize to the same bytes and the same sha.
 """

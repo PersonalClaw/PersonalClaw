@@ -49,7 +49,7 @@ class TestScheduleTriggerApprovalMode:
         )
         resp = await api_trigger_create(request)
         assert resp.status == 200
-        # 🔴 SUPERSEDED CONTRACT (S101 write re-point): the action rides `workflow.inline` in the
+        # 🔴 SUPERSEDED CONTRACT (write re-point): the action rides `workflow.inline` in the
         # store now, not an `add_job` kwarg. The approval_mode is still folded into its config.
         from personalclaw.dashboard.handlers.triggers import _trigger_store
 
@@ -85,7 +85,7 @@ class TestScheduleTriggerApprovalMode:
         )
         resp = await api_trigger_create(request)
         assert resp.status == 200
-        # 🔴 SUPERSEDED CONTRACT (S101 write re-point). This asserted the legacy `add_job` mock's
+        # 🔴 SUPERSEDED CONTRACT (write re-point). This asserted the legacy `add_job` mock's
         # `.silent`; the row now lives in the unified store, where `silent` is `delivery == "none"`
         # (LEGACY_FIELD_MAP). Reading the mock would pass forever without the write happening.
         from personalclaw.dashboard.handlers.triggers import _trigger_store
@@ -114,7 +114,7 @@ class TestTriggerListFields:
     async def test_schedule_trigger_serialization_includes_action_and_fields(
         self, tmp_path, monkeypatch
     ):
-        """🔴 REWRITTEN FOR S110. This built a 20-attribute `MagicMock` job for
+        """🔴 REWRITTEN. This built a 20-attribute `MagicMock` job for
         `crons.list_jobs` — the legacy fallback the facade's CRUD retirement deleted. A mock that
         answers every attribute cannot tell you whether the projection reads the right ones; the
         store row can, because a wrong address yields an empty field.

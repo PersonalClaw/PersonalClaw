@@ -2,7 +2,7 @@
 
 Every watchdog in this repo measures PRODUCER health: findings count, turn wall-time, stagnation,
 consecutive errors. Nothing asks whether the output was ever READ. The field post-mortem
-`PLATFORM-PRIMITIVES` §3 is drawn from is a fully autonomous pipeline that had been dead for two
+behind this module is a fully autonomous pipeline that had been dead for two
 months with nobody noticing, and its author's diagnosis was structural rather than tooling: nobody
 owned acting on the output. Our equivalent is a monitor-kind run writing a deliverable on a cadence
 into an artifact nobody opens — we detect a STALLED work unit and never a POINTLESS one.
@@ -16,7 +16,7 @@ confidently wrong exactly in the case that matters — the deliverable somebody 
 **It reads the outcome record; it counts nothing of its own.** A `publish:` node already
 opens a `pending_outcome{producer: publish, metric: artifact.<slug>.consumed, horizon_secs: 7d,
 baseline: 1.0, slug}` at publish time (`workflows/publish_seam._open_publish_outcome`). That record
-IS the consumption horizon. This module supplies the two halves `PP-9` left open:
+IS the consumption horizon. This module supplies the two halves that record left open:
 
 1. :func:`measure_consumption` — the ground truth for a :data:`~personalclaw.ledger.outcomes.
    SOURCE_CONSUMPTION` question, so the ONE resolver grades a publish bet as `measured` 1.0/0.0
@@ -172,7 +172,7 @@ def measure_consumption(question: outcomes.OutcomeQuestion) -> float | None:
     the question was opened, :data:`~personalclaw.ledger.outcomes.UNCONSUMED` (0.0) if not, and
     None — which the resolver turns into `inconclusive` — when the answer is UNKNOWABLE, not no:
     the question carries no slug, its open timestamp will not parse, or the artifact no longer
-    exists. That distinction is the whole atom: an unreadable cycle must never be counted as
+    exists. That distinction is the whole point: an unreadable cycle must never be counted as
     evidence that nobody looked.
     """
     slug = str(question.record.get("slug") or "") or outcomes.slug_from_metric(question.metric)

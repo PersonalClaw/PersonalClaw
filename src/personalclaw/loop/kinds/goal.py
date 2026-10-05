@@ -2,7 +2,7 @@
 
 Done-ness is **type-driven** (the principle that no agent certifies its own work):
 verifiable runs a deterministic ``verify_command``; open-ended consults a separate
-judge subagent's ROI verdict; monitor never self-completes. Slice 1 supplies the
+judge subagent's ROI verdict; monitor never self-completes. This module supplies the
 classification/config shape + phase keying; the full classify/judge/ratchet
 behavior ports from the legacy ``loops/`` engine.
 """
@@ -42,7 +42,7 @@ class GoalKind(LoopKindStrategy):
         """Index of the execution_plan phase the UPCOMING cycle belongs to (cycle-count
         based): walk each phase's cumulative min_cycles window; -1 with no plan.
 
-        The cycle count comes from the ledger projection (PP-16 seam 4a) rather than the retired
+        The cycle count comes from the ledger projection rather than the retired
         ``loops.total_cycles`` column. Read only when there IS a plan, so the common no-plan goal
         pays nothing.
         """
@@ -177,7 +177,7 @@ class GoalKind(LoopKindStrategy):
                 errors.append(f"Verify command rejected — {denied.why()}.")
             elif danger:
                 errors.append(f"Verify command rejected — {danger}.")
-        # P6: validate any optional tick-engine keys (min_dwell_secs / min_findings /
+        # Validate any optional tick-engine keys (min_dwell_secs / min_findings /
         # metric_pass / metric_hold) on the execution_plan phases, so a malformed dwell
         # or an inverted metric band is caught at intake rather than ignored at runtime.
         from personalclaw.loop.tick import validate_step_phase

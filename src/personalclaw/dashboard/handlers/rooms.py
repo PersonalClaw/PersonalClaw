@@ -1,7 +1,7 @@
 """HTTP surface for Agent Rooms — create, list, member management, transcript, export.
 
-Built before any UI exists, so a room is fully drivable with ``curl``: `AGENT-ROOMS`
-session 1 delivers the store and the member model, and the frontend arrives with the
+Built before any UI exists, so a room is fully drivable with ``curl``: the store
+and the member model came first, and the frontend arrives with the
 arbiter that makes a room worth looking at. Driving the real routes is what validates the
 store; a store with only unit tests is a store nobody has used.
 
@@ -276,7 +276,7 @@ async def api_room_get(request: web.Request) -> web.Response:
     one actually runs under once the restrictive default and the operator ceiling are folded
     in. The declaration is already on the wire inside each member record; the resolution is
     the part a reader cannot compute, and without it "this member is read-only" would be a
-    claim the UI had to re-derive. It is the contract `AR-8`'s member chips render from.
+    claim the UI had to re-derive. It is the contract the UI's member chips render from.
 
     ``member_bindings`` is the other half a member chip needs and cannot compute: which agent
     binding each member IS, and whether that binding still exists. See
@@ -418,7 +418,7 @@ async def api_room_message_post(request: web.Request) -> web.Response:
     turns do not fit in a request. The response carries the ``room``, whose ``owed`` is the
     arbiter's FIFO queue after this message — the turns the room already owed, then the ones this
     message asks for, in the order they will be taken — and whose ``round_running`` says whether
-    a round is now answering them. That is what lets a caller (and the `AR-8` UI) distinguish
+    a round is now answering them. That is what lets a caller (and the rooms UI) distinguish
     "nobody was listening" from "the answers have not landed yet". Poll
     ``GET /api/rooms/{room_id}`` for the replies while ``round_running`` holds.
 

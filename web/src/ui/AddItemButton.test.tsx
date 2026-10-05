@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { render } from '@testing-library/react'
 import { AddItemButton } from './AddItemButton'
 
-// ── "Add another row" affordance contract (design-system consistency S2) ──────
+// ── "Add another row" affordance contract (design-system consistency) ─────────
 // Five list editors (WorkflowForm's Add-step + Add-a-workflow, PromptForm,
 // SnippetForm, PromptEditFields) rendered this exact quiet add-button inline. The
 // primitive is the single source; this test locks the traits that make it the
@@ -20,7 +20,7 @@ describe('AddItemButton', () => {
     const { getByRole } = render(<AddItemButton>Add step</AddItemButton>)
     const have = classOf(getByRole('button'))
     // `gap-1.5` → `gap-xs`: Tailwind's own default compiles but BYPASSES the `--space-scale`
-    // slider and cli density (system.md trap 3), and 6px is not a rung on the spacing scale
+    // slider and cli density (web/DESIGN.md §6), and 6px is not a rung on the spacing scale
     // at all. This one DOES move 2px at comfortable density (6px → 4px) — unlike QuietButton's
     // gap-1/px-2 swap — and it lands on the same icon↔label gap QuietButton already uses.
     for (const t of ['inline-flex', 'items-center', 'gap-xs', 'rounded-md',

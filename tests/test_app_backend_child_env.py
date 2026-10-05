@@ -1,9 +1,9 @@
-"""A gateway secret does NOT reach an app backend's environment (EI-12 D1).
+"""A gateway secret does NOT reach an app backend's environment.
 
 🔴 WHAT WAS MEASURED BEFORE THE FIX. `apps/backend_runtime.py` built the backend's
-environment as `dict(os.environ)` — a full copy of the gateway's. PHF-4 had already
-converted the hook, cron-script and bash-action sites to the `sandbox.build_child_env`
-allowlist and deliberately left this one to D1, which made the app backend the WIDEST
+environment as `dict(os.environ)` — a full copy of the gateway's. The hook, cron-script and
+bash-action sites had already moved to the `sandbox.build_child_env`
+allowlist and this one was deliberately left for later, which made the app backend the WIDEST
 remaining inheritance in the tree and the least deserving of it: an app backend is
 third-party code, scanned but not trusted at install, running for as long as the app is
 enabled. `config/loader.py` seeds `~/.personalclaw/.env` credentials into `os.environ` so
@@ -236,7 +236,7 @@ def test_withheld_names_are_logged_against_the_app_backend_site(
     ), "no withheld-name line named the app-backend site"
 
 
-# ── the P3 storage gate survives the allowlist ──
+# ── the storage gate survives the allowlist ──
 
 
 def test_a_backend_without_storage_still_gets_no_data_dir(tmp_path: Path) -> None:
@@ -256,7 +256,7 @@ def test_a_declared_passthrough_cannot_reopen_the_storage_gate(
     The name is not in the base, but `sandbox.env_passthrough` is an operator surface that
     takes ANY non-credential-shaped name. Declaring this one — with the gateway itself
     carrying the variable — would otherwise hand every storage-less backend a data dir at
-    once, silently undoing sandbox P3. Driven at the real call site, not against the builder.
+    once, silently undoing the storage gate. Driven at the real call site, not against the builder.
     """
     monkeypatch.setenv("PERSONALCLAW_APP_DATA_DIR", str(tmp_path / "leaked"))
     monkeypatch.setattr(
@@ -267,5 +267,5 @@ def test_a_declared_passthrough_cannot_reopen_the_storage_gate(
     manifest = _install_backend_app(tmp_path, "nostore2", dump, permissions={})
     env = _child_env(BackendSupervisor(), manifest, dump)
 
-    assert "PERSONALCLAW_APP_DATA_DIR" not in env, "the P3 storage gate was reopened by config"
+    assert "PERSONALCLAW_APP_DATA_DIR" not in env, "the storage gate was reopened by config"
     assert env.get("PERSONALCLAW_APP_NAME") == "nostore2"  # non-vacuity: it did run

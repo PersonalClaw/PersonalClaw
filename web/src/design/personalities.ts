@@ -26,8 +26,8 @@
  *    — propose-don't-write.
  *
  * The two entries below are deliberately PLACEHOLDER identities: the deliverable
- * of this session is the registry shape and the switching behavior, not a final
- * brand set (the plan says so explicitly). Real personalities can be swapped in
+ * here is the registry shape and the switching behavior, not a final
+ * brand set. Real personalities can be swapped in
  * without touching any of the machinery.
  */
 
@@ -72,8 +72,8 @@ export const SHELL_ELEMENTS: Record<ShellElementId, LazyExoticComponent<Componen
  *  PROTOTYPE CHAIN: `'constructor'` and `'toString'` are not members, but they are
  *  found, so `??` never fires and the caller is handed `Object` to render as a
  *  component. That is not theoretical — the sibling `getErrorTreatment` had the same
- *  shape and `treatmentPaint` threw on the object it returned (fixed alongside this;
- *  see the execution log). An own-key test is what makes "closed" hold for every
+ *  shape and `treatmentPaint` threw on the object it returned (fixed alongside this).
+ *  An own-key test is what makes "closed" hold for every
  *  string, not just the plausible ones. */
 export function getShellElement(id: string | undefined): LazyExoticComponent<ComponentType> | null {
   if (!id || !Object.hasOwn(SHELL_ELEMENTS, id)) return null
@@ -193,7 +193,7 @@ export const PERSONALITIES: Personality[] = [
     },
   },
   {
-    // Placeholder identity #1 (plan: "the registry entry shape is the deliverable").
+    // Placeholder identity #1 (the registry entry shape is the deliverable).
     // Every field in the closed block is exercised by one of the two proofs, so the
     // registry shape is demonstrated rather than described — this one carries the
     // persona snippet and the shell element; the arcade carries a persona only.

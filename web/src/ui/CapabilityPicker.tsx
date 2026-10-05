@@ -47,8 +47,8 @@ export function CapRow({ id, name, description, checked, suggested, onToggle, on
  *  committing it to the loop. Paired with {@link CapRow}'s `onPeek`.
  *
  *  The `kind` discriminant is kept even though 'skill' is its only member today: the
- *  workflow branch was removed with the old feature (WORKFLOWS-V2 Phase 1) and
- *  Slice 7 brings back a v2 def preview. Collapsing the union now would mean
+ *  workflow branch was removed with the old feature and
+ *  a v2 def preview is meant to bring it back. Collapsing the union now would mean
  *  re-threading `kind` through both plan reviews to reintroduce it.  */
 export function CapabilityPeekModal({ peek, onClose }: {
   peek: { kind: 'skill'; skill?: SkillItem }

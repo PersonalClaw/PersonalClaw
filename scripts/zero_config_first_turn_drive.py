@@ -3,9 +3,9 @@
 
 **The promise under test.** A fresh PersonalClaw install with NO provider bound, NO API key and
 NO Ollama reachable should reach a working first chat turn against a bundled default model —
-not the calm ``NoModelSetupState`` that OU-12 makes legible, and not ``ERR_MODEL_UNRESOLVED``.
+not the calm ``NoModelSetupState`` a model-less install shows, and not ``ERR_MODEL_UNRESOLVED``.
 
-**Why this is a script and not a gateway drive.** An earlier note recorded this clause as
+**Why this is a script and not a gateway drive.** An earlier note recorded this promise as
 "undrivable by construction on this rig — it needs a fresh unbound dev-home, which is a rig
 act". That was wrong, and the correction is the whole shape of this file: a throwaway
 ``PERSONALCLAW_HOME``, the same provider bootstrap any non-gateway process runs, and one real
@@ -13,7 +13,7 @@ chat turn drive it in seconds. No gateway, no port, no provider binding, no netw
 nothing written to any real home.
 
 **It COMPLETES a turn, it does not merely resolve one.** Resolving proves a provider was
-found; the clause 4 asks for "a real turn rather than the calm setup-state", and a
+found; the promise is a real turn rather than the calm setup state, and a
 resolution that then failed to generate would satisfy the first and not the second. So the
 drive streams a real completion through the same ``NativeAgentRuntime`` the chat surface uses
 and reports the reply text it got back. ``bootstrap_cli_providers()`` is what makes that
@@ -38,7 +38,7 @@ promise is kept:
 The ``zero_config_first_chat:`` line, not the exit code, is the promise.
 
 Usage:
-    python scripts/ou14_zero_config_drive.py [--home DIR] [--json]
+    python scripts/zero_config_first_turn_drive.py [--home DIR] [--json]
 
     --home DIR  drive against DIR instead of a fresh temporary directory. The directory is
                 created if absent. Refuses the default home outright: a probe that wrote to
@@ -68,7 +68,7 @@ from harness import named_home  # noqa: E402
 _USE_CASE = "chat"
 
 
-#: The prompt the drive sends. Short, factual and answerable by a very small model: the clause
+#: The prompt the drive sends. Short, factual and answerable by a very small model: the promise
 #: under test is "a turn completed", not "the model is clever", and a prompt only a large model
 #: could answer would make the rail fail for the wrong reason.
 _PROMPT = "In one short sentence: what is the capital of France?"
@@ -164,7 +164,7 @@ def observe(home: Path) -> dict[str, object]:
         resolved = type(provider).__name__
         # The MODEL axis behind the agent runtime — the thing that actually generates. Named
         # separately because "the native runtime resolved" is true even when its inner model
-        # is a cloud provider, and this clause is about the BUNDLED one.
+        # is a cloud provider, and this promise is about the BUNDLED one.
         inner = type(resolve_provider_for_use_case(_USE_CASE, _force_model_axis=True)).__name__
         reply = _first_turn(provider)
     except ProviderResolutionError as exc:
@@ -173,7 +173,7 @@ def observe(home: Path) -> dict[str, object]:
         error_text = str(exc)
     after = sorted(p.name for p in home.iterdir())
 
-    # The credential half of the clause: reaching a bundled model must cost NO secret. `.env` is
+    # The credential half of the promise: reaching a bundled model must cost NO secret. `.env` is
     # the credential store's file (config/credentials.py), and a provider entry carrying a
     # `credential` key in config.json is the other way one gets recorded.
     config_path = home / "config.json"
@@ -208,7 +208,7 @@ def observe(home: Path) -> dict[str, object]:
 def verdict(observation: dict[str, object]) -> tuple[bool, str, str]:
     """``(consistent, promise, explanation)`` for *observation*.
 
-    ``promise`` is the clause-4 reading — MET or UNMET. ``consistent`` is whether the
+    ``promise`` is the verdict on the promise itself — MET or UNMET. ``consistent`` is whether the
     observation agrees with the repository's own declaration, which is what the exit code
     reports; see the module docstring for why the two are separate.
     """
@@ -239,7 +239,7 @@ def verdict(observation: dict[str, object]) -> tuple[bool, str, str]:
             "UNMET",
             (
                 f"no model is signed off, and chat correctly raised {code} on an unbound home — "
-                "the calm OU-12 setup state, which is exactly the state OU-14 exists to "
+                "the calm setup state, which is exactly the state the bundled model exists to "
                 "eliminate."
             ),
         )
@@ -272,7 +272,7 @@ def verdict(observation: dict[str, object]) -> tuple[bool, str, str]:
             "UNMET",
             (
                 f"chat resolved to {provider} (model axis {inner}) but the first turn produced "
-                "NO text. Resolution is not the clause: OU-14 asks for a real turn, and a "
+                "NO text. Resolution is not the promise: the promise is a real turn, and a "
                 "provider that resolves and then says nothing is the calm setup state with "
                 "extra steps."
             ),
@@ -309,7 +309,7 @@ def verdict(observation: dict[str, object]) -> tuple[bool, str, str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Drive OU-14's zero-config first chat turn.")
+    ap = argparse.ArgumentParser(description="Drive the zero-config first chat turn.")
     ap.add_argument("--home", help="drive against this dir instead of a fresh temp dir")
     ap.add_argument("--json", action="store_true", help="emit JSON instead of the human block")
     args = ap.parse_args(argv)
@@ -318,7 +318,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.home:
         named = Path(args.home).expanduser()
     else:
-        scratch = Path(tempfile.mkdtemp(prefix="ou14_zero_config_"))
+        scratch = Path(tempfile.mkdtemp(prefix="zero_config_first_turn_"))
         named = scratch / "home"
     home = named_home.scratch_home(named)
     try:
@@ -337,7 +337,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
     else:
-        print("── OU-14 zero-config first-chat drive ──────────────────────────────────")
+        print("── zero-config first-chat drive ────────────────────────────────────────")
         print(f"home (throwaway)          : {observation['home']}")
         print(f"bundle signed off         : {observation['bundle_declared']}")
         print(f"bundle model id           : {observation['bundle_model_id']}")

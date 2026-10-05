@@ -99,7 +99,7 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
   const patternOptions = useMemo(() => EVENT_PATTERN_META.map((p) => ({
     value: p.pattern, label: p.label, description: p.desc,
   })), [])
-  // AppEvent's matcher is a PICKER over the live app-source vocabulary (AUTO-A4), not free text:
+  // AppEvent's matcher is a PICKER over the live app-source vocabulary, not free text:
   // the namespaced name (`app:<app>:<event>`) is core's to derive, so typing it by hand is how a
   // trigger ends up bound to an event that will never fire. Falls back to the plain glob input when
   // no app contributes a source — an empty picker with no fallback would be a dead end.
@@ -111,7 +111,7 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
     : kind === 'run_completed' ? (catalog?.run_completed ?? []) : (catalog?.event ?? [])
   // Draft-by-default surfacing: a send-capable action delivers OUT to a channel, so an
   // inbox trigger that auto-replies is worth flagging before the user commits. Keyed to the
-  // provider, not to a per-provider capability flag (none exists in core yet — see EIAT-3).
+  // provider, not to a per-provider capability flag (none exists in core yet).
   const sendCapable = actionIsSendCapable(provider)
 
   function pickProvider(p: string) {

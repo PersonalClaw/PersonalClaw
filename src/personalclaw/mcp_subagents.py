@@ -178,7 +178,7 @@ def _run_compiled_batch(
         "name": name,
         "root": root,
         "description": f"Compiled batch of {len(leaves)} leaf task(s) from subagent_run.",
-        # The compiler's §4.1 isolation declaration, sent EXPLICITLY. `root` alone would leave it
+        # The compiler's isolation declaration, sent EXPLICITLY. `root` alone would leave it
         # behind: the authoring path takes named fields, so a top-level key that is not passed is
         # a key the persisted def never sees — and the applier reads the def.
         "workspace": result.spec.get(batch_compile.WORKSPACE_KEY) or {},
@@ -371,11 +371,11 @@ def _list_tools() -> list[dict[str, Any]]:
 
 
 def _best_of_n(args: dict[str, Any]) -> str:
-    """`best_of_n` — the chat/tool entry point for the sampling core (HARNESS-CRAFT §2.1).
+    """`best_of_n` — the chat/tool entry point for the sampling core.
 
     A thin wrapper over ``personalclaw.sampling.best_of_n``: the fan-out, judging,
     selection, metering and outcome record all live in the core so this tool, the
-    bundled ``best-of-n`` skill and the HC-5 workflow template share ONE
+    bundled ``best-of-n`` skill and the ``best-of-n`` workflow template share ONE
     implementation. Returns the whole slate as JSON so the presenting model can show
     the winner, collapse the runners-up, and honor "use #2" verbatim.
     """

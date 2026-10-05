@@ -3,7 +3,7 @@
 Replaces `test_cron_reaper.py` + `test_cron_reaper_ephemeral.py` (23 tests), which pinned
 `ScheduleService`'s reaper. That reaper swept `_job_start_times`, a dict written ONLY by
 `_run_job_isolated` — reachable only from the legacy timer the cutover stopped arming — so it
-had been provably inert for six sessions. Every one of those 23 tests passed against it the whole
+had been provably inert ever since. Every one of those 23 tests passed against it the whole
 time, because each one wrote the input dict BY HAND before sweeping. That is the lesson worth
 keeping: a test that constructs the state its subject is supposed to observe cannot tell you whether
 anything real ever produces that state.
@@ -336,7 +336,7 @@ async def test_the_loop_outlives_a_failing_sweep(home, store):
 
 
 def test_the_deadline_matches_the_cron_and_subagent_reapers():
-    """The plan keeps the reaper "as defense-in-depth over ALL trigger-fired runs", so the number a
+    """The reaper stays as defense-in-depth over ALL trigger-fired runs, so the number a
     user already reasons about for a cron has to be the number a store-backed trigger gets. Three
     deadlines that drifted apart would make "why did my run stop at 30 minutes" unanswerable."""
     from personalclaw import subagent
@@ -348,8 +348,8 @@ def test_the_deadline_matches_the_cron_and_subagent_reapers():
 
 
 def test_the_legacy_reaper_is_gone(home):
-    """🔴 The clean break, completed. S106 deleted the inert reaper (two reapers, one of which reaped
-    nothing and said so nowhere); S112 deleted the class that carried it, which is a stronger
+    """🔴 The clean break, completed. The inert reaper is deleted (two reapers, one of which reaped
+    nothing and said so nowhere), and so is the class that carried it, which is a stronger
     statement than any per-method check could make."""
     with pytest.raises(ImportError):
         from personalclaw.schedule import ScheduleService  # noqa: F401
@@ -357,7 +357,7 @@ def test_the_legacy_reaper_is_gone(home):
 
 def test_boot_starts_the_new_reaper_and_not_the_old_one():
     """Source-level, like the `test_triggers_loop.py` check: the wiring is the whole point of the
-    session, and a boot test that mocks `ScheduleService` cannot see which loop was armed."""
+    change, and a boot test that mocks `ScheduleService` cannot see which loop was armed."""
     import pathlib
 
     import personalclaw.gateway as G

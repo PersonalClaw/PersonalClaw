@@ -96,7 +96,7 @@ const NAV: NavItem[] = [
   // UI pages are injected here dynamically at render (see appNavItems).
   // The label says what the click opens: the route lands on the LIBRARY view, whose h1 is
   // "Apps" — the Store is its ?view=store sub-view. A nav item reading "Store" over a page
-  // titled "Apps" was the product's most-visible naming drift (AUD-X3; the site says "Apps" too).
+  // titled "Apps" was the product's most-visible naming drift (the site says "Apps" too).
   { id: 'apps', label: 'Apps', icon: Blocks, section: 'Apps' },
   // Settings is pinned to the very bottom of the rail (NavRail honors pinBottom).
   { id: 'settings', label: 'Settings', icon: Settings, pinBottom: true },
@@ -224,7 +224,7 @@ function AppInner() {
   // claiming a session named "room/<id>" is on screen).
   const activeChatSession = route === 'chat' && sub && sub !== 'new' && sub !== 'history' && !sub.startsWith('room/') && sub !== 'room' ? sub : ''
   useApprovalToasts(activeChatSession)
-  // Plan-42's `native` notification target. Mounted in the shell because it must
+  // The `native` notification target. Mounted in the shell because it must
   // hold for every route, not just the notifications page: the gateway decides which notes
   // are native and this relays them to the Electron shell, which raises the OS banner and
   // hands back the route on a tap. A no-op in a browser tab — the bell is the fallback.
@@ -326,7 +326,7 @@ function AppInner() {
       section: 'Apps',
     }))
 
-  // Contributed-app SDK events (A6/A8): launch a chat, badge an app's nav tile.
+  // Contributed-app SDK events: launch a chat, badge an app's nav tile.
   const [appBadges, setAppBadges] = useState<Record<string, number>>({})
   useEffect(() => {
     const onLaunch = (e: Event) => {
@@ -335,7 +335,7 @@ function AppInner() {
       if (d.prompt) qs.set('seed', d.prompt)
       if (d.agent) qs.set('agent', d.agent)
       const q = qs.toString()
-      // A staged session keeps its ?seed too (plan 60: investigate pre-fills the
+      // A staged session keeps its ?seed too (investigate pre-fills the
       // composer with an editable opening question — never auto-sent).
       navigate(d.session ? `chat/${encodeURIComponent(d.session)}${q ? `?${q}` : ''}` : `chat/new${q ? `?${q}` : ''}`)
     }
@@ -751,7 +751,7 @@ function AppInner() {
           <ModelWaits session="" floating className="mx-auto w-full max-w-[36rem]" />
         </div>
         <ErrorBoundary resetKey={rendered}>
-          {/* Route cross-fade (Slice 5 global choreography): the new page fades+
+          {/* Route cross-fade (global choreography): the new page fades+
               rises in on each route change — keyed on `rendered` so switching
               sections reads as a continuous transition, not a hard cut.
               Enter-only (no exit-wait) keeps navigation instant; MotionConfig

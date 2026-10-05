@@ -1,10 +1,10 @@
 """The sync-transport contract.
 
-The contract-owner slice re-scoped out: the ``SyncTransportProvider`` ABC
+The contract: the ``SyncTransportProvider`` ABC
 + its data types, the flat ``sync_transports`` registry, the ``sdk/sync`` re-export,
-and the ``sync`` provider type with a real ``SyncTypeHandler`` (the #47 rule — a
-manifest type and its live handler land together). The sync CYCLE that consumes
-this (pull→merge→push, CAS registry, outbox) is a later DAS-6 sub-change.
+and the ``sync`` provider type with a real ``SyncTypeHandler`` (the rule that a
+manifest type and its runtime handler land together). The sync CYCLE that consumes
+this (pull→merge→push, CAS registry, outbox) lives in ``durability/sync_cycle.py``.
 """
 
 from __future__ import annotations
@@ -62,8 +62,8 @@ class _FixtureTransport(SyncTransportProvider):
 
 
 def test_sync_type_is_registered_handler():
-    """``sync`` has a live SyncTypeHandler (the #47 rule — see the parity test in
-    test_app_manifest for the PROVIDER_TYPES side)."""
+    """``sync`` has a live SyncTypeHandler: a manifest type and its runtime handler land together
+    (see the parity test in test_app_manifest for the PROVIDER_TYPES side)."""
     reg = get_provider_registry()
     assert isinstance(reg._type_handlers.get("sync"), SyncTypeHandler)
 

@@ -118,7 +118,7 @@ describe('the divergence this primitive resolves', () => {
 })
 
 describe('the ring announces itself, and its abbreviation has a full word', () => {
-  // ── Cycle 178: a graphic that was the only carrier of a number, and said nothing ──────────────
+  // ── A graphic that was the only carrier of a number, and said nothing ─────────────────────────
   //
   // Read from the live AX tree on BOTH call sites (`#/loops/history` and `#/dashboard`): the svg had
   // **no `role`, no `aria-label`, no `aria-hidden` and no `<title>`**. Not named, and not marked

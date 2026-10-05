@@ -168,7 +168,7 @@ def test_shell_structural_hint_surfaces_bash():
     assert "some_exec_tool" in names
 
 
-# ── progressive disclosure: the catalog of non-surfaced tools (PT1) ──
+# ── progressive disclosure: the catalog of non-surfaced tools ──
 
 
 @dataclass

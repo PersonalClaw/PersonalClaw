@@ -28,9 +28,9 @@ import { HELD_CHANGE_REASON } from '../../lib/staleWrite'
  *  · `RoutingPolicySection` below DECIDES — mode and pin written through
  *    `api.setRoutingPolicy`, and each class's order through `api.setRoutingOrder`.
  *
- *  Until MRT-4 this surface only visualized, and both this comment and the panel's
+ *  This surface used to only visualize, and both this comment and the panel's
  *  own hint said so ("Observation only: this does not change routing — that's a
- *  later capability"). MRT-4 shipped that capability directly below the sentence
+ *  later capability"). That capability then shipped directly below the sentence
  *  denying it, so the page told a user its controls did nothing.
  *
  *  Data comes from GET /api/models/telemetry (api.modelsTelemetry); the bucket is
@@ -57,7 +57,7 @@ const USE_CASES = [
 // So Reasoning fills in as models handle it, while Chat (the DEFAULT tab) and Code & tools fill in only
 // from the calls automation makes there: a user who only chats sees nothing on them, and the copy says
 // why rather than promising data their own turns never produce. The tabs are left as they are
-// (mirroring the Models panel's axes is a deliberate choice, and removing two is the owner's call).
+// (mirroring the Models panel's axes is a deliberate choice; removing two is a separate design call).
 // `routingTelemetryPromise.test.tsx` reads this list against the bridge's own.
 const METERED_AXES = ['reasoning', 'background', 'loops', 'orchestration'] as const
 
@@ -401,7 +401,7 @@ function ProposalEvidence({ evidence, promoted, demoted }: {
   return <p data-type="caption" className="mt-1 text-on-surface-low">{bits.join(' · ')}.</p>
 }
 
-/** The routing POLICY table (MODEL-ROUTING-TELEMETRY §6.1-6.2).
+/** The routing POLICY table.
  *
  *  The table above says which model is *efficient*; this one says which model routing
  *  actually tries FIRST, and lets the user overrule it. Three levers, in descending

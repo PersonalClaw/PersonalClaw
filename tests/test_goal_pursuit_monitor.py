@@ -1,17 +1,17 @@
-"""(R15): goal-pursuit-monitor — the parked-run + self-created-clock-trigger pattern.
+"""`goal-pursuit-monitor` — the parked-run + self-created-clock-trigger pattern.
 
 The template's central mechanism is the trigger substrate's resume target: a monitor cycle
 schedules its own next wake with ``set_onetime_task(resume_run_id="self")`` and the run parks
-at an ``event`` gate that trigger answers. These tests hold the three bounds the plan calls
-load-bearing — "ship them in the same slice as the tools, never after":
+at an ``event`` gate that trigger answers. These tests hold the three load-bearing
+bounds, which ship with the tools and never after:
 
 * **mandatory TTL** — every agent-created trigger expires (`_agent_expiry_iso`), so a forgotten
   clock cannot hold a cap slot forever;
 * **provenance** — `created_by: agent` plus the resume target's `run_id` name who created it
   and what it wakes;
-* **the write side of AUTO-R11's resume targets** — `T.create(resume=...)` produces the
+* **the write side of the resume targets** — `T.create(resume=...)` produces the
   `workflow.resume` shape `wakeup.resume_target_of` reads, and it survives a store reload
-  (criterion 7's restart half: the substrate's persistence is what replaces autonudge).
+  (the restart half: the substrate's persistence is what replaces autonudge).
 
 Every test drives the REAL ``TriggerStore`` against a ``tmp_path`` — the same discipline as
 ``test_triggers_tools.py``, and for the same reason: the persistence IS the feature.
@@ -127,7 +127,7 @@ def test_user_created_trigger_keeps_optin_expiry(store):
     assert store.get(result.data["trigger"]["id"]).trigger.expires_at == ""
 
 
-# ── the resume-target write side (AUTO-R11's counterpart) ──
+# ── the resume-target write side ──
 
 
 def test_resume_target_roundtrips_through_the_store(store):
@@ -210,7 +210,7 @@ def test_cap_counts_resume_triggers_too(store):
     assert str(cap) in over.text
 
 
-# ── criterion 7's restart half: substrate persistence ──
+# ── the restart half: substrate persistence ──
 
 
 def test_resume_trigger_survives_a_store_reload(store, tmp_path):

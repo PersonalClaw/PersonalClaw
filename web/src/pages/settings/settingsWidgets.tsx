@@ -207,7 +207,7 @@ const useProjectionRules = () => useQuery('settings:projection-rules', () => api
 // 🔑 THIS ONE KEEPS ITS FALLBACK, AND IT IS THE EXCEPTION THAT PROVES THE RULE. Everything else on
 // the hub was de-swallowed; this read is decorative — the Tool-output tile headlines the RULE count
 // when there is no savings number, so an absent meter is a designed state rather than a gap. That is
-// a deliberate prior ruling with a rail of its own (`dashboard/healthUnknown.test.ts`: "not every
+// a deliberate prior decision with a rail of its own (`dashboard/healthUnknown.test.ts`: "not every
 // swallowed read is a defect. A savings metric that cannot be computed has nothing to assert; a
 // health card that cannot probe does"), and removing it here would also have been a NO-OP on screen:
 // `savedTokens` derives from `savings?.…`, so a rejection and a null render identically. Overturning
@@ -744,7 +744,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     description: 'Retention policy and automatic cleanup.',
     useSearchText() { return 'inbox retention auto cleanup' },
     render(query, go) {
-      // Alert keywords moved to the notification rules matrix (plan 42 S3), so this card
+      // Alert keywords moved to the notification rules matrix, so this card
       // now surfaces what the inbox itself still owns: how long items are kept.
       const { data: s, error: inboxErr, stale: inboxStale, refresh, status: sStatus } = useInbox()
       return (

@@ -34,7 +34,7 @@ function Stamp({ ts }: { ts?: string }) {
 }
 
 /** Action bar below an ASSISTANT turn. Copy + Speak always; Regenerate only on
- *  the last turn (it replaces the latest reply); Branch from any turn (CC-7 —
+ *  the last turn (it replaces the latest reply); Branch from any turn (it
  *  duplicates the conversation up to that point into a new session; branching
  *  from an ANSWER is the common case, "take this analysis two directions"). When
  *  a reply has been regenerated, a ‹ n/N › variant switcher lets the user page

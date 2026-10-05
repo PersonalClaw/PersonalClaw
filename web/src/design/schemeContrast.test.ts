@@ -173,7 +173,7 @@ describe('scheme contrast: every scheme meets WCAG AA (not just the default)', (
         expect(contrast(info.light, WHITE)).toBeGreaterThanOrEqual(AA)
       })
 
-      // DARK — already AA before this cycle; guard against regression. primary as
+      // DARK — already AA before this change; guard against regression. primary as
       // accent text on the neutral dark container (the common accent-text ground).
       it('dark: primary as accent text on surface-container ≥ AA', () => {
         expect(contrast(primary.dark, DARK_SURFACE)).toBeGreaterThanOrEqual(AA)
@@ -580,7 +580,7 @@ describe('the accent pair agrees across every declaration, and emphasis outranks
 // This block used to record, and deliberately not assert, that the current region was told apart
 // from history by HUE ALONE: `--color-primary` vs the old rest tone `--color-on-surface-low` measured
 // **1.004:1** in dark/coral and never exceeded 1.878 in any scheme × mode, and the answer then was a
-// second channel (the on-screen marks idled longer). The owner's ruling removed that
+// second channel (the on-screen marks idled longer). A design decision removed that
 // channel — on-screen markers "don't need to expand to indicate that", colour says it — so colour
 // has to carry it without hue. The rest tone is therefore `--color-map-rest`, a neutral tuned to sit
 // as far in lightness from the accent as 3:1-on-the-canvas allows, and the step between the two is
@@ -710,7 +710,7 @@ describe('session map rail: both mark tones clear SC 1.4.11 on the rail\'s groun
   })
 
   it('the pointed-at marker BRIGHTENS: each lit tone out-contrasts its resting tone on the canvas, everywhere', () => {
-    // "Only the hovered/focused marker enlarges AND brightens" (the owner's reference). Parsed out of
+    // "Only the hovered/focused marker enlarges AND brightens" (the session map's design rule). Parsed out of
     // the component like the resting pair, so the claim follows the code.
     const src = readFileSync(join(process.cwd(), 'src/pages/chat/SessionMapRail.tsx'), 'utf8')
     const m = /const lit = isCurrent \? 'var\((--[a-z0-9-]+)\)' : 'var\((--[a-z0-9-]+)\)'/.exec(src)

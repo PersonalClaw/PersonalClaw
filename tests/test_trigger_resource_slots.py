@@ -1,4 +1,4 @@
-"""Named resource slots — declared, persisted, and read by nothing (§3.5 / AUTO-R9).
+"""Named resource slots — declared, persisted, and read by nothing.
 
 *"Named resource slots — triggers/runs declare needs (`gpu`, `local-llm`); the substrate
 **serializes conflicting runs per slot** and refuses over-capacity starts with a typed
@@ -10,7 +10,7 @@
 all 41 dataclasses in `triggers/`: of every field with a default, this was the only one with **zero
 non-declaration readers**. So three triggers declaring `resource_slots: ["local-llm"]` all ran a
 local
-model at once — exactly the contention §3.5 exists to prevent on a machine shared with the
+model at once — exactly the contention resource slots exist to prevent on a machine shared with the
 interactive
 user.
 
@@ -115,8 +115,9 @@ def test_NOBODY_holding_means_everyone_fires(store, tmp_path):
 
 
 def test_the_outcome_is_DEFERRED_not_a_skip(store, tmp_path):
-    """§3.5 asks for "a `deferred` ledger row". The slot frees on its own, so this fire is postponed
-    by contention — not dropped by policy, which is what a `skipped_*` would claim."""
+    """The requirement above asks for "a `deferred` ledger row". The slot frees on its own, so
+    this fire is postponed by contention — not dropped by policy, which is what a `skipped_*`
+    would claim."""
     _add(store, "clock:index", ["local-llm"])
     _add(store, "clock:digest", ["local-llm"])
     _hold("clock:index", tmp_path)
@@ -126,8 +127,8 @@ def test_the_outcome_is_DEFERRED_not_a_skip(store, tmp_path):
 
 
 def test_the_reason_NAMES_THE_HOLDER(store, tmp_path):
-    """🔴 §3.5 asks for "holder identity". "The gpu is busy" sends a user through every automation
-    they own; "held by clock:index" is actionable."""
+    """🔴 The requirement above asks for "holder identity". "The gpu is busy" sends a user through
+    every automation they own; "held by clock:index" is actionable."""
     _add(store, "clock:index", ["local-llm"])
     _add(store, "clock:digest", ["local-llm"])
     _hold("clock:index", tmp_path)

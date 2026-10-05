@@ -5,13 +5,13 @@
 # Usage: scripts/verify_macos_app_signature.sh <path-to-.app>
 #
 # WHY THIS EXISTS — two defects in two days, and the second was caused by the fix for the
-# first. The project ships the desktop app unsigned by owner ruling (2026-09-22: producing the
+# first. The project ships the desktop app unsigned on purpose (producing the
 # installer does not require signing, and a real signature needs a paid Apple Developer
 # account deliberately not bought). Twice the build produced something else and nothing noticed:
 #
 #   1. FOREIGN AUTHORITY. electron-builder AUTO-DISCOVERS an identity from the build machine's
 #      login keychain. A local build shipped PersonalClaw.app signed
-#      `Authority=MeetNote Developer` — an unrelated third party's identity on what would have
+#      another developer's `Authority=` — an unrelated third party's identity on what would have
 #      been a public release artifact — while the Makefile comment claimed it was unsigned.
 #   2. DAMAGED SEAL. Fixing (1) with `"identity": null` disabled signing, which did NOT leave
 #      the bundle unsigned: it left the STOCK ELECTRON LINKER SIGNATURE in place, and that
@@ -37,7 +37,7 @@
 #     NON-ZERO ("code object is not signed at all") and prints no report, so the pipeline
 #     passes on the good and the bad artifact alike.
 #   * `codesign -dv …` AT ALL — `-dv` is too quiet to print `Authority=` even for a signed
-#     app. Measured on the MeetNote bundle: `-dv` exits 0 and prints Identifier/Format/
+#     app. Measured on that foreign-signed bundle: `-dv` exits 0 and prints Identifier/Format/
 #     CodeDirectory/Signature-size/TeamIdentifier and NO Authority line. `-dvv` is the
 #     minimum verbosity that names a signer, so a gate written with `-dv` reports CLEAN on an
 #     app that is signed.
@@ -57,12 +57,12 @@
 #
 # GATEKEEPER IS DELIBERATELY NOT ASSERTED. `spctl -a -t install` exits 3 ("rejected") on a
 # KNOWN-GOOD unnotarized bundle — measured on the working installed app — because Gatekeeper
-# wants Developer ID + notarization, which the owner ruling rules out buying. Gating on spctl
+# wants Developer ID + notarization, which the project deliberately does not buy. Gating on spctl
 # would gate on notarization and would fail a perfectly good artifact. The user-facing cost of
 # that rejection is documented in docs/guides/desktop.md (drag to Applications, approve once
 # under System Settings -> Privacy & Security), not enforced here.
 #
-# THE INTENDED AUTHORITY SET IS EMPTY. If the ruling is ever revisited and a real Developer ID
+# THE INTENDED AUTHORITY SET IS EMPTY. If that decision is ever revisited and a real Developer ID
 # is bought, this script is the single place that encodes the rule — allow the new authority
 # here rather than deleting the gate.
 
@@ -126,7 +126,7 @@ top_report="$(report_of "$APP")"
 
 # ── 2. no named signing authority, anywhere in the bundle tree ─────────────────────────────
 # Nested code is checked too: electron-builder signs the helper apps and bundled frameworks
-# separately, and on the MeetNote artifact all NINE bundles carried the foreign authority. A
+# separately, and on the foreign-signed artifact all NINE bundles carried that authority. A
 # partial re-sign would otherwise hide in a framework.
 authority_seen=0
 for bundle in "$APP" "$APP"/Contents/Frameworks/*.app "$APP"/Contents/Frameworks/*.framework; do
@@ -213,8 +213,8 @@ verify_macos_app_signature: FAILED — $failed check(s) failed.
 
 This build is NOT the artifact the project ships, and a user would not be able to install it.
 Do NOT fix it by obtaining, borrowing or configuring a real signing identity, and do not
-notarize (owner ruling 2026-09-22). The intended state is an ad-hoc signature over the WHOLE
-bundle with a valid seal. Confirm all three guards and rebuild:
+notarize (the project ships unsigned on purpose). The intended state is an ad-hoc
+signature over the WHOLE bundle with a valid seal. Confirm all three guards and rebuild:
 
   * CSC_IDENTITY_AUTO_DISCOVERY=false  in the Makefile's desktop-dist recipe
   * "identity": null                   under build.mac in desktop/package.json

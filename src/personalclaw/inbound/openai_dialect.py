@@ -1,4 +1,4 @@
-"""Dialect 1 — the standard-API doorway (`/v1/*`), EXTERNAL-ACCESS §2.
+"""The standard-API doorway (`/v1/*`).
 
 Any client that already speaks the de-facto `/v1` wire shape becomes a PersonalClaw
 front-end: the `model` field names one of the user's own **agents**, and the turn runs
@@ -94,7 +94,7 @@ SESSION_PREFIX = session_keys.INBOUND.prefix
 #: Session id used when the caller names none. The declared default.
 DEFAULT_SESSION_TAG = "default"
 
-#: Header escape hatch for clients that cannot set the `user` field (T2-A2).
+#: Header escape hatch for clients that cannot set the `user` field.
 SESSION_HEADER = "X-PersonalClaw-Session"
 
 #: What a caller sees when its turn stopped on an approval nobody was there to give.
@@ -106,8 +106,8 @@ APPROVAL_NOTICE = (
 )
 
 #: How long one inbound turn may take before the caller is answered anyway. Matches
-#: `cli_run`'s headless turn ceiling rather than the 30s request deadline: §1.3
-#: scopes that to time-to-first-byte for streaming surfaces, and an agent turn that
+#: `cli_run`'s headless turn ceiling rather than the 30s request deadline, which
+#: is scoped to time-to-first-byte for streaming surfaces, and an agent turn that
 #: runs a tool legitimately exceeds it.
 TURN_TIMEOUT_SECS = 600.0
 
@@ -143,7 +143,7 @@ def openai_error(
 ) -> web.Response:
     """An error in the dialect's own envelope, with the stable ``code`` preserved.
 
-    The Amendment settled the collision between §2.2's ``{"error": {"code", ...}}``
+    This settles the collision between the shared ``{"error": {"code", ...}}``
     envelope and this wire format's ``{"error": {"message", "type", "code"}}``: the
     dialect's shape wins on this surface (an SDK parses it or raises something
     useless), and the stable machine-readable code survives in ``code``. So a caller
@@ -215,7 +215,7 @@ def _admit(request: web.Request, route: str) -> tuple[web.Response | None, Any |
     off surface does not confirm its own existence) before peer (403) before bearer
     (401) — with one difference: the peer check goes through ``auth.peer_allowed``
     rather than a flat loopback test, because unlike capture this surface HAS a
-    declared remote mode (§1.1's ``allow_remote`` + ``public_url`` pair) for the phone
+    declared remote mode (the ``allow_remote`` + ``public_url`` pair) for the phone
     client the doorway exists to admit.
 
     Refusals answer in the dialect's error envelope, not the dashboard's, so an SDK
@@ -284,7 +284,7 @@ def _admit(request: web.Request, route: str) -> tuple[web.Response | None, Any |
 
 
 def _rate_refusal(route: str, client: Any, client_id: str) -> web.Response | None:
-    """§1.3's per-client token bucket, in this dialect's envelope."""
+    """The per-client token bucket, in this dialect's envelope."""
     try:
         from personalclaw.inbound import caps
 
@@ -339,7 +339,7 @@ def resolve_agent(model: str, client: Any, cfg: Any) -> tuple[str, web.Response 
 
     Order matters: the binding pin is checked BEFORE existence, so a pinned client
     probing for other agents' names learns nothing from the difference between "that
-    agent does not exist" and "you may not have it". §1.2's rule is that a request
+    agent does not exist" and "you may not have it". The rule is that a request
     argument can never override a binding, and a 404 that leaks the agent list would
     be a soft override.
     """
@@ -391,7 +391,7 @@ class _quiet:
 
 
 def session_key_for(client_id: str, tag: str, *, conversation_round: int = 0) -> str:
-    """``inbound:<client_id>:<sha8(tag)>`` — §2.1's key, hashed for a reason.
+    """``inbound:<client_id>:<sha8(tag)>`` — the session key, hashed for a reason.
 
     ``tag`` is caller-supplied (`user`, or the `X-PersonalClaw-Session` header), so it
     is hashed rather than interpolated: a raw value would put an external string into
@@ -517,7 +517,7 @@ def _content_of(msg: dict) -> str:
 
     ``chunk`` is the assistant's streaming text. ``tool``/``permission`` rows are
     where a lesser dialect would emit `tool_calls`; they deliberately produce nothing
-    on the wire (§2.3 — the caller is not the tool executor), and the approval case is
+    on the wire (the caller is not the tool executor), and the approval case is
     handled by ``_is_approval_stop`` instead of by leaking a half-turn.
     """
     role = str(msg.get("role", ""))
@@ -547,8 +547,8 @@ def _token_totals(session_key: str) -> tuple[int, int]:
 
     Read from the usage ledger the ModelCallGuard writes, keyed by the
     DASHBOARD-WRAPPED provider key — the bare session name matches nothing there, and
-    querying it would report a confident 0 on a turn that really billed (the decoy
-    EA-9 hit). Snapshotted before and after the turn so the `usage` block is this
+    querying it would report a confident 0 on a turn that really billed.
+    Snapshotted before and after the turn so the `usage` block is this
     turn's delta rather than the session's lifetime total.
     """
     try:
@@ -904,7 +904,7 @@ async def _stream_completion(
         if needs_approval:
             await resp.write(_frame({"content": ("\n\n" if written else "") + APPROVAL_NOTICE}))
         after_in, after_out = _token_totals(key)
-        # The usage block rides the FINAL frame, per the Amendment: clients budget off
+        # The usage block rides the FINAL frame: clients budget off
         # it, and one carried on an earlier frame is one a client stops reading for.
         await resp.write(
             _frame(
@@ -942,7 +942,7 @@ async def handle_models(request: web.Request) -> web.StreamResponse:
 
     No provider model is ever listed here. A `/v1/models` that answered with the
     user's bound models would turn the doorway into an outward proxy for them, which
-    is the one thing §2.1 says this surface never is.
+    is the one thing this surface must never be.
     """
     refusal, client, client_id = _admit(request, ROUTE_MODELS)
     if refusal is not None:
@@ -989,14 +989,13 @@ def _as_the_clients_work(client_id: str) -> Iterator[None]:
 
 
 def resolve_voice(name: str = "", *, surface: str = "") -> dict | None:
-    """The single seam a voice NAME resolves through. NEW-9 re-implements THIS.
+    """The single seam a voice NAME resolves through. Profiles resolve through THIS.
 
     Returns the provider-neutral synthesis params (``provider``, ``voice``, ``speed``,
     ``speech_voice``, …) for ``name``, or None when the user has bound no TTS voice at
-    all. ``name`` is honoured only as a profile id — this plan ships name-based
-    resolution and leaves profile machinery to NEW-9's ``voice_profiles`` entity, so
-    the seam's SHAPE is the deliverable and there is exactly one function for NEW-9 to
-    replace.
+    all. ``name`` is honoured only as a profile id — profile machinery lives behind
+    ``active_voice_params`` and the ``voice_profiles`` entity, so the seam's SHAPE is the
+    deliverable and there is exactly one function for profiles to resolve through.
 
     The returned ``provider`` is whatever object the user bound. This function does
     not know or care which one that is, which is the whole point: a caller's
@@ -1011,7 +1010,7 @@ async def handle_speech(request: web.Request) -> web.StreamResponse:
     """POST /v1/audio/speech — a thin alias over the bound TTS provider.
 
     The request's ``model`` is read and DISCARDED. That is not laziness: the
-    ``active_models.json`` binding is the truth (§2.2), and a dialect that let a
+    ``active_models.json`` binding is the truth, and a dialect that let a
     client's cosmetic model string select an engine would have handed an external
     caller a provider-routing control the owner never gave it.
 
@@ -1343,7 +1342,7 @@ async def handle_transcriptions(request: web.Request) -> web.StreamResponse:
 async def handle_voices(request: web.Request) -> web.StreamResponse:
     """GET /v1/audio/voices — what the BOUND provider offers. Not a catalog.
 
-    Not part of the `/v1` wire standard; §2.2 adds it because a client that cannot
+    Not part of the `/v1` wire standard; added because a client that cannot
     discover the local voices can only guess at the `voice` field.
     """
     refusal, client, client_id = _admit(request, ROUTE_VOICES)
@@ -1380,7 +1379,7 @@ async def handle_voices(request: web.Request) -> web.StreamResponse:
 
 
 async def _read_json(request: web.Request) -> dict | None:
-    """The request body as an object, or None. Capped per §1.3."""
+    """The request body as an object, or None. Capped by the inbound caps."""
     from personalclaw.inbound.caps import DEFAULT_CAPS
 
     limit = int(getattr(DEFAULT_CAPS, "body_bytes", 0) or 64 * 1024)

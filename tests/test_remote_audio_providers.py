@@ -379,7 +379,7 @@ class TestOpenAITtsProvider:
 
 
 class TestRemoteAudioEndpointGating:
-    """Regression for the #38 class extended to STT/TTS: the registries build one
+    """Regression for the wrong-endpoint class extended to STT/TTS: the registries build one
     adapter per OpenAI-*compatible* config provider, but a non-OpenAI endpoint
     (Alibaba/Groq/…) doesn't serve OpenAI's whisper-1/tts-1. So the curated lists
     surface ONLY on OpenAI's own endpoint; other endpoints list nothing and refuse
@@ -387,7 +387,7 @@ class TestRemoteAudioEndpointGating:
 
     @pytest.mark.asyncio
     async def test_stt_non_openai_unpinned_transcribe_refuses(self, tmp_path):
-        # The #38 gating now lives on the INFERENCE axis (transcribe): a non-OpenAI
+        # The endpoint gating now lives on the INFERENCE axis (transcribe): a non-OpenAI
         # endpoint has no known default transcriber, so an unpinned call refuses rather
         # than sending whisper-1 to the wrong service. (Model DISCOVERY for binding is
         # the config-provider catalog's job, not the adapter's — see the decoupling.)

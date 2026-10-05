@@ -1,4 +1,4 @@
-"""PP-12 admission for a run's ready set: the policies that need a clock and the disk.
+"""Admission for a run's ready set: the policies that need a clock and the disk.
 
 `frontier()` is pure, so it can apply neither a lease (occupancy that lives on disk, under a TTL)
 nor a bake floor (elapsed time). Both are still ADMISSION — "may this start now, given persisted
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
 
 #: Node config keys the policies read. A spec containing none of them never builds an
-#: `AdmissionState` and never asks a question — the pre-PP-12 code path, exactly.
+#: `AdmissionState` and never asks a question — the code path from before these policies, exactly.
 _ADMISSION_KEYS = ("lease", "min_dwell_secs", "metric_pass")
 
 
@@ -151,7 +151,7 @@ def _admit(
         # The verdict said yes; the flocked compare-and-swap said no. THIS is the authoritative
         # answer — a policy that advised on a stale read and a claim that lost the race are the
         # two halves of one mechanism, and skipping the claim because the advice was positive is
-        # exactly the read-then-write S57 measured failing 36 of 40 races.
+        # exactly the read-then-write measured failing 36 of 40 races.
         _journal_admission_hold(ctl, item, verdict, f"{resource!r} claim lost: {error}")
         _note_admission_wake(ctl, state.now + 1.0)
         return False, ""
@@ -160,7 +160,7 @@ def _admit(
 
 
 def _declares_admission_keys(ctl: RunController) -> bool:
-    """Whether any node declares a PP-12 key, cached per spec version."""
+    """Whether any node declares an admission key, cached per spec version."""
     cached = ctl._admission_declared
     version = int(ctl.run.spec_version)
     if cached is not None and cached[0] == version:
@@ -228,7 +228,7 @@ def _lease_claim(ctl: RunController, path: str) -> tuple[str, str, str, int] | N
 
     The OUTERMOST declaration wins. One resource per item is deliberate: two would need a claim
     ORDER to stay deadlock-free, and an ordered multi-resource lock manager is the distributed
-    substrate this plan's soul guardrail excludes.
+    substrate this design deliberately excludes.
     """
     nodes = dict(walk(ctl.root))
     segments = path.split(".")
@@ -328,7 +328,7 @@ def _queue_metric_rollback(ctl: RunController, item: ReadyNode, decision: Any) -
 
 
 def _journal_admission_hold(ctl: RunController, item: ReadyNode, verdict: Any, reason: str) -> None:
-    """Record one PP-12 refusal, once. A refusal nobody can read back is indistinguishable from
+    """Record one admission refusal, once. A refusal nobody can read back is indistinguishable from
     a scheduler that lost the node — the same reasoning `_journal_wip_holds` is built on."""
     binding = verdict.binding
     hold = verdict.hold.value or "unrecorded"
@@ -412,7 +412,7 @@ def _scope_settled(ctl: RunController, scope: str) -> bool:
 
 
 def _opt_metric(value: Any) -> float | None:
-    """A metric, or None when there is not a number here (PP-12).
+    """A metric, or None when there is not a number here.
 
     Booleans are refused: `True` would read as `1.0` and pass a `metric_pass: 1.0` gate on a field
     that was never a measurement.

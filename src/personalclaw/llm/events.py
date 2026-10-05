@@ -248,15 +248,15 @@ class AgentEvent:
     options: Any = field(default_factory=list)
     tool_input: Any = ""
     #: The structured form of :attr:`tool_input`, for backends that carry BOTH a
-    #: display string and the object behind it (ACP-AGENT-PARITY §2.5 gap 7). The
+    #: display string and the object behind it. The
     #: native runtime needs nothing here — it already puts its dict straight into
     #: ``tool_input`` — but an ACP frame's ``tool_input`` is a redacted, pretty-printed
     #: string the card renders verbatim, so flattening the object into that field
     #: would have changed every ACP card's preview to buy the schema-driven fields.
     #: ``None`` means "no object was supplied", never "the object was empty".
     tool_input_obj: dict[str, Any] | None = None
-    #: A file edit the BACKEND declared, as ``{"path", "before", "after"}``
-    #: (ACP-AGENT-PARITY §2.5 gap 7). The native runtime leaves this empty and keeps
+    #: A file edit the BACKEND declared, as ``{"path", "before", "after"}``.
+    #: The native runtime leaves this empty and keeps
     #: driving chips off its own write-tool name set, because it can reconstruct
     #: ``after`` from the call arguments; a backend that states both sides outright
     #: fills this instead of asking the host to infer anything.
@@ -276,8 +276,8 @@ class AgentEvent:
     # client populate these; live-only, never persisted.
     event_count: int = 0
     tool_call_count: int = 0
-    # Typed tool I/O metadata for the rendering framework (tool-io-rendering) +
-    # projection (tool-output-projection): on a TOOL_RESULT, carries
+    # Typed tool I/O metadata for the tool-I/O rendering framework + the
+    # tool-output projection: on a TOOL_RESULT, carries
     # content_type / raw_ref / truncated / original_length; on a TOOL_CALL, may
     # carry the input schema + render hint. Empty for backends that don't supply
     # it (ACP) → the UI renders exactly as before. Mirror in acp.types.AcpEvent.

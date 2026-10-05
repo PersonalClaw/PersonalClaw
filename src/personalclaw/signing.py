@@ -1,6 +1,6 @@
 """Artifact signing — the minisign-format verifier the Store runs BEFORE an install.
 
-**Scheme (SH-3 decision):** detached **Ed25519 signatures in minisign's on-wire
+**Scheme:** detached **Ed25519 signatures in minisign's on-wire
 format** over a **whole-tree digest manifest**. Rationale, rejected alternatives and
 the maintainer workflow live in ``docs/security/signing.md``; this module is the
 verifying half and the format's single source of truth. ``scripts/sign_app.py`` is
@@ -89,8 +89,8 @@ class SignatureState(str, Enum):
 
 @dataclass
 class SignatureInfo:
-    """Contract C2's ``signature: {state, signer}``, plus the ``reason`` the atom's
-    "tampered signature refused **with reason**" clause requires.
+    """The ``signature: {state, signer}`` shape, plus a ``reason``: a tampered signature is
+    refused **with a reason**.
 
     Defaults to ``unsigned``: a :class:`~personalclaw.supply_chain.ScanReport` produced
     by a path that never looked for a signature is truthfully reporting that it saw
@@ -132,8 +132,8 @@ class _Minisig:
 def trusted_keys_dir() -> Path:
     """The packaged trust store. A function, not a constant, so a test can monkeypatch
     it to a tmp dir holding an EPHEMERAL keypair — no private key material ever lives
-    in this repository, so the shipped store is populated by the maintainer (owner task
-    2) and every test generates its own."""
+    in this repository, so the shipped store is populated by the maintainer and every test
+    generates its own."""
     return Path(__file__).resolve().parent / _TRUSTED_KEYS_DIRNAME
 
 

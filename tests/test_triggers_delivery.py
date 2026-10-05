@@ -1,15 +1,15 @@
-"""The outbound delivery contract (AUTO §7 criterion 10 / R18).
+"""The outbound delivery contract.
 
-Criterion 10: "A completed-run notification deep-links (statusUrl) to the exact run journal row; a
-retried delivery does not double-ping."
+A completed-run notification deep-links (statusUrl) to the exact run journal row; a retried
+delivery does not double-ping.
 
 **Measured before writing.** A grep for `statusUrl` or `status_url` across `src/personalclaw`
-returned nothing — the deep link the criterion names did not exist anywhere in the package. A
+returned nothing — that deep link did not exist anywhere in the package. A
 completed-run notification carried a title and a body, so a user reading "Nightly digest
-finished" had no route to the run that produced it. R18 calls that "the notification→journal
-dead end".
+finished" had no route to the run that produced it: the notification→journal
+dead end.
 
-The two load-bearing tests are the criterion's own two clauses:
+The two load-bearing tests are the contract's own two halves:
 `test_the_status_url_points_at_the_exact_run` and `test_a_retried_delivery_does_not_double_ping`.
 """
 
@@ -24,8 +24,8 @@ from personalclaw.triggers import delivery as D
 class _State:
     """A `DashboardState` stand-in that records what reached `notify`.
 
-    Deliberately a recorder rather than a mock of `deliver`: R18 forbids a second notification
-    path, so the property under test is "the arguments arrive at `notify`", and mocking the
+    Deliberately a recorder rather than a mock of `deliver`: a second notification path is
+    forbidden, so the property under test is "the arguments arrive at `notify`", and mocking the
     function that calls it would assert nothing.
     """
 
@@ -48,18 +48,18 @@ def _ok(**over):
     return D.build_delivery(**kwargs)
 
 
-# ── clause 1: the statusUrl deep link ──
+# ── the statusUrl deep link ──
 
 
 def test_the_status_url_points_at_the_exact_run():
-    """The criterion, stated directly. Asserted against the live route
+    """The contract, stated directly. Asserted against the live route
     (`WorkflowsSection` documents `#/workflows/runs/<run_id>`), not an invented path."""
     assert D.status_url(run_id="r-abc") == "#/workflows/runs/r-abc"
     assert _ok(run_id="r-abc").status_url == "#/workflows/runs/r-abc"
 
 
 def test_a_run_id_wins_over_a_trigger_id():
-    """R18 says "the exact runs-inbox row / run journal" — the run is the specific thing that just
+    """The link goes to the exact run, not the trigger — the run is the specific thing that just
     happened."""
     assert D.status_url(run_id="r1", trigger_id="schedule:j1") == "#/workflows/runs/r1"
 
@@ -85,22 +85,22 @@ def test_the_status_url_reaches_notify_in_meta():
     assert state.sent[0]["meta"]["statusUrl"] == "#/workflows/runs/r1"
 
 
-def test_the_wire_key_is_camelCase_as_R18_names_it():
-    """A channel consumer reads the wire key. R18 writes `statusUrl`; `status_url` would be a
-    different
+def test_the_wire_key_is_camelCase():
+    """A channel consumer reads the wire key. The contract writes `statusUrl`; `status_url` would be
+    a different
     field to every external reader."""
     kwargs = _ok().to_notify_kwargs()
     assert "statusUrl" in kwargs["meta"]
     assert "status_url" not in kwargs["meta"]
 
 
-# ── clause 2: a retried delivery does not double-ping ──
+# ── a retried delivery does not double-ping ──
 
 
 def test_the_event_id_is_stable_across_retries():
     """🔴 DERIVED, never random. A `uuid4()` or a timestamp would produce a NEW id on the
     retry, and the
-    consumer would show the notification twice — the exact failure the criterion names."""
+    consumer would show the notification twice — the exact failure the contract names."""
     first = D.event_id(trigger_id="schedule:j1", run_id="r1")
     retry = D.event_id(trigger_id="schedule:j1", run_id="r1")
     assert first == retry
@@ -122,7 +122,7 @@ def test_different_triggers_never_collide():
 
 
 def test_a_retried_delivery_does_not_double_ping():
-    """The criterion's second clause, driven through the real `deliver` path."""
+    """The contract's second half, driven through the real `deliver` path."""
     state = _State()
     seen: set[str] = set()
     delivery = _ok()
@@ -316,7 +316,7 @@ def test_the_flat_text_survives_an_empty_body():
 
 
 def test_a_credential_in_the_summary_is_redacted():
-    """R18 requires `redact_exfiltration_urls` + `redact_credentials` before any surface, as
+    """Delivery applies `redact_exfiltration_urls` + `redact_credentials` before any surface, as
     heartbeat
     delivery does today. A run summary is whatever the run produced — it can contain a token a
     tool printed."""
@@ -335,7 +335,7 @@ def test_redaction_covers_the_title_too():
 def test_the_body_is_capped():
     """An unbounded run summary pushes the statusUrl off the bottom of a Slack card, defeating
     the deep
-    link this session exists to add. Each surface has its own bound: the notification's, and a
+    link this module exists to add. Each surface has its own bound: the notification's, and a
     chat channel's."""
     delivery = _ok(summary="x" * 5000)
     assert len(delivery.body) <= D.NOTE_BODY_CAP
@@ -346,7 +346,7 @@ def test_the_body_is_capped():
 
 
 def test_delivery_goes_through_state_notify_not_a_second_path():
-    """R18: "the substrate does not build a second notification path." Asserted by the fact that the
+    """The substrate does not build a second notification path. Asserted by the fact that the
     only outbound call is `state.notify`, which applies `notification_allowed` and the per-kind
     rule.
     """
@@ -418,7 +418,7 @@ def test_the_module_imports_without_a_syntax_warning():
 
 def test_a_MUTED_automation_still_reports_a_FAILURE():
     """🔴 THE DEFECT. `Trigger.failure_delivery` states its own contract: *"A SEPARATE route for
-    failures (R12). Failures reach the inbox even when `delivery` is none: an automation the user
+    failures. Failures reach the inbox even when `delivery` is none: an automation the user
     asked to stay quiet still has to be able to say it broke."*
 
     It was declared, persisted, round-tripped by `to_dict`/`from_dict`, defaulted by the migration
@@ -486,7 +486,7 @@ def test_DESTINATION_none_actually_SILENCES():
 def test_an_EMPTY_destination_is_not_treated_as_MUTED():
     """`from_dict` defaults `delivery` to `"none"` explicitly, so a BLANK value means a caller built
     a Delivery without one. Defaulting that to silence would let a bug become missing alerts — the
-    fail-quiet direction, which is exactly what this session fixed."""
+    fail-quiet direction, which is exactly the defect above."""
     from personalclaw.triggers.delivery import is_muted
 
     assert is_muted("none") and is_muted("NONE") and is_muted(" none ")

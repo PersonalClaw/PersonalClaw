@@ -1,9 +1,9 @@
-"""`agent_scope` — declared, persisted, and enforcing nothing (§1.4 decision 2).
+"""`agent_scope` — declared, persisted, and enforcing nothing.
 
-Decision 2's recon note: *"chat-turn hooks fire agent-scoped (`fire_for_ids` over
+The intended design: chat-turn hooks fire agent-scoped (`fire_for_ids` over
 `AgentProfile.triggers`); the substrate **preserves agent scoping as an optional
 `spec.agent_scope`**
-and does not silently introduce a global chat firing path."*
+and does not silently introduce a global chat firing path.
 
 🔴 THE DEFECT. `agent_scope` is in `SPEC_KEYS["event"]`, round-trips through the store, and was
 validated by **nothing**. Every one of these stored with `ok: True` and zero issues:
@@ -23,7 +23,7 @@ session agent's own trigger ids per fire and calls `fire_for_ids`, whose resolve
 on any
 failure precisely so a broken lookup cannot fall back to global firing. The substrate has not
 introduced a global chat firing path — the store-backed `event` kind fires on DATA events (memory
-writes, and after EIAT-1 inbox arrivals), never on chat turns. So this session validates the field
+writes and inbox arrivals), never on chat turns. So this file validates the field
 and makes its unenforced state visible, rather than inventing a scoping mechanism for events that do
 not exist yet.
 """
@@ -123,7 +123,7 @@ def test_only_the_EVENT_kind_validates_it():
     kind's own unknown-key check already reports.
 
     Asserted on the PATHS rather than on an empty list: a valid clock spec still carries the
-    unrelated R1 interval-floor warning, and a test that demanded zero issues would break the next
+    unrelated interval-floor warning, and a test that demanded zero issues would break the next
     time any advisory is added to another kind.
     """
     issues = validate_spec("clock", {"kind": "interval", "interval_secs": 3600})
@@ -164,7 +164,7 @@ def test_the_doctor_is_SILENT_for_an_unscoped_trigger():
 
 
 def test_the_chat_path_has_NO_GLOBAL_firing_fallback():
-    """Decision 2's actual requirement, asserted rather than trusted: the resolver returns [] on any
+    """The actual requirement, asserted rather than trusted: the resolver returns [] on any
     failure so a broken lookup fires NOTHING instead of falling back to every hook."""
     import inspect
 
@@ -177,17 +177,18 @@ def test_the_chat_path_has_NO_GLOBAL_firing_fallback():
 
 def test_the_substrate_event_kind_has_no_chat_turn_source():
     """Why the scope has no reader yet: the store-backed `event` kind's sources are data origins
-    (memory writes, inbox arrivals, app-contributed sources) — never chat turns. EIAT-1 widened the
-    vocabulary to inbox patterns and AUTO-A4 added the app-source `AppEvent`; neither is a chat-turn
+    (memory writes, inbox arrivals, app-contributed sources) — never chat turns. The vocabulary
+    widened to inbox patterns and then to the app-source `AppEvent`; neither is a chat-turn
     source, so `agent_scope` remains unread and this guard stays valid. Pinned so that adding a
     *chat-turn* source is what is forced to confront the scope, not merely adding another data
     source.
 
-    🔴 AUTO-A4 is the interesting case for this guard, because an APP could plausibly contribute a
-    chat-turn-shaped source. It cannot reach the scope: `trigger_sources.emit` namespaces every app
-    event under `app:<name>:<event>` and emits with `source=SOURCE_APP`, so an app naming its event
-    `chat_turn` still arrives as an `app` event and matches only `AppEvent` triggers. A chat-turn
-    SOURCE — a new `EVENT_SOURCES` member — is what would break the pin, which is exactly right."""
+    🔴 App-contributed sources are the interesting case for this guard, because an APP could
+    plausibly contribute a chat-turn-shaped source. It cannot reach the scope:
+    `trigger_sources.emit` namespaces every app event under `app:<name>:<event>` and emits with
+    `source=SOURCE_APP`, so an app naming its event `chat_turn` still arrives as an `app` event
+    and matches only `AppEvent` triggers. A chat-turn SOURCE — a new `EVENT_SOURCES` member — is
+    what would break the pin, which is exactly right."""
     from personalclaw.event_triggers import EVENT_PATTERNS, EVENT_SOURCES
 
     assert EVENT_PATTERNS == (

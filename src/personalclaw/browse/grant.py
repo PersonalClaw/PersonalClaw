@@ -29,7 +29,7 @@ end to end:
   the run pauses there, and says so, rather than typing into a page a person is now using.
 * SEL audit — ``browser_grant`` when the grant is REQUESTED and again when it resolves,
   ``browser_revoked`` at run-end / close / kill. The row carries the task label, the site scope
-  (hostnames), and a reason ONLY; NEVER a credential, cookie, or session token (§5.2's
+  (hostnames), and a reason ONLY; NEVER a credential, cookie, or session token (the browse
   no-credential invariant, restated for the audit trail).
 
   **Two rows per grant, on purpose.** The request row was missing, and its absence was a real
@@ -72,7 +72,7 @@ from personalclaw.errors import AgentError
 
 logger = logging.getLogger(__name__)
 
-#: The fail-closed ceiling: a grant with no human answer in this long is REJECTED (plan §(c), the
+#: The fail-closed ceiling: a grant with no human answer in this long is REJECTED (the
 #: ApprovalGate's own 300s default, named once here so the posture reads it in one place).
 GRANT_TIMEOUT = 300.0
 
@@ -161,7 +161,7 @@ def pending_grants() -> list[dict[str, object]]:
 
 
 def scope_for_url(url: str) -> tuple[str, ...]:
-    """The site scope a grant names — the host(s) the task intends to touch (plan §(c).2).
+    """The site scope a grant names — the host(s) the task intends to touch.
 
     Derived from the start URL's host so the human reviews a concrete site before granting. A
     hostname ONLY — never a path, query, or fragment: those can carry a token, and the grant is
@@ -489,7 +489,7 @@ def _audit(
     reason: str = "",
 ) -> None:
     """One SEL row per grant request / decision / revoke. Task label + scope hosts + reason ONLY —
-    NEVER a credential, cookie, or token (§5.2). Never raises: an audit failure must not break a run
+    NEVER a credential, cookie, or token. Never raises: an audit failure must not break a run
     (killswitch style).
 
     Takes the FIELDS rather than a :class:`BrowserGrant`, because the request row is written before

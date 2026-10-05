@@ -3,7 +3,7 @@
 🔴 THE DEFECT (measured on ``origin/main``). The Tools page's Import posted ``POST /api/mcp/apply``
 with ``{personalclaw: true, globalMcp: false, ccGlobal: true}``. ``personalclaw: true`` copied the
 Claude Code spec into ``mcp.json``; ``globalMcp: false`` then removed it again from
-``_GLOBAL_MCP_JSON``, which UT3 had pointed at the very same file
+``_GLOBAL_MCP_JSON``, which an earlier change had pointed at the very same file
 (``_GLOBAL_MCP_JSON = _canonical_mcp_json()``). The request answered 200 with
 ``{"personalclaw": "added", "globalMcp": "removed"}``, ``mcp.json`` was left empty, the values #3617
 stored on the way in were deleted with the server, and the row stayed under "Discovered in other

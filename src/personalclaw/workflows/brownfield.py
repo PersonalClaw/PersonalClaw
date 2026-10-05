@@ -1,4 +1,4 @@
-"""The brownfield context pass (UP-R17) — what a plan should assume about the code it targets.
+"""The brownfield context pass — what a plan should assume about the code it targets.
 
 A generated spec for an EXISTING project fails a particular way: it scaffolds generic stages that
 name the wrong language, the wrong test runner, the wrong directory layout — because the planner was

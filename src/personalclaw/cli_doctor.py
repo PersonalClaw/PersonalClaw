@@ -262,7 +262,7 @@ def _report_acp_agent(entry: object, label: str, issues: list[str], *, start: bo
 def _doctor_paths() -> None:
     """Print the resolved install paths as machine-friendly ``key<TAB>path`` lines.
 
-    The ``doctor get install-dir`` pattern (PLATFORM-LEGIBILITY §3.1): an external
+    The ``doctor get install-dir`` pattern: an external
     agent driving PersonalClaw locates the offline API reference — and the config,
     skills, and install dirs — from the binary alone, without knowing whether this
     is a wheel, an editable install, or a source checkout. Tab-separated so it
@@ -283,7 +283,7 @@ def _doctor_paths() -> None:
 
 
 def _doctor_rebuild_routing_stats() -> None:
-    """Refold ``routing_stats.json`` from the model-call audit — the §1.3 rebuild path.
+    """Refold ``routing_stats.json`` from the model-call audit — the rebuild path.
 
     🔑 THIS IS THE FLAG `routing/stats.py` ALREADY NAMED. Its :func:`~personalclaw.routing.
     stats.rebuild` docstring calls itself "the ``--rebuild-routing-stats`` maintenance path" and
@@ -388,7 +388,7 @@ def _git_work_tree_row(proj: Path) -> str:
 
 
 def _doctor_credentials() -> list[str]:
-    """Print which credential store is holding the secrets; return any issues (SH-1).
+    """Print which credential store is holding the secrets; return any issues.
 
     Reports the RESOLVED backend, never the requested one. That distinction is the
     reason this line exists: an install that asks for a keychain on a box with no OS
@@ -495,7 +495,7 @@ def _doctor_timezone() -> list[str]:
 
 def _doctor_session_lifetime(cfg: AppConfig) -> list[str]:
     """Print how long a sign-in lasts; return an issue when ``auth.session_ttl`` is over the
-    90-day limit (ledger 285).
+    90-day limit.
 
     Such a value is APPLIED as 90 days — a hand-edited file must never brick the box — so until
     it is fixed the file says one lifetime and every sign-in lasts another. The same report the
@@ -1239,8 +1239,7 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
     # Each installed + enabled app whose manifest declares `cli.doctor` renders its
     # own section here (bounded by a hard timeout + exception guard). This is the
     # generic seam that replaced core's former hardcoded channel-app section — a
-    # channel app now ships its own probe via `cli.doctor` (see
-    # PROVIDER-BOUNDARY-COMPLETION). Core's doctor names no vendor.
+    # channel app now ships its own probe via `cli.doctor`. Core's doctor names no vendor.
     from personalclaw.app_cli import run_app_doctor_probes
 
     issues.extend(run_app_doctor_probes())

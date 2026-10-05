@@ -222,7 +222,7 @@ def _body(model="researcher", **extra) -> str:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("model", ["researcher", "personalclaw/researcher"])
 async def test_both_model_spellings_reach_the_agent(monkeypatch, model):
-    """T2-A1's dual form, asserted at the ROUTE: a client with a dropdown that cannot
+    """The dual model spelling, asserted at the ROUTE: a client with a dropdown that cannot
     send a slash must not be a second-class caller."""
     _enable(monkeypatch)
     token = _token()
@@ -333,7 +333,7 @@ def _sse_frames(raw: str) -> tuple[list[dict], bool]:
 
 @pytest.mark.asyncio
 async def test_sse_chunks_then_usage_then_done(monkeypatch):
-    """T2-A1: `chat.completion.chunk` frames, `usage` on the FINAL frame, `[DONE]` last.
+    """`chat.completion.chunk` frames, `usage` on the FINAL frame, `[DONE]` last.
 
     The usage placement is asserted specifically because a block carried on an earlier
     frame is one a budgeting client stops reading for.
@@ -473,7 +473,7 @@ def test_unattended_classification_covers_this_key():
 
 
 def test_session_tag_ignored_unless_the_client_opted_in(monkeypatch):
-    """T2-A2: `user` and the header are honoured only behind ``persistent_sessions``."""
+    """`user` and the header are honoured only behind ``persistent_sessions``."""
     from personalclaw.inbound.clients import InboundClient
 
     class _Req:
@@ -635,7 +635,7 @@ async def test_disabled_surface_is_404_and_says_nothing(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_master_switch_also_closes_the_doorway(monkeypatch):
-    """§1.1 layer 1, asserted separately: the per-surface flag is ON here."""
+    """Gate layer 1, asserted separately: the per-surface flag is ON here."""
     _enable(monkeypatch, enabled=True, master=False)
     token = _token()
     client, _ = await _client(monkeypatch)
@@ -661,7 +661,7 @@ async def test_bad_bearer_is_401_in_the_wire_error_shape(monkeypatch):
         await client.close()
     assert resp.status == 401
     # The GENERIC row, not a surface-specific one: the inbound-MCP section of
-    # `HTTP_ERROR_CODES` records the ruling that admission codes must not name this
+    # `HTTP_ERROR_CODES` records the rule that admission codes must not name this
     # surface or say which kill switch fired, because that hands a prober what the
     # status is chosen to withhold. The SDK classifies on the 401 status, so the
     # generic code costs a caller nothing.
@@ -671,7 +671,7 @@ async def test_bad_bearer_is_401_in_the_wire_error_shape(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_incident_mode_is_503_not_404(monkeypatch):
-    """§1.1 layer 4: an incident is temporary, so it must not tell a client "gone"."""
+    """Gate layer 4: an incident is temporary, so it must not tell a client "gone"."""
     _enable(monkeypatch)
     token = _token()
     monkeypatch.setattr("personalclaw.guardrails.incident.incident_active", lambda: True)
@@ -921,7 +921,7 @@ def test_cosmetic_aliases_are_accepted_and_discarded():
 
 
 def test_resolve_voice_is_the_only_voice_seam():
-    """NEW-9 seam: ONE function for profiles to be re-implemented against."""
+    """The voice seam: ONE function for profiles to be re-implemented against."""
     assert callable(dialect.resolve_voice)
     source = _dialect_source()
     # Every voice resolution in this module goes through the seam, so the count of
@@ -934,7 +934,7 @@ def test_resolve_voice_is_the_only_voice_seam():
 
 @pytest.mark.asyncio
 async def test_speech_returns_bound_provider_audio(monkeypatch):
-    """`/v1/audio/speech` renders through whatever the user bound (Success Criteria 2).
+    """`/v1/audio/speech` renders through whatever the user bound.
 
     The stub stands in for the bound provider; what is asserted is that the dialect
     hands it the params ``resolve_voice`` returned and streams its bytes back — it never

@@ -1,4 +1,4 @@
-"""The grounding preamble (UP-R14).
+"""The grounding preamble.
 
 The preamble's whole job is to resolve identity deterministically and degrade honestly when it
 cannot, so these tests assert both the resolved path (the injected resolver's entities land in the

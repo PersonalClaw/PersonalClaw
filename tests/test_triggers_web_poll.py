@@ -1,4 +1,4 @@
-"""The web_watch poll runtime — what actually FIRES a `web_watch` trigger (§7 item 8).
+"""The web_watch poll runtime — what actually FIRES a `web_watch` trigger.
 
 🔴 THE DEFECT. `web_watch` was a fully declared kind with no runtime. It is in `KINDS`, `SPEC_KEYS`
 accepts `{url, poll_interval, extraction, novelty_key}`, `nl_kind.route()` routes any URL to it, the
@@ -11,7 +11,7 @@ polled it. Measured before a line was written:
     tick()                     → considered: none    (no `next_fire_at`; not a clock kind)
     file_poll.file_triggers()  → ['file:t']          (only `file`)
 
-So a user could ask for exactly what the plan advertises, be told it worked, see it listed in the
+So a user could ask for exactly what the feature advertises, be told it worked, see it listed in the
 UI — and it would never fire. The same shape as the file-watch gap, one kind over.
 
 Every test injects its `fetcher`, so nothing here makes a network request. The novelty, budget and
@@ -190,7 +190,7 @@ def test_a_watch_with_NO_URL_is_not_polled(store):
 
 def test_other_kinds_are_not_polled_by_this_runtime(store):
     """Disjointness is what makes this an additive cutover: a clock trigger polled here as well as
-    ticked by the clock loop would DOUBLE-FIRE, the hazard S100 measured for the clock switch-over.
+    ticked by the clock loop would DOUBLE-FIRE, the hazard measured for the clock switch-over.
     """
     store.upsert(
         Trigger(
@@ -279,7 +279,7 @@ def test_the_SAME_new_item_does_not_fire_TWICE(store, tmp_path):
 def test_THE_STORM_GUARD_a_page_that_changes_every_fetch_never_fires(store, tmp_path):
     """🔴 THE control. A timestamp, a rotating ad or a CSRF token changes the BODY on every fetch.
     Keying novelty on a body hash would turn one watch into a notification every poll — which is
-    what §3 means by "the seen-set IS the storm guard"."""
+    why the seen-set IS the storm guard."""
     trigger = _watch(store, tid="web_watch:noisy")
     counter = {"i": 0}
 
@@ -328,7 +328,7 @@ def test_the_poll_interval_is_CLAMPED_to_the_floor(store):
     """🔴 This is the one kind that makes requests to SOMEONE ELSE'S server: a 5-second watch is
     abusive to the target and indistinguishable from a scraper. Clamped rather than refused — a user
     who typed 60 wants frequent checks, and refusing leaves the automation dead over a number they
-    can barely see. S109 recorded the R1 floor being declared but read by no code; this one is
+    can barely see. A floor was once declared but read by no code; this one is
     enforced at the point of use."""
     assert web_poll.poll_interval_for(_watch(store, poll_interval=5)) == (
         web_poll.MIN_POLL_INTERVAL_SECS
@@ -349,7 +349,7 @@ def test_a_watch_polled_TOO_SOON_is_not_fetched(store, tmp_path):
 
 
 def test_the_DAILY_BUDGET_refuses_with_a_visible_reason(store, tmp_path):
-    """§7 criterion 8: zero silent drops. A watch that stopped polling with no explanation is
+    """Zero silent drops. A watch that stopped polling with no explanation is
     indistinguishable from a broken one."""
     trigger = _watch(store)
     state = web_poll.WatchState(
@@ -525,7 +525,7 @@ def test_the_payload_item_list_is_CAPPED(store, tmp_path):
 
 def test_the_gateway_RUNS_the_poll_loop():
     """🔴 The wiring, not the helper. A runtime nothing calls is the inert-control defect this whole
-    session exists to close — the very state `web_watch` was in before it."""
+    file exists to close — the very state `web_watch` was in before it."""
     import inspect
 
     from personalclaw.gateway import GatewayOrchestrator

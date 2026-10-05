@@ -7,8 +7,8 @@ import { Button } from '../ui/Button'
 import { ERROR_SURFACE_PAINT, treatmentPaint } from '../design/errorTreatments'
 import { useErrorTreatment } from './personality'
 
-/** A persistent banner shown on every page while incident mode is active
- *  (§4.4). Incident mode suspends all unattended work;
+/** A persistent banner shown on every page while incident mode is active.
+ *  Incident mode suspends all unattended work;
  *  this makes that state impossible to miss and offers one-click resume.
  *  Reads the incident endpoint once, then again each time the gateway says the switch moved.
  *  Renders nothing when there is no incident. */

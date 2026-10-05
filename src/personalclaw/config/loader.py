@@ -204,7 +204,7 @@ def _workspace_default_mode(value: object) -> str:
     template: the modes differ in exactly the way that matters, and `in_place` is the one where a
     destructive step runs against the user's real tree. A config typo must not be what puts a run
     there. `container` is accepted as a WORD (it is in the enum) but degrades to an isolated
-    scratch dir at provisioning time — §4.4 is deferred, and rejecting the word here would make
+    scratch dir at provisioning time, and rejecting the word here would make
     the config disagree with the enum.
     """
     word = str(value or "").strip().lower()
@@ -212,7 +212,7 @@ def _workspace_default_mode(value: object) -> str:
 
 
 def _compose_voice(voice: str, system_prompt: str) -> str:
-    """Prepend an agent's VOICE layer (#42) high-priority to its operating rules.
+    """Prepend an agent's VOICE layer high-priority to its operating rules.
 
     WHO the agent is (tone/opinions/persona) goes BEFORE the system prompt so its
     personality survives a long operating-rules prompt. Empty voice → prompt as-is.
@@ -440,7 +440,7 @@ def resolve_agent_config_path() -> Path:
 
 
 def _slug_username(value: object) -> str:
-    """Normalize ``dashboard.username`` on load (TEAM-SHARED-ENTITIES §1).
+    """Normalize ``dashboard.username`` on load.
 
     Imported lazily so the config loader keeps no module-level dependency on
     anything that might import it back, and degrades to "" rather than raising —
@@ -471,7 +471,7 @@ MEMORY_VAULT_MODES = ("off", "mirror", "two_way")
 def _vault_mode(memory_data: dict) -> str:
     """Resolve ``memory.vault_mode``, back-reading the retired ``vault_enabled`` flag.
 
-    ``vault_enabled: true`` was the whole vault control before §5.1 split it three ways,
+    ``vault_enabled: true`` was the whole vault control before ``vault_mode`` split it three ways,
     so an existing install that turned the mirror on must keep it on across the upgrade —
     the same back-read shape as ``conductor_skill`` → ``orchestrator_skill``. The legacy
     flag maps to ``mirror``, never to ``two_way``: reading a user's files back into memory
@@ -583,7 +583,7 @@ def _approval_channel(raw: object) -> str:
 
 @dataclass
 class SelfQaConfig:
-    """Self-QA Companion settings (SELF-VERIFICATION §3) — the commit-watch QA loop.
+    """Self-QA Companion settings — the commit-watch QA loop.
 
     The companion watches a repo, triages each new commit for user-visible impact, drives one
     deep as-a-user scenario against the live gateway UI, and files a finding when the scenario
@@ -925,7 +925,7 @@ class SessionConfig:
 
 @dataclass
 class AmbientConfig:
-    """Ambient-surfaces settings (AMBIENT-SURFACES — the composable home).
+    """Ambient settings (the composable home).
 
     The knobs the dashboard-as-views registry and the generative-UI layer read. All
     default to the conservative shipped behavior so an untouched install is exactly
@@ -980,13 +980,13 @@ class AmbientConfig:
 
 @dataclass
 class CompanionConfig:
-    """Companion-app settings (COMPANION-APPS — native clients over the gateway).
+    """Companion-app settings (native clients over the gateway).
 
     The gateway can advertise itself on the local network so a companion client
     (phone/desktop) can find and pair with it without a typed URL. ``discovery_enabled``
     gates that advertisement — OFF by default, because announcing a service on the LAN is
     a posture choice the user must opt into, not a silent behavior. ``instance_name`` is
-    the friendly label a client shows for this gateway; empty means the advertiser (CA-5)
+    the friendly label a client shows for this gateway; empty means the advertiser
     falls back to the machine hostname.
     """
 
@@ -1016,9 +1016,9 @@ PUSH_BACKENDS: tuple[str, ...] = ("webpush", "ntfy", "relay", "none")
 
 @dataclass
 class MobileConfig:
-    """Phone push transport (MOBILE-COMPANION §C3 — the ``push`` target's HOW).
+    """Phone push transport (the ``push`` target's HOW).
 
-    WHETHER a notification reaches the phone is plan 42's rules matrix (per-(source,kind)
+    WHETHER a notification reaches the phone is the notification rules matrix (per-(source,kind)
     targets); this section is only which transport carries it. ``webpush`` uses the
     browser's own subscription and needs a VAPID keypair (``personalclaw push init``);
     ``ntfy`` POSTs to a self-hosted topic URL and needs no keys; ``none`` is off.
@@ -1061,7 +1061,7 @@ class MobileConfig:
 
 @dataclass
 class BrowseConfig:
-    """Autonomous-browse posture (BROWSE-AUTOMATION §(a)/(d) — BA-7).
+    """Autonomous-browse posture.
 
     ``user_browser_enabled`` is the connector toggle for the SECOND execution target. The
     ``gateway`` target needs no switch: it drives this machine's own per-site browser profile,
@@ -1085,7 +1085,7 @@ class BrowseConfig:
 
 @dataclass
 class LocalModelsConfig:
-    """Local model-manager knobs (LOCAL-MODEL-MANAGER-V2 §9).
+    """Local model-manager knobs.
 
     ``pressure_warn_pct`` is where the loaded-models widget's memory bar starts warning —
     a threshold, not a limit: nothing is ever blocked or unloaded automatically, because
@@ -1222,11 +1222,11 @@ def background_limits() -> BackgroundConfig:
 
 @dataclass
 class SourcesConfig:
-    """Watched-source engine settings (WATCHED-SOURCES §Plug-in Map, SC#12).
+    """Watched-source engine settings.
 
     The knobs the :class:`~personalclaw.knowledge.source_engine.SourceEngine` reads each
     tick. Defaults keep an untouched install conservative: polling on, a one-hour default
-    interval, a 15-minute network floor (the R1-class rate discipline — a source polls
+    interval, a 15-minute network floor (the rate discipline — a source polls
     someone else's server, so a too-frequent poll is abusive and scraper-like), and modest
     per-poll caps. ``enabled`` is the master switch — off parks the loop so no source is
     ever fetched.
@@ -1286,7 +1286,7 @@ class SourcesConfig:
 
 @dataclass
 class AppsConfig:
-    """App Store settings that are not per-app (ECOSYSTEM-TOOLING T2.2).
+    """App Store settings that are not per-app.
 
     Two knobs, both about shipped NETWORK app sources, and they work differently on purpose:
 
@@ -1327,12 +1327,12 @@ class AppsConfig:
 
 @dataclass
 class SkillCatalogConfig:
-    """One external skill-catalog source (AGENT-PACKS §6, the ``packs.skill_catalogs`` list).
+    """One external skill-catalog source (an entry of the ``packs.skill_catalogs`` list).
 
     A catalog is a named index of installable skills (a GitHub "tap" repo, a
-    ``/.well-known/skills/index.json`` site). AP-6 registers each as a
+    ``/.well-known/skills/index.json`` site). Each is registered as a
     :class:`CatalogMarketplace` on the shared skills registry at COMMUNITY tier and installs
-    through the same ``install_guarded`` chokepoint. AP-3 only wires the config surface; the
+    through the same ``install_guarded`` chokepoint. This class is only the config surface; the
     ``list[dataclass]`` precedent is :class:`ProjectionRuleConfig`, so each element field
     carries ``_meta`` for the schema-reachability tests.
     """
@@ -1346,7 +1346,7 @@ class SkillCatalogConfig:
         metadata=_meta(
             "Catalog URL",
             "The catalog's index endpoint or repo URL. Fetched under the CONNECTOR egress "
-            "profile when the catalog is browsed (AP-6); never spawned or executed.",
+            "profile when the catalog is browsed; never spawned or executed.",
         ),
     )
     kind: str = field(
@@ -1361,19 +1361,19 @@ class SkillCatalogConfig:
 
 @dataclass
 class PacksConfig:
-    """Portable-pack + skill-catalog settings (AGENT-PACKS §8).
+    """Portable-pack + skill-catalog settings.
 
     The knobs the pack importer and the fingerprint scanner read. ``skill_catalogs`` is the
-    AP-6 list of external skill-catalog sources (each a :class:`SkillCatalogConfig`);
-    ``fingerprint_enabled`` is the AP-7 project-fingerprint master switch (guard-flag-safe: a
+    list of external skill-catalog sources (each a :class:`SkillCatalogConfig`);
+    ``fingerprint_enabled`` is the project-fingerprint master switch (guard-flag-safe: a
     missing/garbage value stays ON so the propose-only surface is never silently disabled).
     Defaults keep an untouched install conservative — no catalogs configured, fingerprinting
     on (it only ever *proposes*).
 
     ``connector_catalog_url`` is deliberately absent. It was declared here, allowlisted for
     PATCH and given a Settings control for a refresh that does not exist — ``packs/
-    connectors.py``'s own docstring said "a later atom drives the refresh; AP-3 only reads
-    the URL", and AP-3 did not read it either (issue #3490). The connector catalog is the
+    connectors.py``'s own docstring said the refresh would come later and only the URL was
+    read, and nothing read it either (issue #3490). The connector catalog is the
     seeded, user-extendable ``connector_catalog.json`` and nothing else.
     """
 
@@ -1382,28 +1382,28 @@ class PacksConfig:
         metadata=_meta(
             "Skill catalogs",
             "External skill-catalog sources browsed + installed through the guarded skills "
-            "chokepoint (AP-6). Empty by default.",
+            "chokepoint. Empty by default.",
         ),
     )
     fingerprint_enabled: bool = field(
         default=True,
         metadata=_meta(
             "Project fingerprinting",
-            "Let the zero-LLM fingerprint scanner PROPOSE matching packs for a project "
-            "(AP-7). It only ever proposes — never auto-installs. Off stops scanning.",
+            "Let the zero-LLM fingerprint scanner PROPOSE matching packs for a project. "
+            "It only ever proposes — never auto-installs. Off stops scanning.",
         ),
     )
 
 
 @dataclass
 class LegibilityConfig:
-    """Platform-legibility features (Platform-Legibility §5-§7).
+    """Platform-legibility features.
 
     Two independent, user-facing toggles. ``discover_tips`` gates the dashboard
-    "Discover" section and the Discover hub (§6) — a curated, propose-don't-write
+    "Discover" section and the Discover hub — a curated, propose-don't-write
     tour of the system that never enables anything on its own. ``context_adapters``
     gates writing routed-context adapter files (CLAUDE.md/AGENTS.md/.cursorrules)
-    into an opted-in project's bound workspace (§7) — off by default because it
+    into an opted-in project's bound workspace — off by default because it
     writes into user project dirs.
     """
 
@@ -1799,8 +1799,8 @@ class DashboardConfig:
         default=False,
         metadata=_meta(
             "Screen Sharing in Chat",
-            "Master opt-in for the composer's 'Share screen' control (MULTIMODAL-IO "
-            "§5). With it on, a chat turn can carry ONE frame of a screen or window "
+            "Master opt-in for the composer's 'Share screen' control. "
+            "With it on, a chat turn can carry ONE frame of a screen or window "
             "you explicitly picked in the browser's own share dialog: the frame is "
             "held in memory for that single turn, never written to disk, and dropped "
             "the moment it is used. OFF by default — with it off the control is "
@@ -1815,7 +1815,7 @@ class DashboardConfig:
             "Open a generated Word document in an editor instead of download-only. A save "
             "RE-RENDERS the file, so constructs the model cannot hold are lost — the editor "
             "names them before the first edit and again at save, and the previous version is "
-            "one revert away. OFF by default, and enforced server-side too (DFE-5 §C6).",
+            "one revert away. OFF by default, and enforced server-side too.",
         ),
     )
     terminal: dict = field(
@@ -2073,7 +2073,7 @@ class SkillsConfig:
 
 @dataclass
 class KnowledgeConfig:
-    """Knowledge-store semantics (WORKFLOWS-V2-KNOWLEDGE-SYNTHESIS §2.1).
+    """Knowledge-store semantics.
 
     The knobs here all govern how much a synthesis loop is allowed to write and how long
     what it wrote stays trusted. They are config rather than constants because the right
@@ -2318,7 +2318,7 @@ class KnowledgeConfig:
 
 @dataclass
 class RoutingWeightsConfig:
-    """Score weights for the learned routing stage (MODEL-ROUTING-TELEMETRY §4.2)."""
+    """Score weights for the learned routing stage."""
 
     success: float = field(
         default=0.60,
@@ -2340,7 +2340,7 @@ class RoutingWeightsConfig:
 
 @dataclass
 class RoutingConfig:
-    """Telemetry-driven model routing (MODEL-ROUTING-TELEMETRY §7).
+    """Telemetry-driven model routing.
 
     Routing REORDERS the models a user already bound to a use case; it never invents
     a model or changes what resolution means. ``enabled`` is the master switch and is
@@ -2416,7 +2416,7 @@ class RoutingConfig:
 
 @dataclass
 class RemediationConfig:
-    """Health-scored self-remediation engine tuning (PLATFORM-RESILIENCE §4).
+    """Health-scored self-remediation engine tuning.
 
     The engine runs as one heartbeat-driven maintenance job. ``enabled`` is guard-class
     only in the sense that disabling it restores today's heartbeat maintenance (kept
@@ -2462,15 +2462,15 @@ class RemediationConfig:
 
 @dataclass
 class ResilienceConfig:
-    """Platform-resilience knobs (PLATFORM-RESILIENCE §7).
+    """Platform-resilience knobs.
 
     Two guard-class switches: the Doctor health surface and the no-model
     degraded-mode indicator. Both are **guard-class** — a missing or unknown value
-    parses as ENABLED (fail-safe, §5 tenet): a config typo must not silently hide the
+    parses as ENABLED (fail-safe): a config typo must not silently hide the
     Doctor or the degraded chip, which are the surfaces that make a degraded system
-    legible. Plus the platform default mid-turn message policy (§6). The
-    remediation-engine sub-config (target-score / max-cost / idle cadence) is a later
-    session's field.
+    legible. Plus the platform default mid-turn message policy. The
+    remediation-engine sub-config (target-score / max-cost / idle cadence) is the
+    ``remediation`` field.
     """
 
     doctor_enabled: bool = field(
@@ -2525,18 +2525,18 @@ class ResilienceConfig:
 
 @dataclass
 class WorkflowsConfig:
-    """Workflow engine config (WORKFLOWS-V2).
+    """Workflow engine config.
 
     The old shape held surfacing knobs (`match_threshold` for the embedding matcher);
-    that feature was deleted, and the namespace is reused rather than renamed — the
-    plan's clean-break/namespace-reuse call. `match_threshold` RETURNS here with a new
-    owner (WF2UNI-11): the UNIVERSAL-PLANNING tiered matcher's T4 embedding tie-breaker
+    that feature was deleted, and the namespace is reused rather than renamed — a
+    clean break. `match_threshold` RETURNS here with a new
+    owner: the tiered workflow matcher's T4 embedding tie-breaker
     now reads it as the cosine floor below which an embedding is too weak to unseat a
     keyword tie. It is a real reader this time — not the inert knob it was under the old
     SOP feature — so the field is live and wired through all four config points.
     `enabled` keeps its meaning as the feature kill-switch; the engine's own keys
-    (the per-lane `max_concurrent_*_nodes` caps, model_tiers, retention.*) arrive with
-    Slice 0, each wired through all four config points.
+    (the per-lane `max_concurrent_*_nodes` caps, model_tiers, retention.*) are each
+    wired through all four config points.
 
     There is deliberately NO bare `max_concurrent_nodes` total. It was declared here with a
     `_meta` promising "total node slots per run, partitioned across typed lanes", and nothing
@@ -2639,7 +2639,7 @@ class WorkflowsConfig:
             "near-match win. Only consulted on a tie — keyword matches always decide first.",
         ),
     )
-    # The four fields the plan names, each wired through all four points.
+    # Four fields, each wired through all four points.
     surface_mode_default: str = field(
         default="off",
         metadata=_meta(
@@ -2722,7 +2722,7 @@ class WorkflowsConfig:
     )
 
     def lane_caps(self) -> dict[str, int]:
-        """Per-lane admission caps for the frontier (WF2-R21). `compute` is unmetered —
+        """Per-lane admission caps for the frontier. `compute` is unmetered —
         a transform is microseconds of pure data reshaping, so capping it adds only
         latency."""
         return {
@@ -2732,7 +2732,7 @@ class WorkflowsConfig:
         }
 
     def model_tiers(self) -> dict[str, str]:
-        """The tier → use-case slot map (WF2-R16)."""
+        """The tier → use-case slot map."""
         return {
             "reasoning": self.model_tier_reasoning,
             "standard": self.model_tier_standard,
@@ -2886,7 +2886,7 @@ class InboxConfig:
     # NOTE: auto_cleanup_enabled / retention live in the inbox ENTITY settings
     # store (entity_settings/inbox.json via /api/inbox/settings), not here —
     # one store, read by retention maintenance at runtime. Alerting moved OUT
-    # of the inbox entirely in plan 42 S3: it is now a `conditions` block on any
+    # of the inbox entirely: it is now a `conditions` block on any
     # notification rule (entity_settings/notification_rules.json), so the same
     # keyword/name-mention escalation works for every kind, not just messages.
     test_mode: bool = field(
@@ -2913,7 +2913,7 @@ class InboxConfig:
 
 @dataclass
 class ProjectionRuleConfig:
-    """A user-taught tool-output projection rule (TokenJuice, OP6 + §2.3). Output whose
+    """A user-taught tool-output projection rule. Output whose
     head matches ``match_regex`` is projected with ``strategy`` (a builtin content type:
     log/diff/json/test/csv/code) — or, when any op field is set (head/tail/keep/skip/
     count), shaped by the declarative ops interpreter instead. Pure data; no user code
@@ -2967,7 +2967,7 @@ class ProjectionRuleConfig:
 
 @dataclass
 class DurabilityConfig:
-    """Scheduled backup + retention + drills (DURABILITY-AND-SYNC §3)."""
+    """Scheduled backup + retention + drills."""
 
     auto_backup: bool = field(
         default=True,
@@ -3061,7 +3061,7 @@ class DurabilityConfig:
 
 @dataclass
 class AgentsRoutingConfig:
-    """Agent routing (AGENT-ROUTING) — suggest-first specialist routing. Deterministic
+    """Agent routing — suggest-first specialist routing. Deterministic
     classification (keyword + embedding, no LLM); a non-blocking chip proposes, the
     user consents. Silent auto-routing is explicitly out of scope."""
 
@@ -3093,7 +3093,7 @@ class AgentsRoutingConfig:
 @dataclass
 class ToolsConfig:
     """Tool-output handling config. Today: user-teachable projection rules that extend
-    the builtin content-type dispatch for large tool outputs (TokenJuice, OP6)."""
+    the builtin content-type dispatch for large tool outputs."""
 
     projection_rules: list[ProjectionRuleConfig] = field(
         default_factory=list,
@@ -3105,7 +3105,7 @@ class ToolsConfig:
             "Consulted before the heuristic sniff; a bad regex is skipped.",
         ),
     )
-    # Background compression service (Context Economy §4) — the always-on complement
+    # Background compression service — the always-on complement
     # to on-demand projection: an idle, at-rest chat is topic-segmented and
     # attention-weighted on the maintenance cadence, so the history the model is handed
     # when it resumes is short. It writes a derived record beside the chat and never the
@@ -3132,7 +3132,7 @@ class ToolsConfig:
             "active chat is never summarized).",
         ),
     )
-    # Dynamic tool-group activation (Context Economy §5) — partition the tool
+    # Dynamic tool-group activation — partition the tool
     # surface by provider so inactive groups cost one catalog line instead of
     # every schema. Off by default: with it off, and for interactive chat even
     # when on, the tool block is byte-identical to having no groups at all.
@@ -3162,7 +3162,7 @@ class ToolsConfig:
 
 @dataclass
 class CheckpointsConfig:
-    """Turn-bound file checkpointing bounds (EXECUTION-ISOLATION §6).
+    """Turn-bound file checkpointing bounds.
 
     The caps on ``turn_checkpoints``' per-session store: how many turns of pre-edit
     backups to keep, how many megabytes of file bodies, and how big a single body may be
@@ -3213,7 +3213,7 @@ class CheckpointsConfig:
 
 @dataclass
 class VoiceConfig:
-    """Hands-free voice-loop knobs (MULTIMODAL-IO §4.5).
+    """Hands-free voice-loop knobs.
 
     Guard-class note: the four booleans are convenience features, not safety
     guards — plain defaults, no fail-safe parsing. Turning one off degrades the
@@ -3292,12 +3292,12 @@ class VoiceConfig:
 
 @dataclass
 class UpdatesConfig:
-    """Release-based update + release-tracking contract (RELEASE-UPDATE-MECHANISM RUM-1).
+    """Release-based update + release-tracking contract.
 
     The single block the CLI, container, desktop and the Settings > Updates screen read.
-    RUM-1 is only the config surface + the legacy backfill; the resolver, the check
-    kill-switch, the retirement of pull-from-main and the per-kind apply are later RUM
-    atoms that CONSUME these fields.
+    This block is only the config surface + the legacy backfill; the resolver, the check
+    kill-switch, the retirement of pull-from-main and the per-kind apply live elsewhere and
+    CONSUME these fields.
 
     Legacy backfill (``config.validation._fold_legacy_update_flags``, idempotent — a clean
     break under the pre-1.0 banner, NOT a migration file): a home written before this block
@@ -3841,7 +3841,7 @@ class AppConfig:
             "Updates",
             "Release-based update + release-tracking: channel, version pin, opt-in staged "
             "apply, the check kill-switch and interval, and the last-running version for "
-            "rollback (RELEASE-UPDATE-MECHANISM).",
+            "rollback.",
         ),
     )
     timezone: str = field(
@@ -4197,7 +4197,7 @@ class AppConfig:
                         memory_store=entry.get("memory_store", ""),
                         description=entry.get("description", ""),
                         system_prompt=entry.get("system_prompt", ""),
-                        # Voice layer (#42) — MUST be read here (S6 loader-allowlist
+                        # Voice layer — MUST be read here (the loader-allowlist
                         # gotcha) or it's dropped on every config reload.
                         voice=entry.get("voice", ""),
                         # Natural voice — the same loader-allowlist gotcha:
@@ -4209,7 +4209,7 @@ class AppConfig:
                         approval_mode=entry.get("approval_mode", ""),
                         skills=entry.get("skills", []),
                         tools=entry.get("tools", []),
-                        # Renamed hooks→triggers (P4b). Migrate the legacy key on
+                        # Renamed hooks→triggers. Migrate the legacy key on
                         # read so an existing personalclaw.json keeps its scoped
                         # lifecycle triggers; the write side only emits ``triggers``.
                         triggers=entry.get("triggers", entry.get("hooks", [])) or [],
@@ -4292,7 +4292,7 @@ class AppConfig:
                 runner_health_check_secs=max(
                     60, min(86_400, int(agent_data.get("runner_health_check_secs", 3600)))
                 ),
-                # EXECUTION-ISOLATION §3.1(5). Same [60, 86400] clamp as the
+                # Same [60, 86400] clamp as the
                 # staleness window above and as ``_EDITABLE_CONFIG``, for the same
                 # reason: a hand-edited config.json must not be able to express a TTL
                 # the dashboard would refuse to save back.
@@ -4592,7 +4592,7 @@ class AppConfig:
             snapshot_dir=data.get("snapshot_dir", ""),
             durability=DurabilityConfig(
                 # Guard polarity: losing scheduled backups because a value was
-                # unreadable is the failure this whole plan exists to prevent.
+                # unreadable is the failure this whole feature exists to prevent.
                 auto_backup=_guard_flag(durability_data.get("auto_backup")),
                 keep_daily=_safe_int(durability_data.get("keep_daily"), 14),
                 keep_weekly=_safe_int(durability_data.get("keep_weekly"), 8),
@@ -4601,7 +4601,7 @@ class AppConfig:
                 # Time-travel is fail-OPEN like the backups above and for the same
                 # reason: it is a purely local, secret-excluding history, so the risk
                 # of it running when config is unreadable is a few git commits, while
-                # the risk of it NOT running is the unrecoverable edit this plan exists
+                # the risk of it NOT running is the unrecoverable edit this feature exists
                 # to prevent.
                 time_travel=_guard_flag(durability_data.get("time_travel")),
                 # Sync is fail-CLOSED (unlike backups): a sync surface that turns itself
@@ -4992,7 +4992,7 @@ class AppConfig:
                 lockout_threshold=max(1, _safe_int(auth_data.get("lockout_threshold", 5), 5)),
                 lockout_window=str(auth_data.get("lockout_window", "15m") or "15m"),
             ),
-            # Routing (MODEL-ROUTING-TELEMETRY §7 wiring point (b)): explicit field-by-field
+            # Routing: explicit field-by-field
             # mapping — an omission here is a silently dropped setting, which is why the
             # round-trip test exists. Every number is floored so a typo degrades to something
             # workable instead of, say, a zero timeout that fails every local attempt.
@@ -5039,7 +5039,7 @@ class AppConfig:
                         1, _safe_int(loop_breaker_data.get("circuit_threshold", 30), 30)
                     ),
                 ),
-                # §5 rung-ladder thresholds. `_safe_int` + a floor on each, so a typo
+                # Rung-ladder thresholds. `_safe_int` + a floor on each, so a typo
                 # cannot produce a bar of zero approvals (which would offer a promotion
                 # to a type with no track record at all).
                 autonomy=AutonomyConfig(
@@ -5241,7 +5241,7 @@ class AppConfig:
     def load_credentials(self) -> dict[str, str]:
         """Load every stored credential, backend-transparently, plus env overrides.
 
-        Union of both credential backends (C1): ``.env`` (KEY=VALUE per line, ``#``
+        Union of both credential backends: ``.env`` (KEY=VALUE per line, ``#``
         comments, no quotes required, permissions repaired to 0600 on read) merged
         under the keychain, which wins on the key a partly-migrated install holds in
         both. Environment variables still override, as they always did.
@@ -5387,7 +5387,7 @@ def resolve_session_workspace(
     ``resolve_agent_bindings().workspace_dir`` cannot express this on its own: it
     collapses both cases to a concrete path, so a caller assigning it unconditionally
     lets a profile that declared NO directory silently relocate a session the user
-    had explicitly bound elsewhere — the G39 real-home escape, where the relocation
+    had explicitly bound elsewhere — the real-home escape, where the relocation
     also landed outside every configured home.
     """
     profile = (config.agents or {}).get(agent_name) if agent_name else None

@@ -89,7 +89,7 @@ export type ActivityInput = Pick<ChatSession, 'key' | 'title' | 'running' | 'sto
   & Partial<Pick<ChatSessionSummary, 'origin' | 'source_id' | 'source_label' | 'prompt_preview' | 'last_message' | 'created' | 'last_activity_ts' | 'last_ts'>>
 
 /** `GET /api/loops` rows — the second in-flight evidence (see `toLanes`). A RUN-BACKED loop (one
- *  carrying `run_id`, PP-16) has no chat session at all: its stages are subagents, so the sessions
+ *  carrying `run_id`) has no chat session at all: its stages are subagents, so the sessions
  *  above never see it. Optional, like `activity`. */
 export type LoopInput = Pick<Loop, 'id' | 'kind' | 'name' | 'task' | 'status' | 'total_cycles' | 'max_cycles' | 'started_at' | 'session_key' | 'run_id' | 'held'>
 
@@ -165,8 +165,8 @@ const BASE_LANE: Record<InboxItemKind, Lane | null> = {
 /** Which statuses still want something. Exhaustive over `InboxItemStatus` for the same reason
  *  `BASE_LANE` is exhaustive over `InboxItemKind`.
  *
- *  `filtered` is off-surface but NOT resolved — inbox.py:66 calls it "withheld by verification
- *  (INU-6); restorable to PENDING". Mission Control showing a row the verifier withheld would
+ *  `filtered` is off-surface but NOT resolved — inbox.py:66 calls it "withheld by verification;
+ *  restorable to PENDING". Mission Control showing a row the verifier withheld would
  *  undo that decision, so it reads as closed here.
  *  `sent` is the dead member from fact 3; the branch is defensive, not load-bearing.
  *

@@ -837,7 +837,7 @@ def shutdown() -> None:
 
 
 def _audit(decision: Decision) -> None:
-    """One SEL row per change of discovery state (COMPANION-APPS §SEL).
+    """One SEL row per change of discovery state.
 
     The *skips* are audited too, not just the starts: "the owner turned LAN discovery on
     and nothing was announced" is exactly the kind of thing an audit log should be able to

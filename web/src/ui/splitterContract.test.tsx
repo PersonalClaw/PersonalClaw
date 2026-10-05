@@ -25,9 +25,9 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // are pointer-only and do not lie about it, which is a smaller defect but still one:
 //
 //   pages/code/CodeCockpitPage  ×2   full pattern (via the hook)   ← canonical
-//   ui/NavRail                       full pattern                  ← cycle 189 (inline, its own state)
-//   ui/SidePanel                     full pattern (via the hook)   ← cycle 190
-//   pages/chat/ChatFilePanel         full pattern (via the hook)   ← cycle 191
+//   ui/NavRail                       full pattern                  ← inline, its own state
+//   ui/SidePanel                     full pattern (via the hook)
+//   pages/chat/ChatFilePanel         full pattern (via the hook)
 //   pages/terminal/TerminalDrawer    full pattern (via the hook)   ← this change
 //   ui/Composer                      pointer-only  ← the last one, deferred on a TASTE CALL
 //

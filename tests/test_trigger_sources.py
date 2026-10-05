@@ -1,7 +1,6 @@
-"""The `trigger_source` provider seam (AUTOMATION-SUBSTRATE AUTO-A4).
+"""The `trigger_source` provider seam.
 
-Four things this proves, one per DONE_WHEN clause, and every one is DRIVEN rather than asserted
-against hand-built state:
+Four things this proves, and every one is DRIVEN rather than asserted against hand-built state:
 
 1. A fixture app's declared source fires an `event` trigger end to end — through the real
    `trigger_sources.emit` → `event_triggers.emit_event` → the gateway's `EventRouter` → `matches` →
@@ -9,7 +8,7 @@ against hand-built state:
    and the frozen capability fence honoured.
 2. Disabling the app parks its bound triggers with a typed reason from `autopause`'s vocabulary, and
    the park actually STOPS the fire (a park that did not would be an inert control).
-3. `trigger_source` is in `PROVIDER_TYPES` AND has a registered handler (the #47 rule).
+3. `trigger_source` is in `PROVIDER_TYPES` AND has a registered handler.
 4. No vendor names anywhere: the fixture app is `sample-source`.
 
 🔴 The state hazard this suite avoids. The `trigger_sources` registry is process-global, exactly like
@@ -59,8 +58,8 @@ from personalclaw.trigger_sources.parking import (
 from personalclaw.triggers.models import Trigger, TriggerHealth, TriggerState
 from personalclaw.triggers.store import TriggerStore
 
-#: The fixture app's name. GENERICALLY named on purpose — the plan's acceptance criterion ends "core
-#: contains no vendor names", and a test fixture is a tracked file like any other.
+#: The fixture app's name. GENERICALLY named on purpose — core contains no vendor names, and a
+#: test fixture is a tracked file like any other.
 APP = "sample-source"
 
 
@@ -139,7 +138,7 @@ def _store(tmp_path, monkeypatch):
 def _app_trigger(*, id: str = "app-trigger", event_glob: str | None = None, **over) -> Trigger:
     """An `AppEvent` row bound to the fixture app, with a READ-ONLY action by default.
 
-    `notify` because it is in `screen.READ_ONLY_PROVIDERS`: decision 7 permits a read-only action
+    `notify` because it is in `screen.READ_ONLY_PROVIDERS`: the fence permits a read-only action
     with no capability block, so the default trigger is one a real user could author without an
     opt-in. The write-capable case gets its own test rather than being the baseline.
     """
@@ -162,11 +161,11 @@ def _row(store: TriggerStore, trigger_id: str = "app-trigger") -> Trigger:
     return loaded.trigger
 
 
-# ── clause 3: the #47 rule ───────────────────────────────────────────────────
+# ── a manifest type and its runtime handler land together ────────────────────
 
 
 def test_trigger_source_is_in_provider_types_with_a_live_handler():
-    """The #47 rule: a manifest type with no runtime handler installs and then does nothing.
+    """A manifest type with no runtime handler installs and then does nothing.
 
     Asserted BOTH directions, because the shipped guard in `test_app_manifest.py` only checks
     handlers ⊆ PROVIDER_TYPES — a type declared with no handler would pass there while every app
@@ -214,11 +213,11 @@ def test_the_app_event_pattern_is_wired_to_the_app_source():
     assert PATTERN_SOURCE[APP_EVENT] == SOURCE_APP
 
 
-# ── clause 1: end to end, fenced + provenanced ───────────────────────────────
+# ── end to end, fenced + provenanced ─────────────────────────────────────────
 
 
 def test_a_declared_source_fires_an_event_trigger_END_TO_END(_source, _store, monkeypatch):
-    """🔴 THE CLAUSE. A fixture app observes something; a real `event` trigger fires.
+    """🔴 END TO END. A fixture app observes something; a real `event` trigger fires.
 
     Driven through every real seam — the app calls its `emit` callable, core namespaces and fences,
     `emit_event` reaches the gateway's router, `matches` scopes by source and globs the namespaced
@@ -248,7 +247,7 @@ def test_a_declared_source_fires_an_event_trigger_END_TO_END(_source, _store, mo
 
 
 def test_the_payload_is_FENCED_AT_ORIGIN_with_the_app_s_own_provenance(_source):
-    """§7/R4 rule (c): the class of origin, WHICH one, and HOW it got here are three claims.
+    """The class of origin, WHICH one, and HOW it got here are three claims.
 
     Fenced at ORIGIN (the `web_watch` precedent) rather than downstream, so the attributes
     name the app rather than the generic "an event said this". Asserted on the value handed to the
@@ -319,8 +318,8 @@ def test_a_payload_fenced_at_origin_is_NOT_DOUBLE_WRAPPED(_source, _store, monke
 def test_an_injection_payload_from_an_app_NEVER_REACHES_THE_PROVIDER(_source, _store, monkeypatch):
     """The screen runs on an app payload exactly as on a memory write.
 
-    An app is outside the trust boundary by the plan's own words ("app-sourced payloads are
-    untrusted text"), so an app that has been compromised must not be able to steer an unattended
+    An app is outside the trust boundary (app-sourced payloads are
+    untrusted text), so an app that has been compromised must not be able to steer an unattended
     fire. This is the composition check: the fence makes text data, the screen refuses it, and both
     run because the app path re-enters through the SAME `emit_event` seam a memory write uses — and
     the refusal is RECORDED, as the one run row a blocked fire leaves.
@@ -348,9 +347,9 @@ def test_an_injection_payload_from_an_app_NEVER_REACHES_THE_PROVIDER(_source, _s
 
 
 def test_the_FROZEN_CAPABILITY_fence_is_honoured_for_an_app_sourced_fire():
-    """The criterion, verified ADVERSARIALLY via `unfenced_actions` rather than asserted.
+    """The fence, verified ADVERSARIALLY via `unfenced_actions` rather than asserted.
 
-    Decision 7: an auto-fired trigger defaults to read-only actions; a write-capable one needs an
+    An auto-fired trigger defaults to read-only actions; a write-capable one needs an
     explicit opt-in. An app-sourced fire is auto-fired by definition (the app decides when), so it
     inherits that default — enumerated here as "what did this trigger TRY to do, and does the
     refused list cover everything outside its allowlist".
@@ -537,7 +536,7 @@ def test_a_narrow_glob_matches_only_its_own_event():
     )
 
 
-# ── clause 2: disabling the app PARKS its triggers, typed ────────────────────
+# ── disabling the app PARKS its triggers, typed ──────────────────────────────
 
 
 def test_disabling_the_app_PARKS_its_bound_triggers_with_a_typed_reason(_store):
@@ -710,7 +709,7 @@ def test_the_handler_registers_starts_and_deregisters_parks(_store):
 
     Enable → the source is registered, started, and any parked triggers revive. Disable → the source
     is unregistered, stopped, and its triggers park. This is the seam the app-enable/disable path
-    actually calls, so testing it here is what makes the parking clause true in production rather
+    actually calls, so testing it here is what makes the parking guarantee true in production rather
     than only in `parking.py`'s own tests.
     """
     from personalclaw.providers.registry import TriggerSourceTypeHandler
@@ -809,7 +808,7 @@ def test_the_API_creates_and_edits_an_app_event_trigger(_store):
     A pattern the matcher knows but the API refuses is a feature nobody can turn on — and this API
     validates `pattern` against `EVENT_PATTERNS` and derives `source` from `PATTERN_SOURCE`, so both
     halves of the wiring are exercised here rather than trusted. The edit half matters just as much:
-    an edit that answers ok with nothing written is the exact defect S67 found across the old event
+    an edit that answers ok with nothing written is the exact defect once found across the old event
     PUT path. The row is an ordinary store row now, so its edit is `automation_update`'s.
     """
     from personalclaw.dashboard.handlers import triggers as handlers
@@ -892,7 +891,7 @@ def test_an_app_reaches_the_contract_ONLY_through_the_sdk():
 
 
 def test_the_seam_names_NO_VENDOR(_source):
-    """Acceptance criteria's last clause. The seam is generic; the fixture app is `sample-source`.
+    """The seam is generic; the fixture app is `sample-source`.
 
     Scanned over the modules this change added rather than asserted by eye, because a vendor name is
     the kind of thing that arrives later in a docstring example.

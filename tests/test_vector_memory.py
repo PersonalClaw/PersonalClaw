@@ -585,7 +585,7 @@ class TestOccurrencesAreNotMerged:
     """The write path's vector dedup merges the same MEMORY said twice. An occurrence row (a
     workflow run's spec, which the repetition detector counts) is exempt in both directions —
     it once starved that detector to "1 similar plan; 2 needed" on three identical runs, the
-    moment the index held vectors at the model's width (settings B16)."""
+    moment the index held vectors at the model's width."""
 
     _V = [1.0] + [0.1] * 7
 

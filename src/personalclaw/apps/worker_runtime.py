@@ -1,6 +1,6 @@
 """App background-worker supervisor — the host ``permissions.backgroundTasks`` promised.
 
-APE-1 shipped ``permissions.backgroundTasks`` as a *declaration* and said so out loud: the
+``permissions.backgroundTasks`` first shipped as a *declaration* and said so out loud: the
 note at ``apps/manifest.py:405`` reads "unlike ``backgroundTasks`` above, whose host still
 does not exist". This module is that host, which is what turns the flag from disclosure
 into a grant — every launch path funnels through one gate (:meth:`WorkerSupervisor._spawn`)
@@ -26,7 +26,7 @@ Two things a port bought a backend, and a worker does not have:
   an SDK obligation, not a guess this layer can make. What that costs is stated plainly:
   a wedged-but-running worker is invisible here. What it buys is that "alive" never lies.
 * **No ceiling of its own.** A backend serves requests someone asked for; a worker runs
-  unattended forever, which is the denial-of-wallet surface the plan's Risk names. So this
+  unattended forever, which is a denial-of-wallet surface. So this
   supervisor is policy-aware in a way the backend supervisor is not: it has a PAUSED state.
 
 **PAUSED and stopped are different states, deliberately.** PAUSED is a *deferral* — the
@@ -189,7 +189,7 @@ def declared_workers(manifest: "AppManifest") -> list[WorkerSpec]:
 
 
 def _declared_workers(manifest: AppManifest) -> list["WorkerSpec"]:
-    """The workers *manifest* declares, per the APE-3 C2 contract.
+    """The workers *manifest* declares.
 
     Imported at call time because ``apps/background.py`` owns the declaration shape and
     this module owns supervision; a module-scope import would also make the pair a hard
@@ -220,7 +220,7 @@ def _manifest_for(app: str) -> AppManifest | None:
 
 
 def _incident_pause_reason() -> str:
-    """The kill-switch half of the pause policy (AUTONOMY-GUARDRAILS §1.3).
+    """The kill-switch half of the pause policy.
 
     A background worker is unattended work by definition, so it is exactly what the
     incident switch suspends. Fail-OPEN like the switch itself: a stuck-closed kill switch
@@ -582,7 +582,7 @@ class WorkerSupervisor:
         }
         if storage_ok:
             extra["PERSONALCLAW_APP_DATA_DIR"] = str(app_data_dir(rec.app))
-        # APE-10 read-only shared mounts: the same grant, computed by the same function the
+        # Read-only shared mounts: the same grant, computed by the same function the
         # backend site uses, so the two children of one app never disagree about it.
         extra.update(shared_storage_env(rec.app))
         if app_packages:

@@ -1,12 +1,12 @@
 """End-to-end: an ACP wire frame → the effective-risk decision and the task-mode gate.
 
-"effective risk is heuristic and mis-calibrated in both directions". Every
+Effective risk was heuristic and mis-calibrated in both directions. Every
 claude ``session/request_permission`` frame arrived with ``tool_kind: ""`` because the
 declared kind lives on the *preceding* ``tool_call`` frame, so ``task_modes``' kind→risk
 mapping had nothing to read on the approval path; and a shell call whose command text
 had not arrived yet resolved to the LITERAL ``"destructive"``, auditing a read-only
-``pwd; ls`` as destructive (`O7`, `O10`) while the same missing text made ask mode deny a
-read-only ``ls`` (`O13`).
+``pwd; ls`` as destructive while the same missing text made ask mode deny a
+read-only ``ls``.
 
 These tests deliberately start at the **JSON-RPC frame** and end at the **risk verdict /
 gate answer**, through ``acp_event_to_agent_event`` — never at the layer that authors the
@@ -39,7 +39,7 @@ from personalclaw.task_modes import (
 #
 # Both are pinned structurally by ``TestTheProductionCallShapes`` below, so a change
 # in ``chat_runner`` that stops routing through ``resolve_effective_risk`` — or starts
-# feeding the declared kind to the task-mode gate, which §2.2 forbids — reds here
+# feeding the declared kind to the task-mode gate, which the host must never do — reds here
 # instead of silently making these tests measure a path production no longer takes.
 
 
@@ -53,7 +53,7 @@ def _production_risk(event: AgentEvent) -> str:
 def _production_gate(event: AgentEvent, mode: str) -> str:
     """What ``chat_runner``'s task-mode gate answers for this permission frame.
 
-    ``tool_kind`` is passed EMPTY on purpose — that is production's deliberate §2.2
+    ``tool_kind`` is passed EMPTY on purpose — that is production's deliberate
     choice (a CLI-declared "read" must not turn a deny-by-default into an allow), and
     replicating it is what makes the ask-mode assertion below measure the real gate.
     """
@@ -81,7 +81,7 @@ def _permission_frame(
 ) -> JsonRpcMessage:
     """A ``session/request_permission`` frame.
 
-    Defaults to the shape AAP-1 measured on claude-code-acp (`O5`): a ``toolCall`` with
+    Defaults to the shape measured on claude-code-acp: a ``toolCall`` with
     only ``toolCallId`` and ``title`` — no ``kind``, no input. ACP types this field as a
     ``ToolCallUpdate``, so ``kind`` and ``rawInput`` are both legal here (codex sends
     ``kind``); the parameters let a test send either.
@@ -129,7 +129,7 @@ class _Turn:
 # ── direction 1: a read-only call must not be labelled destructive ────────────
 class TestNotLabelledDestructive:
     def test_pending_shell_frame_is_not_audited_as_destructive(self):
-        """`O10`: ``Terminal``/``execute``/``risk: destructive`` for a read-only command.
+        """The symptom: ``Terminal``/``execute``/``risk: destructive`` for a read-only command.
 
         ACP agents open a tool call with ``rawInput: {}`` + ``status: pending`` and fill
         the input in a later ``tool_call_update`` (``extract_tool_update_events``' own
@@ -177,7 +177,7 @@ class TestNotLabelledDestructive:
         assert _production_risk(card) == "destructive"
 
     def test_a_declared_read_kind_names_the_call_but_is_not_a_declaration(self):
-        """`O5`: every claude permission frame arrived ``tool_kind: ""``; the kind is now
+        """Every claude permission frame arrived ``tool_kind: ""``; the kind is now
         correlated from the opening ``tool_call`` frame, so the card and the SEL can name it.
 
         It is still the CLI's LABEL, not a declaration of what the call does: trust-reads
@@ -203,7 +203,7 @@ class TestNotLabelledDestructive:
 # ── direction 2: ask mode must not deny a read-only ls ────────────────────────
 class TestAskModeAllowsAReadOnlyLs:
     def test_command_carried_inline_on_the_permission_frame(self):
-        """`O13`: "a follow-up read-only ``ls`` bash was denied by the same gate".
+        """The symptom: "a follow-up read-only ``ls`` bash was denied by the same gate".
 
         The gate keys off the command text. ACP types the permission frame's ``toolCall``
         as a ``ToolCallUpdate``, whose input field is named ``rawInput`` — the same key

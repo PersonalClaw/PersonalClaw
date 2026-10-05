@@ -168,7 +168,7 @@ def test_a_disabled_feature_writes_nothing_to_disk(tmp_path, monkeypatch):
 
 
 def test_a_room_is_fully_drivable_over_the_api(cfg, tmp_path):
-    """The acceptance criteria: a room works end to end with nothing but HTTP calls."""
+    """A room works end to end with nothing but HTTP calls."""
     created = _create("Pricing debate")
     assert created.status == 201
     room_id = _body(created)["room"]["id"]
@@ -189,7 +189,7 @@ def test_a_room_is_fully_drivable_over_the_api(cfg, tmp_path):
     assert [m["listen_policy"] for m in fetched["room"]["members"]] == ["all", "mention"]
     assert len(fetched["messages"]) == 1
 
-    # And it is on disk under the home, at the path AR-2 names.
+    # And it is on disk under the home, at the declared path.
     assert (tmp_path / "rooms" / room_id / "transcript.jsonl").exists()
 
     removed = asyncio.run(
@@ -1046,8 +1046,8 @@ def test_the_per_room_budget_is_settable_and_not_merely_readable(cfg):
     """`Room.round_budget` was published on the wire with NO writer anywhere.
 
     That is worse than an absent field: a client could read a per-room budget it had no way to
-    set, which reads as "this is configurable" while being false. `AR-8` is the change that had to
-    either give it a write path or take it off the wire; this is the write path.
+    set, which reads as "this is configurable" while being false. It needed either a write path
+    or to come off the wire; this is the write path.
     """
     room_id = _body(_create("Budget room"))["room"]["id"]
     assert _body(_get(room_id))["room"]["round_budget"] == 0, "inherits by default"

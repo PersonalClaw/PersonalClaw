@@ -13,7 +13,7 @@ import type { TriageDigestNotice, TriageDigestView } from '../../lib/api'
 //
 //   the read failed            → the error, with a retry
 //   never installed            → the install offer; there is no schedule to be empty
-//   installed but switched off  → dormant-but-kept (criterion 10)
+//   installed but switched off  → dormant-but-kept
 //   installed, not yet run     → when it will run
 //   ran, nothing to report     → the only reassuring one
 //
@@ -126,7 +126,7 @@ describe('the digest card tells five different states apart', () => {
     await waitFor(() => expect(screen.getByText(/events\.jsonl is unreadable/)).toBeTruthy())
   })
 
-  it('offers §5.4 install with an editable schedule when nothing is installed', async () => {
+  it('offers the install with an editable schedule when nothing is installed', async () => {
     proactiveDigest.mockResolvedValue(view({ state: 'uninstalled', installed: false }))
     render(<TriageDigestCard />)
     const field = await screen.findByLabelText('Digest schedule (cron)')
@@ -480,7 +480,7 @@ describe('the cards are rendered BY their pages', () => {
     const code = stripComments(readFileSync(join(SRC, 'pages/settings/InboxSettingsPanel.tsx'), 'utf8'))
     expect(code).toContain("import { TriageRulesCard } from './TriageRulesCard'")
     expect(code).toMatch(/<TriageRulesCard\s*\/>/)
-    // The card is only meaningful beside the switch that makes its rules dormant (criterion 10),
+    // The card is only meaningful beside the switch that makes its rules dormant,
     // and `proactive.triage_enabled` had no frontend control at all.
     expect(code).toContain("api.patchConfig('proactive.triage_enabled'")
     expect(code).toContain("api.patchConfig('proactive.auto_execute_enabled'")

@@ -333,7 +333,7 @@ def local_network_bypass_enabled() -> bool:
     don't infer from the bind alone", #2860), and a health row that re-spells the
     variable name is a copy that can drift from the behaviour it describes.
     Callers asking "is a token required here" want :func:`loopback_requires_token`;
-    callers asking "is the bypass armed" — the reachability probe's RUA-5 row —
+    callers asking "is the bypass armed" — the reachability probe's bypass-behind-a-proxy row —
     want this.
     """
     return os.environ.get("PERSONALCLAW_BYPASS_LOCAL_NETWORKS") == "1"
@@ -353,7 +353,7 @@ def declared_proxy_front() -> tuple[list[str], bool]:
     ``structural-import-direction`` ratchet forbids core importing the HTTP surface
     while exempting ``dashboard`` from importing itself. Routing through this module —
     the ONE ``dashboard`` import ``doctor`` is grandfathered to hold, and already its
-    mirror for the middleware's short-circuits — keeps the RUA-5 row on the owning
+    mirror for the middleware's short-circuits — keeps the bypass-behind-a-proxy row on the owning
     module without adding a second core→dashboard edge.
 
     Reads config from disk: call it off the event loop.

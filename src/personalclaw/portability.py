@@ -73,7 +73,7 @@ logger = logging.getLogger(__name__)
 
 
 def _inventory_secrets() -> frozenset[str]:
-    """Secret basenames from the state inventory (DURABILITY §1).
+    """Secret basenames from the state inventory.
 
     The export exclude-set is now a PROJECTION of the manifest's ``secret=True``
     entries rather than a second hand-maintained list — the drift between these
@@ -128,7 +128,7 @@ EXCLUDE_DIRS = frozenset(
         # contents are reproducible from the state that travels beside them.
         "snapshots",
         "outbox",
-        # 🔴 A DELIBERATE ASYMMETRY WITH THE SNAPSHOT PATH, recorded here in S182 because it was
+        # 🔴 A DELIBERATE ASYMMETRY WITH THE SNAPSHOT PATH, recorded here because it was
         # unwritten and looks like an oversight once the export becomes inventory-derived: a
         # SNAPSHOT carries `uploads/` (verified: it is in both `_everything_paths` and
         # `_extra_restore_paths`) and an EXPORT does not.
@@ -161,8 +161,8 @@ def _pc_dir() -> Path:
 def _excluded_entry_paths() -> frozenset[str]:
     """Home-relative paths of every ``secret=True`` **or** ``derived=True`` entry.
 
-    §6's rule is ``secret ∪ derived`` and only the ``secret`` half was enforced:
-    :data:`EXPORT_EXCLUDE` is a secret-projection (S1) but nothing projected
+    The rule is ``secret ∪ derived`` and only the ``secret`` half was enforced:
+    :data:`EXPORT_EXCLUDE` is a secret-projection but nothing projected
     ``derived``, and the export's hardcoded database list named ``memory_index.db``
     outright. Measured on a seeded home before this existed — the zip contained the
     derived index *and its rows*. Derived state is rebuildable by definition, so
@@ -239,8 +239,8 @@ def domain_of(rel: str) -> str:
     entry (domain ``platform``), and both are declared. Measured while building this:
 
     * an ancestor-wins rule put every user document in a ``platform`` export and
-      produced an **empty** ``knowledge`` export — the exact boundary criterion 9
-      exists to protect, inverted;
+      produced an **empty** ``knowledge`` export — the exact boundary the per-domain
+      export exists to protect, inverted;
     * a first-declared-wins rule depends on `INVENTORY` ordering, so adding an entry
       silently re-homes a neighbour's files.
 
@@ -382,7 +382,7 @@ _UNDECLARED_LITERAL_DOMAINS = {"workspace_dir": "config"}
 
 
 def _remaining_export_paths(pc: Path, *, covered: frozenset[str] | None = None) -> list[str]:
-    """Declared entries the hand-written export lists do not already carry (S182).
+    """Declared entries the hand-written export lists do not already carry.
 
     Derived from `durability.inventory.export_entries()` — which excludes `secret=True` and
     `derived=True` by construction, so a credential cannot arrive here by being newly declared. The
@@ -420,7 +420,7 @@ def _remaining_export_paths(pc: Path, *, covered: frozenset[str] | None = None) 
 def create_export_zip(domains: Sequence[str] | None = None) -> tuple[bytes, dict]:
     """Create a zip archive of PersonalClaw state. Returns (zip_bytes, manifest_dict).
 
-    ``domains`` restricts the export to those inventory domains (§6's per-domain
+    ``domains`` restricts the export to those inventory domains (the per-domain
     shard: memory / knowledge / work / automation / platform / config). ``None`` is
     the full "give me everything PersonalClaw knows about me" export. An unknown
     domain raises :class:`ValueError` — silently exporting nothing for a typo is the
@@ -474,15 +474,15 @@ def create_export_zip(domains: Sequence[str] | None = None) -> tuple[bytes, dict
             "config.json",
             "hooks.json",
             # 🔴 `triggers.json` — the SOLE source of automations, and the only one
-            # since S112 deleted `ScheduleService`. Driven before adding it: a snapshot of a home
+            # since `ScheduleService` was deleted. Driven before adding it: a snapshot of a home
             # with two automations, an event trigger and run history captured `config.json` ALONE,
             # so `personalclaw snapshot` silently lost every automation the user had. The release
             # notes advise taking one before a breaking upgrade — it must not lose anything.
             "triggers.json",
-            # `crons.json` still travels: it is read-only per §6 and `automation verify-migration`
+            # `crons.json` still travels: it is read-only and `automation verify-migration`
             # diffs both sides, so a snapshot that dropped it would break that command after a move.
             "crons.json",
-            # Named in the plan's own recon note as missing alongside the trigger store.
+            # Was missing alongside the trigger store.
             "event_triggers.json",
             "notifications.jsonl",
             "feedback.jsonl",
@@ -541,7 +541,7 @@ def create_export_zip(domains: Sequence[str] | None = None) -> tuple[bytes, dict
         def _is_projected_db(rel: str) -> bool:
             """Whether ``rel`` is a declared database the backup API already owns.
 
-            🔴 WHY (DAS-10). Two write sites could emit the same declared database: the
+            🔴 WHY. Two write sites could emit the same declared database: the
             projection below (safe, WAL-checkpointed) and the `workspace` tree walk
             (a raw `zf.write`). Measured on a home whose `workspace/lexicon/lexicon.db`
             had a 53 KB uncheckpointed WAL: the zip carried the path TWICE (6 entries
@@ -716,7 +716,7 @@ def create_export_zip(domains: Sequence[str] | None = None) -> tuple[bytes, dict
 
 
 def _shard_schema_version() -> int:
-    """§2's shard schema version, so a v3 zip declares the format generation it came from."""
+    """The shard schema version, so a v3 zip declares the format generation it came from."""
     try:
         from personalclaw.durability.shards import SHARD_SCHEMA_VERSION
 
@@ -726,7 +726,7 @@ def _shard_schema_version() -> int:
 
 
 def _machine_id(home: Path) -> str:
-    """§2's ``machine_id``, so two machines' exports of the same state are attributable."""
+    """The ``machine_id``, so two machines' exports of the same state are attributable."""
     try:
         from personalclaw.durability.shards import machine_id
 
@@ -741,7 +741,7 @@ def _domain_counts(members: list[dict]) -> dict[str, dict[str, int]]:
     Attributed by longest declared-path match, so ``workspace/knowledge/files/doc.pdf``
     counts as ``knowledge`` (its own entry) and not ``platform`` (the ``workspace`` tree
     it is nested inside). A shortest-match or first-match rule would report every user
-    document as platform state, which is precisely the boundary criterion 9 is about.
+    document as platform state, which is precisely the boundary the per-domain split is about.
     """
     try:
         from personalclaw.durability import inventory as inv
@@ -858,9 +858,9 @@ def validate_import_zip(zip_path: Path) -> tuple[bool, str, dict]:
 def _strip_excluded_from_staged(snap: Path) -> list[str]:
     """Delete every `secret ∪ derived` path from a staged import tree. Returns what went.
 
-    Belt-and-suspenders against a hand-built archive (§ amendment: "merge mode
+    Belt-and-suspenders against a hand-built archive: merge mode
     additionally never writes any ``secret=True`` entry even if a hand-built archive
-    contains one"). Applied to the STAGED copy, not to the live home, so the later
+    contains one. Applied to the STAGED copy, not to the live home, so the later
     copy/merge passes physically cannot see a credential — no per-branch skip to forget.
     """
     removed: list[str] = []
@@ -967,9 +967,9 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
 
         # 🔴 STRIP `secret ∪ derived` FROM THE STAGED ARCHIVE, IN BOTH MODES, BEFORE
         # ANYTHING READS IT. Our own exports cannot contain either — but an import zip is
-        # attacker-or-accident-supplied, and the amendment's belt-and-suspenders rule is
-        # explicit: merge mode must never write a `secret=True` entry "even if a
-        # hand-built archive contains one". Doing it once here rather than per-branch is
+        # attacker-or-accident-supplied, and the belt-and-suspenders rule is
+        # explicit: merge mode must never write a `secret=True` entry even if a
+        # hand-built archive contains one. Doing it once here rather than per-branch is
         # what makes it true of the FOURTH hand-written list too, which is where the
         # per-branch version of this rule kept being forgotten.
         stripped = _strip_excluded_from_staged(snap)

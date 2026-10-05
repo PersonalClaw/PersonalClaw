@@ -8,7 +8,7 @@ with it, and "the assistant stopped responding because a workflow row was corrup
 far worse outcome than "the assistant did not mention a running workflow". This is why the
 old surfacing bridge was written the same way, and why it is not negotiable here.
 
-**Show, don't remember (WF2-R20f).** A model editing a spec from memory edits the spec it
+**Show, don't remember.** A model editing a spec from memory edits the spec it
 *generated*, not the one on disk — and those diverge the moment anything else touches the
 run. So the staged-turn contract puts a rendered tree AND the source spec into the model's
 transient context before a mutation turn: it mutates what it just saw.
@@ -102,7 +102,7 @@ def active_workflows_block(*, session_key: str, project_id: str = "") -> str:
         return ""
 
 
-# ── the staged-turn echo (WF2-R20f) ──────────────────────────────────────────
+# ── the staged-turn echo ──────────────────────────────────────────
 
 
 def render_tree(node: Any, *, indent: int = 0, states: dict[str, str] | None = None) -> list[str]:
@@ -144,7 +144,7 @@ def render_tree(node: Any, *, indent: int = 0, states: dict[str, str] | None = N
 
 
 def staged_spec_echo(run_id: str) -> str:
-    """The rendered+source echo that must precede a mutation turn (WF2-R20f).
+    """The rendered+source echo that must precede a mutation turn.
 
     A model that edits from memory edits the spec it GENERATED, which diverges from disk the
     moment anything else touches the run — another tool, a rewind, a concurrent edit. The
@@ -211,7 +211,7 @@ def staged_spec_echo(run_id: str) -> str:
 
 
 #: Tools whose result should be followed by a spec echo, because the model's NEXT move is
-#: likely a mutation and it must edit what it just saw (WF2-R20f).
+#: likely a mutation and it must edit what it just saw.
 STAGING_TOOLS = frozenset({"workflow_status", "workflow_get_def", "workflow_observe"})
 
 

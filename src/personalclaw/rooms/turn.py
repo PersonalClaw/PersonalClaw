@@ -228,7 +228,7 @@ def mentions_in_order(content: str) -> list[str]:
     **A list, not a set, and that is the whole point.** The arbiter's speaker queue is FIFO
     over these names, so the order the human wrote two mentions in IS the order those two
     members speak; collapsing to a set would hand the ordering decision to hash iteration,
-    which is exactly the "nothing outside the text decides the order" property `AR-5` is
+    which is exactly the "nothing outside the text decides the order" property the arbiter is
     built to hold. De-duplicated because naming somebody twice in one sentence is emphasis,
     not a request for two turns.
 
@@ -270,7 +270,7 @@ def render_transcript(room: Room, messages: list[dict]) -> str:
 
     Plain text rather than a structured payload because this is what the member's provider
     receives, and the room's protocol IS the transcript — there is no cross-provider
-    message format to invent (the plan header's soul guardrail).
+    message format to invent.
     """
     lines = []
     for msg in messages:
@@ -517,7 +517,7 @@ async def member_context(
 
     Per member, not per room: the members of a room run on different models with different
     windows, so a room-level rolling summary would compact for the smallest window every member
-    then pays for. AGENT-ROOMS §C3 rejects that shape rather than deferring it.
+    then pays for. That shape is rejected outright rather than deferred.
 
     *serving* is the member's own runner, and ``context_headroom.resolve_window`` asks it for the
     window it serves — resolved ONCE and reused for the before and after reads, so the two cannot

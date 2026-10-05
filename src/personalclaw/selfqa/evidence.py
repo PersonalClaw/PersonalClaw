@@ -8,8 +8,8 @@ deterministic half of that: everything a model must not be trusted to do by hand
 Three shapes are load-bearing here, each a direct response to a way the LLM-authored version of
 this node could lie:
 
-**The digests are computed, never claimed.** The plan's evidence prompt says "compute the
-digests; do not estimate them" — which is an instruction a model can ignore and no one would
+**The digests are computed, never claimed.** An LLM evidence prompt that says "compute the
+digests; do not estimate them" gives an instruction a model can ignore and no one would
 notice. :func:`build_manifest` hashes the actual bytes on disk, so the manifest is a measurement
 of the bundle rather than a description of it.
 
@@ -381,7 +381,7 @@ def derive_gif(
 ) -> Derivation:
     """Derive a trimmed GIF from the recording (ffmpeg palettegen for faithful colour).
 
-    ``start_secs``/``window_secs`` trim to the interesting window (§3.3: the failure window ±10s);
+    ``start_secs``/``window_secs`` trim to the interesting window (the failure window ±10s);
     ``None`` means the whole recording. Degrades typed exactly like :func:`derive_contact_sheet`.
     """
     root = Path(bundle_dir)
@@ -570,7 +570,7 @@ def load_manifest(bundle_dir: Path | str) -> Manifest | None:
     return Manifest.from_dict(data) if isinstance(data, dict) else None
 
 
-# ── required-kinds completion gate (criterion 7) ───────────────────────────────
+# ── required-kinds completion gate ─────────────────────────────────────────────
 
 
 @dataclass(frozen=True)
@@ -653,8 +653,8 @@ def register_bundle(
 ) -> RegisteredBundle:
     """Register the bundle as a **single** Artifact and return its ref.
 
-    The manifest is the artifact's content (so the artifact IS the index, per WORK-R4's "evidence
-    bundle = Artifact composition"); every manifest file is copied under the artifact's dir
+    The manifest is the artifact's content (so the artifact IS the index — the evidence
+    bundle is an Artifact composition); every manifest file is copied under the artifact's dir
     content-addressed, so the artifact is self-contained rather than a set of pointers into a run
     workspace that a later teardown could remove. One Artifact, not one-per-file: the bundle is a
     composition, and a reviewer opens one thing.

@@ -675,7 +675,7 @@ async def api_onboarding(request: web.Request) -> web.Response:
     the flow already makes. ``has_chat_binding`` is derived from this same list below, so
     the flag and the refs cannot disagree.
 
-    ``chat_is_bundled_floor`` says WHAT is answering when that is the OU-14 floor: the entry
+    ``chat_is_bundled_floor`` says WHAT is answering when that is the zero-config floor: the entry
     chat resolves to declares itself a floor, whether it is bound (onboarding binds the small
     model when the user downloads it there) or answering because nothing is. Read off the
     bridge's ``serving_entry`` — the same readiness authority as ``needs_model`` — so the two
@@ -726,7 +726,7 @@ async def api_onboarding(request: web.Request) -> web.Response:
         logger.debug("onboarding: active-model probe failed", exc_info=True)
 
     # ``needs_model`` is the single source of truth: a dry-run of what the bridge
-    # would actually resolve for chat (X3). The has_provider/has_binding fields
+    # would actually resolve for chat. The has_provider/has_binding fields
     # remain for UI breakdown, but the nudge decision agrees with real resolution
     # rather than re-deriving it from a coarser heuristic that could diverge.
     try:
@@ -738,7 +738,7 @@ async def api_onboarding(request: web.Request) -> web.Response:
         needs_model = not (has_provider or has_binding)
 
     # ``chat_is_bundled_floor`` — is chat about to be answered by a zero-config FLOOR model?
-    # (OU-14.) It exists because "a model resolves" and "you have a model worth trusting" are
+    # It exists because "a model resolves" and "you have a model worth trusting" are
     # different facts, and collapsing them is how a user meets a 135M bundled model with no
     # warning and concludes the PRODUCT is bad at chat. True when the entry chat resolves to is
     # flagged ``floor`` — bound or not, because binding the small model (which onboarding does
@@ -755,7 +755,7 @@ async def api_onboarding(request: web.Request) -> web.Response:
         logger.debug("onboarding: floor probe failed", exc_info=True)
 
     # ``chat_download_offer`` — is there a chat model this machine could DOWNLOAD but has not?
-    # (OU-14.) It exists because the honest first-run answer on a fresh install is neither
+    # It exists because the honest first-run answer on a fresh install is neither
     # "you have a model" nor "go configure a provider": it is "there is a one-time download and
     # here is how big it is". A surface cannot offer that without knowing the size up front, so
     # the payload carries the bytes — a download offer without a number is the shape this
@@ -849,7 +849,7 @@ async def api_onboarding_state(request: web.Request) -> web.Response:
     another step's progress; ``name_draft`` is replaced whole.
 
     This is deliberately NOT the config PATCH allowlist: onboarding progress is entity
-    state (§2.1), so it is written here and stored in ``entity_settings/onboarding.json``.
+    state, so it is written here and stored in ``entity_settings/onboarding.json``.
     Unknown or mistyped fields are rejected with a 400 rather than dropped silently.
     Returns ``{ok: true, state: {...}}`` — read it back to confirm the merge.
     """

@@ -20,7 +20,7 @@ def list_providers() -> list[KnowledgeProvider]:
 
 
 def list_provider_info() -> list[dict[str, Any]]:
-    """Provider attribution list (S4 pattern): the native always-on provider plus
+    """Provider attribution list: the native always-on provider plus
     any registered external providers. The native provider owns every native
     knowledge type + the cross-cutting intelligence (extraction/insights) that
     runs over all items regardless of origin."""

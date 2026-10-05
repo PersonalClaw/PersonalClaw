@@ -363,7 +363,7 @@ def _get_def_save_lock() -> asyncio.Lock:
 
 
 async def api_template_trajectory(request: web.Request) -> web.Response:
-    """The trajectory-signature distribution and regression signal for one template (PP-7).
+    """The trajectory-signature distribution and regression signal for one template.
 
     Queryable per template WITHOUT a run in hand: it projects each of the template's recent runs to
     its decision-path signature, reports the distribution of signature classes, and carries the
@@ -464,8 +464,8 @@ async def _save_def(
         # it: without this the key is dropped before the save and the run-start applier finds
         # nothing to provision.
         workspace=body.get("workspace") if isinstance(body.get("workspace"), dict) else None,
-        # Three more fields a definition has, dropped here until the dashboard editor saved one
-        # (F-29): a copy of `code-project` came back with no judge contract.
+        # Three more fields a definition has, dropped here until the dashboard editor saved one:
+        # a copy of `code-project` came back with no judge contract.
         runtime_hints=(
             body.get("runtime_hints") if isinstance(body.get("runtime_hints"), dict) else None
         ),
@@ -499,7 +499,7 @@ async def _save_def(
 async def api_def_a2a_publish(request: web.Request) -> web.Response:
     """POST /api/workflows/{name}/a2a-publish — the template detail UI's publish toggle.
 
-    Its own route rather than a field on the def save (EXTERNAL-ACCESS §5): one bool must not
+    Its own route rather than a field on the def save: one bool must not
     re-validate and re-save the whole definition (see `service.set_a2a_published`). Guarded as a
     def SAVE because that is what it is — a write to the stored template — and because
     publishing a workflow to an external protocol is not a read.
@@ -540,7 +540,7 @@ def _template_run_stats(name: str) -> dict[str, Any]:
 
     ``clean_runs`` = completed runs; ``evaluator_rejected`` = whether any recent run's ledger
     carries a ``gate_rejected`` event ("the evaluator has rejected at least one real bad run",
-    the R11 signal that separates a proven gate from one that has never fired). Bounded to the
+    the signal that separates a proven gate from one that has never fired). Bounded to the
     most recent runs so this stays a display read, not a scan of all history.
     """
     from personalclaw.workflows.journal import GATE_REJECTED
@@ -559,7 +559,7 @@ def _template_run_stats(name: str) -> dict[str, Any]:
     return {"clean_runs": clean, "evaluator_rejected": rejected}
 
 
-# ── §4.4 human-attention accounting ────────────────────────────────────────────
+# ── human-attention accounting ─────────────────────────────────────────────────
 
 
 def _attention_scopes(
@@ -569,7 +569,7 @@ def _attention_scopes(
 
     A bounded display read, same posture as :func:`_template_run_stats`: the most recent
     runs grouped by template, each run's journal read once. Computed on request, stored
-    nowhere — the §4.4 discipline.
+    nowhere — the attention-accounting discipline.
     """
     import time as _time
 
@@ -601,11 +601,11 @@ def _attention_scopes(
 
 
 def promotion_attention_note(_key: str = "") -> str:
-    """The one-line attention citation a promotion proposal carries (§4.4).
+    """The one-line attention citation a promotion proposal carries.
 
     Aggregated across templates and labeled so — run-ledger attention events are
     template-scoped while rungs are action-type-scoped, and until the trust record binds
-    the two (ES-14/15) a per-key attribution would be an invention. Empty when there is
+    the two a per-key attribution would be an invention. Empty when there is
     no sample; a proposal never cites a metric that does not exist. Best-effort: a
     citation failure must never block the proposal itself.
     """
@@ -626,7 +626,7 @@ def promotion_attention_note(_key: str = "") -> str:
 
 
 def nodding_revocation_cause(*, max_runs: int = 120) -> str:
-    """The §4.4 nodding-loop revocation cause, or ``""`` when every gate really judges.
+    """The nodding-loop revocation cause, or ``""`` when every gate really judges.
 
     Walks the same bounded recent-run window as :func:`_attention_scopes`, groups the
     journal's judge verdicts by template, and asks the nodding-loop detector. A gate
@@ -673,7 +673,7 @@ def nodding_revocation_cause(*, max_runs: int = 120) -> str:
 
 
 async def api_attention(request: web.Request) -> web.Response:
-    """GET /api/workflows/attention — per-template §4.4 attention summaries."""
+    """GET /api/workflows/attention — per-template attention summaries."""
     _audit(request, "workflow_attention", "success", "")
     try:
         scopes = await asyncio.to_thread(_attention_scopes)
@@ -904,8 +904,8 @@ def shown_status(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def _owner_username() -> str:
-    """The configured owner username, so the frontend can scope/label runs as mine vs theirs
-    (TSE2-1). Never raises — attribution is a projection detail, not a reason to 500 a list."""
+    """The configured owner username, so the frontend can scope/label runs as mine vs theirs.
+    Never raises — attribution is a projection detail, not a reason to 500 a list."""
     try:
         from personalclaw.identity import current_username
 
@@ -1180,7 +1180,7 @@ async def api_run_delete(request: web.Request) -> web.Response:
     SEL-audited like the other mutations: a delete is the one workflow action with no undo, so
     an audit trail is what makes "where did that run go?" answerable.
 
-    `keep_open=true` keeps the workspace directory when the workspace IS the deliverable (§4.1).
+    `keep_open=true` keeps the workspace directory when the workspace IS the deliverable.
     A query flag rather than a second route: it is one deletion with two dispositions for the
     workspace, and a second route would be a second place to keep the ordering rule right.
     """
@@ -1196,12 +1196,12 @@ async def api_run_delete(request: web.Request) -> web.Response:
 
 @_of_its_chat
 async def api_run_workspace(request: web.Request) -> web.Response:
-    """GET the run's workspace review: changed files + the two reintegration verbs (§4.1).
+    """GET the run's workspace review: changed files + the two reintegration verbs.
 
     A READ, deliberately — reintegration is offered, never performed. There is no POST companion
     here: `Apply Locally` and `Checkout Branch` are commands the USER runs in their own shell
     (the offer carries the branch name), so the gateway never merges into the user's working tree
-    on their behalf. That is the plan's ruling, not a limitation — "apply this" that silently
+    on their behalf. That is deliberate, not a limitation — "apply this" that silently
     stomps an unrelated local edit is exactly what isolating the run was for.
 
     Not `_guard`ed: a read is not a mutation, matching `api_run_status` and `api_run_output`. The
@@ -1219,7 +1219,7 @@ MAX_DROP_BYTES = 16 * 1024 * 1024
 
 @_of_its_chat
 async def api_run_drop_status(request: web.Request) -> web.Response:
-    """GET the run's file-drop policy + what has been dropped (WORK-CONTAINERS §2.5).
+    """GET the run's file-drop policy + what has been dropped.
 
     A read, so not `_guard`ed — the same rule `api_run_workspace` follows. The payload is filenames,
     sizes and digests; no dropped CONTENT is served here, because a drop is untrusted input and the
@@ -1230,7 +1230,7 @@ async def api_run_drop_status(request: web.Request) -> web.Response:
 
 @_of_its_chat
 async def api_run_drop(request: web.Request) -> web.Response:
-    """POST multipart to the run's approval-gated file drop (WORK-CONTAINERS §2.5, R17).
+    """POST multipart to the run's approval-gated file drop.
 
     Multipart with `file` parts, matching `/api/upload/file` — one ingestion convention, not a
     second. Approval rides in the SAME request as `confirm=true` (the `body.get("confirm") is True`
@@ -1240,7 +1240,7 @@ async def api_run_drop(request: web.Request) -> web.Response:
     thing the gate exists to prevent. So an unapproved drop is REFUSED with what it would have
     accepted (name, size, MIME), the UI shows that, and the confirmed retry carries the file again.
 
-    `_guard`ed as a mutation and SEL-audited PER FILE (§2.5): ingesting untrusted content into a
+    `_guard`ed as a mutation and SEL-audited PER FILE: ingesting untrusted content into a
     run's
     reference zone is exactly the event an operator reconstructing "where did this instruction come
     from" needs to find. Each file gets the content scan before it is handed on
@@ -1353,13 +1353,13 @@ async def api_run_drop(request: web.Request) -> web.Response:
 
 @_of_its_chat
 async def api_run_outbox(request: web.Request) -> web.Response:
-    """GET the run's published-artifact listing — the §2.5 outbox half of R17."""
+    """GET the run's published-artifact listing — the outbox half of the file drop."""
     return _reply(service.outbox(request.match_info.get("run_id", "")))
 
 
 @_of_its_chat
 async def api_run_introspect(request: web.Request) -> web.Response:
-    """The §6.4 nine-question introspection projection for one run (WORK-CONTAINERS R6).
+    """The nine-question introspection projection for one run.
 
     A pure read over the journal the run already wrote — the cost/latency strip, the template
     p50/p95 card, the said-no gate table with its fake-check warnings, the journal timeline and
@@ -1375,11 +1375,11 @@ async def api_run_introspect(request: web.Request) -> web.Response:
 
 @_of_its_chat
 async def api_run_ledger_rails(request: web.Request) -> web.Response:
-    """GET the run's two ledger rails — findings and verdict/ROI (PP-16 seam 4).
+    """GET the run's two ledger rails — findings and verdict/ROI.
 
     The run-side counterpart of the loop cockpit's two rails, which the loop side serves off
     `GET /api/loops/{id}` (`store.get_redacted` attaches `findings` + `verdicts`). Both are
-    projections over the PP-5 ledger this run already wrote, so this route stores nothing and
+    projections over the ledger this run already wrote, so this route stores nothing and
     mints no kind.
 
     Its own route rather than a field on `introspect` because the two payloads have different
@@ -1395,7 +1395,7 @@ async def api_run_ledger_rails(request: web.Request) -> web.Response:
 
 @_of_its_chat
 async def api_run_deliverable(request: web.Request) -> web.Response:
-    """GET the run's document deliverable + working log (PP-16 unit 1).
+    """GET the run's document deliverable + working log.
 
     The run-side counterpart of `GET /api/loops/{id}/report`, which the loop cockpit reads for its
     Deliverable tab. Two document slots, the kind-declared filename derived from the loop alias
@@ -1435,12 +1435,12 @@ async def api_run_output(request: web.Request) -> web.Response:
 
 @_of_its_chat
 async def api_run_node_inspect(request: web.Request) -> web.Response:
-    """The §5 reconstructability set for one node (WF2-A2), live while the run is.
+    """The reconstructability set for one node, live while the run is.
 
     A read-only forensics view over data the controller already persisted: the resolved
     prompt (or a ref), the resolved inputs, the output (or an `artifact_ref` when it was
     offloaded), the attempt records, the ledger slice for this node, and whether the output
-    was served from the resume cache. WV-10 renders this as an inspector drawer; this route
+    was served from the resume cache. The run view renders this as an inspector drawer; this route
     is the sole caller today.
 
     SECRETS ABSENT is the contract. The service read returns persisted values verbatim, and
@@ -1524,14 +1524,14 @@ async def api_run_edit(request: web.Request) -> web.Response:
 
 @_of_its_chat
 async def api_run_policy_overrides(request: web.Request) -> web.Response:
-    """PUT the run's sparse SupervisorPolicy overlay (PP-16 seam 4f) — prelaunch only.
+    """PUT the run's sparse SupervisorPolicy overlay — prelaunch only.
 
     REPLACE semantics, matching the store contract (`store.set_policy_overrides`): the JSON
-    body IS the overlay — only the knobs the user overrode, drawn from the five ruled
+    body IS the overlay — only the knobs the user overrode, drawn from the five allowed
     per-instance keys (`supervisor_policy.OVERRIDABLE_POLICY_KEYS`) — and ``{}`` clears every
     override. A PUT, not a PATCH, because the wire verb should say what the store does.
 
-    PRE-LAUNCH ONLY, and the gate is FORCED, not cautious (dev-lane measurement 2026-09-05):
+    PRE-LAUNCH ONLY, and the gate is FORCED, not cautious (measured 2026-09-05):
 
     1. **A live edit would lose a write-write race with the engine.** The controller's
        ``_save_run`` (`controller.py`) persists the WHOLE run row via ``store.save``,
@@ -1540,8 +1540,8 @@ async def api_run_policy_overrides(request: web.Request) -> web.Response:
        narrow single-column UPDATE protects only the other direction.) Honoring a live edit
        would need an engine re-read or the steer-path machinery — out of this seam's scope.
     2. **Parity with the loop side.** ``loop/store.py::update_spec`` freezes the same five
-       knobs at launch (its PRELAUNCH_STATUSES gate). PP-16 is a noun retirement: a run must
-       not silently gain a capability loops never had.
+       knobs at launch (its PRELAUNCH_STATUSES gate). The loop noun is retiring onto the run, and
+       a run must not silently gain a capability loops never had.
 
     The gate lives in the service and reads the lifecycle PHASE (``RUN_PHASES[...] is
     LifecyclePhase.PRELAUNCH``), never the literal DRAFT status, so a future prelaunch
@@ -1628,7 +1628,7 @@ async def api_run_pause(request: web.Request) -> web.Response:
 
 @_of_its_chat
 async def api_run_steer(request: web.Request) -> web.Response:
-    """POST a mid-run steering instruction (LOOPS-EVOLUTION R14).
+    """POST a mid-run steering instruction.
 
     Guarded and audited like any other run mutation: injecting an instruction into a
     running autonomous job changes what it does, and a change to an unattended run that
@@ -1650,7 +1650,7 @@ async def api_run_review(request: web.Request) -> web.Response:
 
     A READ, so it is not `_guard`ed as a mutation — but the anchor verdicts it returns are the
     thing the panel renders, and they are computed here rather than stored, so a stale finding
-    can never render as truth (EXECUTION-ISOLATION §7).
+    can never render as truth.
     """
     return _reply(await review_findings(request.match_info.get("run_id", "")))
 
@@ -1918,7 +1918,7 @@ async def api_manifest(request: web.Request) -> web.Response:
 async def api_run_events(request: web.Request) -> web.Response | web.StreamResponse:
     """Per-run event stream, snapshot-then-subscribe.
 
-    The snapshot goes out BEFORE subscribing (WF2-R11): a client that subscribed first would
+    The snapshot goes out BEFORE subscribing: a client that subscribed first would
     miss everything between connect and the first event, and then render a run that looks
     stalled. A TERMINAL run closes immediately instead of holding a connection open forever
     waiting for events that will never arrive.

@@ -1,4 +1,4 @@
-"""Agent roster — a slug-keyed catalog PROJECTION over the config agents (WORK-R16).
+"""Agent roster — a slug-keyed catalog PROJECTION over the config agents.
 
 Not a second registry. `AgentDefinition`s live in `config.json agents{}` (the `agent` entity's
 source_of_truth is config), so a roster that stored its own copy of an agent would be a second

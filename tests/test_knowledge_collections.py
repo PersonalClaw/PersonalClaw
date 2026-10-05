@@ -1,4 +1,4 @@
-"""Knowledge collections + item curation (C2).
+"""Knowledge collections + item curation.
 
 Two shelf kinds with genuinely different semantics: a MANUAL collection holds an
 explicit membership list, a SMART one stores a query re-run on every read. The
@@ -8,8 +8,7 @@ accept rows it will never read.
 
 The migration half matters as much: this adds two item columns and two tables to an
 EXISTING knowledge.db, using the store's own additive ladder (there is no `lifecycle/`
-package — the deferred-governance premise in the plan is stale; same ruling as
-Memory-Graph the v7).
+package; the memory graph's v7 migration took the same route).
 """
 
 from __future__ import annotations

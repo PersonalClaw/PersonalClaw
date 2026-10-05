@@ -47,7 +47,7 @@ async def _spawned_env(transport: AcpProcess) -> dict:
 
 @pytest.mark.asyncio
 async def test_spawn_env_has_session_key_and_channel(tmp_path):
-    # env-building moved from AcpClient to the transport (P9#7). The subprocess env
+    # env-building moved from AcpClient to the transport. The subprocess env
     # must carry PERSONALCLAW_SESSION_KEY + PERSONALCLAW_CHANNEL_ID when set.
     t = _mk(work_dir=tmp_path, session_key="test-key", channel_id="C0ABC123")
     env = await _spawned_env(t)

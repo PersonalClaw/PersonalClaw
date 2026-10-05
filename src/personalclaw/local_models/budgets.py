@@ -1,4 +1,4 @@
-"""Per-model context-budget derivation from the local-model catalog (LMMV §2.2).
+"""Per-model context-budget derivation from the local-model catalog.
 
 A local model's real context window is a **catalog fact**, not a provider constant. A
 4k-context GGUF and a 200k-context hosted model are the same object to every caller that
@@ -9,7 +9,7 @@ model neither number is a fact: the model is not in the hosted table, so it inhe
 200k window it does not have, and it inherited a 4096-token output cap nobody declared.
 
 This module derives the number instead. :class:`LocalModel` already carries
-``context_tokens`` / ``output_tokens`` off the model card (LMMV §2.1), so the catalog is
+``context_tokens`` / ``output_tokens`` off the model card, so the catalog is
 the authority when it speaks and the existing shared window table remains the fallback
 when it does not. ``0`` is a legitimate, expected card value meaning **"unknown"** — it
 is never treated as a window of zero and is never divided by.

@@ -1,6 +1,6 @@
 """A correctly configured embedding provider resolves at boot; a missing one says so in ONE line.
 
-Measured on every boot of a real home (3 of 3, day-56b validator) bound to an Ollama embedding
+Measured on every boot of a real home (3 of 3) bound to an Ollama embedding
 model: ``Could not build embedding provider 'host-ollama' after config sync`` followed by three
 chained tracebacks — ``KeyError: 'host-ollama'``, the ``ProviderResolutionError`` raised from it,
 and ``KeyError: 'ollama'``. The provider was configured correctly. The gateway resolved the

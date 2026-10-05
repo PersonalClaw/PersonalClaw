@@ -1,4 +1,4 @@
-"""App-facing background agent API (#30).
+"""App-facing background agent API.
 
 An app that declares the ``agent`` permission can run a headless agent task and
 poll its result — the NON-iframe agentic path (for apps that act on agent output

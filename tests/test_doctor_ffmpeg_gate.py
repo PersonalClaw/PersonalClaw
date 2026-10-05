@@ -1,6 +1,6 @@
 """`personalclaw doctor` must not fail a fresh install over ffmpeg, and must name a real fix.
 
-Measured on a fresh container (the day-7 validation lane, wheel from `d2edbdefe`): onboard,
+Measured on a fresh container (wheel from `d2edbdefe`): onboard,
 skip the model step, run `personalclaw doctor`. It printed
 
     Speech-to-Text

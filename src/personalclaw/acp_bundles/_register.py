@@ -158,18 +158,18 @@ def register_acp_cli_entry(
         factory and a pooled connection, ``acp_agent.options_compacts_itself``).
 
     A CLI's own agent-config directory is deliberately NOT a parameter here.
-    ACP-AGENT-PARITY §2.1 measured all three shipped CLIs honouring the
-    protocol's ``session/new`` ``mcpServers`` array (prong A,
-    :mod:`personalclaw.acp.mcp_servers`), so seeding a vendor config file is
-    unnecessary as well as unwired — see the `AAP-4` DEVIATION 2 log entry.
+    All three shipped CLIs were measured honouring the
+    protocol's ``session/new`` ``mcpServers`` array
+    (:mod:`personalclaw.acp.mcp_servers`), so seeding a vendor config file is
+    unnecessary as well as unwired.
 
-    This parameter used to cite `K6` — that kiro reads only ``<cwd>/.kiro/agents``
+    This parameter used to cite the measurement that kiro reads only ``<cwd>/.kiro/agents``
     and ``~/.kiro/agents``, so the config the host writes under
     ``$PERSONALCLAW_HOME/agents/`` is never seen. That measurement still holds; it
     just does not imply seeding is needed. It is a fact about a config **file
-    path**, and the protocol array is an independent channel: `K54`/`K100` watched
+    path**, and the protocol array is an independent channel: a live drive watched
     a kiro session receive the whole ``personalclaw-core`` surface with nothing in
-    ``~/.kiro`` naming us. Don't re-add the parameter on the strength of `K6`.
+    ``~/.kiro`` naming us. Don't re-add the parameter on the strength of that measurement.
 
     Returns
     -------
@@ -348,7 +348,7 @@ def unregister_acp_cli_entry(cli: str) -> None:
 
     Registry-only: a disabled bundle leaves nothing of ours behind because
     nothing of ours was ever written into the CLI's own config. The MCP surface
-    an ACP session sees is passed per ``session/new`` (prong A), so it vanishes
+    an ACP session sees is passed per ``session/new``, so it vanishes
     with the session rather than needing a teardown.
     """
     from personalclaw.security import unregister_agent_sign_in_files

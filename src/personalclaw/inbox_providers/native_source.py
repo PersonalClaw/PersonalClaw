@@ -1,4 +1,4 @@
-"""Native inbox source — the always-on, push-based agent→inbox sink (seam S4).
+"""Native inbox source — the always-on, push-based agent→inbox sink.
 
 Unlike the poll-based providers (filesystem, plus any channel app's source), the
 native source is a
@@ -10,7 +10,7 @@ external provider — so the Inbox is useful out-of-the-box: any agent (chat,
 goal loop, scheduled run, space member) can surface "I finished X", "I need a
 decision on Y", "heads up about Z" with no external channel connected.
 
-S4 pattern (shared, not a common base class): a native-always-on provider +
+A shared pattern, not a common base class: a native-always-on provider +
 external pluggable providers + per-item ``source`` attribution + per-provider
 health. This module owns the native half.
 

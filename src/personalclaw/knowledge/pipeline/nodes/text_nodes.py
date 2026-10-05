@@ -1,4 +1,4 @@
-"""Pure-python text/document nodes (#30 Task A) — no model needed.
+"""Pure-python text/document nodes — no model needed.
 
 These cover the text-backed types that ship usable without any extraction
 model-provider:
@@ -7,7 +7,7 @@ model-provider:
 - ``document_read`` — pdf/docx/sheet/slides/document: extract text via the existing
   ``readers.FileReader`` (pdfplumber/python-docx/python-pptx/html2text).
 - ``consolidate`` — fan-in: merge multiple upstream text outputs into one (header-
-  concat; no LLM in Task A — the reasoning-LLM consolidation is Task B/#47).
+  concat; no LLM — the reasoning-LLM consolidation is in the media nodes).
 """
 
 from __future__ import annotations
@@ -124,7 +124,7 @@ class DocumentReadNode:
 
 
 class DocumentSliceNode:
-    """Shape a document into role-sized slices (WATCHED-SOURCES §5) — no model, ever.
+    """Shape a document into role-sized slices — no model, ever.
 
     Reads the upstream extraction (``document_read`` for an uploaded file,
     ``bookmark_scrape`` for a fetched paper) plus the file itself, runs the deterministic
@@ -323,8 +323,8 @@ class BookmarkScrapeNode:
 class ConsolidateNode:
     """Fan-in: merge upstream text outputs into one document (header-concat).
 
-    Task A is no-LLM — multiple texts are joined under labeled headers. The
-    reasoning-LLM merge (consolidation_reasoning use-case) lands in Task B/#47.
+    This node uses no LLM — multiple texts are joined under labeled headers. The
+    reasoning-LLM merge (consolidation_reasoning use-case) is in the media nodes.
     """
 
     node_type = "consolidate"

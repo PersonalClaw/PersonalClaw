@@ -43,7 +43,7 @@ describe('onboarding step progress is announced', () => {
     // Single source, so the spoken step name cannot drift from the heading. If a title is ever
     // hardcoded back onto a StepRow, this and nameFieldLabelled both fail.
     //
-    // The count is DERIVED from `ORDER`, not frozen: when OU-3 added the `try` step this rail
+    // The count is DERIVED from `ORDER`, not frozen: when the `try` step was added this rail
     // said "all three rows read from TITLES" and would have gone red for a fourth row that was
     // correctly sourced — a frozen count turns "every row" into "exactly N rows" and makes
     // adding a compliant step look like a regression. Deriving it strengthens the claim: it now

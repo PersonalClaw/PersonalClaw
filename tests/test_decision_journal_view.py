@@ -1,6 +1,6 @@
 """The Decision Journal's HTTP read surface.
 
-The execution log recorded that `PA-6` was "frontend-only" because ``calibration()``
+The view was once judged "frontend-only" because ``calibration()``
 already computes the strip. It is not: ``decision_list``/``decision_resolve`` are *chat tools*,
 and nothing served a decision or a calibration bucket over HTTP, so the view had no read path at
 all. This file covers the one route that closes that — and, more importantly, the property that
@@ -327,11 +327,11 @@ class TestFailureIsNotEmptiness:
         assert isinstance(body["error"], dict) and "code" in body["error"]
 
 
-# ── criterion 5's grep audit: neither store writes the other ─────────────────
+# ── the grep audit: neither store writes the other ───────────────────────────
 
 
 class TestStoresStayUncoupled:
-    """The criterion's "grep-audit confirms neither store writes the other" — a SOURCE audit,
+    """The rule "grep-audit confirms neither store writes the other" — a SOURCE audit,
     which is a different leg from ``test_decision_journal.py``'s behavioural one. That test
     proves the memory row it produced holds no back-pointer; this one proves no code path could
     write one, including paths no test happens to drive.

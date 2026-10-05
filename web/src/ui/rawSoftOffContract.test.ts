@@ -5,7 +5,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The hand-rolled half of the disabled-button family ────────────────────────────────────
 //
-// Cycle 109 triaged the 143 `<Button disabled={…}>` and closed the 13 that owed a reason; it also
+// An earlier triage of the 143 `<Button disabled={…}>` closed the 13 that owed a reason; it also
 // measured what a primitive-scoped census CANNOT see — **41 raw `<button disabled={…}>`, 21 with a
 // non-busy gate.** #1168 took the two on `#/loops`; this takes the rest of the fixable class.
 //
@@ -27,12 +27,12 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // `Button` hides both because it computes its own class list; a hand-rolled control does not.
 //
 // 📌 WHAT IS DELIBERATELY STILL NATIVE, by class:
-//   • busy — an in-flight action must not be re-clickable. 🔴 CORRECTION (cycle ux-796): this line
+//   • busy — an in-flight action must not be re-clickable. 🔴 CORRECTION: this line
 //     used to append a second justification, that the state was already announced to assistive
 //     tech. That was FALSE and was never asserted here — `Button` publishes `aria-busy` from its
 //     `loading` prop only, so a busy-gated `disabled` announces nothing. The missing announcement is
 //     a real separate defect, measured and ratcheted down by `ui/busyIsNotAnnounced.test.ts`.
-//     🔑 SECOND CORRECTION (this cycle): "staying native is still right, for the re-clickability
+//     🔑 SECOND CORRECTION: "staying native is still right, for the re-clickability
 //     reason alone" is TRUE HERE AND ONLY HERE, and it is worth being precise about why. THIS rail
 //     governs RAW `<button>`s, which have no click guard of their own — dropping the native attribute
 //     really would let an in-flight action fire twice, which is exactly why `unavailableWhen`'s busy

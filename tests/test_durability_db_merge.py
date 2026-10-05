@@ -1,4 +1,4 @@
-"""DURABILITY-AND-SYNC §4.1 / DAS-6c-ii-h — the sqlite DB-merge seam.
+"""The sqlite DB-merge seam.
 
 make_db_merger returns the db_merger callback the pull engine calls for sqlite/tree entries.
 It ATTACH-merges the staged whole-DB copy into the live DB via the proven snapshot merge
@@ -43,7 +43,7 @@ def _rows(path):
 
 
 def _stage_db_copy(shard_dir, entry_id, src_db):
-    """Mimic the exporter's db/<entry>.db staging (DAS-6c-ii-g)."""
+    """Mimic the exporter's db/<entry>.db staging."""
     import shutil
 
     dbdir = shard_dir / "db"

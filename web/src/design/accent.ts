@@ -53,13 +53,13 @@ export const mutedChip = {
  *  Only coral needs it. Measured as ink over a tint of ITSELF, every other tone clears AA
  *  (`on-surface-low` 7.46 · `on-surface-var` 4.99 · `info` 5.13 · `ok`/`warn`/`danger` 4.54-4.71 at
  *  14-16%), and none has a `<tone>-container` sibling to pair with — routing them through the coral
- *  container would be a redesign, which is the same call cycle 146 made when it left 47 semantic
- *  sites alone.
+ *  container would be a redesign, which is the same call `accentChip.test.ts` made when it left 47
+ *  semantic sites alone.
  *
  *  `strength` stays a parameter rather than being unified: the adopters ship 14% and 16% and those
  *  percentages only apply to tones that already pass, so collapsing them would repaint passing chips
- *  for no accessibility reason. The coral branch has no strength to drift, which is the half cycle
- *  146 cared about.
+ *  for no accessibility reason. The coral branch has no strength to drift, which is the half the
+ *  accent-chip fix cared about.
  *
  *  🪤 NOT for a tinted tile behind an ICON (`toneChipBg`'s other two consumers) — non-text carries a
  *  3:1 floor it already clears at every strength, so moving those would repaint five surfaces for

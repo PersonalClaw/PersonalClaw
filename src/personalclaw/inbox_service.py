@@ -29,9 +29,9 @@ others, and what it said is that source's health (:meth:`health`).
 Periodic **maintenance** — retention cleanup honoring the entity settings
 (``auto_cleanup_enabled`` / ``retention_days``), dismissed-set pruning, and the
 feedback retire-candidate check — is no longer a second cadence inside this loop.
-Since PR2-11 it is a registered remediation-engine job (``inbox.maintenance``),
+It is a registered remediation-engine job (``inbox.maintenance``),
 deficit-driven off the LIVE store like every other absorbed maintenance pass, so
-"old maintenance no longer runs independently" (§4.4 criterion #6) holds for the
+"old maintenance no longer runs independently" holds for the
 inbox too. :meth:`run_maintenance` remains the implementation the engine drives —
 bounced onto this loop via :meth:`run_maintenance_threadsafe` so the store is
 mutated only on the thread that owns it, never from the engine's worker thread.
@@ -295,7 +295,7 @@ def fence_message_for_prompt(
     so the model can't be steered by injected instructions. Thread context is
     included oldest-first with attributions the model can quote.
 
-    **TSE2-3 — a foreign-attributed item is also LABELLED.** In a shared inbox the fence
+    **A foreign-attributed item is also LABELLED.** In a shared inbox the fence
     alone is not enough: it says "this span is data", but every item is data, so a
     teammate's item and the owner's own fence identically and the model cannot tell which
     one carries the owner's intent. So an item attributed to somebody else additionally
@@ -554,7 +554,7 @@ class InboxService:
             )
             self.inbox.add(item)
             count += 1
-            # Inbox→event bridge (EIAT-1 C2). Emitted here, past every acceptance filter
+            # Inbox→event bridge. Emitted here, past every acceptance filter
             # (dedup/mute/self), so an accepted item raises EXACTLY ONE event and a filtered
             # message raises none. The value is the RAW message text — it is fenced once, when a
             # trigger fires on it (`event_triggers.fire_payload`), never here, so it is never
@@ -609,7 +609,7 @@ class InboxService:
         """Retention cleanup honoring the inbox entity settings + state pruning.
         Returns the number of items deleted. Safe to call any time.
 
-        Driven by the remediation engine's ``inbox.maintenance`` job (PR2-11); callers on a
+        Driven by the remediation engine's ``inbox.maintenance`` job; callers on a
         worker thread must go through :meth:`run_maintenance_threadsafe` so this body runs on
         the loop that owns the store."""
         from personalclaw.providers.entity_routes import load_inbox_settings
@@ -638,7 +638,7 @@ class InboxService:
 
     def maintenance_backlog(self) -> int:
         """The magnitude a maintenance pass would act on right now — the remediation engine's
-        ``inbox_maintenance_backlog`` deficit count (PR2-11). Read-only, and measured off THIS
+        ``inbox_maintenance_backlog`` deficit count. Read-only, and measured off THIS
         live store rather than a fresh one (which would fork the in-memory state the service
         holds — see :func:`personalclaw.inbox.live_store`).
 
@@ -947,7 +947,7 @@ def _live_inbox_service() -> "InboxService | None":
 
 def inbox_maintenance_backlog() -> int:
     """The live inbox service's pending-maintenance magnitude, or 0 when none is running — the
-    remediation deficit ``inbox_maintenance_backlog`` (PR2-11). Always safe to call: a bare
+    remediation deficit ``inbox_maintenance_backlog``. Always safe to call: a bare
     process has no service, so there is nothing to prune and the count is 0 (the deficit is still
     emitted, at 0, so the schedulability rail can see it)."""
     svc = _live_inbox_service()
@@ -955,8 +955,8 @@ def inbox_maintenance_backlog() -> int:
 
 
 def run_live_inbox_maintenance() -> str:
-    """Run the live inbox service's maintenance pass — the ``inbox.maintenance`` job entry point
-    (PR2-11). Bounces onto the loop that owns the store so nothing is mutated from the engine's
+    """Run the live inbox service's maintenance pass — the ``inbox.maintenance`` job entry point.
+    Bounces onto the loop that owns the store so nothing is mutated from the engine's
     worker thread. A no-op string when no service is running (the deficit would then be 0 and the
     job unscheduled, but the run-now path can still reach here)."""
     svc = _live_inbox_service()

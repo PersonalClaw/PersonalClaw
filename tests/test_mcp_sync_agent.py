@@ -126,7 +126,7 @@ class TestSyncMcpToAgentBatch:
         assert "@my-mcp-server" not in cfg["tools"]
 
     def test_enable_with_missing_mcp_json_still_adds_tool_refs(self, mcp_env):
-        """Post #15 fix: existing servers get tool refs even when mcp.json missing."""
+        """Existing servers get tool refs even when mcp.json missing."""
         agent_cfg, mcp_json = mcp_env
         mcp_json.unlink()
         from personalclaw.dashboard.handlers.mcp import _sync_mcp_to_agent_batch

@@ -60,7 +60,7 @@ const MODEL_STAGES: ReadonlyArray<readonly [string, string]> = [
 /** Did this item's model-backed enrichment FAIL on its last run — and in which words to say so?
  *
  *  🔴 A NO-MODEL HOME SHOWED NOTHING HERE. The row badged `partial` ("Incomplete") and `failed`,
- *  but RET-2 files a no-provider ingest `unsearchable` (it has no embedding either), which no
+ *  but a no-provider ingest is filed `unsearchable` (it has no embedding either), which no
  *  badge knew — so after "Regenerate intelligence" every job failed and every row looked exactly
  *  as healthy as before, while each item's own page showed Insights and Entities ✕.
  *

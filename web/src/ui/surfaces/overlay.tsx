@@ -1,6 +1,6 @@
 /** The L2 overlay loader — the client half of the user/agent surface producer.
  *
- *  AMBIENT-SURFACES §6 declared three layers and shipped the ceiling, the boundary and
+ *  The surface layer model declared three layers and shipped the ceiling, the boundary and
  *  the refusals for all three; until this module NOTHING wrote an L2 overlay, so the layer
  *  was declared and empty. The backend half (`personalclaw/surface_overlay.py`) carries
  *  the full threat posture in its docstring and owns path containment + the DATA shape.

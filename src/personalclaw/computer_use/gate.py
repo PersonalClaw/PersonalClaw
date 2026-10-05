@@ -1,14 +1,14 @@
-"""The SEL audit step for desktop computer use (DESKTOP-COMPUTER-USE §3 floor 5).
+"""The SEL audit step for desktop computer use.
 
-**This module has no opinion.** The plan places it as step 5 of the dispatch chain —
-``gate.require_computer_use`` — and is emphatic about what that step is: *"SEL audit
-(records, does not decide)"* and *"Every action is SEL-audited (``gate.require_computer_use``
-records, doesn't decide)"*. The decisions happened already, upstream: the keystone
+**This module has no opinion.** It is step 5 of the dispatch chain —
+``gate.require_computer_use`` — and that step is an audit that *records and does not
+decide*: every action is SEL-audited here, and none is refused here. The decisions happened
+already, upstream: the keystone
 (:func:`personalclaw.computer_use.enable_state.is_enabled`, step 1) and the target policy
 (``policy.check_app`` / ``policy.check_input_target``, steps 2 and 4). By the time control
 reaches here the verdict exists; the only remaining obligation is that it is *written down*.
 
-**The name is the plan's, and the veto is deliberately absent.** ``require_*`` reads like a
+**The name stays, and the veto is deliberately absent.** ``require_*`` reads like a
 gate everywhere else in this codebase, and that is exactly the trap: the next reader will
 want to add an ``if not allowed: raise`` here, because the name invites it. Do not. The
 refusal a caller needs is :func:`enable_state.disabled_error` (or the policy's), raised by
@@ -23,7 +23,7 @@ a reason that has nothing to do with safety. So every failure path here is swall
 :func:`require_computer_use` fails **open**.
 
 **Why a swallowed failure is still loud.** A silently total swallow is indistinguishable from
-a module that never ran, which would make the change's clause ("every attempt, allowed or
+a module that never ran, which would make the guarantee ("every attempt, allowed or
 refused, produces a SEL record") unfalsifiable in production. So a dropped record emits
 ``logger.warning`` naming the tool and the outcome that did NOT reach the log. WARNING is a
 deliberate step up from :func:`enable_state.ensure_computer_use_boot`'s ``logger.debug``:
@@ -71,10 +71,9 @@ SEL_EVENT_TYPE = "computer_use"
 
 #: The SEL ``tool_kind`` category for every row this module writes.
 #:
-#: The plan's prose (§3 tool surface) says each tool "emits a distinct SEL ``tool_kind``",
-#: but :class:`personalclaw.sel.SecurityEvent` documents ``tool_kind`` as a *category*
-#: ("execute_bash, fs_write, mcp") and ``operation`` as the "tool name". The field
-#: definitions win: the per-tool distinctness the plan wants lives in ``operation``, and
+#: Each tool's rows must be told apart, but :class:`personalclaw.sel.SecurityEvent` documents
+#: ``tool_kind`` as a *category* ("execute_bash, fs_write, mcp") and ``operation`` as the
+#: "tool name". The field definitions win: the per-tool distinctness lives in ``operation``, and
 #: ``tool_kind`` is the one value that selects the whole capability in a single field filter.
 SEL_TOOL_KIND = "computer_use"
 
@@ -148,7 +147,7 @@ def require_computer_use(
 ) -> None:
     """Record one computer-use attempt. RECORDS; never decides, never raises.
 
-    The name is the plan's (§3 step 5) even though ``require_*`` reads like a gate — see this
+    The name stays even though ``require_*`` reads like a gate — see this
     module's docstring. There is deliberately **no veto**: an ``if`` here that refused
     anything would make the audit step a second decision site behind the keystone and the
     policy, so callers pass the verdict they already reached and this function writes it down.

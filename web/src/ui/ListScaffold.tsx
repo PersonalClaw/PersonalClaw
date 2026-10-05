@@ -264,7 +264,7 @@ export function ListRow({ index = 0, onClick, children, accent, label }: {
 
 /** The bare-text loading state, for a slot too small or too irregular for a shaped skeleton.
  *
- *  🔴 It was a plain `<div>`: no role, so **nothing announced it** — the same defect cycle 143 fixed
+ *  🔴 It was a plain `<div>`: no role, so **nothing announced it** — the same defect already fixed
  *  across every `aria-busy` skeleton, hiding in the one loading component that has no `aria-busy` and
  *  was therefore outside that census. Measured mid-load on `#/workflows` with `/api/**` held back:
  *  "Loading…" on screen for 2.8 seconds, `SPOKEN=[]`.
@@ -322,7 +322,7 @@ export function Skeleton({ className }: { className: string }) {
  *  silent, from the first frame to the moment the data arrived.
  *
  *  🔑 The result-count status (`ui/ListControls`' ResultAnnouncement) does not cover this: it speaks
- *  only when a query or filter is narrowing, which is deliberate — cycle 121 fixed the opposite defect,
+ *  only when a query or filter is narrowing, which is deliberate — that fixes the opposite defect,
  *  an idle surface announcing "39 items" unprompted. So on a first load there was no announcement of
  *  any kind, before OR after.
  *

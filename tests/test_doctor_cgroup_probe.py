@@ -1,6 +1,6 @@
-"""The doctor's sandbox pids/RSS enforcement row (doctor third).
+"""The doctor's sandbox pids/RSS enforcement row.
 
-PHF-2 adds an opt-in cgroup v2 tier (``systemd-run --user --scope`` with TasksMax /
+The sandbox has an opt-in cgroup v2 tier (``systemd-run --user --scope`` with TasksMax /
 MemoryMax / MemorySwapMax=0) above the NOFILE floor. Where that tier does not exist —
 macOS, a non-systemd Linux, a container without a systemd user session — the two ceilings
 it would enforce simply do not apply, and the change's whole point is that we say so instead
@@ -220,8 +220,8 @@ async def test_an_unreadable_sandbox_config_still_produces_a_row(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_the_real_probe_runs_on_this_host_without_raising():
-    """Driven live, not simulated. On darwin this is the not-enforced row the change's done
-    criterion names; on a Linux CI runner it is whichever answer that host truthfully gives.
+    """Driven live, not simulated. On darwin this is the not-enforced row the probe exists
+    to report; on a Linux CI runner it is whichever answer that host truthfully gives.
     Either way the contract is: a ProbeResult comes back and nothing propagates."""
     res = await _probe().run(DoctorContext())
 

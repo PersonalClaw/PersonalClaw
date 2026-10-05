@@ -6,13 +6,13 @@ called it — a queue with no executor, whose ``n >= min_samples`` clause had no
 proposal path. This module is that executor, and it is deliberately the ONLY caller of
 :func:`proposals.propose` in the tree.
 
-**Where it runs, and why there** — the trigger point §6.3 never names. Three candidates were on the
+**Where it runs, and why there.** Three candidates were on the
 table: at route time inside ``route_refs``, on the stats-fold write, or a scheduled sweep. The fold
 write wins on four counts:
 
 * A proposal is a function of the EVIDENCE, not of a request. The fold write is the one moment new
   evidence arrives, so it is the only moment a gap can newly appear. A timer would re-derive the
-  same answer on an interval that no plan section supplies, with a job owner that does not exist.
+  same answer on an arbitrary interval, with a job owner that does not exist.
 * The route path stays exactly as it is: no queue read, no proposal write, and no second walk of the
   run ledger on the path a model call waits on. Detecting at route time would add all three — and
   would additionally have to run the learned stage on the lever-3 path that currently short-circuits
@@ -85,7 +85,7 @@ def _sample_ids(
 ) -> list[str]:
     """Audit ids for this cell's most recent attempts on ``refs``, newest first.
 
-    These are the correlation handle §6.4 asks for: a reviewer pastes one into the audit reader and
+    These are the correlation handle: a reviewer pastes one into the audit reader and
     sees the actual call the proposal was built from. Newest first because a reviewer checking a
     sample wants the recent ones; the cap is applied by ``proposals._clean_evidence``.
     """
@@ -111,7 +111,7 @@ def _evidence(
     current: list[str],
     proposed: list[str],
 ) -> dict[str, Any]:
-    """The §6.3 evidence payload — everything needed to review the proposal without re-running it.
+    """The evidence payload — everything needed to review the proposal without re-running it.
 
     Every value is a number, a dict of numbers, or an id list. No prose:
     ``proposals._clean_evidence`` FENCES any other string, which would mangle a ref into an

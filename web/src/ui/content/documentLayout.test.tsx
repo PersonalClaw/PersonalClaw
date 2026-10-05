@@ -315,7 +315,7 @@ describe('a layout edit is what gets saved', () => {
   })
 
   it('a read-only host shows no layout controls at all, and says why', async () => {
-    // ABSENT, not disabled — the call DFE-5 recorded for the editor itself. A dead dropdown
+    // ABSENT, not disabled — the same call the editor itself makes. A dead dropdown
     // states nothing; a keyboard user tabs onto it and learns nothing.
     mount({ page: A4_LANDSCAPE_2CM }, { readOnly: true })
     await userEvent.click(await screen.findByRole('button', { name: /page layout/i }))

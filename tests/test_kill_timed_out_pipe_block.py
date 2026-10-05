@@ -1,4 +1,4 @@
-"""A timeout that waits for the grandchild is not a timeout (PEP-9 / DC-4 defect class).
+"""A timeout that waits for the grandchild is not a timeout.
 
 ``asyncio``'s ``Process.wait()`` resolves when every *inherited pipe* has disconnected,
 not when the child is reaped. So the pair
@@ -205,7 +205,7 @@ async def test_control_the_replaced_shape_blows_the_same_bound(tmp_path):
 # From the kill-site census. A spawn earns its own session ONLY when the child can fork a
 # grandchild that inherits a live pipe. Everything else is git plumbing that never forks;
 # giving it a session buys nothing and widens the blast radius of a group signal.
-# RUM-4 retired the `git pull` spawn (the git kind rides release tags now; the
+# The `git pull` spawn is retired (the git kind rides release tags now; the
 # advance goes through `asyncio.to_thread(self_update.git_*)`, sync `subprocess.run`
 # under one seam, not a create_subprocess_exec here), and the dashboard dirty-tree
 # check moved to `asyncio.to_thread(self_update.git_tracked_changes)` — so the `pull`

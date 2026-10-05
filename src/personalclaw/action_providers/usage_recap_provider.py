@@ -169,7 +169,7 @@ def reconcile_usage_recap_cron(store: Any) -> None:
     slug, so every restart would add another recap trigger instead of recognizing its own.
 
     Writes the unified trigger store directly — `crons.json` is imported at boot BEFORE
-    reconciliation runs, so a row written there would stay inert until the next boot (the S108
+    reconciliation runs, so a row written there would stay inert until the next boot (the
     bug `reconcile_digest_cron`'s docstring records).
 
     Unlike the digest there is no user-facing schedule setting to converge: the recap's cadence
@@ -220,7 +220,7 @@ def reconcile_usage_recap_cron(store: Any) -> None:
             delivery="none",
         )
         # Emitting a notification is putting something in front of the user unattended, so the
-        # action is write-capable and the fence needs the frozen grant (decision 7). A
+        # action is write-capable and the fence needs the frozen grant. A
         # system-created trigger's opt-in is the code path that created it.
         trigger.capabilities = _screen.capabilities_for_action(trigger)
         armed = _arm(trigger)

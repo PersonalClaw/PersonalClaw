@@ -135,7 +135,7 @@ function BoardCard({ t, tone, onOpen, onDragStart, onDragEnd, dragging }: {
     // **0 of 70** Tab presses landed on a card. axe reports 0 blocking, as it does for every
     // click-only div. WCAG 2.1.1 + 4.1.2.
     //
-    // 🔑 THIS ONE DOES NOT WANT `ui/RowHitTarget`, and that is why cycle 164 deferred it rather than
+    // 🔑 THIS ONE DOES NOT WANT `ui/RowHitTarget`, and that is why it was deferred rather than
     // copying the row fix. That primitive exists for a row that carries its OWN controls — an overlay
     // sibling is how you avoid `nested-interactive`. This card carries **zero** interactive
     // descendants (measured, not assumed), so the wrapper can simply BE the button; and stretching an

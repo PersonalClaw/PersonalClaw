@@ -357,9 +357,9 @@ def _write_entry(conn, key: str, title: str, text: str, *, mtime: float, size: i
 
 
 def index_turn(session_key: str, role: str, text: str, *, memory_mode: str = "", log=None) -> None:
-    """Re-index a session after a turn lands (the §C1 hook).
+    """Re-index a session after a turn lands.
 
-    Signature kept as the plan specifies. The turn's own text is not what's stored —
+    The turn's own text is not what's stored —
     the whole transcript is re-read, so the index matches the file rather than an
     accumulation that could diverge from it. Best-effort and never raises: a search
     index must not be able to break a chat.
@@ -429,7 +429,7 @@ def _drop_entry(conn, key: str) -> None:
 
 
 def purge_orphans(log=None) -> int:
-    """Backfill (SM-11): drop index rows whose transcript no longer exists.
+    """Backfill: drop index rows whose transcript no longer exists.
 
     Enumerates distinct session keys from BOTH tables — the union matters:
     a row present only in ``sessions_fts`` (drift from a partial write under

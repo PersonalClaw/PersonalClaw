@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 #   search-news       — recency-biased (prefers a supports_recency provider)
 #   search-financial  — domain/source-biased (a future specialist)
 #   fetch-article     — single-URL content extraction (prefers a supports_fetch
-#                       provider, else the native fetch pipeline §4 handles it)
+#                       provider, else the native fetch pipeline handles it)
 # Extensible exactly like Model's use-cases (stt/tts/ocr grew the same way).
 SEARCH_USE_CASES: tuple[str, ...] = (
     "search-general",

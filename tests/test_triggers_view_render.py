@@ -7,7 +7,7 @@ endpoint is the production render caller. A real render surface (an artifact ope
 `{surface}` here; every bound `view` trigger past its TTL refreshes fire-and-forget, the rest serve
 cache.
 
-Deliberately NOT a poll (R10): the runtime is a function a render calls, so a `view` trigger costs
+Deliberately NOT a poll: the runtime is a function a render calls, so a `view` trigger costs
 nothing when nobody looks. The gateway module must never import `pull_on_view` as a loop — the
 `test_triggers_chain` runtime map and `tests/test_triggers_pull_on_view.py`'s
 `test_NO_background_loop_polls_this_kind` guard both pin that, and this endpoint imports the runtime

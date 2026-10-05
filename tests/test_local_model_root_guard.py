@@ -1,4 +1,4 @@
-"""The model-root rail proves it fires (LOCAL-MODEL-MANAGER-V2 SC-10).
+"""The model-root rail proves it fires.
 
 ``conftest._forbid_real_model_roots`` wraps every ``local_models/layouts.py`` entry point
 for the whole suite so a test cannot reach a real model dir / cache root. A rail that only
@@ -233,7 +233,7 @@ def test_the_guarded_set_covers_every_cache_root_entry_point():
     assert not unguarded, (
         f"layouts.{sorted(unguarded)} take a cache_root but are NOT in GUARDED_FUNCTIONS — "
         f"the model-root rail has a hole it reports as clean. Add them there so the autouse "
-        f"fixture wraps them (LMMV Success Criterion 10)."
+        f"fixture wraps them."
     )
     stale = listed - derived
     assert not stale, (
@@ -345,7 +345,7 @@ def test_no_test_module_import_binds_a_guarded_layouts_name():
     }
     assert not offenders, (
         f"{offenders} bind a guarded layouts function at IMPORT time, which captures the "
-        f"UNWRAPPED object and bypasses the model-root rail (LMMV Success Criterion 10). "
+        f"UNWRAPPED object and bypasses the model-root rail. "
         f"Import the module instead (`from personalclaw.local_models import layouts`) and "
         f"call `layouts.<fn>(...)`, or move the import inside the test body."
     )

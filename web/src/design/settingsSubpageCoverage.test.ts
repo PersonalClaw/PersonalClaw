@@ -7,7 +7,7 @@ import { join } from 'node:path'
 // `#/settings` renders the bento HOME grid. Every panel lives at its own `#/settings/<id>`
 // route and mounts only when you navigate there. So the e2e a11y scan's single `settings`
 // entry covered 1 of 31 surfaces, and the other 30 never rendered under axe at all — THREE
-// of the five defects found by hand in cycle 49 were sitting in that blind spot
+// of the five defects found by hand in one audit were sitting in that blind spot
 // (design's sub-AA nav preview, security's unscrollable denylist, audit's nameless button).
 //
 // The manifest now lists them, and this test is what keeps the two lists honest: a new panel

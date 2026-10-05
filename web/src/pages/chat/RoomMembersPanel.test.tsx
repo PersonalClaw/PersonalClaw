@@ -1,12 +1,12 @@
 /**
  * Per-member status.
  *
- * The clause asks for four facts per member: whether it is listening or muted (the listen
+ * Four facts per member: whether it is listening or muted (the listen
  * policy), its model binding, its posture and the axes that actually bind, and
  * whether it is currently owed a turn. These tests assert each one is on screen, and — the harder
  * half — that nothing is INVENTED when the backend has not said it.
  *
- * The three axes AR-6 narrowed to are `tool_grants`, `tool_allowlist` and `budget`. The other three
+ * The three axes a member can be narrowed on are `tool_grants`, `tool_allowlist` and `budget`. The other three
  * (`egress_tier`, `denylist_extra`, `path_allowlist`) are refused BY NAME because their enforcement
  * points re-resolve the profile and would discard a member's narrowing, so a control for one would
  * be a false ceiling. The last test here is that rail: the add form offers none of them.
@@ -343,7 +343,7 @@ describe('🔴 the member ceiling is refused in the panel, not offered and then 
 
 describe('🔴 the three REFUSED safety axes are offered nowhere', () => {
   it('no control names an axis whose narrowing the enforcement point would discard', () => {
-    // AR-6 measured it: `web/fetch.py` and `guardrails/denylist.py` RE-RESOLVE the profile from the
+    // Measured: `web/fetch.py` and `guardrails/denylist.py` RE-RESOLVE the profile from the
     // session key at enforcement time, so a member narrowing `egress_tier`, `denylist_extra` or
     // `path_allowlist` is handed the ROOM's base at the moment the rule is applied. The
     // declaration reads as binding and binds nothing — a false ceiling, which is worse than an

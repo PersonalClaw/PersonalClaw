@@ -143,7 +143,7 @@ def test_migrate_without_active_voice_raises_409(home, monkeypatch):
 
 
 def test_module_exposes_no_automatic_caller():
-    """§6 'never automatic' — the only public entry points are the explicit two."""
+    """Migration is 'never automatic' — the only public entry points are the explicit two."""
     public = {n for n in dir(vm) if not n.startswith("_")}
     # imported names (vb/vp) are allowed; the migration's OWN callables are exactly these.
     own = {n for n in public if getattr(getattr(vm, n), "__module__", "") == vm.__name__}

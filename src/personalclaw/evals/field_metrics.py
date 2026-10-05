@@ -1,13 +1,13 @@
-"""Loop-3 live field metrics beside lab results + ``lab_field_divergence`` (E3 / ES-9).
+"""Loop-3 live field metrics beside lab results + ``lab_field_divergence``.
 
-Amendment E3's contract, verbatim: *"Loop 3 — live quality (field): derived metrics,
+The contract: *"Loop 3 — live quality (field): derived metrics,
 computed by query, stored nowhere new (the discipline): per-template/per-action-type
-👍/👎 rate + edit-before-approve rate from the FEEDBACK-SIGNAL store, plus
+👍/👎 rate + edit-before-approve rate from the feedback store, plus
 approval/rejection/undo rates from the earned-autonomy ledger. Rendered BESIDE lab results
-on the §10 Learning-page tab — one row per subject: lab score (Loop 1, pinned) | gate
+on the Learning-page tab — one row per subject: lab score (Loop 1, pinned) | gate
 status (Loop 2) | field trend (Loop 3). A subject whose lab score rose while its field
 trend fell is flagged ``lab_field_divergence`` — the honest "should-be vs is" check, and a
-§4.2 trust-record demotion signal."*
+trust-record demotion signal."*
 
 **Everything here is a query.** No file is written by any function in this module except
 through the demotion machinery that already exists (``autonomy.demote`` via
@@ -18,7 +18,7 @@ through the demotion machinery that already exists (``autonomy.demote`` via
   autonomy._feedback_rejections` already uses, so the field row and the ladder's own
   evidence can never disagree about whose thumbs these are.
 * edit-before-approve — the run journal's ``user_edited_mid_flight`` events against
-  human-answered gates (plan 58 defers explicit edit records as an open question; the
+  human-answered gates (explicit edit records are still an open question; the
   journal event is the flywheel's own "gold" edit signal, and it exists today).
   Template-scoped only: no record anywhere captures an edit on an action type's output,
   so that cell is ``None`` — *not measured*, never ``0.0``.
@@ -38,7 +38,7 @@ grant. :func:`sweep_lab_field_divergence` files the demotion mechanically: a
 divergent action type loses its OWN standing grant (:func:`personalclaw.guardrails.ladder.
 revoke_scope`), and a divergent template revokes standing grants wholesale
 (:func:`~personalclaw.guardrails.ladder.revoke_granted_scopes`) — the same consequence a
-failed §2 study and a nodding gate already carry, because all three are template-scoped
+failed study and a nodding gate already carry, because all three are template-scoped
 proof that the evidence autonomy rests on is wrong. Both paths are gated on a standing
 grant, which is what makes a STANDING divergence naturally idempotent, and re-granting
 always takes a click.
@@ -245,7 +245,7 @@ def _template_run_signals() -> dict[str, list[tuple[float, bool]]]:
     ``user_edited_mid_flight`` event is an edit-before-approve (bad), a human-answered
     gate with no edit is a clean approval (good), and a run whose gates were all
     auto-approved yields NOTHING — nobody looked, so it is evidence of nothing. Bounded
-    exactly like ``_attention_scopes`` (the §4.4 discipline this module inherits).
+    exactly like ``_attention_scopes`` (a discipline this module inherits).
     """
     from personalclaw.workflows import journal
     from personalclaw.workflows import store as run_store
@@ -397,8 +397,8 @@ def _diverged(lab: dict[str, Any] | None, summary: FieldSummary) -> tuple[bool, 
     all predate the lab row each keep the flag OFF, because the flag files a demotion and
     a demotion must rest on a measured contradiction, never on an absence. An
     unparseable lab timestamp does NOT veto the flag — the contradiction is real in that
-    case and only its ordering is unknown, and the fail-safe direction is the plan's
-    explicit ruling (the cost of over-demoting is a re-grant click).
+    case and only its ordering is unknown, and the fail-safe direction is
+    deliberate (the cost of over-demoting is a re-grant click).
     """
     if lab is None or lab.get("rose") is not True:
         return False, ""
@@ -475,7 +475,7 @@ def subject_rows() -> list[SubjectRow]:
     return rows
 
 
-# ── the mechanical §4.2 demotion signal ───────────────────────────────────────
+# ── the mechanical demotion signal ────────────────────────────────────────────
 
 
 def _evals_enabled() -> bool:
@@ -504,9 +504,9 @@ def _any_standing_grant() -> bool:
 
 
 def sweep_lab_field_divergence(rows: list[SubjectRow] | None = None) -> list[str]:
-    """File the §4.2 trust-record demotion for every divergent subject. Returns them.
+    """File the trust-record demotion for every divergent subject. Returns them.
 
-    The mechanical half of the atom's second clause, driven by the gateway's autonomy
+    The mechanical half of the divergence check, driven by the gateway's autonomy
     sweep — never by a GET, because a read surface must not demote things. Priced only
     when something is at stake: with no standing grant anywhere there is nothing a
     divergence could void, so the journal/SEL walk is skipped entirely — which, combined
@@ -514,14 +514,14 @@ def sweep_lab_field_divergence(rows: list[SubjectRow] | None = None) -> list[str
     divergence idempotent: after the first sweep nothing is granted, and the next sweep
     files nothing.
 
-    Two consequences, one per subject family, both through the shipped §4.2 machinery:
+    Two consequences, one per subject family, both through the shipped demotion machinery:
 
     * an ``action_type`` subject loses its OWN grant
       (:func:`personalclaw.guardrails.ladder.revoke_scope` — floor, cooldown,
       trust-record ``revoked`` flag, SEL audit, one notice);
     * a ``template`` subject revokes standing grants wholesale
       (:func:`~personalclaw.guardrails.ladder.revoke_granted_scopes`) — the SAME
-      consequence a failed §2 study and a nodding gate carry, because all three are
+      consequence a failed study and a nodding gate carry, because all three are
       template-scoped proof that "the system behaves well" evidence is void.
 
     One subject's failure never stops the rest, and a failure files nothing for it.

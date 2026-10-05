@@ -92,7 +92,7 @@ def _in_running_loop(fn):
 def test_timeout_bounds_the_caller_inside_a_running_loop():
     """A 3.0s embed under a 0.25s budget must give the caller back its thread at 0.25s.
 
-    The pre-KL-15 shape raised TimeoutError on time and then blocked in ``__exit__``'s
+    The old shape raised TimeoutError on time and then blocked in ``__exit__``'s
     ``shutdown(wait=True)`` for the full 3.0s. 3.00s for a 0.2s budget.
     """
 

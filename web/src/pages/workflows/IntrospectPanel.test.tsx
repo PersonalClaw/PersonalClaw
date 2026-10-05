@@ -4,7 +4,7 @@ import type { WorkflowIntrospection } from '../../lib/api'
 import { IntrospectPanel, riskyText, rowSummary } from './IntrospectPanel'
 import { runCostText } from '../../lib/runCost'
 
-// ── WF2WOR-7 criteria 6 & 8: the nine questions are answerable from the cockpit ──
+// ── The nine questions are answerable from the cockpit ──
 //
 // The gap this closes was not arithmetic — `workflows/introspection.py` was fully tested. It was
 // that NOTHING consumed it: no route, no surface. So the properties worth pinning here are about
@@ -435,7 +435,7 @@ describe('the timeline is the journal AND the attempt ledger', () => {
 describe('a named gap is shown, not swallowed', () => {
   it('renders the backend checklist_gaps rather than blank space', async () => {
     // A gap is a BACKEND hole this panel cannot close by rendering harder. Hiding it would make
-    // an incomplete surface look complete — the exact thing R6 is against.
+    // an incomplete surface look complete — the exact thing the checklist is against.
     introspect = async () => payload({ checklist_gaps: ['next: what will happen next if I say nothing'] })
     render(<IntrospectPanel runId="r1" onClose={() => {}} />)
     expect(await screen.findByText(/1 of 9 questions cannot be answered/i)).toBeTruthy()
@@ -482,7 +482,7 @@ describe('the live touched-items feed', () => {
 
 // ── The run's money line says it is an estimate ──
 //
-// The change's clause is `~$X this run`. The shipped line was `$${cost.toFixed(4)} this run` —
+// The intended copy is `~$X this run`. The shipped line was `$${cost.toFixed(4)} this run` —
 // four decimals of precision on a figure `pricing.py` derives from a static price table. These
 // pin the disclosure, not the arithmetic: a money surface that reads as exact is the defect.
 

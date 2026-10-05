@@ -4,8 +4,8 @@ import { join } from 'node:path'
 
 // ── The last three settings panels whose failed read said nothing ─────────────────────────────
 //
-// Cycle 124 fixed the `personalclawConfig` family and left ~51 substituting readers with the rule: only
-// worth a cycle where a substituted value decides what a CONTROL claims. Re-censused the 53 with that
+// An earlier fix converted the `personalclawConfig` family and left ~51 substituting readers with the rule: only
+// worth a fix where a substituted value decides what a CONTROL claims. Re-censused the 53 with that
 // exact test — does the panel WRITE (patch/save/PUT), does it render editable controls, and does it read
 // `error`? — and three came back positive. Driven at 500 with an intercept COUNTER, because a
 // non-matching route pattern looks exactly like a clean result (it cost two wrong readings first: the
@@ -19,8 +19,8 @@ import { join } from 'node:path'
 //                                          fabricated `{}`, silent
 //
 // 🔑 TWO SHAPES, ONE FAMILY. A substituted `null` is indistinguishable from "still loading" to a
-// `if (!data) return <FormSkeleton/>` gate, so the panel shimmers forever (cycle 117's inbox shape); a
-// substituted `{}` passes the gate and renders the form from fallbacks (cycle 124's shape). Same cause —
+// `if (!data) return <FormSkeleton/>` gate, so the panel shimmers forever (the inbox panel's shape); a
+// substituted `{}` passes the gate and renders the form from fallbacks (the config panels' shape). Same cause —
 // the rejection never reached the hook — and the same fix: let it reach, branch on it first.
 //
 // 🔑 EVERY VOICE CONTROL PUTs ON CHANGE, so its version is the integrity one: a user "correcting" a switch
@@ -62,7 +62,7 @@ describe('a settings panel whose gating read fails says so', () => {
     it(`${panel} lets the rejection reach the hook`, () => {
       const code = codeOf(panel)
       expect(code, `${panel} must still make the call`).toContain(call)
-      // 🪤 SAME LINE, not a character window: cycle 124's version reached the NEXT element of the same
+      // 🪤 SAME LINE, not a character window: an earlier version reached the NEXT element of the same
       // `Promise.all` and blamed its legitimate fallback on this read.
       const line = code.split('\n').find((l) => l.includes(call)) ?? ''
       expect(line, 'a `.catch` chained onto the gating read fabricates the panel').not.toMatch(/\.catch\(\(\)\s*=>/)

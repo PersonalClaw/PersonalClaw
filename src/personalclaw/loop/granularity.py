@@ -1,7 +1,7 @@
 """The granularity dial — how far an open-ended loop chases diminishing returns.
 
-The dial maps to a marginal-value threshold ``T`` and a patience window ``N``
-(§5.2). The supervisor (deterministic) reads the judge's marginal-value trail:
+The dial maps to a marginal-value threshold ``T`` and a patience window ``N``.
+The supervisor (deterministic) reads the judge's marginal-value trail:
 when the last ``N`` cycles all scored below ``T``, returns are exhausted and the
 loop completes. ``forever`` disables value-based self-stop entirely.
 
@@ -60,7 +60,7 @@ def returns_exhausted(marginal_scores: list[float], granularity: str) -> bool:
 
 
 def calibrated_band(scores: list[float], floor: float) -> float:
-    """The noise floor of a marginal-value trail: ``max(2σ, floor)`` (P4 "prove-the-instrument").
+    """The noise floor of a marginal-value trail: ``max(2σ, floor)`` ("prove-the-instrument").
 
     A gain smaller than twice the trail's own variance is indistinguishable from noise. This
     is a **diagnostic** of how jittery the signal is (surfaced on the verdict as ``band_used``
@@ -84,7 +84,7 @@ def _noise_patience(scores: list[float], setting: DialSetting) -> int:
 
 
 def returns_exhausted_calibrated(marginal_scores: list[float], granularity: str) -> bool:
-    """Variance-aware returns-exhaustion (P4). Same absolute bar as :func:`returns_exhausted`
+    """Variance-aware returns-exhaustion. Same absolute bar as :func:`returns_exhausted`
     (the recent window must all be below the dial threshold — bounded, dial meaning intact),
     but a NOISY signal must show a **longer run** of sub-threshold cycles before the loop
     trusts that returns are exhausted. A couple of low cycles amid a jittery trail is likely a

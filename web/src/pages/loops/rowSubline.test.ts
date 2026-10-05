@@ -6,8 +6,8 @@ import { hasDistinctName } from './loopPhases'
 // ── The loops list row printed the same sentence twice ────────────────────────────────────────
 //
 // `#/loops/history` — the loops LIST, which `#/loops` is not; that route renders the composer, and
-// `LoopsSection` only reaches `LoopsListPage` at `seg === 'history'`. The surface had never been
-// reviewed until cycle 164 added it to the capture inventory, and the first look at it showed this:
+// `LoopsSection` only reaches `LoopsListPage` at `seg === 'history'`. The surface had gone
+// unreviewed, and the first look at it showed this:
 //
 //   title  "zz45 Design a dispatcher-console design system for our b…"
 //   sub    "zz45 Design a dispatcher-console design system for our b…"
@@ -101,7 +101,7 @@ describe('the row uses the rule, and keeps its geometry', () => {
   })
 
   it('the row hit target is named from the same title, bounded by the shared helper', () => {
-    // Cycle 164 gave this row its keyboard route; the name must stay capped (rowSubject caps at 55
+    // This row has a keyboard route; the name must stay capped (rowSubject caps at 55
     // and adds an ellipsis) rather than growing to a whole goal paragraph.
     expect(code).toMatch(/<RowHitTarget label=\{rowSubject\(\[title\]\)\} \/>/)
   })

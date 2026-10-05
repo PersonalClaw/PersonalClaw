@@ -578,8 +578,8 @@ def test_split_does_not_leave_the_halves_holding_the_parents_vectors(store, monk
 
     Measured while writing this, and worth stating because it decides WHICH vector the
     assertion belongs on: the whole-item vector is composed from **title + summary only**.
-    `compose_item_text` accepts `content` and documents it as unused — KL-9 moved body-level
-    semantics into the chunk index on purpose. So a split legitimately leaves the parent's ITEM
+    `compose_item_text` accepts `content` and documents it as unused — body-level semantics
+    moved into the chunk index on purpose. So a split legitimately leaves the parent's ITEM
     vector equal (its title and summary did not change), and the vectors that MUST move are the
     chunk ones. Asserting inequality on the item vector would have been asserting a behaviour
     the architecture deliberately does not have; asserting it on the chunks is the real contract.

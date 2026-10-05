@@ -29,7 +29,7 @@ export const WIDGET_ACTION_EVENT = 'ne:widget-action'
 
 /** What the host learns about the widget an action came from. */
 export interface WidgetActionMeta {
-  /** The saved artifact this widget IS, when it is one (the C32 living view). */
+  /** The saved artifact this widget IS, when it is one (the living view). */
   slug?: string
   /** The genui dual payload's `humanFriendlyMessage` — the short label the
    *  TRANSCRIPT shows, while `text` (the `llmFriendlyMessage`) is what the model
@@ -59,13 +59,13 @@ function clipToBytes(s: string, max: number): string {
   return cut + TRUNCATION_MARKER
 }
 
-/** The shared tail every `[UI]` turn gets: the byte clip, then the C32 living-view
+/** The shared tail every `[UI]` turn gets: the byte clip, then the living-view
  *  suffix. Factored out so a correction directive (annotate mode) inherits the SAME
  *  clip and the SAME "refresh in place" rule a widget action has, instead of a
  *  second dialect of both. */
 export function finishActionText(body: string, live?: { saved: boolean; slug: string }): string {
   const base = clipToBytes(`${UI_PREFIX}${body}`, MAX_ACTION_TEXT_BYTES)
-  // Living view (C32): name the source artifact so the agent refreshes THIS view in
+  // Living view: name the source artifact so the agent refreshes THIS view in
   // place (artifact_update <slug>) instead of spawning a new one. Only meaningful
   // once the widget is saved and therefore has a slug the agent can target.
   return live?.saved && live.slug ? `${base} (refresh artifact "${live.slug}" in place)` : base

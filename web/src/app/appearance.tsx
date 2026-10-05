@@ -261,7 +261,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     // as soon as the viewport grows back past the mobile breakpoint.
     root.style.setProperty('--content-width', isMobile ? '100%' : WIDTH_PRESETS[ov.widthPreset ?? DEFAULT_WIDTH_PRESET])
 
-    // ── P19 orthogonal theming attributes on <html> ──
+    // ── Orthogonal theming attributes on <html> ──
     // data-theme = active palette identity (custom `--color-*` stay the mechanism; the
     //   attribute lets CSS / embedded surfaces key off the scheme without re-reading
     //   every var). data-ui = the density axis (comfortable/dense/cli) whose CSS blocks

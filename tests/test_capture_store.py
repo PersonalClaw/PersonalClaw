@@ -1,4 +1,4 @@
-"""EA-5 capture store — the ingestion-hygiene properties, not just the plumbing.
+"""Capture store — the ingestion-hygiene properties, not just the plumbing.
 
 Every test drives a `tmp_path` home. `capture_dir()` resolves `config_dir()` per call
 (never cached at import) precisely so this monkeypatch reaches it; a module-level
@@ -101,7 +101,7 @@ def test_the_record_carries_the_plan_s_field_shape(_isolated_home):
         "tokens",
         "latency_ms",
     ):
-        assert key in record, f"§7.2 record shape is missing {key}"
+        assert key in record, f"capture record shape is missing {key}"
     assert record["tokens"] == {"input": 12, "output": 7}
     assert record["latency_ms"] == 345
     # Digests, not content: the record is the mineable index.
@@ -582,8 +582,8 @@ def test_imported_content_is_redacted_and_fenced_like_a_proxied_turn(_isolated_h
 # ---------------------------------------------------------------------------
 # stage_records — the record shape the import ADAPTERS actually emit
 #
-# The three EA-5 halves were built separately, and this seam is where they met: the
-# adapters normalise every log format into the §7.2 RECORD shape (digests + already
+# The three capture halves were built separately, and this seam is where they met: the
+# adapters normalise every log format into the capture RECORD shape (digests + already
 # extracted tool facts, no bodies — an SSE dump structurally cannot supply a request
 # half), while the store's one shaping path reads bodies. Measured before the fix:
 # `stage_records` returned `{'imported': 0, 'skipped': 1, 'reasons': ['record had no
@@ -592,8 +592,8 @@ def test_imported_content_is_redacted_and_fenced_like_a_proxied_turn(_isolated_h
 # ---------------------------------------------------------------------------
 
 
-def _record_72(**overrides) -> dict:
-    """One §7.2 record exactly as `capture_import._record` emits it."""
+def _adapter_record(**overrides) -> dict:
+    """One capture record exactly as `capture_import._record` emits it."""
     record = {
         "ts": 1755000000.0,
         "dialect": "claude-code-jsonl",
@@ -610,15 +610,15 @@ def _record_72(**overrides) -> dict:
     return record
 
 
-def test_a_section_7_2_record_imports_and_keeps_its_extracted_tool_facts(_isolated_home):
+def test_an_adapter_record_imports_and_keeps_its_extracted_tool_facts(_isolated_home):
     """The adapters' shape must import, and the facts they already extracted must survive.
 
     `_build_record` DERIVES tool_calls/read_paths/wrote_paths from the bodies. The bodies
-    synthesised for a bodiless §7.2 record contain no tool calls at all, so a re-derivation
+    synthesised for a bodiless adapter record contain no tool calls at all, so a re-derivation
     would return empty lists and silently DROP everything the adapter found — the record
     would import and still be wrong. Hence the overlay, and hence this assertion.
     """
-    result = capture_store.stage_records([_record_72()], source="claude-code-export")
+    result = capture_store.stage_records([_adapter_record()], source="claude-code-export")
     assert result == {"imported": 1, "skipped": 0, "reasons": []}
 
     (main,) = [p for p in capture_store.capture_dir().glob("*.jsonl") if ".content." not in p.name]
@@ -641,8 +641,8 @@ def test_two_imported_turns_differing_only_in_tool_calls_are_not_duplicates(_iso
     same prompt and response but different tool calls collide and the import reports a
     phantom duplicate.
     """
-    first = _record_72()
-    second = _record_72(
+    first = _adapter_record()
+    second = _adapter_record(
         tool_calls=[{"name": "Bash", "args_clipped": "ls", "ok": True}],
         read_paths=[],
         wrote_paths=[],
@@ -668,7 +668,7 @@ def test_an_overlaid_path_is_still_attributed_to_its_skill(_isolated_home, monke
     monkeypatch.setattr("personalclaw.skills.loader.skills_dir", lambda: skills_root)
 
     result = capture_store.stage_records(
-        [_record_72(read_paths=[str(skill_file)], wrote_paths=[])], source="export"
+        [_adapter_record(read_paths=[str(skill_file)], wrote_paths=[])], source="export"
     )
     assert result["imported"] == 1
 
@@ -681,7 +681,7 @@ def test_an_sse_shaped_record_imports_without_inventing_a_user_turn(_isolated_ho
     """An SSE dump has no request half. The record must say so rather than fake one."""
     result = capture_store.stage_records(
         [
-            _record_72(
+            _adapter_record(
                 dialect="openai-sse",
                 prompt_digest=None,
                 response_digest="streamed reply",
@@ -710,7 +710,7 @@ def test_a_credential_in_prompt_digest_is_redacted_and_fenced_on_the_import_path
     assert found, "vacuity floor: the redactor does not recognise SECRET, so absence proves nothing"
 
     result = capture_store.stage_records(
-        [_record_72(prompt_digest=f"my key is {SECRET} keep it safe")], source="export"
+        [_adapter_record(prompt_digest=f"my key is {SECRET} keep it safe")], source="export"
     )
     assert result["imported"] == 1
 
@@ -733,7 +733,7 @@ def test_a_record_with_neither_a_body_nor_a_digest_is_skipped_with_an_actionable
     _isolated_home,
 ):
     result = capture_store.stage_records(
-        [_record_72(prompt_digest=None, response_digest=None)], source="export"
+        [_adapter_record(prompt_digest=None, response_digest=None)], source="export"
     )
     assert result["imported"] == 0
     assert result["skipped"] == 1

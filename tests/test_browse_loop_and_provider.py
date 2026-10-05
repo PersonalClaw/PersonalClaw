@@ -1,6 +1,6 @@
 """The browse loop, the BrowseActionProvider contract, and the provider-fidelity wiring.
 
-Every class here pins one clause of the change's contract, and each guard is paired with a
+Every class here pins one clause of the provider's contract, and each guard is paired with a
 CONTROL leg that proves it can fail:
 
   * ``TestTheProviderContract`` — the ABC + ``ALLOWED_HOOK_PROVIDERS`` + the rung declaration.
@@ -12,7 +12,7 @@ CONTROL leg that proves it can fail:
     ceiling) and every page is fenced. Control for the ceiling: the same script with
     ``max_steps=2`` parks. Control for the fence: the fence assertion counts pages, so one
     unfenced page out of four fails it.
-  * ``TestSubmitVerification`` — §7.1. Control: a submit that changes nothing is reported
+  * ``TestSubmitVerification`` — submit outcomes. Control: a submit that changes nothing is reported
     FAILED *without* asking the model, so the "verified" path cannot be a rubber stamp.
   * ``TestParking`` — step and budget exhaustion park with notes intact, at the loop, at the
     provider, at the engine's action node and at the controller's run status.
@@ -330,7 +330,7 @@ class TestTheWorkflowActionNode:
 
     def test_the_action_node_dispatches_browse_through_the_REAL_registry(self, monkeypatch):
         """THE call site. `get_provider=None` means `dispatch_action` resolves the name itself
-        through `action_providers.registry.get_action_provider` — the seam BA-3 had to land in,
+        through `action_providers.registry.get_action_provider` — the seam browse had to land in,
         not a parallel path.
 
         The provider's own plumbing is faked (no browser, no model); the RESOLUTION is real.
@@ -348,7 +348,7 @@ class TestTheWorkflowActionNode:
         monkeypatch.setattr(
             bp.BrowseActionProvider,
             "_open",
-            # `cdp_url` is keyword-only on the real seam (BA-7 resolves the target before the
+            # `cdp_url` is keyword-only on the real seam (the target is resolved before the
             # connect, so `_open` no longer reads the config key itself).
             lambda self, cfg, ctx, *, cdp_url="": _done((session, page, None)),
         )
@@ -458,7 +458,7 @@ class TestTheLoop:
         assert result.parked and result.park_reason == PARK_STEP_EXHAUSTED
 
     def test_a_stuck_model_is_warned_once_and_then_the_run_ends(self):
-        """§7.2 stuck detection. The warning has to reach the NEXT prompt, and a model that
+        """Stuck detection. The warning has to reach the NEXT prompt, and a model that
         ignores it has to stop the run — otherwise the guard is a slower infinite loop."""
         session, page = _fresh_pair()
         decide = _Decide(fallback="SCROLL down")

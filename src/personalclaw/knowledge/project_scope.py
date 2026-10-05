@@ -1,7 +1,7 @@
 """Project scoping for knowledge items.
 
 Knowledge is ONE global library by design — a project is a **tag plus item metadata**, never
-a second database (`session_brief.project_tag` states the same boundary). What §1.6 adds is
+a second database (`session_brief.project_tag` states the same boundary). What this module adds is
 provenance and a container filter for the items a RUN writes:
 
 * ``project_id`` — the container the item was produced in. An ordering/scoping key: it is
@@ -99,7 +99,7 @@ def write_scope(
 def scope_tags(project_id: str) -> list[str]:
     """Tags that file an item under its project. Empty for a project-less write.
 
-    This is what makes the project half of §1.6 real rather than declared: the project brief
+    This is what makes the project half of the scoping real rather than declared: the project brief
     (`session_brief.load_items`) reads items by exactly this tag, so before anything wrote it
     the brief was a live reader of a key no writer produced — it returned nothing for every
     project, forever.

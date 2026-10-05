@@ -17,7 +17,7 @@ import { filesUnder, readSource } from '../../test/sourceTree'
 // (`settings/PortabilityPanel`, `settings/MemoryGraph`) and adding a third page-local copy is how a
 // shared idiom becomes three implementations.
 //
-// 🪤 ONE RECORDED RULING GOES THE OTHER WAY AND IS CORRECT. `ui/ListScaffold`'s `LoadError` states
+// 🪤 ONE RECORDED DECISION GOES THE OTHER WAY AND IS CORRECT. `ui/ListScaffold`'s `LoadError` states
 // its reason for staying noun-free: *"Nothing on this component reads the count, so the noun cannot
 // be pluralized reliably"* — a caller passes `what="project"` and the component never sees a number.
 // That distinction holds precisely because the count is absent. It is the opposite of these eleven,
@@ -28,8 +28,8 @@ import { filesUnder, readSource } from '../../test/sourceTree'
 // distinguishing a plural from a call needs to know it is inside a string, and a regex that keys on
 // the following character admits `new Set(s).add(id)` and `open(s)` — a tree-wide run reports 80
 // where a hand count of user-visible copy is about half that. A ceiling on a population known to be
-// wrong is the failure this program has already paid for twice, so the remaining per-directory
-// worklist lives in `.validation/ux/PRODUCT-POLISH.md` and gets converged a surface at a time.
+// wrong is a failure this project has already paid for twice, so the remaining directories are
+// converged a surface at a time.
 
 const HERE = join(process.cwd(), 'src/pages/learning')
 

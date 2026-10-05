@@ -27,14 +27,14 @@ logger = logging.getLogger(__name__)
 async def drain_overlap_queue(ctl: RunController) -> None:
     """Start the next `on_overlap: queue` run for this def, now that this one has ended.
 
-    The live call site for the queue (WV-14). It belongs here because this is the moment
+    The live call site for the queue. It belongs here because this is the moment
     the def stops being busy: `_save_run` above has already written the terminal status,
     so `store.active_runs()` no longer counts this run and the drain's own re-check sees
     a free def.
 
     Awaited inline rather than fired as a task, deliberately: a floating task makes the
     handoff untestable ("did it start?" becomes a race) and can outlive the loop that
-    created it. Fully guarded, because `_finish` is the single terminal writer (WF2-R10)
+    created it. Fully guarded, because `_finish` is the single terminal writer
     and MUST NOT raise — a failure here costs the NEXT run's start, never this run's
     recorded outcome, and the watchdog's poll re-drains what this missed.
     """
@@ -73,16 +73,16 @@ async def end_what_its_steps_started(
 
 
 def capture_run_end(ctl: RunController) -> None:
-    """Route a terminal run through the LearningGate → run-end learner (LEARNING-FLYWHEEL §3.3).
+    """Route a terminal run through the LearningGate → run-end learner.
 
     The RUN_END cadence. Best-effort and fully guarded: `_finish` is the single terminal
-    writer (WF2-R10) and MUST NOT raise, so a failure here costs a lesson, never the run's
+    writer and MUST NOT raise, so a failure here costs a lesson, never the run's
     terminal status.
 
     Inert unless a memory service with a live vector store was injected into EngineServices —
     every test and CLI path leaves `services.memory` None, so this no-ops there exactly as
-    `self_model_observer.observe_turn` no-ops without `has_vector`. The gate is what honors
-    success criterion 10: an incognito/temporary session's terminal run is denied here (via
+    `self_model_observer.observe_turn` no-ops without `has_vector`. The gate is the
+    privacy boundary: an incognito/temporary session's terminal run is denied here (via
     the session-key restriction registry) and writes nothing through this cadence, and
     `learning.run_end_enabled=False` turns the cadence off without touching the others. So is a
     run that is the work of an app not given your memory.
@@ -236,14 +236,13 @@ def chain_after_run(services: Any, run: WorkflowRun, status: RunStatus) -> None:
 
 
 def revise_project_overview(ctl: RunController) -> None:
-    """Auto-revise the run's project overview on a successful completion (WORK-CONTAINERS §6.1).
+    """Auto-revise the run's project overview on a successful completion.
 
     DETERMINISTIC by design: this appends a terse line (run name + terminal status +
     a one-line summary drawn from the run's handoff/summary, else its workflow name) to
     the living overview and records the outcome in the decisions ledger. It does NOT
     call an LLM — the `completion` service is inert in prod, and an LLM-summarized
-    overview is an explicit follow-on. This is a DEVIATION from a literal "revise"
-    (append, not summarize), recorded in the plan's Execution log.
+    overview is an explicit follow-on. So "revise" here means append, not summarize.
 
     Best-effort and fully guarded: `_finish` is the single terminal writer and MUST
     NOT raise, so a failure here costs the overview line, never the terminal status.

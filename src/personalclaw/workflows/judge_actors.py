@@ -2,13 +2,13 @@
 
 Two invariants live here. Both exist because the alternative — telling the model not to
 approve its own work — is advice, and advice does not survive a worker that is being
-scored on completion. WF2LOO-15 measured that only one of them ran; WF2LOO-13 wired the
-other, and every function in this module now has a live caller in `engine.dispatch_gate`'s
+scored on completion. Only one of them used to run; the other is wired now, and every
+function in this module has a live caller in `engine.dispatch_gate`'s
 judge branch:
 
 * **Judge isolation.** `plan_judge_session` / `validate_judge_model` refuse a `cross_model`
   gate whose candidate judge shares the worker's model family. That seam was itself dead
-  once and was wired at S146; the comment there records it.
+  once and is wired now; the comment there records it.
 * **The worker-transition rule.** `check_transition` / `resolve_transition` rule on the actor
   behind the judge gate's terminal transition. An independent judge is `Actor.JUDGE` and may
   complete the node; a gate that opted into `self_judge` is the producer grading itself, so it

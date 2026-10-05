@@ -1,4 +1,4 @@
-/** Tool I/O render registry (tool-io-rendering, TC1).
+/** Tool I/O render registry.
  *
  * ONE registry that renders a tool call's INPUT and OUTPUT by type, with rich
  * per-tool OVERRIDES for native tools (predictable schemas), a schema-driven

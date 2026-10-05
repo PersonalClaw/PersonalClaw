@@ -234,7 +234,7 @@ def _incoming(**kw):
 def _ingest_svc(tmp_path, monkeypatch, settings=None, operator="", alert_conditions=None):
     """An InboxService on an isolated store.
 
-    ``alert_conditions`` writes a real `inbox/alert` RULE (plan 42 S3) — alerting no longer
+    ``alert_conditions`` writes a real `inbox/alert` RULE — alerting no longer
     reads inbox entity settings, so a test that set `alert_keywords` there would silently
     get no alerts. ``settings`` still covers what the inbox DOES own (retention/cleanup).
     """
@@ -324,7 +324,7 @@ def test_run_maintenance_honors_settings(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_background_loop_does_not_run_maintenance(tmp_path, monkeypatch):
-    """PR2-11 clean break: the poll loop no longer runs maintenance — that is the remediation
+    """Clean break: the poll loop no longer runs maintenance — that is the remediation
     engine's `inbox.maintenance` job now. A running loop with an expired item and auto-cleanup
     on leaves the item in place, and the maintenance body is never called from the loop."""
     import asyncio

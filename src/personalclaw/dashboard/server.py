@@ -172,7 +172,7 @@ def _apply_startup_yolo(state: DashboardState, cfg: Any) -> None:
 
 
 def _ws_csp_sources() -> str:
-    """Extra `connect-src` entries for an internet-exposed instance (T4.1).
+    """Extra `connect-src` entries for an internet-exposed instance.
 
     Returns "" unless `dashboard.public_url` is set, so a normal local install keeps a
     byte-identical CSP. When set, both `wss://host` and `https://host` are added: the page is
@@ -331,7 +331,7 @@ async def app_permission_middleware(
     request: web.Request,
     handler: object,
 ) -> web.StreamResponse:
-    """Enforce an app's declared ``permissions.api`` allowlist (A5).
+    """Enforce an app's declared ``permissions.api`` allowlist.
 
     Only acts on requests carrying an app identity (``request["app"]`` set
     from an app-scoped token). A path the app didn't declare is rejected
@@ -557,11 +557,11 @@ async def start_dashboard(
             logger.debug("Could not create consolidator", exc_info=True)
 
     # Extract skills from a session one last time when it idles out, then evict its
-    # per-session MCP connections (rel-mcp-server-pooling #46). Composed so each
+    # per-session MCP connections. Composed so each
     # step runs alongside the others, none replacing consolidation.
     #
     # The session-scoped workflow sweep that sat between them died with the old
-    # feature (WORKFLOWS-V2 Phase 1): ephemeral session-scoped SOPs were a property
+    # feature: ephemeral session-scoped SOPs were a property
     # of embedding-surfaced definitions. v2 runs are durable and engine-owned, so a
     # session expiring must NOT delete them — if a v2 cleanup hook is ever needed it
     # belongs on run retention, not session expiry.
@@ -963,7 +963,7 @@ async def start_dashboard(
     # Fire background MCP probe at startup (non-blocking)
     asyncio.create_task(handlers._bg_mcp_probe())
 
-    # Start the MCP idle-connection sweeper (rel-mcp-server-pooling #46): reaps
+    # Start the MCP idle-connection sweeper: reaps
     # connections unused past the TTL so resident MCP memory tracks active use.
     try:
         from personalclaw.mcp_client import get_mcp_client_registry

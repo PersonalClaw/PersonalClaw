@@ -175,7 +175,7 @@ def app_packages_env() -> dict[str, str]:
     for exactly that). Its entries precede site-packages inside that one process; neither child
     is started through the resource-ceiling shim, so there is no platform code in it for a
     package to shadow. Published on ``personalclaw.sdk.util``: piper-tts re-derived it by hand
-    (#124), from where ``importlib`` found the package.
+    (PersonalClawApps #124), from where ``importlib`` found the package.
 
     The rest is the child allowlist (``sandbox.build_child_env``), never the gateway's own
     environment: the gateway puts every secret saved in PersonalClaw into that one, and a hook is

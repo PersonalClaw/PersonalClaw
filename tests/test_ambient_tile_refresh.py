@@ -96,8 +96,8 @@ class TestTheRenderTransformIsDeterministic:
             tile_refresh.render_skeleton("<b>{{nodes.missing.output.n}}</b>", {})
 
 
-class TestTheWF2NodeRendersTheStoredSkeleton:
-    """The change names a WF2 NODE, so the node's dispatcher is exercised — not only the
+class TestTheWorkflowNodeRendersTheStoredSkeleton:
+    """The change names a workflow NODE, so the node's dispatcher is exercised — not only the
     helper it calls. A `transform` that could render a skeleton in `render_skeleton` but not
     through `dispatch_transform` would be a transform nobody can author."""
 
@@ -259,7 +259,7 @@ class TestTheLedgerRow:
         assert path.exists()
         rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
         assert len(rows) == 1
-        # One directory PER TILE, not per refresh — the run-weight §2.3 refuses.
+        # One directory PER TILE, not per refresh — a refresh must not carry a run's weight.
         assert path.parent.name == "overview__sales"
         assert path.parent.parent.name == tile_refresh.LEDGER_DIRNAME
 
@@ -408,8 +408,8 @@ class TestAFailedRefreshKeepsLastGood:
 
     @pytest.mark.asyncio
     async def test_incident_mode_suspends_the_unattended_refresh(self, home, monkeypatch):
-        """🔴 The kill switch, at the CALL SITE. A TTL tile is a fourth unattended dispatch seam
-        (AUTONOMY-GUARDRAILS §1.2), so a dashboard that kept fetching through an incident would be
+        """🔴 The kill switch, at the CALL SITE. A TTL tile is a fourth unattended dispatch seam,
+        so a dashboard that kept fetching through an incident would be
         the quiet exception that makes the switch useless."""
         ref = _live_tile()
         monkeypatch.setattr("personalclaw.guardrails.incident.incident_active", lambda: True)

@@ -354,7 +354,8 @@ class NetFetchActionProvider(ActionProvider):
 
         text = str(getattr(response, "text", "") or "")
         truncated = len(text) > max_chars
-        # BOUND, then FENCE. Reversing these two lines produces an unclosed fence — see §4.
+        # BOUND, then FENCE. Reversing these two lines produces an unclosed fence — see the
+        # module docstring's §4.
         text = text[:max_chars]
         fenced = fence_untrusted(
             text,

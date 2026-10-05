@@ -18,8 +18,8 @@ import { join } from 'node:path'
 //      360px  dotted 4  stranded 2   (h=41 — wrapped)
 //      320px  dotted 4  stranded 4   (h=41)  ← the width WCAG SC 1.4.10 (Reflow) mandates
 //
-// So it was correct at every tier `scripts/surfaces.json` sweeps and wrong at the one AA requires.
-// `ui/danglingSeparator.test.ts` recorded `#/tasks` as "8 phone, 0 desktop" and §4 row 43 recorded
+// So it was correct at every swept width and wrong at the one AA requires.
+// `ui/danglingSeparator.test.ts` recorded `#/tasks` as "8 phone, 0 desktop" and an earlier audit recorded
 // "1 of 8 rows at EVERY width, 1920 included"; **neither reproduces on this tree** — the real answer
 // is narrower than one and wider than the other, and only a sub-390px measurement finds it.
 //

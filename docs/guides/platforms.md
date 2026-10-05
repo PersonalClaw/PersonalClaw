@@ -26,11 +26,11 @@ one, and the token points at something you can go read or re-run:
 | Windows via Docker Desktop | supported | `checklist:Windows via Docker Desktop` (this page) — written, **not yet executed verbatim**; the release runbook's Windows checklist records the first run |
 | Windows native | not supported | — see [windows-native-audit](../research/windows-native-audit.md) |
 
-The arm64 rows became CI-backed in PLATFORM-REACH A1.3 (arm jobs in `full.yml`) and
-A2.1 (per-arch release smoke); before that they were aspirational.
+The arm64 rows became CI-backed with the arm jobs in `full.yml` and the
+per-arch release smoke; before that they were aspirational.
 
 The two `CI:release/images smoke` citations above were, for a while, a proof that had
-never run. A2.1 shipped the step on 2026-08-10 and the last release before that was
+never run. The step shipped on 2026-08-10 and the last release before that was
 v0.1.3 on 2026-07-31, so it had executed zero times — and it invoked the container
 command through a **login** shell, which sources `/etc/profile`, which *overwrites*
 `PATH` instead of extending it, so the gateway image's own `ENV PATH` was discarded and

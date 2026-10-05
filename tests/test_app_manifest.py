@@ -403,12 +403,12 @@ class TestRoundTrip:
 
 
 # ---------------------------------------------------------------------------
-# CLI seams (Plan 32 — cli.setup / cli.doctor)
+# CLI seams (cli.setup / cli.doctor)
 # ---------------------------------------------------------------------------
 
 
 class TestCliSeams:
-    # --- P1: round-trip for cli ---
+    # --- round-trip for cli ---
     def test_cli_round_trip(self):
         original = _valid_manifest(cli={"setup": "cli_setup:run", "doctor": "cli_doctor:probe"})
         m = AppManifest.from_dict(original)
@@ -423,7 +423,7 @@ class TestCliSeams:
         cfg = CliConfig(setup="mod:fn", doctor="d:probe")
         assert CliConfig.from_dict(cfg.to_dict()).to_dict() == cfg.to_dict()
 
-    # --- P2: an absent field defaults empty and is omitted from output ---
+    # --- an absent field defaults empty and is omitted from output ---
     def test_cli_default_empty(self):
         m = AppManifest.from_dict(_valid_manifest())
         assert m.cli.setup == ""
@@ -442,7 +442,7 @@ class TestCliSeams:
         assert m.cli.setup == ""
         assert m.cli.doctor == ""
 
-    # --- P3: unknown-field preservation still works alongside the new fields ---
+    # --- unknown-field preservation still works alongside the new fields ---
     def test_unknown_fields_preserved_with_cli(self):
         data = _valid_manifest(
             cli={"setup": "cli_setup:run"},
@@ -461,7 +461,7 @@ class TestCliSeams:
         assert m2.extra == m.extra
         assert m2.to_dict() == serialized
 
-    # --- P4: existing manifests without the new fields still parse cleanly ---
+    # --- existing manifests without the new fields still parse cleanly ---
     def test_existing_manifest_still_parses(self):
         m = AppManifest.from_dict(
             _valid_manifest(
@@ -472,7 +472,7 @@ class TestCliSeams:
         assert m.validate() == []
         assert m.cli.to_dict() == {}
 
-    # --- APE-1: the new permission grants do not disturb unknown-field preservation ---
+    # --- the new permission grants do not disturb unknown-field preservation ---
     def test_unknown_fields_preserved_alongside_new_permission_grants(self):
         """The manifest deliberately carries fields it does not know (so an app built for
         a newer core still round-trips through an older one). Adding
@@ -809,7 +809,7 @@ class TestDependencies:
 
 
 class TestManifestNewProperties:
-    # Feature: app-classification-redesign, Property 3: Manifest 数据类序列化往返一致性
+    # Manifest 数据类序列化往返一致性
     @given(
         on_install=st.text(max_size=30),
         on_update=st.text(max_size=30),
@@ -830,7 +830,6 @@ class TestManifestNewProperties:
         enable_timeout,
         disable_timeout,
     ):
-        """**Validates: Requirements 4.2**"""
         cfg = SetupConfig(
             onInstall=on_install,
             onUpdate=on_update,
@@ -850,7 +849,7 @@ class TestManifestNewProperties:
         assert restored.onEnableTimeout == cfg.onEnableTimeout
         assert restored.onDisableTimeout == cfg.onDisableTimeout
 
-    # Feature: app-classification-redesign, Property 3: Dependencies 序列化往返一致性
+    # Dependencies 序列化往返一致性
     @given(
         managed_by=st.sampled_from(["gateway", "app"]),
         mcp_deps=st.lists(st.from_regex(r"[a-z][a-z0-9\-]{0,20}", fullmatch=True), max_size=5),
@@ -861,7 +860,6 @@ class TestManifestNewProperties:
     )
     @settings(max_examples=200)
     def test_dependencies_round_trip_property(self, managed_by, mcp_deps, skill_deps, commands):
-        """**Validates: Requirements 5.2**"""
         deps = Dependencies(
             managedBy=managed_by,
             marketplace=MarketplaceDependencies(mcp=mcp_deps, skills=skill_deps),
@@ -875,14 +873,13 @@ class TestManifestNewProperties:
         assert restored.marketplace.skills == deps.marketplace.skills
         assert restored.commands == deps.commands
 
-    # Feature: app-classification-redesign, Property 4: 单依赖项 managedBy 覆盖
+    # 单依赖项 managedBy 覆盖
     @given(
         default_managed=st.sampled_from(["gateway", "app"]),
         override_managed=st.sampled_from(["gateway", "app"]),
     )
     @settings(max_examples=100)
     def test_managed_by_override_property(self, default_managed, override_managed):
-        """**Validates: Requirements 5.5**"""
         deps = Dependencies.from_dict(
             {
                 "managedBy": default_managed,
@@ -928,7 +925,7 @@ class TestProviderConfigEntity:
 
 
 def _handler_type_gaps(provider_types: set[str], handlers: set[str]) -> dict[str, list[str]]:
-    """Both #47 directions at once, over injectable inputs so each can be proven.
+    """Both directions at once, over injectable inputs so each can be proven.
 
     - ``handler_not_declarable``: a live handler whose type PROVIDER_TYPES omits —
       install-BLOCKED (``ProviderConfig.validate`` rejects the manifest). Loud.
@@ -957,13 +954,13 @@ def _live_handler_types() -> set[str]:
 
 
 class TestProviderTypesMatchHandlers:
-    """#47: PROVIDER_TYPES (the manifest validator's allowlist) MUST equal the set of
+    """PROVIDER_TYPES (the manifest validator's allowlist) MUST equal the set of
     provider types the runtime actually registers a handler for — in BOTH directions.
     A type with a live handler but missing from PROVIDER_TYPES is install-blocked
-    (ProviderConfig.validate rejects it) — the split-era #1 'action rejected' class.
+    (ProviderConfig.validate rejects it) — the 'action rejected' class.
     'prompt' regressed this way (PromptTypeHandler existed; PROVIDER_TYPES omitted it).
     The reverse — declarable with no handler — installs clean and then silently does
-    nothing; ``inbox`` sat in a weaker form of that state until INU-8 (a handler that
+    nothing; ``inbox`` once sat in a weaker form of that state (a handler that
     ran the factory and discarded the instance), which is why this now asserts both
     directions and why every seam-served type must NAME the mechanism serving it."""
 
@@ -975,11 +972,11 @@ class TestProviderTypesMatchHandlers:
         gaps = _handler_type_gaps(set(PROVIDER_TYPES), handlers)
         assert not gaps["handler_not_declarable"], (
             f"provider types with a live handler but MISSING from PROVIDER_TYPES "
-            f"(install-blocked, #47/#1 class): {gaps['handler_not_declarable']}"
+            f"(install-blocked, the 'action rejected' class): {gaps['handler_not_declarable']}"
         )
         assert not gaps["declarable_no_handler"], (
             f"provider types declarable in a manifest with NO runtime handler "
-            f"(installs clean, then silently dead — the #47 class): "
+            f"(installs clean, then silently dead): "
             f"{gaps['declarable_no_handler']}. Give it a handler, remove it from "
             f"PROVIDER_TYPES, or register an EntitySeamHandler whose source_of_truth "
             f"names the mechanism that really serves it."

@@ -1,9 +1,9 @@
-"""Knowledge failures are told truthfully — the day-7 live-validation defects B6 and B9.
+"""Knowledge failures are told truthfully — two defects found in live validation.
 
 Measured on a validation home with NO model provider bound, which is exactly the state a new
 user is in:
 
-**B9 — "Knowledge degraded" made a false claim.** Doctor's ``knowledge.searchability`` row read
+**"Knowledge degraded" made a false claim.** Doctor's ``knowledge.searchability`` row read
 "3 ingested items cannot be found by search (no_embedding_provider) — they are in the library
 and no query can reach them", and the ``knowledge_search`` tool printed the same claim and then
 LISTED the match. Keyword search found both notes, in the library and through the tool. What the
@@ -12,7 +12,7 @@ three of its four reasons that means "semantic search cannot reach them" — nev
 The count was wrong too: 3 against the library's 2, because the third row is an artifact's search
 mirror, which the library deliberately never lists.
 
-**B6 — "Regenerate intelligence" failed silently.** The route answered 200 ``{"queued": 3}``
+**"Regenerate intelligence" failed silently.** The route answered 200 ``{"queued": 3}``
 although no model could run a single job; each failed in the background, and the graph went on
 saying the items "have not been through entity extraction" while every item's own page showed
 Insights and Entities failed. The precondition was knowable before anything was queued.
@@ -177,7 +177,7 @@ def test_the_fixture_is_the_validation_state(tmp_path):
     assert _library_total(store) == 2
 
 
-# ── B9 — Doctor says what is actually unreachable, and counts what the library lists ──────
+# ── Doctor says what is actually unreachable, and counts what the library lists ───────────
 
 
 def test_doctor_does_not_claim_keyword_reachable_items_are_unreachable(tmp_path):
@@ -241,7 +241,7 @@ def test_doctor_count_matches_the_library_on_a_mixed_library(tmp_path):
     assert {r["shelf"] for r in ev["unlisted_items"]} == {"artifact", "finding"}
 
 
-# ── B9 — the search tool says the same true thing, from the same source ────────────────────
+# ── the search tool says the same true thing, from the same source ─────────────────────────
 
 
 def test_knowledge_search_lists_the_match_without_claiming_it_is_unreachable(tmp_path):
@@ -357,7 +357,7 @@ def test_the_item_status_line_is_a_human_sentence(tmp_path):
     assert "model unavailable" in line
 
 
-# ── B6 — regenerate refuses up front when no model can run it ───────────────────────────
+# ── regenerate refuses up front when no model can run it ────────────────────────────────
 
 
 def _regen(store: KnowledgeStore, body: dict):
@@ -423,7 +423,7 @@ def test_missing_scope_retries_items_whose_entity_extraction_failed(tmp_path):
     assert enq == [item_id], body
 
 
-# ── B6 — the library can tell never-tried from tried-and-failed ─────────────────────────
+# ── the library can tell never-tried from tried-and-failed ──────────────────────────────
 
 
 def _stats(store: KnowledgeStore) -> dict:

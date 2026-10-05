@@ -4,15 +4,15 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 
 // ── The done screen hands over three controls ────────────────────────────────
 //
-// The Design's done screen "points at Inbox, the bounciness slider, and the unlock-everything
-// toggle". Pointing is the easy half; the half worth testing is that each pointer is the REAL
+// The done screen points at Inbox, the bounciness slider, and the unlock-everything
+// toggle. Pointing is the easy half; the half worth testing is that each pointer is the REAL
 // mechanism and not a lookalike:
 //
 //  • the Inbox link must actually leave the flow (the route guard holds a non-onboarded user
 //    on `#/onboarding`, so a plain link here would be bounced — `exitTo.ts` is the seam);
 //  • the dial must be the Settings → Design Bounciness control, i.e. moving it must reach
 //    `runtime.bounciness`, which is what every spring preset reads;
-//  • the switch must drive the ONE nav-disclosure setting OU-5 shipped, and drive it through
+//  • the switch must drive the ONE nav-disclosure setting, and drive it through
 //    `finish()` — an abandoned flow must leave no record, because the absence of a record is
 //    exactly how the shell tells an upgrade from a fresh install.
 

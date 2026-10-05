@@ -1,8 +1,8 @@
 """The missing executor: the fold write asks whether the evidence outgrew the table.
 
 ``routing/proposals.py`` shipped complete and had **zero production importers** — ``propose`` took a
-``current``, a ``proposed`` and an ``evidence`` dict and computed no gap, so the acceptance criteria
-clause *"a genuine quality gap at n>=5 enqueues a routing proposal"* had no ``n>=5``, no gap
+``current``, a ``proposed`` and an ``evidence`` dict and computed no gap, so the requirement
+*"a genuine quality gap at n>=5 enqueues a routing proposal"* had no ``n>=5``, no gap
 detection and no call anywhere. ``routing/gap.py`` is that caller and ``stats.record_routing_stats``
 is its trigger point; these rails exist so that deleting either would be caught.
 
@@ -14,7 +14,7 @@ Three things are asserted here that a green ``test_routing_proposals.py`` could 
 * **propose-don't-write across the WHOLE path**, not just across ``propose``: a model call that
   produces a proposal leaves ``routing_policy.json`` byte-identical, with a floor proving the same
   comparison sees the write that accepting it makes;
-* **SC #8** — with both JSON files deleted the path degrades and writes no ``memory.db`` /
+* **degradation** — with both JSON files deleted the path degrades and writes no ``memory.db`` /
   ``knowledge.db``, a negative given a floor so it cannot pass vacuously.
 
 Every test drives an isolated ``tmp_path`` home through ``PERSONALCLAW_HOME`` (read per call, cached
@@ -435,7 +435,7 @@ class TestEvidence:
         assert prop.evidence["p50_delta_ms"] == 0.0
 
 
-# ── SC #8: deleting the state files degrades, and touches no database ───────────
+# ── deleting the state files degrades, and touches no database ──────────────────
 
 
 class TestDegradation:

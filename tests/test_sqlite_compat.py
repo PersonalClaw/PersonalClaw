@@ -156,7 +156,7 @@ def test_resolved_driver_is_a_real_sqlite_module():
 
 
 def test_no_production_site_uses_a_bare_with_on_a_connection():
-    """``with sqlite3.connect(...)`` does NOT close the connection (SH6.2).
+    """``with sqlite3.connect(...)`` does NOT close the connection.
 
     Its context manager ends the TRANSACTION and leaves the handle open, so the shape is a
     per-call resource leak that only shows up as a `ResourceWarning: unclosed database`

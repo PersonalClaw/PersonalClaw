@@ -132,7 +132,7 @@ export function ToolCard({ seg }: { seg: ToolSegment }) {
                   )}
                 </div>
               )}
-              {/* TC5: concrete next-steps on a failed tool — the contract's recovery_hints,
+              {/* Concrete next-steps on a failed tool — the contract's recovery_hints,
                   surfaced so the user (and the reading agent) sees how to recover. */}
               {seg.recoveryHints && seg.recoveryHints.length > 0 && (
                 <div className="mt-1.5 rounded-md bg-surface-container px-2.5 py-1.5">

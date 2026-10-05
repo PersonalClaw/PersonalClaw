@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 
-// ── Settings → Security says how long a sign-in lasts, and changes it (ledger 317c) ─────────────
+// ── Settings → Security says how long a sign-in lasts, and changes it ───────────────────────────
 //
 // `auth.session_ttl` had no control anywhere: `personalclaw config set` and a hand-edited
 // `config.json` were the only ways to shorten how long a stolen browser cookie keeps working. The

@@ -1,19 +1,15 @@
 """Filing a failing scenario — exactly one Inbox item and exactly one Task.
 
-The change's criterion reads "a failing scenario files one Inbox item + one Task", and *one*
+The rule is that a failing scenario files one Inbox item + one Task, and *one*
 is a ceiling as much as a floor. Three Inbox items for one failure trains the user to ignore the
 inbox, which costs more than filing nothing. So the count is enforced here rather than left to
 the caller's discipline: :func:`file_finding` files one of each per finding and is idempotent on
 the finding's key, so a retried node, a resumed run, or a node that fires twice cannot multiply
 the filing.
 
-(The change cites this to plan Success Criterion #6; #6 itself covers the watcher, the skip record
-and the UI drive, and does not mention filing. The requirement is the change's, not #6's — the
-citation is the change's, and it is recorded here rather than silently propagated.)
-
 Both sinks are the existing native ones — `post_to_inbox` (the in-core push sink) and the native
-`TaskProvider` through `tasks.registry.create_task`. No new inbox source, no new task provider;
-§5 of the plan is explicit that inventing one is the tempting wrong answer here.
+`TaskProvider` through `tasks.registry.create_task`. No new inbox source, no new task provider:
+inventing one is the tempting wrong answer here.
 
 The two records are deliberately different documents. The Inbox item is the *interrupt*: one
 line saying what broke, plus the evidence bundle reference. The Task is the *work*: the scenario
@@ -39,7 +35,7 @@ class _Progress:
 
     A flag flipped after BOTH sinks succeed makes a partial failure re-post the Inbox item: the
     item lands, the Task raises, nothing is recorded, and the replay starts over from the top —
-    two interrupts for one failure, which is the exact ceiling breach the criterion forbids. A
+    two interrupts for one failure, which is the exact ceiling breach the rule forbids. A
     flag flipped BEFORE either sink is the mirror defect: the Task never gets created and the
     replay reports the finding as filed. So each sink is recorded as it completes, and a replay
     does only what is left.

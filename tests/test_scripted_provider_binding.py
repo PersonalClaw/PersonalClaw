@@ -366,7 +366,7 @@ def test_declared_capabilities_are_exactly_the_minimum_set(
 ):
     """Equality, not containment — a later widening must red here.
 
-    CHAT because clause 1 is "completes a scripted chat turn"; CODE_TOOLS because
+    CHAT because the provider's job is to complete a scripted chat turn; CODE_TOOLS because
     the fixture's declared job includes tool-call emission. Nothing else: a JSON
     fixture performs none of the rest, and declaring one would make this entry the
     implicit fallback for a use case it cannot serve.
@@ -402,7 +402,7 @@ def test_the_omitted_capabilities_are_named_so_the_omission_is_deliberate():
 
 # ── Integration rails: the two defects only the MERGED tree can see ───────────────
 #
-# Both halves of PHF-7 were built on separate branches against a written contract, and
+# Both halves of this seam were built on separate branches against a written contract, and
 # `pyproject.toml` sets `ignore_missing_imports = true`, so mypy said NOTHING about either
 # mismatch: `make lint` was exit 0 on both branches while the pair was broken. These rails
 # turn that into a test failure instead of a TypeError in a running gateway.

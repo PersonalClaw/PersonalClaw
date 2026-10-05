@@ -52,8 +52,8 @@ LEDGER_PREFIX = "mining"
 #: same floor ``detectors.MIN_PLAN_STEPS`` applies to plans — mined from the other direction.
 MIN_TRACE_STEPS = 2
 
-#: How many runs must share a normalized successful trace before it is template-worthy. §3.2's
-#: "gated by min_frequency": one success is an event, a repeat is a pattern.
+#: How many runs must share a normalized successful trace before it is template-worthy. Gated
+#: by min_frequency: one success is an event, a repeat is a pattern.
 MIN_TRACE_FREQUENCY = 3
 
 #: How many recent runs the positive-path scan reads. Bounded because this runs on a real box with a
@@ -170,7 +170,7 @@ def miss_counts(*, days: int = 30) -> dict[str, int]:
     return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
 
 
-# ── clause A: the per-spec embedding producer ──
+# ── the per-spec embedding producer ──
 
 
 def spec_text(run: Any, *, journal: Any = None) -> str:
@@ -178,13 +178,13 @@ def spec_text(run: Any, *, journal: Any = None) -> str:
 
     Intent alone is too thin (two different plans phrased alike collide) and a full transcript is
     too noisy (outputs dominate the vector). The plan SHAPE — what it set out to do plus the steps
-    it took to do it — is the thing §3.2 wants matched, and it is stable across reruns.
+    it took to do it — is the thing to match, and it is stable across reruns.
 
     The synthesized (inverted) intent is included deliberately, and it is what makes the corpus work
     on real data: a run launched from a template carries a terse or empty ``intent``, so an index
     keyed on the declared field alone would hold nothing for exactly the runs that repeat most.
     Inverting execution back into user register (:func:`invert_intent`) gives every run a comparable
-    sentence, which is the §3.2 design — synthesize, then embed and cluster.
+    sentence, which is the design — synthesize, then embed and cluster.
     """
     parts: list[str] = []
     intent = str(getattr(run, "intent", "") or "").strip()
@@ -255,7 +255,7 @@ def index_run_spec(run: Any, service: Any, *, journal: Any = None) -> bool:
     # 80 characters) tells two runs apart and still refuses the same run indexed twice. (2)
     # `OCCURRENCE_TAG` exempts the row from the vector dedup (cosine > 0.88), which merges them
     # however the text starts; it began to bite once the index held vectors at the embedding
-    # model's width (settings B16) — before that fix every non-384-dim vector was dropped, so it
+    # model's width — before that fix every non-384-dim vector was dropped, so it
     # never ran.
     body = f"run {run_id}\n{text}"
     try:
@@ -368,12 +368,12 @@ def _age_days(created_at: Any, now: float) -> float:
     return max(0.0, (now - parsed.timestamp()) / 86400.0)
 
 
-# ── clause B: intent inversion ──
+# ── intent inversion ──
 
 
 @dataclass
 class Inversion:
-    """§3.2's intent inversion: the run's own execution read back as a user-register intent.
+    """The intent inversion: the run's own execution read back as a user-register intent.
 
     The normal direction is intent → plan. This is the INVERSE — plan → intent — which is what makes
     it a usable corpus: a run's declared ``intent`` may be terse, absent, or written in machine
@@ -442,8 +442,8 @@ def invert_intent(run: Any, *, journal: Any = None) -> Inversion:
 
     A journal-mining pass, not a call site — the run's ledger already records every step it took, so
     the "what it did" half needs no new instrumentation. The canonical ``did`` string is synthesized
-    deterministically from node ids plus the workflow name (§3.2 describes a cheap synthesis pass;
-    a model call per terminal run is the cost this whole section exists to avoid).
+    deterministically from node ids plus the workflow name (a cheap synthesis pass;
+    a model call per terminal run is the cost this whole module exists to avoid).
 
     Never raises. An unreadable journal returns a typed ``NO_JOURNAL`` miss rather than a drift of
     0.0 — scoring a run as perfectly on-target because we could not read it is exactly the blind
@@ -487,8 +487,8 @@ def invert_intent(run: Any, *, journal: Any = None) -> Inversion:
 def _synthesize_intent(workflow_name: str, steps: list[str]) -> str:
     """Build the user-register sentence for what a run DID, from its shape alone.
 
-    Deterministic and model-free (§3.2 calls for a *cheap* pass; a completion per terminal run is
-    the cost this section exists to avoid). Node ids are de-slugged into words so the sentence
+    Deterministic and model-free (a *cheap* pass; a completion per terminal run is
+    the cost this module exists to avoid). Node ids are de-slugged into words so the sentence
     shares a vocabulary with prose intents — ``fetch_data`` and "fetch the data" must land near
     each other in the index, and an un-deslugged id would embed as an opaque token.
     """
@@ -504,12 +504,12 @@ def _synthesize_intent(workflow_name: str, steps: list[str]) -> str:
     return f"{lead}{body}.".capitalize()
 
 
-# ── clause C: positive-path trace mining ──
+# ── positive-path trace mining ──
 
 
 @dataclass
 class Trace:
-    """One recurring SUCCESSFUL step sequence — the positive half of §3.2's signal set."""
+    """One recurring SUCCESSFUL step sequence — the positive half of the signal set."""
 
     signature: str
     steps: list[str] = field(default_factory=list)
@@ -557,7 +557,7 @@ def positive_path_candidates(
 ) -> tuple[list[Trace], Miss | None]:
     """Scan recent SUCCESSFUL runs for recurring step sequences.
 
-    §3.2's positive-path mining: zero model calls, gated by ``min_frequency`` AND outcome quality
+    Positive-path mining: zero model calls, gated by ``min_frequency`` AND outcome quality
     (only runs whose terminal status is COMPLETE contribute — a sequence mined from a failed run is
     a recipe for failing). Returns ``(traces, miss)``; the miss is typed for the same reason as
     everywhere else in this module.

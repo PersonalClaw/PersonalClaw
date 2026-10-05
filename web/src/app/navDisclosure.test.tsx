@@ -193,7 +193,7 @@ describe('the rail a fresh install sees', () => {
     // Measured on the live starter rail before this: five rows under three headings, with
     // "PLATFORM" sitting over Inbox alone and "APPS" over the apps entry alone. A heading per
     // item is chrome, not structure — the starter rail is one curated group by construction.
-    // The apps ITEM is now labeled "Apps" (AUD-X3), the same word as its section, so the
+    // The apps ITEM is now labeled "Apps", the same word as its section, so the
     // header sweep asserts on the two section names an item label cannot collide with; they
     // exist in NAV, which keeps the assertion non-vacuous about headers being dropped.
     renderApp()

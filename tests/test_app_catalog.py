@@ -350,7 +350,7 @@ def test_published_default_source_is_not_duplicated_by_a_user_add():
     assert user_sources == []
 
 
-# ── local-directory app sources (workspace-core-app-split §4) ──
+# ── local-directory app sources ──
 
 
 def _local_app(root: Path, name: str) -> None:
@@ -701,7 +701,7 @@ def test_app_update_notification_kind_is_registered():
     assert nk.kind_for_legacy("app_update").key == "apps/update"
 
 
-# ── SDK boundary (workspace-core-app-split §3) ──
+# ── SDK boundary ──
 
 
 def test_sdk_reexports_are_core_classes():
@@ -739,7 +739,7 @@ def test_sdk_all_submodules_import():
     assert isinstance(SDK_VERSION, str)
 
 
-# ── P20: registry-index (federated app sources) ──────────────────────────────
+# ── registry-index (federated app sources) ───────────────────────────────────
 
 
 def _write_registry(root: Path, apps: list[dict]) -> None:
@@ -971,7 +971,7 @@ def test_registry_skips_already_installed(tmp_path):
     assert "fresh-app" in names and "brave-search" not in names
 
 
-# ── P29: install-consent transparency (permissions + declared crons in the catalog) ──
+# ── install-consent transparency (permissions + declared crons in the catalog) ──
 
 
 def test_catalog_surfaces_permissions_and_crons_for_review(tmp_path):
@@ -1355,7 +1355,7 @@ def test_seeding_never_reaches_for_the_installer(tmp_path, monkeypatch):
         assert forbidden not in body, f"the seeder must not {forbidden} anything"
 
 
-# --- ET-4 negative clause, pinned structurally ------------------------------------
+# --- the install-path negative claim, pinned structurally -------------------------
 # "the scanner gate at install is unchanged (no new install path)" is a claim about
 # what does NOT exist, and the behavioural rail above can only prove the ONE route it
 # drives. A second route that skipped the gate would leave it green. So the census

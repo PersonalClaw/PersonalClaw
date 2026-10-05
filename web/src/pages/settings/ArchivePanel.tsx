@@ -77,7 +77,7 @@ function ArchiveRow({ a, open, onToggle }: { a: SessionArchive; open: boolean; o
     <div className="rounded-lg bg-surface-container px-4 py-2.5">
       {/* `aria-expanded` on the row itself, matching `AuditPanel`'s event row — the same shape in the
           same area (a card whose button reveals detail beneath it). The toggle arriving as a PROP is
-          why the cycle-127 disclosure census could not see this one. */}
+          why an earlier disclosure census could not see this one. */}
       <button type="button" onClick={onToggle} aria-expanded={open} className="flex w-full items-center gap-3 text-left">
         <FileText size={16} className="shrink-0 text-on-surface-low" />
         <div className="min-w-0 flex-1">

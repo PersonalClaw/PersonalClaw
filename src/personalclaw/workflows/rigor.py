@@ -1,11 +1,10 @@
-"""The rigor axis: the CHEAP end of planning (UP-R10).
+"""The rigor axis: the CHEAP end of planning.
 
-Session 40 built the classifier that routes rigor; session 44 built the machinery the deep end
-enters. This module is the other direction — the paths that exist so that spec-driven planning does
-not become a new waterfall.
+A classifier routes rigor; the deep end enters the heavyweight machinery. This module is the other
+direction — the paths that exist so that spec-driven planning does not become a new waterfall.
 
-The plan states the risk plainly: *planner over-machinery for a single user*. Every heavyweight
-mechanism in Universal Planning (the grill, contracts, risk gates) is entered only by classifier or
+The risk is plain: *planner over-machinery for a single user*. Every heavyweight
+mechanism in planning (the grill, contracts, risk gates) is entered only by classifier or
 risk escalation. What keeps the cheap paths cheap is here:
 
 * **`rigor: fast`** — an explicit "ten-minute inferior spec, start now". It skips interrogation and
@@ -242,7 +241,7 @@ def revise_from_artifact(spec: dict[str, Any], revision: ArtifactRevision) -> di
     """Fold a run's outcome back into the spec.
 
     Only the ratchet and the provenance are applied here — NOT node edits. Node edits go through
-    `revision.merge_patches` (session 43), whose merge-by-id is what guarantees an untouched stage
+    `revision.merge_patches`, whose merge-by-id is what guarantees an untouched stage
     cannot drift. A second edit path here would be a second chance to silently rewrite a stage
     nobody complained about.
     """

@@ -3,7 +3,7 @@ import { render, fireEvent } from '@testing-library/react'
 import { Copy } from 'lucide-react'
 import { SquareIconButton } from './SquareIconButton'
 
-// ── Dense square icon-button contract (design-system consistency S2/T2.3) ──────
+// ── Dense square icon-button contract ──────────────────────────────────────────
 // This primitive codifies the size-7 rounded-md dense icon-action role that was
 // hand-rolled five times (two byte-identical settings copies + three ui/ near-
 // variants) with a dangerous prop collision: the settings copies used `active`

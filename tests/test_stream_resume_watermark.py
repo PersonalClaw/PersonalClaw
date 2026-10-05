@@ -4,7 +4,7 @@ A chat rebuilds its transcript from ``GET /api/chat/sessions/{key}`` on a reload
 and the session-create remount, and the answer still being written arrives in that snapshot as
 one ``streaming`` message. The socket keeps delivering ``chat_chunk`` frames while the read is in
 flight, so the client has to know, per chunk, whether the snapshot already holds it — or it
-paints the overlap twice. Measured on a reload (day56b s22) the client instead dropped the
+paints the overlap twice. Measured on a reload, the client instead dropped the
 partial entirely: 170 and 209 chars cut from the start of answers of 6,580 and 3,857.
 
 The contract under test, through the REAL chat runner and the REAL detail handler:

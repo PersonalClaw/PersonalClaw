@@ -15,15 +15,15 @@ import { RowAction } from './widgets/kit'
 //
 // SC 2.5.8 Target Size (Minimum), AA. 🪤 THE SPACING EXCEPTION RESCUES NEITHER, and that is the part
 // worth measuring rather than assuming: it requires a 24px circle on each target to clear the other
-// targets, so 4px between row actions and 16px between chips both fail. (Cycle 72 hit the same trap
-// from the other side — switch centres 34–107px apart *looked* like ample clearance until the
-// enclosing full-card nav button was accounted for.)
+// targets, so 4px between row actions and 16px between chips both fail. (The `sm` Toggle hit the
+// same trap from the other side — switch centres 34–107px apart *looked* like ample clearance until
+// the enclosing full-card nav button was accounted for.)
 //
 // 🔑 ONE OF THE TWO IS A PRIMITIVE, so one edit reaches every adopter: `RowAction` is the dashboard's
 // row-action button, used by TasksWidget, SystemHealth (×2), ActiveWork (×3), PinnedArtifacts and
 // ActionCenter. The chips are a one-off in `DashboardPage`.
 //
-// 🔑 THE FIX IS THE HIT BOX, NOT THE DESIGN — the shape cycle 72 established for the `sm` Toggle:
+// 🔑 THE FIX IS THE HIT BOX, NOT THE DESIGN — the shape already established for the `sm` Toggle:
 // grow the box to 24px and hand the extra height back with a negative margin, so nothing reflows.
 // Measured after: chip 268×20 → 268×24, `RowAction` 38×22 → 38×24, and the surface is
 // **pixel-identical at both themes and phone (0%)**. An accessibility fix with no visual cost is
@@ -70,9 +70,9 @@ describe('the fix reaches the widgets, and the chips too', () => {
     expect(src).toMatch(/inline-flex min-h-6 -my-0\.5 items-center gap-xs text-on-surface-var/)
   })
 
-  it('does not silence the Reply CONTRAST finding, which is a separate owner call', () => {
-    // `#/settings` light-theme audit still reports 4.46:1 on these buttons. That is deferred in the
-    // ledger; a target-size fix must not be mistaken for having addressed it.
+  it('does not silence the Reply CONTRAST finding, which is a separate design call', () => {
+    // `#/settings` light-theme audit still reports 4.46:1 on these buttons. That is deferred;
+    // a target-size fix must not be mistaken for having addressed it.
     const src = readFileSync(join(DIR, 'widgets', 'ActionCenter.tsx'), 'utf8')
     expect(src, 'the tone is untouched — only the hit box moved').toMatch(/<RowAction tone="primary"/)
   })

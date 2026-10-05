@@ -66,7 +66,7 @@ export interface DashboardLiveData {
   scheduleSuppressed: number
   status: DashboardStatus | null
   notifications: NotificationItem[]
-  /** Live system metrics (cpu/mem/net/disk/load) from /api/system — P27. Polled on
+  /** Live system metrics (cpu/mem/net/disk/load) from /api/system. Polled on
    *  the fast, visibility-gated cadence so the SystemHealth widget shows live rates. */
   system: SystemInfo | null
   /** The curated Discover tips for the dashboard section + hub, or an empty
@@ -215,7 +215,7 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   const loadLoops = useCallback(() => { api.uLoops().then((d) => { guard(setLoops)(d); guard(setLoopsErr)(null) }).catch((e) => guard(setLoopsErr)(e)).finally(() => markRead('loops')) }, [markRead])
   const loadTasks = useCallback(() => { api.readyTasks().then((d) => { guard(setTasks)(d); guard(setTasksErr)(null) }).catch((e) => guard(setTasksErr)(e)).finally(() => markRead('tasks')) }, [markRead])
   // 🔴 Keeps the archive split, which this call discarded. The backend has returned
-  // `did_ids`/`suppressed` since S132 and S163 typed them — but the widget still saw only
+  // `did_ids`/`suppressed` and the API types declared them — but the widget still saw only
   // `d.runs`, so a minutely trigger inside quiet hours filled all six visible rows with identical
   // "gate" entries and the ONE fire that ran (at index 7) never appeared. Measured. The user reads
   // that as "nothing has run", which is the exact failure the split exists to prevent.

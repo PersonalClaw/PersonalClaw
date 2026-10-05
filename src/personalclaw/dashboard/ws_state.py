@@ -305,7 +305,7 @@ class DashboardWebSocketState:
         """THE app-event gate: may THIS socket receive ``event_type`` about ``subject``?
 
         An owner/dashboard socket — no app identity in ``_ws_app`` — receives
-        everything, exactly as before. An app-scoped socket (sandbox P1) receives an
+        everything, exactly as before. An app-scoped socket (the app sandbox) receives an
         event ONLY if the app's manifest declares it in ``permissions.events``: deny by
         default, including when the manifest cannot be read at all. Server-side
         enforcement, because the SDK's client-side filter is advisory and the Store
@@ -449,7 +449,7 @@ class DashboardWebSocketState:
         """Send a typed message to all WS clients (not SSE). THE one WS producer.
 
         Owner/dashboard connections get every event. An app-scoped connection
-        (sandbox P1) gets an event ONLY if the app's manifest declares it in
+        (the app sandbox) gets an event ONLY if the app's manifest declares it in
         ``permissions.events`` — server-side enforcement so an untrusted app can't
         observe events it didn't ask for (the SDK's client-side filter is advisory).
 
@@ -499,7 +499,7 @@ class DashboardWebSocketState:
     def register_ws(self, ws: web.WebSocketResponse, *, app: str = "") -> None:
         """Register a new WebSocket client.
 
-        ``app`` scopes the connection to an installed app (sandbox P1): its events
+        ``app`` scopes the connection to an installed app (the app sandbox): its events
         are filtered to the app's declared ``permissions.events`` in broadcast_ws.
         Empty (the owner/dashboard) receives the full stream."""
         # Capture the gateway loop so off-loop broadcast_ws callers (MCP tool

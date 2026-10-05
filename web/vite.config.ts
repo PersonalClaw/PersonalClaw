@@ -17,9 +17,9 @@ const WEB_DIR = dirname(fileURLToPath(import.meta.url))
 const notices = thirdPartyNotices(WEB_DIR)
 
 // After Vite writes dist/, generate dist/ui-docs.json — the documentation-as-data
-// artifact for the ui/ kit that the gateway serves and UiDocsToolProvider reads
-// (Platform-Legibility §5). It fuses the hand-authored <Name>.doc.ts objects with
-// prop types derived from the TypeScript source; see scripts/buildUiDocs.mjs.
+// artifact for the ui/ kit that the gateway serves and UiDocsToolProvider reads.
+// It fuses the hand-authored <Name>.doc.ts objects with prop types derived from
+// the TypeScript source; see scripts/buildUiDocs.mjs.
 function uiDocsPlugin(): Plugin {
   return {
     name: 'ui-docs',
@@ -33,10 +33,10 @@ function uiDocsPlugin(): Plugin {
 }
 
 // After Vite writes dist/, bundle src/sw.ts to dist/sw.js — at the dist ROOT, so
-// the worker registers at scope '/' and can control the SPA (MOBILE-COMPANION
-// T3.1). A normal Vite entry would land in dist/assets/ under a hashed name and
-// be scoped to /assets/. Runs in closeBundle so dist/assets already exists: the
-// cache version is a hash of those filenames. See scripts/buildServiceWorker.mjs.
+// the worker registers at scope '/' and can control the SPA. A normal Vite entry
+// would land in dist/assets/ under a hashed name and be scoped to /assets/. Runs
+// in closeBundle so dist/assets already exists: the cache version is a hash of
+// those filenames. See scripts/buildServiceWorker.mjs.
 function serviceWorkerPlugin(): Plugin {
   return {
     name: 'service-worker',

@@ -3,8 +3,8 @@
 An app may declare a ``backend`` (``BackendConfig``: ``entryPoint`` / ``port`` /
 ``healthCheck`` / ``type``). When the app is enabled, the gateway launches that
 entry point as an isolated **subprocess** bound to a localhost port, and the REST
-layer reverse-proxies ``/apps/{name}/api/*`` to it (A4). This is the isolation
-model chosen in the plan over an in-process ASGI mount.
+layer reverse-proxies ``/apps/{name}/api/*`` to it. This is the isolation
+model chosen over an in-process ASGI mount.
 
 This module owns the process table: start (pick a free port, spawn, record),
 stop (terminate + reap), and lookup (the proxy asks "where is app X's backend?").
@@ -62,7 +62,7 @@ SKIP_ENV = "PERSONALCLAW_SKIP_APP_BACKENDS"
 
 
 def _sel_capability_grant(*, consumer: str, sharer: str) -> None:
-    """Audit one active APE-10 shared-storage read grant on the HMAC-chained SEL.
+    """Audit one active shared-storage read grant on the HMAC-chained SEL.
 
     Emitted at the moment the grant becomes REAL — when the sharer's data dir is
     mounted into a running consumer backend — mirroring how ``messaging._sel_message``
@@ -93,7 +93,7 @@ def _sel_capability_grant(*, consumer: str, sharer: str) -> None:
 
 
 def shared_storage_env(consumer: str) -> dict[str, str]:
-    """The read-only shared-storage env mounts a CONSUMER backend is granted (APE-10).
+    """The read-only shared-storage env mounts a CONSUMER backend is granted.
 
     For every INSTALLED app the consumer holds a double-declared, deny-by-default
     ``storageRead`` grant on (``permissions.can_read_shared_storage`` — consumer names
@@ -101,7 +101,7 @@ def shared_storage_env(consumer: str) -> dict[str, str]:
     ``PERSONALCLAW_APP_SHARED_DIR_<SHARER>`` → that app's ``app_data_dir``. An app with
     no grant gets ``{}`` — NO mount. Read-only is the contract: the path points at the
     sharer's live data dir but the SDK hands the consumer a read-only handle
-    (``sdk.util.shared_app_data_dir``) and writes stay broker-only (APE-9). Emits one
+    (``sdk.util.shared_app_data_dir``) and writes stay broker-only. Emits one
     ``capability_grant`` SEL per active grant."""
     from personalclaw.apps.manager import app_data_dir, list_apps, shared_dir_env_name
     from personalclaw.apps.permissions import checker_for
@@ -129,14 +129,14 @@ def build_backend_sandbox_spec(
     port: int,
     can_network: bool,
 ) -> "SandboxSpec":
-    """Map an app's declared permissions to a :class:`SandboxSpec` (EXECUTION-ISOLATION EI-4
-    §1.3(4)). Pure — no I/O, no spawn — so the mapping is unit-testable without a running tier.
+    """Map an app's declared permissions to a :class:`SandboxSpec`. Pure — no I/O, no
+    spawn — so the mapping is unit-testable without a running tier.
 
     * ``permissions.network`` → ``egress_tier``: a backend WITHOUT the network permission runs
       ``off`` (the tier isolates outbound where it can); WITH it, ``all``.
     * ``permissions.storage`` → ``allowed_write_paths``: the app's own data dir is the one host
       path it may write — and it is granted that dir ONLY when storage is permitted (the caller
-      passes ``data_dir=None`` when it is not, mirroring the P3 storage gate). Without storage the
+      passes ``data_dir=None`` when it is not, mirroring the storage gate). Without storage the
       backend gets no writable host path beyond the workspace boundary.
 
     ``expose_ports`` carries the backend's port so the tier maps it to the host (the gateway
@@ -292,7 +292,7 @@ class BackendSupervisor:
             # relative to __file__). Created up front so the first write works.
             # Gated by the app's declared ``storage`` permission — a backend without
             # it never receives the DATA_DIR, so it has no sanctioned place to
-            # persist (untrusted-app sandbox P3: the capability grants the path).
+            # persist (the capability grants the path).
             from personalclaw.apps.manager import app_data_dir
             from personalclaw.apps.permissions import checker_for
 
@@ -316,13 +316,13 @@ class BackendSupervisor:
                 )
                 return None
 
-            # The child env is an ALLOWLIST, not a copy of the gateway's (EI-12 D1).
+            # The child env is an ALLOWLIST, not a copy of the gateway's.
             # App backends are the LEAST trusted children in the tree — third-party code,
             # scanned at install, running for as long as the app is enabled — and
             # `dict(os.environ)` handed them every variable the gateway had grown to carry,
             # including the `.env` credentials `config/loader.py` seeds into `os.environ` so
             # "trusted children" inherit them. The variables below (PORT, APP_NAME, the
-            # proxy secret, the app's own DATA_DIR when held, plus any APE-10
+            # proxy secret, the app's own DATA_DIR when held, plus any shared-storage
             # read-only PERSONALCLAW_APP_SHARED_DIR_<SHARER> mounts) are the ones this
             # site COMPUTES; everything else arrives only if it is in
             # `CHILD_ENV_BASE_NAMES` or the operator declared it by name in
@@ -356,7 +356,7 @@ class BackendSupervisor:
                 # Storage not declared → don't hand the backend a data dir. The allowlist
                 # cannot inherit this name (it is not in the base), but an operator CAN
                 # declare it in `sandbox.env_passthrough`, which would otherwise re-open the
-                # P3 storage gate for every backend at once. The gate is enforced here, at
+                # storage gate for every backend at once. The gate is enforced here, at
                 # the point where the name would become a variable.
                 env.pop("PERSONALCLAW_APP_DATA_DIR", None)
             # Resource ceiling: an app backend is agent-influenced (third-party
@@ -364,13 +364,13 @@ class BackendSupervisor:
             # the ``tool`` profile. This runs synchronously off the watchdog daemon thread,
             # so it uses argv-prepend (spawn_shim_argv) rather than preexec_fn — a
             # preexec_fn here would fork the whole gateway from a non-loop thread while the
-            # loop holds locks (see backend_runtime hazard audit / §1.1). The shim sets the
+            # loop holds locks. The shim sets the
             # limit AFTER exec in the single-threaded child, so no fork-time lock hazard.
-            # EI-4 §1.3(4): a backend that declares a sandbox tier launches THROUGH that
+            # A backend that declares a sandbox tier launches THROUGH that
             # provider — the app's declared permissions mapped to the tier's confinement policy
             # (build_backend_sandbox_spec: network → egress_tier, storage → allowed_write_paths).
             # A NAMED tier that is unregistered or unavailable refuses to launch rather than
-            # falling back to an unconfined host process (failure-honesty §1.1): a container/VM
+            # falling back to an unconfined host process: a container/VM
             # backend that silently ran on the host would defeat the isolation it asked for. The
             # ceiling shim still wraps the resulting (client) argv exactly as the host path does.
             inner_cmd = list(cmd)

@@ -6,7 +6,7 @@ import { join } from 'node:path'
 //
 // Phone-width census (390×844), 16 surfaces, counting only controls that are visible, receive pointer
 // events, and have no `opacity:0` / `pointer-events:none` / `aria-hidden` / `inert` ancestor — the
-// filters earlier cycles paid for. The result is concentrated rather than spread:
+// filters earlier passes paid for. The result is concentrated rather than spread:
 //
 //   `DegradedChip`  **25×21 on 16 of 16 routes**   ← shell chrome: one component, every destination
 //   ToolsPage's "Discovered in other tools" disclosure  **244×18** (phone AND desktop)
@@ -31,17 +31,17 @@ import { join } from 'node:path'
 // 🪤 THE ONE REMAINING PROBE HIT IS A FALSE POSITIVE, AND IT IS WORTH KNOWING WHY. `#/loops` still
 // reports a 14×14 `input` — the Scratch checkbox. Its target is the natively-associated `<label>`, which
 // measures **63×24** and contains the input (`labelIsTarget: true`, verified in the DOM). A probe that
-// counts inputs rather than their labels will keep reporting it; the fix shipped in cycle ~139 and the
+// counts inputs rather than their labels will keep reporting it; the fix already shipped and the
 // code says so at the call site.
 //
-// 🟡 AND THE ONE REAL FAILURE THIS CYCLE COULD NOT FIX IS THE OWNER'S CALL. `#/loops` at 390px still has
+// 🟡 AND THE ONE REAL FAILURE THIS CHANGE COULD NOT FIX IS THE OWNER'S CALL. `#/loops` at 390px still has
 // `[serious] target-size` on the Granularity pill, and axe's reason is not size:
 //
 //     "Target has insufficient size because it is partially obscured
 //      (smallest space is 19px by 32px, should be at least 24px by 24px)"
 //
 // The pill is 101×32. It is the shell's floating corner cluster painting over it — the standing 390px
-// header-overlap ruling (`#/loops`, `#/loop`, `#/code`, `#/apps`): at 390px the shell corners reserve
+// header overlap (`#/loops`, `#/loop`, `#/code`, `#/apps`): at 390px the shell corners reserve
 // 68px left + 152px right, leaving the page header 170px for a row whose content measures 495px, so the
 // Mode pill (293→411) is off-screen entirely. That needs a decision about how the page header slot and
 // the shell corners share width, not a hit-area tweak.

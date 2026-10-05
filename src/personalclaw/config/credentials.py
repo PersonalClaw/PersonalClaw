@@ -3,11 +3,12 @@
 🔴 **WHY THIS IS ITS OWN MODULE.** It began as a section of ``config/loader.py``. That file
 sits at the top of ``scripts/generate_structural_baseline.py``'s ``SIZE_CEILING_LINES``
 watch band, with ~100 lines of headroom, and ``tests/test_structural_baseline.py`` names
-this exact scenario in its docstring: "adding one boolean toggle would red CI". SH-2 adds a
-boolean toggle (``security.credential_keychain``), a keychain delete and a ``.env`` removal
-path, so the cohesive section those belong to moved out to pay for them. Same reasoning and
-same shape as ``agents/native/decision_tool_defs.py``, extracted from ``builtin_tools.py``
-for the same rail. **There is no re-export shim in ``loader``** — importers were updated.
+this exact scenario in its docstring: "adding one boolean toggle would red CI". The keychain
+backend adds a boolean toggle (``security.credential_keychain``), a keychain delete and a
+``.env`` removal path, so the cohesive section those belong to moved out to pay for them.
+Same reasoning and same shape as ``agents/native/decision_tool_defs.py``, extracted from
+``builtin_tools.py`` for the same rail. **There is no re-export shim in ``loader``** —
+importers were updated.
 
 Two backends sit behind :func:`save_credential` / :func:`get_credential` /
 :func:`credential_names` / :func:`delete_credential` / ``AppConfig.load_credentials``. Callers
@@ -370,7 +371,7 @@ def requested_credential_backend() -> CredentialBackend:
        even when the config field is on, which is the recovery lever for a machine whose
        secret service has stopped answering.
     2. ``security.credential_keychain`` in ``config.json`` — the PERSISTED opt-in the
-       Settings toggle writes (SH-2). Without it the env var would have to be re-exported
+       Settings toggle writes. Without it the env var would have to be re-exported
        for every process, and the persisted request the migration acts on would have
        nowhere to live.
 
@@ -605,11 +606,11 @@ def _keychain_delete(key: str) -> bool:
     is the shape of a lost secret. Removing the name is therefore treated as the operation
     and the entry deletion as best-effort, never the other way round.
 
-    Two callers: SH-2's rollback, and :func:`delete_credential` — the public chokepoint the
-    secrets vault's ``DELETE /api/secrets`` needs (EI-10). Until that route existed there was
-    deliberately no public delete verb, because a deletion path with no consented caller is a
-    liability; the vault is that caller, and it goes through the chokepoint rather than reaching
-    in here.
+    Two callers: the credential migration's rollback, and :func:`delete_credential` — the
+    public chokepoint the secrets vault's ``DELETE /api/secrets`` needs. Until that route
+    existed there was deliberately no public delete verb, because a deletion path with no
+    consented caller is a liability; the vault is that caller, and it goes through the
+    chokepoint rather than reaching in here.
     """
     kr = _usable_keyring()
     if kr is None:
@@ -805,7 +806,7 @@ def _dotenv_credentials(home: Path | None = None) -> dict[str, str]:
 
 
 def save_credential(key: str, value: str) -> None:
-    """Persist one credential through the ACTIVE credential backend (C1).
+    """Persist one credential through the ACTIVE credential backend.
 
     Callers do not choose or learn the backend. With the keychain active the secret
     goes to the OS secret service; otherwise — and whenever a keychain write fails —

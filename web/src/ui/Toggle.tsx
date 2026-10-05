@@ -96,13 +96,13 @@ export function Toggle({
   // Reachable-but-unavailable only when there is a reason to announce; otherwise stay native.
   // 🪤 THE DIMMING HAS TO MOVE WITH THE SEMANTICS: `disabled:opacity-40` cannot match an
   // `aria-disabled` element, so a soft-off switch would look fully enabled while refusing to
-  // toggle. Both selectors are named below (cycle 111 hit this exact trap on `Button`).
+  // toggle. Both selectors are named below (`Button` hit this exact trap).
   const softOff = disabled && !!disabledReason
   // 🪤 `aria-describedby` OUTRANKS `title`, so claiming the hint unconditionally would DELETE the
   // soft-off reason from what a screen reader announces. A soft-off switch carries its reason in
-  // `title` — the kit's convention, ruled cycle 37 and re-confirmed on `Button`, which measured an
-  // sr-only describedby target being concatenated into the accessible NAME instead. `title` is the
-  // only carrier here, and per accname a resolved `aria-describedby` wins outright.
+  // `title` — the kit's convention, confirmed on `Button`, which measured an sr-only describedby
+  // target being concatenated into the accessible NAME instead. `title` is the only carrier here,
+  // and per accname a resolved `aria-describedby` wins outright.
   //
   // 8 call sites pass a `disabledReason` to a switch (the "Open at login" is the 8th,
   // and it is soft-off only where Electron implements no login item — so the 5 below is unchanged:

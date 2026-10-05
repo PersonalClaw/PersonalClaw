@@ -103,7 +103,7 @@ class WorkflowWatchdog:
         #: Consecutive poll failures. A persistently broken poll should be loud in the
         #: log rather than silently retrying forever.
         self._consec_errors = 0
-        #: Coalesced delivery (WF2-R11 batch-5). ONE coalescer for the whole supervisor, so
+        #: Coalesced delivery. ONE coalescer for the whole supervisor, so
         #: its windows are keyed by observer across every run rather than one debounce state
         #: per run — a browser watching two runs should not get two independent timers
         #: fighting over the same connection.
@@ -275,7 +275,7 @@ class WorkflowWatchdog:
         user-facing moments (needs_input, failure) go through `notify` separately.
 
         Every event goes through the coalescer, which batches the high-frequency per-node
-        chatter and passes everything else straight through (WF2-R11 batch-5). A run's last
+        chatter and passes everything else straight through. A run's last
         events are flushed on termination by `_flush_run`, so nothing is stranded in a
         window whose timer outlives the run.
         """
@@ -323,7 +323,7 @@ class WorkflowWatchdog:
     def _publish_to_equivalent_loop_hub(
         self, state: Any, key: str, event: str, payload: Any
     ) -> None:
-        """Mirror a run event onto the EQUIVALENT loop hub, so a loop cockpit adopts it live (R10c).
+        """Mirror a run event onto the EQUIVALENT loop hub, so a loop cockpit adopts it live.
 
         This is what `loop_aliases.keys_equivalent` exists for. During coexistence a legacy loop
         can run as a template: the cockpit subscribes on `loop:<id>` (`loop/watchdog.registry_key`)
@@ -557,7 +557,7 @@ class WorkflowWatchdog:
         """Decide the fate of every crash-survivor ISOLATED run, ONCE, before adoption.
 
         A RUNNING run with no live controller on the first poll is one this process never
-        drove — a gateway killed mid-run. §5.2's rule turns on the SUBSTRATE: an isolated
+        drove — a gateway killed mid-run. The rule turns on the SUBSTRATE: an isolated
         run (worktree/container) whose substrate survived on disk has recoverable work →
         SUSPENDED (PAUSED), which the next poll's adoption reattaches; one whose substrate is
         gone is honestly aborted → CANCELLED. Marking every stale isolated run aborted is the
@@ -568,18 +568,18 @@ class WorkflowWatchdog:
         process that died, but its journal is on disk, and the existing adoption path
         resumes it from cache hits (or reaps it if every node is already terminal) — which
         IS the truthful-across-a-kill behaviour for the inline case. Cancelling them here
-        would discard journal-backed recoverable work and pre-empt that path. This is a
-        DEVIATION from the plan's literal Step 4 (which swept inline → CANCELLED); the §5.2
+        would discard journal-backed recoverable work and pre-empt that path. That is
+        deliberate (sweeping inline → CANCELLED is the tempting alternative); the
         intent — never abort a run whose substrate survived — is preserved, and the inline
         path stays owned by adoption. Runs with a live controller are never swept (this
         runs before the first `_adopt`, so it only sees controller-less runs). The status
         write happens BEFORE adoption so a swept run is not relaunched. Returns the ids it
         decided, so the adoption loop on this same poll skips them.
 
-        `PP-16` ("one adoption/reaping path") made the *mechanics* of this shared with the loop
-        watchdog's own boot sweep: :func:`concurrency.boot_sweep` owns the crash-survivor
+        The *mechanics* of this are shared with the loop watchdog's own boot sweep (one
+        adoption/reaping path): :func:`concurrency.boot_sweep` owns the crash-survivor
         partition, the per-row failure isolation, the count log and the decided-id contract,
-        and the run-specific §5.2 substrate rule stays here in :meth:`_sweep_one`. One
+        and the run-specific substrate rule stays here in :meth:`_sweep_one`. One
         consequence is a real improvement rather than a relocation: a row whose decision raises
         no longer aborts the whole sweep — it is logged and the remaining survivors are still
         decided.
@@ -603,7 +603,7 @@ class WorkflowWatchdog:
         )
 
     async def _sweep_one(self, run: WorkflowRun) -> bool:
-        """§5.2's substrate rule for ONE crash-survivor run. Returns whether a fate was
+        """The substrate rule for ONE crash-survivor run. Returns whether a fate was
         written — an inline run, or one whose substrate says nothing changed, is deliberately
         left to adoption and reports ``False`` so this poll still drives it."""
         substrate = self._substrate_for(run)
@@ -631,9 +631,9 @@ class WorkflowWatchdog:
         that points at a gone worktree is worse than an abort); an inline run (no recorded
         workspace) is reported not-isolated so the sweep leaves it to adoption.
 
-        WF2WOR-4: the answer now comes from `worktrees.substrate_for(inspect_worktree(...))`,
-        which is what S52 built it FOR — "the substrate is built HERE so S46's boot sweep has one
-        source of truth". Before this, the sweep did its own `Path(wt).is_dir()`, so two places
+        The answer comes from `worktrees.substrate_for(inspect_worktree(...))`, which exists
+        for exactly this — the substrate is built THERE so the boot sweep has one
+        source of truth. Before this, the sweep did its own `Path(wt).is_dir()`, so two places
         computed the same decision and the disagreement would show up as a run aborted despite
         having recoverable work. `provisioning.inspect_run` additionally records the DIRTY state
         and the changed files, which is what makes the suspended run's Resume affordance able to
@@ -642,7 +642,7 @@ class WorkflowWatchdog:
         Falls back to the cheap existence check if the inspection raises: a boot sweep must
         decide, and an unanswerable git call is not a reason to leave a stale `running` row.
         """
-        # EI-6 §5.1 reattach-not-reap PRE-STEP. It runs FIRST, before any path check, because
+        # The durable reattach-not-reap PRE-STEP. It runs FIRST, before any path check, because
         # it is the only question whose answer can be "the worker is still executing right
         # now" — and a run with a live worker must never be decided by looking at a directory.
         # Ordering matters in one direction only: a live durable worker outranks every other
@@ -671,7 +671,7 @@ class WorkflowWatchdog:
 
     @staticmethod
     def _durable_substrate(run: WorkflowRun) -> containers.Substrate | None:
-        """A still-alive durable tmux worker for *run*, or None. The §5.1 boot pre-step.
+        """A still-alive durable tmux worker for *run*, or None. The durable boot pre-step.
 
         Two ways a worker is recognised, in order of strength:
 
@@ -844,8 +844,8 @@ async def prune_runs(workflow_name: str, *, keep: int = 100) -> int:
     succeeds — the reverse order would orphan megabytes of journal with no row left to
     find them by.
 
-    ASYNC because retention is the OTHER deletion path teardown has to cover (§4.1: "teardown
-    ties to run retention expiry"). Wiring only the explicit delete would leave every
+    ASYNC because retention is the OTHER deletion path teardown has to cover (teardown
+    ties to run retention expiry). Wiring only the explicit delete would leave every
     retention-expired run's services running — and retention is the path that fires without
     anyone watching, so it is the one where a leak accumulates silently. The teardown goes
     through `service.teardown_workspace`, the SAME performer the explicit delete uses, gated by

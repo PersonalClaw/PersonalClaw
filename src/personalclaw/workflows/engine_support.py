@@ -162,7 +162,7 @@ def resolve_axis_model(use_case: str) -> str:
 def _judge_sample_count(cfg: dict[str, Any]) -> int:
     """How many independent samples this judge gate takes. Always ≥ 1.
 
-    Absent/invalid → 1, which is the pre-S145 behaviour: a gate that never asked for sampling must
+    Absent/invalid → 1, the behaviour from before sampling: a gate that never asked for it must
     not start paying for it. Clamped at `MAX_JUDGE_SAMPLES` — see that constant for why a typo
     here is expensive rather than merely wrong.
     """

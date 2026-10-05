@@ -1,6 +1,5 @@
 /**
- * The environment the shell hands the gateway it spawns (DESKTOP-CAPABILITIES `DC-1` T1.3,
- * DISTRIBUTION contract C1).
+ * The environment the shell hands the gateway it spawns.
  *
  * 🔑 THE SHELL MUST DECLARE THE INSTALL KIND, because nothing else can work it out.
  * `self_update.detect_install_kind()` resolves `PERSONALCLAW_INSTALL_KIND` first, then probes

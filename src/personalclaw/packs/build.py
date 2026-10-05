@@ -1,4 +1,4 @@
-"""Pack export core — dependency-closure walker + two-layer redaction (AGENT-PACKS §2.1-2.2).
+"""Pack export core — dependency-closure walker + two-layer redaction.
 
 ``build_pack(seeds)`` writes a ``schema_version=1`` ``.pclaw`` ZIP; ``preview_pack(seeds)``
 returns the same plan WITHOUT writing a byte, so the export surface can render a
@@ -55,11 +55,11 @@ def config_dir() -> Path:
 logger = logging.getLogger(__name__)
 
 #: The pack format version. Integer, present from the first export — a manifest with no
-#: version is one a later reader has to guess the shape of (.ovsvoice rule).
+#: version is one a later reader has to guess the shape of.
 SCHEMA_VERSION = 1
 
-#: The component kinds Session 1 walks. Apps/triggers/connectors are later AP changes; a seed
-#: naming an unknown kind resolves to nothing and becomes a requirements row.
+#: The component kinds the exporter walks; a seed naming an unknown kind resolves to nothing
+#: and becomes a requirements row.
 _KINDS = ("skill", "template", "prompt", "agent")
 
 #: A component id: nested-skill slugs use ``/`` (``utils/tiny-url``), so ``/`` is allowed,
@@ -97,15 +97,15 @@ class PackComponent:
 
 @dataclass
 class Requirement:
-    """A named thing the pack needs but could not include (§2.1).
+    """A named thing the pack needs but could not include.
 
     An unresolvable edge lands here rather than being silently dropped — a pack that
     forgot what it depends on produces an import that fails on first run for a reason
     nobody can name.
     """
 
-    # skill|template|agent|prompt for an unresolved component; later AP changes add
-    # credential|connector|app once those edges exist.
+    # skill|template|agent|prompt for an unresolved component (credential|connector|app
+    # once those edges exist).
     kind: str
     id: str
     description: str
@@ -146,7 +146,7 @@ class BlockedComponent:
 
 @dataclass
 class PackPreview:
-    """The full export plan, rendered BEFORE any write (§2.1 look-before-write).
+    """The full export plan, rendered BEFORE any write (look-before-write).
 
     ``payloads`` maps each shipping component's pack-relative path to its exact bytes, so
     :func:`build_pack` writes precisely what the preview showed — the tree and the archive
@@ -265,8 +265,7 @@ def _resolve_skill(home: Path, cid: str) -> _Resolved | None:
     text = _read_denied_safe(home, f"skills/{cid}/SKILL.md")
     if text is None:
         return None
-    # SKILL.md MCP-tool mentions are advisory — a later AP change demotes missing ones
-    # to connector requirements; in Session 1 a skill is a closure LEAF.
+    # SKILL.md MCP-tool mentions are advisory, so a skill is a closure LEAF.
     return _Resolved("skill", cid, f"skills/{cid}/SKILL.md", text.encode("utf-8"), [])
 
 
@@ -281,7 +280,7 @@ def _resolve_template(home: Path, cid: str) -> _Resolved | None:
         wf = WorkflowDef.from_dict(json.loads(text))
         for node in _iter_nodes(wf.root):
             cfg = node.config or {}
-            # template → agent slug: a stage node names its subagent persona (WORK-R16).
+            # template → agent slug: a stage node names its subagent persona.
             agent = str(cfg.get("agent", "") or "").strip()
             if node.kind == NodeKind.STAGE and agent:
                 edges.append(f"agent:{agent}")
@@ -360,7 +359,7 @@ def _scan_component(pack_bytes: bytes) -> tuple[str, tuple[str, ...]]:
 
     Returns ``(reason, categories)`` where a non-empty reason means BLOCK. Both detectors
     fail closed and are secret-specific (a pack may legitimately mention an email, so PII
-    alone does not block — the contract is "credential-bearing", §2.2):
+    alone does not block — the contract is "credential-bearing"):
 
     * ``security.redact`` — if redacting the text CHANGES it, a credential/exfil-URL pattern
       matched. That is the same redactor every output path already uses.
@@ -485,7 +484,7 @@ def preview_pack(
     name: str = "pack",
     version: str = "0.0.0",
 ) -> PackPreview:
-    """Compute the full export plan WITHOUT writing anything (§2.1 look-before-write).
+    """Compute the full export plan WITHOUT writing anything (look-before-write).
 
     Drives both redaction layers exactly as :func:`build_pack` will, so the tree a user
     sees is the pack they would get — including the requirements it demoted and any

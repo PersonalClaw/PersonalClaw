@@ -8,7 +8,7 @@ import type { InboxItem, Loop, NotificationItem, TaskItem } from '../../lib/api'
 
 // ── `#/companion`'s loops / tasks / inbox / recent sections ────────────────────────────────
 //
-// The change says these must work "per the original S2 done-whens", which are two sentences:
+// The contract for these sections is two sentences:
 // *renders on a phone viewport; URL doctrine holds* and *every action round-trips
 // against a dev gateway; optimistic UI reverts on failure*. So every test here drives
 // a control and asserts the CALL that left the browser, plus the two failure behaviours that
@@ -178,7 +178,7 @@ describe('the Running section — pause / resume / stop / nudge via loop_routes'
   })
 
   it('stops a running loop through loop_routes, and it leaves the steerable list', async () => {
-    // The third loop_routes action the acceptance criterion names (pause / nudge / STOP). `stopped` is
+    // The third loop_routes action the contract names (pause / nudge / STOP). `stopped` is
     // not a STEERABLE status, so the reconciling refetch drops the row off the phone — a
     // stopped loop is not a decision anyone is waiting on.
     fakeLoops([loop()])
@@ -328,7 +328,7 @@ describe('the Tasks section — state transitions', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe('the Inbox section — resolve through plan 42\'s own lifecycle', () => {
+describe('the Inbox section — resolve through the inbox\'s own lifecycle', () => {
   it('resolves an item to HANDLED and takes it off the phone', async () => {
     fakeInbox([item()])
     render(<InboxSection />)
@@ -466,7 +466,7 @@ describe('the companion page as one column', () => {
     })
     // Order IS the priority order: a blocked run is the only row another person waits on.
     expect(headings).toEqual(['Approvals', 'Running', 'Tasks', 'Inbox', 'Recent'])
-    // The stub list `MC-3` shipped is DELETED, not hidden behind a flag.
+    // The stub list that shipped first is DELETED, not hidden behind a flag.
     expect(screen.queryByText('Not on the phone yet')).toBeNull()
   })
 

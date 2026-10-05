@@ -1,8 +1,8 @@
 """Skill bodies allocate on the one prompt budget.
 
-The clause this file exists for, verbatim: *"A test drives a deliberately oversized skill
-against a small budget and asserts the conversation survives with the skill reduced — not
-that the allocator was called."* So the anchor test below drives the REAL
+This file exists to drive a deliberately oversized skill
+against a small budget and assert the conversation survives with the skill reduced — not
+that the allocator was called. So the anchor test below drives the REAL
 ``ContextBuilder.build_message`` path with a 42,000-token skill and asserts properties of
 the assembled prompt: the user's request is in it, the skill's steps are not, the skill's
 declared summary is, and the total is small. Nothing here asserts that ``allocate`` was
@@ -245,7 +245,7 @@ class TestTheDecisionIsObservablePerTurn:
         assert [r["name"] for r in rows] == ["monster"]
         assert rows[0]["state"] == "reduced"
         assert rows[0]["cap_tokens"] == CONTEXT_TIERS["standard"]
-        # And the same fact is on the notice channel CE2-8 already broadcasts.
+        # And the same fact is on the existing notice channel.
         assert any("monster" in n for n in assembled.notices)
 
 
@@ -520,7 +520,7 @@ class TestAnAdmittedSkillIsUnchanged:
         """Priority, not append order, decides who gets the room.
 
         Two identical bodies, one forced and one surfaced, and only room for one: the
-        confirmed skill wins. Before CE2-9 the winner was whichever `parts.add` ran first.
+        confirmed skill wins. Before this fix the winner was whichever `parts.add` ran first.
 
         MEASURED while writing this: passing them in this order originally gave the room to
         `guessed`, because `fuse` stamps `source_rank` from list position and salience

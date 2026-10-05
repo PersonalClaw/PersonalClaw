@@ -2,11 +2,11 @@ import { useMemo } from 'react'
 import { QrCode, XCircle } from 'lucide-react'
 import { QUIET_ZONE, encodeQr, qrPath } from '../../lib/qr'
 
-/** The scannable form of a pairing payload (rendering COMPANION-APPS §C2).
+/** The scannable form of a pairing payload.
  *
  *  The QR is a RENDERING of `pair/start`'s `pairing_url` and nothing else — the code rides inside
  *  that URL, which is what makes one scan enough. Nothing is composed here: composing the URL in
- *  the browser is the defect §C2 (a) exists to prevent (the dashboard can be open on loopback
+ *  the browser is the defect this exists to prevent (the dashboard can be open on loopback
  *  while the scanning phone needs the LAN address), so this takes the gateway's string verbatim.
  *
  *  Three states are refusals, and each says which one it is, because the failure mode of a

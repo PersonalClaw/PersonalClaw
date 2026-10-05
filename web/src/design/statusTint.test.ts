@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { join } from 'node:path'
 import { filesUnder, readSource } from '../test/sourceTree'
 
-// ── StatusPill adoption ratchet (audit AB-2) ────────────────────────────────
+// ── StatusPill adoption ratchet ────────────────────────────────
 // The canonical tinted status pill is ui/StatusPill.tsx: one sanctioned tint
 // strength (16%, inside the 18% ink-contrast budget tokens.css documents),
 // one closed tone vocabulary. Pages had hand-rolled the tint ~90 times as

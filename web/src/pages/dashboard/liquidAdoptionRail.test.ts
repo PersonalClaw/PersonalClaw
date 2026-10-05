@@ -25,14 +25,13 @@ import { filesUnder, readSource } from '../../test/sourceTree'
 //     drawn, not mounted, so it structurally cannot host an SVG child. Giving it a liquid state
 //     would mean porting the silhouette into `worldScene.ts`, which is a different change.
 //   · `loops/LoopCockpitPage.tsx` — a REAL candidate, not an absent one: it exists (1.3k lines)
-//     and it has the phase/running state a composure morph depicts. The plan names both
-//     consumers ("loop cockpits, ambient surfaces (20 — liquid state transitions)",
-//     FLUID-MOTION.md §"Integration points"). It is left for a later pass on purpose — this
-//     change's clause is that the family reads as one system with a liquid transition SHIPPED,
+//     and it has the phase/running state a composure morph depicts. Loop cockpits and ambient
+//     surfaces are both natural consumers. It is left for a later pass on purpose — this
+//     change's requirement is that the family reads as one system with a liquid transition SHIPPED,
 //     and one honest adoption settles that. A second one is taste work, not coherence work.
 //
-// The plan's own C2 sketch is stale on two counts, verified against `ui/motion/LiquidShape.tsx`
-// rather than trusted: `intensity={expr(1)}` (FLUID-MOTION.md:51) would scale the amplitude
+// The obvious call-site sketch is wrong on two counts, verified against `ui/motion/LiquidShape.tsx`
+// rather than trusted: `intensity={expr(1)}` would scale the amplitude
 // TWICE, because the primitive applies `expr()` to `intensity` itself, and `from="circle"`
 // contradicts the primitive's own documented pairing for a load ("loading→loaded is
 // blob→squircle rather than an arbitrary pair"). Both are asserted the correct way below.
@@ -115,7 +114,7 @@ describe('the liquid state transition is adopted in the product', () => {
     expect(src, `${TILES} must render <LiquidShape>, not merely import it`)
       .toMatch(/<LiquidShape\b/)
     // And it must not reach past the primitive into the vocabulary: a surface that hands its own
-    // spring to a family member is the fifth dialect change FM-4 exists to delete.
+    // spring to a family member is the fifth dialect the shared family timing exists to delete.
     expect(src, `${TILES} must not compose its own family timing`)
       .not.toMatch(/\b(familySpring|familyTween|MORPH_FAMILY)\b/)
   })
@@ -169,7 +168,7 @@ describe('the liquid state transition is adopted in the product', () => {
     // The primitive scales the amplitude through `expr()` itself, so the call site passes a PLAIN
     // number. Pre-scaling here applies the knob twice — an extra factor of `0.35 + 0.65*e`, so 13%
     // low at the default expressiveness and 65% low at 0. Nearly invisible where anyone measures
-    // it, worst for whoever dialled the knob DOWN. The plan's C2 sketch has this backwards.
+    // it, worst for whoever dialled the knob DOWN. The obvious sketch has this backwards.
     const intensity = tag!.match(/\bintensity=\{\s*([^}]+?)\s*\}/)?.[1]
     expect(intensity, 'intensity must be passed explicitly at this call site').toBeTruthy()
     expect(intensity, 'intensity must not be pre-scaled — the primitive applies expr() itself')

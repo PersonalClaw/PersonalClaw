@@ -224,9 +224,9 @@ class TestSurfacingSuppression:
     """Suppression gating a real consumer.
 
     The original gated consumer (`workflows.surfacing.eligible_workflows`)
-    was deleted in WORKFLOWS-V2 Phase 1, leaving `suppressed_producers()` inert — read
-    only by the Settings display and the retire-proposal path, withholding nothing. FS-6
-    re-adds a LIVE consumer: turn-time **skill surfacing** (`SkillsLoader.get_surfaced_
+    was deleted, leaving `suppressed_producers()` inert — read
+    only by the Settings display and the retire-proposal path, withholding nothing. It now
+    has a LIVE consumer again: turn-time **skill surfacing** (`SkillsLoader.get_surfaced_
     skills` → `skills.surfacing.surface_skills`), the one turn-time surfacing gate that
     actually runs (the workflow suggestion path is itself inert). A skill whose judgments
     persistently draw 👎 — identity `("skill_synthesis", <key>)` — falls below

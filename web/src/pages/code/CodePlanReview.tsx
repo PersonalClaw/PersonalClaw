@@ -167,9 +167,9 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
     setLoadErr(null)
     api.uLoop(draft.projectId).then(paint).catch(setLoadErr)
     api.skills().then(setInstalledSkills).catch(() => {})
-    // No workflow catalog until WORKFLOWS-V2 Slice 0 lands the def store. The
+    // No workflow catalog is loaded here. The
     // picker below is length-guarded, so an empty list renders no section; the
-    // persisted `workflow_ids` field is left intact for the v2 defs to fill.
+    // persisted `workflow_ids` field is left intact for the workflow defs to fill.
     api.uLoopPlanSession(draft.projectId).then((s) => {
       if (s) setArtifacts(s.steps.filter((st) => st.kind !== 'decomposition' && st.artifact && Object.keys(st.artifact).length > 0))
     }).catch(() => {})
@@ -291,7 +291,7 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
                   <span className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-var capitalize">{String(kc(project).project_kind ?? '')}</span>
                   {project.workspace_dir && <span className="rounded-pill bg-surface-high px-2 py-0.5 font-mono text-on-surface-var" title={project.workspace_dir}>{project.workspace_dir.split('/').slice(-2).join('/')}</span>}
                   {/* build + test commands the supervisor will independently gate on
-                      (C50/C51) — show them at review so the launch decision is informed. */}
+                      — show them at review so the launch decision is informed. */}
                   {!!kc(project).verify_command && <span className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-var">build: <code className="text-on-surface">{String(kc(project).verify_command)}</code></span>}
                   {!!kc(project).test_command && <span className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-var">tests: <code className="text-on-surface">{String(kc(project).test_command)}</code></span>}
                 </div>
@@ -493,8 +493,7 @@ function PlanCapabilities({ skills, workflows, skillIds, workflowIds, onToggleSk
               checked={skillIds.has(s.key)} suggested={suggested.has(s.key)}
               onToggle={() => onToggleSkill(s.key)} onPeek={() => setPeek({ kind: 'skill', skill: s })} icon={<Sparkle size={14} />} />
           ))}
-          {/* The workflow rows stood here — removed with the old feature
-              (WORKFLOWS-V2 Phase 1). Slice 7 restores a v2 def picker. */}
+          {/* The workflow rows stood here — removed with the old feature. */}
         </div>
       )}
       {/* Planner-suggested marketplace skills not yet installed — install in place. */}
@@ -568,7 +567,7 @@ function PlanArtifacts({ steps }: { steps: PlanStep[] }) {
   )
 }
 
-// P6 per-stage quality gate editor. metric_pass (0-5) is the bar the supervisor's
+// Per-stage quality gate editor. metric_pass (0-5) is the bar the supervisor's
 // third-party judge must clear for the stage to advance; metric_hold is the marginal
 // floor below which a structurally-passing cycle still HOLDs to refine. Opt-in: when
 // off, the stage advances on its structural exit criteria alone (metric_pass undefined).
@@ -694,7 +693,7 @@ function StageCard({ index, count, stage, onPatch, onRemove, onMove }: {
               placeholder="Add a concrete, checkable condition…"
               data-type="body-s" className="rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary placeholder:text-on-surface-low" />
           </div>
-          {/* P6 quality gate — the per-stage metric bar (metric_pass/metric_hold). The
+          {/* Quality gate — the per-stage metric bar (metric_pass/metric_hold). The
               exit criteria are the structural gate (met/not-met); the quality bar is the
               graded gate on TOP of it: even a structurally-passing cycle HOLDs to refine
               if the supervisor's judge scores it below `pass`. Opt-in per stage; planner

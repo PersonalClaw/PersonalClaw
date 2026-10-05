@@ -119,7 +119,7 @@ async def _unchanged(cfg_file, section: str, request_fn):
     A SNAPSHOT, not an absence check. Originally because `AppConfig.load()` wrote the whole
     normalised config back (22 KB from `{}`) the moment any handler read config, so "the key
     is not in the file" could never be true and an absence check would have been measuring the
-    loader rather than the write. PHF-15 made `load()` a pure read, but the snapshot stays: it
+    loader rather than the write. `load()` is a pure read now, but the snapshot stays: it
     is the shape that states the actual property ("this request changed nothing here")
     regardless of what else happens to be materialised on disk.
     """
@@ -408,7 +408,7 @@ def test_the_cli_cannot_write_past_the_bounds_the_api_enforces(cfg_file):
     materialises ``agent.max_subagents`` on disk unless a write puts it there. (This test used
     to read the key back and compare it to the default, which only worked because
     ``AppConfig.load()`` rewrote the whole normalised config as a migration side effect —
-    PHF-15 removed that, so the key is legitimately absent when the write is refused.)
+    That is gone, so the key is legitimately absent when the write is refused.)
     """
     before = json.dumps(_section(cfg_file, "agent"), sort_keys=True)
     with pytest.raises(SystemExit) as exc:

@@ -113,7 +113,7 @@ def test_not_found_passthrough(gateway) -> None:
 
 
 def test_the_immediate_fire_tool_is_registered() -> None:
-    """`automation_run` is `schedule_trigger`'s successor (S109 retired the alias). Same shape: an
+    """`automation_run` is `schedule_trigger`'s successor (the alias is retired). Same shape: an
     MCP process cannot own the LLM turn, so an immediate run posts to the gateway's HTTP `/run`."""
     from personalclaw.mcp_automation import _list_tools
 

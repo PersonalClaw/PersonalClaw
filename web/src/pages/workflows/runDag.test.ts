@@ -16,7 +16,7 @@ import { buildTree } from './nodeTree'
  *  The ITERATION forms carry no bracket at all — `<path>.body#<i>` for a foreach item and
  *  `<path>.body@<n>` for a while iteration (`workflows/tick.py`). Every path in this file is one
  *  the engine actually emits; the fictional `body[n]` this suite used to test with is what let
- *  issue #567 sit here for 85 cycles.
+ *  issue #567 sit here undetected.
  */
 
 const node = (instance_path: string, state = 'done'): WorkflowNodeState => ({

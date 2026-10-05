@@ -1,4 +1,4 @@
-"""Memory ↔ markdown vault (mem-fs-mirror).
+"""Memory ↔ markdown vault.
 
 A projection of the memory store into an Obsidian-compatible markdown vault under
 ``~/.personalclaw/memory-vault/`` so a human can browse memory as a linked
@@ -344,8 +344,8 @@ def _record_title(rec: "MemoryRecord") -> str:
 def render_record(rec: "MemoryRecord", *, entities: "list[Entity] | None" = None) -> RenderedNote:
     """Render one record to a markdown note. Pure — no I/O, deterministic.
 
-    ``entities`` are the entities this record links to **according to ``mem_links``**
-    (§5.1). They are passed in rather than looked up here so rendering stays pure and,
+    ``entities`` are the entities this record links to **according to ``mem_links``**.
+    They are passed in rather than looked up here so rendering stays pure and,
     more importantly, so the only way an ``[[entity]]`` link can appear on a page is
     for the graph to hold that edge. Scraping the body for capitalized words would
     invent links the graph does not have, and the backlink-symmetry lint would then be
@@ -436,7 +436,7 @@ def render_record(rec: "MemoryRecord", *, entities: "list[Entity] | None" = None
         parts.append("")
         parts.extend(generated)
 
-    # NOTE: no separate `last_updated` key. §5.1 lists one, but `_FM_ORDER` already
+    # NOTE: no separate `last_updated` key: `_FM_ORDER` already
     # emits the record's own `updated_at`, which IS the store version this page was
     # projected from — the value the two-way pass compares against to notice a
     # concurrent store write. Two frontmatter keys for one fact would drift.
@@ -492,7 +492,7 @@ def render_session_hub(conversation_id: str, members: list[tuple[str, str]]) -> 
     🔴 Every episodic page has emitted ``**Session:** [[session-<id>]]`` since the
     mirror shipped, and **no such page was ever written**. Obsidian tolerates that (an
     unresolved link is still a graph node), which is why it went unnoticed — but the
-    §5.3 broken-link lint measures the vault against itself, and a projection that
+    broken-link lint measures the vault against itself, and a projection that
     links pages it does not create makes that check fire on the vault's own output.
     Generating the hub is the honest fix: the link resolves, the lint means what it
     says, and the session actually becomes browsable.
@@ -647,7 +647,7 @@ def timeline_lines(body: str) -> list[str]:
     """The evidence lines already on an entity page, in the order they appear.
 
     Pulled out verbatim so the next render can carry them through unchanged. This is
-    the append-only half of §5.1's "compiled truth + append-only timeline": the
+    the append-only half of "compiled truth + append-only timeline": the
     compiled section is rewritten every sync, the history below it never is.
     """
     out: list[str] = []
@@ -1125,7 +1125,7 @@ class MemoryVault:
           the hash must not cover the frontmatter the sync itself rewrites);
         * **different** → a human edited it. If the page parses confidently, the edit
           goes through ``MemoryService.apply_vault_edit`` — the normal write path, so
-          the same key validation, the same S5 injection scan, the same reversible
+          the same key validation, the same injection scan, the same reversible
           ``memory_events`` row with ``source: vault_edit``;
         * **different but not confidently parseable** → the page is left EXACTLY as the
           human wrote it, stamped ``sync_conflict: <reason>`` in frontmatter, and
@@ -1185,7 +1185,7 @@ class MemoryVault:
             return (False, "cannot locate the edited value (H1 heading missing?)")
         if not value.strip():
             return (False, "edited value is empty — delete the page to propose removal")
-        # A concurrent store write is not a refusal: §5.2 makes the human authoritative.
+        # A concurrent store write is not a refusal: the human is authoritative.
         # It IS worth telling them about, and the previous value stays recoverable
         # through the `memory_events` row this write logs (`undo_event` restores it).
         stale = False
@@ -1508,7 +1508,7 @@ def extract_edited_value(body: str, *, stop_at_headings: bool = True) -> str | N
 
     ``stop_at_headings`` also ends the region at the first ``## `` heading. That is right
     for a MEMORY record page, whose editable value is a sentence and whose ``##``
-    sections are all machine-owned, and it is WRONG for KL-20's knowledge pages, whose
+    sections are all machine-owned, and it is WRONG for knowledge pages, whose
     editable region is a whole document that legitimately contains its own ``##``
     headings — left on, absorbing an edited article would silently truncate it at its
     first subheading and write the truncation back to the store. Every page this module
@@ -1686,7 +1686,7 @@ def mirror_after_consolidation(service: MemoryService) -> asyncio.Task[dict] | N
 
     Wired into ``ConversationManager.consolidate_session``; never raises so a
     mirror hiccup can't break session sealing. In ``two_way`` this is also the
-    on-cadence half of §5.2: edits made in the vault between sessions are absorbed
+    on-cadence half of the edit-back: edits made in the vault between sessions are absorbed
     when the next session seals, with no watcher and no daemon.
 
     The global memory's vault then sweeps ``raw/`` (:meth:`MemoryVault.sweep_raw`), as a task on

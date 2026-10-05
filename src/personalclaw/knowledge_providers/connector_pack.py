@@ -211,7 +211,7 @@ def render_fetch(
 
 
 class ConnectorPackProvider(KnowledgeSourceProvider):
-    """The poll-capable provider a connector pack registers (§7.1).
+    """The poll-capable provider a connector pack registers.
 
     Core code driving a pack's declarations — which is the point. ``fetch_fn`` and ``parse_fn``
     are the two injectable seams, and they are the ONLY ways bytes enter or code runs: tier 1
@@ -370,7 +370,7 @@ class ConnectorPackProvider(KnowledgeSourceProvider):
     async def poll(
         self, source_id: str, cursor: str = "", *, policy: Any = None
     ) -> SourcePollResult:
-        """One engine-mediated fetch + one fenced parse. Never raises to the engine (§1.1)."""
+        """One engine-mediated fetch + one fenced parse. Never raises to the engine."""
         source = self.store.get_source(source_id)
         if source is None:
             return SourcePollResult(error=f"source {source_id} no longer exists")
@@ -443,7 +443,7 @@ class ConnectorPackProvider(KnowledgeSourceProvider):
 
 
 def connector_pack_provider(app_ref: str | Path, config: dict | None = None, **kwargs: Any) -> Any:
-    """The manifest factory a connector pack's ``provider.py`` calls (§7.1).
+    """The manifest factory a connector pack's ``provider.py`` calls.
 
     ``app_ref`` may be the app directory or a file inside it (so a pack can pass ``__file__``).
     ``config`` is the app's ``ProviderSettings`` dict; ``timeout_secs`` is the only knob read

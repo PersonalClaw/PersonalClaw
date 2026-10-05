@@ -4,7 +4,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { noBaselineReason, withFrontmatterName } from './skillMeta'
 
-// ── B7 (day-7 validation, c1b-121): "New skill" failed on the first try, every time ─────────────
+// ── "New skill" failed on the first try, every time ─────────────────────────────────────────────
 //
 // The dialog's SKILL.md template carried a literal `name: my-skill` that nothing updated, and the
 // server binds that line to the key the Name field sends (`skills/loader.py:validate_skill_md`). So

@@ -1,12 +1,10 @@
 """The one automation substrate: triggers fire workflows.
 
-Session 62 is the ENTITY layer only — the record, its per-kind specs, and
-the fire/run records with
-typed outcomes. The scheduler (`TriggerService`) is session 63, dispatch is 64, and the
-lossless cron
-migration is 66. Nothing here schedules or fires anything, deliberately: the shape has to be settled
-before three legacy stores are folded into it, because the migration is the step that cannot be
-redone cheaply.
+The package root is the ENTITY layer only — the record, its per-kind specs, and the fire/run
+records with typed outcomes. The scheduler (`TriggerService` in `service`), dispatch and the
+lossless cron migration (`migrate`) are modules of their own. Nothing here schedules or fires
+anything, deliberately: the shape has to be settled before three legacy stores are folded into
+it, because the migration is the step that cannot be redone cheaply.
 
 Three stores this absorbs, measured before the dataclass was written:
 

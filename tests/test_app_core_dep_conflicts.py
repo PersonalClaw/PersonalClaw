@@ -1,4 +1,4 @@
-"""An app may not re-pin a dependency core owns (EI-12 D3).
+"""An app may not re-pin a dependency core owns.
 
 App ``pythonDependencies`` are pip-installed into ``<home>/app-python``, which the gateway
 loads AFTER its own environment (``apps/app_python.py``). So core's installed copy of a
@@ -11,8 +11,8 @@ in its constraints — ``tests/test_app_python_packages.py`` holds that half.)
 
 Isolation stops at the process: in-process provider code shares one interpreter, so an
 app's packages are importable by everything in it. That is disclosed on the consent
-surface rather than approximated; truly scoping them needs out-of-process providers, an
-owner-scope seam change recorded BLOCKED in the plan.
+surface rather than approximated; truly scoping them needs out-of-process providers, a
+separate and larger change.
 
 Every assertion here runs through the real installer entry point, and the pip
 subprocess is replaced with one that FAILS the test if it is ever reached — a refusal

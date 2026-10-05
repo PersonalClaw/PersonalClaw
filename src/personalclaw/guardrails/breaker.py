@@ -12,7 +12,7 @@ overnight unattended runs fail in microseconds instead of stacking 30s timeouts 
 the worst case the automation substrate would otherwise hit.
 
 In-process state is deliberate for a single-user gateway: a restart resetting the
-breaker is acceptable (§6 data model — "restart resets"). The state is process-
+breaker is acceptable. The state is process-
 global (one breaker per provider name across the gateway); :func:`reset_breakers`
 clears it, invoked by an autouse test fixture so per-test breaker state never
 leaks between tests (the SEL-singleton discipline).
@@ -26,16 +26,15 @@ from enum import Enum
 
 logger = logging.getLogger(__name__)
 
-# Defaults (overridable per breaker; config wiring lands in Session 2 via
+# Defaults (overridable per breaker; config wiring via
 # GuardrailsConfig.breaker). Local providers (ollama cold-start) warrant a higher
-# threshold — Session 4's SafetyProfile carries per-provider tuning; until then
-# these single defaults apply.
+# threshold, but there is no per-provider tuning, so these single defaults apply.
 _DEFAULT_THRESHOLD = 5
 _DEFAULT_RECOVERY_SECS = 30.0
 
 
 class BreakerState(str, Enum):
-    """The three breaker states, surfaced verbatim by the health view (§2.5)."""
+    """The three breaker states, surfaced verbatim by the health view."""
 
     CLOSED = "closed"
     OPEN = "open"

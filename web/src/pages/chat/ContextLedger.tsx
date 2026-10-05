@@ -56,10 +56,10 @@ export function ContextLedger({ fed, fedNoMemory, learned, learnedOrigin, learne
     setForgetPending(false)
   }
 
-  // ── ONE action, not two (LV-2 owner ruling, 2026-08-26) ────────────────────────────────
+  // ── ONE action, not two ────────────────────────────────
   //
   // A learning the user has to go looking for is not visible, and visibility is this
-  // plan's whole subject. Before this, opening the ledger only REVEALED the approve/edit
+  // ledger's whole subject. Before this, opening the ledger only REVEALED the approve/edit
   // link somewhere below; finding and reaching it was a second action, and for a keyboard
   // user a second action plus an unknown number of Tab presses. So the tap that opens the
   // disclosure also brings the target into view and puts the caret on it: one tap, and the
@@ -74,7 +74,7 @@ export function ContextLedger({ fed, fedNoMemory, learned, learnedOrigin, learne
   // Keyed on `learnedHref` rather than the `surface` object: `learnedSurface` returns a fresh
   // literal every render, which would re-fire the effect (and re-steal focus) on every keystroke
   // elsewhere in the page. A row with no known surface has no target, so nothing moves — the
-  // ledger just opens, which is the pre-ruling behaviour and the correct degrade.
+  // ledger just opens, which is the earlier behaviour and the correct degrade.
   useEffect(() => {
     if (!open || !learnedHref) return
     const link = learnedRowRef.current?.querySelector('a')

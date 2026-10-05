@@ -4,7 +4,7 @@ Two packs ship in the wheel: **Personal CFO** (budget-review template + a spendi
 trigger + finance skills + a finance-category connector requirement + a CFO roster) and
 **Health OS** (checkup-cadence trigger + journaling template + health skills + a health
 roster). They are the reference for third-party authors and the acceptance test for the whole
-mechanism (§Success 1): each one exports, wipes, and imports onto a fresh
+mechanism: each one exports, wipes, and imports onto a fresh
 ``PERSONALCLAW_HOME`` with its skills locked, its template runnable, its trigger DISABLED,
 its connector prompting configure-or-substitute, and its setup interview asking for a folder.
 
@@ -161,7 +161,7 @@ def _is_component_member(name: str) -> bool:
 def build_bundled(name: str, out_path: Path) -> Path:
     """Assemble bundled pack ``name`` into a ``.pclaw`` at ``out_path``; return the path.
 
-    The export leg of §Success 1's round trip. Steps, all fail-closed:
+    The export leg of the export-wipe-import round trip. Steps, all fail-closed:
 
     1. read the authored ``pack.json`` and collect every member;
     2. resolve each declared component to its member bytes (a missing one raises);

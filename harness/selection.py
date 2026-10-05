@@ -24,13 +24,13 @@ class ForceRule:
 
 
 # Ordered; a file can match several rules and force several profiles. Globs are matched
-# against repo-relative POSIX paths. These encode the plan's named couplings plus the
+# against repo-relative POSIX paths. These encode the known couplings plus the
 # obvious "touching web/ forces the web gate" and "touching Python forces fast tests".
 _FORCE_RULES: tuple[ForceRule, ...] = (
     ForceRule(
         "web/src/pages/chat/*",
         "replay",
-        "chat stream touched — replay guards the K42/K44/K45 coalescer bug class",
+        "chat stream touched — replay guards the stream-coalescer bug class",
     ),
     ForceRule(
         "web/src/pages/loops/*",

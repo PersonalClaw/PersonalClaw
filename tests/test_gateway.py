@@ -744,8 +744,8 @@ class TestAutoApplyUpdate:
             await orch._auto_apply_update()  # should not raise
         tracked.assert_not_called()
 
-    # RUM-4 retired the "only auto-update on main / coerce detached HEAD to main"
-    # branch gate: the release channels (stable/beta/pin) check out a release TAG
+    # The "only auto-update on main / coerce detached HEAD to main" branch gate is
+    # retired: the release channels (stable/beta/pin) check out a release TAG
     # regardless of the current branch (detaching HEAD onto that release IS the
     # intended "ride release tags" state), and the git-only `nightly` channel
     # follows the current branch by fast-forward. Both are exercised in
@@ -1087,8 +1087,8 @@ class TestVolatilePatterns:
     def test_constants_values(self):
         assert _MAX_INJECT_ATTEMPTS == 2
         assert _EPOCH_WINDOW_SECS == 300
-        # `FAILURE_REMINDER_SECS` moved to `triggers.delivery` with the control that reads it
-        # (S161). `_SUCCESS_REMINDER_SECS` and `_CRON_MSG_LIMIT` were DELETED: both were
+        # `FAILURE_REMINDER_SECS` moved to `triggers.delivery` with the control that reads it.
+        # `_SUCCESS_REMINDER_SECS` and `_CRON_MSG_LIMIT` were DELETED: both were
         # orphaned when the legacy cron dedup path was retired, with zero readers left.
         assert FAILURE_REMINDER_SECS == 3600
 
@@ -1198,7 +1198,7 @@ class TestAutoApplyUpdateGitPath:
 
     @pytest.mark.asyncio
     async def test_dirty_tree_refuses_to_advance(self):
-        """RUM-4 data-loss safety: the UNATTENDED auto-update must NEVER advance
+        """Data-loss safety: the UNATTENDED auto-update must NEVER advance
         over a working tree carrying uncommitted tracked-file edits. It refuses,
         leaves the tree untouched, and surfaces an actionable paused state instead
         of silently discarding the user's work — and never resets."""
@@ -2943,7 +2943,7 @@ class TestRuntimeBaseIsPublishedForChildren:
     gateway on another port addressed its children at 10000, which on a multi-instance host
     is a DIFFERENT instance rather than a dead socket (#2539). Two measured symptoms of the
     one root: ``subagent_run`` answering ``<urlopen error [Errno 61] Connection refused>``
-    on a kiro ACP session while the in-process tools beside it worked (``AAP-3``/``K58``),
+    on a kiro ACP session while the in-process tools beside it worked,
     and a ``run-script`` action's ``ctx.notify()`` persisting into a second instance's
     notification store.
     """

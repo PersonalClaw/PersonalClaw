@@ -1,4 +1,4 @@
-// Shared derivations for the loaded-models / memory-pressure surface (LMMV §7).
+// Shared derivations for the loaded-models / memory-pressure surface.
 // Two surfaces render this data — the Settings → Models section and the dashboard's
 // "On this machine" band — so the decisions (ordering, tone, wording) live HERE once
 // rather than being re-derived in each and drifting apart.

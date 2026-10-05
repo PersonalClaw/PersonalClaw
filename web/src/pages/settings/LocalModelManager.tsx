@@ -63,7 +63,7 @@ function FitChip({ model }: { model: AvailableModel }) {
     // `hover:bg-surface-high`, and a translucent 16% tint over that tier measures **4.4543**
     // dark / **4.4625** light — under AA in BOTH themes, which axe reports as a serious
     // `color-contrast` violation on `#/settings/providers`. It had never fired because no
-    // downloadable chat model reached that route until OU-14 added one; the defect was latent,
+    // downloadable chat model reached that route until one was added; the defect was latent,
     // not new. Pinning the compositing base to the resting tier reads 5.0903 / 5.0075 with the
     // same ink and the same tint strength. `statusChipContrast.test.ts` records this exact
     // conclusion — a ground that moves toward the ink is a ground problem — and

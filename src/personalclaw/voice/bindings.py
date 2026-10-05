@@ -7,7 +7,7 @@ One JSON store, ``<home>/voice_bindings.json``, sibling of ``active_models.json`
       "agent:research-agent": "vp-a1b2c3d4",
       "client:some-client": "vp-..." }
 
-Resolution is the plan's four-level chain, and the order is the whole point:
+Resolution is a four-level chain, and the order is the whole point:
 
 1. **explicit** — a ``profile_id`` the caller passed ("speak as X") always wins;
 2. **binding** — the surface key (``channel:<transport>`` / ``agent:<slug>`` /
@@ -163,10 +163,10 @@ def resolve_profile_id(*, surface: str = "", explicit: str = "") -> tuple[str, s
 
 
 def binding_warning(profile: VoiceProfile, surface: str) -> str:
-    """Non-blocking consent warning for an agentic/off-machine binding (§1.3).
+    """Non-blocking consent warning for an agentic/off-machine binding.
 
-    Binding a *cloned* voice to a channel or subagent is the agentic case the plan
-    says should warn when consent is unverified — plain local synthesis is never
+    Binding a *cloned* voice to a channel or subagent is the agentic case that
+    warns when consent is unverified — plain local synthesis is never
     gated, so this returns a reason string for the UI rather than refusing.
     """
     if profile.kind != "clone" or profile.verified_own_voice:

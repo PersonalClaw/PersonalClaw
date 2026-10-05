@@ -573,7 +573,7 @@ describe('the migrated surfaces read the error', () => {
       // and `FormSkeleton` (a shaped form placeholder, used by the settings panels). The rail knew the
       // first two because the first adopters used them — the same accident this file has now corrected
       // four times. The vocabulary is what widens; the property being checked does not.
-      // `<Loading />` gained a `what` prop in cycle 144 (it is a live region now), so match the TAG.
+      // `<Loading />` gained a `what` prop (it is a live region now), so match the TAG.
       //
       // FIFTH widening: a bare `<Loader2 className="animate-spin">` inside `<Centered>` counts
       // too. `#/code/:id`'s page gate is one, and there is NO spinner primitive to send it to — `Loading`
@@ -687,7 +687,7 @@ describe('the migrated surfaces read the error', () => {
 // own. So on the day this was written the tree held **71 fetcher swallows across 31 files** and CI
 // was GREEN, because none of the 31 was an adopter. That is not a gap in the list; it is the wrong
 // shape of rail. A list can only ever fail the files someone already thought of, which is why #532's
-// own count went UP across four cycles — 73 → 115 → 122 — with a green rail the whole time.
+// own count went UP across four recounts — 73 → 115 → 122 — with a green rail the whole time.
 //
 // So this half is a CENSUS, not a list, and it is a budget rather than an allowlist:
 //
@@ -696,7 +696,7 @@ describe('the migrated surfaces read the error', () => {
 //                                                                    allowlist-of-names has)
 //   · a file that swallows FEWER than its number            → red   (ratchet the number down in the
 //                                                                    same commit; slack is a hole,
-//                                                                    the ruling `primitiveAdoption`
+//                                                                    the rule `primitiveAdoption`
 //                                                                    already records)
 //
 // 🪤 THE MIDDLE ONE IS THE WHOLE POINT. An allowlist of FILE NAMES with no count is why a defect in
@@ -980,7 +980,7 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // both moved in one commit, and the byte-identity that made the entry defensible is what made it
   // impossible to fix either one alone. The two left make no CLAIM about the value they read:
   // `useAgentDefaults`' decorating read of the default agent's NAME renders as '—', and
-  // `useToolsSavings` backs a meter whose absence is a designed state under a prior ruling with its
+  // `useToolsSavings` backs a meter whose absence is a designed state with its
   // own rail (`dashboard/healthUnknown.test.ts`). That is the line, and it is narrower than "this read
   // is unimportant".
   'pages/settings/settingsWidgets.tsx': 2,
@@ -1100,7 +1100,7 @@ describe('§B no fetcher swallows its own rejection, tree-wide and by COUNT', ()
     expect(counts('.catch(() => setGraph({ nodes: [], edges: [] }))'), 'the SAME lie, via a setter').toBe(1)
     expect(counts(".catch(() => ({ 'a': 1 }))"), 'a quoted key is still a literal').toBe(1)
     // THE SCALAR SHAPE, one control PER SPELLING — and the per-spelling granularity is the whole
-    // point rather than tidiness. The shape was blind for three cycles because the selector carried
+    // point rather than tidiness. The shape was blind for three sweeps because the selector carried
     // `[]`, `null` and `{}` and nobody re-read it for `true`; a single control would pin one spelling
     // and leave the next narrowing invisible in exactly the same way. Measured before the widening:
     // all six of these scored 0 while `.catch(() => [])` scored 1 AT THE SAME FILE POSITION, which is
@@ -1354,7 +1354,7 @@ describe('§B no fetcher swallows its own rejection, tree-wide and by COUNT', ()
 // whether a cached copy should still paint — and sweeping 107 of those in one commit would be the
 // "convert them all" move this file's §A header already declines for the same reason. So the numbers
 // below are debt, and the only supported edit is DOWNWARD. There is no generator: a regenerate mode on
-// a budget like this is not a convenience, it is a loophole — it would let the next lane bless a new
+// a budget like this is not a convenience, it is a loophole — it would let the next change bless a new
 // swallow by re-running a script instead of writing down why the site is correct.
 //
 // 🪤 A NUMBER OF `0` IS NOT THE SAME STATEMENT AS NO ENTRY, AND BOTH APPEAR BELOW ON PURPOSE. An
@@ -1455,7 +1455,7 @@ const UNBOUND_ERROR_BUDGET: Record<string, number> = {
   // `null` so `error` was structurally unreachable, and the call bound nothing so nobody could have
   // read it either way. Two independent defeats of one contract on one line.
   // `ProjectionRulesPanel`'s entry is a KEEP, not debt. `SavingsCard`'s `{ data }` backs a card that
-  // ends `if (!data || data.saved_chars <= 0) return null` — a designed absence under a prior ruling
+  // ends `if (!data || data.saved_chars <= 0) return null` — a designed absence
   // with its own rail (`dashboard/healthUnknown.test.ts`), because a fresh install has no savings and
   // "0 saved" would be noise. An error banner there would invent a problem out of a card that is
   // supposed to be invisible most of the time.

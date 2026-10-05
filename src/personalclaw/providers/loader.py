@@ -35,7 +35,7 @@ BUNDLED_DIR = NATIVE_DIR
 def _load_ext_module(ext: "RegisteredProvider", module_path: str) -> Any:
     """Import an extension's implementation module.
 
-    ONE rule for both tiers (APE-5): if ``module_path`` resolves to a file inside the
+    ONE rule for both tiers: if ``module_path`` resolves to a file inside the
     extension's own directory, load it from there under a namespaced module name
     (``apps/native_contract.load_bundle_module``); otherwise ``module_path`` is a real
     dotted package path (``personalclaw.tasks.native``) and is imported normally.
@@ -155,7 +155,7 @@ def _start_installed_apps(*, gateway: bool) -> None:
     on the import path, after the interpreter's own entries, and the native apps seeded as
     installed apps (first run; after that their packaged files are refreshed), so the walk below
     finds them. Then the walk itself (:func:`personalclaw.apps.app_runtime.start_installed`),
-    and last the one generic app-route tool provider (§4.2), which surfaces every enabled app's
+    and last the one generic app-route tool provider, which surfaces every enabled app's
     ``agentCallable`` backend routes as ``app_<name>_<op>`` tools and reads the installed apps
     live on each listing, so registering it once is enough.
     """
@@ -190,7 +190,7 @@ def register_extension_providers() -> None:
     providers OUTSIDE the gateway (a CLI command, a worker) must call this — otherwise only core's
     built-in providers are visible and an app-contributed provider (Bedrock embedding, …) silently
     reads as "unknown provider" / "no executor" there, even though the same app resolves fine
-    inside the gateway (ES-3).
+    inside the gateway.
 
     The same walk gateway startup makes (:func:`load_all_extensions`), with each enabled app
     loaded as far as this process runs any of it: its providers, prompts, skills and proposal
@@ -308,8 +308,8 @@ def load_all_extensions() -> None:
     :func:`bootstrap_cli_providers` — instead, so it does not also spawn processes it will never
     supervise.
     """
-    # Reconcile any app update that crashed mid-swap BEFORE the walk reads the apps tree (A2
-    # crash recovery) — restore a half-swapped app from its leftover .{name}.rollback dir, or
+    # Reconcile any app update that crashed mid-swap BEFORE the walk reads the apps tree (crash
+    # recovery) — restore a half-swapped app from its leftover .{name}.rollback dir, or
     # drop a stale one. A gateway-restart concern, so a CLI process's startup does not do it.
     try:
         from personalclaw.apps.app_manager import recover_interrupted_updates
@@ -351,7 +351,7 @@ def load_all_extensions() -> None:
         from personalclaw.apps.worker_runtime import start_worker_watchdog
 
         start_worker_watchdog()
-        # Same semantics, different children: a model sidecar (LMMV §3.1) is respawned on
+        # Same semantics, different children: a model sidecar is respawned on
         # crash and never survives the gateway. A sweep over an empty runner table is
         # free, so this costs nothing until an app declares `execution: sidecar`.
         from personalclaw.local_models.sidecar import start_sidecar_watchdog

@@ -12,11 +12,11 @@ pending-enrichment count. Availability is the cheap no-instantiate probe
 never persisted (recomputable, so never stored).
 
 Scope note (verified against code 2026-08-24): the three floors this module used to
-call "future infrastructure" now EXIST, so they are declared rather than deferred
-(PR2-9). LEARN-R19's staging log is real (``learning.staging.StagingStore``:
+call "future infrastructure" now EXIST, so they are declared rather than deferred.
+The learning staging log is real (``learning.staging.StagingStore``:
 ``flush_records`` + unconsumed-entry backlog), the no-model knowledge-ingest tier is
 real (the raw/LLM-free ingest graph, which lands an item ``partial`` with
-"insights: model unavailable" — the stamp KNOW-R17 describes), and synthesis
+"insights: model unavailable" — the heuristic-tier stamp), and synthesis
 watchers are real (``mode: append_evidence`` persists evidence with no model while
 ``knowledge.staleness`` counts what the compiled section has not caught up with).
 
@@ -293,7 +293,7 @@ def _transition(
     if contract.surface not in _announced_down:
         return None  # never announced as down, so nothing to announce as back
     was_chosen = _announced_down.pop(contract.surface)
-    # §5.2 criterion #3 wants the recovery to summarize what was RE-ENRICHED, and
+    # The recovery should summarize what was RE-ENRICHED, and
     # `backlog` was measured BEFORE the drain ran — reporting it after a drain that
     # just cleared it would announce a queue that no longer exists. So: the drained
     # count when the drain finished here, the standing backlog when it moved nothing
@@ -461,7 +461,7 @@ def _search_backlog() -> int:
 
 
 def _memory_staging_backlog() -> int:
-    """Unconsumed LEARN-R19 staging entries — the captures no consolidation pass has
+    """Unconsumed learning staging entries — the captures no consolidation pass has
     compiled into a proposal yet.
 
     Reads the store WITHOUT creating it: ``StagingStore.__init__`` only computes paths
@@ -481,7 +481,7 @@ async def _memory_staging_drain(state: Optional[object] = None) -> int:
     """Compile the staged captures that piled up while no model was bound into ONE
     propose-only lesson batch, then mark exactly those entries consumed.
 
-    The pieces LEARN-R19 built for this were all present and unused: ``pending`` reads the
+    The staging store's pieces for this were all present and unused: ``pending`` reads the
     queue, ``staging_refs`` carries the provenance onto the proposal, and ``mark_consumed``
     is the one mutation staging allows. This is their first caller.
 
@@ -520,7 +520,7 @@ async def _memory_staging_drain(state: Optional[object] = None) -> int:
     return len(ids)
 
 
-#: The heuristic-tier stamp, as it actually exists (KNOW-R17's ``extraction: heuristic``
+#: The heuristic-tier stamp, as it actually exists (an ``extraction: heuristic`` marker
 #: by another name): the LLM-free ingest graph completes, the insights stage finds no
 #: model, and the runner downgrades the item recording exactly that reason.
 #: Archived items are excluded for the same reason the batch regen route excludes them —
@@ -705,7 +705,7 @@ def _register_builtin_contracts() -> None:
         )
     )
     # memory extraction — deterministic preference-facet capture continues; only the
-    # LLM skill-ladder review pauses. Every pass records its outcome in the LEARN-R19
+    # LLM skill-ladder review pauses. Every pass records its outcome in the learning
     # staging log whether or not it produced anything, so the backlog is the unconsumed
     # captures and the drain is the consolidation pass over them.
     register_contract(
@@ -723,8 +723,8 @@ def _register_builtin_contracts() -> None:
     # knowledge ingest — raw text is captured and stored without a model (the LLM-free
     # ingest graph: passthrough / document-read / structural link / local embed); only LLM
     # entity/insight extraction is skipped, which lands the item 'partial' recording
-    # "insights: model unavailable". That stamp IS the heuristic tier's queue marker
-    # (KNOW-R17), so it is both the backlog and what the drain re-extracts in place.
+    # "insights: model unavailable". That stamp IS the heuristic tier's queue marker,
+    # so it is both the backlog and what the drain re-extracts in place.
     register_contract(
         DegradedContract(
             surface="knowledge_ingest",

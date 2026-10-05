@@ -110,11 +110,11 @@ DETECTOR_ORDER: tuple[str, ...] = (
 #: it, so the preview can say plainly which of the two paths the user is looking at.
 DETECTOR_MANUAL = "manual"
 
-#: §2.3 per-poll request budget. Ten covers a tier-1 fetch, a WP sub-request and a render
+#: The per-poll request budget. Ten covers a tier-1 fetch, a WP sub-request and a render
 #: with room to spare; the point is that a poll can never become a crawl.
 DEFAULT_MAX_REQUESTS = 10
 
-#: §2.2 output hygiene. A title of one or two words is a navigation label ("Home", "Sign up",
+#: Output hygiene. A title of one or two words is a navigation label ("Home", "Sign up",
 #: "Read more"), not an item headline — the single most effective filter against a homepage's
 #: chrome being mistaken for content.
 DEFAULT_MIN_WORDS_TITLE = 3
@@ -123,7 +123,7 @@ DEFAULT_MIN_WORDS_TITLE = 3
 KEEP_DIFFERENT_DOMAIN_DROP = "drop"
 KEEP_DIFFERENT_DOMAIN_KEEP = "keep"
 
-#: §2.1 tunables for ``selector_frequency``: a signature must repeat at least this often to be
+#: Tunables for ``selector_frequency``: a signature must repeat at least this often to be
 #: a candidate item block, and only this many of the most frequent signatures are considered.
 MINIMUM_SELECTOR_FREQUENCY = 2
 USE_TOP_SELECTORS = 5
@@ -135,7 +135,7 @@ USE_TOP_SELECTORS = 5
 #: remediations that would otherwise both surface as "found nothing".
 JS_SHELL_MAX_TEXT_CHARS = 400
 
-#: Tier 3's post-navigate wait (§(d)/BA-6). The gateway session's ``navigate`` only SENDS
+#: Tier 3's post-navigate wait. The gateway session's ``navigate`` only SENDS
 #: ``Page.navigate`` — it does not await the load event — and a client-rendered page then builds
 #: its DOM some unknown time after that, so reading the DOM in the same breath as the navigate
 #: returns the pre-render shell: no extractable text, ``ok=False``, and the content cursor never
@@ -189,7 +189,7 @@ _ID_KEYS = ("id", "guid", "uuid", "objectID", "_id")
 
 #: The web-source spec, as a JSON Schema subset.
 #:
-#: §2.2 asks for a schema and the runtime validators to be one artifact so the FE form and an
+#: The schema and the runtime validators are one artifact so the FE form and an
 #: agent can validate client-side without drifting from what the provider enforces. This is
 #: that artifact, and the DIRECTION of derivation is deliberate: :func:`validate_spec` is a
 #: generic walker OVER this schema rather than hand-written checks a generator later mirrors
@@ -404,7 +404,7 @@ class _Collected:
 class _Budget:
     """One poll's request allowance, shared by every tier.
 
-    ONE counter for tier 1, the WordPress sub-request and the render, because §2.3's budget
+    ONE counter for tier 1, the WordPress sub-request and the render, because the budget
     is per POLL: a per-tier allowance would let an escalating page make three separate
     "small" budgets add up to a crawl.
     """
@@ -486,7 +486,7 @@ def _parse_time(value: str) -> str:
 
 
 def apply_post_process(value: str, steps: list[dict], *, page_url: str) -> str:
-    """Run §2.2's post-process chain over one extracted value, in order.
+    """Run the post-process chain over one extracted value, in order.
 
     Each step is data validated by :data:`POST_PROCESS_SCHEMA`, so an unknown name never
     reaches here; a step that raises on pathological input (a catastrophic ``gsub`` pattern)
@@ -786,7 +786,7 @@ def detect_json_state(dom: Element, **_: Any) -> list[dict[str, str]]:
 
 
 def detect_selector_frequency(dom: Element, **_: Any) -> list[dict[str, str]]:
-    """The most repeated link-bearing block signature on the page (§2.1).
+    """The most repeated link-bearing block signature on the page.
 
     Signature is ``(tag, sorted classes)`` — the structural identity a templating engine
     repeats per item. Only blocks that contain a link AND some text are counted, the top
@@ -878,7 +878,7 @@ def _extract_field(scope: Element, config: dict, *, page_url: str, sanitize_defa
 def extract_declared(
     dom: Element, extraction: dict, *, page_url: str, sanitize_default: bool
 ) -> list[dict[str, str]]:
-    """Run a user's ``spec.extraction`` config over the page (§2.2's escape hatch)."""
+    """Run a user's ``spec.extraction`` config over the page (the escape hatch)."""
     items_cfg = extraction.get("items") or {}
     selector = str(items_cfg.get("selector") or "")
     if not selector:
@@ -911,12 +911,12 @@ def _word_count(text: str) -> int:
 
 
 def apply_hygiene(rows: list[dict], *, page_url: str, spec: dict) -> list[SourceItem]:
-    """§2.2's output hygiene, then identity. The floors, in order:
+    """The output hygiene, then identity. The floors, in order:
 
     * relative links are resolved against the page (an unresolved link is not an identity);
     * ``keep_different_domain: drop`` (default) removes off-site links — ads, share widgets
       and "recommended for you" rails, which is most of what a naive detector picks up;
-    * a title under ``min_words_title`` words is DISCARDED (not the item — §2.2 says a valid
+    * a title under ``min_words_title`` words is DISCARDED (not the item — a valid
       item needs title *or* description, so a two-word link with real body text survives
       titled by its URL, while bare navigation chrome has neither and is dropped);
     * an item with neither title nor description is dropped;
@@ -985,7 +985,7 @@ def _visible_text(dom: Element) -> str:
 
 
 def looks_like_js_shell(html: str, dom: Element) -> bool:
-    """Whether this page is a client-rendered shell rather than a document (§2.3).
+    """Whether this page is a client-rendered shell rather than a document.
 
     Measured, not guessed: a page that ships script and has less visible text than
     :data:`JS_SHELL_MAX_TEXT_CHARS` built its content elsewhere. This is the discrimination
@@ -1000,7 +1000,7 @@ def looks_like_js_shell(html: str, dom: Element) -> bool:
 
 
 def looks_rendered(html: str) -> bool:
-    """Whether ``html`` is a page that has finished building itself (§2.3, tier 3's wait).
+    """Whether ``html`` is a page that has finished building itself (tier 3's wait).
 
     Two clauses, because a pre-render DOM arrives in two shapes:
 
@@ -1036,7 +1036,7 @@ def make_browse_settle(
       not read half-built.
 
     The deliberate trade: a page that ships script and renders FEWER than
-    :data:`JS_SHELL_MAX_TEXT_CHARS` of text is, by §2.3's measurement, indistinguishable from one
+    :data:`JS_SHELL_MAX_TEXT_CHARS` of text is, by the shell measurement, indistinguishable from one
     that never rendered — so it waits out the ceiling and is then extracted anyway. That costs a
     bounded wait on the tier that is already the last and most expensive one, and it is the right
     way round: the other choice reads every JS page too early, which is the defect.
@@ -1080,13 +1080,13 @@ def make_browse_settle(
 
 
 class WebSourceProvider(KnowledgeSourceProvider):
-    """Poll-capable provider over a watched web page (§2).
+    """Poll-capable provider over a watched web page.
 
     Spec keys are :data:`SPEC_SCHEMA`; ``budget`` (on the source row, not the spec) carries
     ``{max_requests, allow_render, allow_browse, cdp_url}``. ``fetch_fn`` / ``render_fn`` /
     ``browse_fn`` are the injectable seams and the ONLY ways bytes enter — which keeps tier 1 under
     the engine's ``SOURCE`` egress policy, tier 2 on the guard-pre-flighting core render path, and
-    tier 3 (BA-6) on the gateway browser's egress-fenced session.
+    tier 3 on the gateway browser's egress-fenced session.
     """
 
     #: A page is more expensive to poll than a conditional-GET feed, and a changelog does not
@@ -1158,7 +1158,7 @@ class WebSourceProvider(KnowledgeSourceProvider):
         return await fetch(url, policy=policy, headers=headers)
 
     async def _render(self, url: str, *, policy: Any) -> Any:
-        """Tier 2 — core's ``web/render.py`` and nothing else (§2.3). It pre-flights the same
+        """Tier 2 — core's ``web/render.py`` and nothing else. It pre-flights the same
         egress guard because a headless browser does its own DNS and would otherwise bypass
         ``net.fetch``'s IP pinning."""
         if self._render_fn is not None:
@@ -1180,9 +1180,9 @@ class WebSourceProvider(KnowledgeSourceProvider):
         browse: Callable[..., Any] | None,
         render_note: str,
     ) -> _Collected:
-        """Tier 3 (BA-6) — ONE gateway browse tick when the render tier still saw a shell.
+        """Tier 3 — ONE gateway browse tick when the render tier still saw a shell.
 
-        Draws on the SAME per-poll ``budget`` as the fetch and the render (§2.3): the browse tick
+        Draws on the SAME per-poll ``budget`` as the fetch and the render: the browse tick
         is one more request, not a fresh allowance. ``browse`` returns an object exposing ``.html``
         (both ``TickResult`` from a poll's ``execute_tick`` and ``TickOutcome`` from a preview's
         direct run satisfy that), which is parsed and re-run through the detector stack.
@@ -1320,7 +1320,7 @@ class WebSourceProvider(KnowledgeSourceProvider):
     async def _detect_wordpress_api(
         self, dom: Element, *, page_url: str, budget: _Budget, policy: Any
     ) -> list[dict[str, str]]:
-        """WordPress REST posts, when the page advertises the endpoint (§2.1).
+        """WordPress REST posts, when the page advertises the endpoint.
 
         Costs one request from the poll's shared budget, and only when the ``api.w.org`` link
         is actually present — so a non-WordPress page pays nothing for having this detector
@@ -1367,14 +1367,14 @@ class WebSourceProvider(KnowledgeSourceProvider):
     ) -> tuple[str, list[SourceItem]]:
         """Run the stack (or the manual config) and return the winner plus its items.
 
-        Hygiene runs INSIDE the loop: a detector whose candidates all fail the §2.2 floors
+        Hygiene runs INSIDE the loop: a detector whose candidates all fail the hygiene floors
         found nothing, so the stack continues. Deciding a winner on raw candidates instead is
         how a nav menu wins over the article list further down the page.
         """
         sanitize_on = spec.get("sanitize_html", True) is not False
         extraction = spec.get("extraction")
         if isinstance(extraction, dict) and extraction:
-            # A manual config REPLACES the stack rather than joining it (§2.2 is the escape
+            # A manual config REPLACES the stack rather than joining it (it is the escape
             # hatch for when all five detectors miss); falling back to auto here would hide a
             # broken selector behind whatever the frequency detector happens to find.
             rows = extract_declared(
@@ -1412,7 +1412,7 @@ class WebSourceProvider(KnowledgeSourceProvider):
         """Fetch, detect, and escalate to the render tier when the OUTCOME demands it.
 
         Every request in here — tier 1, the WordPress sub-request inside the stack, the render
-        — comes out of the one ``budget``, which is what makes §2.3's "all attempts in one
+        — comes out of the one ``budget``, which is what makes "all attempts in one
         poll draw on a single max_requests" true rather than aspirational.
         """
         if not budget.take():
@@ -1447,7 +1447,7 @@ class WebSourceProvider(KnowledgeSourceProvider):
                 detector=detector, guidance=LISTING_PAGE_GUIDANCE, cursor_state=cursor_state
             )
         if not allow_render:
-            # The one clause SC#2 names: needed the tier, not allowed it. A distinct health
+            # Needed the tier, not allowed it. A distinct health
             # status, not a generic degraded, because the remediation is one knob.
             return _Collected(
                 escalations=["render tier needed but budget.allow_render is false"],
@@ -1536,7 +1536,7 @@ class WebSourceProvider(KnowledgeSourceProvider):
     async def preview(
         self, spec: dict, *, budget: dict | None = None, policy: Any = None
     ) -> SourcePreview:
-        """Dry-run the extraction for the paste-URL create flow (§2.4).
+        """Dry-run the extraction for the paste-URL create flow.
 
         Persists nothing — no item, no cursor, no seen-set row — and takes the SPEC rather
         than a ``source_id``, because the whole point is to run before a source exists. The
@@ -1579,7 +1579,7 @@ class WebSourceProvider(KnowledgeSourceProvider):
     async def poll(
         self, source_id: str, cursor: str = "", *, policy: Any = None
     ) -> SourcePollResult:
-        """One escalating fetch + detect. Never raises to the engine (§1.1).
+        """One escalating fetch + detect. Never raises to the engine.
 
         The cursor carries the conditional-GET validators, so a page that has not changed
         answers 304 and the poll costs a few hundred bytes. ``budget`` is read from the SOURCE
@@ -1644,7 +1644,7 @@ def _rendered(value: Any) -> str:
 def _rendered_title(value: Any) -> str:
     """A WordPress REST ``title.rendered``, which is HTML-ESCAPED text.
 
-    Found by driving the create flow against a real WordPress listing page (WS-9): every
+    Found by driving the create flow against a real WordPress listing page: every
     apostrophe arrived as ``&#8217;`` — ``Don&#8217;t stop early`` — because WP escapes these
     fields and nothing decoded them. A title is plain text by definition and is rendered as
     text on every surface, so leaving the entities in means they show up literally in the
@@ -1672,13 +1672,13 @@ def _max_requests(budget: dict | None) -> int:
 
 
 def _allow_render(budget: dict | None) -> bool:
-    """§2.3's opt-in. Default FALSE, and only a literal ``True`` turns it on — a truthy
+    """The render tier's opt-in. Default FALSE, and only a literal ``True`` turns it on — a truthy
     string from a hand-edited row must not silently license a browser launch."""
     return (budget or {}).get("allow_render") is True
 
 
 def _allow_browse(budget: dict | None) -> bool:
-    """§(d)'s opt-in for the gateway browse tier (BA-6). Default FALSE; only a literal ``True``
+    """The opt-in for the gateway browse tier. Default FALSE; only a literal ``True``
     licenses a full-browser launch, exactly as ``allow_render`` gates the render tier."""
     return (budget or {}).get("allow_browse") is True
 

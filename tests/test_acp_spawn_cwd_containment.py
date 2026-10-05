@@ -1,4 +1,4 @@
-"""G39 rails — the cwd that reaches a spawned ACP CLI must stay inside the CONFIGURED workspace.
+"""The cwd that reaches a spawned ACP CLI must stay inside the CONFIGURED workspace.
 
 These assert the SPAWN KWARGS: the ``cwd=`` value handed to the sandbox handle's ``exec``,
 which is literally what ``asyncio.create_subprocess_exec`` receives. That seam is the point,
@@ -160,8 +160,8 @@ def test_the_agent_bind_path_resolves_the_workspace_through_the_contract():
     even if a caller stops using it — measured: replacing the agent-bind assignment with
     ``resolve_agent_bindings(cfg, matched).workspace_dir`` — which IS the bug: it collapses
     "inherit" to a concrete path and relocates a session the user bound elsewhere — leaves this
-    file at 6 passed. A fix whose USE is unrailed can be reverted silently, which is how G39 got
-    written in the first place.
+    file at 6 passed. A fix whose USE is unrailed can be reverted silently, which is how this
+    defect was reported in the first place.
 
     Asserted at source level because the alternative is standing up a live chat session and a
     profile just to read one assignment back; the string this checks IS the seam.

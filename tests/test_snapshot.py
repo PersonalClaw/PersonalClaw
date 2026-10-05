@@ -165,10 +165,10 @@ class TestSnapshot:
         snap = snaps[0]
         assert (snap / "memory.db").is_file()
         assert (snap / "crons.json").is_file()
-        # 🔴 S113: the `crons` component held `crons.json` alone — the legacy file nothing has
+        # 🔴 The `crons` component held `crons.json` alone — the legacy file nothing has
         # written — so `personalclaw snapshot` backed up an empty relic and dropped every
-        # automation the user had. `triggers.json` is the store; `event_triggers.json` was named in
-        # the plan's own recon note as missing alongside it.
+        # automation the user had. `triggers.json` is the store; `event_triggers.json` was
+        # missing alongside it.
         assert (snap / "triggers.json").is_file(), "the automation store must travel"
         assert (snap / "event_triggers.json").is_file()
         assert (snap / "config.json").is_file()
@@ -178,7 +178,7 @@ class TestSnapshot:
         assert (snap / "skills/my-skill/SKILL.md").is_file()
         assert not (snap / "workspace/hygiene_data/week1.json").exists()
         m = json.loads((snap / "MANIFEST.json").read_text())
-        # v3 — the manifest gained the per-domain `domains` block the §6
+        # v3 — the manifest gained the per-domain `domains` block the
         # archive browser reads. `contents` is unchanged for existing readers.
         assert m["version"] == 3
         assert isinstance(m["domains"], dict)
@@ -341,7 +341,7 @@ class TestRestoreMerge:
         conn.close()
 
     def test_merge_restores_automations_from_the_store(self, env, monkeypatch):
-        """🔴 S113. The `crons` component restored `crons.json` only — the legacy file — so a
+        """🔴 The `crons` component restored `crons.json` only — the legacy file — so a
         restore gave the user back an empty relic and none of their automations."""
         from personalclaw.triggers.store import TriggerStore
 
@@ -875,7 +875,7 @@ class TestConcurrentSnapshot:
         assert tarballs[0].name != tarballs[1].name
 
 
-# ── DURABILITY §1: safe live-database capture + inventory-driven gap closure ──
+# ── safe live-database capture + inventory-driven gap closure ──
 
 
 class TestLiveDatabaseSafety:
@@ -1166,8 +1166,8 @@ def test_an_ABSENT_snapshot_history_is_a_NO_OP(tmp_path: Path) -> None:
 
 def test_the_merge_does_NOT_re_apply_retention(tmp_path: Path) -> None:
     """`ScheduleRunStore.rotate_all()` owns retention and runs at gateway boot. Trimming here
-    would be a second copy of that policy — the exact duplication S175 removed, which had silently
-    reverted S173."""
+    would be a second copy of that policy — the exact duplication already removed once, after one
+    copy silently reverted the other."""
     import inspect
 
     from personalclaw import snapshot
@@ -1336,8 +1336,8 @@ def test_a_TARGETED_restore_stays_targeted(tmp_path: Path) -> None:
 
 
 def test_EVERYTHING_is_a_valid_component(tmp_path: Path) -> None:
-    """🔴 Criterion 1 names this invocation verbatim — "`--components everything` followed by wiping
-    `~/.personalclaw` and restoring reproduces … including tasks, projects, entity_settings" — and
+    """🔴 The full-restore drill is `--components everything`, then wiping `~/.personalclaw` and
+    restoring, which must reproduce everything including tasks, projects, entity_settings — and
     the CLI answered **"❌ Unknown component: everything"**. Without it there is no way to ask for
     the task board at all."""
     from personalclaw.snapshot import COMPONENT_HELP, VALID_COMPONENTS
@@ -1389,12 +1389,12 @@ def test_the_restore_projection_MIRRORS_the_capture_one(tmp_path: Path) -> None:
 def test_EVERYTHING_selects_the_NAMED_components_too(tmp_path: Path) -> None:
     """🔴 MY OWN FIX SHIPPED HALF-INERT, and the eight tests above all passed while it did.
 
-    Found by driving criterion 1's actual drill — snapshot, wipe the home, restore — instead of
+    Found by driving the actual drill — snapshot, wipe the home, restore — instead of
     trusting the component I had just added. `--components everything` restored the task board and
     **dropped `config.json`, `memory.db`, `notifications.jsonl`, `workspace/` and `skills/`**,
     because `everything` had been added as just another member of the list: naming it made `_want`
     answer False for all seven NAMED components. A flag whose entire promise is completeness,
-    silently narrowing the restore — and the invocation criterion 1 tells a user to type.
+    silently narrowing the restore — and the very invocation the drill tells a user to type.
 
     `everything` is a superset marker, not a peer.
     """
@@ -1410,9 +1410,9 @@ def test_EVERYTHING_selects_the_NAMED_components_too(tmp_path: Path) -> None:
 
 
 def test_a_WIPE_and_restore_returns_every_named_component(tmp_path: Path) -> None:
-    """Criterion 1 end to end, at the `_do_replace` level: the drill is "wipe `~/.personalclaw` and
-    restore", so the test that matters drives an EMPTY home rather than a partially-populated one —
-    the state a user recovering onto a new machine actually has."""
+    """The full-restore drill end to end, at the `_do_replace` level: the drill is "wipe
+    `~/.personalclaw` and restore", so the test that matters drives an EMPTY home rather than a
+    partially-populated one — the state a user recovering onto a new machine actually has."""
     from personalclaw.snapshot import _do_replace
 
     snap = _seeded_snapshot(tmp_path)
@@ -1605,8 +1605,8 @@ def test_the_FEEDBACK_merge_recovers_rows_and_dedupes_on_id(tmp_path: Path) -> N
 
 def test_the_feedback_merge_does_NOT_re_apply_its_CAP(tmp_path: Path) -> None:
     """`feedback.py` owns its own retention ("atomic trim at 2x cap"). Re-implementing the bound
-    here would be the duplication S175 deleted from the run store after one copy silently reverted
-    the other."""
+    here would be the duplication already deleted from the run store after one copy silently
+    reverted the other."""
     import inspect
 
     from personalclaw import snapshot
@@ -1657,7 +1657,7 @@ def test_every_declared_APPEND_DEDUP_entry_now_has_a_path(tmp_path: Path) -> Non
         "notifications.jsonl",
         "security_events.jsonl",
         "feedback.jsonl",
-        # Added by S179 and demanded by THIS test the moment the entry was declared — which is what
+        # Demanded by THIS test the moment the entry was declared — which is what
         # the ratchet is for. Keyed on `AttemptRecord.audit_id` via `_merge_keyed_jsonl`.
         "model_calls.jsonl",
         "crashes",
@@ -1726,8 +1726,8 @@ def _kb_db(path: Path, tag: str, n: int = 40) -> Path:
 
 def test_a_MERGE_recovers_every_declared_sqlite_store(tmp_path: Path) -> None:
     """🔴 THE DEFECT. Seven entries declare `merge=sqlite_attach_ignore`; only `memory.db` had an
-    executor. S177 made the other six reachable, but reachably copy-if-missing — so a database the
-    live home already had kept its own rows and dropped the snapshot's entirely.
+    executor. An earlier fix made the other six reachable, but reachably copy-if-missing — so a
+    database the live home already had kept its own rows and dropped the snapshot's entirely.
 
     Driven across all six: a snapshot row and a live row went in, only the live row came out. Six
     stores silently half-restored, including `learning.db` and both knowledge stores.
@@ -1865,7 +1865,7 @@ def test_MEMORY_DB_keeps_its_own_executor(tmp_path: Path) -> None:
 
     from personalclaw import snapshot
 
-    # S183 moved the path list into `_attach_merge_paths(snap)` so `_do_merge` and `merge_plan`
+    # The path list lives in `_attach_merge_paths(snap)` so `_do_merge` and `merge_plan`
     # cannot disagree. Assert on the SHARED helper's output, which is the behaviour, rather than on
     # a substring of one caller's source.
     assert "memory.db" not in snapshot._attach_merge_paths(tmp_path), "memory.db must not be routed"
@@ -2083,9 +2083,8 @@ def test_a_LOCKED_destination_degrades_to_a_skip(tmp_path: Path) -> None:
 
 def test_a_MERGE_recovers_every_file_shaped_store(tmp_path: Path) -> None:
     """🔴 THE DEFECT. Nine file-shaped entries declare `union_by_id` or `lww_by_updated_at` and none
-    had an executor. S177 made them reachable, but reachably copy-if-missing — so a file the live
-    home
-    already had kept its contents and dropped the snapshot's entirely.
+    had an executor. An earlier fix made them reachable, but reachably copy-if-missing — so a file
+    the live home already had kept its contents and dropped the snapshot's entirely.
 
     Driven with each file's REAL shape, read out of a long-lived home: **8 of 8 lost the snapshot
     side**, including `hooks.json` (the message-pipeline hooks a user configured) and `inbox.json`.
@@ -2256,7 +2255,7 @@ def test_a_WRAPPER_MISMATCH_is_a_no_op(tmp_path: Path) -> None:
 
 
 def test_every_declared_MERGE_STRATEGY_has_an_executor_or_a_reason(tmp_path: Path) -> None:
-    """The sweep's closing assertion (S176-S181). Each of the five `MERGE_*` strategies must be
+    """The sweep's closing assertion. Each of the five `MERGE_*` strategies must be
     satisfied, and `replace_only` was checked entry-by-entry rather than waved through:
 
     * `append_dedup` — `_merge_run_history`, `_merge_notifications`, `_merge_security_events`
@@ -2322,13 +2321,12 @@ def test_every_declared_MERGE_STRATEGY_has_an_executor_or_a_reason(tmp_path: Pat
     )
 
 
-# ── 🔴 `--dry-run` printed a file list, not a merge plan (plan gap 2) ──
+# ── 🔴 `--dry-run` printed a file list, not a merge plan ──
 
 
 def test_the_DRY_RUN_prints_a_PLAN_not_a_file_list(tmp_path, capsys) -> None:
-    """🔴 THE DEFECT, which the plan names against itself: *"`--dry-run` prints a raw file list, not
-    a
-    merge plan (no counts, no per-entry strategy, no conflict preview)"*.
+    """🔴 THE DEFECT: `--dry-run` printed a raw file list, not a merge plan (no counts, no
+    per-entry strategy, no conflict preview).
 
     Driven side by side before the fix: the dry run listed three filenames while the merge imported
     one
@@ -2377,7 +2375,7 @@ def test_the_PLAN_and_the_ACT_name_the_same_sqlite_stores(tmp_path) -> None:
 
 
 def test_the_dry_run_WRITES_NOTHING(tmp_path, monkeypatch, capsys) -> None:
-    """The plan's own criterion for this task: "nothing written in plan mode (dir hash unchanged)".
+    """Nothing is written in plan mode (dir hash unchanged).
     A preview that mutates the thing it previews is the one failure mode a dry run cannot have."""
     import hashlib
 
@@ -2464,7 +2462,7 @@ def test_an_ABSENT_entry_is_not_in_the_plan(tmp_path) -> None:
     )
 
 
-# ── 🔴 restore mode auto-detected on memory.db alone (T2-M3) ──
+# ── 🔴 restore mode auto-detected on memory.db alone ──
 
 
 def test_a_POPULATED_home_without_memory_db_proposes_MERGE(tmp_path, monkeypatch) -> None:
@@ -2476,8 +2474,8 @@ def test_a_POPULATED_home_without_memory_db_proposes_MERGE(tmp_path, monkeypatch
     `triggers.json`: the user's task and their automation were moved into `pre-restore-<ts>/`
     and the snapshot's copies took their place. Recoverable, which is why this is a wrong
     DEFAULT rather than
-    data loss — but the plan's own framing is that "the restore people actually perform is onto a
-    machine that already has state … and replace-mode restores there destroy the newer half".
+    data loss — but the restore people actually perform is onto a machine that already has
+    state, and replace-mode restores there destroy the newer half.
     """
     from personalclaw.snapshot import home_is_populated
 

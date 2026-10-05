@@ -55,7 +55,7 @@ OWNER = SRC / "config" / "loader.py"
 #: `__all__`. `config_dir` / `config_path` ARE declared there — the re-export IS the public
 #: contract an app calls. So a delegator cannot be added without either publishing
 #: `config_loader` (a core internal on the app surface, which that rail exists to prevent) or
-#: widening that rail, and widening another lane's boundary rail as a side effect of this sweep is
+#: widening that rail, and widening another suite's boundary rail as a side effect of this sweep is
 #: not a trade worth making.
 #:
 #: The exemption is also SAFE, not merely convenient, and the distinction matters. The hazard is

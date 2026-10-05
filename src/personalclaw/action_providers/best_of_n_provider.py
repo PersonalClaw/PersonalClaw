@@ -8,16 +8,15 @@ core, not here: the genuinely-parallel fan-out, the temperature ladder, the
 ModelCallGuard metering on every call, the deterministic winner selection, and the
 bounded ``sampling_outcomes.jsonl`` record.
 
-**DEVIATION from the node sketch, recorded here because this is the seam it names.**
-The plan sketches "fan-out node (N samples) → judge node → select node" and, in the
-same sentence, requires that "the template CALLS the core rather than
-reimplementing". The shipped core does not decompose into those halves: its pieces
-(``_sample_one`` / ``_judge_candidates`` / ``_select_winner``) are private, and the
-concurrency proof, the fail-open tiers, the tie-break contract and the outcome record
-all span the WHOLE call. Splitting them across engine nodes would re-own each of those
-contracts in template config — exactly the skill/template drift the plan's own risk
-table forbids ("templates are thin spec wrappers"). So the template's one action node
-calls ``best_of_n`` whole: the engine sees fan-out → judge → select as one metered
+**Why one node rather than three, recorded here because this is the seam it names.**
+A "fan-out node (N samples) → judge node → select node" split looks natural, but the
+template must CALL the core rather than reimplement it, and the shipped core does not
+decompose into those halves: its pieces (``_sample_one`` / ``_judge_candidates`` /
+``_select_winner``) are private, and the concurrency proof, the fail-open tiers, the
+tie-break contract and the outcome record all span the WHOLE call. Splitting them across
+engine nodes would re-own each of those contracts in template config — exactly the
+skill/template drift that keeping templates thin spec wrappers forbids. So the template's
+one action node calls ``best_of_n`` whole: the engine sees fan-out → judge → select as one metered
 action, and the parallelism is the core's own ``asyncio.gather``.
 
 ``action_config`` shape (mirrors the MCP tool's arguments exactly)::
@@ -84,7 +83,7 @@ class BestOfNActionProvider(ActionProvider):
             )
         # Same coercions as the MCP tool (`mcp_subagents._best_of_n`), so the two entry
         # points hand the core identical arguments for identical inputs — the parity the
-        # HC-5 shared-core test asserts.
+        # shared-core test asserts.
         try:
             n = int(action_config.get("n") or 3)
         except (TypeError, ValueError):

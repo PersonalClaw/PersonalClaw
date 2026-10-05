@@ -65,7 +65,7 @@ class Boundary:
 def section_boundaries(content: str) -> list[Boundary]:
     """Every heading-opened section boundary in *content*, in document order.
 
-    🔴 This exists so KL-19's split verb cuts on the SAME rule the chunker sections on. A
+    🔴 This exists so the split verb cuts on the SAME rule the chunker sections on. A
     split whose "section boundary" came from a second heading regex would hand the chunk layer
     a document whose sections it does not agree with — the halves would re-chunk along
     different seams than the UI drew, and the outline a reader chose from would not be the

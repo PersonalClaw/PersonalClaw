@@ -66,7 +66,7 @@ _NO_STORE = {"Cache-Control": "no-store"}
 #
 # **Deliberately unmet clauses of LATER drafts:** anything requiring server→client requests
 # (elicitation, sampling) or a resumable event stream is out of scope for a read-only,
-# POST-only surface, and OAuth-based authorization is expressly this plan's non-goal — the
+# POST-only surface, and OAuth-based authorization is expressly a non-goal — the
 # surface uses a dedicated bearer token distinct from the dashboard's. Advertising a revision
 # that mandates those would be a false claim, which is exactly what this review is for.
 PROTOCOL_VERSION = "2025-06-18"
@@ -239,7 +239,7 @@ async def handle_mcp(request: web.Request) -> web.Response:
         presented = header[len("Bearer ") :].strip()
 
     # 3b) Identity. A bearer may be EITHER the surface token (the un-scoped operator
-    #     credential MCP-READONLY-INBOUND shipped) or a per-client token. A client
+    #     credential the read-only MCP surface shipped with) or a per-client token. A client
     #     token is tried FIRST so a registered client is never mistaken for the
     #     surface principal and thereby handed un-pinned access.
     client, client_reason = clients_mod.lookup_by_token(presented, SURFACE)
@@ -364,7 +364,7 @@ async def handle_mcp(request: web.Request) -> web.Response:
             # client: its default `2025-11-25` got `-32602` and the session died,
             # although its supported list contains our `2025-06-18`. The reference server
             # implementation agrees (`mcp/server/session.py`: requested-if-supported else
-            # latest). See this plan's execution log for the recorded deviation.
+            # latest).
             #
             # What the old code got RIGHT and is kept: a supported request is ECHOED, not
             # overridden by our preference, so the session runs under the revision the
@@ -503,7 +503,7 @@ async def handle_mcp(request: web.Request) -> web.Response:
 
 
 def _record_breach(client_id: str, reason: str) -> None:
-    """Count one cap breach toward auto-disable (§1.3). No-op for an anonymous caller.
+    """Count one cap breach toward auto-disable. No-op for an anonymous caller.
 
     Read from config here rather than baked in, so the owner's
     `auto_disable_after_breaches` (including 0 = never) governs.

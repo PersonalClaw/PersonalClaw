@@ -10,7 +10,7 @@
  * in `tokens.css` cannot substitute for it. The press depth is a NUMBER computed in JS
  * (`1 - expr(0.05, 0.4)`) and handed to framer-motion, which writes it as an inline transform —
  * CSS never sees a declaration it could override. That is reduced motion's third layer
- * (system.md §5), and it is the one an author skips.
+ * (`docs/design/motion.md` §3), and it is the one an author skips.
  *
  * Measured while writing this: motion allowed → `transform: scale(0.9727…)`, reduced →
  * `transform: none`. The paired motion-allowed assertions live in `buttonTierSixStates.test.tsx`,

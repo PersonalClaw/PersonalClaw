@@ -1,17 +1,17 @@
-"""Rendering-engine registry guards (R6 of rendering-engine-architecture.md).
+"""Rendering-engine registry guards.
 
 The frontend ContentTypeRegistry (web/src/ui/content/) is the ONE source of
 truth for how a content type renders/edits/sanitizes. Two cross-tier invariants
 keep it from forking again:
 
 1. **Kind alignment** — every artifact `kind` the registry declares MUST be in the
-   backend ``ALLOWED_KINDS`` and vice-versa. The registry is FE-authoritative
-   (open-decision #2); this test is the "checked against it" half, so adding a kind
+   backend ``ALLOWED_KINDS`` and vice-versa. The registry is FE-authoritative;
+   this test is the "checked against it" half, so adding a kind
    on one tier without the other fails CI instead of silently 400-ing at save time.
 
 2. **No parallel dispatch** — no web component outside ``ui/content/`` may
    re-introduce a content-type→renderer dispatcher (the ``IFRAME_KINDS`` /
-   ``EDITABLE_KINDS`` Sets this plan deleted). These are the exact drifts the rendering
+   ``EDITABLE_KINDS`` Sets that were deleted). These are the exact drifts the rendering
    engine consolidated; this guard stops their return.
 
 3. **One way onto the page for text the app did not write** — a model's reply, a tool's

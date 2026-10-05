@@ -115,7 +115,7 @@ class TestNativeTypeRegistration:
             NativeKnowledgeProvider(store).create_typed(item_type="verdict", title="x")
 
     def test_a_decision_rides_the_passthrough_graph(self) -> None:
-        """The change's contract. `graph_for` falls back to `DocumentGraph` for anything it does
+        """The routing contract. `graph_for` falls back to `DocumentGraph` for anything it does
         not know, so an UNLISTED decision would route through the document reader and merely
         look similar — which is why the type is mapped explicitly."""
         from personalclaw.knowledge.pipeline.graphs import PassthroughGraph, graph_for
@@ -169,7 +169,7 @@ class TestLogDecision:
         assert row["id"] in [h["id"] for h in hits]
 
     def test_the_structured_fields_ride_the_metadata_json(self, store, triggers) -> None:
-        """No new column, so `_migrate` stays untouched — the plan's §2.1 constraint."""
+        """No new column, so `_migrate` stays untouched."""
         row = _log(store, triggers)
         item = store.get_item(row["id"])
         meta = decision_meta(item)
@@ -185,7 +185,7 @@ class TestLogDecision:
     def test_it_mints_exactly_one_review_trigger_at_a_deterministic_id(
         self, store, triggers
     ) -> None:
-        """Criterion 3's "exactly one". Counted over the WHOLE store rather than looked up by
+        """Exactly one trigger. Counted over the WHOLE store rather than looked up by
         id, because a generated slug would also satisfy a by-id lookup of the row it created."""
         row = _log(store, triggers)
         rows = [r for r in triggers.load() if r.trigger.id.startswith("system:decision-journal")]
@@ -300,14 +300,14 @@ class TestLogDecision:
         assert row["review_horizon"] == expected
 
 
-# ── resolution + the R18 lesson ──────────────────────────────────────────────
+# ── resolution + the lesson ──────────────────────────────────────────────────
 
 
 class TestResolution:
     def test_resolving_writes_a_lesson_citing_expectation_versus_outcome(
         self, store, triggers, memory
     ) -> None:
-        """Criterion 5's memory half. The lesson must CITE both sides: a lesson that records
+        """The memory half. The lesson must CITE both sides: a lesson that records
         only the outcome cannot teach calibration, which is the entire point of the journal."""
         row = _log(store, triggers)
         resolved = resolve_decision(
@@ -347,7 +347,7 @@ class TestResolution:
         assert key in {row_["key"] for row_ in memory.get_lessons()}
 
     def test_the_two_stores_stay_uncoupled(self, store, triggers, memory) -> None:
-        """Criterion 5's "linked only by soft references": the knowledge item holds a string,
+        """Linked only by soft references: the knowledge item holds a string,
         and the memory row holds nothing pointing back."""
         row = _log(store, triggers)
         resolved = resolve_decision(
@@ -485,7 +485,7 @@ class TestDeferral:
         assert memory.get_lessons() == []
 
     def test_it_defers_at_most_twice_then_goes_stale_pending(self, store, triggers, memory) -> None:
-        """Criterion 6. Past the cap the item stays pending with NO trigger — the journal view
+        """Past the cap the item stays pending with NO trigger — the journal view
         surfaces it, and nothing nags again."""
         row = _log(store, triggers)
         kw = {"store": store, "trigger_store": triggers, "memory": memory}
@@ -552,7 +552,7 @@ class TestListAndCalibration:
             list_decisions(store=store, domain="vibes")
 
     def test_calibration_is_count_honest_under_ten(self, store, triggers, memory) -> None:
-        """Criterion 7: computed from knowledge.db alone, no new store and no LLM, and honest
+        """Computed from knowledge.db alone, no new store and no LLM, and honest
         about a sample too small to mean anything."""
         for i in range(3):
             row = _log(store, triggers, summary=f"D{i}", domain="technical")
@@ -602,7 +602,7 @@ def _invoke(name: str, args: dict):
 
 class TestChatTools:
     def test_the_three_tools_surface_from_the_knowledge_app_provider(self) -> None:
-        """The plan registers them beside the knowledge tools, in the same category — a
+        """They register beside the knowledge tools, in the same category — a
         decision IS a knowledge item, so the journal cannot be removed independently of the
         library its entries live in."""
         from personalclaw.agents.native.builtin_tools import (

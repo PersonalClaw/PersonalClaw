@@ -1,6 +1,6 @@
-"""Per-arm precision, threshold tuning from data, Beta-Binomial trust (LEARN-R4 / §2.5).
+"""Per-arm precision, threshold tuning from data, Beta-Binomial trust.
 
-§7 criterion 7 is the bar, and it has three clauses: per-arm surfaced-vs-used precision is
+The bar has three clauses: per-arm surfaced-vs-used precision is
 REPORTABLE per entity kind, threshold profiles are TUNABLE FROM DATA, and a muted chip visibly
 LOWERS an entity's trust posterior. Each has a test named for it below.
 
@@ -58,7 +58,7 @@ def test_the_shipped_arm_table_is_imported_not_restated():
     `memory_push.ARM_CONFIDENCE` already defines alias/exact_name/suffix, and its docstring records
     that "how the name was recognised IS the evidence". My first draft wrote a second table with
     `exact_name` at 0.90 where the shipped one says 0.80 — two confidence scales for one arm name,
-    which is exactly the drift this program keeps finding. The shipped values win.
+    which is exactly the drift that keeps recurring. The shipped values win.
     """
     from personalclaw.memory_push import ARM_CONFIDENCE as shipped
     from personalclaw.memory_push import RECENCY_BONUS as shipped_bonus
@@ -78,7 +78,7 @@ def test_the_retrieval_arms_extend_rather_than_replace():
 
 
 def test_an_embedding_match_is_the_least_trusted_arm():
-    """A nearest neighbour is a guess; the plan names it at ~0.6 for that reason."""
+    """A nearest neighbour is a guess; it sits at ~0.6 for that reason."""
     assert ARM_CONFIDENCE["embedding"] == min(ARM_CONFIDENCE.values())
 
 
@@ -265,7 +265,7 @@ def test_proposals_are_proposals_and_apply_nothing():
 
 
 def test_a_new_entity_starts_at_even_odds():
-    """§2.5 says "start 0.50" — neither trusted nor suspected."""
+    """Start at 0.50 — neither trusted nor suspected."""
     fresh = Posterior(kind="skill", entity="brand-new")
     assert fresh.mean == pytest.approx(0.5)
     assert fresh.observations == 0
@@ -273,7 +273,7 @@ def test_a_new_entity_starts_at_even_odds():
 
 
 def test_a_mute_visibly_lowers_the_posterior():
-    """§7 criterion 7's third clause, asserted directly."""
+    """The third clause, asserted directly."""
     before = posterior_from_counts(kind="lesson", entity="lint", surfaced=20, used=15)
     after = apply_mute(before)
     assert after.lower_bound < before.lower_bound

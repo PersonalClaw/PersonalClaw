@@ -1,6 +1,6 @@
 """The per-gate fail-open/fail-closed classification, verified against real behaviour.
 
-§1.4 decision 1 (R3 am.): *"Fail-open vs fail-closed is classified **per gate**: budget/storm-guard
+The design rule: *"Fail-open vs fail-closed is classified **per gate**: budget/storm-guard
 checks time-box and fail-open; security fences (capabilities, injection screen, fencing) stay
 fail-closed."*
 
@@ -12,7 +12,7 @@ read by **no production code** — only tests. Measured:
 Two vocabularies that never intersected. The set held per-trigger CAP KEYS a person edits
 (`cost_cap`, `rate_cap`, `duty_gate` — the `GATE_KEYS` vocabulary), while the fire path walks GATE
 names (`screen`, `quiet`, `duty`, `budget`, `claim`, `yield`, `capability`, `incident`). So **every
-gate the engine actually runs resolved to "closed"** — including `duty`, which §1.4 and
+gate the engine actually runs resolved to "closed"** — including `duty`, which the design and
 `calendar.evaluate_duty` both require to fail OPEN.
 
 **The gates were right; the classifier was wrong.** Driven: an unregistered duty provider allows the
@@ -60,7 +60,7 @@ def test_BOTH_vocabularies_resolve():
 
 
 def test_the_two_sets_do_not_OVERLAP():
-    """A gate in both sets would resolve by lookup order — the ambiguity S71 found in `fuse`."""
+    """A gate in both sets would resolve by lookup order — the ambiguity once found in `fuse`."""
     assert not (FAIL_OPEN_GATES & FAIL_CLOSED_GATES)
 
 
@@ -74,7 +74,7 @@ def test_an_UNCLASSIFIED_gate_still_defaults_to_CLOSED():
 
 
 def test_the_DUTY_gate_really_fails_OPEN(monkeypatch):
-    """🔴 The classification checked against behaviour. §1.4 is explicit: the duty gate calls out to
+    """🔴 The classification checked against behaviour. The duty gate calls out to
     a provider, and uninstalling the calendar app that supplied it must not silently stop every
     automation that referenced it."""
     gates = {"duty_gate": {"provider": "no-such-calendar-app"}}
@@ -84,9 +84,9 @@ def test_the_DUTY_gate_really_fails_OPEN(monkeypatch):
 
 
 def test_the_BUDGET_gate_really_fails_CLOSED():
-    """§3.6 is more specific than the "budget/storm-guard … fail-open" prose, and the
+    """The budget rule is more specific than the "budget/storm-guard … fail-open" prose, and the
     code follows
-    it: "an unreadable budget is not an unlimited one". The classifier now matches §3.6."""
+    it: "an unreadable budget is not an unlimited one". The classifier now matches it."""
     decision = asyncio.run(evaluate(FireContext(trigger_id="t", budget_readable=False)))
     assert decision.allowed is False
     assert decision.gate == "budget"
@@ -147,7 +147,7 @@ def test_IDEMPOTENCY_is_never_fail_open():
     ["max_cost_usd_per_run", "rate_cap", "max_runs_per_hour", "max_actions_per_hour", "condition"],
 )
 def test_a_STORM_GUARD_cap_stays_fail_open(cap):
-    """R3's amendment: a budget probe that hangs must not silently stop every automation on the
+    """A budget probe that hangs must not silently stop every automation on the
     machine. The cost of a skipped cap check is one extra run."""
     assert gate_failure_mode(cap) == "open"
 

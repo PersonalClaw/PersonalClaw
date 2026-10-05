@@ -1,6 +1,6 @@
 """The wiring that makes the surfacing mechanisms reachable.
 
-S55-S61 built decision modules and gave the def somewhere to declare its surfacing. Nothing CALLED
+Decision modules were built and the def got somewhere to declare its surfacing. Nothing CALLED
 any of it. Three gaps were measured here, each of which made a shipped mechanism unreachable:
 
 **`author_def` had no `metadata` parameter.** So every `DefMetadata` field — including the

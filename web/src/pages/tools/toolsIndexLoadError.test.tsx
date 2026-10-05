@@ -6,7 +6,7 @@ import { join } from 'node:path'
 // ── Four tolerant reads and one that is the collection ───────────────────────────────────────────
 //
 // `#/tools` composes SIX reads inside one cached fetcher, each with its own `.catch`. That pattern is
-// deliberate here and this cycle keeps it: a dead MCP server, an unreachable pool or a missing groups
+// deliberate here and this change keeps it: a dead MCP server, an unreachable pool or a missing groups
 // config must not hide the built-in tools, and `load_failures` makes per-tool breakage first-class on
 // this very surface. Partial tolerance is the design.
 //
@@ -100,7 +100,7 @@ describe('the composed fetcher keeps its asymmetry legible', () => {
     const list = readList()
     expect(list, 'the index must be in the list').toContain('api.toolsIndex()')
     // 🪤 Asserted against the whole call, not a prefix: `api.toolsIndex()` matches even with a
-    // `.catch(...)` re-appended, which is precisely how a mutation slipped two cycles ago.
+    // `.catch(...)` re-appended, which is precisely how a mutation once slipped through.
     expect(list, 'the index must not substitute an empty collection')
       .not.toMatch(/api\.toolsIndex\(\)\s*\.catch/)
   })

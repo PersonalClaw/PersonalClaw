@@ -1,5 +1,5 @@
 /**
- * FLUID-MOTION §S3 T3.2 — the orchestrated surface entrance UNDER reduced motion.
+ * The orchestrated surface entrance UNDER reduced motion.
  *
  * Its own file, with the `matchMedia` stub installed at MODULE SCOPE before any render, for
  * the reason `ui/personality/TerminalStrip.reducedMotion.test.tsx` records: framer-motion

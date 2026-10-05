@@ -132,8 +132,8 @@ describe('the daily-digest promise', () => {
   })
 
   it('the builder is still real — not a descoped stub', () => {
-    // 🪤 Its section header reads "daily digest (mem-tree, descoped)", which is about the wider mem-tree
-    // plan, not this node kind. Worth pinning precisely because that word sits next to working code: a
+    // 🪤 Its section header used to call it "descoped", which was about a wider design, not this node
+    // kind. Worth pinning precisely because that word sat next to working code: a
     // future reader (or a cleanup pass) could take it as licence to delete the builder while the hint
     // keeps promising it.
     const svc = py('memory_service.py')

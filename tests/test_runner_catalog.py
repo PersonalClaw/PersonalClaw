@@ -141,7 +141,7 @@ def test_shipped_catalog_carries_the_four_runner_rows():
 def test_shipped_runtime_ids_are_canonical_never_aliases():
     """A shipped row must advertise the id a bundle REGISTERS, not an alias of it.
 
-    `AAPX-2`, measured as-a-user 2026-09-19. The kiro row shipped
+    Measured as-a-user 2026-09-19. The kiro row shipped
     ``runtime_id: "acp:kiro"`` while the only bundle implementing the provider registers
     ``acp:kiro-cli``, so the id this catalog published through ``GET /api/agent-runners``
     could not be bound at all::
@@ -198,7 +198,7 @@ def test_byo_definition_adds_a_row_and_can_replace_a_shipped_one(tmp_path):
     assert cat["codex"].source == "user"
 
 
-# ── clause 1: evidence is measured or absent ──────────────────────────────────
+# ── claim 1: evidence is measured or absent ───────────────────────────────────
 
 
 def test_absent_binary_records_no_latency_and_no_version():
@@ -243,7 +243,7 @@ def test_never_probed_runner_surfaces_null_health_not_a_default():
     assert row.to_dict()["health"] is None
 
 
-# ── clause 2: the verbatim probe error reaches the surface ────────────────────
+# ── claim 2: the verbatim probe error reaches the surface ─────────────────────
 
 
 def test_probe_error_is_the_probes_own_text():
@@ -267,7 +267,7 @@ def test_failed_cli_error_is_the_clis_own_stderr(monkeypatch, tmp_path):
 async def test_verbatim_error_survives_to_the_api_response():
     """The exact probe text is what ``GET /api/agent-runners`` hands the UI.
 
-    This is the end of clause 2: it is not enough that the probe knows the reason — the
+    This is the end of claim 2: it is not enough that the probe knows the reason — the
     surface has to carry it. A generic 'unavailable' anywhere between here and the row
     dict reds this assertion. The probe is a runner's Check (the read runs nothing), so the
     recorded Check is what the read must carry.
@@ -307,7 +307,7 @@ def _flip_runner() -> runners.RunnerDefinition:
 
 
 def test_removing_a_runner_from_path_flips_a_healthy_row_to_unhealthy(monkeypatch, tmp_path):
-    """The acceptance clause, driven as a TRANSITION rather than two separate states.
+    """The health flip, driven as a TRANSITION rather than two separate states.
 
     Probing an absent binary and probing a present one are both already covered, but
     neither proves the thing a user actually experiences: a row that WAS healthy, with a
@@ -509,7 +509,7 @@ def test_capabilities_persist_from_the_discovery_snapshot():
     assert row.to_dict()["capabilities"]["models"] == ["m1"]
 
 
-# ── clause 3: the refusal, at the spawn call site ─────────────────────────────
+# ── claim 3: the refusal, at the spawn call site ──────────────────────────────
 
 
 class _FakeProvider:
@@ -758,7 +758,7 @@ def test_frontend_exposes_the_toggle():
     assert "RunnersSection" in panel
 
 
-# ── the second §3.2 field: agent.runner_health_check_secs, and its READER ──────
+# ── the second config field: agent.runner_health_check_secs, and its READER ────
 #
 # A config field whose value nothing consults is a knob that lies. So the round-trip
 # assertions below are paired with the reader: the staleness verdict the row carries has

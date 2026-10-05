@@ -1,6 +1,6 @@
 """A sidecar app's engine installs from the UI, into the app's own Python environment.
 
-What stood in the way on main, measured by the apps/models lane on Voice Clone TTS:
+What stood in the way on main, measured on Voice Clone TTS:
 
 * nothing could install the engine but a shell: no surface called the install route, and the
   one hook an app has (``setup.onInstall``) is capped at 60 seconds;

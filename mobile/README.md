@@ -98,8 +98,7 @@ Two documents, two mechanisms:
   rotation and resize.
 
 The native keys are read by native code, so no test in this repo can prove they *render*. A real
-device is the only proof, and that is recorded as a PARTIAL in
-the plan (internal) rather than claimed.
+device is the only proof, and none is claimed here.
 
 The bootstrap screen uses CSS system colors (`Canvas`, `CanvasText`, `AccentColor`, `Field`) and
 invents no design token. PersonalClaw's design system lives in `web/` and is served; hand-copying a

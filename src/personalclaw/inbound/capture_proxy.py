@@ -43,7 +43,7 @@ spends the operator's credential on any host a local agent names.
 
 **Recording is off the hot path.** The response reaches the caller FIRST; the turn
 record is handed to a background task afterwards. Sync storage inside the proxy loop is
-the named anti-pattern (§7.1 "latency honesty") — it makes every captured turn slower
+the anti-pattern "latency honesty" rules out — it makes every captured turn slower
 than an un-captured one, which is how a recording feature gets turned off. A recorder
 that raises, or a `capture_store` that has not landed yet, degrades to a logged warning:
 the caller always gets its bytes.
@@ -131,7 +131,7 @@ def upstream_allowlist(cfg: Any) -> tuple[str, ...]:
     """The operator's allow-list of upstream hosts, or ``()``.
 
     Read TOLERANTLY across two spellings on purpose. The nested form
-    (``external_access.capture.upstream_allowlist``) is what §7.1 describes; the flat
+    (``external_access.capture.upstream_allowlist``) groups it under ``capture``; the flat
     form (``external_access.capture_upstream_allowlist``) is the convention the
     neighbouring ``capture_retention_days`` already follows. Accepting either costs one
     ``getattr`` and removes a whole class of "the field landed under the other name and
@@ -472,7 +472,7 @@ async def _forward(
                 reply.body = await resp.read()
                 return reply
             async for chunk in resp.content.iter_any():
-                # Caller first, buffer second — the ordering §7.1 asks for.
+                # Caller first, buffer second — the latency-honest ordering.
                 await on_chunk(chunk)
                 reply.chunks.append(chunk)
             return reply
@@ -486,7 +486,7 @@ _pending: set[asyncio.Task] = set()
 def _recorder() -> Callable[..., Awaitable[str]] | None:
     """`capture_store.record_turn_async`, or None when it has not landed.
 
-    Imported lazily and tolerantly for the ordering reason §7.1 names in the other
+    Imported lazily and tolerantly for the same ordering reason in the other
     direction: the transport and the store ship independently, and the transport must
     not be un-runnable because its consumer is one commit behind. A missing store means
     traffic still forwards and one warning is logged — never a 500 for the caller.
@@ -723,7 +723,7 @@ def _screened(exc: BaseException) -> str:
 
 
 async def handle_import(request: web.Request) -> web.StreamResponse:
-    """POST /capture/import — §8's telemetry import for agents that cannot be proxied.
+    """POST /capture/import — the telemetry import for agents that cannot be proxied.
 
     Body: ``{"file": "<name>", "format": "jsonl"|"json"|"sse", "source": "<label>"}``.
     Answers the SAME report ``personalclaw capture import`` prints — ``{imported,
@@ -813,7 +813,7 @@ async def handle_import(request: web.Request) -> web.StreamResponse:
 
 
 def register_routes(app: web.Application) -> None:
-    """Mount both dialects and §8's import route.
+    """Mount both dialects and the import route.
 
     Registered UNCONDITIONALLY, like every inbound surface on the dashboard's port, and
     the reason matters: a mount-time gate freezes the decision at startup, so

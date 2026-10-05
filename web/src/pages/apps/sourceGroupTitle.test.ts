@@ -1,13 +1,13 @@
 import { describe, it, expect, vi } from 'vitest'
 import { sourceGroup, localSourceLabel, type StoreItem } from './AppsSection'
 
-// ── WT-10: a local source is a FOLDER NAME in the Store, never an absolute path ──
+// ── A local source is a FOLDER NAME in the Store, never an absolute path ──
 //
 // The Store groups apps by where they came from. For a git source the heading is the
 // URL; for a local source it used to be the raw `key` — the absolute directory path.
 // Run the app from a git worktree and that path was the worktree checkout, so the
-// Store printed "/Users/…/worktrees/ux-inspect/src/…" (uppercased by the divider) as a
-// section title: a dev/console artifact leaking into product chrome (DESIGN-TENETS
+// Store printed "/Users/…/worktrees/feature-x/src/…" (uppercased by the divider) as a
+// section title: a dev/console artifact leaking into product chrome (`web/PRODUCT.md`
 // tenet 1, companion-not-console). The heading is now the folder name; the full path
 // stays the grouping KEY, so the source filter/URL state (`ssrc=local:<path>`) is
 // unchanged. Both the divider heading AND the Sources rail/filter read this one label,
@@ -45,7 +45,7 @@ describe('localSourceLabel turns a filesystem path into a human folder name', ()
     expect(localSourceLabel('C:\\Users\\me\\apps')).toBe('apps')
   })
   it('never returns a value containing a path separator for a real folder', () => {
-    const leaky = '/Users/me/PersonalProjects/PersonalClaw/.worktrees/ux-inspect/src/personalclaw/apps'
+    const leaky = '/Users/me/code/PersonalClaw/.worktrees/feature-x/src/personalclaw/apps'
     expect(localSourceLabel(leaky)).toBe('apps')
     expect(localSourceLabel(leaky)).not.toContain('/')
   })
@@ -55,8 +55,8 @@ describe('localSourceLabel turns a filesystem path into a human folder name', ()
 })
 
 describe('sourceGroup labels a local source by folder name, keyed by full path', () => {
-  it('a worktree-checkout source does not leak the absolute path into the heading (WT-10)', () => {
-    const worktree = '/Users/me/PersonalProjects/PersonalClaw/.worktrees/ux-inspect/src/personalclaw/apps'
+  it('a worktree-checkout source does not leak the absolute path into the heading', () => {
+    const worktree = '/Users/me/code/PersonalClaw/.worktrees/feature-x/src/personalclaw/apps'
     const g = sourceGroup(mk({ source: `${worktree}/ledger`, sourceKind: 'local', origin: 'local' }), [])
     // Heading is human, and carries no filesystem path.
     expect(g.label).toBe('apps')

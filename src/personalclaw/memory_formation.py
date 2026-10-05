@@ -205,7 +205,7 @@ def candidates_from_extract(
 
     ``holder_attribution`` off means the axis is not persisted at all: the extracted
     holder/weight are dropped and the row is written as a plain fact, which is exactly
-    the pre-MGAV-5 shape. That is the flag doing real work rather than decorating.
+    the pre-attribution shape. That is the flag doing real work rather than decorating.
 
     Two things a model returns are not candidates. A key another writer owns (a procedural
     prior, the self-model's evidence, a lesson, a slot — :func:`~.vector_memory.is_fact_key`)
@@ -258,7 +258,7 @@ def gather(vs, candidates: Sequence[Candidate]) -> list[Candidate]:
       contain a dot: sharing only the top-level allowlist prefix (``pref``) would make
       every preference collide with every other one, which is noise, not a signal.
     * **keyword overlap** — the generalization of the ``episodic_dedup_threshold``
-      machinery that already half-did this for episodics (§4.1).
+      machinery that already half-did this for episodics.
     * **graph arm** — records linked to entities the candidate NAMES, which catches a
       collision whose wording shares nothing with the candidate's.
 
@@ -407,7 +407,7 @@ def adjudicate(cand: Candidate, decision: Decision | None, *, source: str) -> De
     * a ``SUPERSEDE`` the model is unsure about → still SUPERSEDE-shaped but
       ``unsure``, which the executor turns into keep-both;
     * a ``SUPERSEDE``/``UPDATE`` where the target's holder outranks the candidate's →
-      forced ``unsure`` (holder precedence, §4.2). This is the rule that stops an
+      forced ``unsure`` (holder precedence). This is the rule that stops an
       external rumour from retiring something the user told us;
     * a ``SUPERSEDE``/``UPDATE`` of a row the owner set herself, from a write that is not hers
       (:func:`_written_as`) → forced ``unsure`` too: only she replaces what she set.

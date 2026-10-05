@@ -1,4 +1,4 @@
-"""App Platform REST API + backend reverse-proxy (A4).
+"""App Platform REST API + backend reverse-proxy.
 
 HTTP-level coverage over the /api/apps routes: install from a local path,
 list/get, enable/disable, config get/put (validated against configSchema),
@@ -134,7 +134,7 @@ async def test_install_list_get(tmp_path):
 @pytest.mark.asyncio
 async def test_list_hasconfig_from_provider_settings_schema(tmp_path):
     """GET /api/apps `hasConfig` must be true for a PROVIDER app whose settings live
-    under provider.settingsSchema (not setup.configSchema) — regression for bug #29,
+    under provider.settingsSchema (not setup.configSchema) — regression for the bug
     where such apps (native-vector-memory/tasks/skills/notifications) reported
     hasConfig=false so the Apps UI hid their Configure action."""
     async with _client(tmp_path) as client:
@@ -220,7 +220,7 @@ async def test_list_reports_no_quality_block_for_an_app_that_declares_none(tmp_p
 
 @pytest.mark.asyncio
 async def test_client_install_returns_200_with_one_liner(tmp_path):
-    """P21 platform gate: an installMode=client app is NOT server-installable — the
+    """The platform gate: an installMode=client app is NOT server-installable — the
     handler must return 200 (a valid client-install DIRECTIVE, not a 400 bad-request)
     with needs_client_install + the copy-paste one-liner, and must NOT commit it."""
     async with _client(tmp_path) as client:
@@ -317,7 +317,7 @@ async def test_config_get_put_validated(tmp_path):
 
 @pytest.mark.asyncio
 async def test_sensitive_config_field_is_write_only(tmp_path):
-    """A field marked x-meta.sensitive is WRITE-ONLY over the API (#43): GET masks
+    """A field marked x-meta.sensitive is WRITE-ONLY over the API: GET masks
     the stored secret (never returns it in the clear) + flags it in _secret_set; a
     PUT carrying the mask sentinel (or empty) keeps the stored secret rather than
     clobbering it; a real new value overwrites it."""
@@ -369,7 +369,7 @@ async def test_sensitive_config_field_is_write_only(tmp_path):
 async def test_the_app_detail_route_masks_the_same_secret_the_config_route_does(tmp_path):
     """``GET /api/apps/{name}`` serves the SAME stored config as ``.../config``.
 
-    The test above has pinned the write-only rule on ``/config`` since #43, and this route —
+    The test above has pinned the write-only rule on ``/config``, and this route —
     two functions away in the same module, reading the same file, honouring the same flag —
     returned the secret verbatim anyway. Not a hypothetical surface: it is exactly what
     ``api.app(name)`` fetches. Found by a derived census
@@ -489,7 +489,7 @@ async def test_a_reference_in_a_field_the_schema_does_not_call_secret_is_masked(
 async def test_config_route_rejects_traversal_name_cleanly(tmp_path):
     """A path-escaping {name} on the config route must 404 cleanly (the manifest
     check treats an invalid name as not-installed), NOT surface app_dir's guard
-    ValueError as a 500 (#44)."""
+    ValueError as a 500."""
     async with _client(tmp_path) as client:
         for bad in ["..%2F..%2Fetc", "..%2F..%2F..%2Fevil"]:
             r = await client.get(f"/api/apps/{bad}/config")
@@ -784,7 +784,7 @@ async def test_startup_relaunches_enabled_backends(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_apps_list_flags_available_update(tmp_path, monkeypatch):
-    """APE-7 end-to-end over HTTP: install v1.0.0, register a local source carrying a
+    """End to end over HTTP: install v1.0.0, register a local source carrying a
     v1.1.0 copy, and GET /api/apps → the installed app is flagged updateAvailable with
     the newer latestVersion (computed on the read path, no polling)."""
     # Neutralize the always-present first-party default source so this test's source set

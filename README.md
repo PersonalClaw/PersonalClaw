@@ -167,7 +167,7 @@ means a design boundary we expect to still hold at 1.0**, not a backlog item:
 | have no model of your own to connect | **no** | the one model it can fetch for you is a 135M-parameter floor (one 138 MiB download, then offline) with no tools; real work needs your own Ollama or a provider app |
 | need accounts for more than one person | **never** | single-user by construction — *"no hub in core, ever"* |
 | want a native phone app | **no** | the phone is the dashboard installed as a PWA, not a store app |
-| need a native Windows install | **no** | WSL2 or Docker Desktop only; the native port was ruled no-go |
+| need a native Windows install | **no** | WSL2 or Docker Desktop only; a native port was audited and found no-go |
 | want a signed, auto-updating desktop app | **no** | macOS-only, unsigned, built from a checkout, no update channel |
 | want it to live in Telegram / Discord / email | **no** | core registers exactly one channel: the web dashboard |
 | expect web search to work out of the box | **no** | no search provider ships bundled — it is a seam you fill |
@@ -399,10 +399,7 @@ push to `main`.
 - [Architecture overview](docs/architecture/overview.md) — the system map (with diagrams).
 - [Configuration reference](docs/reference/configuration.md) · [CLI](docs/reference/cli.md) · [API](docs/reference/api-overview.md) · [HTTP routes](docs/reference/api-routes.md)
 - Roadmap — maintainer-owned and deliberately not in this repo; the written way in is the
-  [contribution intake path](CONTRIBUTING.md#the-model). **The short uppercase codes these
-  pages sometimes cite** — `PP-16`, `AAP-5`, `CHANNEL-EXPANSION` — are identifiers from that
-  unpublished plan set, kept only where they record *why* a behaviour exists. Nothing asks
-  you to resolve them and nothing depends on your doing so: each page cites the code that
+  [contribution intake path](CONTRIBUTING.md#the-model). Each page cites the code that
   actually decides, and the code is the authority.
 - [Visual showcase](SHOWCASE.md) — every screen, light and dark.
 

@@ -1,6 +1,6 @@
-"""Per-slice runnable exemplars for the Workflows-v2 build-out.
+"""Per-slice runnable exemplars for the workflows engine build-out.
 
-Each landed WF2 slice has a directory here holding three files (the contract in
+Each landed workflows-engine slice has a directory here holding three files (the contract in
 ``README.md``): a standalone ``exemplar.py`` exercising that slice's mechanism through the
 real engine with a fake model, a ``smoke.sh`` that runs it and asserts the outcome (≤30s),
 and a ``RATIONALE.md`` note. Exemplars are triple-duty: regression anchors (the ``exemplars``
@@ -76,7 +76,7 @@ def incomplete_slices(root: Path | None = None) -> list[str]:
     """Names of ``slice_*`` directories missing one or more contract files.
 
     A slice merged without its full exemplar bundle shows up here — the mechanical half of
-    the plan's same-PR rule ("validate flags a slice merged without its exemplar")."""
+    the same-PR rule ("validate flags a slice merged without its exemplar")."""
     base = root or exemplars_root()
     missing: list[str] = []
     for directory in _slice_dirs(base):

@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { join, relative } from 'node:path'
 import { filesUnder, readSource } from '../test/sourceTree'
 
-// ── Windowing-adoption ratchet (resuming SM-3) ──────────────────────────────
+// ── Windowing-adoption ratchet ──────────────────────────────────────────────
 // The INVERSE of primitiveAdoption.test.ts. That ratchet counts bespoke chrome and
 // holds it DOWN; this one counts surfaces that adopted `ui/WindowedList` and holds it
 // UP, so the measured improvement cannot quietly leak back out — a surface that drops
@@ -16,8 +16,8 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // before/after on a real 5,000-row store under a 4x CPU throttle. A ratchet on a number
 // nobody can trace back to an observation is just a number.
 //
-// 🪤 THE ADOPTION IS THE POINT, NOT THE FILE. Acceptance criterion says "ADOPTED at the surfaces
-// a real library actually gets long in … rather than added once and left unused", so
+// 🪤 THE ADOPTION IS THE POINT, NOT THE FILE. The primitive has to be ADOPTED at the surfaces
+// a real library actually gets long in, rather than added once and left unused, so
 // this test asserts the five named surfaces individually rather than only a total: a
 // total can be held up by five adoptions at surfaces nobody's list ever gets long in.
 
@@ -46,7 +46,7 @@ describe('windowing adoption ratchet (the window may only spread, never retreat)
       `A surface dropped ui/WindowedList (${adopters.length} < ${base.adopters}). Long lists degrade `
         + `as they grow — that is measured, not asserted (see windowedListAdoption.baseline.json). `
         + `If a surface genuinely no longer needs it, lower "adopters" AND remove it from `
-        + `"surfaces" in the baseline, in the same commit, with the reason in the plan's Execution log. `
+        + `"surfaces" in the baseline, in the same commit, with the reason in its message. `
         + `Live: ${adopters.join(', ')}`,
     ).toBeGreaterThanOrEqual(base.adopters)
   })
@@ -57,12 +57,12 @@ describe('windowing adoption ratchet (the window may only spread, never retreat)
       missing,
       `These surfaces are recorded as windowed but no longer render <WindowedList>: ${missing.join(', ')}. `
         + `An adoption count that stays flat while a NAMED long-list surface drops out is the `
-        + `"added once and left unused" failure DSC-13 exists to prevent.`,
+        + `"added once and left unused" failure this ratchet exists to prevent.`,
     ).toEqual([])
   })
 
   it('the five surfaces the change names are the five that adopted it', () => {
-    // knowledge items, sessions, runs, inbox, logs — verbatim from acceptance criteria.
+    // knowledge items, sessions, runs, inbox, logs — the five long-list surfaces.
     for (const [surface, file] of [
       ['knowledge items', 'pages/knowledge/KnowledgeListPage.tsx'],
       ['sessions', 'pages/ChatPage.tsx'],

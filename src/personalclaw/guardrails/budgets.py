@@ -41,7 +41,7 @@ as a call the dollar totals could not count (``unpriced``), never as a free one,
 a dollar total is set against a ceiling says how many calls it leaves out.
 
 This is harness mechanics: ``spend.json`` is a file under the config dir, NOT a
-memory entry or knowledge item (§7 boundary). What calls running now have set aside, and what
+memory entry or knowledge item. What calls running now have set aside, and what
 calls to each model have cost today, are held in the gateway process's memory.
 """
 
@@ -745,7 +745,7 @@ def current_run_key() -> str:
 #: Ambient for the same reason `_CURRENT_RUN_KEY` is: a per-trigger `max_cost_usd_per_run`
 #: is known at the FIRE seam, while the guard that must enforce it is built by
 #: `provider_bridge` from provider config and never sees the trigger. Threading a budget
-#: down would touch the same 33 bridge call sites S153 measured.
+#: down would touch the same 33 bridge call sites.
 #:
 #: Unlimited by default, so a run that binds no ceiling keeps the operator's config value.
 _CURRENT_RUN_BUDGET: contextvars.ContextVar[Budget] = contextvars.ContextVar(
@@ -859,7 +859,7 @@ def reset_meter() -> None:
 
 
 def safety_budget_for_inbound() -> Budget:
-    """The run ceiling for one inbound-access turn (EXTERNAL-ACCESS §9.5).
+    """The run ceiling for one inbound-access turn.
 
     The HEADLESS profile's budget, which ``safety_profile_for`` fills from the operator's
     configured ``max_tokens_per_day`` / ``max_dollars_per_day`` when the profile declares

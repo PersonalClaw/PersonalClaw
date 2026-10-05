@@ -1,12 +1,12 @@
 """ONE updater for a knowledge item: propose, then accept.
 
-WF2KNO-11 clause B. An update to an existing knowledge item runs as a PROPOSAL the owner
+An update to an existing knowledge item runs as a PROPOSAL the owner
 inspects and accepts or dismisses, so generated prose never silently overwrites human
 writing. The plain "just update it" path is the SAME path with the acceptance folded in —
 ``auto_accept=True`` files the proposal and immediately accepts it — rather than a second
 function that writes to the row directly.
 
-That second function is exactly the drift this change removes. A direct-write update sitting
+That second function is exactly the drift this module removes. A direct-write update sitting
 beside a propose-an-update is two code paths over one row: the queue's decision memory, its
 fingerprint dedup, its inbox surfacing and its audit trail all attach to one of them, and
 every caller then silently picks which of those guarantees it gets. So there is no direct

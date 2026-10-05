@@ -319,7 +319,7 @@ class LossReport:
         return ", ".join(f"{kind}×{count}" for kind, count in counts.items())
 
     def to_dict(self) -> dict[str, object]:
-        """JSON-ready view for the surface that must warn before an edit (§C5).
+        """JSON-ready view for the surface that must warn before an edit.
 
         Carries the DERIVED answers (``lossless``, ``kinds``, ``summary``) beside the
         items rather than leaving a client to re-derive them. A report is evidence, and

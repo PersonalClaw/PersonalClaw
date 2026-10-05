@@ -120,8 +120,8 @@ const GIT_URL_RE = /^(https?:\/\/|git@|git:\/\/|ssh:\/\/)/
 /** A human heading for a local filesystem source. The Store groups apps by where
  *  they came from, but a raw absolute path is a dev/console artifact with no place
  *  in product chrome (tenet 1: companion, not console) — running the app from a git
- *  worktree surfaced "/Users/…/worktrees/ux-inspect/src/…" as a Store section title
- *  (WT-10). Show the folder name the user recognises instead
+ *  worktree surfaced "/Users/…/worktrees/feature-x/src/…" as a Store section title.
+ *  Show the folder name the user recognises instead
  *  ("/Users/me/projects/cool-app" → "cool-app"); the full path stays the grouping
  *  key, so filtering/URL state is unchanged. Falls back to the trimmed path only
  *  when there is no segment to show (e.g. a bare "/"). Handles both separators. */
@@ -566,7 +566,7 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
     // correctly shows its empty state, directing the user to the Library.)
     const installedNames = new Set((apps ?? []).map((a) => a.name))
     const byName = new Map<string, StoreItem>()
-    // bundled + local-dir-scanned + P20 registry-indexed (remoteApps) + git-scanned
+    // bundled + local-dir-scanned + registry-indexed (remoteApps) + git-scanned
     // multi-app repos (gitApps) — the union of every installable app the catalog surfaced,
     // flattened by the ONE merge every consumer shares (`lib/appCatalog`) rather than by a
     // concatenation order of this surface's own (#2528).
@@ -1498,7 +1498,7 @@ const PROVIDER_ENTITY_LABEL: Record<string, string> = {
   // as prose — the card is where a user decides what to grant, so its wording is part of the control.
   trigger_source: 'Trigger source', duty_gate: 'Duty gate', sync: 'Sync', sandbox: 'Sandbox',
   // 🔴 AND `trigger` FELL THROUGH THE SAME WAY, which is why the comment above is now a pattern and
-  // not an anecdote. `shared-automations` ships `provider.type: "trigger"` (TSE-4 — a STORE of trigger
+  // not an anecdote. `shared-automations` ships `provider.type: "trigger"` (a STORE of trigger
   // rows, distinct from `trigger_source`, which supplies the stimulus), so its Store card read
   // "trigger provider" and its rail facet read a bare lowercase "trigger".
   //
@@ -1825,7 +1825,7 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: 
 export function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled: (name: string) => void }) {
   const providerLabel = item.isProvider
     ? `${PROVIDER_ENTITY_LABEL[item.providerType] ?? item.providerType} provider` : ''
-  // A registry-indexed (P20) item installs from its `pointer` (repo[#subdirectory]); a
+  // A registry-indexed item installs from its `pointer` (repo[#subdirectory]); a
   // dir-scanned/bundled item from its `source`. Both are reviewed before anything installs.
   const install = useAppInstall({ onInstalled: (r) => onInstalled(r.name) })
   const disclosure = disclosureOf(item)
@@ -1869,7 +1869,7 @@ export function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onIns
         </div>
       )}
 
-      {/* P29: what this app will be GRANTED and what it will RUN, BEFORE install. Keyed on
+      {/* What this app will be GRANTED and what it will RUN, BEFORE install. Keyed on
           consentKnown through `disclosureOf`, not on permissions-emptiness (issue 614): a
           scanned manifest that declares nothing gets PermissionList's own "None — no gateway
           capability" disclosure, while a registry pointer — whose manifest is read when the
@@ -2030,7 +2030,7 @@ export function RemoveAppModal({ name, displayName, onClose, onDone }: { name: s
     // #3540 symptom on the uninstall path. And the refusal it hides is one this very dialog
     // documents above: the backend fails CLOSED on an earlier data/ copy and renders that as
     // `404 app not installed`, which a user can only act on if they are shown it.
-    // Not a toast: the eye is on the dialog, and `refusedWriteVisible`'s ruling is that a
+    // Not a toast: the eye is on the dialog, and `refusedWriteVisible`'s rule is that a
     // surface with a place to put the sentence puts it there. Not closing either — closing is
     // this dialog's success signal, and the app is still installed.
     try { await api.removeApp(name); onDone() }

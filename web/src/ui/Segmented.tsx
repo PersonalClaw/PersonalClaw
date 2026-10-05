@@ -15,7 +15,7 @@ export interface SegOption { key: string; label?: string; tone?: string; icon?: 
  *  pill group. Use this for every "pick one of N" choice (filters, view
  *  switches, mode toggles, tab strips) so they look identical everywhere.
  *
- *  🔑 IT IS A RADIOGROUP, AND THAT WAS AN OPEN OWNER RULING UNTIL #3472. It declared
+ *  🔑 IT IS A RADIOGROUP, AND THAT WAS AN OPEN QUESTION UNTIL #3472. It declared
  *  `role="tablist"` / `role="tab"` / `aria-selected` across **50 call sites with ZERO
  *  `role="tabpanel"` in the entire app** — the only two tabpanels live in
  *  `pages/chat/ChatActivityPanel`, which does not use this control. So a screen reader

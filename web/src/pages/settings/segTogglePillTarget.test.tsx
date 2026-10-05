@@ -6,7 +6,7 @@ import { SegToggle } from './bento'
 
 // ── Eight pills at 22px, adjacent, on the app's most-visited hub ─────────────────────────────
 //
-// Cycle 125 finished the `#/settings/*` sweep and left three shapes behind, measured. This is the first:
+// The `#/settings/*` sweep left three shapes behind, measured. This is the first:
 // `SegToggle`'s pills — the compact choice strip inside a bento tile.
 //
 //   #/settings   Mode: Light 43.70×22 · Mode: Dark 41.30×22 · Mode: Auto 42.48×22
@@ -21,7 +21,7 @@ import { SegToggle } from './bento'
 //
 // Fixed on the shared component, so all four adopters (Mode, Density, Min severity, and the dashboard
 // tile's strip) come along: `h-6` with `-my-px` — 24px of target, 2px handed straight back. The shape
-// cycle 113 established for `RowAction` and cycle 116 restated as the invariant: **grow the hit box,
+// already established for `RowAction` and restated as the invariant: **grow the hit box,
 // leave the layout alone.**
 //
 // Driven on `#/settings`, parent worktree vs this one (`grep -c 'h-\[22px\]'` = 2 there, 0 here):
@@ -34,7 +34,7 @@ import { SegToggle } from './bento'
 //
 // Evidence is a CROP of the pill group, not the page: 2.15% dark / 2.00% light inside a 131×26 group,
 // bounding box 40×24 — the selected pill's tint is 2px taller and nothing else moved. The page-level diff
-// is 0.018%/0.017%; per cycle 125 a page capture cannot be trusted to contain a defect in a fixed-shell
+// is 0.018%/0.017%; a page capture cannot be trusted to contain a defect in a fixed-shell
 // app, so the crop is the real evidence and the page number is context.
 
 describe('SegToggle pills are 24px targets', () => {

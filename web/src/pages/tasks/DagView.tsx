@@ -3,7 +3,7 @@ import { motion, useReducedMotion } from 'framer-motion'
 import { expr, exprHeavy } from '../../design/motion'
 import { accentChip } from '../../design/accent'
 
-/** A reusable, presentational SVG DAG renderer (P17). It draws ALREADY-POSITIONED
+/** A reusable, presentational SVG DAG renderer. It draws ALREADY-POSITIONED
  *  nodes + edges — layout stays in the caller (`dag.ts` for tasks) so this component
  *  is graph-agnostic and Tasks / Workflows / (later) loop sub-goals can all share it.
  *

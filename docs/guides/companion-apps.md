@@ -207,7 +207,7 @@ A companion may hold more than one paired gateway. A work brain and a personal b
 common case, and they are unrelated machines that merely happen to sit in one app's list.
 That list is the **only** sanctioned multi-instance mechanism in PersonalClaw. Nothing is
 shared between the gateways in it — see [No hub, ever](#no-hub-ever) below, which is a
-standing ruling and not a current limitation.
+permanent boundary and not a current limitation.
 
 ### The endpoint registry
 
@@ -463,13 +463,13 @@ real TLS tunnel being killed under a live session
 
 ### No hub, ever
 
-This is an owner ruling, quoted from the plan of record rather than summarised, because it is
+This is a standing decision, quoted rather than summarised, because it is
 the rule most likely to be re-litigated by someone adding "just one" convenience:
 
 > **No hub in core, ever. No gateway-to-gateway anything.** Gateways never discover, sync
 > with, or proxy for each other; no shared identity, no cross-gateway search, no aggregated
 > inbox in core or in the shells. A future "hub" could only ever be a third-party app running
-> against gateways the user pairs it with — explicitly out of every first-party plan's scope.
+> against gateways the user pairs it with — explicitly out of first-party scope.
 
 Read it as a design boundary, not a missing feature. The N gateways in a client's registry are
 N independent machines; the client is the only thing that knows they are related, and it knows
@@ -529,10 +529,10 @@ platform-shaped endpoint, no server-side branch on your user agent, no fan-out s
 platform that cannot be brought up without one has found a gap in this contract; report it as
 a gap rather than closing it privately on the server.
 
-### The gate: nothing platform-specific ships before `PLATFORM-REACH`
+### The gate: nothing platform-specific ships before the platform is cleared
 
-Which platforms are supported at all is the call, not this contract's. Until it
-clears a platform, **no code for that platform lands in this repository** — and that includes
+Which platforms are supported at all is a separate call, not this contract's. Until a
+platform is cleared, **no code for that platform lands in this repository** — and that includes
 the well-meant kind:
 
 - no platform SDK dependency, and no platform SDK identifier in `src/personalclaw` or

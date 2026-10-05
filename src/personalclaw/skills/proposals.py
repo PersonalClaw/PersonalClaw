@@ -1,7 +1,7 @@
-"""Skill proposals — propose-only auto-skill evolution (skill-evolution-proposal-only).
+"""Skill proposals — propose-only auto-skill evolution.
 
 Auto-skill synthesis used to write straight into the live ``auto/`` skill namespace.
-After the documented malicious-skill-drift risk (OpenForge B2), the stance is
+After the documented malicious-skill-drift risk, the stance is
 **propose, never install**: synthesized skills land in a review QUEUE, and a human
 accepts (moves to live) or rejects them. Nothing the system authored autonomously
 runs until a person approves it.
@@ -89,8 +89,8 @@ def record_review(*, verdict: str, elapsed_ms: float, session_key: str, detail: 
 
     This exists because an empty proposals list is two different facts wearing one
     face: "the ladder ran and had nothing to propose" and "the ladder never ran"
-    are the same observation from outside (`G44`). The per-pass log line added by
-    `G47` does not separate them on a shipped install either — the verdicts that
+    are the same observation from outside. The per-pass log line
+    does not separate them on a shipped install either — the verdicts that
     mean the pass worked, ``no_action`` chief among them, log at INFO while the
     default ``log_level`` is WARNING, so the common success is invisible.
 
@@ -439,7 +439,7 @@ def enqueue(
 
 
 def _surface_in_inbox(prop: SkillProposal) -> None:
-    """Raise the proposal as a durable inbox item (plan 42 S4).
+    """Raise the proposal as a durable inbox item.
 
     A proposal is a standing request: it waits until the user decides. Before this it lived
     only in the skills page's approval tab, so a proposal synthesized while the user was
@@ -519,8 +519,7 @@ def _resolve_inbox_item(pid: str, status: str) -> None:
 
     Without this the row would sit unresolved forever after the user accepted or rejected
     the proposal on either surface — the inbox would keep claiming attention for work
-    already done, which is precisely the "second attention store" problem this plan exists
-    to end.
+    already done, which is precisely the "second attention store" problem to avoid.
 
     Accepts a transition FROM a terminal status, because ``accept()`` runs after
     ``reject()`` has already marked the item dismissed and needs to correct it to handled.
@@ -681,9 +680,9 @@ def _announce_rows(rows: list[Any]) -> None:
 def backfill_inbox_items(pending: "list[SkillProposal] | None" = None) -> int:
     """Give every pending proposal an inbox item if it doesn't have one. Returns how many.
 
-    T4.2, as an **idempotent backfill keyed on data inspection** rather than a
-    `lifecycle/migrations/m_*.py` file (see the plan's *Change discipline*). Proposals
-    enqueued before S4 have no item; without this they'd stay invisible in the inbox forever
+    An **idempotent backfill keyed on data inspection** rather than a
+    `lifecycle/migrations/m_*.py` file. Proposals enqueued before the inbox surfacing
+    existed have no item; without this they'd stay invisible in the inbox forever
     while `enqueue` only covers new ones.
 
     Idempotent **by pid**: `emit_attention_item`'s dedup key is the proposal id, so an
@@ -780,7 +779,7 @@ def accept(
 
     A ``kind="refine"`` proposal that names a resolvable ``refine_target`` applies as a SIDECAR
     OVERLAY on that skill (``skills/overlays.py``) — a single file merged onto the base body at
-    load time, never a rewrite of ``SKILL.md``. This is WF2LEA-6's clean break over the old
+    load time, never a rewrite of ``SKILL.md``. This is a clean break from the old
     in-body append: the base bytes (and a marketplace skill's ``.pclaw-lock.json`` hashes) stay
     intact, and reverting the refinement is the deletion of exactly one file. Everything else —
     ``kind="new"``, or a refine whose target no longer exists — CREATES a new ``auto/`` skill.

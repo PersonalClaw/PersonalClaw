@@ -188,7 +188,7 @@ async def favicon(request: web.Request) -> web.StreamResponse:
 def _dist_root_file(name: str, content_type: str) -> web.StreamResponse:
     """Serve a dist-ROOT file with an explicit content type.
 
-    Two things here are load-bearing for the PWA (MOBILE-COMPANION T3.1):
+    Two things here are load-bearing for the PWA:
 
     * **The content type is stated, never guessed.** ``.webmanifest`` is absent from
       Python's ``mimetypes`` table on a stock install, so ``FileResponse`` would send
@@ -293,7 +293,7 @@ async def font_asset(request: web.Request) -> web.StreamResponse:
 async def api_stt_transcribe(request: web.Request) -> web.Response:
     """POST /api/stt/transcribe — transcribe uploaded audio via the active STT model.
 
-    Two duplex-loop behaviors ride on this endpoint (MULTIMODAL-IO §4). Both keyed
+    Two duplex-loop behaviors ride on this endpoint. Both keyed
     off the query string, because the body is a streamed multipart upload whose
     first part must stay the audio:
 
@@ -302,7 +302,7 @@ async def api_stt_transcribe(request: web.Request) -> web.Response:
       back as ``{"text": "", "filtered": "echo"}`` so the dashboard can say why
       nothing happened instead of looking deaf.
     * The response carries ``input_origin: "voice"`` and, when the disclaimer is
-      enabled, the line the frontend submits with the turn (§4.4).
+      enabled, the line the frontend submits with the turn.
     """
     import tempfile  # noqa: F811
 
@@ -1163,7 +1163,7 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
         except Exception:
             logger.exception("Failed to apply the Self-QA companion setting")
 
-    # Live-apply tool-output projection rules (TokenJuice OP6) so an edit takes effect
+    # Live-apply tool-output projection rules so an edit takes effect
     # immediately (no restart) — mirrors the startup install into the projection engine.
     if path_key == "tools.projection_rules":
         try:

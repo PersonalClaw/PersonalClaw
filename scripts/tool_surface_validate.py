@@ -1,11 +1,11 @@
-"""UT7 cross-surface consistency validator (unified tool-provider universe).
+"""Cross-surface consistency validator for the unified tool-provider universe.
 
 Hits the gateway of a scratch home you name (found from the record that gateway keeps in its
 home) and asserts the invariants the unification must hold. Run repeatedly (each run = one
 cycle); exits non-zero on any violation, printing the specific failure. Idempotent +
 side-effect-free (it toggles then restores). The default home or no home is refused:
 
-    .venv/bin/python scripts/ut7_validate.py --home /tmp/pc-tools
+    .venv/bin/python scripts/tool_surface_validate.py --home /tmp/pc-tools
 """
 
 from __future__ import annotations

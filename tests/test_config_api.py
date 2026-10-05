@@ -50,8 +50,7 @@ def _all_tags() -> set[str]:
 class TestConfigApiProperties:
     """Property-based tests for schema API filtering logic."""
 
-    # Feature: config-schema, Property 7: Tag filtering returns only matching entries
-    # **Validates: Requirements 5.2**
+    # Property: Tag filtering returns only matching entries
     @given(tag_subset=st.frozensets(st.sampled_from(sorted(_all_tags() | {"nonexistent_tag"}))))
     def test_tag_filtering_returns_only_matching_entries(
         self,
@@ -77,8 +76,7 @@ class TestConfigApiProperties:
                     f"with {requested} but was not included in filtered results"
                 )
 
-    # Feature: config-schema, Property 8: Deprecated filtering excludes deprecated entries
-    # **Validates: Requirements 5.3**
+    # Property: Deprecated filtering excludes deprecated entries
     @given(data=st.data())
     def test_deprecated_filtering_excludes_deprecated(self, data: st.DataObject) -> None:
         """Filtering with deprecated=false returns zero deprecated entries."""
@@ -87,8 +85,7 @@ class TestConfigApiProperties:
         for entry in filtered:
             assert not entry.deprecated, f"Entry {entry.path!r} is deprecated but was not excluded"
 
-    # Feature: config-schema, Property 13: Sensitive entries have null defaultValue in API
-    # **Validates: Requirements 7.1**
+    # Property: Sensitive entries have null defaultValue in API
     @given(data=st.data())
     def test_sensitive_entries_have_null_default_in_api(self, data: st.DataObject) -> None:
         """For any sensitive ConfigEntry, the API response dict has defaultValue=null."""
@@ -232,7 +229,7 @@ def _seed_config() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Property-based tests P8–P10
+# Property-based tests
 # ---------------------------------------------------------------------------
 
 
@@ -266,8 +263,7 @@ RESERVED_AGENT_NAMES = _reserved_agent_names()
 class TestAgentCrudProperties:
     """Property-based tests for PersonalClaw Agent CRUD round-trips."""
 
-    # Feature: multi-agent-orchestration, Property 8: CRUD create round-trip
-    # **Validates: Requirements 4.1, 4.2**
+    # Property: CRUD create round-trip
     @settings(deadline=None)
     @given(
         # The API validates names against ^[a-zA-Z0-9_-]{1,64}$ (ASCII only),
@@ -327,8 +323,7 @@ class TestAgentCrudProperties:
         finally:
             tmp.unlink(missing_ok=True)
 
-    # Feature: multi-agent-orchestration, Property 9: CRUD update round-trip
-    # **Validates: Requirements 4.3**
+    # Property: CRUD update round-trip
     # deadline disabled — CRUD tests spin up aiohttp TestServer per example,
     # timing varies with xdist parallelism and platform (aarch64 vs x86)
     @settings(deadline=None)
@@ -400,8 +395,7 @@ class TestAgentCrudProperties:
         finally:
             tmp.unlink(missing_ok=True)
 
-    # Feature: multi-agent-orchestration, Property 10: CRUD delete round-trip
-    # **Validates: Requirements 4.4**
+    # Property: CRUD delete round-trip
     @settings(deadline=None)
     @given(
         # API name contract: ^[a-zA-Z0-9_-]{1,64}$ (ASCII only).

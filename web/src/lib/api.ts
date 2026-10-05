@@ -234,7 +234,7 @@ export interface CallerHealth {
  *  not be usable where a provider is meant (`lib/rungs.providerRungIndex`). */
 export type ActionProviderName = string & { readonly __actionProvider: true }
 
-// The earned-autonomy ladder (AUTONOMY-GUARDRAILS §5-§6). One row per DECLARED action
+// The earned-autonomy ladder. One row per DECLARED action
 // type: the rung it resolves at, where that rung came from (`authority`), the recomputed
 // track record, and whether the next rung has been earned. Nothing here is editable in
 // place — a rung changes through `autonomyGrant` (a click) or `autonomyDemote`.
@@ -575,7 +575,7 @@ export interface DurabilityConflicts {
   counts: {
     total: number
     needs_review: number
-    /** Unresolved count per review surface — what §4.2 item 3's routing actually did. A
+    /** Unresolved count per review surface — what the per-surface routing actually did. A
      *  panel showing only its own surface still has to report what waits elsewhere. */
     by_surface: Record<string, number>
     selected: number
@@ -591,7 +591,7 @@ export type DurabilityConflictChoice = 'keep_local' | 'take_remote' | 'accept_pr
  *  archive, so it must render as "not recorded" rather than as zeros. */
 export type DurabilityDomainCounts = Record<string, { files: number; bytes: number; rows: number }>
 /** The last restore drill's verdict. `ok: null` = ran, but the outcome was not recorded
- *  (a pre-DAS-10 stamp). Never render an unknown outcome as a pass. */
+ *  (a stamp that predates outcome recording). Never render an unknown outcome as a pass. */
 export interface DurabilityDrill {
   ran: boolean
   ok: boolean | null
@@ -666,8 +666,8 @@ export interface SurfacingCandidate {
   reason: string
 }
 
-// The automation would-execute description — the five facts §3.3
-// names, each read from a shipped resolver server-side. `epoch`/`at` are empty when the trigger
+// The automation would-execute description — five facts,
+// each read from a shipped resolver server-side. `epoch`/`at` are empty when the trigger
 // has no next fire at all (a `manual` or expired row), which is a THIRD state distinct from
 // armed and computed: `source` is what tells them apart, so read it rather than truthiness on
 // `at`.
@@ -691,7 +691,7 @@ export interface AutomationActionConfig {
 export interface AutomationCapabilityGrants {
   declared: Record<string, string[]>
   requested: Record<string, string[]>
-  // What still needs an explicit opt-in after decision 7's read-only default has been applied.
+  // What still needs an explicit opt-in after the read-only default has been applied.
   needs_fence: Record<string, string[]>
   refused: { key: string; value: string; reason: string }[]
   granted: boolean
@@ -701,7 +701,7 @@ export interface AutomationObserveMode {
   provider_known: boolean
   supported: boolean
   // `observe` = a real observe-mode run is possible (the spawn-based LLM providers);
-  // `preview` = the T9 rule, this provider has no observe mode so we describe instead.
+  // `preview` = this provider has no observe mode, so we describe instead.
   mode: 'observe' | 'preview'
   executed: boolean
   ok: boolean
@@ -849,7 +849,7 @@ export interface ChannelSenderPairing { code: string; expires_at: string; ttl_se
 // a run nobody named, which reads by its task.
 export interface SpawnedAgent { id: string; task: string; title?: string; done: boolean; parent?: string; agent?: string; started?: number; result?: string; error?: string }
 // A knowledge item scored for chat-context injection (from search-for-context),
-// carrying its token cost so the picker can budget. P12 adds the per-item citation
+// carrying its token cost so the picker can budget. It also carries the per-item citation
 // locator (source_type/section/line_range/deep_link) so a card can deep-link + cite
 // where in the source the match sits; all optional (null for a structureless type).
 export interface KnowledgeContextCard {
@@ -888,7 +888,7 @@ export interface DiscoveredAgent {
 }
 export interface ModelItem { name: string; model_name: string; description: string; provider: string }
 
-// App Platform (A7)
+// App Platform
 // An app's declared permission scope, exactly as `Permissions.to_dict()` emits it
 // (apps/manifest.py) — every key that dict can carry must be declared here, or the
 // consent UI cannot disclose it (that was the defect: `appMessaging` reached
@@ -938,8 +938,8 @@ export interface AppPermissionsWire {
   // which the consent UI states rather than implies.
   proposals?: AppProposalKindWire[]
   // The two grants that are NOT enforced yet, and must not be shown as if they
-  // were. `backgroundTasks` = the app may run a long-lived supervised worker (APE-3
-  // hosts it); `eventSubscriptions` = typed platform events it subscribes to (APE-2's
+  // were. `backgroundTasks` = the app may run a long-lived supervised worker;
+  // `eventSubscriptions` = typed platform events it subscribes to (the platform's event
   // registry owns the names — exact matches, no wildcard). Neither runtime exists today,
   // so nothing hosts a worker and no platform event is delivered to any app, declared or
   // not. They are disclosed because the declaration is a STANDING grant: it goes live
@@ -1157,7 +1157,7 @@ export interface AppDetail {
   uiRevision?: string
   restartReason?: string
 }
-// P29: a manifest cron's install-consent summary — name + cadence + WHAT it runs
+// A manifest cron's install-consent summary — name + cadence + WHAT it runs
 // (an agent + its prompt; a manifest cron has no action/command). Cadence is either
 // `every` seconds or a `cron_expr`.
 export interface AppCronSummary {
@@ -1282,11 +1282,11 @@ export interface AppCatalogEntry {
    *  apps by what they DO must read this, not the author-controlled `tags`. Absent for a
    *  non-provider app or a registry pointer whose manifest isn't fetched yet. */
   providerCapabilities?: string[]
-  // P20: when this entry came from a source's registry index, the install pointer
+  // When this entry came from a source's registry index, the install pointer
   // (repo[#subdirectory]) to hand install — routes through the scanner unchanged. "" for
   // a dir-scanned/bundled entry (its `source` is the pointer).
   pointer?: string
-  // P29 install-consent: what the app will be GRANTED (permissions) + the recurring
+  // Install consent: what the app will be GRANTED (permissions) + the recurring
   // jobs it will RUN (crons), surfaced pre-install so the Store card can show them
   // before the user commits. Empty dict/[] for an app that declares neither, or for a
   // registry-index pointer (its manifest isn't fetched until install).
@@ -1393,7 +1393,7 @@ export interface AppScanFinding {
   runtime?: 'not_analysed' | 'loaded' | 'unloaded' | 'untraceable'
   runtime_reason?: string
 }
-/** SH-3 contract C2. `state` is `signed` | `unsigned` | `invalid`; `signer` is the
+/** `state` is `signed` | `unsigned` | `invalid`; `signer` is the
  *  in-tree key's identity (only meaningful when signed); `reason` is the refusal text an
  *  `invalid` state must show. An `invalid` state means the install was REFUSED — it is
  *  never consentable, unlike a warning verdict. `unsigned` is normal for community apps. */
@@ -1417,7 +1417,7 @@ export interface AppInstallResult {
   disclosure?: AppDisclosure | null
   previous?: AppDisclosure | null
   consent?: string
-  // P21 platform gate: set when the app installs on the user's LOCAL machine
+  // Platform gate: set when the app installs on the user's LOCAL machine
   // (installMode=client) or doesn't support this server's OS — the server can't
   // install it, so it hands back a copy-paste one-liner to run in a terminal.
   needs_client_install?: boolean
@@ -1428,7 +1428,7 @@ export interface AppInstallResult {
   // `restart_required` is whether there is any. Only a restart finishes it.
   restart_required?: boolean
   restart_reason?: string
-  // APE-8 "Fix with AI": on a failed install with captured subprocess output,
+  // "Fix with AI": on a failed install with captured subprocess output,
   // `fix_prompt` is a ready-to-send chat seed that embeds `log_excerpt` wrapped in
   // the backend's untrusted-content fence. The FE hands it straight to launchChat;
   // it is empty on success or when there was no log to show.
@@ -1490,12 +1490,12 @@ export interface ChatSession {
   acp_provider: string; acp_provider_agent: string; mode: string; workspace_dir: string
   messages: number; running: boolean; stopping: boolean; pending_approval: boolean
   memory_mode?: string; last_message?: string
-  /** 🔴 DECLARED `number` UNTIL CYCLE 173, AND THE ENDPOINT HAS NEVER SENT ONE. Read from the wire:
+  /** 🔴 ONCE DECLARED `number`, AND THE ENDPOINT HAS NEVER SENT ONE. Read from the wire:
    *  `POST /api/chat/sessions` returns `last_ts: ""`, and the sibling list (`ChatSessionSummary`,
    *  below) has always typed the same field `string` — two shapes of ONE entity disagreeing about one
    *  field. Nothing consumed it off this interface, so nothing broke; what it did do was make a real
-   *  defect look plausible. Cycle 166 deferred a "renders BLANK because it is fed a NUMBER" finding on
-   *  `#/chat` to its own cycle, and the number in that claim came from HERE, not from any payload.
+   *  defect look plausible. An earlier review deferred a "renders BLANK because it is fed a NUMBER" finding on
+   *  `#/chat` as its own fix, and the number in that claim came from HERE, not from any payload.
    *
    *  🪤 The lesson `lib/epoch` already carries, in its own words: a type is "a declaration, not a
    *  check — nothing validates a fetch against it". `started_at?: number` printing "in NaNd" on
@@ -1788,7 +1788,7 @@ export interface KnowledgeUndoEntry {
 }
 export interface ChatFolder { id: string; name: string; order?: number; collapsed?: boolean; parent_id?: string }
 export interface ChatTag { id: string; name: string; color?: string; order?: number; status?: boolean }
-// A PROPOSED organization for an untagged chat (SM T2.1). `tags` are NAMES, not ids — a
+// A PROPOSED organization for an untagged chat. `tags` are NAMES, not ids — a
 // proposed tag may not exist yet and is created (via the shared tag helper) only on accept.
 // Holding one of these changes nothing about the session; only organizeAccept applies it.
 export interface OrganizeProposal {
@@ -1845,7 +1845,7 @@ export interface NotificationItem {
   /** The Inbox row's kind when the note was raised for one (`proposal` for an app's proposal). */
   item_kind?: string
   job_id?: string; loop_id?: string; loop_kind?: string; acked: boolean
-  /** R18's deep link into the thing this note is ABOUT — `#/triggers?open=<id>` for a trigger fire,
+  /** A deep link into the thing this note is ABOUT — `#/triggers?open=<id>` for a trigger fire,
    *  `#/workflows/runs/<id>` for a run. Caller-supplied meta, so it is followed only as an in-app
    *  route (`notificationLink`), never as a URL. */
   statusUrl?: string
@@ -1901,7 +1901,7 @@ export interface ScheduleJob {
   // Reading it as a run status is the two-vocabularies-one-dot defect (issue 496): `triggerMeta`
   // lands it in `Trigger.health` and `triggerStatusMeta` owns when it may speak.
   last_status?: string | null
-  last_run_status?: string | null          // newest run record status: success|failure|timeout|launched (T7, persistent)
+  last_run_status?: string | null          // newest run record status: success|failure|timeout|launched (persistent)
   last_run_source?: RunSource | null        // what started its newest run (`triggers.run_source`)
   // The LIFECYCLE state (`active | paused | autopaused | parked | quarantined | retired`). The clock
   // projection was the last of the three to omit it, so an autopaused and a quarantined schedule
@@ -2114,7 +2114,7 @@ export interface TaskItem {
  *  plan, notes, dependencies) are replaced whole by a write, so they go through `api.saveTask`,
  *  which names the revision they were read at. */
 export type TaskScalarEdit = Partial<Pick<TaskItem, 'title' | 'description' | 'status' | 'priority' | 'assignee' | 'due' | 'task_list_id'>>
-// Server DAG snapshot (GET /api/tasks/graph) — adjacency + analysis (seam S3).
+// Server DAG snapshot (GET /api/tasks/graph) — adjacency + analysis.
 export interface TaskGraphEdge { from: string; to: string; type: DependencyType }
 export interface DependencyAnalysis {
   completion_pct: number; leaf_task_ids: string[]; root_task_ids: string[]
@@ -2127,8 +2127,8 @@ export interface TaskComment { id: string; task_id: string; author: string; body
 // A decompose proposal — one task the loop intake suggests (index-based deps).
 export interface ApiProposedTask { title: string; description?: string; priority?: string; depends_on?: number[] }
 
-// WORKFLOWS-V2 Phase 1: the old SOP types (WorkflowStep/Scope/Graph/Item/Match)
-// lived here. Slice 7b lands the v2 run/def types below, now that the API mounts.
+// The old SOP types (WorkflowStep/Scope/Graph/Item/Match) lived here; the workflow
+// run/def types below replaced them.
 //
 // The stub stays: it is the shape the loop plan-review pickers type against, and the
 // persisted `workflow_ids` field still flows through them. Kept separate from
@@ -2139,7 +2139,7 @@ export interface WorkflowDefStub {
   scope?: string; tags?: string[]; steps?: Array<{ id?: string; title: string; instruction?: string }>
 }
 
-// ── WORKFLOWS-V2 (Slice 7b) ──
+// ── Workflows ──
 // A node in a spec tree. Kind-specific settings live in `config` (the backend's
 // tolerant-reader contract), so this type stays valid as node kinds gain fields.
 export interface WorkflowNode {
@@ -2242,7 +2242,7 @@ export interface WorkflowVersionOp {
   kind?: string
   fields?: string[]
 }
-/** A template's maturity (R11): L0 draft → L3 mature, from static signals + ledger activity. */
+/** A template's maturity: L0 draft → L3 mature, from static signals + ledger activity. */
 export interface WorkflowMaturity {
   level: number
   label: string // draft | shaping | proven | mature
@@ -2287,7 +2287,7 @@ export interface WorkflowNodeState {
   // iterated node — a fan-out of twelve otherwise renders as twelve rows distinguishable only
   // by an index suffix, which is useless for telling which item is stuck.
   item_index?: number; item_total?: number; item_label?: string
-  // This node's terminal output was served from the resume/rewind cache (WF2-A1) rather than
+  // This node's terminal output was served from the resume/rewind cache rather than
   // freshly produced — "did my edit actually re-run anything?" answered at a glance. A TERMINAL
   // qualifier like `degraded_reason`: absent means freshly produced, so it is never carried
   // forward across events (a re-run after a rewind emits `node_done` WITHOUT it, and carrying
@@ -2398,7 +2398,7 @@ export interface WorkflowCascadePreview {
   rerun: string[]; stale: string[]; skipped: string[]; committed_effects: string[]; needs_confirmation: boolean
 }
 // One review finding as the triage panel receives it: the
-// WORKFLOWS-V2 Canonical Finding record, plus `auto_fixable`, plus the ANCHOR VERDICT computed
+// canonical Finding record, plus `auto_fixable`, plus the ANCHOR VERDICT computed
 // against the run's diff on this request. `anchor_state: 'unanchored'` with an `anchor_reason` is a
 // finding that must be shown as unverifiable rather than as truth — `resolved_path`/`resolved_line`
 // are the diff's own spelling of where it landed, and are what the accepted brief cites.
@@ -2428,7 +2428,7 @@ export interface WorkflowTriageResult {
   calibrated?: number
   auto_apply_candidates?: string[]
 }
-// The reconstructability set for one node (WF2-A2) — what the inspector drawer renders, live
+// The reconstructability set for one node — what the inspector drawer renders, live
 // while the node is still at work: `state` is then its live state (`pending` before the run
 // reached it) and `output` is null, since nothing has been produced yet. `resolved_prompt` is the
 // fully-resolved post-binding prompt inline, or a `{ ref }` when it was too large to inline;
@@ -2491,7 +2491,7 @@ export interface WorkflowWorkspaceReview {
     reason: string
   }
 }
-// One artifact this run published (WORK-CONTAINERS §2.5 outbox). `kind` is what the cockpit resolves
+// One artifact this run published (the run's outbox). `kind` is what the cockpit resolves
 // through the contentTypes registry — the route declares the TYPE and never the renderer, so a newly
 // registered kind previews here without touching the outbox.
 export interface WorkflowOutboxEntry {
@@ -2860,7 +2860,7 @@ export type PromptVarType = 'text' | 'textarea' | 'number' | 'boolean' | 'select
 export type PromptKind = 'system' | 'user'
 export type PromptSource = 'user' | 'bundled' | 'marketplace'
 export interface PromptVariable { name: string; type: PromptVarType; description?: string; required?: boolean; default?: unknown; options?: string[] }
-// Runnable "campaign template" (#17): the loop-launch config a runnable prompt
+// Runnable "campaign template": the loop-launch config a runnable prompt
 // carries. Non-empty launch_spec = the prompt is a template you fill + launch into a
 // Project/Loop run (its rendered content becomes the task). Mirrors LoopComposer's
 // create knobs; all optional (kind defaults to 'goal').
@@ -2875,7 +2875,7 @@ export interface LaunchSpec {
 export interface PromptItem {
   name: string; kind?: PromptKind; title?: string; description?: string; content?: string
   variables?: PromptVariable[]; tags?: string[]; source?: string; updated_at?: number
-  // Runnable template (#17): present + non-empty → fill-and-launch surfaces.
+  // Runnable template: present + non-empty → fill-and-launch surfaces.
   launch_spec?: LaunchSpec
   // detail-only: the full variable set the fill-in UI renders (own ∪ snippets'),
   // and the snippet names this prompt includes.
@@ -3111,7 +3111,7 @@ export type McpServerDefinition =
 export type McpServerSave =
   | { transport?: 'stdio'; command: string; args?: string[]; env?: Record<string, string>; plainEnv?: string[]; keepEnv?: string[] }
   | { transport: 'http' | 'sse'; url: string; headers?: Record<string, string>; keepHeaders?: string[] }
-/** P23d: the in-process MCP connection-pool observability snapshot (GET /api/mcp/pool-stats). */
+/** The in-process MCP connection-pool observability snapshot (GET /api/mcp/pool-stats). */
 export interface McpPoolStats {
   live_connections?: number; shared_conns?: number; session_conns?: number
   configured_servers?: number; spawns?: number; reaps?: number; served?: number
@@ -3464,7 +3464,7 @@ export interface ActionProvider {
 // Server-sourced for the same reason the vars are: a hard-coded list here would tell a user their
 // working hook is dead the moment the backend wires one.
 export interface LifecycleEventInfo { event: string; label: string; desc: string; vars: string[]; blocking: boolean; dormant?: boolean; dormant_reason?: string; agent_scoped?: boolean }
-// One app-contributed trigger source and the events it declares (AUTO-A4). Read from the LIVE
+// One app-contributed trigger source and the events it declares. Read from the LIVE
 // `trigger_sources` registry, so a disabled app's source is absent rather than offered — authoring a
 // trigger against an event that cannot fire is the failure this list exists to prevent.
 // `source_event` is the namespaced name (`app:<app>:<event>`) the backend matches `event_glob`
@@ -3498,13 +3498,13 @@ export interface LearningRow {
   id: string; kind: string; title: string; provenance: string
   source_cadence: string; source_excerpt: string
   // `evidence_strength` is WHICH KIND of evidence the refs are — anecdotal / correlated / causal /
-  // ablation. The count alone cannot tell a measured on/off ablation (EVALUATION-SUBSTRATE §3.1
-  // files retirements with `ablation`) from a co-occurrence, and "" is UNGRADED, never a grade.
+  // ablation. The count alone cannot tell a measured on/off ablation (the ablation
+  // harness files retirements with `ablation`) from a co-occurrence, and "" is UNGRADED, never a grade.
   evidence_refs: string[]; evidence_strength: string; reinforcements: number; confidence: number
   manifest_valid: boolean; manifest_issues: string[]
   risk_tier: string; status: string
   renderable: boolean; bulk_acceptable: boolean
-  // The Loop-2 gate's before/after columns (EVALUATION-SUBSTRATE amendment E2 / ES-6). ALWAYS
+  // The Loop-2 gate's before/after columns. ALWAYS
   // present: a proposal with no gate run arrives as `state: 'ungated'` with a reason, so the
   // absence is a sentence the reader can act on rather than an empty cell. `before`/`after`/
   // `delta` are `null` when unmeasured and must render as "not measured", never as 0 — the same
@@ -3514,7 +3514,7 @@ export interface LearningRow {
   // The local A/B replay harness's verdict. ALWAYS present, for the
   // same reason `gate` is. Where the gate measures the candidate against the SHIPPED scenario
   // library, this measures it against real turns mined from the user's OWN captured sessions —
-  // two corpora, two clauses, deliberately not merged into one number a reader cannot attribute.
+  // two corpora, two verdicts, deliberately not merged into one number a reader cannot attribute.
   // `candidate_mean`/`baseline_mean` are `null` when nothing scored and must render as
   // "not measured", never as 0: a candidate that genuinely scored zero and a candidate nobody
   // scored lead a reviewer to opposite decisions. It is EVIDENCE and never a veto — a `regressed`
@@ -3573,14 +3573,14 @@ export interface StagingWeek {
   first_pass_day?: string
 }
 
-// The flywheel observability panel (GET /api/learning/health — LEARN-R14b).
+// The flywheel observability panel (GET /api/learning/health).
 //
 // EVERY score and rate here is `number | null`, and null means UNMEASURED, not zero. The
 // backend refuses to score silence: a component with no data is excluded from the
 // composite and says so, because reporting an un-instrumented subsystem as 0% is
 // indistinguishable from reporting a broken one and the user's only apparent fix would
 // be to generate traffic.
-/** LEARN-R16's five-way verdict plus its honest not-yet state. Closed — the FE maps every
+/** The five-way attribution verdict plus its honest not-yet state. Closed — the FE maps every
  *  member explicitly rather than falling back, because a default branch would render a
  *  verdict nobody defined as whatever the fallback said. */
 export type AttributionVerdict =
@@ -3600,8 +3600,8 @@ export interface MaeBucket {
   labelled: number
   mae: number | null
 }
-/** One (rubric-class x tier x samples) row of the judge tier-recommendation table
- *  (EVALUATION-SUBSTRATE §6). Every judgement arrives DECIDED by the backend —
+/** One (rubric-class x tier x samples) row of the judge tier-recommendation table.
+ *  Every judgement arrives DECIDED by the backend —
  *  `adequate` and `inadequate_reasons` included — because a frontend that re-derived
  *  "is this tier good enough" would eventually disagree with the harness, and the copy
  *  shipping the permissive answer would be the UI.
@@ -3643,7 +3643,7 @@ export interface JudgeBenchRecommendation {
   cost_usd: number | null
   notes: string[]
 }
-/** One scope's (workflow template's) §4.4 human-attention summary. Everything
+/** One scope's (workflow template's) human-attention summary. Everything
  *  arrives COMPUTED — events/run, decayed debt, the trend verdict — because the backend
  *  derives them per query from run ledgers; a UI that re-derived the trend from the raw
  *  numbers would eventually disagree with the one the promotion proposal cited. */
@@ -3716,7 +3716,7 @@ export interface FieldMetricsField {
   /** '' means "not enough field signals to call it" — unmeasured, never flat. */
   trend: '' | 'rising' | 'falling' | 'flat'
 }
-/** One Learning-tab lab-vs-field row (amendment E3 / ES-9): lab score (Loop 1, pinned) |
+/** One Learning-tab lab-vs-field row: lab score (Loop 1, pinned) |
  *  gate status (Loop 2) | field trend (Loop 3). The divergence verdict arrives DECIDED —
  *  it is what the gateway sweep files demotions on, and a UI that re-derived it from the
  *  visible numbers would eventually disagree with what was demoted. */
@@ -3792,7 +3792,7 @@ export interface AblationRegistryRow {
   live_refs: string[]
   description: string
 }
-/** One past cadence run. `proposal` is the filed LEARN-R9 retirement proposal id, or
+/** One past cadence run. `proposal` is the filed retirement proposal id, or
  *  `not_filed:<reason>` when a `remove` verdict did not file one, or '' for a verdict that
  *  never files. The distinction matters: a `remove` with nothing filed is a dropped
  *  recommendation, not a completed one. */
@@ -3950,7 +3950,7 @@ export interface BenchmarkReport {
   /** How many cells across the whole run that was. */
   unrecorded_spend_cells?: number
 }
-/** The (V4) reproduction judgement. The variance is NOT numeric and NOT invented by the
+/** The reproduction judgement. The variance is NOT numeric and NOT invented by the
  *  code: `stated_variance` is the protocol's own list of conditions and `stated_variance_source`
  *  cites where it is stated, so a reader can check the tolerance rather than trust it. */
 export interface BenchmarkReproduction {
@@ -4040,7 +4040,7 @@ export interface RetrievalStoreReport {
 }
 /** The per-arm retrieval ablation for BOTH stores.
  *
- *  Keyed by store rather than merged: §5.1 runs knowledge and memory SEPARATELY and never
+ *  Keyed by store rather than merged: the bench runs knowledge and memory SEPARATELY and never
  *  shares a corpus, so one table over both would be the shape the boundary forbids. */
 export interface RetrievalBenchView {
   stores: Record<string, RetrievalStoreReport>
@@ -4128,7 +4128,7 @@ export interface StudyVerdict {
   ledger_row_written: boolean
 }
 /** 🔴 Deliberately WITHOUT the rubric text and without the `locked/` checks. The server
- *  omits them (§2.2: a check the worker can read is a check it satisfies by construction,
+ *  omits them (a check the worker can read is a check it satisfies by construction,
  *  and a dashboard is one fetch away from an agent's context), so this type omits them too
  *  — a field declared here would invite a future handler to fill it. */
 export interface StudyView {
@@ -4236,7 +4236,7 @@ export interface LearningHealth {
   ablation: { at?: string; rows?: { heuristic: string; delta: number; verdict: string; items: number }[] }
 }
 
-// One projected fire in the week grid (GET /api/triggers/week — AUTO-A3). `suppressed_by` is "" for
+// One projected fire in the week grid (GET /api/triggers/week). `suppressed_by` is "" for
 // a fire that will actually run, "quiet" inside a quiet window, "skipped" on one of the trigger's
 // skip_dates. The two suppression kinds stay distinct because they are different promises: a quiet
 // window defers a time of day and may catch up, while a skip date removes a whole day and never
@@ -4268,7 +4268,7 @@ export interface WeekProjection {
 // insights, and provider attribution mirror the target vision (OpenForge-style);
 // the current PClaw backend persists a RAG subset (item_type string, title/
 // content/summary/tags + entities/graph), so the richer fields are
-// rendered ahead of the backend (SoonTag) — see knowledge-entity-vision.md.
+// rendered ahead of the backend (SoonTag).
 export type KnowledgeType =
   | 'note' | 'fleeting' | 'journal' | 'gist' | 'bookmark'
   | 'image' | 'audio' | 'video' | 'pdf' | 'document' | 'sheet' | 'slides'
@@ -4314,8 +4314,8 @@ export interface KnowledgeItem {
   created_at?: string; updated_at?: string
   _score?: number; _match_type?: string
   // The SEMANTIC kind (`semantics.KINDS`), distinct from `item_type`/`type` which routes the
-  // ingestion graph. Serialized by every item response but never declared here until KL-19 gave
-  // a surface a reason to read it — the restructure panel's change-kind verb. Nullable because
+  // ingestion graph. Serialized by every item response but never declared here until a surface
+  // had a reason to read it — the restructure panel's change-kind verb. Nullable because
   // most items have never been assigned one.
   kind?: string | null
   // vision fields (may be absent from the PClaw backend today)
@@ -4327,7 +4327,7 @@ export interface KnowledgeItem {
   // Nothing of the file was kept, so there is nothing to retry: the file goes in by being added again.
   file_metadata?: { width?: number; height?: number; format?: string; page_count?: number; sheet_count?: number; slide_count?: number; row_count?: number; line_count?: number; ocr_pages_capped?: boolean; ocr_page_cap?: number; ocr_pages_rasterized?: number; no_speech?: boolean; frames_sampled?: number; frame_times?: number[]; video_seconds?: number; refused?: string } & Record<string, unknown>
   insights?: Record<string, unknown> | null; ai_summary?: string; ai_title?: string
-  // node-graph ingestion lifecycle (#30): queued|processing|done|partial|failed
+  // node-graph ingestion lifecycle: queued|processing|done|partial|failed
   processing_status?: string; processing_error?: string
   /** Where a queued or processing item stands in the ingest queue; `null` when it is neither,
    *  or when no running queue holds it (then all that is known is that it is queued). */
@@ -4342,7 +4342,7 @@ export interface KnowledgeItem {
    *  base (`saveKnowledgeItem`). Of the body alone, so a title, flag or pipeline write elsewhere
    *  never makes a body edit stale. */
   content_revision?: string
-  // populated by GET /items/{id}/related. `score` is the RANKING key (KL-13: a cosine
+  // populated by GET /items/{id}/related. `score` is the RANKING key (a cosine
   // similarity edge above `knowledge.similarity_min_score`), and `chunk_index` /
   // `neighbour_chunk_index` are its provenance — oriented to the item asked about, so a
   // surface can explain WHY two items are related. `shared_entities` survives but is now
@@ -4467,7 +4467,7 @@ export interface KnowledgeIngestGraph {
   // Ground-truth per-step outcome persisted at ingest end — what the detail UI draws.
   node_phases?: Record<string, PhaseOutcome>
 }
-/** One node's output in an item's extracted-content pool (#30 drill-down). */
+/** One node's output in an item's extracted-content pool (drill-down). */
 export interface ExtractedContent {
   id: string; item_id: string; node_type: string; backend?: string
   text?: string; metadata?: Record<string, unknown>; created_at?: string
@@ -4683,14 +4683,14 @@ export interface InboxItem {
   source?: string; can_reply?: boolean; reply_target?: string
   /** When the reply in `draft` was sent, epoch seconds; absent or 0 while none was. */
   replied_at?: number
-  // P11: user-favorited (a strong engagement signal + a star in the UI).
+  // User-favorited (a strong engagement signal + a star in the UI).
   favorited?: boolean
-  // Feedback Signal: per-judgment producer meta the thumbs attribute to.
+  // Feedback signal: per-judgment producer meta the thumbs attribute to.
   feedback_producers?: Record<'classification' | 'draft' | 'digest', FeedbackProducer | undefined>
   // Attention store: what kind of attention this wants, and the ids of the
   // things it is ABOUT — refs is what makes a needs_input row deep-link to its loop.
   item_kind?: InboxItemKind
-  // A ref value is usually an id STRING (`refs.loop`, `refs.session`), but the C6
+  // A ref value is usually an id STRING (`refs.loop`, `refs.session`), but the proposal
   // payload rides here too under `refs.proposal` — hence the widened value type. Read the
   // typed payload through `proposalOf()` rather than indexing this directly.
   refs?: Record<string, any>
@@ -4709,7 +4709,7 @@ export interface InboxItem {
 export interface InboxAttachment {
   id: string; name: string; mimetype: string; size: number; kept: boolean; not_kept?: string
 }
-/** INU-7 C6 — the proposal payload carried in `refs.proposal` on a `proposal` item.
+/** The proposal payload carried in `refs.proposal` on a `proposal` item.
  *  `apply` holds EXACTLY ONE of `action` / `workflow` / `skill_promotion` / `app_callback`;
  *  the backend refuses zero, two, or an unknown key rather than guessing. */
 export interface InboxProposal {
@@ -4776,7 +4776,7 @@ export interface InboxStatus {
   my_total_count?: number
 }
 export interface InboxSettings {
-  // alert_keywords / alert_on_name_mention removed in plan 42 S3 — alerting is now a
+  // alert_keywords / alert_on_name_mention were removed — alerting is now a
   // `conditions` block on a notification rule (see NotificationRuleRow).
   auto_cleanup_enabled: boolean
   retention_days: number
@@ -4868,14 +4868,14 @@ export interface ComputerUseFeedRow {
   source: string; caller_identity: string; app: string
 }
 // GET /api/computer-use/live-view — everything here is a MIRROR of state that already
-// exists in the gateway (§3 floor 7: the views grant nothing). Renders on any posture:
+// exists in the gateway (the views grant nothing). Renders on any posture:
 // `enabled: false` is itself the most useful thing the view can say on a disarmed machine.
 export interface ComputerUseLiveView {
   enabled: boolean; allowed_apps: string[]; ttl_secs: number
   snapshots: ComputerUseSnapshot[]; trail: ComputerUseTrailPoint[]; feed: ComputerUseFeedRow[]
 }
 
-// ── The browse mirror (BROWSE-AUTOMATION §(b)/(c)) ───────────────────────────
+// ── The browse mirror ───────────────────────────
 // The read model the live BrowseMirror panel polls: the kill-switch state and the sites whose
 // saved session has EXPIRED. One GET so the kill button and the persistent auth banner cannot show
 // a stale pair (see dashboard/handlers/browse_mirror.py:api_browse_status). Values never carry a
@@ -4917,8 +4917,8 @@ export interface BrowseStepFrame {
 // archive timestamp slug, `mtime`=epoch seconds.
 export interface SessionArchive { name: string; key: string; stamp: string; size: number; mtime: number }
 
-/** A saved chat starter: the SETUP of a conversation, never its content
- *  (SESSION-MANAGEMENT S3). Empty agent/model mean "use the default at start time". */
+/** A saved chat starter: the SETUP of a conversation, never its content.
+ *  Empty agent/model mean "use the default at start time". */
 export interface SessionTemplate {
   id: string; name: string; agent: string; model: string
   reasoning_effort: string; first_prompt: string; created_at: number
@@ -5298,8 +5298,8 @@ export interface ApprovalRuleRow {
   suppressed_until?: string | null; suppression_rung?: number
 }
 
-/** Per-arm volunteered-vs-used precision for the push reflex
- *  (MEMORY-GRAPH-AND-VAULT §3). `used` = the record's recall count rose after it
+/** Per-arm volunteered-vs-used precision for the push reflex.
+ *  `used` = the record's recall count rose after it
  *  was volunteered, so precision is measured rather than asserted. */
 export interface VolunteerArmStat { n: number; used: number; precision: number }
 export interface VolunteerStats {
@@ -5494,7 +5494,7 @@ export interface MemoryEntityProposal {
   refs?: string
 }
 // Memory slots — the bounded registers injected every session. A built-in with
-// `materialized: false` has no row yet (MGAV-8 keeps them lazy); the editor still lists it so
+// `materialized: false` has no row yet (slots are created lazily); the editor still lists it so
 // the first line can be written. `cap_chars` is fixed in code per slot; `block_limit` (the
 // whole block's budget) is the one configurable number.
 export interface MemorySlotLine {
@@ -5669,7 +5669,7 @@ export interface SecretDeleteResult {
   project_id: string
   secrets: SecretPresenceWire[]
 }
-// User-teachable tool-output projection rule (TokenJuice OP6): output matching
+// User-teachable tool-output projection rule (TokenJuice): output matching
 // match_regex is projected with `strategy` (a builtin content type).
 export type ProjectionStrategy = 'log' | 'diff' | 'json' | 'test' | 'csv' | 'code'
 export interface ProjectionRule {
@@ -5683,7 +5683,7 @@ export interface ProjectionRule {
   skip?: string
   count?: string
 }
-// Feedback Signal — the closed judgment-target vocabulary + producer meta.
+// Feedback signal — the closed judgment-target vocabulary + producer meta.
 export type FeedbackTargetKind =
   | 'inbox_classification' | 'inbox_draft' | 'inbox_digest'
   | 'loop_finding' | 'routing_suggestion' | 'proposal_content' | 'app_judgment'
@@ -5732,7 +5732,7 @@ export interface ToolsSavings {
   rows: unknown[]
 }
 
-/** Tool GROUPS (Context Economy §5) — the provider-grain partition of the tool
+/** Tool GROUPS — the provider-grain partition of the tool
  *  surface. Activation is per-session runtime state (the agent drives it via
  *  reset_tools); what's configurable is `enabled` + the per-surface defaults. */
 export interface ToolGroupInfo {
@@ -5962,7 +5962,7 @@ export interface RunnerRow {
   health_stale: boolean | null
   capabilities: RunnerCapabilities | null
   adapter: { npm_pkg: string; pinned: boolean; state: string; verified: boolean; detail: string }
-  // Who is holding this runner right now (EI-6 §3.1(5)), or `null` for free. Already
+  // Who is holding this runner right now, or `null` for free. Already
   // expiry-filtered server-side: a holder that went quiet past
   // `agent.runner_idle_release_secs` arrives as `null`, so the UI never has to decide
   // whether a stale lease still counts.
@@ -6053,14 +6053,14 @@ export interface SearchProviderInfo {
 }
 
 // Per-model capability flags (mirrors local_models/provider.py CapabilityMatrix) — a
-// binding UI renders these as chips instead of guessing (LMMV §2.1).
+// binding UI renders these as chips instead of guessing.
 export interface CapabilityMatrix {
   word_timestamps?: boolean; segment_timestamps?: boolean; speaker_labels?: boolean
   acoustic_events?: boolean; hotword_biasing?: boolean; hotword_budget?: number
   languages?: string[]; reasoning_budget_control?: boolean
 }
 // A model discovered from a configured backend (the unit you bind to a use-case).
-// The catalog-contract fields (matrix/license/…, LMMV §2) are optional — only local
+// The catalog-contract fields (matrix/license/…) are optional — only local
 // models loaded from a catalog.json carry them; hosted/remote models omit them.
 export interface AvailableModel {
   id: string; name: string; capabilities: string[]; provider: string; provider_type: string
@@ -6074,7 +6074,7 @@ export interface AvailableModel {
   // What a person calls a LOCAL model whose `name` is a file/binding id (`SmolLM2-135M-Instruct`
   // for `SmolLM2-135M-Instruct-Q8_0`). Empty or absent = `name` already reads as a name.
   display_name?: string
-  // Gated pre-warn (LMMV §5): only present on a GATED row, computed server-side from the HF
+  // Gated pre-warn: only present on a GATED row, computed server-side from the HF
   // token cascade. `false` = no valid token is configured, so the UI warns BEFORE Download;
   // absent = the cascade could not answer (a network blip) and the UI simply does not pre-warn.
   token_ready?: boolean
@@ -6136,7 +6136,7 @@ export interface ProviderModels {
   // Denormalized from the response top level, like `AvailableModel.host_fit`.
   host_fit?: HostModelFit
 }
-// The raw /api/models/available envelope. `fit` is absent on a host that predates LMMV-8's
+// The raw /api/models/available envelope. `fit` is absent on a host that predates the
 // budget probe, which reads as "unknown" everywhere downstream.
 export interface AvailableModelsResponse { providers: ProviderModels[]; fit?: HostModelFit }
 /** A recording's transcription, or why there is none. `code` is `stt_unavailable` when speech-to-text
@@ -6154,7 +6154,7 @@ export function transcriptionFailure(r: Transcription): string | null {
   return r.code === 'stt_unavailable' ? r.error : `Couldn’t transcribe audio: ${r.error}`
 }
 export interface ProviderTestResult { ok: boolean; status?: string; message: string; connection?: ModelConnection }
-// One HF-token cascade source's status (LMMV §5). The token VALUE never crosses the wire —
+// One HF-token cascade source's status. The token VALUE never crosses the wire —
 // only `masked` (hf_…abcd). `active` marks the single winning source (first whoami-valid).
 export interface HfTokenSource {
   source: 'credential_store' | 'env' | 'hf_cli_file'
@@ -6196,7 +6196,7 @@ export interface SidecarInstallStatus {
   }
 }
 // A background local-model download job — the ONE canonical wire shape
-// (matches ModelDownloadJob.to_dict in dashboard/model_downloads.py, LMMV §4.1).
+// (matches ModelDownloadJob.to_dict in dashboard/model_downloads.py).
 // `progress` is 0.0–1.0 when `total_bytes` is known, else 0.0 (indeterminate);
 // `speed_bps`/`eta_s` are coarse poller derivations (0 = not cheaply knowable);
 // `reason` is a typed machine label on error/cancel ('cancelled'|'network'|
@@ -6238,7 +6238,7 @@ export interface ReindexJob {
  *  binding — so a surface follows `active` rather than only a job it started. */
 export interface ReindexJobs { jobs: ReindexJob[]; active: ReindexJob | null }
 // One resident model occupying RAM right now (matches loaded_occupants() in
-// local_models/residency.py, LMMV §7). `rss_mb` is null for an in-process model — the
+// local_models/residency.py). `rss_mb` is null for an in-process model — the
 // gateway's heap cannot be attributed per-model, so the honest value is "unknown", never a
 // fabricated split. `is_active` is ATTRIBUTION, not liveness: false means still loaded but
 // no longer bound to any use case, which is the reclaimable case.
@@ -6307,10 +6307,10 @@ export interface DashboardConfig {
   simplified_tool_names: boolean
   // Follow-up chips after each reply (default on) + streaming reveal cadence.
   followup_chips: boolean; offer_check_work: boolean; stream_reveal: 'smooth' | 'immediate'
-  // MI-4 master opt-in for the composer's screen-share control. OFF by default; the
+  // Master opt-in for the composer's screen-share control. OFF by default; the
   // server refuses a frame while it is off, so this is a real gate, not just UI state.
   screen_share_enabled: boolean
-  // DFE-5 master opt-in for editing a generated office document in place. OFF by
+  // Master opt-in for editing a generated office document in place. OFF by
   // default; the server refuses `PUT …/model` while it is off, so — like the flag
   // above — this is a real gate rather than a UI preference.
   document_editing: boolean
@@ -6601,14 +6601,14 @@ export interface LoopFinding {
   files_touched?: string[]
   new_findings_count?: number; evidence?: string; metric?: { name?: string; value?: number }; ts?: number
 }
-// A loop cycle's judge verdict. Since WF2LOO-16 this is the SAME record the workflows judge
+// A loop cycle's judge verdict. This is the SAME record the workflows judge
 // contract uses (`judge_contract.JudgeVerdict`) — the loop's private third vocabulary was
 // deleted — so the shape gained the contract's fields. Every key below that existed before is
 // still spelled the same, and older stored verdicts can carry null scores, so the scored fields
 // stay optional-by-guard at the read sites rather than being assumed present.
 export interface LoopVerdict {
   cycle?: number; done: boolean; done_reason?: string; marginal_value: number; quality_score: number; regressed: boolean
-  // P4 observability (optional — present on high-stakes/scored verdicts): whether an
+  // Observability (optional — present on high-stakes/scored verdicts): whether an
   // adversarial skeptic cross-checked this verdict, and the calibrated returns-band used.
   adversarial?: boolean; band_used?: number
   // ── From the contract. Optional: a verdict stored before the merge has none. ──
@@ -6690,11 +6690,11 @@ export interface LoopClassification {
   execution: 'solo' | 'multi_agent'; roster?: RosterMember[]; strategy_id?: string; strategy_reason?: string
   clarifying_questions?: string[]; verify_command?: string; success_criteria?: string; sub_goals?: string[]
   deliverables?: string[]
-  // Planner-suggested capabilities (IT-3/IT-3b): ids from the installed catalog
+  // Planner-suggested capabilities: ids from the installed catalog
   // pre-checked in Plan Review, plus marketplace skills worth installing.
   suggested_skill_ids?: string[]; suggested_workflow_ids?: string[]
   marketplace_suggestions?: SkillSearchResult[]
-  // Role-phased plan (IT-6): each phase carries per-phase capabilities.
+  // Role-phased plan: each phase carries per-phase capabilities.
   execution_plan?: Record<string, unknown>[]
 }
 export interface LoopValidation {
@@ -6737,7 +6737,7 @@ export interface CodeStage {
   stage: string; title: string; objective: string; exit_criteria: string[]
   deliverable: string; task_list_name: string; agent_name?: string
   skill_ids?: string[]; workflow_ids?: string[]
-  // P6 tick-engine quality gate (optional, per-stage). When metric_pass is set, the
+  // Tick-engine quality gate (optional, per-stage). When metric_pass is set, the
   // supervisor's third-party judge must score the stage's work ≥ metric_pass (0-5)
   // before it advances; a score in [metric_hold, metric_pass) HOLDs for another cycle;
   // below the prior stage's bar rolls back. Planner-seeded for verification/review
@@ -6977,7 +6977,7 @@ export interface LoopSpend {
 }
 export interface Loop {
   id: string; kind: LoopKind; name: string; task: string; summary?: string
-  /** Present when the loop is a WORKFLOW RUN (PP-16: a ported kind — `general` — runs on the
+  /** Present when the loop is a WORKFLOW RUN (a ported kind — `general` — runs on the
    *  workflows engine and has no loops-table row), absent on a loops-table loop. `GET /api/loops`
    *  lists both, so this is how a surface tells which cockpit opens the loop (`lib/loopKind:
    *  loopRoute`) and which lifecycle it has (`lib/loopStatus:loopActionSources`). Decide by this
@@ -7030,7 +7030,7 @@ export interface Loop {
   /** While incident mode holds a `running` loop, the sentence that says so (`loop.held_reason`);
    *  `''` otherwise. The status stays `running` — `effectiveLoopStatus` reads this to say "Held". */
   held?: string
-  // Feedback Signal: the producer the finding thumbs attribute to
+  // Feedback signal: the producer the finding thumbs attribute to
   // (("loop_judge", kind) — per-kind, each kind carries its own brief/rubric).
   feedback_producer?: FeedbackProducer
   // Everything kind-specific. goal: {goal_type, granularity, sub_goals, deliverables,
@@ -7059,7 +7059,7 @@ export interface UnifiedLoopClassification {
   plan?: LoopPhase[]; kind_config: Record<string, unknown>
 }
 
-// Guided decomposition (#16, grill's `tree` shape) — the richer intake behind
+// Guided decomposition (grill's `tree` shape) — the richer intake behind
 // `intake_rigor='thorough'`: 2-4 phases of clarifying questions that build on one
 // another, memory-checked so the agent doesn't re-ask what it already knows about
 // you. Returned by POST /api/loops/{id}/grill-tree; the FE walks the phases + folds
@@ -7196,7 +7196,7 @@ export interface ContentSearchResp { results: ContentMatch[]; engine: 'rg' | 'py
 // every generated .docx/.xlsx/.pptx/.pdf/.csv/video displayed as a "Widget".
 export type ArtifactKind = 'widget' | 'html' | 'react' | 'markdown' | 'svg' | 'json' | 'text' | 'infographic' | 'document' | 'image' | 'csv' | 'docx' | 'xlsx' | 'pptx' | 'pdf' | 'video'
 export type ArtifactSource = 'chat' | 'cron' | 'subagent' | 'manual' | 'import'
-// ── Dashboard-as-views registry (AMBIENT-SURFACES §1 / A2-1) ──
+// ── Dashboard-as-views registry ──
 // A view is ordered tile REFS + size hints — NEVER coordinates (the retired grid's
 // lesson). A tile ref is `core:<widget>` (a hard-imported first-party widget) or
 // `artifact:<slug>` (a pinned artifact tile). `added_by:agent` rows are PROPOSALS
@@ -7243,9 +7243,9 @@ export interface Artifact {
   // LIST row carries neither (the server omits them — a list-shaped live_dirty
   // was a fabricated False, #630). Present only on content-bearing responses.
   source_path: string; live_dirty?: boolean; project_id?: string
-  // Optional library collection label (ARTIFACTS S1). "" = uncollected.
+  // Optional library collection label. "" = uncollected.
   collection?: string
-  /** Frozen record: the server refuses every content mutation on it (SM-9 — today only
+  /** Frozen record: the server refuses every content mutation on it (today only
    *  shared chat transcripts). Read here so the UI stops OFFERING an edit rather than
    *  letting the user type into an editor whose save always 400s. */
   readonly: boolean
@@ -7259,7 +7259,7 @@ export interface Artifact {
 // Mirrors `personalclaw/documents/model.py` field for field. Every field is REQUIRED
 // here even though the server defaults them, because this same shape is posted BACK and
 // `document_from_dict` is strict — an optional field a UI forgot to echo would be a
-// silently dropped run/style, which is the exact fidelity failure the plan exists to
+// silently dropped run/style, which is the exact fidelity failure the editor exists to
 // prevent. `loss` is the report the parse produced: what the model could not hold.
 export interface DocumentRun { text: string; bold: boolean; italic: boolean; code: boolean; link: string }
 export interface DocumentParagraphStyle {
@@ -7584,8 +7584,8 @@ export interface ModelWait {
   left_secs: number | null
 }
 
-/** One per-model efficiency row for a (use_case, query_class) bucket
- *  (MRT-1d/1e). Observation only — the fold supplies
+/** One per-model efficiency row for a (use_case, query_class) bucket.
+ *  Observation only — the fold supplies
  *  n/success/feedback/cost, the audit tail supplies p50/p95 latency, and
  *  `on_frontier` = this ref is not dominated by another on (success↑, p50_ms↓,
  *  avg_cost_usd↓). `feedback`/latency are 0 when no signal has landed yet.
@@ -7990,8 +7990,8 @@ export const api = {
     const q = p.toString()
     return get<UsageFold>(`/api/usage${q ? `?${q}` : ''}`)
   },
-  // Per-model routing efficiency for one (use_case, query_class) bucket
-  // (MRT-1d). BOTH params are required (a missing either
+  // Per-model routing efficiency for one (use_case, query_class) bucket.
+  // BOTH params are required (a missing either
   // is a 400); `rows` may be empty for a bucket with no telemetry yet. Read-only —
   // this only visualizes; nothing here changes routing. The Routing & Efficiency
   // settings panel renders it.
@@ -8136,13 +8136,13 @@ export const api = {
   // rewrites the same profiles. 404s when the pack is not installed or ships no roster.
   packRosterDeploy: (name: string) => post<PackRosterDeployRec>(`/api/packs/${encodeURIComponent(name)}/roster/deploy`, {}),
   // ── Pack store + fingerprint discovery ──
-  // `packsBundled` is the store catalog; installing one runs the full §3 import (scan,
+  // `packsBundled` is the store catalog; installing one runs the full import (scan,
   // integrity, leaves-first commit with rollback) at BUILTIN trust.
   packsBundled: () => get<{ packs: BundledPackRec[] }>('/api/packs/bundled').then((d) => d.packs),
   packBundledInstall: (name: string) => post<{ ok: boolean; plan: Record<string, unknown> }>(`/api/packs/bundled/${encodeURIComponent(name)}/install`, {}),
   // The propose-only fingerprint cards. This GET performs the ON-DEMAND scan ("Suggest
-  // packs") — one of only two callers of the scanner (the other is project-create); §7
-  // forbids a background loop, so nothing polls this on a timer.
+  // packs") — one of only two callers of the scanner (the other is project-create); there
+  // is deliberately no background loop, so nothing polls this on a timer.
   // `unscanned` names each project whose scan failed, and why: an empty `proposals` is only "no
   // match" when nothing is in it.
   // `fingerprinting` false: project fingerprinting is turned off, so nothing was scanned at all.
@@ -8156,7 +8156,7 @@ export const api = {
   // Dry run by default, like the update: the interesting output is what stays and what must go first.
   packUninstall: (name: string, confirm = false) => post<{ ok: boolean; uninstall: PackUninstallRec }>(`/api/packs/${encodeURIComponent(name)}/uninstall`, { confirm }),
 
-  // ── Owner login (REMOTE-USER-AUTH C3/C5) ──
+  // ── Owner login ──
   // The credential itself is never READ back — `authSession` reports only whether one is
   // configured, for whom, and whether 2FA is on. Setting a password goes through its own
   // POST rather than patchConfig, because a password is not a config field: the PATCH
@@ -8255,7 +8255,7 @@ export const api = {
       '/api/models/health',
     ),
 
-  // ── The earned-autonomy ladder (§5-§6.1). Read, then three writes — and only `grant`
+  // ── The earned-autonomy ladder. Read, then three writes — and only `grant`
   //    increases what an automation may do on its own, which is why it is the only one
   //    that can be refused (400 with the reason).
   autonomyLadder: () => get<AutonomyLadder>('/api/autonomy'),
@@ -8281,7 +8281,7 @@ export const api = {
   durabilityStatus: () => get<DurabilityStatus>('/api/durability/status'),
   durabilityRun: (job: 'export' | 'snapshot' | 'drill') =>
     post<DurabilityJobResult>('/api/durability/run', { job }),
-  // ── §6 DSAR surface ──
+  // ── DSAR surface ──
   // These retired `/api/durability/snapshots` and the `/api/portability/*` trio: one
   // export endpoint, one import endpoint, one archive list, one restore.
   durabilityArchive: () => get<DurabilityArchives>('/api/durability/archive'),
@@ -8308,7 +8308,7 @@ export const api = {
    *  gateway runs, as on an import, so the client offers only the merge. */
   durabilityArchiveRestore: (id: string, body: { mode?: 'merge'; components?: string[]; confirm?: boolean } = {}) =>
     post<DurabilityRestoreResult>(`/api/durability/archive/${encodeURIComponent(id)}/restore`, body),
-  // ── §4.2 the conflict review queue ──
+  // ── The conflict review queue ──
   /** `surface` omitted returns every surface's records; the counts always cover all of them
    *  so a filtered read can still say what waits elsewhere. */
   durabilityConflicts: (surface?: string, status?: string) => {
@@ -8442,7 +8442,7 @@ export const api = {
   // tombstone is not a delete anyway (the line stays, marked, so it is never re-derived).
   memorySlotRetireLine: (name: string, text: string, partition = '') =>
     post<{ ok: boolean }>(inMemory(`/api/memory/slots/${encodeURIComponent(name)}/lines/retire`, partition), { text }),
-  // C15 — the facet overrides. `memoryFacets` is the ONLY read that carries a facet's key:
+  // The facet overrides. `memoryFacets` is the ONLY read that carries a facet's key:
   // the identity report's facet section drops it (that document is propose-don't-write) and
   // also hides forgotten facets, so nothing there can be pinned or reviewed.
   memoryFacets: (partition = '') => get<{ facets: MemoryFacet[] }>(inMemory('/api/memory/facets', partition)).then((d) => d.facets),
@@ -8765,7 +8765,7 @@ export const api = {
     post<{ removed: number; freed_bytes: number }>('/api/models/downloads/cleanup', { confirm: true }),
   deleteLocalModel: (provider: string, model: string) =>
     del(`/api/models/local/${encodeURIComponent(provider)}/${encodeURIComponent(model)}`),
-  // HF token cascade (LMMV §5). Status is per-source, masked (the value never crosses the
+  // HF token cascade. Status is per-source, masked (the value never crosses the
   // wire); set writes SOURCE 1 (the credential store) and clear removes it — both SEL-audited
   // server-side. Set/clear return the refreshed status so the UI repaints from one source.
   hfTokenStatus: () => get<HfTokenStatus>('/api/models/hf-token/status'),
@@ -8779,7 +8779,7 @@ export const api = {
    *  (`model_untestable`) or a Test of the same provider already running (`model_test_running`). */
   modelTest: (useCase: string, model: string) =>
     post<ModelTestResult>('/api/models/test', { use_case: useCase, model }),
-  // What is occupying RAM right now (LMMV §7) — resident models with attribution, each
+  // What is occupying RAM right now — resident models with attribution, each
   // provider's readiness, and the system pressure snapshot. One fetch backs both the
   // Settings section and the dashboard's "On this machine" band.
   modelsLoaded: () => get<ResidencySnapshot>('/api/models/loaded'),
@@ -8789,7 +8789,7 @@ export const api = {
   unloadModelProvider: (provider: string) =>
     post<{ ok: boolean; provider: string; kind: string; freed: boolean; pressure: MemoryPressure }>(
       '/api/models/unload', { provider }),
-  // The resumable sidecar install (LMMV §3.2) for a provider declaring execution: sidecar.
+  // The resumable sidecar install for a provider declaring execution: sidecar.
   sidecarInstallStatus: (provider: string) =>
     get<SidecarInstallStatus>(`/api/models/sidecar/${encodeURIComponent(provider)}/install/status`),
   startSidecarInstall: (provider: string) =>
@@ -8936,7 +8936,7 @@ export const api = {
   // since. Answers with the tags as stored after.
   editSessionTags: (session: string, edit: { add?: string[]; remove?: string[] }) =>
     put<{ ok: boolean; tags: string[] }>(`/api/chat/sessions/${encodeURIComponent(session)}/tags`, edit),
-  // Suggested organization (SM T2.1). The GET only READS — a suggestion never applies
+  // Suggested organization. The GET only READS — a suggestion never applies
   // itself; organizeAccept is the sole path that writes folder/tags from a proposal. It answers at
   // once: `pending` while the model is still sorting the chat, whose answer then arrives as a
   // `chat_organize` frame naming the chat.
@@ -9006,8 +9006,8 @@ export const api = {
    *  rather than this client buffering the transcript in memory. */
   sessionExportUrl: (key: string, format: 'md' | 'json') =>
     `/api/chat/sessions/${encodeURIComponent(key)}/export?format=${format}`,
-  /** Share a chat as a redacted, READ-ONLY artifact in this instance's own library
-   *  (SM-9). POST because it creates durable state, and nothing publishes it anywhere:
+  /** Share a chat as a redacted, READ-ONLY artifact in this instance's own library.
+   *  POST because it creates durable state, and nothing publishes it anywhere:
    *  there is no public link and no token — an artifact the owner can open, and nobody
    *  else can reach without this gateway's session auth. */
   shareSession: (key: string) =>
@@ -9060,8 +9060,8 @@ export const api = {
     post<{ optimized?: string; changed?: boolean; added?: string[] }>('/api/optimizer/optimize', { prompt, context }),
   /** Transcribe a recording. `duplex` marks a hands-free capture: the backend then
    *  checks the transcript against what it last spoke and answers
-   *  `{ text: '', filtered: 'echo' }` when the microphone heard the assistant
-   *  (MULTIMODAL-IO §4.2). `input_origin`/`disclaimer` ride back so the turn can be
+   *  `{ text: '', filtered: 'echo' }` when the microphone heard the assistant.
+   *  `input_origin`/`disclaimer` ride back so the turn can be
    *  honest about having been dictated. */
   transcribeAudio: async (
     blob: Blob,
@@ -9114,7 +9114,7 @@ export const api = {
   sideOpen: (session: string) => post<{ ok: boolean }>(`/api/chat/sessions/${session}/side/open`, {}),
   sideTurn: (session: string, question: string) => post<{ ok: boolean; run_id: string }>(`/api/chat/sessions/${session}/side/turn`, { question }),
   sideClose: (session: string) => post<{ ok: boolean }>(`/api/chat/sessions/${session}/side/close`, {}),
-  // /undo N — roll back the last N conversation turns (power-user-surfaces P7). Returns
+  // /undo N — roll back the last N conversation turns. Returns
   // how many turns were removed + an honest notice that side effects were NOT reverted.
   undoChat: (session: string, n = 1) =>
     post<{ ok: boolean; turns_undone: number; notice: string }>(`/api/chat/sessions/${session}/undo`, { n }),
@@ -9204,12 +9204,12 @@ export const api = {
   voiceProfileLock: (id: string, history_index: number) =>
     post<VoiceProfile>(`/api/voice/profiles/${encodeURIComponent(id)}/lock`, { history_index }),
   voiceProfileUnlock: (id: string) => post<VoiceProfile>(`/api/voice/profiles/${encodeURIComponent(id)}/unlock`, {}),
-  /** Bind one surface (or `default`). `warning` is advisory — §1.3 warns on a
+  /** Bind one surface (or `default`). `warning` is advisory — the server warns on a
    *  consent-less clone bound to an agentic surface and never refuses the bind. */
   voiceBindingSet: (surface: string, profile_id: string) =>
     put<{ bindings: VoiceBindings; warning: string }>('/api/voice/bindings', { surface, profile_id }),
   voiceBindingClear: (surface: string) => del(`/api/voice/bindings?surface=${encodeURIComponent(surface)}`),
-  /** §6 one-click migration: the active flat TTS selection becomes a design-kind
+  /** One-click migration: the active flat TTS selection becomes a design-kind
    *  profile bound `default`. Only ever on an explicit click — nothing calls this
    *  on a startup path. 409 `no_active_voice` when no TTS model is bound. */
   voiceMigrate: (name = '') => post<VoiceProfile>('/api/voice/migrate', name ? { name } : {}),
@@ -9235,7 +9235,7 @@ export const api = {
   uLoopStreamUrl: (id: string) => `/api/loops/${encodeURIComponent(id)}/stream`,
   classifyULoop: (kind: LoopKind, task: string) =>
     post<UnifiedLoopClassification>('/api/loops/classify', { kind, task }),
-  // Guided decomposition (#16): memory-checked question-tree for a created loop's goal.
+  // Guided decomposition: memory-checked question-tree for a created loop's goal.
   grillTree: (id: string) => post<GrillTreeResult>(`/api/loops/${encodeURIComponent(id)}/grill-tree`, {}),
   validateULoop: (body: Record<string, unknown>) => post<LoopValidation>('/api/loops/validate', body),
   createULoop: (body: Record<string, unknown>) => post<Loop>('/api/loops', body),
@@ -9338,8 +9338,8 @@ export const api = {
   // Cross-trigger run index (dashboard Schedule widget) — newest runs across all
   // schedules, distinct from the per-schedule history the trigger detail uses.
   // Returns the archive split alongside the rows: `did_ids` are fires that DID something,
-  // `suppressed_ids` the ones a gate held. Typed here because the backend has computed them since
-  // S132 and this wrapper declared only `{runs, total}`, so every consumer silently dropped them
+  // `suppressed_ids` the ones a gate held. Typed here because the backend already computed them
+  // and this wrapper declared only `{runs, total}`, so every consumer silently dropped them
   // — a surface that cannot tell the two apart buries the one fire that mattered under
   // 1439 skips, which is the exact failure the split exists to prevent.
   triggersHistory: (limit = 20, offset = 0) =>
@@ -9367,7 +9367,7 @@ export const api = {
     get<{ triggers: Trigger[]; server_tz: string; owner?: string; unreadable?: TriggerSourceUnreadable[] }>(
       `/api/triggers${type ? `?type=${type}` : ''}`,
     ),
-  // The week-grid projection (AUTO-A3). `start`/`until` are offset-qualified local datetimes; the
+  // The week-grid projection. `start`/`until` are offset-qualified local datetimes; the
   // backend computes every occurrence from the recurrence each trigger already carries — read-only,
   // no store changes.
   triggersWeek: (start?: string, days = 7, until?: string) => {
@@ -9383,11 +9383,11 @@ export const api = {
   // lists, runs, toggles and deletes through the `store:` helpers like every other store trigger.
   // The backend DERIVES `source` from `pattern` (PATTERN_SOURCE) — never taken from the wire — so
   // the body carries only the pattern, its one matcher field, the action and the optional budget.
-  // A 201 may carry a `warning` (a catastrophic content_re warns rather than refuses, §7/R4 rule d).
+  // A 201 may carry a `warning` (a catastrophic content_re warns rather than refuses).
   createEvent: (body: {
     name?: string; pattern: EventPattern
     sender_glob?: string; address_glob?: string; key_glob?: string; content_re?: string
-    // AppEvent's matcher (AUTO-A4): a glob on the NAMESPACED event name (`app:<app>:<event>`).
+    // AppEvent's matcher: a glob on the NAMESPACED event name (`app:<app>:<event>`).
     // Empty matches every app event — the catch-all, which is why AppEvent needs no second pattern.
     event_glob?: string
     max_fires?: number; debounce_secs?: number; action: { provider: string; config: Record<string, unknown> }
@@ -9519,7 +9519,7 @@ export const api = {
   // every browser; `""` when none, or when the stored one is deleted or archived.
   projectSettings: () => get<ProjectSettings>('/api/projects/settings'),
   updateProjectSettings: (body: ProjectSettings) => put<ProjectSettings>('/api/projects/settings', body),
-  // Legibility §7 — render the marker-fenced PClaw context block into the project's
+  // Render the marker-fenced PClaw context block into the project's
   // bound workspace_dir adapter files (CLAUDE.md / AGENTS.md / .cursorrules), replace-
   // in-place. Gated server-side on legibility.context_adapters + a bound workspace_dir.
   regenerateContextAdapters: (id: string) =>
@@ -9542,7 +9542,7 @@ export const api = {
     put<{ ok: boolean; prompt: PromptItem; revision: string }>(`/api/prompts/${encodeURIComponent(name)}`, body, basedOn(base)),
   deletePrompt: (name: string) => del(`/api/prompts/${encodeURIComponent(name)}`),
   renderPrompt: (name: string, variables: Record<string, unknown>) => post<{ name: string; rendered: string }>(`/api/prompts/${encodeURIComponent(name)}/render`, { variables }),
-  // Runnable "campaign template" (#17): render with values + create+start a loop.
+  // Runnable "campaign template": render with values + create+start a loop.
   launchCampaignTemplate: (name: string, variables: Record<string, unknown>, projectId?: string) =>
     post<{ ok: boolean; loop_id: string; kind: LoopKind; started: boolean }>(
       `/api/prompts/${encodeURIComponent(name)}/launch`, projectId ? { variables, project_id: projectId } : { variables }),
@@ -9593,8 +9593,8 @@ export const api = {
   // she was offered, and nothing is changed when another version ships by then (409).
   useBundledSkill: (name: string, digest: string) => post<{ ok: boolean; name: string }>('/api/skills/bundled/update', { name, digest }),
   keepSkillCopy: (name: string, digest: string) => post<{ ok: boolean; name: string }>('/api/skills/bundled/keep', { name, digest }),
-  // Skill proposals inbox (skill-evolution-proposal-only) — propose-only review.
-  // ── Learning Flywheel §6.1: the Proposal Inbox + the staging week panel ──
+  // Skill proposals inbox — propose-only review.
+  // ── Learning flywheel: the Proposal Inbox + the staging week panel ──
   // `accept`/`reject` carry NO actor: the backend derives it from the request, because a caller that
   // could name itself `user` would make the human-installs gate decorative.
   learningProposals: (opts?: { kind?: string; tier?: string; flagged?: boolean }) => {
@@ -9648,7 +9648,7 @@ export const api = {
   ablation: () => get<AblationView | SwitchedOffView | NotRunView>('/api/evals/ablation'),
   /** The skill-impact benchmark: does an approved skill make the next run better?
    *
-   *  Read-only, and for the sharpest reason on this route family: §3 pairs k=5 trials per arm
+   *  Read-only, and for the sharpest reason on this route family: the benchmark pairs k=5 trials per arm
    *  over ten tasks — 100 real model calls — so a click that started one would spend serious
    *  money. The RUN is `python scripts/learning_benchmark.py --run`, which has `--preflight` and
    *  `--dry-run` modes that call nothing.
@@ -9660,12 +9660,12 @@ export const api = {
    *  "no benchmark yet" is a 200 `NotRunView`. */
   learningBenchmark: () => get<BenchmarkView | SwitchedOffView | NotRunView>('/api/evals/learning-benchmark'),
   /** Pre-registered template A/B studies. Read-only for the same reason as the
-   *  bench: a k=5 paired study is ten template runs plus six judge calls per pair. §2.1 is
-   *  also explicit that the human REGISTERS and the substrate RUNS, so there is deliberately
+   *  bench: a k=5 paired study is ten template runs plus six judge calls per pair. The human
+   *  REGISTERS and the substrate RUNS, so there is deliberately
    *  no POST here — a click that could do both would defeat the pre-registration. */
   /** Per-arm P@k/R@k for BOTH retrieval stores. Read-only for a different
-   *  reason than the bench's: retrieval costs no model calls, but §5.1 forbids the harness
-   *  writing to knowledge.db or memory.db at all, and the cheapest way to keep that promise
+   *  reason than the bench's: retrieval costs no model calls, but the harness must never
+   *  write to knowledge.db or memory.db at all, and the cheapest way to keep that promise
    *  on a web surface is to have no run trigger on it. The RUN is `personalclaw
    *  retrieval-eval`. "Evals off" is a 200 `SwitchedOffView`; "no run yet" is a 200
    *  `NotRunView`. */
@@ -9703,7 +9703,7 @@ export const api = {
    *  caller must let the block be ABSENT in that case rather than render zeros, which
    *  would claim nothing was learned when the truthful answer is "not being tracked". */
   learningSummary: (days?: number) => get<LearningSummary | SwitchedOffView>(`/api/learning/summary${days ? `?days=${days}` : ''}`),
-  // Ephemeral session-skill drafts (skill-ephemeral-promotion).
+  // Ephemeral session-skill drafts.
   ephemeralSkills: (session: string, opts: ReadOptions = {}) =>
     get<{ drafts: EphemeralDraft[] }>(`/api/skills/ephemeral/${encodeURIComponent(session)}`, opts).then((d) => d.drafts),
   promoteEphemeralSkill: (session: string, payload: { slug: string; scope: 'agent' | 'global'; agent?: string; title?: string; body?: string }) =>
@@ -9949,14 +9949,14 @@ export const api = {
     post<TriggerRunResult>(`/api/triggers/store:${encodeURIComponent(rawId)}/run`, dryRun ? { dry_run: true } : {}),
   // The `view` kind's render caller. A render surface pings this as it mounts/refreshes;
   // any `view` trigger bound to `surface` and past its TTL refreshes (fire-and-forget on the
-  // gateway), the rest serve cache. Deliberately NOT a poll — R10: a view trigger costs nothing
+  // gateway), the rest serve cache. Deliberately NOT a poll: a view trigger costs nothing
   // when nobody looks, so a render calls it rather than a background loop. Callers fire-and-forget
   // (`.catch(() => {})`) — a background refresh must never block or error a render.
   viewRender: (surface: string) =>
     post<{ refreshed: string[]; served_cache: { trigger_id: string; reason: string }[] }>(
       '/api/triggers/view/render', { surface }),
 
-  // knowledge — typed item library + entities/graph + sources (see knowledge-entity-vision.md)
+  // knowledge — typed item library + entities/graph + sources
   knowledgeStats: () => get<KnowledgeStats>('/api/knowledge/stats'),
   knowledgeItems: (params?: { q?: string; type?: string; page?: number; limit?: number; includeArchived?: boolean }) => {
     const qs = new URLSearchParams()
@@ -9966,7 +9966,7 @@ export const api = {
     qs.set('page', String(params?.page ?? 1)); qs.set('limit', String(params?.limit ?? 50))
     return get<{ items: KnowledgeItem[]; total: number; page: number; limit: number }>(`/api/knowledge/items?${qs}`)
   },
-  // ── Lexicon / Vocabulary (core LEX.6) ──
+  // ── Lexicon / Vocabulary ──
   lexiconTerms: (opts: { source?: string; search?: string } = {}) =>
     get<{ terms: LexiconTerm[]; total: number }>(
       `/api/lexicon/terms?source=${encodeURIComponent(opts.source || '')}&search=${encodeURIComponent(opts.search || '')}`),
@@ -10032,7 +10032,7 @@ export const api = {
   // Bare URLs for <img>/<audio>/<video> src — auth rides the same-origin pc_token cookie.
   knowledgeItemFileUrl: (id: string) => `/api/knowledge/items/${encodeURIComponent(id)}/file`,
   knowledgeItemThumbnailUrl: (id: string) => `/api/knowledge/items/${encodeURIComponent(id)}/thumbnail`,
-  // node-graph ingestion (#30): per-item extracted-content pool + live progress SSE.
+  // node-graph ingestion: per-item extracted-content pool + live progress SSE.
   knowledgeExtracted: (id: string) => get<{ contents: ExtractedContent[] }>(`/api/knowledge/items/${encodeURIComponent(id)}/extracted`),
   knowledgeIngestStreamUrl: (id: string) => `/api/knowledge/items/${encodeURIComponent(id)}/ingest/stream`,
   // The ingestion node-graph SHAPE for an item's type — for the mini-DAG progress view.
@@ -10283,7 +10283,7 @@ export const api = {
   pairInboxSender: (id: string) =>
     withSecurityConsent((c) => post<{ ok: boolean; paired: boolean }>(
       `/api/inbox/${encodeURIComponent(id)}/pair`, c ? { confirm: true } : {})),
-  // Approve one proposal through the C6 apply dispatcher. `edited` is the
+  // Approve one proposal through the proposal apply dispatcher. `edited` is the
   // edit-then-approve payload and REPLACES the stored one (server refuses it for a
   // non-editable proposal). Resolves with ok:false on a failed apply — the item is still
   // PENDING and carries the error, so the caller renders the failure instead of throwing.
@@ -10304,7 +10304,7 @@ export const api = {
   digestInboxChannel: (channelId: string, hours = 4) =>
     post<InboxItem>(`/api/inbox/digest?channel_id=${encodeURIComponent(channelId)}&hours=${hours}`),
   sendInboxReply: (id: string, text: string) => post<{ ok: boolean; delivered_to_session?: boolean }>('/api/inbox/send', { id, text }),
-  // P11 engagement signals — recorded only when inbox.engagement_ranking_enabled is on
+  // Engagement signals — recorded only when inbox.engagement_ranking_enabled is on
   // (backend gates it); open is best-effort fire-and-forget, favorite persists the star.
   openInboxItem: (id: string) => post<{ ok: boolean }>(`/api/inbox/${encodeURIComponent(id)}/open`),
   favoriteInboxItem: (id: string, favorited: boolean) =>
@@ -10436,7 +10436,7 @@ export const api = {
     const qs = p.toString()
     return get<DecisionJournalView>(`/api/knowledge/decisions${qs ? `?${qs}` : ''}`)
   },
-  // The rules manager. These three routes shipped with PA-1 and had NO consumer until now.
+  // The rules manager. These three routes had NO consumer until now.
   approvalRules: () =>
     get<{ rules: ApprovalRuleRow[]; unreadable: string[] }>('/api/memory/approval-rules'),
   saveApprovalRule: (body: { pattern: string; verdict: 'approve' | 'deny'; scope?: string; expires_at?: string | null; send_capable?: boolean }) =>
@@ -10451,7 +10451,7 @@ export const api = {
   // memory vault (Obsidian markdown mirror) — status + on-demand sync.
   memoryVaultStatus: () => get<MemoryVaultStatus>('/api/memory/vault'),
   syncMemoryVault: () => post<MemoryVaultSyncResult>('/api/memory/vault/sync', {}),
-  // daily-digest nodes (mem-tree) — per-day rollups; rebuild=1 forces a build.
+  // daily-digest nodes — per-day rollups; rebuild=1 forces a build.
   dailyDigests: (rebuild = false, partition = '') =>
     get<{ digests: DailyDigest[] }>(inMemory(`/api/memory/daily-digests${rebuild ? '?rebuild=1' : ''}`, partition)).then((d) => d.digests),
   // memory explorer — semantic browse/CRUD, episodic search/list/delete, audit, inspector, consolidate.
@@ -10559,7 +10559,7 @@ export const api = {
   // is the panel's own "Allow egress to all private networks?" dialog.
   setSecurityEgress: (cfg: EgressPolicyConfig, base: string, confirmed = false) =>
     api.patchConfigDocument('security.egress', cfg, base, confirmed),
-  // Tool-output projection rules (TokenJuice OP6). Read from the whole-config GET
+  // Tool-output projection rules (TokenJuice). Read from the whole-config GET
   // (tools.projection_rules) with the revision of that list; written whole via the config PATCH,
   // over that revision.
   projectionRules: () => api.configDocument<ProjectionRule[]>('tools.projection_rules', []),
@@ -10568,12 +10568,12 @@ export const api = {
   // TokenJuice savings (counterfactual) summary — estimated tokens saved by output
   // projection this month, top compressor, per-compressor breakdown.
   toolsSavings: () => get<ToolsSavings>('/api/tools/savings'),
-  // Tool groups (Context Economy §5): the derived partition + per-surface
+  // Tool groups: the derived partition + per-surface
   // activation defaults. Read-only — the flag and defaults are config writes.
   toolGroups: () => get<ToolGroupsData>('/api/tools/groups'),
   setToolGroupsEnabled: (enabled: boolean) =>
     patch<Record<string, any>>('/api/config/personalclaw', { path: 'tools.groups_enabled', value: enabled }),
-  // Feedback Signal: 👍/👎 on AI judgment outputs + per-producer accuracy.
+  // Feedback signal: 👍/👎 on AI judgment outputs + per-producer accuracy.
   recordFeedback: (body: FeedbackRecordBody) => post<{ ok: boolean; id: string; verdict: string }>('/api/feedback', body),
   feedbackTarget: (kind: FeedbackTargetKind, id: string) =>
     get<{ verdict: 'up' | 'down' | null; reason?: string } | SwitchedOffView>(`/api/feedback/target/${kind}/${encodeURIComponent(id)}`),
@@ -10821,7 +10821,7 @@ export const api = {
   workflowRunOutput: (id: string, nodeId: string) =>
     get<{ run_id: string; node_id: string; instance_path: string; state: string; output: unknown }>(
       `/api/workflows/runs/${encodeURIComponent(id)}/outputs/${encodeURIComponent(nodeId)}`),
-  /** The reconstructability set for one TERMINAL node (WF2-A2) — resolved prompt, inputs,
+  /** The reconstructability set for one TERMINAL node — resolved prompt, inputs,
    *  output, attempts, this node's ledger slice, and whether it was served from cache. Every
    *  text field arrives redacted. The inspector drawer consumes this. */
   workflowRunNodeInspect: (runId: string, nodeId: string) =>
@@ -10833,7 +10833,7 @@ export const api = {
     get<{ continuations: WorkflowContinuation[]; run_status?: string }>(`/api/workflows/runs/${encodeURIComponent(id)}/continuations`),
   /** The run's workspace review: changed files + the two reintegration verbs. A GET
    *  because reintegration is OFFERED, never performed — there is no companion POST, and that
-   *  is the plan's ruling rather than a gap. 404s for an unknown run; a run with no managed
+   *  is deliberate rather than a gap. 404s for an unknown run; a run with no managed
    *  workspace answers with an empty `workspace`, which the panel renders as "no diff". */
   workflowRunWorkspace: (id: string) =>
     get<WorkflowWorkspaceReview>(`/api/workflows/runs/${encodeURIComponent(id)}/workspace`),
@@ -10934,7 +10934,7 @@ export const api = {
     get<{ healthy: boolean; dry_run: boolean; runs_scanned: number; counts: Record<string, number>; findings: Array<{ kind: string; run_id: string; detail: string; heal: string; healed: boolean }> }>(
       `/api/workflows/audit?dry_run=${dryRun ? 'true' : 'false'}`),
   workflowManifest: () => get<WorkflowManifest>('/api/workflows/manifest'),
-  /** Per-template §4.4 attention summaries. Derived per request from run ledgers —
+  /** Per-template attention summaries. Derived per request from run ledgers —
    *  stored nowhere — so an empty list means "no workflow runs yet", never a failure. */
   workflowAttention: () => get<{ scopes: AttentionScope[] }>('/api/workflows/attention'),
   // Bare URL for EventSource — auth rides the same-origin cookie, as with every other
@@ -11048,7 +11048,7 @@ export const api = {
   teardownArtifact: (slug: string) =>
     del(`/api/artifacts/${encodeURIComponent(slug)}/deploy`),
 
-  // ── dashboard-as-views registry (AMBIENT-SURFACES §1 / A2-1) ──
+  // ── dashboard-as-views registry ──
   // Presets are read-only: updateView/deleteView on a preset return 403. Pinning
   // (pinTile) POSTs an artifact:<slug> tile; resolveTile accepts (keep) or removes
   // (dismiss/unpin) an overlay tile.
@@ -11089,7 +11089,7 @@ export const api = {
     post<{ ok: boolean; code?: string; message?: string; outcome?: string; violations?: string[][]; row?: TileRefreshRow }>(
       `/api/dashboard/views/${encodeURIComponent(viewId)}/tiles/action`, body),
 
-  // App Platform (A7) — install/manage apps that extend PClaw.
+  // App Platform — install/manage apps that extend PClaw.
   // Normalize the app-category flag at the boundary: `native` is the single source
   // of truth downstream. A gateway that hasn't restarted yet still emits the legacy
   // `platform` flag for always-on providers — fold it into `native` here so the whole

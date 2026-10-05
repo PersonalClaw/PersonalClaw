@@ -1,14 +1,14 @@
 """Cross-source semantic dedup — the pure resolver.
 
-TIER-1 exact dedup (URL-normalize + byte-hash) already lives in ``store.py`` and stays. This
-module is TIER-2: the FUZZY resolver that fires only when TIER-1 misses AND a vector exists —
+Tier one, exact dedup (URL-normalize + byte-hash), already lives in ``store.py`` and stays. This
+module is tier two: the FUZZY resolver that fires only when tier one misses AND a vector exists —
 filename/title near-match AND cosine ≥ threshold AND a **date-gate** (a differing
 recurring-series date token ⇒ DISTINCT, so a daily/weekly report series never collapses into
 one item). On a confirmed dup it names a **format-recall winner** (keep the richer copy,
 archive the loser — reversible, never delete).
 
 Everything here is PURE + unit-testable — no DB, no embedder, no I/O. The runner stage +
-``KnowledgeStore.find_fuzzy_dup_candidates`` (steps 2+4) call into these functions with rows
+``KnowledgeStore.find_fuzzy_dup_candidates`` call into these functions with rows
 they've already fetched; they layer on top without touching this file. Gated off until wired
 (the create-time exact tiers are unaffected).
 """
@@ -45,7 +45,7 @@ _STOP_STEM = re.compile(r"[^a-z0-9]+")
 
 @dataclass
 class DupVerdict:
-    """Result of a TIER-2 comparison. ``is_dup`` only when filename AND cosine AND date-gate
+    """Result of a tier-two comparison. ``is_dup`` only when filename AND cosine AND date-gate
     all agree. ``winner``/``loser`` (item ids) set only when is_dup — the loser is archived."""
 
     is_dup: bool

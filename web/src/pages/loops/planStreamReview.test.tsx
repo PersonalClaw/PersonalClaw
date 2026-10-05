@@ -6,12 +6,12 @@ import { PlanStreamReview } from './PlanStreamReview'
 // ── Plan review streams progressively across cards + graph + JSON ───────────────────────────────
 //
 // planStream/planGraph/planNaming are unit-tested as pure modules; this mounts the COMPONENT that
-// assembles them and asserts the clause's render: the three synchronized views (Proposal / Graph /
+// assembles them and asserts what it renders: the three synchronized views (Proposal / Graph /
 // JSON), the JSON view showing the raw buffer verbatim, and the in-flight shimmer while streaming.
 
 const BUFFER = '{"title":"Build the thing","steps":[{"id":"a","title":"Alpha"},{"id":"b","title":"Beta"}]}'
 
-describe('PlanStreamReview — three synchronized views (WF2UNI-10 render)', () => {
+describe('PlanStreamReview — three synchronized views', () => {
   it('renders the three view toggles and the proposal cards (with per-step labels) by default', () => {
     render(<PlanStreamReview buffer={BUFFER} complete={true} />)
     expect(screen.getByRole('radio', { name: 'Proposal' })).toBeInTheDocument()

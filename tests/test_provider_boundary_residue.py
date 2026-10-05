@@ -43,6 +43,7 @@ exactly what that half is meant to catch.
 from __future__ import annotations
 
 import ast
+import inspect
 import re
 from pathlib import Path
 
@@ -145,17 +146,34 @@ def _has_residue(text: str) -> bool:
     return bool(_sdk_import_lines(text)) or any(pat.search(text) for pat in _LITERAL_PATTERNS)
 
 
+#: The marker of the keeps file's second kind of entry: an interoperability FORMAT keep.
+_FORMAT_KEEP = "format:"
+
+
 def _keeps() -> set[str]:
-    """Repo-relative paths listed in the keeps file (ignoring comments/blanks)."""
+    """Repo-relative paths listed as RESIDUE keeps (ignoring comments, blanks and the
+    ``format:`` keeps, which carry no residue and are checked by their own test)."""
     paths: set[str] = set()
     for line in _KEEPS_FILE.read_text(encoding="utf-8").splitlines():
         line = line.strip()
-        if not line or line.startswith("#"):
+        if not line or line.startswith("#") or line.startswith(_FORMAT_KEEP):
             continue
         # "<path> — <judgment>"
         path = line.split("—", 1)[0].strip()
         if path:
             paths.add(path)
+    return paths
+
+
+def _format_keeps() -> set[str]:
+    """Repo-relative paths listed as ``format: <path> — <judgment>`` keeps."""
+    paths: set[str] = set()
+    for line in _KEEPS_FILE.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line.startswith(_FORMAT_KEEP):
+            path = line[len(_FORMAT_KEEP) :].split("—", 1)[0].strip()
+            if path:
+                paths.add(path)
     return paths
 
 
@@ -355,7 +373,7 @@ def test_the_judgment_table_cites_no_symbol_that_does_not_exist():
     """
     rows = _judgment_table_rows()
     assert rows, "no judgment-table rows parsed out of provider-boundary.md — fix the parser"
-    # The zero below is only meaningful if the checker can fire, so make it fire (§15: write
+    # The zero below is only meaningful if the checker can fire, so make it fire (write
     # the control before trusting the selector's silence).
     control = _unresolvable_symbol_citations(["| `constants.NOT_A_REAL_CONSTANT` | core | x |"])
     assert control == ["constants.NOT_A_REAL_CONSTANT"], (
@@ -390,3 +408,36 @@ def test_residue_patterns_are_case_insensitive_without_matching_prose_identifier
     assert not _has_residue(
         "_setup_slack_tokens"
     ), "credential-key patterns wrongly flagged a suffixed prose identifier"
+
+
+def test_the_interoperability_formats_are_a_recorded_keep():
+    """Core's readers and writers of other agent tools' files are recorded in both places.
+
+    The judgment table used to end "Everything else vendor-specific: ``apps/`` bundles" while
+    the importers of another tool's setup and history, and the writers that export into its
+    files, lived in core with no row and no keep. They are formats, not integrations: no
+    account, no network call, no vendor SDK, none of the other product's code. So each one is
+    a ``format:`` keep that must exist, must carry no vendor residue (a file that did would be
+    a residue keep instead), and must be named by the table's "Interoperability formats" row.
+    """
+    from personalclaw.onboarding_import import registry
+
+    formats = _format_keeps()
+    root = _CORE.parents[1]
+    # Positive control: the importer's registry and every source module it lists are recorded.
+    sources = {
+        _rel(Path(inspect.getsourcefile(src.scan) or "").resolve()) for src in registry.SOURCES
+    }
+    assert sources, "the importer lists no sources, so this check would hold vacuously"
+    assert sources | {"src/personalclaw/onboarding_import/registry.py"} <= formats
+    rows = [ln for ln in _judgment_table_rows() if "**Interoperability formats.**" in ln]
+    assert len(rows) == 1, "the judgment table has no single Interoperability formats row"
+    for rel in sorted(formats):
+        path = root / rel
+        assert path.is_file(), f"format keep {rel} does not exist"
+        assert not _has_residue(path.read_text(encoding="utf-8")), (
+            f"{rel} carries vendor SDK or credential residue, so it is a residue keep, "
+            "not a format keep"
+        )
+        named = Path(rel).name in rows[0] or f"{Path(rel).parent.name}/" in rows[0]
+        assert named, f"the Interoperability formats row does not name {rel}"

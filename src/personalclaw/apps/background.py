@@ -152,7 +152,7 @@ class WorkerState(str, Enum):
 class PauseReason(str, Enum):
     """Why a worker was paused. Every value is resumable — that is what pause means."""
 
-    BUDGET = "budget"  # APE-3 acceptance criteria: a budget breach pauses the worker + notifies
+    BUDGET = "budget"  # a budget breach pauses the worker + notifies
     OPERATOR = "operator"  # a human paused it from the Apps surface
     DEGRADED = "degraded"  # the host is degraded and is shedding background load
 
@@ -162,11 +162,11 @@ class StopReason(str, Enum):
 
     There is deliberately no ``UNINSTALLED``: from the CHILD's vantage an uninstall is a
     disable that never comes back, and the part that differs — reaping the process so no
-    orphan survives (APE-3 V1) — happens parent-side, where the PID is. A vocabulary the
+    orphan survives — happens parent-side, where the PID is. A vocabulary the
     child cannot act on differently would be a distinction it only reports, not one it uses.
     """
 
-    DISABLED = "disabled"  # APE-3 acceptance criteria: the app was disabled (or uninstalled)
+    DISABLED = "disabled"  # the app was disabled (or uninstalled)
     SHUTDOWN = "shutdown"  # the gateway is going away
     ERROR = "error"  # the supervisor gave up on this worker
 

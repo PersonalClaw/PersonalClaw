@@ -46,7 +46,7 @@ class AgentDefinition:
     description: str = ""
     model: str = ""
     system_prompt: str = ""
-    # Voice/soul layer (#42): WHO the agent is — tone, opinions, bluntness, persona
+    # Voice/soul layer: WHO the agent is — tone, opinions, bluntness, persona
     # — kept SEPARATE from system_prompt (the operating rules / what it does), and
     # injected high-priority so personality survives long operating-rule prompts.
     voice: str = ""
@@ -82,7 +82,7 @@ class AgentDefinition:
             description=str(d.get("description", "")),
             model=str(d.get("model", "")),
             system_prompt=str(d.get("system_prompt", "")),
-            # Voice layer (#42) — MUST be read here (the loader-allowlist gotcha)
+            # Voice layer — MUST be read here (the loader-allowlist gotcha)
             # or it's silently dropped on every reload/round-trip.
             voice=str(d.get("voice", "")),
             # Natural voice — same gotcha: unread here the preference is

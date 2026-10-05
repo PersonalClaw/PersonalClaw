@@ -1,4 +1,4 @@
-"""The C6 Proposal contract and its apply dispatcher.
+"""The Proposal contract and its apply dispatcher.
 
 What these pin, in the order they matter:
 
@@ -325,11 +325,11 @@ def test_edit_on_a_non_editable_proposal_is_refused_not_ignored():
     assert item.refs[pc.REFS_KEY]["apply"] == {"workflow": {"ref": "original"}}
 
 
-# ------------------------------------------------------------- T4.1 re-expressed as C6
+# ------------------------------------------------ skill promotion through the contract
 
 
-def test_learning_queue_surfaces_the_c6_skill_promotion_payload(monkeypatch, tmp_path):
-    """The skill path is now `apply.skill_promotion` — the first consumer of C6, not a
+def test_learning_queue_surfaces_the_skill_promotion_payload(monkeypatch, tmp_path):
+    """The skill path is now `apply.skill_promotion` — the first consumer of the contract, not a
     bespoke wiring. The legacy ref stays so existing readers are untouched."""
     from personalclaw.learning import proposals as learning_proposals
 

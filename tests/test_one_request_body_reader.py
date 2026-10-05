@@ -112,7 +112,7 @@ read.
 refuse.** They answer ``400`` — which is what these invariants are about — but with the flat
 ``{"error": "invalid JSON"}`` body rather than the structured
 ``{"error": {"code", "message"}}`` envelope that ``AGENTS.md`` §"Shared conventions" mandates
-for new routes. That split is a separately-owned defect (change ``PL-8``, plus #1854 for
+for new routes. That split is a separately-owned defect (#1854 for
 its two rawest children) covering all ~134 flat-envelope sites across the API, not just the
 body-read ones. Converging them HERE would fork the work and mint the envelope decision in
 two places, so this file measures the split and leaves it: 157 flat, 17 ``json_error``, 3

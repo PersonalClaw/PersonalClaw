@@ -64,7 +64,7 @@ def test_keeps_bundled_provider_refs(monkeypatch, tmp_path):
 def test_keeps_image_gen_bundle_refs(monkeypatch, tmp_path):
     """A dynamically-registered image-gen bundle (fal) has no config.json entry,
     but its binding must NOT be pruned — the regression that silently dropped a
-    just-bound fal:<model> from /api/models/active + routing (IG-GAP1)."""
+    just-bound fal:<model> from /api/models/active + routing."""
     _setup(
         monkeypatch,
         tmp_path,

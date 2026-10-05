@@ -1,14 +1,14 @@
 """Judge verdict integrity: verdicts must be answerable from the evidence shown.
 
-The T04 gap: a judge could PASS while citing evidence it was never shown, and nothing
+The gap: a judge could PASS while citing evidence it was never shown, and nothing
 downstream could tell — the verdict asserted a conclusion the presented evidence cannot
 support. The contract now grounds every citation against the exact slice the caller showed
 the judge (verbatim-span or a declared observation command), flags partial fabrication,
 rejects a PASS resting ONLY on fabricated citations, and stamps each verdict with the
 sha256 identity of the slice it judged.
 
-The T04 regression fixture is `test_t04_fixture_*`: the exact fabricated-PASS shape from
-the draft, asserted to have been ACCEPTED by the pre-`ES-12` contract surface (no
+The regression fixture is `test_fabricated_pass_fixture_*`: the exact fabricated-PASS shape,
+asserted to have been ACCEPTED by the earlier contract surface (no
 answerability signal existed) and REJECTED now — reproduce, then pass.
 """
 
@@ -47,11 +47,11 @@ def _raw_pass(refs: list[str], proof: str = "") -> dict:
     }
 
 
-# ── the T04 regression fixture: reproduces, then passes ──
+# ── the regression fixture: reproduces, then passes ──
 
 
-def test_t04_fixture_fabricated_pass_was_previously_accepted() -> None:
-    """REPRODUCE: without the evidence slice (the pre-ES-12 calling convention), the same
+def test_fabricated_pass_fixture_was_previously_accepted() -> None:
+    """REPRODUCE: without the evidence slice (the earlier calling convention), the same
     fabricated PASS sails through — nothing in the record even distinguishes it."""
     fabricated = ["deployment log: rollout completed on all 6 hosts"]
     v = validate_verdict(_raw_pass(fabricated), JudgeHints())
@@ -59,7 +59,7 @@ def test_t04_fixture_fabricated_pass_was_previously_accepted() -> None:
     assert v.evidence_hash == "" and v.unanswerable_refs == []
 
 
-def test_t04_fixture_fabricated_pass_is_now_rejected() -> None:
+def test_fabricated_pass_fixture_is_now_rejected() -> None:
     """PASS: with the slice supplied, the identical verdict is a protocol reject — its only
     citation references evidence the judge was never shown."""
     fabricated = ["deployment log: rollout completed on all 6 hosts"]

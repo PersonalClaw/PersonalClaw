@@ -5,7 +5,7 @@ import { join } from 'node:path'
 // ── The week-grid empty state must not blame a working feature (#686, then #561) ──────────────────
 //
 // The hint said "Only enabled interval schedules are plotted. A cron-expression trigger is not
-// projected here yet" — pre-S103 copy. The cron stepper (`calendar.next_after`) closed that
+// projected here yet" — stale copy. The cron stepper (`calendar.next_after`) closed that
 // gap, and on the measured home 15 of 15 plotted fires were CRON: the hint had it precisely
 // backwards, telling a user staring at an empty week that the cause was "you used cron" and the
 // fix was "use an interval".
@@ -33,7 +33,7 @@ describe('week-grid empty-state copy (#686, #561)', () => {
     expect(src()).toContain('No fires this week')
   })
 
-  it('does not claim cron triggers are unprojected — S103 plots them', () => {
+  it('does not claim cron triggers are unprojected — the grid plots them', () => {
     const s = src()
     expect(s).not.toContain('A cron-expression trigger is not projected')
     expect(s).not.toContain('Only enabled interval schedules are plotted')

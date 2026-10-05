@@ -24,7 +24,7 @@ on. Before this module, exactly ONE of them was documented anywhere in the repos
 (``WF_MISSING_EXPR``, in ``docs/architecture/workflows.md``).
 
 The vocabulary is **162 codes across ten modules**. #3499 measured 159; ``WF_INPUT_BAD_LOOP_FIELD``,
-``WF_INPUT_DUPLICATE_LOOP_FIELD`` and ``WF_LOOP_KIND_NO_TASK_INPUT`` arrived from PP-16 on ``main``
+``WF_INPUT_DUPLICATE_LOOP_FIELD`` and ``WF_LOOP_KIND_NO_TASK_INPUT`` arrived on ``main``
 while this registry was being written, and the rail below is what caught their absence.
 
 **Every meaning below is derived from the code that raises it** — the guard that fires plus

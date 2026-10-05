@@ -3,7 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 
 import { DiscoverPage } from './DiscoverPage'
 
-// ── FLUID-MOTION §S3 T3.2 — the replay rule on a REAL surface ───────────────────────────
+// ── The replay rule on a REAL surface ───────────────────────────
 //
 // `ui/motion/Entrance.test.tsx` proves a re-render does not replay the cascade for the
 // primitive. That is necessary and not sufficient: the defect this change actually has to avoid

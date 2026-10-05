@@ -15,8 +15,8 @@ the answer was permanently "none". Measured on the standing validation gateway (
 ``AUTH_MODE=none``): ``pair/start`` + ``pair/complete`` returned 200, ``GET /api/devices``
 listed the new device, and ``POST /api/browse/connector`` still answered 403
 ``browse_connector_unpaired`` with that device's own freshly-minted cookie. The code was
-correct; the mode made a whole CLASS of clauses unobservable — the connector attach,
-COMPANION-APPS device sessions, the origin-less ``/api/ws`` upgrade, mobile pairing.
+correct; the mode made a whole CLASS of features unobservable — the connector attach,
+companion-app device sessions, the origin-less ``/api/ws`` upgrade, mobile pairing.
 
 This is the same hole the ``app`` claim had before none-mode learned to adopt it
 (``test_app_permissions.test_none_mode_adopts_app_claim_and_enforces``), and it is closed the
@@ -33,6 +33,7 @@ from __future__ import annotations
 import inspect
 import json
 import os
+import re
 
 import aiohttp
 import pytest
@@ -239,7 +240,7 @@ def test_presented_session_nonce_resolves_a_real_paired_session(_isolated) -> No
 def test_none_mode_middleware_populates_the_session_nonce() -> None:
     """WIRING: ``AuthMode.NONE``'s dev middleware must call the helper.
 
-    The helper passing is not the clause — the clause is that none-mode USES it. Asserted on
+    The helper passing is not the point — the point is that none-mode USES it. Asserted on
     the source of ``start_dashboard`` because that middleware is a closure with no import
     path; the same reason ``test_device_session_consumption`` reads middleware source.
     """
@@ -248,9 +249,10 @@ def test_none_mode_middleware_populates_the_session_nonce() -> None:
     src = inspect.getsource(start_dashboard)
     head, _, tail = src.partition("async def _dev_user_middleware")
     assert tail, "the none-mode dev middleware was renamed; re-point this rail"
-    body = tail.split("# PL-9:")[0]
+    # The closure's own body: up to the first line back at ``start_dashboard``'s indent.
+    body = re.split(r"\n    (?=\S)", tail, maxsplit=1)[0]
     assert "presented_session_nonce" in body, (
         "AuthMode.NONE's middleware does not record session_nonce — every paired-device "
-        "clause is unobservable under PERSONALCLAW_AUTH_MODE=none"
+        "feature is unobservable under PERSONALCLAW_AUTH_MODE=none"
     )
     assert 'request["session_nonce"]' in body

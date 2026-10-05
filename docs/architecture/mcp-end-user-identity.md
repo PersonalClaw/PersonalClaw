@@ -31,7 +31,7 @@ identity-propagation layer for a tenancy that does not exist.
 
 ## 1. What the constraint actually forbids
 
-The research finding this spike resolves (F11) pairs a vendor reference architecture with
+The research finding this spike resolves pairs a vendor reference architecture with
 the vendor-neutral MCP authorization specification. The architecture says the shared MCP
 server must use a propagated end-user identity to enforce fine-grained access control on
 the backend; the specification adds the hard constraint — a server must validate
@@ -290,8 +290,8 @@ and a **validator** that authorizes on the result. PersonalClaw has none of them
   authorizes per-user.
 
 Building token exchange therefore means building an authorization server, a user table, and
-per-user authorization inside core — which is the multi-tenant identity product the owning
-plan's guardrail explicitly forbids, and which the threat model's single-owner scope
+per-user authorization inside core — which is the multi-tenant identity product the
+vision explicitly excludes, and which the threat model's single-owner scope
 disclaims. **Disposition: out of scope.** Not "later" — the wrong shape for this product.
 
 ### 4.2 Separately-issued tokens
@@ -329,19 +329,19 @@ and paying for a per-user layer would buy nothing a user could observe.
 The composition of columns 2 and 3 — a locally-issued, revocable, capability-narrowed
 credential for the *machine*, plus an out-of-band pairing ceremony for the *human* — is the
 mechanism the research found the ecosystem prescribing but never specifying. **That is the
-answer to open question #3, and PersonalClaw arrived at it independently in two halves.**
+answer to the research question, and PersonalClaw arrived at it independently in two halves.**
 
 ---
 
 ## 5. Recommendation — owner ratification required
 
-The clause asks for one of adopt / defer / out-of-scope. The honest answer splits, because
-the clause bundles two separable questions. Both dispositions are stated so each can be
+The choice offered is one of adopt / defer / out-of-scope. The honest answer splits, because
+the choice bundles two separable questions. Both dispositions are stated so each can be
 ratified with one word:
 
 > **R1 — Token exchange as the propagation mechanism: OUT OF SCOPE (permanent).**
 > It requires an issuer, a subject and a per-user validator that core deliberately does not
-> have (§4.1), and building them is the multi-tenant identity product the plan guardrail
+> have (§4.1), and building them is the multi-tenant identity product the vision
 > and the threat model both refuse. Revisit only if PersonalClaw ever becomes multi-tenant,
 > which is a product decision, not an architectural one.
 
@@ -396,7 +396,7 @@ can relax either one.
 ## 7. Security-control surfaces — every row is owner-escalation
 
 If R2 is ever un-deferred, these are the surfaces it touches. Each is a security-control
-decision and none may be taken by an implementing worker without an explicit owner ruling.
+decision and none may be taken by an implementer without the maintainer's explicit sign-off.
 
 | id | surface | why it is owner-escalation |
 |---|---|---|
@@ -460,11 +460,11 @@ Code is the as-built authority. Three shipped documents disagree with it and are
    long-lived and sensitive. *Since resolved:* #3727 corrected the docstring, and the change
    after it capped every session, link and token at 90 days
    (`src/personalclaw/auth/lifetimes.py::MAX_LIFETIME_SECS`), refusing a request for longer.
-3. **The pairing TTL is ten minutes, not an hour.** Planning text describes a one-hour
-   pairing code; `src/personalclaw/channel_trust.py:57` is 600 seconds.
+3. **The pairing TTL is ten minutes, not an hour.** The pairing code was described as lasting
+   an hour; `src/personalclaw/channel_trust.py:57` is 600 seconds.
 
-A fourth correction concerns this note's own commission. The change that ordered it, and the
-plan behind it, name a `sender_trust` substrate — a `sender_trust.json` store, a
+A fourth correction concerns this note's own commission. The request that ordered it names a
+`sender_trust` substrate — a `sender_trust.json` store, a
 `channel_transports/trust.py` module, and a `check_sender()` entry point. **None of the
 three exists.** `sender_trust` appears nowhere in `src`; `channel_transports/` contains only
 `__init__.py`, `base.py`, `manager.py`, `reference_echo.py` and `webui.py`; `check_sender`

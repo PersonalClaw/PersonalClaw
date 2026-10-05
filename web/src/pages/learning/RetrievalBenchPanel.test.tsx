@@ -142,7 +142,7 @@ describe('the per-arm retrieval ablation table', () => {
   })
 
   it('names the ground truth that produced the numbers, and unlabelled queries too', () => {
-    // §5.2 names three sources and this harness mines a SUBSTITUTE for one of them, so the
+    // There are three ground-truth sources and this harness mines a SUBSTITUTE for one of them, so the
     // mix is part of reading the score. Counted server-side; rendered verbatim here.
     render(<RetrievalBenchPanel
       bench={view({

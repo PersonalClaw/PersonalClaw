@@ -1,4 +1,4 @@
-"""PipelineGraph — a code-owned conditional DAG of processing nodes (#30).
+"""PipelineGraph — a code-owned conditional DAG of processing nodes.
 
 Per-type graphs subclass :class:`PipelineGraph` (in ``graphs.py``) and declare their
 nodes + edges in ``build()``. The graph is validated at construction (referenced

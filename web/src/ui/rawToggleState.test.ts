@@ -5,7 +5,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The eleven raw toggles left after the primitives were fixed ───────────────────────────────
 //
-// Cycles 128–130 closed the primitive side of this family (`Button`, `HeaderControl`, `FilterChip`,
+// The primitive side of this family was closed first (`Button`, `HeaderControl`, `FilterChip`,
 // `IconButton`, `SquareIconButton`, `QuietButton` all announce now). What remained were hand-rolled
 // `<button>`s. Classified per site — which is the whole job, since the same measurement has three
 // different right answers:
@@ -18,7 +18,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //    2  LEAVE — the accessible NAME already flips:
 //        `DiagnosticsPanel`'s pause ("Resume" ⇄ "Pause") and `PromptDetail`'s raw/rendered switch
 //        ("Raw" ⇄ "Rendered", title "Show raw template" ⇄ "Show rendered"). A second channel adds
-//        nothing when the name itself carries the state — the ruling from cycle 128, applied twice more.
+//        nothing when the name itself carries the state — the established rule, applied twice more.
 //
 // 🔑 WHY AUTOSCROLL IS PRESSED AND PAUSE IS NOT, given both flip a mode: autoscroll's `title` names the
 // STATE ("Autoscroll on"/"Autoscroll off") and its only other cue is a coral tint, so nothing announced
@@ -40,7 +40,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //
 // The census ceiling drops with this: **48 toggles, 16 still silent** (was 34). Of those 16, ten are
 // primitive-backed and already announce through `HeaderControl`/`FilterChip`/`IconButton`/
-// `SquareIconButton` — the census counts call sites, not behaviour (cycle 130's lesson) — and the
+// `SquareIconButton` — the census counts call sites, not behaviour — and the
 // remaining six are the name-flipping exceptions plus `ModelBackends`' show/hide pair.
 
 // 🪤 THIS CENSUS USED TO WALK `src/pages` ONLY, and that scope was wrong about its own subject.
@@ -144,8 +144,8 @@ describe('a mode toggle gets pressed — unless its name already says so', () =>
 describe('the census ceiling falls', () => {
   it('67 toggles across src, at most 20 silent', () => {
     // 🪤 The count is over CALL SITES, so many of the silent ones are primitive-backed and already
-    // announce through `HeaderControl`/`FilterChip`/`IconButton`/`SquareIconButton` (cycle 130's
-    // lesson). The ceiling exists to stop a NEW silent toggle landing, not to claim zero.
+    // announce through `HeaderControl`/`FilterChip`/`IconButton`/`SquareIconButton`.
+    // The ceiling exists to stop a NEW silent toggle landing, not to claim zero.
     //
     // 🪤 AND THE FLOOR IS DELIBERATELY WELL BELOW THE MEASUREMENT (60 against 67). A `>=` floor
     // detects a REMOVAL and never an ADDITION, so its only job here is anti-vacuity — proving the

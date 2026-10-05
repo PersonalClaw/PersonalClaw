@@ -515,8 +515,8 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # `request_too_large` are reused for the caps.
     #
     # The rows below are the ones a caller PAST admission needs to tell its own mistakes
-    # apart. They ride inside the `/v1` wire envelope — that surface's shape wins per the
-    # 2026-07-26 amendment — with `type`/`param` added via `json_error`'s `error_extra`, so
+    # apart. They ride inside the `/v1` wire envelope — that surface's shape wins on
+    # it — with `type`/`param` added via `json_error`'s `error_extra`, so
     # the stable code survives in `code` exactly where a script branches on it.
     #
     # `unknown_agent` is the load-bearing one: `model` names an AGENT on this surface, and
@@ -635,7 +635,7 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The desktop live view is readable by the owner only — an app-scoped token cannot "
         "watch what the agent is doing on the operator's desktop."
     ),
-    # ── binary artifact write + document model (artifacts/handlers.py — DFE §C3) ──
+    # ── binary artifact write + document model (artifacts/handlers.py) ──
     #
     # Every row here is a DIFFERENT thing for the caller to do, which is the whole test
     # for a distinct code. A document editor that could only see "409" would have to
@@ -847,8 +847,8 @@ HTTP_ERROR_CODES: dict[str, str] = {
     ),
     # ── capture telemetry import (inbound/capture_proxy.py) ──
     # ONE code, for the store failing under the import — NOT for a file that parsed badly.
-    # A malformed export is a 200 whose `reasons` name each skipped line (§8's
-    # skipped-and-counted), so a caller that branches on this code branches on "the
+    # A malformed export is a 200 whose `reasons` name each skipped line
+    # (skipped-and-counted), so a caller that branches on this code branches on "the
     # machinery broke", which is retryable, and never on "your file was rubbish", which
     # is not. A refused `file` is `invalid_request`: the name, not the machinery.
     "capture_import_failed": "Staging an exported agent log into the capture store failed.",

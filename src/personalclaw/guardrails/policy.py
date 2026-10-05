@@ -129,7 +129,7 @@ INCIDENT = SafetyProfile(
 # HERE by construction (never blocks waiting for a human; writes require a grant on
 # the job/trigger reviewed when the automation was created).
 #
-# 🔴 ``egress_tier="all"``, corrected from ``"registry"`` when PHF-8 gave the tier a real
+# 🔴 ``egress_tier="all"``, corrected from ``"registry"`` once the tier got a real
 # enforcement point. REGISTRY was authored (net/policy.py) for "sandboxed code runs that
 # need the common dev registries WITHOUT opening the whole internet" — a PACKAGE-manager
 # posture. The plane a tier is enforced on is every request a run makes through the egress
@@ -162,7 +162,7 @@ def get_profile(name: str) -> SafetyProfile:
 
 
 def safety_profile_for(base: SafetyProfile) -> SafetyProfile:
-    """Layer the operator's ``guardrails`` config onto a base profile (§3).
+    """Layer the operator's ``guardrails`` config onto a base profile.
 
     Mirrors ``egress_policy_for``: the default budget + scan_mode from
     ``GuardrailsConfig`` fill in a profile that didn't set its own. Config read is
@@ -222,7 +222,7 @@ def profile_for_session(session_key: str) -> SafetyProfile:
     posture. This is the single object the gateway's approval pick consults, replacing the ad-hoc
     AUTO_APPROVE/HOOK_BASED branch. Operator config is layered in via ``safety_profile_for``.
 
-    **Then the CEILING intersects it** (PLATFORM-HARDENING-FLOORS §5): the operator's
+    **Then the CEILING intersects it**: the operator's
     ``governance/ceiling.json`` is level one and this profile is level two, and tightest
     wins. Composing HERE — rather than at each seam — is deliberate: this function is
     already the single object every dispatch seam consults (rung routing, the action
@@ -260,8 +260,7 @@ def ceiling_permits_approval(value: str) -> bool:
 
 
 def rung_ceiling_for_profile(profile: SafetyProfile, *, unattended: bool = False) -> str:
-    """The highest autonomy rung a run under ``profile`` may reach (AUTONOMY-GUARDRAILS
-    §5.2, layered per PLATFORM-HARDENING-FLOORS §5).
+    """The highest autonomy rung a run under ``profile`` may reach.
 
     **Two levels, one rule — tightest wins.** The action type's own ceiling is level one;
     this is level two, and it may only NARROW. The composition lives in
@@ -337,7 +336,7 @@ def no_one_to_ask(approval: str) -> "ToolApprovalPolicy":
     return ToolApprovalPolicy.REJECT_ALL
 
 
-# ── tool grants (§3 ``tool_grants``) ──────────────────────────────────────────────
+# ── tool grants (``tool_grants``) ─────────────────────────────────────────────────
 
 
 def tool_grant_posture(

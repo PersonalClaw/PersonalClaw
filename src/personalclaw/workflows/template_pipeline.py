@@ -1,4 +1,4 @@
-"""The template-creation pipeline (UP-R9).
+"""The template-creation pipeline.
 
 `workflow_save_as_template` covers completed runs. The two highest-volume template sources are the
 ones this module stops throwing away:
@@ -295,7 +295,7 @@ def _is_entity(token: str, text: str, start: int) -> bool:
 def parameterize(spec: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
     """Scrub every prompt in a spec, declaring each slot as an input.
 
-    The slots are declared as INPUTS, not left as bare bindings: session 42's
+    The slots are declared as INPUTS, not left as bare bindings: the
     `declared_but_unused` lint measured three shipped templates offering a control nothing read, and
     the mirror failure — a binding with no declared input — fails at run start on its first
     binding. Declaring them is what makes the generalized template launchable.

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, fireEvent, screen } from '@testing-library/react'
 import { TextInput, TextArea, Select, NumberField, Field, Checkbox, ChipInput } from './forms'
 
-// ── Standard-field scale invariant (design-system consistency S2/T2.3) ──────
+// ── Standard-field scale invariant ──────────────────────────────────────────
 // The form family grew a principled size (sm/md/lg) × surface (container/high/
 // base) scale — the family variants the app's height/fill spread collapses onto.
 // This test locks the two guarantees that make the growth a *codification, not a

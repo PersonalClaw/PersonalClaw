@@ -130,8 +130,8 @@ class ActiveJobTracker:
 
 def is_cancellable_origin(origin: str) -> bool:
     """Whether a turn of this origin may be cancel-and-replaced — interactive turns
-    only. Loop/cron/subagent/heartbeat work is NEVER cancelled by a user message
-    (§6.3.1); it queues regardless of policy."""
+    only. Loop/cron/subagent/heartbeat work is NEVER cancelled by a user message;
+    it queues regardless of policy."""
     return origin == "webui" or origin.startswith("channel:")
 
 

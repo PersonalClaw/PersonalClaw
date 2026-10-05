@@ -63,7 +63,7 @@ const KINDS: Record<string, KindMeta> = {
   needs_input: { label: 'Loop needs your input', icon: HelpCircle, tone: 'var(--color-warn)' },
   progress: { label: 'Loop progress', icon: Activity, tone: 'var(--color-info)' },
   proposal: { label: 'Skill proposal', icon: Lightbulb, tone: 'var(--color-primary)' },
-  // guardrails/autonomy_revocation (ES-15 mechanical revocation). Warn tone, like the other
+  // guardrails/autonomy_revocation (mechanical revocation). Warn tone, like the other
   // rows the user has to act on: the floor has already dropped and only they can re-grant it.
   autonomy_revocation: { label: 'Earned autonomy revoked', icon: ShieldOff, tone: 'var(--color-warn)' },
   // Their own rows, because the backend now emits distinct wire strings for them. Without an
@@ -197,8 +197,8 @@ export function clockTime(iso: string): string {
 /** Where a notification's `statusUrl` leads, as an in-app route plus the words for the button —
  *  or null when it names nowhere this app can go.
  *
- *  🔴 WHY THIS EXISTS. Every trigger fire's note has carried `statusUrl: "#/triggers?open=…"` since
- *  R18, and nothing in the SPA read it: the detail panel offered Mark read and Delete, so a note
+ *  🔴 WHY THIS EXISTS. Every trigger fire's note has carried `statusUrl: "#/triggers?open=…"`,
+ *  and nothing in the SPA read it: the detail panel offered Mark read and Delete, so a note
  *  about an automation was a dead end with no way back to the automation.
  *
  *  🔴 IN-APP ROUTES ONLY, BY CONSTRUCTION. `statusUrl` rides the note's `meta`, and `notify` is the

@@ -1,6 +1,6 @@
 """The OpenAI adapter is the producer for the prompt-cache usage fields.
 
-`PCS-6` built the producer for Anthropic (`llm/anthropic.py::_read_cache_usage`). The
+The producer was built for Anthropic first (`llm/anthropic.py::_read_cache_usage`). The
 OpenAI-dialect half was never built, because "OpenAI needs no cache MARKER" was read as "there
 is no cache NUMBER to read". There is: OpenAI-family caching is AUTOMATIC, and the vendor
 reports the hit on `usage.prompt_tokens_details`. The adapter read only `prompt_tokens` /
@@ -302,7 +302,7 @@ async def test_turn_one_creates_and_turn_two_reads(fake_openai: None) -> None:
     assert second.cache_read_tokens == _CACHED_TOKENS
     assert second.cache_read_tokens > first.cache_read_tokens
 
-    # And the hit rate RISES, which is the number the change names.
+    # And the hit rate RISES, which is the number that matters.
     def _pct(event: Any) -> float | None:
         return cache_hit_pct(
             cache_read_tokens=event.cache_read_tokens,
@@ -316,7 +316,7 @@ async def test_turn_one_creates_and_turn_two_reads(fake_openai: None) -> None:
 
 @pytest.mark.asyncio
 async def test_no_cache_marker_of_any_kind_reaches_the_wire(fake_openai: None) -> None:
-    """The other half of the change's clause: the read is reported with NO marker sent.
+    """The other half: the read is reported with NO marker sent.
 
     OpenAI's posture is AUTOMATIC, so surfacing the number must not have smuggled a request
     key in to get it. Pinned by exact kwarg set rather than by substring, so a future key

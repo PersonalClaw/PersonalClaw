@@ -1,5 +1,5 @@
 """Behavior QA pack — deterministic pass/fail regression net for the safety +
-reliability behaviors the Phase-1 ports guard (eval-behavior-qa-pack / C18).
+reliability behaviors PersonalClaw guards.
 
 This is NOT a model-quality benchmark: every assertion is deterministic (string
 presence/absence, classification verdict, gate state) over the real PClaw
@@ -167,7 +167,7 @@ class TestApprovalGatingBehavior:
 class TestWorkerNeverCertifiesOwnWork:
     """The tenet: an agent may not certify its own work as done. The worker only
     PRODUCES + reports evidence; done-ness is decided off-worker (a deterministic
-    check or a separate judge — built in C2). So a worker-authored finding has no
+    check or a separate judge). So a worker-authored finding has no
     self-verdict path into completion."""
 
     def test_worker_finding_has_no_completion_authority(self):

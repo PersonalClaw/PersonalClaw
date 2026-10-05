@@ -1,5 +1,4 @@
-"""Tests for safety profiles + egress tiers + the provider health view
-(§2.5)."""
+"""Tests for safety profiles + egress tiers + the provider health view."""
 
 from __future__ import annotations
 
@@ -19,7 +18,7 @@ from personalclaw.guardrails.policy import (
 from personalclaw.llm_helpers import ToolApprovalPolicy
 from personalclaw.net.policy import REGISTRY, egress_policy_for_tier, get_policy
 
-# ── §3 SafetyProfile ─────────────────────────────────────────────────────────
+# ── SafetyProfile ────────────────────────────────────────────────────────────
 
 
 def test_named_profiles_exist():
@@ -121,7 +120,7 @@ def test_profile_with_overrides():
     assert p.egress_tier == "off" and p.name == "x"
 
 
-# ── §4.2 egress tiers ────────────────────────────────────────────────────────
+# ── egress tiers ─────────────────────────────────────────────────────────────
 
 
 def test_registry_profile_registered():
@@ -144,7 +143,7 @@ def test_egress_policy_for_tier():
     assert egress_policy_for_tier("all").allow_only is False
 
 
-# ── §2.5 provider health ─────────────────────────────────────────────────────
+# ── provider health ──────────────────────────────────────────────────────────
 
 
 def test_health_empty(monkeypatch, tmp_path):

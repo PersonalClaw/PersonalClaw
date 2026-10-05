@@ -24,7 +24,7 @@ import { HEALTH_NEEDS_RENDER, INTERVAL_CHOICES, firstScanPromise, fmtInterval, f
 
 /** The create flow: pick a kind → describe it → (web only) preview and tune → save.
  *
- *  The preview is deliberately NOT uniform across kinds. WS-3 kept `preview` off the
+ *  The preview is deliberately NOT uniform across kinds. `preview` is kept off the
  *  provider ABC because a feed's or a folder's preview IS its poll, so `SourceKind.previewable`
  *  is a measured fact per provider and this page says plainly where no dry run exists rather
  *  than faking one by half-polling a feed. */

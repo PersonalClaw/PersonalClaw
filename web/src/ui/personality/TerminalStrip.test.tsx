@@ -87,7 +87,7 @@ describe('with motion allowed the raster animates', () => {
   it('sits above page content and below the surfaces a user must act on', () => {
     // The strip rides --z-overlay: above the content ceiling (--z-content) and
     // below --z-modal, so a dialog and a toast stay crisp over it. Reading the
-    // token off the class is what proves it joined the CD-05 scale — a raw z-[55]
+    // token off the class is what proves it joined the z-layer scale — a raw z-[55]
     // would paint identically yet sit outside the ladder.
     const { container } = render(<TerminalStrip />)
     expect(root(container).className).toContain('z-[var(--z-overlay)]')

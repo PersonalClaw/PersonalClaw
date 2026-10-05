@@ -121,7 +121,7 @@ class AskField:
 
 @dataclass
 class Ask:
-    """The typed ask payload. ONE shape for every human-input node (WF2-R7)."""
+    """The typed ask payload. ONE shape for every human-input node."""
 
     kind: AskKind = AskKind.APPROVAL
     prompt: str = ""
@@ -250,7 +250,7 @@ def _check_field(spec: AskField, value: Any) -> str:
 
 
 def gate_timeout_secs(node_config: dict[str, Any], *, unattended: bool = False) -> int:
-    """The gate's deadline (WF2-R7).
+    """The gate's deadline.
 
     An explicit `timeout_secs` always wins — the author knows their gate. `0` means "wait
     indefinitely". Otherwise a gate waits what every other approval waits: the owner's approval
@@ -291,7 +291,7 @@ def timeout_phrase(secs: float) -> str:
 
 @dataclass
 class Continuation:
-    """A durable resume point (WF2-R7 batch-5).
+    """A durable resume point.
 
     `resolved_inputs` is the load-bearing field: resuming re-enters THIS step with what it
     had already resolved, rather than re-executing the enclosing subgraph. Answering an
@@ -368,7 +368,7 @@ def handoff_bundle(
     risks: list[str] | None = None,
     attempted: list[str] | None = None,
 ) -> dict[str, Any]:
-    """The blocked-run context bundle (WF2-R7). Fixed shape so the widget can render it
+    """The blocked-run context bundle. Fixed shape so the widget can render it
     without knowing which node produced it.
 
     `attempted` is what the step that is asking already tried, one line each — the
@@ -545,7 +545,7 @@ def drop_continuations(run_id: str, *, instance_prefix: str = "") -> int:
 
 
 def expired_item(cont: Continuation) -> dict[str, Any]:
-    """The typed `resume_expired` needs-input item (WF2-R7).
+    """The typed `resume_expired` needs-input item.
 
     A dead token must never just do nothing — that is indistinguishable from a bug, and the
     user is left clicking a button with no effect. This offers the concrete next move.

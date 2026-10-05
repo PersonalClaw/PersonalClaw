@@ -51,7 +51,7 @@ from personalclaw.workflows.supervisor_policy import policy_for_kind
 logger = logging.getLogger(__name__)
 
 
-# ── `AG-14` ceiling arithmetic (pure, module-level so tests exercise the shipped math) ──
+# ── Ceiling arithmetic (pure, module-level so tests exercise the shipped math) ──
 
 
 def active_runtime_secs(loop: Loop, now: float) -> float:
@@ -74,7 +74,7 @@ def deadline_reached(loop: Loop, now: float) -> float | None:
 
 
 def default_stop_reason(genuine: bool) -> LoopStopReason:
-    """The `AG-14` classification a completion carries when its caller names none:
+    """The stop-reason classification a completion carries when its caller names none:
     a genuine finish is ``DONE``; a non-genuine one is the historical meaning of
     non-genuine, ``CYCLE_BUDGET``."""
     return LoopStopReason.DONE if genuine else LoopStopReason.CYCLE_BUDGET
@@ -97,7 +97,7 @@ _LADDER_TEXT_LIMIT = 6000
 #: Finding keys that are BOOKKEEPING rather than work product. `cycle` changes every
 #: cycle by construction and `new_findings_count` is the worker's own progress claim —
 #: leaving either in the content hash would let a worker defeat the hash by incrementing
-#: a counter next to unchanged output, which is the exact evasion WF2LOO-18 closes.
+#: a counter next to unchanged output, which is the exact evasion this set closes.
 _NON_CONTENT_KEYS = frozenset(
     {"cycle", "new_findings_count", "task_id", "timestamp", "ts", "created_at", "updated_at"}
 )
@@ -493,7 +493,7 @@ class LoopWatchdog:
         # while the user is away (only the code strategy emits stage_advance, so the
         # "stage" wording is always accurate). Ported from the legacy code watchdog.
         "stage_advance": ("info", "Stage complete"),
-        # P4 prove-the-instrument: a blind done-ness judge (canary failed) or a completion
+        # Prove the instrument: a blind done-ness judge (canary failed) or a completion
         # the independent reproduce refused to confirm are both worth surfacing — they mean
         # the loop's self-assessment can't be trusted this run.
         "judge_blind": ("warning", "Loop paused — done-ness judge unreliable"),
@@ -719,7 +719,7 @@ class LoopWatchdog:
         "finished the work" from "stopped on budget" even after a reload, instead of an
         identical green check. Ported from the legacy code watchdog's genuine flag.
 
-        ``stop_reason`` is the `AG-14` closed classification. Callers that hit a specific
+        ``stop_reason`` is the closed stop-reason classification. Callers that hit a specific
         ceiling name it; unnamed, it defaults from ``genuine`` — a genuine finish is
         ``DONE`` and a non-genuine one is the historical meaning of non-genuine,
         ``CYCLE_BUDGET`` — so every completion carries a reason without every legacy
@@ -738,7 +738,7 @@ class LoopWatchdog:
         # their turns, which nothing reads now (`manager.end_run`).
         await manager.end_run(self._state, self._svc, loop_id)
         await self._reconcile_linked_tasks(loop_id)
-        # P4 independent REPRODUCE: before graduating a GENUINE completion's deliverable to
+        # Independent REPRODUCE: before graduating a GENUINE completion's deliverable to
         # a permanent artifact, re-confirm it with a fresh, independent ground-truth pass.
         # If that second observation DISAGREES (returns False), block the graduation and
         # surface it — a completion is never shipped on a single observation. A reproduce
@@ -770,7 +770,7 @@ class LoopWatchdog:
         # blocked the ship.
         if ship_ok:
             self._register_deliverable_artifact(loop_id)
-        # Scratch-workspace lifecycle (auto-campaign-scratch-workspace): if the loop
+        # Scratch-workspace lifecycle: if the loop
         # opted into auto-teardown, reclaim its OWN scratch dir now that the output is
         # safely graduated. Off by default → the dir persists (today's behavior).
         try:
@@ -796,7 +796,7 @@ class LoopWatchdog:
         )
 
     def _schedule_loop_end_ladder(self, loop_id: str) -> None:
-        """Gate + schedule the end-of-run skill-ladder review (`LV-1`).
+        """Gate + schedule the end-of-run skill-ladder review.
 
         Mirrors ``dashboard.chat_runner._maybe_skill_ladder_review``: the gate is answered
         here, synchronously, and only the expensive half is handed to the background. Gate
@@ -850,7 +850,7 @@ class LoopWatchdog:
     async def _run_loop_end_ladder(
         self, loop_id: str, loaded_skills: list[str], *, completion=None
     ) -> str | None:
-        """The awaitable half of the loop-end ladder review (`LV-1`).
+        """The awaitable half of the loop-end ladder review.
 
         Split from :meth:`_schedule_loop_end_ladder` so the body is drivable without a
         scheduler. Feeds the loop's REAL texts to the shared review — its goal as the
@@ -902,7 +902,7 @@ class LoopWatchdog:
         return (getattr(loop, "summary", "") or "").strip()
 
     def _capture_loop_end(self, loop_id: str) -> None:
-        """Route a terminal loop through the LearningGate → loop-end learner (PP-5).
+        """Route a terminal loop through the LearningGate → loop-end learner.
 
         Mirrors the workflow controller's `run_finish.capture_run_end`: gated by the RUN_END
         cadence, and the service is resolved best-effort. The positive-path + inversion producers
@@ -956,7 +956,7 @@ class LoopWatchdog:
         """The loop's document deliverable on disk, or None.
 
         The ONE resolution of "where did this run write its output" — consumed both by the
-        artifact graduation and by the loop-end ladder review (`LV-1`), which needs the same
+        artifact graduation and by the loop-end ladder review, which needs the same
         answer for a different purpose. Kinds with no document deliverable (verifiable/code:
         the code/check IS the output) declare "" and get None.
 
@@ -1115,7 +1115,7 @@ class LoopWatchdog:
         genuinely-live worker is skipped. Also GCs orphan file dirs with no backing row.
 
         **This was `loop/manager.reap_orphaned_loops`, awaited from a gateway startup hook** —
-        the second boot-adoption path `PP-16` names beside ``workflows/watchdog``'s. Both now
+        the second boot-adoption path beside ``workflows/watchdog``'s. Both now
         run through one primitive from the first poll of the supervisor that owns the noun,
         which fixes two defects the hook shape guaranteed: the hook's
         ``except: logger.warning`` lost loop revival for the life of the process (a loop stuck
@@ -1295,10 +1295,9 @@ class LoopWatchdog:
         shape is for the sweep to leave the row in a state the *ordinary* poll advances, which
         means `_poll_once` growing a PLANNING pass (it iterates RUNNING only today). That is
         new supervisor behaviour needing its own budget/attention/stagnation coverage, so it
-        belongs to `PP-16`'s still-open "pluggable supervisor" seam, not to this one — removing
+        belongs to the still-open "pluggable supervisor" seam, not to this one — removing
         the call without building the replacement would strand every restart-interrupted
-        PLANNING loop forever, which is worse than the wart. Recorded in
-        PLATFORM-PRIMITIVES' execution log.
+        PLANNING loop forever, which is worse than the wart.
 
         Practical hazard while it stands: **no test reaches this today** (measured — no test
         both creates a PLANNING loop and calls `_poll_once`), so a future test that does will
@@ -1403,8 +1402,8 @@ class LoopWatchdog:
             loop_files.record_cycle_findings(cid)
             findings = loop_files.get_findings(cid)
             # The cycle count, full stop. This poll used to also write it back to a
-            # `loops.total_cycles` column; PP-16 seam 4a deleted that column and both of its
-            # writers, so `count` is now the only place the number exists and every reader
+            # `loops.total_cycles` column; that column and both of its
+            # writers are gone, so `count` is now the only place the number exists and every reader
             # projects it the same way. Do not re-add a write here.
             count = len(findings)
 
@@ -1479,7 +1478,7 @@ class LoopWatchdog:
                         # Only flag (a), so we don't false-alarm "Done-ness check
                         # unavailable" on a loop that never had one.
                         if supervisor.has_done_check(loop, policy):
-                            # P4: distinguish a transient judge failure from a CONFIRMED
+                            # Distinguish a transient judge failure from a CONFIRMED
                             # BLIND judge (the canary proved it can't tell good from empty).
                             # A blind judge won't recover by retrying, so halt the loop to
                             # NEEDS_INPUT with judge_blind rather than spinning on judge_error.
@@ -1688,7 +1687,7 @@ class LoopWatchdog:
 
     def _stagnation_disabled(self, loop) -> bool:
         """Whether the stall signal is off for this loop — read off the DECLARED policy
-        (`PP-16` seam 3) rather than a hard-coded kind name. A monitor goal's quiet cycle is a
+        rather than a hard-coded kind name. A monitor goal's quiet cycle is a
         valid no-op; every other declared row keeps the stall signal."""
         return not supervisor.stagnation_enabled(policy_for_kind(loop.kind, loop.kind_config))
 

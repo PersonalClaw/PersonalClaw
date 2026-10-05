@@ -57,7 +57,7 @@ from personalclaw.web.fetch import (  # noqa: F401
 
 # ``evaluate(url, policy) -> GuardDecision`` is the SYNCHRONOUS egress guard (resolve
 # + host-classify + scheme check) that ``fetch`` runs internally. Promoted to the SDK
-# facade (#45) so an app with a SYNC surface that can't await ``fetch`` — e.g.
+# facade so an app with a SYNC surface that can't await ``fetch`` — e.g.
 # openai-tools' ``connected`` property, skills-sh's SkillsMarketplace ABC (_get) —
 # can still guard an operator-configured endpoint before a raw request, WITHOUT
 # reaching into ``personalclaw.net`` directly (the app import-boundary forbids that).

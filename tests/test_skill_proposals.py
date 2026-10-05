@@ -1,4 +1,4 @@
-"""skill-evolution-proposal-only: autonomous synthesis proposes, never installs.
+"""Autonomous synthesis proposes, never installs.
 
 Auto-skill synthesis enqueues a human-reviewable proposal (source trace FENCED);
 a person accepts (→ live auto/ skill) or rejects it. There is no auto-install path.
@@ -91,7 +91,7 @@ def test_accept_applies_edits(home):
 def test_accept_refine_overlays_target_without_mutating_it(home):
     # Issue #303: a kind="refine" proposal names an EXISTING skill; accept must resolve to
     # that skill, not route through create-new (which 409'd because the slug already existed).
-    # WF2LEA-6 clean break: the refinement applies as a SIDECAR OVERLAY, so the base SKILL.md
+    # Clean break: the refinement applies as a SIDECAR OVERLAY, so the base SKILL.md
     # is byte-IDENTICAL after accept (its lock stays intact) while the refinement is visible at
     # load time.
     original = (

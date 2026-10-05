@@ -3,7 +3,7 @@
 Three routes land here: ``PUT /api/artifacts/{slug}/raw`` (bytes in),
 ``GET /api/artifacts/{slug}/model`` (structure out) and
 ``PUT /api/artifacts/{slug}/model`` (structure in, re-rendered server-side). This suite
-asserts each of the change's six clauses **at the route**, not at the mechanism: a test
+asserts each of the write path's six clauses **at the route**, not at the mechanism: a test
 proving :func:`personalclaw.http_errors.json_error` works, or that
 ``update_binary(expect_version=…)`` raises, would say nothing about whether these
 handlers call them.
@@ -106,7 +106,7 @@ def _settled_docx_bytes(model: DocumentModel | None = None) -> bytes:
     """*model* rendered, parsed and re-rendered, so its page setup is EXPLICIT in the model
     rather than inherited from the template.
 
-    Since DFE-6 one render already parses losslessly, so this no longer exists to dodge a
+    One render already parses losslessly, so this no longer exists to dodge a
     margin loss — it exists for the tests that need the page setup to be a stated fact of
     the model they hold."""
     parsed, _ = parse_docx(_docx_bytes(model))
@@ -117,7 +117,7 @@ def _lossy_docx_bytes() -> bytes:
     """A document carrying a construct the model genuinely CANNOT hold: a two-paragraph
     header, against ``PageSetup.header_text``'s one string.
 
-    Until DFE-6 the vehicle here was the template's asymmetric page margins. Those are
+    The vehicle here used to be the template's asymmetric page margins. Those are
     representable now, so a test that still used them would assert `lossless is False`
     about a lossless document — the vacuity leg needs a construct that is honestly
     unrepresentable, not one that used to be.
@@ -878,7 +878,7 @@ async def test_a_restricted_session_cannot_save_a_model(patched_native) -> None:
 
 
 def test_the_new_routes_are_registered_and_ordered_after_the_literal_paths() -> None:
-    """The change's routes exist on the real table, and the literal-path-before-``{slug}``
+    """The write path's routes exist on the real table, and the literal-path-before-``{slug}``
     rule the surrounding comments explain still holds — a ``{slug}`` pattern registered
     ahead of ``pinned``/``folders``/``deployed`` would swallow them."""
     app = _app()
@@ -941,7 +941,7 @@ def _xlsx_artifact(provider):
 
 @pytest.mark.asyncio
 async def test_a_spreadsheet_serves_its_model_through_the_same_route(patched_native) -> None:
-    """``GET …/model`` must resolve the parser BY KIND. Before DFE-7 this route answered
+    """``GET …/model`` must resolve the parser BY KIND. This route once answered
     415 for every .xlsx, so this is the call site the codec table exists for."""
     prov = patched_native
     art = _xlsx_artifact(prov)
@@ -1103,7 +1103,7 @@ def _pptx_artifact(provider):
 
 @pytest.mark.asyncio
 async def test_a_deck_serves_its_model_through_the_same_route(patched_native) -> None:
-    """``GET …/model`` resolves the parser BY KIND. Before DFE-8 this route answered 415
+    """``GET …/model`` resolves the parser BY KIND. This route once answered 415
     for every .pptx, so the deck editor had nothing to load."""
     prov = patched_native
     art = _pptx_artifact(prov)
@@ -1131,7 +1131,7 @@ async def test_a_deck_serves_its_model_through_the_same_route(patched_native) ->
 
 @pytest.mark.asyncio
 async def test_a_slide_edit_survives_the_save_and_read_back(patched_native) -> None:
-    """The change's second clause, at the route: GET the model, edit a slide, PUT it back,
+    """The deck round trip, at the route: GET the model, edit a slide, PUT it back,
     then read the STORED BYTES with python-pptx — not with our parser — and find the edit
     AND the bullet depth that was never touched."""
     from pptx import Presentation

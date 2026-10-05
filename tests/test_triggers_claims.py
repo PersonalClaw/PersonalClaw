@@ -79,7 +79,7 @@ def test_overlap_skip_now_blocks_a_second_fire(tmp_path):
 
 
 def test_a_blocked_fire_writes_a_typed_ledger_row(tmp_path):
-    """§7 crit 8's zero-silent-drops: a suppressed fire is a typed row, not an absence."""
+    """Zero silent drops: a suppressed fire is a typed row, not an absence."""
     store = TriggerStore(base_dir=tmp_path)
     store.upsert(_clock("skip"))
     asyncio.run(SVC.tick(store, now=NOW, base_dir=tmp_path))

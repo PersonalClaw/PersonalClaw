@@ -1,4 +1,4 @@
-"""Ephemeral (session-live) skills + end-of-session promotion (skill-ephemeral-promotion).
+"""Ephemeral (session-live) skills + end-of-session promotion.
 
 The explicit, in-the-moment counterpart to silent auto-extraction: when the user
 says "from now on do X", the agent calls ``skill_remember(title, body)`` and a
@@ -9,7 +9,7 @@ drafts and promotes each to a tier (this-agent / all-agents) or forgets it.
 Drafts live under ``~/.personalclaw/skills/.ephemeral/<session_slug>/<slug>.md`` —
 a hidden staging area the loader never treats as a real tier. Promotion writes a
 clean SKILL.md into the chosen tier via ``SkillsLoader.create_skill`` (global) or
-``SkillsLoader(agent=...).create_skill`` (agent-local, from skill-agent-local-tier),
+``SkillsLoader(agent=...).create_skill`` (agent-local),
 then clears the draft. Nothing lands in the library without the user's explicit
 choice — a higher-trust path than background extraction, not a replacement for it.
 

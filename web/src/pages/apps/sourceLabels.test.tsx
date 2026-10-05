@@ -4,7 +4,7 @@ import { SourcesPanel } from './AppsSection'
 
 // ── A shipped default source has to LOOK like one, and the removable one has to be removable ──
 //
-// ET-4 ships the curated registry as a *seeded* default: a real row in `app-sources.json`, so the
+// The curated registry ships as a *seeded* default: a real row in `app-sources.json`, so the
 // user can delete it for good. The bundled apps repo is the other kind — folded into every backend
 // read, so its DELETE is a no-op by construction. Two kinds of default, one list, and the only
 // place the difference is visible is here.
@@ -13,7 +13,7 @@ import { SourcesPanel } from './AppsSection'
 //  · both defaults carry a "Default" label, so a user can tell a shipped source from one they typed;
 //  · the SEEDED default keeps its remove control and calls the API with its own URL;
 //  · the BUNDLED default has NO remove control — a button whose backend silently does nothing is
-//    worse than no button (the pre-ET-4 behaviour: click Remove, watch the row stay);
+//    worse than no button (the earlier behaviour: click Remove, watch the row stay);
 //  · a user-added source is unlabelled and removable, so the "Default" label is not painted on
 //    every row (a label everything carries is a label that says nothing).
 

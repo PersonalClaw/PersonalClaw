@@ -1,8 +1,8 @@
-"""The stale-index clause: the half a re-snapshot clears, and the harness that measures it.
+"""A stale index: the half a re-snapshot clears, and the harness that measures it.
 
-The acceptance criterion ends *"a stale index (past TTL or changed fingerprint) refuses and
-**forces a re-snapshot**"*. ``test_computer_use_dispatch.py`` already proves the **refuses**
-half from both sides of both bounds. Nothing proved the **forces a re-snapshot** half: the
+A stale index (past TTL or changed fingerprint) refuses and **forces a re-snapshot**.
+``test_computer_use_dispatch.py`` already proves the **refuses** half from both sides of both
+bounds. Nothing proved the **forces a re-snapshot** half: the
 closest test moves the frozen clock *backwards*, which is not a re-snapshot, and the rest assert
 only that the word ``computer_snapshot`` appears in the FIX line. A refusal whose remedy has
 never been executed is a remedy nobody has checked — so the first section here runs it, for both
@@ -13,7 +13,7 @@ new one acts. "Forces a re-snapshot" is a claim about the store not silently hea
 the operator was told to abandon, and a test that only checked the new id would pass against a
 dispatch that had quietly started accepting the old one again.
 
-The second section is about ``scripts/dcu3_stale_index_validate.py``, the live harness. That
+The second section is about ``scripts/computer_use_stale_index_validate.py``, the live harness. That
 script cannot run in CI — it needs a real desktop and the macOS Accessibility (TCC) grant — so
 the two things about it that can rot silently are pinned here instead:
 
@@ -65,13 +65,13 @@ def _script(filename: str):
 
 def _harness():
     """The stale-index harness."""
-    return _script("dcu3_stale_index_validate.py")
+    return _script("computer_use_stale_index_validate.py")
 
 
 #: Both live harnesses, because the provenance omission (#2569) was in both of them. Named by
 #: file so a rail can assert the property over the population rather than over whichever one
 #: somebody remembered.
-LIVE_HARNESSES = ("dcu3_stale_index_validate.py", "dcu4_v1_validate.py")
+LIVE_HARNESSES = ("computer_use_stale_index_validate.py", "computer_use_drive_validate.py")
 
 
 @pytest.fixture(autouse=True)
@@ -444,7 +444,11 @@ def test_the_harness_drives_only_the_dispatch():
     drives nothing. Matched on calls, not on text, so the module's prose may name a function it
     must not call.
     """
-    path = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "dcu3_stale_index_validate.py"
+    path = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "computer_use_stale_index_validate.py"
+    )
     source = path.read_text(encoding="utf-8")
     tree = ast.parse(source)
     called = {_dotted(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call)}

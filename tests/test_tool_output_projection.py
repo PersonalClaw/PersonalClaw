@@ -1,4 +1,4 @@
-"""OP1 — content-type-aware tool-output projection.
+"""Content-type-aware tool-output projection.
 
 Projection keeps the salient slice (log error lines, diff hunks+stat, json shape,
 test failures, csv head/tail) for large recognized types, and is conservative +
@@ -244,7 +244,7 @@ def test_projection_respects_cap_budget():
     assert len(p.text) <= 1000 + 200
 
 
-# ── OP5: shared project_and_retain (used by native tools AND the MCP adapter) ──
+# ── Shared project_and_retain (used by native tools AND the MCP adapter) ──
 
 
 def _isolate_store(tmp_path, monkeypatch):
@@ -287,7 +287,7 @@ def test_project_and_retain_no_session_no_raw(tmp_path, monkeypatch):
     assert len(out) < len(big) and "raw_ref" not in meta
 
 
-# ── user-teachable projection rules (TokenJuice OP6) ────────────────────────
+# ── user-teachable projection rules (TokenJuice) ────────────────────────────
 
 
 class TestUserProjectionRules:

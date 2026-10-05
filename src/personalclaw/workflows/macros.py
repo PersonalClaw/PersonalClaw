@@ -3,7 +3,7 @@
 The engine deliberately has twelve node kinds and no more. Every pattern the ultracode
 harness reaches for — a judge panel, adversarial verification, intent routing, a multi-modal
 research sweep — is a COMPOSITION of those kinds, not a new kind. That is the whole bet of
-§"Agent Orchestration as Compositions": adding `judge_panel` as a thirteenth node kind would
+orchestration as composition: adding `judge_panel` as a thirteenth node kind would
 mean a scheduler case, a dispatcher, a resume path, a rewind story and a widget row for it.
 Expanding it at definition time means none of that exists.
 
@@ -309,7 +309,7 @@ def _verify_panel(node: dict[str, Any]) -> dict[str, Any]:
 
 
 def _route(node: dict[str, Any]) -> dict[str, Any]:
-    """Classify, then dispatch — the routing pattern as a one-liner (WF2-R17).
+    """Classify, then dispatch — the routing pattern as a one-liner.
 
     `infer(classify into enum)` → `branch(on: that output)`. The classifier is `infer` at the
     FAST tier by default: deciding which of three paths to take is a cheap judgment, and

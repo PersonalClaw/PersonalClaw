@@ -1,4 +1,4 @@
-"""ACP frame → AcpEvent decoders — the pure translation surface (P9 cutover step 2).
+"""ACP frame → AcpEvent decoders — the pure translation surface.
 
 The one-session :class:`~personalclaw.acp.client.AcpClient` and the multi-session
 :class:`~personalclaw.acp.session.AcpSession` both turn raw ``session/update`` frames
@@ -119,9 +119,9 @@ class SeenToolCall:
 
     Both fields hold the decoder's post-redaction values, and both may be empty: an
     absence must stay representable. ``kind`` may be the decoder's own ``unknown``
-    placeholder, which means "declared nothing" and must never resolve permissive
-    (`G10`); an empty ``title`` means the frame did not name the tool, and is what stops
-    a filled-in title from being invented (`G18`).
+    placeholder, which means "declared nothing" and must never resolve permissive;
+    an empty ``title`` means the frame did not name the tool, and is what stops
+    a filled-in title from being invented.
     """
 
     kind: str = ""
@@ -157,8 +157,8 @@ def extract_tool_event(
     ``tool_call_inputs`` so a following permission request can echo the full input,
     caches the frame's declared ``kind`` AND ``title`` under the same key in
     ``tool_call_seen`` so that request can name both what kind of tool it is gating
-    (`G10` — claude's ``session/request_permission`` payload carries no ``kind``) and
-    WHICH tool (`G18` — codex's carries no ``title``), and appends ``(kind, title)``
+    (claude's ``session/request_permission`` payload carries no ``kind``) and
+    WHICH tool (codex's carries no ``title``), and appends ``(kind, title)``
     to ``tool_calls_sink`` (the turn's prompt stats).
     """
     params = msg.params or {}
@@ -195,7 +195,7 @@ def extract_tool_event(
                     if diff_str:
                         input_str = diff_str
                         found_diff = True
-                    # §2.5 gap 7: the same declaration also feeds the file-change chip.
+                    # The same declaration also feeds the file-change chip.
                     # Recorded even when `make_unified_diff` returns "" (identical
                     # texts): the chip layer owns the no-op decision, and duplicating
                     # that judgement here is how the two surfaces drift apart.
@@ -241,7 +241,7 @@ def extract_tool_event(
         # (keyed on toolCallId, the only id both frames share). ``unknown`` is the
         # decoder's own placeholder for "this frame declared none" — cache it too rather
         # than dropping it, so the permission path can tell an unmeasured kind apart from
-        # one that measured as unclassifiable (`G10` requirement: absence stays
+        # one that measured as unclassifiable (the requirement: absence stays
         # representable and must never resolve permissive). The title rides the same
         # correlation because the two gaps are one seam: a permission frame that cannot
         # say WHAT it is gating usually cannot say WHICH tool either.
@@ -256,7 +256,7 @@ def extract_tool_event(
             tool_kind=kind,
             tool_purpose=purpose,
             tool_input=input_str,
-            # §2.5 gap 7: hand the OBJECT over too, not only the flattened string.
+            # Hand the OBJECT over too, not only the flattened string.
             # Carried unredacted on purpose, exactly like the native runtime's dict:
             # ``chat_runner._redact_tool_input_obj`` is the single redaction+cap point
             # for the structured shape, and redacting here as well would mask values
@@ -270,7 +270,7 @@ def extract_tool_event(
 
 # ── the tool-result FAILURE bit, derived runtime-agnostically ────────────────
 #
-# `AAP-6` §2.3 gap 5. The loop breaker, the procedural-outcome accumulator and the
+# The loop breaker, the procedural-outcome accumulator and the
 # tool card all read ONE bit: did this tool call fail. Reading it off the ACP
 # `status` field alone made that bit a per-CLI lottery, measured:
 #
@@ -382,7 +382,7 @@ def extract_tool_update_events(
 
     # 1) Resolved input + refined title (the initial frame was empty).
     raw_input = update.get("rawInput")
-    # §2.5 gap 7. A `diff` content block on an UPDATE frame is the common case — the
+    # A `diff` content block on an UPDATE frame is the common case — the
     # opening `tool_call` usually has no content at all — so the chip has to be read
     # here as well as there. Only `file_change` is taken from it: rewriting `input_str`
     # into a unified diff on this path would change what existing ACP cards print,
@@ -441,7 +441,7 @@ def extract_tool_update_events(
                 tool_input=input_str,
                 # The update frame is where an adapter that opened with ``rawInput: {}``
                 # finally names its arguments, so this is the site that decides whether
-                # the card can render fields at all (§2.5 gap 7).
+                # the card can render fields at all.
                 tool_input_obj=raw_input if isinstance(raw_input, dict) else None,
                 file_change=upd_file_change,
                 tool_call_id=tool_call_id,
@@ -468,10 +468,10 @@ def extract_tool_update_events(
         output = (output or "")[:8000]
         output, _ = redact_exfiltration_urls(output)
         output, _ = redact_credentials(output)
-        # Carry the FAILURE bit (§2.3 gap 5). `completed` and `failed` used to
+        # Carry the FAILURE bit. `completed` and `failed` used to
         # produce a byte-identical event, so every consumer downstream — the tool
         # card's colour coding and, decisively, the loop breaker — could not tell a
-        # failing ACP tool call from a succeeding one. `G6` measured the consequence:
+        # failing ACP tool call from a succeeding one. The measured consequence:
         # six consecutive failures in one ACP turn produced no warn, no block and no
         # circuit trip, because the host was never told anything had failed. The key
         # is `ok`, matching the native runtime's tool_meta contract: present and
@@ -518,9 +518,9 @@ def build_permission_event(
     # The declared kind (read/edit/execute/delete/…). Carried so the approval card,
     # the SEL row and the not-gateable residue check can NAME the tool even when the
     # adapter sends no title (codex sends `kind` but no `title`, which is why the card
-    # said "unknown" — G18). Deliberately NOT fed to the task-mode gate: a CLI-declared
-    # "read" must not be able to turn that gate's deny-by-default into an allow (§2.2
-    # fails closed).
+    # said "unknown"). Deliberately NOT fed to the task-mode gate: a CLI-declared
+    # "read" must not be able to turn that gate's deny-by-default into an allow (the
+    # gate fails closed).
     #
     # The frame's OWN kind is only present on some adapters — codex declares it,
     # claude-code-acp sends `{toolCallId, title}` and nothing else, which is why every
@@ -548,7 +548,7 @@ def build_permission_event(
     tool_call_id = tool_call.get("toolCallId", "")
 
     # Fill an absent kind AND an absent title from the correlated `tool_call` frame
-    # (see above). `G18`: codex's permission payload is `{toolCallId, kind, status}` — the
+    # (see above). Codex's permission payload is `{toolCallId, kind, status}` — the
     # human title lives one frame earlier, which is why every codex approval card and
     # every SEL decision row read `tool: "unknown"` while the tool's real name sat in the
     # cache. The frame's own declaration always wins; the correlated value only fills an
@@ -575,7 +575,7 @@ def build_permission_event(
     #    permission frame's `toolCall` as a ToolCallUpdate, whose input field is named
     #    `rawInput` — the SAME key `extract_tool_event` reads above. Reading only
     #    `input`/`params` here meant a frame that carried the command inline still
-    #    reached the gate with an empty input (`G10`, the ask-mode half: a read-only
+    #    reached the gate with an empty input (the ask-mode half: a read-only
     #    `ls` is indistinguishable from an unreadable command, and the title-hint
     #    fallback denies it).
     if not tool_input:

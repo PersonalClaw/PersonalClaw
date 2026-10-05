@@ -1,13 +1,13 @@
 """Locate an installed Chromium for the behavioural proofs — by shape, not by literal.
 
-Two of the acceptance clauses cannot be reached by any assertion
+Two of the browse safety guarantees cannot be reached by any assertion
 about source text: *"the injected safety script makes a test page's ``fetch()`` /
 ``media.play()`` / ``navigator.bluetooth`` throw or return blocked"* and *"client-side redirects
 are re-evaluated per ``Page.frameNavigated``"*. Both are proven only by
 ``tests/test_browse_safety_script.py`` (layer 2) and ``tests/test_browse_cdp_live.py``, which
 launch a real browser over raw CDP. When no browser is found those files ``pytest.skip`` — and a
-skip is counted as a pass, not as a gap. **So the reach of this module is the reach of BA-2's
-behavioural proof**, and anything it fails to find is a clause that quietly stopped being tested.
+skip is counted as a pass, not as a gap. **So the reach of this module is the reach of their
+behavioural proof**, and anything it fails to find is a guarantee that quietly stopped being tested.
 
 Both files used to carry their own copy of the search, spelled as two absolute literals::
 

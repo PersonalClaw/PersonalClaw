@@ -1,4 +1,4 @@
-"""Skill-use counter — sidecar usage store (skill-use-counter, #25)."""
+"""Skill-use counter — sidecar usage store."""
 
 from __future__ import annotations
 

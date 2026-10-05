@@ -118,7 +118,7 @@ async def test_stops_on_no_tool_call():
 @pytest.mark.asyncio
 async def test_steer_drains_at_model_boundary():
     """A steer message buffered during the tool batch is injected as a user message
-    before the next inference (#37)."""
+    before the next inference."""
     model = _ScriptedModel(
         [
             [
@@ -147,7 +147,7 @@ async def test_steer_drains_at_model_boundary():
 
 @pytest.mark.asyncio
 async def test_steer_capped_per_turn():
-    """No more than _MAX_STEERS_PER_TURN steers are injected within one turn (#37)."""
+    """No more than _MAX_STEERS_PER_TURN steers are injected within one turn."""
     from personalclaw.agents.native.runtime import _MAX_STEERS_PER_TURN
 
     # Many tool turns so there are many model boundaries to drain at.
@@ -186,7 +186,7 @@ async def test_no_steer_source_is_noop():
 
 
 class _FailingTool(_Tool):
-    """A tool that fails with recovery_hints (TC5) — the runtime must surface them."""
+    """A tool that fails with recovery_hints — the runtime must surface them."""
 
     async def invoke(self, tool_name, arguments):
         return ToolResult(
@@ -201,7 +201,7 @@ class _FailingTool(_Tool):
 
 @pytest.mark.asyncio
 async def test_tool_result_carries_recovery_hints_on_failure():
-    """TC5: a failed tool's recovery_hints reach the TOOL_RESULT event's tool_meta so
+    """A failed tool's recovery_hints reach the TOOL_RESULT event's tool_meta so
     the chat card can surface a 'Next steps' note (they were dropped at the WS boundary)."""
     model = _ScriptedModel(
         [
@@ -801,7 +801,7 @@ async def test_approval_gate_resolve_and_timeout():
     assert gate.reject("nope") is False
 
 
-# ── progressive tool disclosure (PT1): catalog tier + tool_schema ──
+# ── progressive tool disclosure: catalog tier + tool_schema ──
 
 
 class _ManyTools(ToolProvider):

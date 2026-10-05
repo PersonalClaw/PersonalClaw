@@ -18,13 +18,13 @@ import { reportingWrite } from '../../app/reportingWrite'
 import { api, type KnowledgeAnnotation, type KnowledgeDuplicate, type KnowledgeItem, type ExtractedContent, ApiError } from '../../lib/api'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 
-/** Accent ink for a `knowledgeMeta` tone painted as TEXT on the **canvas** — the ground
- *  cycle 147 named. `--color-primary` measures **4.37:1** on `--color-canvas` in light
+/** Accent ink for a `knowledgeMeta` tone painted as TEXT on the **canvas** ground.
+ *  `--color-primary` measures **4.37:1** on `--color-canvas` in light
  *  against a 4.5 floor, so the three primary-toned kinds (Note / Fleeting note / Journal)
  *  failed AA in the breadcrumb trail below; every other tone on that ground measures
  *  5.71-5.83 and passes, so only this one is remapped. `primary-emphasis` is the mode-aware
  *  legible sibling — further from the ground in BOTH modes (dark `#ff6b5b`→`#ff9a86` = 9.33:1)
- *  — and is the token cycles 147/155/158 already settled for this same failure on the canvas,
+ *  — and is the token already settled for this same failure on the canvas,
  *  `surface-high` and `surface-low`.
  *
  *  ⚠️ THE REMAP IS STILL CORRECT BUT ITS MARGIN IS NOW SMALL, AND THAT IS WORTH KNOWING BEFORE
@@ -38,7 +38,7 @@ import { useQueryParam, type RouteProps } from '../../app/useQueryState'
  *
  *  The REGISTRY is deliberately left alone: `knowledgeMeta`'s tone also inks icons in
  *  `ArtifactCard`, `ArtifactViewer` and `KnowledgeDetail`, which carry a 3:1 non-text floor
- *  and already pass — cycle 155 checked that icon and left it for exactly this reason. */
+ *  and already pass — that icon was checked and left alone for exactly this reason. */
 const canvasInk = (tone: string) => (tone === 'var(--color-primary)' ? 'var(--color-primary-emphasis)' : tone)
 
 /** The dedicated, full-screen Knowledge item page (`#/knowledge/item/<id>`).
@@ -195,7 +195,7 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
                       colours for one breadcrumb crumb. */}
                   {tm && item && <span data-type="body-s" className="shrink-0 inline-flex items-center gap-1.5 whitespace-nowrap" style={{ color: canvasInk(tm.tone) }}><tm.icon size={16} /> {typeLabel(item)}</span>}
                   {/* `PageTitle`, not the bare span it replaced: this route's PATH identifies the
-                      entity (`#/knowledge/item/<id>`), so by the rule cycle 162 settled — a
+                      entity (`#/knowledge/item/<id>`), so by the house rule — a
                       destination is named by its identity, not by its category — the item's name is
                       this page's `h1`. Measured before: ZERO headings of any level on the whole
                       surface, so a screen-reader user skipping by heading landed on nothing and had
@@ -342,8 +342,8 @@ function KnowledgeExtras({ item, pool, related, onOpenItem, annotations, onRemov
 
 // ── The three dock sections the reader's insight rail also carries ───────────────────
 //
-// The clause: reading mode "no longer REPLACES the insights dock — related items,
-// entities and highlights ride a rail". Those three sections therefore have TWO homes: the
+// Reading mode no longer REPLACES the insights dock — related items,
+// entities and highlights ride a rail. Those three sections therefore have TWO homes: the
 // "More details" side panel (KnowledgeExtras, above) and the reader's rail (ReaderInsights,
 // below). They are extracted as components rather than duplicated into a second reader-only
 // component, so a change to how a related item or an entity chip reads lands on both
@@ -407,8 +407,8 @@ export function RelatedSection({ related, onOpenItem }: {
           <button key={r.id} type="button" onClick={() => onOpenItem(r.id)}
             className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-high">
             <span data-type="body-s" className="truncate text-on-surface">{r.title || '(untitled)'}</span>
-            {/* The badge names whatever CHOSE this ordering. KL-13 replaced an unthresholded
-                shared-entity count with a cosine similarity edge above a real floor, so a
+            {/* The badge names whatever CHOSE this ordering. An unthresholded shared-entity
+                count was replaced with a cosine similarity edge above a real floor, so a
                 "3 shared" chip would no longer explain why this row sits where it does. The
                 tooltip carries the rest — which passage matched, and the entity overlap the
                 score no longer ranks by — so the number stays accountable. Falls back to the

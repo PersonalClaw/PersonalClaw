@@ -166,7 +166,7 @@ class TestLoadedByAgents:
         assert out["search"] == []
 
 
-# ── S6 integrity surface (POST /api/skills/{name}/verify + list annotation) ──────
+# ── Integrity surface (POST /api/skills/{name}/verify + list annotation) ─────────
 
 
 def _verify(name: str) -> tuple[int, dict]:

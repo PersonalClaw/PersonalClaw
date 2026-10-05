@@ -1,7 +1,7 @@
 """Self-description endpoint — serves the generated manifest (:mod:`personalclaw.manifest`)
 that lets an agent driving PersonalClaw read the tool/route/provider surface instead
 of guessing signatures. One source, two renderings: this live handler walks the
-running route table; the build-time offline reference (S3) renders the same
+running route table; the build-time offline reference renders the same
 ``build_manifest()`` output."""
 
 import logging

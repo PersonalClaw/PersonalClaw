@@ -13,7 +13,7 @@ real `general-project` spec driven through a real `RunController`:
    spawns an unattended run's stages `approval_mode="auto"`.
 
 A third defect sat underneath and made the loop useless even when approved: `general-project`'s
-`work` stage declares `tools_posture: full` and no `capability`, and since AG-11 made `capability`
+`work` stage declares `tools_posture: full` and no `capability`, and since `capability` became
 the one decision, every such stage ran READ-ONLY — the worker's writes were denied, and the judge
 found "no artifacts". `stage_capability` makes the declared posture load-bearing.
 

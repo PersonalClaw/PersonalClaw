@@ -3,7 +3,7 @@ import { LANES, laneFor, isKnownKind, KNOWN_KINDS, toLanes, inboxRaisedBy } from
 import type { ActivityInput, ApprovalInput, AttentionInput, Lane, LaneCard } from './attentionLanes'
 import type { InboxItemKind, InboxItemStatus } from './api'
 
-// ── AS-8 lane derivation ────────────────────────────────────────────────────────────────────────
+// ── Lane derivation ─────────────────────────────────────────────────────────────────────────────
 //
 // Four lanes, each item exactly once. The two things these tests exist to catch are the two failures
 // that render perfectly:

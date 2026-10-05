@@ -3,7 +3,7 @@ import { act, render, fireEvent } from '@testing-library/react'
 
 // ── The def page's Versions/Ledger tabs, maturity badge, and Refine-now button ──
 //
-// The four §6 surfaces the change owes the template-detail page. Each is driven here against a
+// The four surfaces of the template-detail page. Each is driven here against a
 // mocked api so the render is real: the badge reads the maturity payload, the Versions tab lists
 // the monotonic history with a working restore, the Run Ledger tab lists this template's runs,
 // and Refine-now calls the propose-only refiner endpoint and navigates to the run it launches.
@@ -49,7 +49,7 @@ async function mount(api: Record<string, unknown>, onStarted: (id: string) => vo
   return r
 }
 
-describe('WF2LEA-6 template-detail surfaces', () => {
+describe('template-detail surfaces', () => {
   it('shows the maturity badge from the versions payload', async () => {
     const text = (await mount(makeApi())).container.textContent ?? ''
     expect(text).toContain('mature')

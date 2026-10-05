@@ -30,7 +30,7 @@ export function schemaDefaults(schema: ProviderSchema | null | undefined): Recor
 /** The form's starting values from a config read: the config with every stored secret BLANKED,
  *  and the revision that read reported. A sensitive field with a stored secret arrives MASKED
  *  (write-only over the API); editing dots is nonsense, and a blank submit means "keep the stored
- *  secret" — the same treatment the Apps Configure dialog gives its own secrets (#43). */
+ *  secret" — the same treatment the Apps Configure dialog gives its own secrets. */
 function editableConfig(c: { config?: Record<string, unknown>; _secret_set?: string[]; revision: string }): Revisioned<Record<string, unknown>> {
   const next = { ...(c.config ?? {}) }
   for (const k of c._secret_set ?? []) next[k] = ''

@@ -1,4 +1,4 @@
-"""Semantic skill surfacing at turn time (skill-semantic-surfacing, #26).
+"""Semantic skill surfacing at turn time.
 
 PClaw auto-*creates* and *refines* skills, but turn-time **recall** was the weak
 half: ``SkillsLoader.get_triggered_skills`` matches purely on **keyword word-overlap**
@@ -14,7 +14,7 @@ a sync ``(text) -> list[float] | None``):
 2. Score every candidate skill by ``max(cosine_vs_cached_desc_embedding,
    keyword_overlap)`` — so a paraphrase the keyword path missed still surfaces, and
    a keyword the embedder ranks low still fires (no regression vs the old behavior).
-3. Rank by score, **tie-break by use_count** (#25 — proven-useful skills win ties),
+3. Rank by score, **tie-break by use_count** (proven-useful skills win ties),
    cap at ``skills.max_triggered``.
 
 **Meaning alone picks at most one skill, and only a clear one.** A cosine over the floor is
@@ -221,10 +221,10 @@ def surface_skills(
     """Return up to *max_skills* skill keys for this turn, semantic ∪ keyword.
 
     *skills* is ``SkillsLoader.list_skills(with_usage=True)`` output (needs
-    key/description/triggers/path/always/use_count). The ``use_count`` field (#25)
+    key/description/triggers/path/always/use_count). The ``use_count`` field
     is the tiebreak. Excludes ``always`` skills (injected unconditionally elsewhere).
 
-    *suppressed* (FS-6) is Feedback-Signal's withholding set — the
+    *suppressed* is the feedback signal's withholding set — the
     ``(producer_kind, producer_id)`` pairs :func:`feedback.suppressed_producers`
     computed as persistently-wrong. A matched skill whose identity
     ``("skill_synthesis", <key>)`` is in it is WITHHELD: a producer whose judgments
@@ -232,7 +232,7 @@ def surface_skills(
     empty = suppress nothing; the live wiring (``SkillsLoader.get_surfaced_skills``)
     fetches the set fail-open, so a feedback fault degrades to normal surfacing.
 
-    With ``explain=True`` (the Doctor surfacing simulator, PLATFORM-RESILIENCE §3.1)
+    With ``explain=True`` (the Doctor surfacing simulator)
     it returns instead a per-candidate breakdown — ``[{key, kw_score, sem_score,
     threshold_kw, threshold_sem, negated, included, reason}, …]`` for EVERY candidate
     (including excluded ones, so the user sees WHY something was excluded — a withheld
@@ -289,7 +289,7 @@ def surface_skills(
                         "archived by the skill curator",
                     )
                 )
-            continue  # curator (#27) archived this skill — keep on disk, off the turn
+            continue  # the curator archived this skill — keep on disk, off the turn
         triggers = s.get("triggers", "") or ""
         kw_score, negated = _keyword_score(query_words, triggers) if triggers else (0.0, False)
         if negated:
@@ -327,7 +327,7 @@ def surface_skills(
         kw_hit = kw_score >= _KEYWORD_GATE
         sem_hit = standout.key == key
         matched = kw_hit or sem_hit
-        # A matched producer Feedback-Signal marked persistently-wrong is
+        # A matched producer the feedback signal marked persistently-wrong is
         # WITHHELD — the match stands, but the skill does not surface until the user
         # edits it (which clears the suppression). Membership is exact-tuple against
         # feedback's producer identity for a skill: ("skill_synthesis", <key>).
@@ -380,7 +380,7 @@ def surface_skills(
             continue
         # Union score: the better of the two normalized signals.
         score = max(kw_score, sem_score)
-        use_count = int(s.get("use_count", 0) or 0)  # #25 tiebreak
+        use_count = int(s.get("use_count", 0) or 0)  # tiebreak
         scored.append((score, use_count, key))
 
     if explain:
@@ -390,7 +390,7 @@ def surface_skills(
             key=lambda r: (not r["included"], -max(r["kw_score"], r["sem_score"]), r["key"])
         )
         return explained
-    # Rank by score desc, then proven use_count desc (#25 tiebreak), then key for
+    # Rank by score desc, then proven use_count desc, then key for
     # determinism.
     scored.sort(key=lambda t: (-t[0], -t[1], t[2]))
     return [key for _score, _uc, key in scored[:max_skills]]

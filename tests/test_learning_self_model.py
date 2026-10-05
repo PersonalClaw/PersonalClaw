@@ -1,8 +1,8 @@
-"""The capped self-model: reinforcement-promoted, propose-don't-write (LEARN-R21 / §2.6).
+"""The capped self-model: reinforcement-promoted, propose-don't-write.
 
 The flywheel's ONLY mechanism that learns from what quietly WORKS. Every other cadence learns from
 corrections and failures, so this is the one that can notice a habit that keeps succeeding — and
-that asymmetry is what makes it worth constraining. §2.6 names three constraints and this suite
+that asymmetry is what makes it worth constraining. Three constraints apply, and this suite
 asserts each is enforced MECHANICALLY rather than by convention:
 
 * propose, never install — `test_a_refused_plan_yields_no_proposal_at_all`
@@ -13,7 +13,7 @@ asserts each is enforced MECHANICALLY rather than by convention:
 a behavioural principle the harness observed about its OWN working patterns would have rendered as a
 FACT ABOUT THE USER. `test_the_selfmodel_prefix_is_excluded_from_fact_blocks` is the regression.
 `user.*` WAS already in `_BUILTIN_PREFIXES`, so no allowlist change was needed — measuring both is
-what kept this session from inventing one.
+what kept this change from inventing one.
 """
 
 from __future__ import annotations
@@ -94,7 +94,7 @@ def test_the_prefix_sits_under_an_already_allowlisted_root():
 
 
 def test_the_prefix_is_adjacent_to_the_existing_persona_seam():
-    """§2.6 puts the self-model beside `user.persona.*`, which is the same KIND of thing:
+    """The self-model sits beside `user.persona.*`, which is the same KIND of thing:
     harness-internal, agent-facing, never a user fact."""
     from personalclaw.vector_memory import _NON_FACT_KEY_CLAUSE
 

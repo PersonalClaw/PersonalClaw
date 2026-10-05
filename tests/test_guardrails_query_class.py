@@ -1,6 +1,6 @@
 """query_class threaded onto the attempt audit.
 
-The ModelCallGuard classifies the current call (via the pure MRT-1a classifier) and stamps the
+The ModelCallGuard classifies the current call (via the pure query classifier) and stamps the
 resulting query_class onto every model_calls.jsonl attempt row, so the telemetry stats layer can
 fold per (use_case, query_class). Classification is fail-open — a broken classifier leaves the
 class "" and never breaks a model call.

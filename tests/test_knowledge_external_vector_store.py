@@ -549,10 +549,10 @@ def test_a_chunk_with_no_embedding_is_not_indexed(store):
 def test_vector_store_is_a_registered_provider_type():
     """Manifest type + runtime handler + SDK facade, together.
 
-    The #47 rule: a ``PROVIDER_TYPES`` entry without a handler makes every manifest of that
+    Same-commit rule: a ``PROVIDER_TYPES`` entry without a handler makes every manifest of that
     type fail validation at install; a handler without the entry does the same. The equality
     is guarded globally by ``test_manifest_types_match_handlers`` — this pins the specific
-    pair so a removal names KBVS-1.
+    pair so a removal names this seam.
     """
     from personalclaw.apps.manifest import PROVIDER_TYPES
     from personalclaw.providers.registry import VectorStoreTypeHandler
@@ -1012,7 +1012,7 @@ def test_the_doctor_names_the_empty_but_reachable_store(store, monkeypatch, caps
 
 
 def test_the_doctor_row_is_reachable_from_the_command_a_user_types(store):
-    """A helper nobody calls is the defect this clause exists to close — ``describe()`` was
+    """A helper nobody calls is the defect this test exists to close — ``describe()`` was
     already implemented by every app and reachable from nothing. So the wiring is asserted,
     not just the helper: ``personalclaw doctor`` must call it, and must fold its result into
     the ``issues`` list that drives the exit status."""

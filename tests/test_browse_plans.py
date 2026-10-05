@@ -1,4 +1,4 @@
-"""Tests for the scheduled-actuator browse plans (BROWSE-AUTOMATION §(d))."""
+"""Tests for the scheduled-actuator browse plans."""
 
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ def test_save_and_load_in_isolated_home(plan_home):
     assert p.id in [q.id for q in bp.list_plans()]
 
 
-# ── the floor + the registration refusal (§(d) rung cap) ───────────────────────
+# ── the floor + the registration refusal (rung cap) ────────────────────────────
 
 
 def test_floor_is_draft_only_for_submit_plans_and_one_tap_for_read_only():
@@ -167,7 +167,7 @@ def test_a_read_only_plan_runs_unattended_at_its_own_floor(plan_home):
 
 
 def test_a_submit_plan_is_refused_unattended_at_exactly_its_own_floor(plan_home):
-    """A grant of exactly ``draft_only`` is not a PROMOTING grant (BA-6 acceptance criteria).
+    """A grant of exactly ``draft_only`` is not a PROMOTING grant.
 
     ``granted_rung`` hands out ``draft_only`` for any type the store has not promoted, so this
     is the grant a real ungranted submit-bearing plan arrives with — not an exotic input. The
@@ -186,7 +186,7 @@ def test_a_submit_plan_is_refused_unattended_at_exactly_its_own_floor(plan_home)
 
 
 def test_equality_with_the_floor_admits_a_reader_and_refuses_a_submitter(plan_home):
-    """The two arms of the same clause, side by side: one operator cannot serve both.
+    """The two arms of the same guard, side by side: one operator cannot serve both.
 
     A blanket ``<=`` at this guard would refuse the read-only arm — including the only
     production caller, the browse tier, which polls a ``watch_page`` plan at

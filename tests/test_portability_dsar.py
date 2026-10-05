@@ -1,4 +1,4 @@
-"""The §6 DSAR surface: per-domain export, `secret ∪ derived` exclusion, MANIFEST v3.
+"""The DSAR surface: per-domain export, `secret ∪ derived` exclusion, MANIFEST v3.
 
 These tests exist to prove PROPERTIES, not to exercise code paths. Each one plants
 real-shaped bytes and then asserts on the ARTIFACT — the zip's entry list and its
@@ -6,7 +6,7 @@ contents — rather than on whether some exclusion list happens to mention a nam
 test that reads `EXPORT_EXCLUDE` and finds `.env` in it proves nothing about what the
 export actually wrote; the defect this suite was written against (`memory_index.db`,
 declared `derived=True`, hardcoded into the export's database list) was invisible to
-exactly that kind of test for four sessions.
+exactly that kind of test.
 """
 
 from __future__ import annotations
@@ -153,7 +153,7 @@ def test_import_refuses_a_hand_built_archive_carrying_a_credential(seeded_home, 
     """A merge import never writes a `secret ∪ derived` path, even when the zip has one.
 
     Our own exports cannot produce this archive; a hand-built or tampered one can, and
-    the plan's amendment requires the import side to refuse it independently. Built by
+    the import side must refuse it independently. Built by
     hand for exactly that reason — deriving the fixture from `create_export_zip` would
     only re-test the export.
     """
@@ -178,7 +178,7 @@ def test_import_refuses_a_hand_built_archive_carrying_a_credential(seeded_home, 
     assert ".env" in summary.get("refused", []), summary
 
 
-# ── per-domain export (criterion 9's export half) ────────────────────────────
+# ── per-domain export ────────────────────────────────────────────────────────
 
 
 def test_knowledge_export_carries_the_user_documents_and_nothing_else(seeded_home):
@@ -206,7 +206,7 @@ def test_platform_export_does_not_smuggle_the_user_documents(seeded_home):
 
 
 def test_memory_and_knowledge_are_separately_exportable(seeded_home):
-    """Criterion 9: memory and knowledge come out as separate archives, not one blob."""
+    """Memory and knowledge come out as separate archives, not one blob."""
     mem_names, mem_body = _zip_of(create_export_zip(["memory"])[0])
     know_names, know_body = _zip_of(create_export_zip(["knowledge"])[0])
     assert "memory.db" in mem_names and USER_DOC.encode() not in mem_body

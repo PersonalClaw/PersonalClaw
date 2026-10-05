@@ -1,8 +1,8 @@
-"""The template pipeline's PRODUCTION WIRING (UP-R9/UP-R13.3).
+"""The template pipeline's PRODUCTION WIRING.
 
 `test_workflows_template_pipeline.py` already proves the pipeline's rules are right. This file
 proves they RUN — which is a different claim, and the one that was false: both
-`workflows/template_pipeline.py` and `workflows/eval_specs.py` shipped in S45 with zero production
+`workflows/template_pipeline.py` and `workflows/eval_specs.py` shipped with zero production
 importers, so every rule they implement was correct and unreachable.
 
 So every test here drives a real surface end to end, and the fixtures are deliberately hostile to
@@ -182,7 +182,7 @@ class TestEvalSpecsAreProduced:
         assert surface["eval_spec"]["fixtures"]
 
     def test_ungradeable_checks_are_reported_not_graded(self, home):
-        """Grading is LEARNING-FLYWHEEL's. A spec that names what a judge would have to grade —
+        """Grading is the learning loop's. A spec that names what a judge would have to grade —
         and does not grade it — is the CORRECT output here, so the surface must carry the names and
         must not claim a verdict."""
         definition = {

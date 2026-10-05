@@ -399,7 +399,7 @@ def test_head_reads_the_fixture_s_retired_config_key_as_a_legacy_value(
     )
 
 
-def test_the_manifest_covers_every_store_the_atom_names(manifest: dict[str, Any]) -> None:
+def test_the_manifest_covers_every_required_store(manifest: dict[str, Any]) -> None:
     """A manifest missing a store makes that store's loss invisible.
 
     The survival test iterates the manifest's own entries, so dropping ``run_history`` from
@@ -407,7 +407,7 @@ def test_the_manifest_covers_every_store_the_atom_names(manifest: dict[str, Any]
     required set from the outside.
     """
     assert set(manifest["stores"]) == set(_REQUIRED_STORES), (
-        "the manifest's stores drifted from the set RET-1 enumerates: "
+        "the manifest's stores drifted from the required set: "
         f"{sorted(set(_REQUIRED_STORES) ^ set(manifest['stores']))}"
     )
 

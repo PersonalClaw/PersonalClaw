@@ -197,7 +197,7 @@ function pushMd(out: ContentSegment[], content: string): void {
 /** The first COMPLETE `<widget kind="genui">` block in `raw`, or null.
  *
  *  The shared detector for every non-chat genui HOST (a workflow gate's prompt, a
- *  dashboard tile's rendered body — AMBIENT-SURFACES §5.4). Those surfaces are not
+ *  dashboard tile's rendered body). Those surfaces are not
  *  markdown-rendered, so they cannot pick the block up through `Markdown`'s embed
  *  dispatch; they ask HERE instead of each re-deriving "is this a genui payload",
  *  which is how one surface ends up recognizing a block another one renders as text.

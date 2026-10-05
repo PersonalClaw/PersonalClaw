@@ -1,4 +1,4 @@
-"""E13-P1: Artifact entity — native provider + registry + REST handlers.
+"""Artifact entity — native provider + registry + REST handlers.
 
 Covers the on-disk model (CRUD, slug derivation/disambiguation, traversal +
 sensitive-path refusal), the explicit-snapshot versioning rule (silent save vs

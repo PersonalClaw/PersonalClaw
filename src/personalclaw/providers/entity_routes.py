@@ -95,7 +95,7 @@ def _save_entity_settings(entity: str, settings: dict[str, Any]) -> None:
 
 # Default schemas for entity settings.
 #
-# `alert_keywords` / `alert_on_name_mention` were REMOVED here (plan 42 S3): alerting is no
+# `alert_keywords` / `alert_on_name_mention` were REMOVED here: alerting is no
 # longer an inbox-only concept with its own two fields, it is a `conditions` block on any
 # notification rule (Settings → Notifications → Per-kind delivery). The one-time projection
 # of the old values lives in `notification_rules._backfill_inbox_alerts`, which reads them
@@ -173,7 +173,7 @@ def load_inbox_settings() -> dict[str, Any]:
 def _type_error(body: dict[str, Any], defaults: dict[str, Any]) -> str:
     """Name the first known key whose value type doesn't match the defaults
     schema, or "" when all match. The defaults dict is the authoritative
-    TYPE schema too (same doctrine as the key allowlist — bug #22): a
+    TYPE schema too (same doctrine as the key allowlist): a
     mistyped value silently persisted and then broke consumers, e.g. a
     string ``alert_keywords`` made evaluate_alert() iterate CHARACTERS
     (alert storm) and ``retention_days: true`` became a 1-day retention
@@ -225,7 +225,7 @@ def load_notifications_settings() -> dict[str, Any]:
     including the retired ``default_channel`` (removed 2026-07: it picked among
     notification-delivery providers, which did not exist).
 
-    ``type=notification`` providers DO exist now (`TSE2-5` — see
+    ``type=notification`` providers DO exist now (see
     ``providers/registry.py::NotificationTypeHandler``), and ``default_channel`` stays
     retired anyway: routing is decided per note by its **addressee**
     (``notification_addressing``), which is a property of the thing the note is about, not a
@@ -487,7 +487,7 @@ async def handle_notifications_settings_put(request: web.Request) -> web.Respons
         return web.json_response({"error": "Body must be a JSON object"}, status=400)
 
     # Only persist KNOWN keys — the defaults schema is the authoritative allowlist
-    # (see the inbox handler; same silent-accept fix — bug #22).
+    # (see the inbox handler; same silent-accept fix).
     known = {k: v for k, v in body.items() if k in NOTIFICATIONS_DEFAULTS}
     err = _put_type_guard(known, NOTIFICATIONS_DEFAULTS)
     if err is not None:
@@ -577,7 +577,7 @@ def _list_edit_refusal(
 async def handle_notification_rules_put(request: web.Request) -> web.Response:
     """PUT /api/notifications/rules — replace rules for the keys named in the body.
 
-    Guarded to the same standard as the settings PUTs above (bug #22 doctrine): an
+    Guarded to the same standard as the settings PUTs above: an
     unknown key, an unknown mode, or a malformed conditions block is REJECTED rather than
     persisted, because a rules file that silently fails to parse degrades to defaults —
     the user would set `never` on a noisy kind, see it accepted, and keep getting notified.

@@ -7,7 +7,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Four switches a keyboard user could not reach, and a census that first said two ────────
 //
-// Cycle 109 gave `Button` a `disabledReason`, and the same question was never asked of the app's
+// `Button` got a `disabledReason` first, and the same question was never asked of the app's
 // other interactive primitives. `Toggle`'s natively-disabled sites triage into three buckets:
 //
 //   4  A PRECONDITION THE USER CAN FIX     the two `#/settings/account` security switches ·
@@ -41,7 +41,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //
 // 🪤 THE DIMMING HAD TO MOVE WITH THE SEMANTICS. `disabled:opacity-40` cannot match an
 // `aria-disabled` element, so naming only the native selector would leave a soft-off switch looking
-// fully enabled while refusing to toggle (cycle 111 hit this on `Button`). Both are named, and the
+// fully enabled while refusing to toggle (`Button` hit this first). Both are named, and the
 // browser confirms it: **opacity 0.4 and cursor not-allowed after the change**, not merely intended.
 //
 // 🔑 WHY THE OTHER TEN STAY NATIVE. An in-flight toggle must not be re-clickable, and "still
@@ -99,7 +99,7 @@ describe('the triage, pinned per site', () => {
   const account = readSource(join(SRC, 'pages/settings/AccountPanel.tsx'))
 
   it('all four precondition switches name what unlocks them', () => {
-    // Per TAG, not per file: an earlier rail in this session stayed green while one of two Saves in
+    // Per TAG, not per file: an earlier rail stayed green while one of two Saves in
     // one file lost its contract.
     const PRECONDITION: [string, RegExp][] = [
       ['pages/settings/AccountPanel.tsx', /(?<!aria-)disabled=\{!state\.credential_configured\}/],
@@ -160,8 +160,8 @@ describe('the triage, pinned per site', () => {
     // the "not serving" pill naming the cause — not by disabling the control the user needs.
     // 🔺 20 → 24 (reconciled at integration). Both sides of this census were written
     // against a base of 20 and each counted only its own additions, so NEITHER side's number is
-    // right for the union — 21 and 23 both undercount. EA-8 added ONE switch (the template detail
-    // page's "Publish to A2A"), PA-5 added THREE (two Settings → Inbox proactive-triage switches
+    // right for the union — 21 and 23 both undercount. One side added ONE switch (the template detail
+    // page's "Publish to A2A"), the other added THREE (two Settings → Inbox proactive-triage switches
     // and one per-rule send-capability switch in the rules manager). 20 + 1 + 3 = 24.
     //
     // Reasoned sites 5 → 7, and the split is the point rather than the total. The switch and

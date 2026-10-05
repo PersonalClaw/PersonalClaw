@@ -1,12 +1,12 @@
-"""Criterion 7: kill the gateway mid-fire and restart — the boot sweep that had no caller.
+"""Kill the gateway mid-fire and restart — the boot sweep that had no caller.
 
-Criterion 7: *"Kill the gateway mid-fire and restart: no double-fire, no lost fire, missed slots
+The rule: *"Kill the gateway mid-fire and restart: no double-fire, no lost fire, missed slots
 appear in the review card, pending approvals re-arm, `catch_up` triggers fire exactly once,
 staggered."*
 
-🔴 **THE DEFECT — five dead layers, the deepest chain this program has found.** The dead-seam sweep
-(the technique, generalised) flagged four functions in the criterion-7 chain with no
-caller outside their own module. Following each one up found the criterion inert end to end:
+🔴 **THE DEFECT — five dead layers, the deepest chain found so far.** The dead-seam sweep
+(the technique, generalised) flagged four functions in the restart-recovery chain with no
+caller outside their own module. Following each one up found the rule inert end to end:
 
 1. **`service.boot` had ZERO callers.** Boot ran `migrate_and_arm`, which only arms rows with NO
    `next_fire_at` (`arm.needs_arming`) — so a trigger that WAS armed and went overdue while the lid
@@ -20,7 +20,7 @@ caller outside their own module. Following each one up found the criterion inert
 3. **`drain_spooled_fires` had no caller.** A fire parked by a sync CLI memory write sat on disk
    forever — the silent drop the spool was written to fix, one layer up.
 4. **`wakeup.retry_queue` had no caller.** A resume whose session was not ready was built,
-   classified `REQUEUED`, and thrown away. §3.2 refuses to let anyone drop one: it carries a gate
+   classified `REQUEUED`, and thrown away. Nothing may drop one: it carries a gate
    answer, and eating it strands the parked run forever waiting for a reply the user already gave.
 5. **The loop's own drop check read a key its producer does not emit.** `summary.get("dropped")` —
    `summary()` returns `{total, delivered, by_disposition, retry}`, so a `no_session` delivery (a
@@ -66,7 +66,7 @@ def _utc_host(monkeypatch):
 class _State:
     """A dashboard state recording `notify` kwargs.
 
-    `kind`/`title`/`body`/`meta`, matching the real contract — S140 recorded that a fake with the
+    `kind`/`title`/`body`/`meta`, matching the real contract — a fake with the
     wrong SHAPE reproduces the bug you are confirming you fixed.
     """
 
@@ -115,7 +115,7 @@ def test_the_boot_sweep_LEAVES_NOTHING_immediately_due(tmp_path):
 
 
 def test_the_sweep_STAGGERS_rather_than_bunching(tmp_path):
-    """§3.1 needs both halves — recovered on boot AND spread, so a restart does not fire everything
+    """Both halves are needed — recovered on boot AND spread, so a restart does not fire everything
     in one second."""
     store = TriggerStore(base_dir=tmp_path)
     store.save_all([_clock(f"t{i}", next_at=NOW - HOUR) for i in range(6)])
@@ -159,7 +159,7 @@ def test_catch_up_fires_ONCE_and_the_refusals_are_EXPLAINED(tmp_path):
 
 
 def test_the_missed_review_SURFACES_as_one_notification():
-    """Criterion 7's "missed slots appear in the review card". ONE notification naming the count,
+    """The rule's "missed slots appear in the review card". ONE notification naming the count,
     not one per slot: a laptop opened after a weekend would otherwise deliver hundreds."""
     state = _State()
     _orchestrator(state)._surface_missed_review(
@@ -204,7 +204,7 @@ def test_the_surface_NEVER_raises_without_a_dashboard():
 def test_the_boot_report_carries_every_field_the_gateway_reads(tmp_path):
     """The gateway logs `rearmed`/`total`/`review.rows` and passes the whole report to the surface.
     A report missing one of those would make the log line lie rather than fail — the exact class of
-    defect this session exists to close."""
+    defect this file exists to close."""
     store = TriggerStore(base_dir=tmp_path)
     store.save_all([_clock("t1", next_at=NOW - HOUR)])
     report = SVC.boot(store, now=NOW)

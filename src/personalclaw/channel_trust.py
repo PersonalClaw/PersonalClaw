@@ -72,11 +72,11 @@ logger = logging.getLogger(__name__)
 #: entity_settings key (one file, partitioned per provider).
 _ENTITY = "channel_trust"
 
-#: Pairing-code parameters (Design §S1 / Contract C1).
+#: Pairing-code parameters.
 PAIRING_CODE_TTL_SECS = 600  # 10 minutes
 PAIRING_CODE_DIGITS = 8
 
-#: Policy vocabularies (Contract C2). The default posture for an unknown sender.
+#: Policy vocabularies. The default posture for an unknown sender.
 DM_POLICIES: tuple[str, ...] = ("pairing", "owner_only", "open")
 GROUP_POLICIES: tuple[str, ...] = ("tracked_only", "off")
 DEFAULT_DM_POLICY = "pairing"
@@ -148,7 +148,7 @@ def _read_store(*, strict: bool = False) -> dict[str, Any]:
     originally given here — that the helper swallows a corrupt file silently — is not true:**
     it warns, and it now returns ``None`` for a discarded read rather than choosing a
     fallback at all. What keeps this reader separate is that the store is a *trust* surface,
-    so `{}` here is the fail-CLOSED answer (nothing is trusted) and CE-1's contract is
+    so `{}` here is the fail-CLOSED answer (nothing is trusted) and the helper's contract is
     defaults + warn. Folding it into the shared helper would be a change to a security
     control's read path, which is a decision of its own and not a tidy-up.
 
@@ -1347,8 +1347,8 @@ def guard_inbound(
 ) -> TrustVerdict:
     """THE trust gate a transport calls at the top of its inbound path.
 
-    This is the seam CE-2..9 (Telegram/Discord/email + External-Access) bind to, so its
-    shape is a contract. It applies the provider's policy:
+    This is the seam every channel transport (Telegram/Discord/email, external access) binds
+    to, so its shape is a contract. It applies the provider's policy:
 
     * **DM**, policy ``open`` → allowed. Policy ``pairing`` / ``owner_only`` → allowed only
       if the sender is already approved; otherwise the unknown-sender flow fires

@@ -4,17 +4,17 @@ This change is adversarial by design: every clause in it defeats a specific way 
 result, so every clause here gets its own assertion AND a falsification that shows the
 assertion can fail. The four that matter most, and the shape of their rails:
 
-* **§2.1 immutable registration / pinned rubric** — the rail is the INVALIDATION, and it is
+* **immutable registration / pinned rubric** — the rail is the INVALIDATION, and it is
   asserted on the HASH. `test_touching_the_rubric_without_changing_it_does_NOT_invalidate`
   is the falsification of a timestamp-based implementation: a study that invalidates on
   mtime would fail that test, and one that invalidates on content passes it.
-* **§2.3 blinded / position-swapped / median-of-3** — three mechanisms, three sets of
+* **blinded / position-swapped / median-of-3** — three mechanisms, three sets of
   tests. The position-swap rail asserts the OUTPUTS were actually exchanged (slot A of the
   swapped presentation is byte-identical to slot B of the direct one), never that a flag
   was set.
-* **§2.3 agreement floor** — a judge that always names slot A produces zero winners rather
+* **agreement floor** — a judge that always names slot A produces zero winners rather
   than a clean sweep.
-* 🔴 **§2.2 locked/ never worker-visible** — a NEGATIVE assertion, so it carries a vacuity
+* 🔴 **locked/ never worker-visible** — a NEGATIVE assertion, so it carries a vacuity
   floor: `test_the_leak_guard_REFUSES_a_vacuous_token_set` and
   `test_the_leak_guard_REFUSES_an_empty_scan_set` are what make the clean result mean
   something, and `test_a_new_worker_payload_text_field_is_scanned_by_default` is what keeps
@@ -166,7 +166,7 @@ LOCKED_PHRASE = {
 }
 
 
-# ── §2.1 the pre-registration is immutable ───────────────────────────────────
+# ── the pre-registration is immutable ────────────────────────────────────────
 
 
 def test_register_study_writes_the_registration_the_pinned_rubric_and_the_locked_checks(
@@ -229,7 +229,7 @@ def test_k_and_the_agreement_floor_default_from_EvalsConfig_not_from_literals(ev
     assert reg.agreement_floor == pytest.approx(evals.judge_agreement_floor)
 
 
-# ── §2.3 a mid-study rubric edit invalidates, and it is decided on the HASH ───
+# ── a mid-study rubric edit invalidates, and it is decided on the HASH ────────
 
 
 @pytest.mark.asyncio
@@ -297,7 +297,7 @@ def test_a_missing_pinned_rubric_is_invalidation_not_a_shrug(eval_home):
     assert state == studies.RUBRIC_PIN_MISSING
 
 
-# ── §2.3 blinding ────────────────────────────────────────────────────────────
+# ── blinding ─────────────────────────────────────────────────────────────────
 
 
 def test_the_pair_prompt_carries_no_version_hypothesis_or_arm_label(eval_home):
@@ -340,7 +340,7 @@ def test_assert_blinded_REFUSES_a_vacuous_token_set(eval_home):
         studies.assert_blinded(bare, ("some prompt",))
 
 
-# ── §2.3 position swap ───────────────────────────────────────────────────────
+# ── position swap ────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -410,7 +410,7 @@ async def test_a_position_biased_judge_produces_NO_winner(eval_home):
     assert len(flipped) == 3
 
 
-# ── §2.3 median-of-3 ─────────────────────────────────────────────────────────
+# ── median-of-3 ──────────────────────────────────────────────────────────────
 
 
 def test_the_median_of_three_is_a_median_not_a_first_sample():
@@ -457,7 +457,7 @@ async def test_three_samples_are_taken_per_presentation_from_the_engines_own_con
     assert len(caller.prompts) == 6, "one pair = 2 positions × 3 samples"
 
 
-# ── §2.3 the agreement floor and judge_unreliable routing ────────────────────
+# ── the agreement floor and judge_unreliable routing ─────────────────────────
 
 
 def test_an_unmeasurable_agreement_is_below_every_floor():
@@ -546,7 +546,7 @@ async def test_a_consistent_judge_clears_the_floor_and_produces_a_win(eval_home)
     assert result.judge_below_floor is False
 
 
-# ── 🔴 §2.2 locked/ is supervisor-side and never worker-visible ──────────────
+# ── 🔴 locked/ is supervisor-side and never worker-visible ───────────────────
 
 
 def test_a_locked_token_shorter_than_the_guard_can_see_is_REFUSED_at_registration(eval_home):
@@ -634,7 +634,7 @@ async def test_a_study_whose_DECLARED_locked_checks_are_missing_REFUSES_to_run(e
 
     `locked/` is `derived_within` on the `evals` inventory entry, so a home restored from a
     snapshot carries the registration and not the answer keys. Running anyway would produce
-    an artifact indistinguishable from an honest §2.2 study.
+    an artifact indistinguishable from an honest study.
     """
     reg = register(k=1, locked_checks=[LOCKED_CMD, LOCKED_PHRASE])
     locked_dir = store.study_dir(reg.study_id) / "locked"
@@ -720,7 +720,7 @@ def test_a_new_worker_payload_text_field_is_scanned_by_DEFAULT():
     assert "/tmp/ws" not in visible and "st-1" not in visible
 
 
-# ── §2.2 supervisor-side execution in the child output workspace ─────────────
+# ── supervisor-side execution in the child output workspace ──────────────────
 
 
 @pytest.mark.asyncio
@@ -829,7 +829,7 @@ async def test_a_locked_path_escaping_the_workspace_is_verifier_absent(eval_home
 
 
 def test_the_output_workspace_never_held_the_locked_content(eval_home, tmp_path):
-    """§2.2 forbids the checks from the worker's workspace too, not only its prompt."""
+    """The checks are forbidden from the worker's workspace too, not only its prompt."""
     ws = tmp_path / "ws"
     ws.mkdir()
     (ws / "reply.txt").write_text("hello — Source: inbox-4711\n", encoding="utf-8")
@@ -841,7 +841,7 @@ def test_the_output_workspace_never_held_the_locked_content(eval_home, tmp_path)
         studies.assert_locked_absent_from_workspace(reg.study_id, ws)
 
 
-# ── §2.1 ANY locked-check regression = fail regardless ───────────────────────
+# ── ANY locked-check regression = fail regardless ────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -909,7 +909,7 @@ def test_a_locked_regression_outranks_the_agreement_floor_but_keeps_BOTH_facts()
     assert result.judge_below_floor is True, "the second fact must not be erased"
 
 
-# ── §2.4 what a verdict does ─────────────────────────────────────────────────
+# ── what a verdict does ──────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -1059,7 +1059,7 @@ async def test_the_study_view_publishes_the_verdict_agreement_and_per_run_artifa
 
 
 def test_the_view_never_publishes_the_rubric_text_or_the_locked_checks(eval_home):
-    """A read-only API that served the locked checks would defeat §2.2 in one curl."""
+    """A read-only API that served the locked checks would defeat the lock in one curl."""
     reg = register(locked_checks=[LOCKED_CMD, LOCKED_PHRASE])
     view = studies.study_view(reg.study_id)
     blob = json.dumps(view)
@@ -1087,12 +1087,12 @@ def test_the_registration_hash_is_canonical_and_order_independent(eval_home):
     assert restored.sha256() == reg.sha256()
 
 
-# ── 🔴 §2.1 the registration SEAL — what makes every pin above more than decor ─
+# ── 🔴 the registration SEAL — what makes every pin above more than decor ──────
 #
 # Every rail above this line reads its own threshold out of `registration.json`:
 # `rubric_sha256` pins the rubric, `agreement_floor` sets the judge floor, `k` sets the
 # design. Before the seal, that file and the pinned rubric it pins lived in the same
-# directory with the same owner, so the whole of §2.1 was defeated by editing the file the
+# directory with the same owner, so the whole registration was defeated by editing the file the
 # checks are read FROM — no forgery of a hash required, just a text editor. These tests
 # assert the seal on the two things a self-referential hash can never do: catch an edit to
 # the design, and catch a rubric forgery whose own hash check comes back clean.
@@ -1284,7 +1284,7 @@ def test_a_zero_agreement_floor_ROUND_TRIPS_or_the_seal_calls_an_honest_study_ta
     assert studies.seal_status(restored) == (studies.SEAL_OK, "")
 
 
-# ── §4.4 mechanical revocation: a failed study voids standing grants ──
+# ── mechanical revocation: a failed study voids standing grants ───────
 
 
 def test_a_study_loss_revokes_standing_autonomy_grants(monkeypatch):

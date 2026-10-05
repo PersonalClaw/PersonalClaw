@@ -10,7 +10,8 @@
  *  reconnect that replays events converges on the same view as a fresh snapshot fetch.
  *
  *  Three guards make the law survive rewind and fork, which are what break naive live
- *  widgets (the K42/K44/K45 coalescer bugs in this codebase's chat stream):
+ *  widgets (the coalescer bugs in this codebase's chat stream: a reply duplicated by mid-stream
+ *  activity, a new turn absorbing the last one's answer, an edit-resend glued onto the old answer):
  *
  *  1. **Dedup by event id.** Ids are deterministic at emit (`<run>-evt-<n>`), so a re-emit
  *     after a reconnect is an idempotent no-op instead of a duplicated row.
@@ -63,7 +64,7 @@ export interface WorkflowViewModel {
   nodes: WorkflowNodeState[]
   doneCount: number
   totalCount: number
-  /** Nodes whose output was served from the resume cache (WF2-A1) rather than re-run.
+  /** Nodes whose output was served from the resume cache rather than re-run.
    *
    *  A COUNT, not a per-row flag, because that is the shape of the question: "did my edit
    *  re-run anything?" is about the whole run, and the compact chat card renders only the
@@ -301,7 +302,7 @@ function patchNode(
     state,
     attempt: existing?.attempt,
     degraded_reason: (env.degraded_reason as string) || '',
-    // Cache-origin (WF2-A1). Read from THIS event, deliberately not carried forward like
+    // Cache-origin. Read from THIS event, deliberately not carried forward like
     // `item_*` below: only a cache hit publishes `cached`, so a re-run after a mid-flight edit
     // emits `node_done` without it — and inheriting `existing.cached` would keep the row
     // claiming a cache hit the edit just invalidated, which is the exact question the flag
@@ -355,7 +356,7 @@ function recount(vm: WorkflowViewModel): WorkflowViewModel {
   }
 }
 
-/** The explicit dedup key from the plan: `run_id|node_id|epoch|seq|state`.
+/** The explicit dedup key: `run_id|node_id|epoch|seq|state`.
  *
  *  Exported for the replay harness and for a debug view. The fold itself dedups
  *  on `event_id`, which is stronger — but this key is what a RECORDED trace can be grouped

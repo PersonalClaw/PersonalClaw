@@ -75,7 +75,7 @@ def _trigger(tid="t1", *, next_at=0.0, kind="clock", author="", enabled=True, **
     "author,expected",
     [
         (OWNER, True),
-        ("", True),  # unattributed reads as the owner's — every pre-TSE-4 row
+        ("", True),  # unattributed reads as the owner's — every row older than `author`
         ("  KEYUR  ", True),  # normalized at the boundary, so casing cannot mint a second author
         ("alice", False),
         ("Alice", False),
@@ -146,7 +146,7 @@ def test_armable_excludes_broken_rows(store):
 
 
 def test_a_foreign_row_is_absent_from_the_tick_candidate_set(store):
-    """The structural claim, measured where §2.2 puts it: a due foreign row produces NO fire.
+    """The structural claim, measured at the candidate set: a due foreign row produces NO fire.
 
     Not "is refused with a reason" — refused implies it was considered. `due_ids` is fed from
     `armable`, so the id never enters the walk at all.
@@ -303,13 +303,13 @@ def test_unregistering_removes_the_providers_rows(store):
     assert TREG.unregister_trigger_store("team") is False
 
 
-# ── the type handler (the #47 rule) ──
+# ── the type handler ──
 
 
 def test_the_trigger_type_has_a_live_handler():
-    """The other direction of the #47 rule is guarded suite-wide by
-    `test_app_manifest.py::TestProviderTypesMatchHandlers`; this pins the specific pairing so a
-    deletion of either half names THIS change in the failure."""
+    """The other direction of the rule that a manifest type and its runtime handler land together
+    is guarded suite-wide by `test_app_manifest.py::TestProviderTypesMatchHandlers`; this pins the
+    specific pairing so a deletion of either half names THIS change in the failure."""
     from personalclaw.apps.manifest import PROVIDER_TYPES
     from personalclaw.providers.registry import TriggerTypeHandler, get_provider_registry
 

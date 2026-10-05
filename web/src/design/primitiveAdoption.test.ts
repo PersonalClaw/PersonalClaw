@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { scanDrift, countInlineFontWeights } from './consistencyAudit.report'
 
-// ── Primitive-adoption ratchet (design-system consistency C1 / T3.4) ────────
+// ── Primitive-adoption ratchet (design-system consistency) ──────────────────
 // The third consistency rail (alongside token-lint-strict in tokenLint.test.ts
 // and the a11y axe scan in e2e/): flag NEW bespoke chrome. Raw <button>,
 // <input>/<textarea>/<select>, and ad-hoc dialogs outside web/src/ui/ should

@@ -228,7 +228,7 @@ export function AppConfigFields({ appName, props, cur, set, secretSet = [], requ
   // Names of fields that already have a stored secret (from the config GET's
   // `_secret_set`). Such fields are WRITE-ONLY: the backend never sends the real value,
   // so the input starts blank with a "saved — leave blank to keep" placeholder; typing a
-  // new value replaces the secret, blank keeps it (#43). The backend's list, not the
+  // new value replaces the secret, blank keeps it. The backend's list, not the
   // schema's `sensitive` flag, decides: it also names a field whose stored value is a
   // credential-store reference the schema never declared (a credential-named field).
   secretSet?: string[]
@@ -339,7 +339,7 @@ export function AppConfigFields({ appName, props, cur, set, secretSet = [], requ
 /** The form's starting values from a config read — schema defaults under the stored config, each
  *  stored secret BLANKED — with the revision that read reported, which a save names. A set
  *  sensitive field arrives as a mask sentinel; the input starts blank so the user isn't editing
- *  dots, and a blank submit means "keep the stored secret" (the backend preserves it, #43). */
+ *  dots, and a blank submit means "keep the stored secret" (the backend preserves it). */
 function editableAppConfig(d: {
   config: Record<string, unknown>; schema: Record<string, unknown>; _secret_set?: string[]; revision: string
 }): Revisioned<Record<string, unknown>> {

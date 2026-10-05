@@ -19,7 +19,7 @@ const { IPC_CHANNELS } = require("../capabilities");
 // that buys is the one thing a mapping-table assertion cannot — that `show()` actually
 // constructs a notification and calls `.show()` on it, and that the tap wires focus +
 // route. What it does NOT prove is that macOS renders a banner; that needs a launched
-// shell on a real Mac (the V3 walk-through, still open).
+// shell on a real Mac (a manual walk-through, not yet performed).
 
 /** A recording stand-in for Electron's Notification. */
 function fakeNotification({ supported = true, throwOn = null } = {}) {
@@ -201,7 +201,7 @@ describe("main.js wiring", () => {
   const main = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
 
   it("registers the notify handler in the main process", () => {
-    // 🪤 The whole DC-5 audit finding was a target nothing dispatched to. A module that
+    // 🪤 The original defect was a target nothing dispatched to. A module that
     // exists but is never registered would reproduce it one layer down: the preload would
     // invoke a channel with no handler, and every native note would reject silently.
     assert.match(main, /registerNativeNotificationIpc\(ipcMain, nativeNotifications, IPC_CHANNELS\)/);

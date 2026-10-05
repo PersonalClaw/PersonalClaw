@@ -7,7 +7,7 @@ import { Button } from '../../ui/Button'
 import { Modal } from '../../ui/Modal'
 import { BUSY_REASON } from '../../ui/unavailable'
 
-/** Session-skills review (skill-ephemeral-promotion).
+/** Session-skills review.
  *
  *  When the agent captured skills this session via `skill_remember`, they live as
  *  drafts until reviewed. This surfaces a subtle "N session skills to review" chip

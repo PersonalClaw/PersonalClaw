@@ -241,8 +241,7 @@ class TestContextBuilder:
 
     def test_memory_citation_clauses_present_when_episodic_injected(self, tmp_path):
         """A new session with episodic recall gets both the cite-by-index and the
-        admit-ignorance clauses, and build_message fills the citation manifest
-        (MEMORY-GRAPH-AND-VAULT §5.4)."""
+        admit-ignorance clauses, and build_message fills the citation manifest."""
         from personalclaw.memory_service import MemoryService
 
         builder = self._memory_citation_builder(tmp_path)
@@ -295,7 +294,7 @@ class TestContextBuilder:
         assert "say you don't have it in memory" not in msg
 
     def test_force_skill_ids_loads_even_for_custom_agent(self, tmp_path):
-        # Goal-loop capabilities (IT-5): a confirmed skill loads ACTIVELY even on a
+        # Goal-loop capabilities: a confirmed skill loads ACTIVELY even on a
         # custom agent's turn (which otherwise skips passive skill surfacing).
         sd = tmp_path / "skills" / "rate-limits"
         sd.mkdir(parents=True)

@@ -4,9 +4,9 @@ The macOS dmg shipped wrong twice in two days, and the second defect was caused 
 the first:
 
 1. electron-builder AUTO-DISCOVERS a signing identity from the build machine's login keychain,
-   so a local build produced ``PersonalClaw.app`` signed ``Authority=MeetNote Developer`` — an
-   unrelated third party's identity on what would have been a public release artifact — while
-   the Makefile comment claimed the build was unsigned.
+   so a local build produced ``PersonalClaw.app`` signed with another developer's
+   ``Authority=`` — an unrelated third party's identity on what would have been a public
+   release artifact — while the Makefile comment claimed the build was unsigned.
 2. Fixing (1) with ``"identity": null`` disabled signing, which does NOT leave the bundle
    unsigned: it leaves Electron's stock LINKER seal, which declares that sealed resources must
    be present while sealing none of ``Frameworks``, the four helper apps, ``app.asar`` or the
@@ -143,8 +143,8 @@ def test_desktop_manifest_declares_no_signing_identity() -> None:
     )
     assert mac["identity"] is None, (
         f'build.mac.identity must be null, got {mac["identity"]!r} — a non-null value asks '
-        "electron-builder to sign with a real identity, which the owner ruling of 2026-09-22 "
-        "rules out"
+        "electron-builder to sign with a real identity, and the release ships ad-hoc signed "
+        "with no named authority on purpose"
     )
 
 

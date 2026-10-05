@@ -1,6 +1,6 @@
 """Rails — the honest Windows/Linux platform story.
 
-The change's clause is *"on non-macOS, every computer-use tool returns a typed refusal naming the
+The rule is *"on non-macOS, every computer-use tool returns a typed refusal naming the
 platform; no silent no-op"*, and the thing that makes it hard to prove is that it is a statement
 about platforms this suite does not run on. So the shape of this file is deliberate:
 
@@ -161,7 +161,7 @@ def _args_for(spec, snapshot_id: str) -> dict:
 def test_the_platform_driver_now_resolves(module, system, _api):
     """The gap this change closes, stated as the assertion that would have failed before it.
 
-    ``DRIVER_MODULES`` has named ``windows_driver``/``linux_driver`` since `DCU-4` while neither
+    ``DRIVER_MODULES`` has long named ``windows_driver``/``linux_driver`` while neither
     module existed, so ``resolve_driver`` returned ``None`` on both platforms and their answer
     came from the *no driver at all* fallback. This is a REAL macOS assertion — resolution is by
     import and these modules import anywhere.
@@ -209,7 +209,7 @@ def _offending_imports(source: str) -> list[str]:
 def test_a_pending_driver_imports_no_os_library_at_module_level(module, _system, _api):
     """``resolve_driver`` imports this module inside the GATEWAY's process. A module-level
     ``import comtypes`` (or ``gi``) would therefore turn "this machine has no desktop
-    capability" into "this machine has no gateway" — the failure mode `DCU-3` wrote
+    capability" into "this machine has no gateway" — the failure mode the macOS driver wrote
     ``test_importing_the_ffi_touches_no_framework`` about. This file having imported the module
     at the top on macOS is the other half of the proof."""
     source = pathlib.Path(module.__file__).read_text(encoding="utf-8")
@@ -252,7 +252,7 @@ def test_a_pending_driver_re_derives_no_wording(module, _system, _api):
 
 @pytest.mark.parametrize(("module", "system", "api"), PENDING)
 def test_every_operation_refuses_with_the_platform_code(module, system, api, monkeypatch):
-    """The change's clause at the driver boundary: all seven operations, the real
+    """The rule at the driver boundary: all seven operations, the real
     ``driver_host.run_op``, one typed refusal each.
 
     SIMULATED: ``platform.system()`` only. Everything the child does with the answer — resolve
@@ -341,14 +341,14 @@ def test_the_two_platforms_do_not_share_one_hardcoded_sentence(monkeypatch):
 
 @pytest.mark.parametrize("spec", ct.TOOL_SURFACE, ids=lambda s: s.name)
 def test_every_tool_refuses_through_the_real_dispatch_on_windows(spec, tmp_path, monkeypatch):
-    """**The clause, at the call site a user reaches.** Not "a function exists that would return
+    """**The rule, at the call site a user reaches.** Not "a function exists that would return
     this code" — the real ``computer_dispatch``, the real keystone, the real screens, the real
     SEL row, the real ``create_subprocess_limited`` spawn, a real child process, and the real
     ``_run_driver`` translation.
 
     That last participant is why this test is the one that matters: ``_run_driver`` honours a
     child's code **only** if it is in ``_CHILD_CODES`` and otherwise rewrites it as
-    ``ERR_COMPUTER_USE_DRIVER_FAILED``. `DCU-3` measured that flattening on
+    ``ERR_COMPUTER_USE_DRIVER_FAILED``. That flattening was measured on
     ``ERR_COMPUTER_USE_AX_PERMISSION`` and it is the difference between an operator reading
     "run this on macOS" and reading "the driver failed".
 

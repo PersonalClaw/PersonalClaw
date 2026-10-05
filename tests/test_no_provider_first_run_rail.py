@@ -16,8 +16,8 @@ when one ships):**
 
   1. ``POST /api/chat``                                       — regression guard (#2856 → #2865)
   2. ``GET  /api/suggestions``                                — regression guard (#2866 → #2868)
-  3. ``POST /api/knowledge/items``                            — regression guard (OU-3 runner fix)
-  4. ``POST /api/knowledge/items/{id}/generate-intelligence`` — regression guard (OU-3 runner fix)
+  3. ``POST /api/knowledge/items``                            — regression guard (runner fix)
+  4. ``POST /api/knowledge/items/{id}/generate-intelligence`` — regression guard (runner fix)
   5. ``POST /api/loops/classify``                     — MUST-FAIL-ON-MAIN anchor (this change)
 
 **Ground truth (measured on a live no-provider gateway, ``origin/main`` @ ``df5f59b56``,
@@ -196,7 +196,7 @@ async def test_classify_no_provider_surfaces_calm_signal():
 @pytest.mark.asyncio
 async def test_classify_with_provider_bound_is_unchanged():
     """When a model resolves, the preflight must NOT fire — no ``model_unresolved`` — so a
-    bound instance is byte-for-byte the pre-OU-12 behaviour (a normal 200 classification)."""
+    bound instance behaves byte-for-byte as before (a normal 200 classification)."""
     valid = json.dumps({"title": "Weekly status", "goal_type": "open_ended"})
     with (
         patch("personalclaw.providers.provider_bridge.can_resolve_use_case", return_value=True),
@@ -261,7 +261,7 @@ async def test_suggestions_no_provider_returns_declared_empty_state():
 
 
 # --------------------------------------------------------------------------- #
-# Surfaces 3+4 — knowledge ingest (regression guard, OU-3 runner fix)
+# Surfaces 3+4 — knowledge ingest (regression guard, runner fix)
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @pytest.mark.parametrize("reingest", [False, True], ids=["create", "generate-intelligence"])
@@ -274,7 +274,7 @@ async def test_knowledge_ingest_no_provider_is_not_silent_done(tmp_path, reinges
     store = KnowledgeStore(str(tmp_path / "knowledge.db"))
     item_id = store.create_typed_item(
         item_type="note",
-        title="OU12 note",
+        title="First-run note",
         content=(
             "A note about distributed consensus, the Raft algorithm, and leader election "
             "so the insights stage has real content to (fail to) enrich."
@@ -307,7 +307,7 @@ async def test_knowledge_ingest_with_provider_bound_reaches_done(tmp_path):
 
     BOTH providers are bound here, and that is the point of the assertion. This test used to
     pass ``embedder=None`` while claiming "a bound provider must reach done" — a premise it
-    did not satisfy. RET-2 made the missing embedder its own named failure
+    did not satisfy. A missing embedder is now its own named failure
     (``processing_status='unsearchable'``: no vector, no chunk, nothing semantic can reach
     the item), so binding an embedder is what makes the docstring true rather than a
     relaxation of it."""
@@ -322,7 +322,7 @@ async def test_knowledge_ingest_with_provider_bound_reaches_done(tmp_path):
     store = KnowledgeStore(str(tmp_path / "knowledge.db"))
     item_id = store.create_typed_item(
         item_type="note",
-        title="OU12 note",
+        title="First-run note",
         content="A note about distributed consensus and the Raft algorithm.",
     )
     status = await ingest_item(store, item_id, insights_pool=_AnswerPool(), embedder=_Embedder())

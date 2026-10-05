@@ -1,8 +1,8 @@
 """Anthropic-compatible PROTOCOL client — Messages API via the ``anthropic`` SDK.
 
 The ``anthropic`` SDK is imported lazily inside
-:meth:`AnthropicProvider.__init__` to satisfy Requirement R6.3 / Property
-11 (Provider SDK Lazy Import). The module file itself is safe to import
+:meth:`AnthropicProvider.__init__`, so a provider SDK is never imported
+eagerly. The module file itself is safe to import
 without ``anthropic`` installed: only constructing an
 :class:`AnthropicProvider` instance triggers the SDK import.
 
@@ -93,7 +93,7 @@ def _read_cache_usage(usage: object) -> tuple[int, int]:
     """`(cache_creation_tokens, cache_read_tokens)` from an Anthropic ``usage`` object.
 
     The producer for `LLMEvent.cache_creation_tokens` / `.cache_read_tokens`, which the event
-    declared but nothing populated (PCS-6). Defensive by design: a `usage` missing the fields
+    declared but nothing populated. Defensive by design: a `usage` missing the fields
     (a non-cached response, or an older SDK), a non-int value, or `None` all yield ``0`` and NEVER
     raise — a cache-usage read must never break a completed turn's terminal event.
     """
@@ -271,7 +271,7 @@ def _translate_messages(messages: list[dict]) -> tuple[str | list[dict], list[di
     * A ``role: "system"`` message tagged :data:`~personalclaw.llm.prompt_cache.VOLATILE_KEY`
       is NOT hoisted into ``system=``. Anthropic serves ``system=`` ahead of
       ``messages[0]``, so a per-turn-changing note there would break the cacheable EXACT
-      prefix (F1). The Messages API has no system turn inside the conversation either, so
+      prefix. The Messages API has no system turn inside the conversation either, so
       the note rides the way :data:`~personalclaw.llm.prompt_cache.VOLATILE_KEY` lays
       down: one text block (its content, already fenced as the runtime's) appended to the
       request's LAST user turn — after its ``tool_result`` blocks and after any cache
@@ -288,7 +288,7 @@ def _translate_messages(messages: list[dict]) -> tuple[str | list[dict], list[di
       ``{role, content}``. A LIST content passes through with its neutral image parts
       translated to Anthropic ``image`` blocks (:func:`_translate_parts`).
 
-    Cache translation (PCS-4 / §C4): a message carrying the NEUTRAL
+    Cache translation: a message carrying the NEUTRAL
     :data:`~personalclaw.llm.prompt_cache.CACHE_HINT_KEY` is the trailing boundary of
     the cacheable span, and Anthropic marks that boundary with ``cache_control`` on a
     CONTENT BLOCK — so the hinted message's LAST block gets the marker:
@@ -311,13 +311,14 @@ def _translate_messages(messages: list[dict]) -> tuple[str | list[dict], list[di
 
     Byte-identical invariant: a ``messages`` list with NO volatile-tagged and NO
     cache-hinted message produces exactly the ``(system, out)`` this returned before
-    PCS-1 — a ``str`` ``system`` included. ``system=`` is block-shaped ONLY when a
-    hinted system message is present, so an unhinted request serializes today's bytes.
+    volatile notes and cache hints existed — a ``str`` ``system`` included. ``system=`` is
+    block-shaped ONLY when a hinted system message is present, so an unhinted request serializes
+    today's bytes.
     """
     system_parts: list[str] = []
     out: list[dict] = []
     # Volatile system notes, laid on the last user turn after the loop (empty ⇒ the
-    # return is byte-for-byte the pre-PCS-1 behavior).
+    # return is byte-for-byte the behavior without volatile notes).
     volatile_notes: list[str] = []
     # True once a hoisted (non-volatile, non-empty) system message carried the neutral
     # cache hint. Only then does ``system=`` become block-shaped.
@@ -419,7 +420,7 @@ def _translate_messages(messages: list[dict]) -> tuple[str | list[dict], list[di
 
     # Deliver any volatile notes on the last user turn, in order — after the stable
     # context and every breakpoint, so the served prompt's prefix stays stable across
-    # turns (F1). Empty when no message was tagged, keeping the untagged path
+    # turns. Empty when no message was tagged, keeping the untagged path
     # byte-identical.
     _lay_system_notes(out, volatile_notes)
 
@@ -440,7 +441,7 @@ class AnthropicProvider(ModelProvider):
 
     The ``anthropic`` SDK is imported inside ``__init__`` so the package
     ``personalclaw.providers`` can be imported without pulling the SDK into
-    ``sys.modules`` (R6.3 / Property 11).
+    ``sys.modules``.
     """
 
     # The Messages API accepts a multi-message history + tool schemas; the
@@ -464,7 +465,7 @@ class AnthropicProvider(ModelProvider):
         max_tokens: int = 4096,
         extra_options: dict[str, object] | None = None,
     ) -> None:
-        # Lazy import per R6.3 / Property 11. Do NOT lift to module top.
+        # Lazy import on purpose. Do NOT lift to module top.
         # anthropic is an OPTIONAL SDK — require_sdk raises a clear
         # MissingSDKError naming `pip install personalclaw[anthropic]` when absent.
         anthropic = require_sdk("anthropic", "anthropic", feature="the Anthropic chat provider")

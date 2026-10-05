@@ -1,6 +1,6 @@
-"""`code-project`'s R5 structural gates, driven through the real engine.
+"""`code-project`'s structural gates, driven through the real engine.
 
-The change this file verifies is LOOPS-EVOLUTION **criterion 6**: *a "build a feature" run
+The bar this file verifies: *a "build a feature" run
 passes the init-gate, holds WIP=1, and classifies a seeded regression vs a pre-existing
 failure via the baseline diff.*
 
@@ -91,7 +91,7 @@ def _node(node_id: str) -> Node:
     raise AssertionError(f"code-project has no node {node_id!r}")
 
 
-#: The four conditions R5a's initializer must establish before any code is written.
+#: The four conditions the initializer must establish before any code is written.
 CHECKLIST = ("can_start", "can_test", "can_see_progress", "can_pick_next")
 
 INPUTS = {
@@ -119,7 +119,7 @@ def _ctx(**outputs) -> BindingContext:
     return BindingContext(inputs=dict(INPUTS), node_outputs=dict(outputs))
 
 
-# ── R5a: the gated initializer ───────────────────────────────────────────────
+# ── the gated initializer ────────────────────────────────────────────────────
 
 
 class TestTheInitGate:
@@ -154,7 +154,7 @@ class TestTheInitGate:
         assert result.state == InstanceState.FAILED
 
 
-# ── R5b: WIP=1, engine-enforced ──────────────────────────────────────────────
+# ── WIP=1, engine-enforced ───────────────────────────────────────────────────
 
 
 #: Child indices in the shipped root sequence, resolved by id so a reordering does not
@@ -264,7 +264,7 @@ class TestWipOne:
         assert validate_spec(_spec(), strict=True).issues == []
 
 
-# ── R5d: the baseline capture, really run ────────────────────────────────────
+# ── the baseline capture, really run ─────────────────────────────────────────
 
 
 async def _run_baseline(cwd, verify_cmd: str, guard_cmd: str) -> dict:
@@ -316,7 +316,7 @@ class TestTheBaselineCapture:
         assert got["output"]["guard_passed"] is False
 
 
-# ── R5e + criterion 6: the dual gate's classification ────────────────────────
+# ── the dual gate's classification ───────────────────────────────────────────
 
 
 def _verifier(*, metric: bool | None, guard: bool | None):
@@ -365,7 +365,7 @@ class TestTheDualGate:
         assert len(fake.calls) == 1
 
     async def test_a_seeded_regression_fails_the_gate(self) -> None:
-        """The guard PASSED at baseline and fails now: this change broke it (criterion 6)."""
+        """The guard PASSED at baseline and fails now: this change broke it."""
         result, _fake = await _verify_gate(guard_passed_at_baseline=True, metric=True, guard=False)
         assert result.state == InstanceState.FAILED
         assert result.output["guard"] == GuardOutcome.REGRESSION.value
@@ -415,8 +415,8 @@ class TestTheDualGate:
         assert "{{inputs.guard_command}}" == block.get("guard")
 
 
-class TestCriterionSixEndToEnd:
-    """The criterion as one story, with the baseline REALLY captured by the shipped node."""
+class TestBuildAFeatureEndToEnd:
+    """The bar as one story, with the baseline REALLY captured by the shipped node."""
 
     async def test_a_build_a_feature_run_tells_the_two_failures_apart(self, tmp_path) -> None:
         # 1. The initializer's four conditions hold, so the gate opens.
@@ -455,12 +455,12 @@ class TestCriterionSixEndToEnd:
         assert regression.output["guard"] == GuardOutcome.REGRESSION.value
 
 
-# ── R5c/R5f: reproduction before edit, via inverted success_when ──────────────
+# ── reproduction before edit, via inverted success_when ───────────────────────
 
 
 def _repro_success_when() -> str:
     expr = str((_node("repro").config or {}).get("success_when", ""))
-    assert expr, "the repro stage declares no success_when — R5c would be advice, not a gate"
+    assert expr, "the repro stage declares no success_when — it would be advice, not a gate"
     return expr
 
 
@@ -501,7 +501,7 @@ async def _drive(output: dict, inputs: dict) -> tuple[RunStatus, dict]:
 class TestReproductionBeforeEdit:
     async def test_a_bug_run_that_did_not_reproduce_fails(self) -> None:
         """The inversion: the stage RAN, and that is not success. "I could not reproduce it
-        but I can see the bug" is the exact move R5c exists to stop."""
+        but I can see the bug" is the exact move the repro gate exists to stop."""
         status, _outputs = await _drive(
             {"fail_reproduced": False, "infeasible_reason": ""},
             {"bug_flavored": True},

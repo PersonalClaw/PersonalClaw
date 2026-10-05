@@ -1,14 +1,14 @@
-"""A resolved credential never reaches the run ledger ON DISK (criterion 11).
+"""A resolved credential never reaches the run ledger ON DISK.
 
-Criterion 11: *"`{{secret:KEY}}` never appears resolved in triggers.json, journals, **ledger**, or
-`automation_history` output."*
+The promise: `{{secret:KEY}}` never appears resolved in triggers.json, journals, **ledger**, or
+`automation_history` output.
 
 **What already held, verified by driving rather than assumed** — the dispatch half is sound. A
 trigger
 whose bash command is `echo tok={{secret:MY_KEY}}` keeps the PLACEHOLDER in `triggers.json`, the
 provider receives the RESOLVED value (it must, to authenticate), and after the fire the resolved
 value
-appears in no file under the home. S115 built that correctly.
+appears in no file under the home. That half was built correctly.
 
 🔴 THE GAP. The API's `_redact_run` cleans the RESPONSE, and nothing cleaned the WRITE. Measured:
 a run
@@ -21,7 +21,7 @@ produces — was written in plaintext to **both** `cron-history/<job>.jsonl` and
 Both are 0600, but both are on disk, both are carried by `personalclaw snapshot`, and
 both are
 readable by anything that reads the home. **Redacting only on read is a read-path control over a
-storage-path leak** — and the criterion says "ledger", not "ledger responses".
+storage-path leak** — and the promise says "ledger", not "ledger responses".
 
 Fixed at `append_sync`, the single funnel every run record passes through, so a future caller
 cannot
@@ -146,7 +146,7 @@ def test_a_REDACTION_FAILURE_withholds_rather_than_stores_raw(monkeypatch):
 
 def test_a_redaction_failure_does_NOT_lose_the_run_record(tmp_path, monkeypatch):
     """The record must still be written — a bookkeeping failure that dropped the row would hide the
-    run entirely, which is the silent drop criterion 8 bans."""
+    run entirely: a silent drop."""
     monkeypatch.setattr(
         "personalclaw.security.redact_credentials",
         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
@@ -172,7 +172,7 @@ def test_the_redaction_is_at_the_SINGLE_write_point():
 def test_it_reuses_the_SHARED_matcher():
     """Not a second regex set. A credential pattern added to `security` must cover this
     automatically
-    — a private copy would drift, which is the lesson S115 recorded for the workflow lint."""
+    — a private copy would drift, the lesson already learned with the workflow lint."""
     import inspect
 
     src = inspect.getsource(_redact_stored)
@@ -184,7 +184,7 @@ def test_it_reuses_the_SHARED_matcher():
 
 
 def test_the_STORED_TRIGGER_keeps_the_placeholder(tmp_path):
-    """The contract, re-asserted here because criterion 11 covers `triggers.json` too: resolution
+    """The contract, re-asserted here because the promise covers `triggers.json` too: resolution
     happens at DISPATCH, so the row on disk never holds a value."""
     from personalclaw.triggers.models import Trigger
     from personalclaw.triggers.store import TriggerStore

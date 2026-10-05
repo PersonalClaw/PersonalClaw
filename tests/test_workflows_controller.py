@@ -1,12 +1,12 @@
 """The controller and journal — end-to-end runs against a temp home.
 
-These are the integration tests for the slice: a real spec, a real journal on disk, real
+These are the integration tests: a real spec, a real journal on disk, real
 state persistence, with only the model call faked. Everything writes under a monkeypatched
 `config_dir`, so nothing here can touch a real home.
 
 The load-bearing assertions:
 
-* **the resume cache re-runs exactly the binding closure** (WF2-A1) — after editing one
+* **the resume cache re-runs exactly the binding closure** — after editing one
   node's prompt, that node and its dependents re-run and nothing else does, asserted from
   the LEDGER rather than from logs;
 * **budget is pre-charged on resume** — a resumed run inherits its spend, or a
@@ -152,7 +152,7 @@ class TestHappyPath:
 
 
 class TestArtifactOffload:
-    """WV-11 end to end: a node whose output offloads populates `node_artifacts`, so a
+    """Artifact offload end to end: a node whose output offloads populates `node_artifacts`, so a
     downstream `{{nodes.x.artifact}}` resolves to a live pointer."""
 
     #: A big output goes to the model node; the transform below binds its ARTIFACT ref.
@@ -199,7 +199,7 @@ class TestArtifactOffload:
 
 
 class TestResumeCache:
-    """WF2-A1: the acceptance bar is that this is answerable from the LEDGER."""
+    """The bar is that this is answerable from the LEDGER."""
 
     async def _run_once(self, spec, fn, run=None):
         run = run or _make_run(spec)
@@ -681,7 +681,7 @@ class TestBudget:
         assert "budget" in c.run.error_message
 
     async def test_resume_pre_charges_from_the_ledger(self) -> None:
-        """WF2-R4 invariant #1: without this a crash loop mints a fresh budget every
+        """Without this a crash loop mints a fresh budget every
         restart and spends without bound."""
         run = _make_run(SEQ_SPEC)
         c = RunController(run, SEQ_SPEC, services=EngineServices(completion=_echo()))
@@ -859,7 +859,7 @@ class TestLedger:
 
 class TestBranchAndJoinIntegration:
     async def test_an_untaken_branch_does_not_deadlock_a_live_run(self) -> None:
-        """WF2-R18 regression #1, end to end."""
+        """The untaken-branch regression, end to end."""
         spec = {
             "name": "j",
             "root": {
@@ -896,7 +896,7 @@ class TestBranchAndJoinIntegration:
         assert c.instances["root.children[0].cases[feat]"].state == InstanceState.SKIPPED
 
     async def test_an_async_fan_out_join_waits_for_the_slowest_leg(self) -> None:
-        """WF2-R18 regression #2, end to end: the timing IS the assertion."""
+        """The slowest-leg regression, end to end: the timing IS the assertion."""
         spec = {
             "name": "f",
             "root": {
@@ -1196,7 +1196,7 @@ class TestResilienceIntegration:
         """A 20-iteration loop returning identical output must not run 20 times, and must cost
         no model calls to notice.
 
-        PP-15 relaxed the BOUND, not the property. The old bound (`<= 4`) encoded the binary
+        The BOUND was relaxed, not the property. The old bound (`<= 4`) encoded the binary
         failure: the first trip went straight to a human, so every middle rung of the declared
         escalation ladder was unreachable in production. The thrash now walks the ladder — a
         nudge, then the engine rungs — before spending a human, so it takes more iterations and
@@ -1274,7 +1274,7 @@ class TestResilienceIntegration:
 class TestProjectOverviewOnComplete:
     """The completion hook: a COMPLETE run auto-revises its
     project's living overview and appends a decisions-ledger line — DETERMINISTICALLY (an
-    appended line, not an LLM summary; DEVIATION recorded in the plan log). The hook is
+    appended line, not an LLM summary). The hook is
     best-effort: `_finish` is the single terminal writer and must never raise.
     """
 
@@ -1360,7 +1360,7 @@ class TestWorkspaceProvisioningAtRunStart:
     The load-bearing properties, each of which fails silently without a test:
 
     * a FATAL declaration REFUSES the run rather than running in an unchosen mode (the
-      ignored-fatal-issue shape this program keeps finding);
+      ignored-fatal-issue shape this codebase keeps finding);
     * a spec with NO block provisions nothing — a workspace is a declaration, not a default, and
       defaulting it took every crash-survivor run out of the adoption path;
     * `services.cwd` is REPOINTED at the workspace, or the isolation would be a directory nothing

@@ -1,6 +1,6 @@
 import type { WeekOccurrence } from '../../lib/api'
 
-/** The 7×24 week grid's PLACEMENT, as pure functions (AUTO-A3).
+/** The 7×24 week grid's PLACEMENT, as pure functions.
  *
  *  Split from the component for the same reason `runDag.ts` is: the grid's hard part is deciding
  *  which cell an epoch lands in and what that cell says, and none of that needs a DOM to test. The

@@ -383,8 +383,8 @@ def _facts_from_tool_history(
     second copy of "what counts as a failed tool call" is a second answer that would drift from the
     one the breaker and procedural memory already use.
 
-    A call with no recorded result is ``attempted``. That is the interrupted case the whole atom is
-    about, so it is the one place where saying less is the entire point.
+    A call with no recorded result is ``attempted``. That is the interrupted case the whole module
+    is about, so it is the one place where saying less is the entire point.
     """
     from personalclaw import security
 

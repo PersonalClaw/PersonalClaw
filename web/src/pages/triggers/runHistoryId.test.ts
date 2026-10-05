@@ -3,13 +3,13 @@
  *
  * 🔴 THE DEFECT. `api.scheduleHistory` / `api.scheduleRunDetail` hardcoded a `schedule:` prefix, and
  * `RunHistory` was private to `ScheduleDetail` and took a bare job id. So a store trigger's run
- * history was **unrequestable from the frontend** even after the backend began serving it — S166 for
- * the list, S167 for the per-run detail. `StoreTriggerDetail` showed "When it runs" and "What it
+ * history was **unrequestable from the frontend** even after the backend began serving it — the
+ * list and the per-run detail. `StoreTriggerDetail` showed "When it runs" and "What it
  * runs" and nothing about whether it ever had.
  *
  * These tests pin the id ALGEBRA, which is where the bug lived: which id addresses the endpoint, and
  * which addresses the run store behind it. They are two different strings and confusing them is how
- * S165 nearly shipped an inert fix.
+ * an earlier fix nearly shipped inert.
  */
 import { describe, it, expect } from 'vitest'
 

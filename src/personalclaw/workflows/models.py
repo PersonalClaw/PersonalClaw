@@ -80,8 +80,8 @@ CONTAINER_KINDS = frozenset(
 NO_OUTPUT_KINDS = frozenset({NodeKind.SEQUENCE, NodeKind.PARALLEL, NodeKind.FOREACH})
 
 #: Kinds that consume model tokens AND take an author-tunable `model_tier`. `visualize`
-#: is deliberately NOT here: it makes a model call but is pinned to the reasoning axis
-#: (AMBIENT-SURFACES §5.3), so a `model_tier` would mean nothing on it — and the
+#: is deliberately NOT here: it makes a model call but is pinned to the reasoning axis,
+#: so a `model_tier` would mean nothing on it — and the
 #: validator's `prompt` requirement keys off this set, which `visualize` (data+hint, no
 #: prompt) must not trip.
 LLM_KINDS = frozenset({NodeKind.STAGE, NodeKind.INFER})
@@ -568,7 +568,7 @@ class Failure:
 
 @dataclass
 class FailureSignature:
-    """A 4-layer localization record for cheap cross-run diffing (WF2-R5)."""
+    """A 4-layer localization record for cheap cross-run diffing."""
 
     failing_node: str = ""
     stage: str = ""
@@ -592,7 +592,7 @@ class FailureSignature:
 class LifecyclePhase(str, Enum):
     """What a work-unit status MEANS, separate from the word a noun spells it with.
 
-    `PP-16`'s "one status vocabulary" clause is not a rename. `LoopStatus` and `RunStatus` each
+    "One status vocabulary" is not a rename. `LoopStatus` and `RunStatus` each
     carry members the other cannot express — `loop_run_map.STATUS_VOCABULARY_DELTA` measures the
     ten orphans — and, the part no rename can reconcile, they disagreed about the terminality of
     the SAME word: `failed` stamped an end timestamp and refused any further transition on a run,
@@ -720,7 +720,7 @@ class OverlapPolicy(str, Enum):
     run-workflow provider compared against `SKIP` and `CANCEL_PREVIOUS` and let `queue` fall
     through to create+launch, so the one policy whose name promises ordering started a
     CONCURRENT run — the exact behaviour `SKIP`'s comment below says the default exists to
-    prevent (WV-14). A new member must add its own branch there rather than inherit one.
+    prevent. A new member must add its own branch there rather than inherit one.
     """
 
     #: Default. A prior is still going ⇒ nothing is created and nothing starts. A per-minute
@@ -908,7 +908,7 @@ def _non_negative_int(value: Any) -> int:
 @dataclass
 class DefMetadata:
     """Declared, not inferred. `requirements` is what a run-start preflight checks so a
-    missing binary or credential fails BEFORE tokens are spent (Slice 6)."""
+    missing binary or credential fails BEFORE tokens are spent."""
 
     risk: str = "low"
     capabilities: list[str] = field(default_factory=list)
@@ -951,17 +951,17 @@ class DefMetadata:
     summary: str = ""
     #: When a reader should reach for this def.
     when_to_use: str = ""
-    #: Cadence channel (R8): days between intended runs. 0 means the author did not ask to be
+    #: Cadence channel: days between intended runs. 0 means the author did not ask to be
     #: nagged — the same reading `ttl: 0` gets.
     cadence_days: int = 0
     #: Cadence escalation mode (`manual` | `auto`). Auto materializes at most one task per day
     #: while overdue.
     escalation: str = "manual"
-    #: Fingerprint packs (R19) this def belongs to. A def with no pack is not pack-gated.
+    #: Fingerprint packs this def belongs to. A def with no pack is not pack-gated.
     packs: list[str] = field(default_factory=list)
-    #: Declared hand-off edges (R7): `[{target_def, condition, context_fields, ...}]`.
+    #: Declared hand-off edges: `[{target_def, condition, context_fields, ...}]`.
     hands_off_to: list[dict[str, Any]] = field(default_factory=list)
-    #: Blueprint mode (R16): render as a guided conversation rather than injected text.
+    #: Blueprint mode: render as a guided conversation rather than injected text.
     guided: bool = False
     #: Whether this template appears as a SKILL on
     #: ``GET /a2a/agent-card`` and is startable through ``POST /a2a/tasks``.
@@ -1183,7 +1183,7 @@ def run_work_id(run_id: str) -> str:
 class WorkflowRun:
     """One execution. `root_run_id` is propagated through subworkflow spawns, forks and the runs a
     step starts, and indexed with status, so the whole tree of a run is one query rather than a
-    recursive walk (WF2-R13)."""
+    recursive walk."""
 
     id: str
     workflow_name: str
@@ -1222,7 +1222,7 @@ class WorkflowRun:
     agent_count: int = 0
     error_message: str = ""
     attention: dict[str, Any] | None = None
-    #: PP-16 seam 4d: the run's SPARSE `SupervisorPolicy` overlay. A template
+    #: The run's SPARSE `SupervisorPolicy` overlay. A template
     #: is SHARED across runs, so it structurally cannot hold a per-instance user setting —
     #: the declared defaults stay where they are (`supervisor_policy.KIND_CONVERGENCE`, a
     #: template's `supervisor:` block) and this dict holds ONLY the knobs this run overrode
@@ -1230,7 +1230,7 @@ class WorkflowRun:
     #: and persists no state. The write seam (`store.set_policy_overrides`) is strict about
     #: keys; this reader is tolerant — see `from_dict` below.
     policy_overrides: dict[str, Any] = field(default_factory=dict)
-    #: TSE2-1 (MULTI-TENANCY-ENTITY): attribution, never authority. `owner_username` answers "whose
+    #: Attribution, never authority. `owner_username` answers "whose
     #: run is this" and `origin_harness` "which machine minted it" — both OPTIONAL, stamped at
     #: `store.create` from the shipped primitives (`identity.current_username()` and
     #: `durability.shards.machine_id`), never invented here. Empty is today's behaviour: a run with
@@ -1239,7 +1239,7 @@ class WorkflowRun:
     #: (how a change was made, not who), which is untouched.
     owner_username: str = ""
     origin_harness: str = ""
-    #: The loop kind this run was started AS, through `POST /api/loops` (PP-16: a ported loop kind
+    #: The loop kind this run was started AS, through `POST /api/loops` (a ported loop kind
     #: IS a run). ``""`` for every run that is not a loop — a template started from the Workflows
     #: page, a chat tool, a trigger. This is what makes "a run-backed loop is a loop" answerable
     #: from the run row: the loop listing selects on it, and nothing resolves a TEMPLATE back to a
@@ -1301,7 +1301,7 @@ class WorkflowRun:
     )
 
     def belongs_to(self, username: str) -> bool:
-        """Whether this run is ``username``'s work (TSE2-1, mirroring `Task.belongs_to`).
+        """Whether this run is ``username``'s work (mirroring `Task.belongs_to`).
 
         A run has no assignee, so `owner_username` alone decides. With no username configured
         every run belongs to the owner — a single-user install must behave exactly as it does
@@ -1493,7 +1493,7 @@ class NodeInstance:
     approved_request: str = ""
     approved_at: float = 0.0
     #: True when THIS instance's terminal output was served from the resume/rewind cache
-    #: (WF2-A1) rather than freshly produced. The `step_cached` ledger event is the durable
+    #: rather than freshly produced. The `step_cached` ledger event is the durable
     #: record; this is the projection a status read can answer from without scanning it, which
     #: is what lets the run view mark cached rows on a page load rather than only on the live
     #: event stream.

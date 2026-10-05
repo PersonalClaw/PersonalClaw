@@ -412,7 +412,7 @@ class TestTheOperations:
     async def test_reply_draft_writes_a_draft_and_has_no_send_path_at_all(
         self, tmp_path: Path, monkeypatch: Any
     ) -> None:
-        """§1.6 bound 2, enforced in the provider rather than trusted to the caller."""
+        """A draft is never a send, enforced in the provider rather than trusted to the caller."""
         from personalclaw.action_providers import inbox_op_provider as mod
         from personalclaw.action_providers.base import ActionContext
 
@@ -617,7 +617,7 @@ class TestTheFourBounds:
         assert uncapped.deferred == ()
 
     async def test_a_budget_breach_mid_run_demotes_the_rest_with_skipped_budget_rows(self) -> None:
-        """Bound 4 — the clause, with the sibling that makes it mean something.
+        """Bound 4 — the budget breach, with the sibling that makes it mean something.
 
         Leg 1 (the control) runs the SAME fixture under a probe that never breaches and requires
         all `_EXPECTED_UNDER_BUDGET` to execute. Leg 2 breaches after the first check. Without
@@ -697,7 +697,7 @@ class TestTheFourBounds:
         assert "could not be verified" in reason
 
     async def test_the_real_budget_floor_is_the_one_consulted(self, tmp_path: Path) -> None:
-        """`default_budget_check` reads the NEW-1 meter, not a private counter of its own."""
+        """`default_budget_check` reads the shared `SpendMeter`, not a counter of its own."""
         import personalclaw.guardrails.budgets as budgets_mod
         from personalclaw.guardrails.budgets import Budget, SpendMeter
         from personalclaw.proactive.autoexec import default_budget_check
@@ -923,7 +923,7 @@ class TestRulesAndAccounting:
         assert result.executed[0].rule == TIER_POLICY_RULE
 
     async def test_every_proposal_is_accounted_for(self) -> None:
-        """Zero silent drops (criterion 4): the counts always reconcile with the input."""
+        """Zero silent drops: the counts always reconcile with the input."""
         from personalclaw.proactive.approval import ApprovalRule, Verdict
 
         manifest = _manifest()
@@ -1042,11 +1042,11 @@ class TestRulesAndAccounting:
         assert _approval_rules(_Boom()) == []
 
 
-# ---------------------------------------------------------------- criterion 2
+# ---------------------------------------------------------------- adversarial injection
 
 
 class TestTheAdversarialInjection:
-    """Criterion 2, verbatim: an inbox item containing prompt-injection text cannot cause any
+    """An inbox item containing prompt-injection text cannot cause any
     action outside the trigger's frozen capability set, cannot self-assign `trivial`, and cannot
     reference an item id absent from the collect manifest.
 
@@ -1257,7 +1257,7 @@ class TestTheCallSite:
         await TriageDigestActionProvider().execute({}, ActionContext(event="clock", payload={}))
         assert len(seen) == 1
         stage = seen[0].get("auto_execute")
-        assert stage is not None, "deleting the auto_execute= wiring makes the whole atom inert"
+        assert stage is not None, "deleting the auto_execute= wiring makes the whole stage inert"
         # It is a real stage, not a placeholder: it returns an AutoExecResult.
         manifest = _manifest()
         out = await stage(_trivial_archives(manifest), manifest)

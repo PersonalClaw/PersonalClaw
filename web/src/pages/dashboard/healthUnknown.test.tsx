@@ -131,7 +131,7 @@ describe('the settings health and safety cards say when they could not check', (
   /** One `SETTINGS_WIDGETS` entry, brace-matched from its `id:` line.
    *
    *  🪤 This used to be a FILE-WIDE count pinned at 2, which made the rail measure the wrong
-   *  thing: it passed only while exactly two cards in the whole file used this copy. CA-2's
+   *  thing: it passed only while exactly two cards in the whole file used this copy. The
    *  Devices card adopted the same good form — a failed read must not read as "no devices" on a
    *  security surface — and the count went to 3, reporting a regression where there was none,
    *  while still saying nothing about whether THESE two cards kept the pattern. Scoped per card

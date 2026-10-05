@@ -1,7 +1,7 @@
 """A scheduled script runs under the ``tool`` resource ceiling.
 
 ``run_script_sandboxed`` already had the OS path sandbox (``wrap_argv``) and,
-an allowlisted child environment. Neither is a resource ceiling: before EI-3 a cron script
+an allowlisted child environment. Neither is a resource ceiling: before this change a cron script
 could exhaust the gateway's file descriptors or fork-bomb in ways an agent bash command —
 which has carried the ``tool`` ceiling — already could not.
 
@@ -118,7 +118,7 @@ def test_a_cron_script_child_reports_the_configured_nofile_ceiling(
         """,
     )
 
-    r = ss.run_script_sandboxed(spec, "ei3-job", "", timeout=_TIMEOUT)
+    r = ss.run_script_sandboxed(spec, "script-job", "", timeout=_TIMEOUT)
 
     assert r["status"] == "ok", r
     assert r["message"] == str(_CEILING), (
@@ -159,7 +159,7 @@ def test_a_cron_script_that_exceeds_the_fd_ceiling_is_contained(
     _set_sandbox_config(monkeypatch, tmp_path, nofile=_CEILING, max_pids=0, max_rss_mb=0)
     spec = _crons_with(monkeypatch, tmp_path, "bomb.py", _FD_BOMB.format(attempts=_ATTEMPTS))
 
-    r = ss.run_script_sandboxed(spec, "ei3-job", "", timeout=_TIMEOUT)
+    r = ss.run_script_sandboxed(spec, "script-job", "", timeout=_TIMEOUT)
 
     assert r["status"] == "ok", r
     opened, err = r["message"].split("|")
@@ -188,7 +188,7 @@ def test_the_same_script_is_uncontained_when_the_operator_disables_the_cap(
     _set_sandbox_config(monkeypatch, tmp_path, nofile=0, max_pids=0, max_rss_mb=0)
     spec = _crons_with(monkeypatch, tmp_path, "bomb.py", _FD_BOMB.format(attempts=_ATTEMPTS))
 
-    r = ss.run_script_sandboxed(spec, "ei3-job", "", timeout=_TIMEOUT)
+    r = ss.run_script_sandboxed(spec, "script-job", "", timeout=_TIMEOUT)
 
     assert r["status"] == "ok", r
     opened, err = r["message"].split("|")
@@ -257,7 +257,7 @@ def test_the_ceiling_shim_wraps_the_sandbox_and_not_the_reverse(
 
     monkeypatch.setattr(ss.subprocess, "run", _capture)
     monkeypatch.setattr(ss, "wrap_argv", _record_wrap)
-    r = ss.run_script_sandboxed(spec, "ei3-job", "", timeout=_TIMEOUT)
+    r = ss.run_script_sandboxed(spec, "script-job", "", timeout=_TIMEOUT)
     assert r["status"] == "ok", r
 
     assert len(seen) == 1, (
@@ -311,7 +311,7 @@ def test_the_ceiling_survives_an_intervening_os_sandbox_wrapper(
         """,
     )
 
-    r = ss.run_script_sandboxed(spec, "ei3-job", "", timeout=_TIMEOUT)
+    r = ss.run_script_sandboxed(spec, "script-job", "", timeout=_TIMEOUT)
 
     assert r["status"] == "ok", r
     assert r["message"] == str(_CEILING), (

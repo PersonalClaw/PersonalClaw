@@ -1,6 +1,6 @@
 """Import-lint: an installed APP may only reach into core through ``personalclaw.sdk.*``.
 
-The core/app boundary (workspace-core-app-split §3) is a PUBLISHED SDK: apps import the
+The core/app boundary is a PUBLISHED SDK: apps import the
 stable ``personalclaw.sdk`` facade, never deep core internals (``personalclaw.dashboard``,
 ``personalclaw.agents.native``, ``personalclaw.tool_providers.projection``, …). This test
 statically scans every ``apps/<name>/*.py`` and fails on any ``import personalclaw.X`` /
@@ -9,7 +9,7 @@ statically scans every ``apps/<name>/*.py`` and fails on any ``import personalcl
 Rationale: if an app reaches past the SDK, core can't evolve its internals without
 breaking installed apps — the whole point of the separation. When a genuinely-needed
 symbol isn't on the SDK yet, the fix is to PROMOTE it to a ``personalclaw.sdk`` submodule
-(as the model/media/tool/acp waves did), not to reach around the boundary.
+(as the model/media/tool/acp symbols were), not to reach around the boundary.
 
 Test files (``test_*.py``) are exempt: they legitimately import core test helpers +
 patch core module paths (they run in the dev tree, not as an installed app).
@@ -31,15 +31,15 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 _BUNDLED_APPS = _REPO_ROOT / "src" / "personalclaw" / "apps" / "native"
 
 #: Path segments that are never app source. ``.worktrees`` and ``.git`` are the two that
-#: matter and the two that were missing: the apps clone hosts other lanes' linked worktrees
-#: under ``PersonalClawApps/.worktrees/<lane>/``, and ``rglob`` walks straight into them.
+#: matter and the two that were missing: the apps clone hosts other branches' linked worktrees
+#: under ``PersonalClawApps/.worktrees/<name>/``, and ``rglob`` walks straight into them.
 #: Measured on the main checkout: **532** files matched, **355 of them (67%) inside two other
-#: lanes' worktrees** — so this rail's verdict was a function of other people's uncommitted
-#: work, and a violation in scratch state reded a lane that had never opened the file.
+#: branches' worktrees** — so this rail's verdict was a function of other people's uncommitted
+#: work, and a violation in scratch state reded a branch that had never opened the file.
 _NOT_APP_SOURCE = frozenset({"__pycache__", ".venv", "node_modules", ".worktrees", ".git"})
 
 #: How far up to look for the workspace-level apps clone. Four is the measured depth from a
-#: linked worktree (``<lane>`` → ``.worktrees`` → checkout → workspace); five leaves one
+#: linked worktree (``<name>`` → ``.worktrees`` → checkout → workspace); five leaves one
 #: step of slack without wandering far enough to meet an unrelated ``apps/`` directory.
 _ANCESTOR_SEARCH_DEPTH = 5
 
@@ -66,15 +66,15 @@ def _sibling_apps_root() -> Path | None:
     🔴 The previous fix for issue 1777 was still wrong from a git worktree, in the same way
     for a subtler reason. It resolved the workspace as ``_REPO_ROOT.parent`` — correct from
     the main checkout, where that IS the workspace. But ``_REPO_ROOT`` is the tree the tests
-    live in, and this project's lanes each run from a linked worktree at
-    ``<checkout>/.worktrees/<lane>``; there ``_REPO_ROOT.parent`` is ``.worktrees``, so
+    live in, and this project's parallel branches each run from a linked worktree at
+    ``<checkout>/.worktrees/<name>``; there ``_REPO_ROOT.parent`` is ``.worktrees``, so
     neither sibling spelling exists and the scan silently fell back to the bundled apps
     alone. **Measured: 2 files scanned, against 177 in the sibling clone** — and
     ``test_the_lint_has_something_to_lint`` stayed green, because a non-empty assertion is
     satisfied by 1.1% of the population just as well as by all of it.
 
     So the rail that had "never run, anywhere" was, after its fix, running at 1% for every
-    lane in the project. Hence the search is by ancestor walk with a positive proof
+    linked worktree in the project. Hence the search is by ancestor walk with a positive proof
     (``_holds_app_bundles``) instead of one hardcoded level: the depth from the tests to the
     workspace is a property of how the suite was invoked, which no fixed offset can encode.
 
@@ -183,13 +183,13 @@ def test_the_lint_has_something_to_lint():
     assert _app_source_files(), f"roots resolved but hold no app source: {roots}"
 
 
-def test_no_scanned_file_comes_from_another_lanes_worktree():
+def test_no_scanned_file_comes_from_another_linked_worktree():
     """The over-scan half: the apps clone hosts linked worktrees, and ``rglob`` entered them.
 
     Not folded into the floor above because it is the opposite failure. That one catches a
     scan that sees too little; this one catches a scan that sees other people's uncommitted
     work — 355 of 532 matched files on the measured run — which makes this rail's verdict
-    non-deterministic across lanes and reds a branch for a file it never opened.
+    non-deterministic across worktrees and reds a branch for a file it never opened.
     """
     intruders = [
         str(f)
@@ -205,7 +205,7 @@ def test_no_scanned_file_comes_from_another_lanes_worktree():
 def test_the_apps_root_resolves_from_a_linked_worktree_layout(tmp_path, monkeypatch):
     """The resolution regression, pinned on a layout instead of on this machine.
 
-    `_REPO_ROOT.parent` is the workspace from the main checkout and `.worktrees` from a lane,
+    `_REPO_ROOT.parent` is the workspace from the main checkout and `.worktrees` from a worktree,
     which is why the bug was invisible to whoever ran the suite from the checkout. Building
     both layouts makes the difference the assertion rather than the environment.
 
@@ -214,8 +214,8 @@ def test_the_apps_root_resolves_from_a_linked_worktree_layout(tmp_path, monkeypa
     must NOT match.
     """
     workspace = tmp_path / "ws"
-    lane = workspace / "PersonalClaw" / ".worktrees" / "lane-x"
-    lane.mkdir(parents=True)
+    linked = workspace / "PersonalClaw" / ".worktrees" / "feature-x"
+    linked.mkdir(parents=True)
     apps = workspace / "PersonalClawApps"
     (apps / "demo-app").mkdir(parents=True)
     (apps / "demo-app" / "app.json").write_text("{}", encoding="utf-8")
@@ -226,7 +226,7 @@ def test_the_apps_root_resolves_from_a_linked_worktree_layout(tmp_path, monkeypa
     (decoy / "not-an-app").mkdir()
     assert not _holds_app_bundles(decoy), "a directory with no app.json child is not an apps root"
 
-    for tree_root in (lane, workspace / "PersonalClaw"):
+    for tree_root in (linked, workspace / "PersonalClaw"):
         monkeypatch.setattr(sys.modules[__name__], "_REPO_ROOT", tree_root)
         assert _sibling_apps_root() == apps, (
             f"from {tree_root.relative_to(workspace)} the walk did not find the apps clone "

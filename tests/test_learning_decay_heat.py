@@ -1,4 +1,4 @@
-"""Memory heat on the ONE decay kernel (LEARN-R6f / WF2LEA-9 part 2).
+"""Memory heat on the ONE decay kernel.
 
 The migration is a behaviour change, so both behaviours are pinned here: the numbers
 the private `e^(−days/30)` curve produced and the numbers the kernel produces. A test

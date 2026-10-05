@@ -7,9 +7,9 @@ One arm-masked runner, TWO stores, run separately and read-only:
   RRF-fused;
 * **memory** — :meth:`~personalclaw.vector_memory.VectorMemoryStore.rank_semantic` over
   ``memory.db``: the same three arm names over the ``0.6·vec + 0.4·kw`` hybrid plus
-  MEMORY-GRAPH's graph boost.
+  the memory graph's boost.
 
-The two stores never share a corpus, never cross-query, and neither is written: §5.1's
+The two stores never share a corpus, never cross-query, and neither is written: the
 KNOWLEDGE/MEMORY boundary. Fixtures, qrels and reports are harness mechanics under
 ``~/.personalclaw/evals/`` — no eval artifact is a memory entry or a knowledge item.
 
@@ -32,7 +32,7 @@ anything, the mask never reached the retriever and every per-arm delta in the re
 noise — so the run raises :class:`MaskNotAppliedError` instead of publishing.
 
 **Weak labels, and their bias, stated.** Qrels are mined from events, never synthesized
-from the arms' own inputs: knowledge from LEARN-R4's ``surfacing_events`` (the source
+from the arms' own inputs: knowledge from ``surfacing_events`` (the source
 (a), retrieved-then-used at turn time) AND from ``intent_outcomes`` (an ingest-time LLM
 match against an item's consolidated content — it does not consult retrieval, so it is not
 circular), memory from ``mem_volunteer_events`` via
@@ -40,7 +40,7 @@ circular), memory from ``mem_volunteer_events`` via
 Deliberately NOT implemented: the source (c), synthetic entity queries from the alias
 table. Both stores' graph arms take entity mentions as their INPUT, so a qrels set built
 from mentions would score the graph arm against its own index and manufacture the very
-"+P@5 from the graph arm" finding the report exists to test. See the plan's ES-3 log.
+"+P@5 from the graph arm" finding the report exists to test.
 """
 
 from __future__ import annotations
@@ -179,7 +179,7 @@ class MaskNotAppliedError(RuntimeError):
 
 
 class StoreMutatedError(RuntimeError):
-    """A store file changed across the run — §5.1's read-only clause, violated."""
+    """A store file changed across the run — the read-only rule, violated."""
 
 
 # ── mask arithmetic ──────────────────────────────────────────────────────────
@@ -293,7 +293,7 @@ SOURCE_HAND_LABEL = "hand_label"
 
 @dataclass(frozen=True)
 class RetrievalBenchmark:
-    """``{name, store, corpus_snapshot_ref, queries, created_at}`` (§5.2).
+    """``{name, store, corpus_snapshot_ref, queries, created_at}``.
 
     ``corpus_snapshot_ref`` versions the corpus by REFERENCE (row-id set + content hash),
     never by copying the store: re-running an old benchmark against a grown store reports
@@ -346,7 +346,7 @@ class RetrievalBenchmark:
 
         Every :class:`QrelsQuery` already carries its ``source``, but only inside
         ``benchmark.json``: the report and the panel showed P@5 with no visible statement
-        of which labels produced it. §5.2 names three sources and the knowledge store mines
+        of which labels produced it. There are three label sources and the knowledge store mines
         TWO of them with different biases — ``surfacing_events`` (source (a), turn-time
         retrieved-then-used) and ``intent_outcomes`` (ingest-time topical match) — so a
         reader who cannot see the mix cannot judge the number. A knowledge run whose census
@@ -498,7 +498,7 @@ def build_table(scores: "list[QueryScore]", *, k: int) -> list[ArmMaskRow]:
 
 @dataclass(frozen=True)
 class ArmContribution:
-    """One arm's marginal contribution — the number §5.3 asks for, plus its verdict."""
+    """One arm's marginal contribution, plus its verdict."""
 
     arm: str
     full_p_at_k: float | None
@@ -531,7 +531,7 @@ class ArmContribution:
 def arm_verdict(
     contribution_p: float | None, scored_queries: int, *, arm_ran: bool
 ) -> tuple[str, tuple[str, ...]]:
-    """The offline verdict a dark-shipped arm gets BEFORE enablement (§5.3).
+    """The offline verdict a dark-shipped arm gets BEFORE enablement.
 
     :data:`ARM_UNMEASURED` when the arm was never observed to run, when the delta does not
     exist, or when it rests on fewer than :data:`MIN_SCORED_QUERIES` queries — an
@@ -658,7 +658,7 @@ def store_unchanged(db_path: "str | Path") -> "Iterator[dict[str, str]]":
     The check runs in a ``finally``, so a body that RAISED is still checked — the case an
     edit-and-edit-back implementation strands. The digest is taken AFTER the caller has
     opened the store, because opening it runs ``CREATE TABLE IF NOT EXISTS`` migrations
-    that legitimately write; §5.1's clause is about the RETRIEVAL being read-only, and
+    that legitimately write; the rule is about the RETRIEVAL being read-only, and
     measuring the open would make the rail fire on a first-ever run.
     """
     before = store_digest(db_path)
@@ -673,15 +673,14 @@ def store_unchanged(db_path: "str | Path") -> "Iterator[dict[str, str]]":
         drift = sorted(p for p, digest in before.items() if after.get(p) != digest)
         if drift:
             raise StoreMutatedError(
-                "retrieval bench wrote to a store (forbidden by §5.1, read-only): "
-                + ", ".join(drift)
+                "retrieval bench wrote to a store (forbidden, read-only): " + ", ".join(drift)
             ) from failure
 
 
 def sibling_store_paths(measured: "str | Path") -> list[Path]:
     """The OTHER live store's files, when ``measured`` is a live store under this home.
 
-    §5.1's clause is "never writes to **either**" store, but a run measures only one, so
+    The rule is "never writes to **either**" store, but a run measures only one, so
     :func:`store_unchanged` over the measured path alone left the other store unguarded:
     a knowledge run that wrote to ``memory.db`` — the one write the KNOWLEDGE/MEMORY
     boundary exists to forbid — passed the rail.
@@ -711,7 +710,7 @@ def sibling_store_paths(measured: "str | Path") -> list[Path]:
 
 @contextmanager
 def stores_unchanged(measured: "str | Path") -> "Iterator[dict[str, str]]":
-    """Both stores byte-identical across the block — §5.1's read-only clause, in full.
+    """Both stores byte-identical across the block — the read-only rule, in full.
 
     Guards the measured store AND (when it is this home's live store) the store the run
     never opened, so a cross-store write is a raise rather than a silent pass. Composed
@@ -960,7 +959,7 @@ def corpus_drifted(benchmark: RetrievalBenchmark, current_ref: str) -> bool:
 
 
 def mine_surfacing_qrels(handle) -> list[QrelsQuery]:
-    """§5.2's source (a) for the knowledge store: LEARN-R4's ``surfacing_events``, retrieved-
+    """Source (a) for the knowledge store: ``surfacing_events``, retrieved-
     then-used. The turn's ``query`` is the query, a ``used`` candidate's ``entity`` is a positive.
 
     **Every positive is resolved against the measured corpus, and an unresolvable one is
@@ -973,7 +972,7 @@ def mine_surfacing_qrels(handle) -> list[QrelsQuery]:
     retriever. A label whose id the store under test does not contain is not this store's
     ground truth — it is another arm's, and it belongs to that arm's bench.
 
-    ``used`` is the only positive predicate: §2.5 derives it mechanically at the moment the
+    ``used`` is the only positive predicate: it is derived mechanically at the moment the
     content reached the prompt. A surfaced-but-unused candidate is the DENOMINATOR of
     precision, never a positive.
     """
@@ -1054,13 +1053,13 @@ def mine_intent_qrels(handle) -> list[QrelsQuery]:
 
 
 def mine_knowledge_qrels(handle) -> list[QrelsQuery]:
-    """The knowledge store's mined qrels: §5.2 source (a) FIRST, then the ingest-time label.
+    """The knowledge store's mined qrels: source (a) FIRST, then the ingest-time label.
 
     **Two sources, not a fallback.** ``surfacing_events`` is source (a) proper — a real
     retrieved-then-used observation at turn time — and ``intent_outcomes`` is an ingest-time
     topical match. They answer different questions over the same id space, both are live, and
     each query carries its own ``source`` so :meth:`RetrievalBenchmark.sources` publishes the
-    mix. Neither stands in for the other: until LEARN-R4's writer covers a surfacing arm that
+    mix. Neither stands in for the other: until its writer covers a surfacing arm that
     ranks knowledge ITEMS, source (a) contributes no knowledge labels, and dropping
     ``intent_outcomes`` for that reason would trade a working non-circular label set for an
     empty one and leave every arm's marginal contribution unmeasurable.
@@ -1075,7 +1074,7 @@ def mine_knowledge_qrels(handle) -> list[QrelsQuery]:
 
 
 def mine_memory_qrels(handle) -> list[QrelsQuery]:
-    """Weak labels from ``mem_volunteer_events`` — retrieved-then-used (§5.2 source (a)).
+    """Weak labels from ``mem_volunteer_events`` — retrieved-then-used (source (a)).
 
     Delegates the used predicate to
     :meth:`~personalclaw.memory_graph.MemoryGraph.volunteer_qrels` so the benchmark's
@@ -1107,7 +1106,7 @@ def benchmarks_dir() -> Path:
 
 
 def benchmark_path(store_kind: str) -> Path:
-    """The saved benchmark for one store. One file per store — §5.1's "never share a
+    """The saved benchmark for one store. One file per store — "never share a
     corpus" is enforced by the filename, not by a field a caller could set wrong."""
     if store_kind not in STORES:
         raise RetrievalBenchError(f"unknown store {store_kind!r}; expected one of {STORES}")
@@ -1158,12 +1157,12 @@ def build_benchmark(store_kind: str, handle, *, name: str = "") -> RetrievalBenc
     )
 
 
-# ── the hand-label card (§5.2 source (b)) ────────────────────────────────────
+# ── the hand-label card (source (b)) ─────────────────────────────────────────
 
 #: How many candidates a card offers per query. The card is literally "mark which of
 #: these 8 results answer this real query of yours".
 HAND_LABEL_CANDIDATES = 8
-#: How many queries one card offers. §5.2 calls it a 10-minute pass; 5 queries × 8
+#: How many queries one card offers. It is meant as a 10-minute pass; 5 queries × 8
 #: candidates is about that.
 HAND_LABEL_QUERIES = 5
 
@@ -1171,7 +1170,7 @@ HAND_LABEL_QUERIES = 5
 def hand_label_card(
     benchmark: RetrievalBenchmark, retriever: Retriever, *, limit: int = HAND_LABEL_QUERIES
 ) -> dict:
-    """The payload of §5.2's hand-labeling pass: head queries × their top candidates.
+    """The payload of the hand-labeling pass: head queries × their top candidates.
 
     Offers the queries whose labels are WEAKEST first — mined before hand-labelled, and
     fewer relevant ids before more — because a human minute spent confirming a query that
@@ -1302,7 +1301,7 @@ def run_retrieval_bench(
 ) -> RetrievalBenchResult:
     """Run one store's per-arm P@k/R@k ablation and persist it under ``matrices/<id>/``.
 
-    ``store_kind`` is REQUIRED and there is no default: §5.1 runs the two stores
+    ``store_kind`` is REQUIRED and there is no default: the two stores run
     SEPARATELY, and a default would make "I ran the retrieval bench" ambiguous about which
     half was measured. Pass ``handle``/``db_path`` to measure a store you already opened
     (tests, and the CLI which opens once to mine and then to score); otherwise the live
@@ -1312,7 +1311,7 @@ def run_retrieval_bench(
     AFTER measurement when the control mask retrieved anything
     (:class:`MaskNotAppliedError`) or EITHER store's files changed
     (:class:`StoreMutatedError` — :func:`stores_unchanged` guards the store this run never
-    opened too, because §5.1 forbids a write to either one).
+    opened too, because a write to either one is forbidden).
     """
     if store_kind not in STORES:
         raise RetrievalBenchError(f"unknown store {store_kind!r}; expected one of {STORES}")
@@ -1610,7 +1609,7 @@ def latest_retrieval_view() -> dict:
 
 
 def card_for_store(store_kind: str, *, limit: int = HAND_LABEL_QUERIES) -> dict:
-    """Build §5.2's hand-label card against the LIVE store, read-only.
+    """Build the hand-label card against the LIVE store, read-only.
 
     Opens the store, (re)mines the qrels so the card offers today's weakest-labelled
     queries, and asks the shipped retriever for each one's top candidates under the FULL
@@ -1703,7 +1702,7 @@ def _read_table_if_ours(run_dir: Path) -> dict | None:
 def _sel_log(
     bench_id: str, store_kind: str, benchmark: RetrievalBenchmark, *, outcome: str
 ) -> None:
-    """SEL-log a bench lifecycle event (§10). Best-effort — never breaks a run."""
+    """SEL-log a bench lifecycle event. Best-effort — never breaks a run."""
     try:
         sel().log_api_access(
             caller=f"retrieval-bench:{bench_id}",

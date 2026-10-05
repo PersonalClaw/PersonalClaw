@@ -24,7 +24,7 @@ forgotten — which is exactly the defect this module exists to close. So `tick_
 the spool drain sits there: an idle session is *precisely* when an idle trigger is due, and
 returning early on an empty due-set would skip it exactly then.
 
-**🔴 HALF 2 LANDED: `autonudge.py` is deleted and the loop tick engine rides this
+**🔴 `autonudge.py` is deleted and the loop tick engine rides this
 runtime.** The two populations that used to coexist — user idle triggers here, loop-worker nudge
 loops in autonudge's private store + timers — now live in ONE store and tick off ONE poll. The
 split that remains is a ROUTING split, decided per row by one spec read (`_is_nudge`):
@@ -39,12 +39,12 @@ split that remains is a ROUTING split, decided per row by one spec read (`_is_nu
   fall-through to the wake path.
 * **The overlap that WOULD be possible is still refused.** A plain idle trigger scoped to a
   session some nudge loop drives is skipped with the same typed reason (`autonudge_owns_session`,
-  kept verbatim for wire/test stability) — logged, never silently dropped (§7 crit 8). The fence
+  kept verbatim for wire/test stability) — logged, never silently dropped. The fence
   is now a scan of the rows already in hand (`_nudge_owned_sessions`) rather than a probe into a
   second store, because there is no second store.
 
 **Preserved autonudge semantics** (from the deleted `autonudge.py`'s timer body, kept verbatim
-in meaning — the historical line references live in the design note):
+in meaning):
 
 * **Reactive re-arm.** A fire re-arms from the fire, not from a fixed grid: `armed_at` is stamped
   to the fire instant so the next fire is `idle_secs` after *this* one settled. User activity
@@ -93,7 +93,7 @@ DEFAULT_IDLE_SECS = 60.0
 _SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 #: Why an enabled idle trigger did not fire this poll. Typed so the caller can log a reason rather
-#: than a silence — §7 criterion 8 counts an unexplained non-fire as a silent drop.
+#: than a silence — an unexplained non-fire counts as a silent drop.
 SKIP_NOT_IDLE = "not_idle_yet"
 SKIP_AUTONUDGE = "autonudge_owns_session"
 SKIP_SESSION_BUSY = "session_mid_turn"
@@ -118,8 +118,8 @@ class IdleState:
     the trigger. `cycle_count` counts DELIVERED fires only, which is what makes `first_idle_secs`
     a genuine one-shot: a mid-turn drop leaves the count at 0 and the short first wait still armed.
 
-    `error_count` and `created_ts` carry the nudge adapter's per-loop state (WF2AUT-11 half 2):
-    consecutive errored turns (turn-churning, so it belongs here per S61d, not on the row) and
+    `error_count` and `created_ts` carry the nudge adapter's per-loop state:
+    consecutive errored turns (turn-churning, so it belongs here, not on the row) and
     the loop's birth time (the trigger entity deliberately keeps no birth time — its legacy field
     map says so — so the `/api/autonudge` wire's `created_ts` lives here instead). Both read as 0
     on every sidecar written before the port, which is the right default for each.
@@ -207,7 +207,7 @@ def idle_triggers(store: Any) -> list[Any]:
 
 
 def scope_session(trigger: Any) -> str:
-    """The session the trigger watches, from `spec.scope` (§1.2: `session:<key>` | `gateway`).
+    """The session the trigger watches, from `spec.scope` (`session:<key>` | `gateway`).
 
     `gateway` scope returns `""` — a gateway-wide idle period is not one session's quiet, and the
     delivery target is decided by `wakeup.session_key_for` from the trigger id like any other fire.
@@ -326,7 +326,7 @@ def fires_spent(trigger: Any) -> bool:
 def _nudge_owned_sessions(triggers: list[Any]) -> set[str]:
     """The sessions a nudge row already owns (the anti-double-fire fence, post-port).
 
-    Before WF2AUT-11 half 2 this was a probe into `autonudge.py`'s separate store; both
+    This used to be a probe into `autonudge.py`'s separate store; both
     populations now live in ONE store, so the fence is a scan of the rows already in hand. The
     question is unchanged — a plain idle trigger scoped to a session some nudge loop drives must
     defer, with the same typed reason (`SKIP_AUTONUDGE`), or the session gets nudged twice.
@@ -343,7 +343,7 @@ def due_fires(
 
     Split from `poll` for the same reason `service.tick` is split from `loop.run_forever`: the
     decision is pure and drivable, and the dispatch is the caller's. Each skip carries a reason so
-    the caller can log it — a non-fire with no reason is the silent drop §7 criterion 8 bans.
+    the caller can log it — a non-fire with no reason is a silent drop.
 
     Newly-seen triggers are ARMED here (their sidecar stamped with `now`), which is why this is not
     read-only: an unarmed trigger has no quiet period to measure, and leaving it unarmed would make
@@ -423,7 +423,7 @@ async def poll(
 
     The one runtime `KIND_RUNTIMES` names for `idle`. Deliberately reuses `wakeup.dispatch_fires`
     and `executor.drain` rather than a second dispatch path: an idle fire must walk exactly the
-    gates a clock fire walks, and a private path is precisely how the `web_watch` screen gap (S134)
+    gates a clock fire walks, and a private path is precisely how the `web_watch` screen gap
     happened.
 
     `sessions is None` (an API-only process) is reported, not treated as a delivery: the state

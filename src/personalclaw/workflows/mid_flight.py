@@ -1,4 +1,4 @@
-"""Applying mid-flight mutations (WF2-R2 / R20).
+"""Applying mid-flight mutations.
 
 `RunController.submit_mutation` validates a batch against the spec the queue will leave
 (`projected_spec`) and QUEUES it (`queue_mutation`, in memory and beside the run, so a restart does
@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 
 def queue_mutation(ctl: RunController, result: mutations.BatchResult, actor: str) -> None:
-    """Queue a validated batch for the drain point, in memory AND on disk (ledger 249).
+    """Queue a validated batch for the drain point, in memory AND on disk.
 
     On disk because the queue can outlive the controller: a PAUSED run applies its edits when it
     is resumed (`submit_mutation` does not wake it), and a gateway restart in between took an
@@ -116,7 +116,7 @@ def posture_refusal(
 
 def projected_spec(ctl: RunController) -> dict[str, Any]:
     """The spec the run will have once the queue drains: the last queued batch's candidate, or
-    the run's own spec when nothing is queued (ledger 293).
+    the run's own spec when nothing is queued.
 
     A batch is checked against THIS, not against the spec the run has now: two edits made while a
     run is paused apply one after the other, so the second has to be valid on the spec the first
@@ -152,11 +152,11 @@ def drain_mutations(ctl: RunController) -> None:
     """Apply queued batches, in order. Called under the lock, between scheduling steps.
 
     Each batch is PREPARED AGAIN here, against the spec the batch before it left and the state the
-    run is in now — never swapped in as the candidate it was queued with (ledger 293). That
+    run is in now — never swapped in as the candidate it was queued with. That
     candidate was computed from the spec at submit, so two edits made while a run was paused each
     carried a spec without the other's change, and committing the second put back the spec from
     before the first: the first edit vanished. Preparing again is also the re-verification
-    (WF2-R2 TOCTOU): nodes complete while a user reads a preview, so a node that was pending at
+    for TOCTOU: nodes complete while a user reads a preview, so a node that was pending at
     submit may be frozen by now, and a batch that no longer applies is rejected and journaled as
     rejected — a silently dropped batch is indistinguishable from an applied one.
 
@@ -233,7 +233,7 @@ def commit_mutation(ctl: RunController, result: mutations.BatchResult, actor: st
         elif op.kind == mutations.OpKind.FORK:
             _apply_fork(ctl, op)
 
-    # Nodes whose inputs changed but which are NOT being re-run (WF2-R2 #3). Flagged
+    # Nodes whose inputs changed but which are NOT being re-run. Flagged
     # rather than silently serving an answer computed from inputs that no longer exist.
     _flag_stale(ctl, result.preview)
     ctl._save_run()
@@ -307,8 +307,8 @@ def _apply_reentry(ctl: RunController, op: mutations.Op, preview: mutations.Casc
         ctl._park_answers.pop(path, None)
         # A pending approval for a node about to re-run would resume a step that no
         # longer exists in that form — drop the token rather than let it land
-        # in the wrong epoch. The question is WITHDRAWN: its confirmation closes `withdrawn`
-        # (ledger 249), and its Inbox row closes with it — left open, it offers the dropped
+        # in the wrong epoch. The question is WITHDRAWN: its confirmation closes `withdrawn`,
+        # and its Inbox row closes with it — left open, it offers the dropped
         # token, and the re-ask's row dedupes onto it (same run, path and epoch) instead of
         # carrying the live one. Reachable since a parked run applies a rewind at once; before,
         # a rewind at a gate never ran while the gate waited.
@@ -361,7 +361,7 @@ def _skip_by_id(ctl: RunController, node_id: str) -> None:
 
 
 def _flag_stale(ctl: RunController, preview: mutations.CascadePreview) -> None:
-    """Journal `inputs_stale` for done nodes outside the re-run set (WF2-R2 #3)."""
+    """Journal `inputs_stale` for done nodes outside the re-run set."""
     rerun = set(preview.rerun)
     for path, node in walk(ctl.root):
         if not node.id or node.id in rerun:

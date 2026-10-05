@@ -1,8 +1,8 @@
 """Workspace provisioning + teardown wiring.
 
-S49 and S52 shipped the two DECISION layers and both had zero production callers, so a spec's
+The two DECISION layers shipped first and both had zero production callers, so a spec's
 `workspace:` block was parsed nowhere and every run silently ran in place. These tests pin the
-performer and its two call sites, and they drive a REAL git repo for the same reason S52 did: the
+performer and its two call sites, and they drive a REAL git repo because the
 properties under test are facts about git's behaviour, not about our wrappers.
 
 Four things were MEASURED against a real repo before writing the module, and three of them
@@ -121,7 +121,7 @@ class TestSpecResolution:
         assert spec.mode is Mode.IN_PLACE
 
     def test_an_unparseable_default_mode_falls_back_to_scratch_NOT_in_place(self) -> None:
-        """The ruling: `in_place` is never a default. A config typo must not be the thing that
+        """The rule: `in_place` is never a default. A config typo must not be the thing that
         puts a destructive step against the user's real tree."""
         spec, issues = provisioning.resolve_spec({"workspace": {"setup": "x"}}, default_mode="wat")
         assert spec.mode is Mode.SCRATCH
@@ -360,7 +360,7 @@ class TestDegradation:
         )
 
     async def test_container_mode_degrades_rather_than_refusing(self, home, repo) -> None:
-        """WF2WOR-12 shipped container mode with the no-environment posture unchanged: a bare
+        """Container mode keeps the no-environment posture: a bare
         `container` declaration (no manifest) still RUNS — isolated scratch, reason recorded,
         no container id claimed."""
         run = _run()
@@ -809,7 +809,7 @@ class TestDeletionPaths:
 
 class TestSubstrateCheck:
     async def test_the_sweep_reads_the_REAL_worktree_state(self, home, repo) -> None:
-        """S52 built `substrate_for` so "the boot sweep has one source of truth". Before this
+        """`substrate_for` exists so "the boot sweep has one source of truth". Before this
         change the sweep did its own `Path(wt).is_dir()`, so two places computed the same decision —
         and the disagreement shows up as a run aborted despite having recoverable work."""
         from personalclaw.workflows.controller import EngineServices
@@ -848,8 +848,8 @@ class TestSubstrateCheck:
         assert substrate.alive is False
 
     def test_an_inline_run_is_reported_NOT_isolated(self, home) -> None:
-        """So the sweep leaves it to adoption, which resumes it from the journal — the DEVIATION
-        the sweep's own docstring records."""
+        """So the sweep leaves it to adoption, which resumes it from the journal — the deliberate
+        choice the sweep's own docstring records."""
         from personalclaw.workflows.controller import EngineServices
         from personalclaw.workflows.watchdog import WorkflowWatchdog
 
@@ -863,7 +863,7 @@ class TestSubstrateCheck:
 
 class TestConfigReaders:
     def test_workspace_default_mode_is_READ_by_resolve_spec(self) -> None:
-        """A knob nothing reads is the inert-control class this program keeps finding."""
+        """A knob nothing reads is the inert-control class this codebase keeps finding."""
         for mode in ("scratch", "worktree", "in_place", "container"):
             spec, _ = provisioning.resolve_spec({"workspace": {"setup": "x"}}, default_mode=mode)
             assert spec.mode.value == mode

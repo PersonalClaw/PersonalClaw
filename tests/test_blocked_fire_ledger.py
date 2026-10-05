@@ -1,17 +1,17 @@
-"""A screened payload leaves a typed ledger row (§7 criterion 8).
+"""A screened payload leaves a typed ledger row.
 
-S134 wired the injection screen at the dispatch seam and recorded, in the plan, that the ledger
-row was
+The injection screen at the dispatch seam first shipped with the ledger
+row
 **still owed**: that path is not a `tick` fire, so nothing wrote one.
 
-🔴 WHY THAT MATTERED. Criterion 8: *"Every suppressed fire … appears as a typed ledger row with a
+🔴 WHY THAT MATTERED. The rule: *"Every suppressed fire … appears as a typed ledger row with a
 reason — zero silent drops."* A refusal only a log file knows about is a silent drop by that
 definition. The user sees an automation that stopped and has nowhere to look; and because
 `blocked_injection` **never auto-retries**, this row is the only record that will ever exist for
 that
 fire.
 
-**The screened TEXT is deliberately not stored.** Criterion 11's discipline generalises: a blocked
+**The screened TEXT is deliberately not stored.** The no-secrets discipline generalises: a blocked
 payload is hostile third-party content, and copying it into a store the UI renders would move an
 injection attempt out of a refused fire and into a surface a human reads. The matched GROUPS
 name the
@@ -65,7 +65,7 @@ def _rows(tmp_path, job_id="web_watch:w"):
 
 
 def test_a_BLOCKED_payload_writes_a_ledger_row(monkeypatch, tmp_path):
-    """🔴 The gap S134 left owed. Before this the refusal existed only in a log line."""
+    """🔴 The row the screen first left owed. Before this the refusal existed only in a log line."""
     _fire(monkeypatch, tmp_path, {"kind": "web_watch", "new_items": [EVIL]})
     _runs, total = _rows(tmp_path)
     assert total == 1
@@ -99,7 +99,7 @@ def test_the_row_is_attributed_to_the_TRIGGER(monkeypatch, tmp_path):
 
 
 def test_the_HOSTILE_TEXT_is_NOT_stored(monkeypatch, tmp_path):
-    """🔴 The discipline that matters most here. Criterion 11 keeps resolved secrets out of history;
+    """🔴 The discipline that matters most here. Resolved secrets are kept out of history;
     the same reasoning keeps a blocked payload out — storing it moves an injection attempt from a
     refused fire into a surface a human reads."""
     _fire(monkeypatch, tmp_path, {"kind": "web_watch", "new_items": [EVIL]})
@@ -112,7 +112,7 @@ def test_the_HOSTILE_TEXT_is_NOT_stored(monkeypatch, tmp_path):
 
 
 def test_the_provider_is_STILL_never_reached(monkeypatch, tmp_path):
-    """Adding bookkeeping must not soften the refusal S134 shipped."""
+    """Adding bookkeeping must not soften the screen's refusal."""
     assert _fire(monkeypatch, tmp_path, {"kind": "web_watch", "new_items": [EVIL]}).seen is None
 
 
@@ -133,10 +133,10 @@ def test_a_LEDGER_FAILURE_does_not_let_the_fire_through(monkeypatch, tmp_path):
 def test_a_BENIGN_payload_writes_NO_blocked_row(monkeypatch, tmp_path):
     """A blocked-fire row on a normal fire would make the feed report attacks that never happened.
 
-    Counts BLOCKED rows specifically, not all rows: S139 writes an outcome row for every
+    Counts BLOCKED rows specifically, not all rows: an outcome row is written for every
     fire (which is what feeds autopause's failure counter), so a benign fire legitimately
     leaves a `success` row. The original `total == 0` asserted more than it meant and went
-    red the moment S139 landed — a good catch by an over-broad assertion.
+    red the moment outcome rows landed — a good catch by an over-broad assertion.
     """
     rec = _fire(monkeypatch, tmp_path, {"kind": "web_watch", "new_items": ["Release 2.1 is out"]})
     assert rec.seen is not None

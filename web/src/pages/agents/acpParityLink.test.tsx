@@ -1,9 +1,9 @@
-/** The discovered-agents inspector must link the ACP parity statement (SC #7).
+/** The discovered-agents inspector must link the ACP parity statement.
  *
  * The parity doc (`docs/agents/acp-parity.md`) says, per provider, what is at parity, what the
  * host compensates for, and what is a protocol/CLI constraint. Its whole purpose is that a user
  * DECIDING which agent to bind can see those boundaries — and that decision is made in the agents
- * UI, not in a repository README. The audit was `partial` on exactly this: the READMEs linked
+ * UI, not in a repository README. That was the gap: the READMEs linked
  * the doc, the discovered-agent panel did not, so the last few metres to the reader were missing.
  *
  * This pins the UI half: the read-only inspector for a provider-run agent carries an EXTERNAL link

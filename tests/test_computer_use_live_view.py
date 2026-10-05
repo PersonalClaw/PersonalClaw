@@ -1,6 +1,6 @@
 """The human-facing live view + cursor-motion overlay GRANT NOTHING.
 
-DESKTOP-COMPUTER-USE §3 floor 7 in test form. The change's criterion is *"the views render;
+The rule is *"the views render;
 neither adds any agent capability — asserted by confirming the tool surface is unchanged
 with the views on"*, and that clause is a census, not a vibe, so it is asserted three ways
 that fail independently:
@@ -11,8 +11,8 @@ that fail independently:
   actively rendered — an observed dispatch, a rendered view model, and a served GET — so a
   view that registered, renamed, widened or re-described a tool reds on bytes.
 * **No route that can act appeared** (:func:`test_the_computer_use_route_surface_is_pinned`):
-  the registered ``/api/computer-use/*`` surface is pinned to exactly one POST (the dispatch,
-  `DCU-4`) and one GET (the view). A second acting verb under this prefix is a second chain.
+  the registered ``/api/computer-use/*`` surface is pinned to exactly one POST (the dispatch)
+  and one GET (the view). A second acting verb under this prefix is a second chain.
 * **The view modules structurally cannot reach the desktop**
   (:func:`test_the_view_modules_import_no_driver_and_reach_no_dispatch`): asserted by AST,
   the same way ``tools.py``'s thinness is — ``overlay``/``render`` import no driver module
@@ -134,7 +134,7 @@ def _view_client(app_name: str = "") -> TestClient:
 
 
 def test_the_tool_surface_is_unchanged_with_the_views_on(tmp_path, monkeypatch):
-    """THE acceptance clause. "Views on" is exercised, not declared: before the after-shot,
+    """THE rule. "Views on" is exercised, not declared: before the after-shot,
     an approved dispatch feeds the overlay, ``render.live_view()`` builds the view model, and
     the dashboard route serves it — every surface has actually run. The before/after
     byte-compare catches mutation; the pinned name census catches a surface that was already
@@ -150,7 +150,7 @@ def test_the_tool_surface_is_unchanged_with_the_views_on(tmp_path, monkeypatch):
             "computer_scroll",
             "computer_perform_action",
         }
-    ), "the seven-tool surface (§2) changed — DCU-7 must not touch it"
+    ), "the seven-tool surface changed — the views must not touch it"
 
     # Views ON: overlay observing a real approved dispatch…
     _arm(tmp_path, ARMED_APP)
@@ -178,7 +178,7 @@ def test_the_tool_surface_is_unchanged_with_the_views_on(tmp_path, monkeypatch):
 
     after = json.dumps(ct._list_tools(), sort_keys=True)
     assert before == after, (
-        "the computer-use tool surface CHANGED while the views were on. DCU-7's views are "
+        "the computer-use tool surface CHANGED while the views were on. The views are "
         "observation-only; a view that adds, renames or re-describes a tool is a capability."
     )
 
@@ -208,7 +208,7 @@ def test_the_computer_use_route_surface_is_pinned():
         ("get", "/api/computer-use/live-view"),
     }, (
         "the /api/computer-use route surface changed. The views must add no route that can "
-        "act — a new verb here needs the whole DCU-4 chain and its own atom, not a view."
+        "act — a new verb here needs the whole dispatch chain and its own change, not a view."
     )
 
 
@@ -254,7 +254,7 @@ def test_the_view_modules_import_no_driver_and_reach_no_dispatch():
         source = (SRC / "computer_use" / module).read_text(encoding="utf-8")
         assert _reach(source) == [], (
             f"{module} reaches the desktop: {_reach(source)}. The views are observation-only "
-            "(§3 floor 7) — they mirror stored state and may never import a driver or call "
+            "— they mirror stored state and may never import a driver or call "
             "the dispatch."
         )
 
@@ -346,7 +346,7 @@ def test_observation_fails_open_on_any_input():
 
 
 def test_a_named_pointer_method_records_its_own_spelling(tmp_path, monkeypatch):
-    """The plan wants the real-cursor warp one filter away everywhere it appears — the SEL
+    """The real-cursor warp must be one filter away everywhere it appears — the SEL
     gets `computer_click:global`, and the overlay keeps the same distinction so a
     watching human can tell a pointerless press from their own mouse being taken."""
     _arm(tmp_path, ARMED_APP)

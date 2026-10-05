@@ -16,7 +16,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //   prompts     noMatchShown=true   liveRegions=[]   NOT ANNOUNCED
 //   …6 of 6
 //
-// axe reports nothing here, as in cycle 52: a missing announcement is not a rule violation.
+// axe reports nothing here: a missing announcement is not a rule violation.
 //
 // 🔑 THE CANONICAL FORM ALREADY EXISTED — `ui/FindBar.tsx` (then `pages/chat/FindBar.tsx`, promoted
 // to a shared primitive) announces its match count
@@ -46,7 +46,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // 🪤 THE NOUN IS PART OF THE COPY, AND `files` GOT IT WRONG TWICE: `noun="matches"` made the zero
 // branch read **"No matching matches"**, so the noun was switched to "lines" — which fixed the
 // sentence by announcing a DIFFERENT WORD than the visible counter ("N matches") and zero state
-// ("No matches."). A screen-reader user then heard vocabulary the screen never showed (AUD-A10).
+// ("No matches."). A screen-reader user then heard vocabulary the screen never showed.
 // The resolution is the `singular`/`empty` overrides: the announced noun is the visible noun
 // ("matches"), and the two sentences the defaults mangle are supplied by the surface —
 // `empty="No matches"`, `singular="match"`.
@@ -302,7 +302,7 @@ describe('EVERY list bar passes a result count — the ratchet', () => {
     // 12 comparisons resolve today across the 15 bars. Held as a floor rather than an equality so a
     // new surface does not have to touch this line, but low enough to fail loudly if the resolution
     // regexes stop matching — a version of this check that resolved NOTHING passed while reading
-    // nothing, twice, during this cycle.
+    // nothing, twice, during this change.
     expect(checked, 'the scan must actually resolve some defaults').toBeGreaterThanOrEqual(12)
   })
 
@@ -467,7 +467,7 @@ describe('the hand-laid bars reach the same idiom', () => {
   })
 
   it('EVERY search control in the TREE announces — or is exempt for a CHECKED reason', () => {
-    // 🔑 This census was scoped to `pages/settings` for one cycle, because that was the area swept
+    // 🔑 This census was scoped to `pages/settings` at first, because that was the area swept
     // end to end. It is now tree-wide: every file that renders a search control either announces its
     // result count, routes through `ListControls` (ratcheted above), or appears below with a reason —
     // and **every reason is verified here rather than taken on trust.** An exemption nobody checks is

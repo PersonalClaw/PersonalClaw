@@ -1,4 +1,4 @@
-"""The brownfield context pass (UP-R17).
+"""The brownfield context pass.
 
 The pass exists to be TRUE about a real directory, so these tests build real trees under tmp_path
 and assert the synthesis reflects them. The cache tests are the load-bearing ones: a stale reading

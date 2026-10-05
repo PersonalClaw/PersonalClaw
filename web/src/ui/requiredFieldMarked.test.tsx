@@ -110,7 +110,7 @@ describe('the create forms mark their mandatory field', () => {
       reasons += (src.match(/disabledReason=\{[^}]*[Ee]nter a[^}]*first/g) ?? []).length
     }
     // Measured 20, floored at 5 — 15 could have gone quietly. A floor that stands for a POPULATION has to
-    // sit at the population (cycle 134's audit).
+    // sit at the population.
     expect(reasons, 'the "Enter a … first" population must still be visible to this rail').toBeGreaterThanOrEqual(20)
   })
 })

@@ -184,7 +184,7 @@ def test_the_marker_alone_answers_when_git_cannot_be_asked(
 
 
 def test_the_doctor_actually_prints_the_row_it_computes() -> None:
-    """A helper nobody calls is an inert control — assert the CALL SITE, as SH-1 does."""
+    """A helper nobody calls is an inert control — assert the CALL SITE."""
     import ast
     import inspect
 

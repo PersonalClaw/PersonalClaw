@@ -29,7 +29,7 @@ The pipeline, every step fail-closed and SEL-audited:
 
 Triggers land DISABLED and config_subset lands STAGED (never applied): a pack cannot arm
 automation or edit config on install — those are human-enabled from their own surfaces later
-(§3.1 propose-don't-write applied to distribution).
+(propose-don't-write applied to distribution).
 """
 
 from __future__ import annotations
@@ -71,8 +71,8 @@ logger = logging.getLogger(__name__)
 #: templates reference agents+skills; triggers reference templates/prompts.
 _COMMIT_RANK: dict[str, int] = {"skill": 0, "prompt": 1, "agent": 2, "template": 3, "trigger": 4}
 
-#: The component kinds AP-2 commits. A manifest naming an unknown kind is skipped with a
-#: report note rather than hard-failing (best-effort forward import, .ovsvoice rule).
+#: The component kinds an import commits. A manifest naming an unknown kind is skipped with a
+#: report note rather than hard-failing (best-effort forward import).
 _KNOWN_KINDS = frozenset(_COMMIT_RANK)
 
 
@@ -214,12 +214,12 @@ class PackImportRefused(Exception):
         super().__init__(message)
 
 
-# ── the pack skills marketplace (acceptance criteria 5) ────────────────────────
+# ── the pack skills marketplace ────────────────────────────────────────────────
 
 
 class PackMarketplace(SkillsMarketplace):
     """A transient, single-pack skills SOURCE that adapts one extracted pack skill dir to
-    the ``SkillDetail{name, files}`` shape the shared install gate expects (§3.1).
+    the ``SkillDetail{name, files}`` shape the shared install gate expects.
 
     Skills never bypass the supply-chain gate just because they arrived in a pack — this
     exists ONLY so pack skill dirs flow through the exact same ``install_guarded`` →
@@ -628,7 +628,7 @@ def refuse_links(
 def _fresh_id(home: Path, kind: str, orig_id: str, taken: set[tuple[str, str]]) -> str:
     """A local id that collides with neither a live component nor an already-assigned one.
 
-    Returns ``orig_id`` when free; otherwise the WORK-R15 ``<id>-imported-<N>`` slot,
+    Returns ``orig_id`` when free; otherwise the ``<id>-imported-<N>`` slot,
     incrementing past any live OR in-this-import collision (``taken``)."""
 
     def _busy(cid: str) -> bool:
@@ -714,7 +714,7 @@ def _build_plan(
 
     ``in_place`` turns OFF fresh-id collision remapping, and exists for exactly one caller:
     :func:`packs.update.apply_update`. On a first install a collision means "someone else
-    already owns this slug", so the WORK-R15 ``<id>-imported-<N>`` slot is right. On an UPDATE
+    already owns this slug", so the ``<id>-imported-<N>`` slot is right. On an UPDATE
     the colliding entity IS this pack's own previous copy, and remapping would install a second
     parallel component beside it instead of replacing it — the update would silently never
     happen while reporting success."""
@@ -825,7 +825,7 @@ def _build_plan(
     # build a skill _Comp for it here and fold it into `parsed` — that way its scan verdict
     # feeds the plan's DANGEROUS/WARNING gates AND the commit loop installs it through
     # install_guarded with no special-casing. A DANGEROUS setup interview blocks the whole
-    # import, exactly as §3.5 requires. ──
+    # import. ──
     setup_files = _setup_skill_files(quarantine, members)
     setup_id = ""
     if setup_files:
@@ -922,9 +922,9 @@ def _parse_bindings(raw: bytes | None) -> list[dict[str, Any]]:
 
 
 def _parse_connectors(raw: bytes | None) -> list[dict[str, Any]]:
-    """Parse a pack's top-level ``connectors.json`` into a list of declarations (§3.3).
+    """Parse a pack's top-level ``connectors.json`` into a list of declarations.
 
-    Each declaration is ``{name, category, ...}`` and carries NO credential value (§2.2: the
+    Each declaration is ``{name, category, ...}`` and carries NO credential value (the
     schema bans value-bearing auth fields). A missing/unparseable/mis-shaped file yields no
     declarations (a pack without connectors is the common case)."""
     if not raw:
@@ -939,7 +939,7 @@ def _parse_connectors(raw: bytes | None) -> list[dict[str, Any]]:
 
 
 def _setup_skill_files(quarantine: Path, members: dict[str, bytes]) -> list[dict[str, Any]] | None:
-    """A pack's ``setup/SKILL.md`` file set (§3.4), rebased to skill-dir-relative entries.
+    """A pack's ``setup/SKILL.md`` file set, rebased to skill-dir-relative entries.
 
     The pack ships the setup interview as ``setup/…`` members (``setup/SKILL.md`` required).
     We collect them the same way :func:`_skill_files_from_members` collects a component
@@ -961,7 +961,7 @@ def _setup_skill_files(quarantine: Path, members: dict[str, bytes]) -> list[dict
 
 
 def _editable_config_keys(raw: bytes | None) -> list[str]:
-    """The subset of a pack's ``config_subset.json`` keys that are user-editable (§3.1).
+    """The subset of a pack's ``config_subset.json`` keys that are user-editable.
 
     A pack cannot edit config fields the user couldn't edit through the UI: only keys in the
     ``_EDITABLE_CONFIG`` allowlist (``config/editable.py``) are staged as proposals; the rest are
@@ -1105,7 +1105,7 @@ def _write_component_file(path: Path, text: str) -> None:
 def _staged_dir(home: Path, stage: str) -> Path:
     """The pack-scoped staging area for proposals a pack may NOT apply on install —
     disabled triggers + validated config_subset entries. Human-enabled from their own
-    surfaces later (§3.1 propose-don't-write). Named for the pack, so inside its folder,
+    surfaces later (propose-don't-write). Named for the pack, so inside its folder,
     with no link the home holds on the way (:func:`_inside`)."""
     return _inside(home, _STAGED, stage)
 
@@ -1113,7 +1113,7 @@ def _staged_dir(home: Path, stage: str) -> Path:
 def _commit_file_component(comp: _Comp, home: Path, journal: _Journal, stage: str) -> Path:
     """Serialize + write a single-file component (all but skills), journaling the write.
 
-    Returns the written path so the caller can stamp the component's ledger lock (§1
+    Returns the written path so the caller can stamp the component's ledger lock (the
     ``pack_owned`` update flow) from the bytes that actually landed — deriving the lock from
     anything other than the committed file would let the two disagree."""
     path = component_path(comp.kind, comp.target_id, home, stage)
@@ -1149,7 +1149,7 @@ def _commit_file_component(comp: _Comp, home: Path, journal: _Journal, stage: st
 
 
 def _commit_skill(comp: _Comp, home: Path, marketplace_name: str, journal: _Journal) -> Path:
-    """Commit a skill through ``install_guarded`` → ``.pclaw-lock.json`` (done_when 5).
+    """Commit a skill through ``install_guarded`` → ``.pclaw-lock.json``.
 
     Returns the skill's committed dir (for journaling). DANGEROUS is refused by the gate
     even here (defense-in-depth); a WARNING passes only because the plan-level consent gate
@@ -1171,7 +1171,7 @@ def _commit_skill(comp: _Comp, home: Path, marketplace_name: str, journal: _Jour
 
 
 def _stage_roster(plan: ImportPlan, home: Path, journal: _Journal, stage: str) -> None:
-    """Stage the pack's roster (§4.2) — installed, not deployed.
+    """Stage the pack's roster — installed, not deployed.
 
     The rows carry the FRESH ids the commit assigned, so a deploy months later resolves the
     personas that actually landed. Nothing here makes an agent live: that is
@@ -1218,7 +1218,7 @@ def inspect_pack(path: Path | str, *, tier: "Any" = None) -> ImportPlan:
 
     Opens the ZIP, extracts to a SYSTEM tempdir (never the home), recomputes ``content_hash``
     from the actual bytes, runs the referential-integrity + parse lint, and scans every
-    component at ``tier`` (default COMMUNITY — an imported pack is untrusted origin, §3.5).
+    component at ``tier`` (default COMMUNITY — an imported pack is untrusted origin).
     Returns an :class:`ImportPlan`; raises :class:`PackImportRefused` only for an unopenable
     or path-unsafe archive (structural refusals a plan can't represent)."""
     from personalclaw.supply_chain import TrustTier
@@ -1262,7 +1262,7 @@ def import_pack(
     byte-identical pre-import state and re-raises as ``reason="fault"``.
 
     ``connector_choices`` maps a declared connector's name → its resolution input
-    ``{mode, credentials?, substitute?}`` (§3.3); a connector with no choice degrades to
+    ``{mode, credentials?, substitute?}``; a connector with no choice degrades to
     ``skip`` with a ``connector_missing:<name>`` marker. Connector resolution runs AFTER the
     component commit fully succeeds — so a component-commit fault rolls back to byte-identical
     state without ever having written a credential or a server. Returns the
@@ -1292,7 +1292,7 @@ def import_pack(
             # The DETAIL is included, not just code+ref: for an unresolved reference the exact
             # ref that failed to resolve lives only in the detail, and a refusal that named
             # only the component reporting the problem leaves the author guessing which of its
-            # N references is broken (AP-4 §4.2 requires the exact ref be named).
+            # N references is broken.
             detail = "; ".join(f"{f.code}:{f.ref}: {f.detail}" for f in plan.lint.errors)
             _audit("pack_import", "refused", resources=plan.name, error=f"lint: {detail}")
             raise PackImportRefused("lint", f"referential-integrity lint failed: {detail}", plan)

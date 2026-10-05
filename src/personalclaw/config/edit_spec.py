@@ -741,7 +741,7 @@ def coerce_edit_value(path_key: str, value: Any, spec: dict) -> Any:
         clean["allow_private"] = ap
         value = clean
     elif spec["type"] == "projection_rules":
-        # A list of user-taught tool-output projection rules (TokenJuice OP6 + §2.3):
+        # A list of user-taught tool-output projection rules:
         # [{name, match_regex, strategy, head?, tail?, keep?, skip?, count?}].
         # Normalise to exactly those keys; every regex must compile + each strategy
         # must be a known builtin projector. Declarative only (no code) — a bad rule
@@ -830,8 +830,8 @@ def coerce_edit_value(path_key: str, value: Any, spec: dict) -> Any:
     elif spec["type"] == "skill_catalogs":
         # A list of external skill-catalog sources: [{name, url, kind}].
         # Normalise to exactly those keys; a url is required and must be http(s); kind is a
-        # closed set. Pure data — nothing here is fetched or executed (AP-6 registers the
-        # marketplace + fetches under the CONNECTOR egress profile). A credential is never a
+        # closed set. Pure data — nothing here is fetched or executed (the
+        # marketplace fetches under the CONNECTOR egress profile). A credential is never a
         # catalog field: it would ride a request log, so it goes through the credential store.
         if not isinstance(value, list):
             raise ConfigValueError("must be a list", f"{path_key}={value}")

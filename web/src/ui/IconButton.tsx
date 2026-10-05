@@ -49,7 +49,7 @@ export function IconButton({
   // 16 async icon controls (10 of them the whole in-flight population of the two icon tiers)
   // passed `disabled={busy}` mid-flight, so they dimmed to 40% with `cursor: not-allowed` and
   // announced `aria-disabled` — a false state, and to a screen-reader user indistinguishable
-  // from a gate they can never satisfy. `Button` has said this in prose since cycle 37 and ships
+  // from a gate they can never satisfy. `Button` already says this in prose and ships
   // the cross-fade; the two icon tiers never got it, and they are the ones that need it most
   // because they have no LABEL to swap — the glyph is the whole button.
   //

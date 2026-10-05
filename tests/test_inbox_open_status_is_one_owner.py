@@ -14,7 +14,7 @@ resolved. Attention state changed because the user LOOKED. And the `dismiss-all`
 from the same field, so it offered to "dismiss all 33 pending items" and the endpoint answered
 `{"dismissed": 37}`.
 
-The ruling these rails pin: **a row you have read but not answered is still your work.** So SEEN is
+The rule these rails pin: **a row you have read but not answered is still your work.** So SEEN is
 open, `inbox.OPEN_STATUSES` is the one owner every count/filter/chip/sweep/dedup/digest reads, the
 wire carries ONE count (`open_count`), and "new" stays a per-ROW signal (the unread dot) rather than
 a total. The census tests are the rail against a third definition reappearing: a second spelling of
@@ -129,7 +129,7 @@ def test_open_and_resolved_partition_the_status_enum():
         f"(unclassified: {sorted(every - (OPEN_STATUSES | RESOLVED_STATUSES))})"
     )
     assert not (OPEN_STATUSES & RESOLVED_STATUSES), "a status cannot be both open and resolved"
-    # The ruling itself, stated so a future flip of it is a deliberate, visible edit.
+    # The rule itself, stated so a future flip of it is a deliberate, visible edit.
     assert ItemStatus.SEEN.value in OPEN_STATUSES, (
         "SEEN is OPEN: having looked at a row is not having dealt with it. Moving it to "
         "the resolved side restores the defect issue 493 measured — a count that falls when the "

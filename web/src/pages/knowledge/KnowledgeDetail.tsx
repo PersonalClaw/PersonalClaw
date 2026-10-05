@@ -153,7 +153,7 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
   // live in the page's "More details" side panel (KnowledgeExtras), which fetches its
   // own copies, so this component no longer holds them.
   const [itemIntents, setItemIntents] = useState<IntentOutcome[]>([])
-  // Live node-graph ingestion phase (#30): node_type → phase (running/done/skipped/failed).
+  // Live node-graph ingestion phase: node_type → phase (running/done/skipped/failed).
   const [nodePhases, setNodePhases] = useState<Record<string, string>>({})
   const [procStatus, setProcStatus] = useState<string>(item.processing_status ?? '')
   // Where it stands in the ingest queue while it waits or is read (`KnowledgeQueueStanding`).
@@ -707,7 +707,7 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
           a summary panel is the data view it exists to escape. The metadata and tag rows
           above stay — they are one line each and they are how a reader confirms WHAT they
           are reading.
-          🔑 KL-16 corrected the other half of that trade. It used to cost the reader the
+          🔑 The other half of that trade has been corrected. It used to cost the reader the
           More-details dock's attention sections too, which is a different thing: the
           article's highlights, entities and related items are what a reader reaches for
           WHILE reading, and losing them meant leaving the reader to follow a lead. They now
@@ -1070,7 +1070,7 @@ function InsightsDock({ open, onToggle, summary, insights, intents, canGenerate,
             hand-rolled span before, so the bespoke-chrome count stays flat at the
             primitive-adoption ratchet's baseline. */}
         <div className="group/dock flex w-full items-center gap-2.5 py-3">
-          {/* `disabled={!hasMore}` stays NATIVE on purpose — ruled a distinction, not the
+          {/* `disabled={!hasMore}` stays NATIVE on purpose — judged a distinction, not the
               boundary-gate drift that `boundaryReason.test.tsx` converts. That rail moves a
               control off the native attribute when it clamps at one END OF A SEQUENCE, because
               the arrow the user is pressing must not vanish from the tab order under them. This
@@ -1200,7 +1200,7 @@ function FullscreenModal({ title, onClose, children }: { title: string; onClose:
   return (
     // `--z-content` IS 50: spelling migration, byte-identical computed value. This is focus-trapped
     // and Escape-dismissable, which invites `--z-modal` — but it declares NO dialog role, and
-    // `chat/ChatFilePanel` records the repo's ruling on exactly that shape: page-level ad-hoc
+    // `chat/ChatFilePanel` records the repo's decision on exactly that shape: page-level ad-hoc
     // takeovers deliberately do not claim one (`primitiveAdoption` holds them at 0; `ui/Modal` is
     // canonical). So the rule applied across this migration is DECLARED ROLE, not felt modality —
     // `role="dialog"` earns the modal rung, a full-screen content takeover gets the content ceiling.

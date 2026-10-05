@@ -9,23 +9,23 @@ import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── What Chrome COMPUTES as a control's name, which is not what the source says ─────────────────
 //
-// Four cycles (136, 137, 139, 140) shipped changes whose entire effect is announcement, and every one
-// was verified by reading ATTRIBUTES off the DOM. This cycle read the layer below: Chrome's computed
+// Four earlier changes shipped work whose entire effect is announcement, and every one
+// was verified by reading ATTRIBUTES off the DOM. This change read the layer below: Chrome's computed
 // accessibility tree over CDP (`Accessibility.getFullAXTree`), 17 routes, **1260 exposed interactive
 // nodes**. Attributes are the input; the AX tree is the output, and the two disagree in both
 // directions.
 //
-// It confirmed the four cycles (23 dashboard row actions → 22 distinct computed names; the context
+// It confirmed those four changes (23 dashboard row actions → 22 distinct computed names; the context
 // menu's focus really lands on a `menuitem`; the typeahead editor really carries an activedescendant
 // RELATION, not just an attribute) and **found two defects that attribute-reading cannot see**:
 //
 //   #/artifacts       5 tiles whose computed name was **438-695 characters** of their own rendered
 //                     markdown preview — heading `#`, `**` emphasis and blockquote `>` included.
 //                     Source looks fine: the tile passes `title={art.name}`. A button with CONTENT
-//                     takes its name from the content, and `title` loses to it (cycle 139's lesson,
+//                     takes its name from the content, and `title` loses to it (an earlier lesson,
 //                     one layer deeper).
 //   #/notifications   83× "Investigate in chat", 83× "Delete", 81× "Mark unread" — three names for
-//                     **247 controls**, on the one list surface cycle 139's DOM census undercounted
+//                     **247 controls**, on the one list surface an earlier DOM census undercounted
 //                     (its row grouping keyed on 40 characters of the row's text, so it reported
 //                     "none"). The AX tree does the grouping properly.
 //
@@ -43,16 +43,16 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //
 // 🪤 THE FIRST ATTEMPT AT THE FIX DID NOT FIX IT EITHER: naming from `n.title` alone left 35×
 // "…: Refine a skill" and 26× "…: Loop progress", because the title is a KIND on this surface, not an
-// identity. Second time in three cycles that the obvious subject field was not the distinguishing one
-// (cycle 140's was `e.title` on inbox proposals). **Re-measure after composing a name.**
+// identity. Second time in three changes that the obvious subject field was not the distinguishing one
+// (the other was `e.title` on inbox proposals). **Re-measure after composing a name.**
 
 const SRC = join(process.cwd(), 'src')
 const read = (rel: string) => readSource(join(SRC, rel))
 const codeOf = (rel: string) => read(rel).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
-// ── Cycle 154: THREE BUTTONS WHOSE ENTIRE BODY IS AN ICON, AND SO HAD NO NAME AT ALL ────────────
+// ── THREE BUTTONS WHOSE ENTIRE BODY IS AN ICON, AND SO HAD NO NAME AT ALL ───────────────────────
 //
-// `#/knowledge` → **Intents** had never been audited: the ledger's coverage for this surface is the
+// `#/knowledge` → **Intents** had never been audited: audit coverage for this surface was the
 // Library view, and four of its five tabs had never been driven. Driven at both themes, the Intents
 // view reported axe **`button-name` [critical]** on a 46×32 control at the right edge of every intent
 // row — `<Button size="sm" variant="ghost"><Trash2 /></Button>`, a **destructive** action announcing
@@ -95,7 +95,7 @@ describe('a tile whose content is a document needs an explicit name', () => {
   })
 
   it('the artifact card passes the artifact name', () => {
-    // Cycle 153 removed the `active={active}` that used to sit between `onClick` and `title`: it was
+    // A later change removed the `active={active}` that used to sit between `onClick` and `title`: it was
     // threaded from a hard-coded `activeSlug={null}`, so it could never be true. The assertion this
     // test exists for — the tile carries an explicit `ariaLabel` instead of 438-695 characters of
     // markdown preview — is unchanged.
@@ -128,10 +128,10 @@ describe("the notification row actions name their row, and stay bounded", () => 
   const code = codeOf('pages/notifications/NotificationsPage.tsx')
 
   it('all four actions name the row through the shared helper', () => {
-    // Cycle 142 moved the composition into `lib/rowSubject` (one rule, one number, two surfaces), so
+    // The composition lives in `lib/rowSubject` (one rule, one number, two surfaces), so
     // this asserts the call rather than a local copy of the join.
     //
-    // Cycle 164 bound it ONCE — the row's own hit target needs the same name, and five call sites
+    // It is bound ONCE — the row's own hit target needs the same name, and five call sites
     // recomputing an identical expression is how two of them drift. So the shape asserted here moved
     // from the inline call to the binding plus its uses, which also pins that they cannot diverge.
     expect(code, 'the row subject is computed once')
@@ -144,10 +144,10 @@ describe("the notification row actions name their row, and stay bounded", () => 
   })
 
   it("the bell's shade actions name their row too, and bind the subject once", () => {
-    // 🔴 Cycle 171: the SAME notification row, in the dropdown, still had bare verbs. Measured in the
+    // 🔴 The SAME notification row, in the dropdown, still had bare verbs. Measured in the
     // open shade: **"Dismiss" named 5 controls and "Mark read" named 2** — one name per verb for the
     // whole panel — while the Action Center rows a few pixels away already announced
-    // "Reply: <subject>". Cycle 164 had given this row a named hit target, which left its two actions
+    // "Reply: <subject>". The row already had a named hit target, which left its two actions
     // as the last unnamed controls on the surface.
     //
     // 🔑 The rail lives beside the page's because they are ONE row shown on two surfaces: a
@@ -168,7 +168,7 @@ describe("the notification row actions name their row, and stay bounded", () => 
       expect(bell, `${verb} must name its row`).toMatch(new RegExp(`aria-label=\\{\`${verb}: \\$\\{subject\\}\`\\}`))
     }
     expect(bell, 'the row itself shares that subject').toMatch(/<RowHitTarget label=\{subject\} \/>/)
-    // 🪤 And the VISIBLE hint stays the bare verb — cycle 119's contract. A tooltip repeating the whole
+    // 🪤 And the VISIBLE hint stays the bare verb — the bare-verb tooltip contract. A tooltip repeating the whole
     // subject on hover is noise for a sighted user who can already read the row.
     expect(bell).toMatch(/title="Mark read"/)
     expect(bell).toMatch(/title="Delete"/)
@@ -196,9 +196,9 @@ describe("the notification row actions name their row, and stay bounded", () => 
 })
 
 
-// ── Cycle 156: THE NAME WAS WRITTEN AND THE PRIMITIVE THREW IT AWAY ─────────────────────────────
+// ── THE NAME WAS WRITTEN AND THE PRIMITIVE THREW IT AWAY ────────────────────────────────────────
 //
-// Sweeping the views behind every surface's view switcher (the lens cycle 154 opened) found
+// Sweeping the views behind every surface's view switcher (the lens the icon-button sweep opened) found
 // `#/triggers` → **Week** reporting `button-name` [critical] **twice**, at both themes — the week's
 // prev/next arrows. The source looked correct:
 //
@@ -207,10 +207,10 @@ describe("the notification row actions name their row, and stay bounded", () => 
 // 🪤 **`Button` never forwarded `aria-label`, and TypeScript cannot say so: a JSX attribute containing a
 // HYPHEN is not checked against a component's props type.** So the name was dropped in silence, the
 // build stayed green, and the only witness was the accessibility tree. The prop is `ariaLabel` — the one
-// cycle 154 added, for exactly this shape.
+// the icon-button fix above added, for exactly this shape.
 //
-// This is the second time this session that a control's name existed and never reached the user
-// (cycle 148: a `LoadError` noun the loading state did not borrow). **A name in the source is not a name
+// This is the second time a control's name existed and never reached the user
+// (the first: a `LoadError` noun the loading state did not borrow). **A name in the source is not a name
 // in the tree.**
 //
 // The same sweep found one more, in the same class of never-audited view: `#/skills` → **Browse** has a
@@ -330,7 +330,7 @@ describe('a hyphenated aria prop on a kit component is a dropped name', () => {
   it("the marketplace picker names itself", () => {
     // 🪤 The first version of this assertion was `<select value={marketplace}[^>]*aria-label=…` and it
     // FAILED on correct source — `[^>]*` stops at the `>` inside `onChange={(e) => …}`. The same trap
-    // this whole cycle is about, in the test written to catch it. Anchor on the attribute instead.
+    // this whole section is about, in the test written to catch it. Anchor on the attribute instead.
     const src = readSource(join(process.cwd(), 'src/pages/skills/SkillsPage.tsx'))
     expect(src).toMatch(/setMarketplace\(e\.target\.value\)\} aria-label="Marketplace"/)
   })

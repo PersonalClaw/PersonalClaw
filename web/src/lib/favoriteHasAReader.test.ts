@@ -3,7 +3,7 @@
  *
  * `api.ts` states the contract itself, next to the inbox field:
  *
- *   // P11: user-favorited (a strong engagement signal + a star in the UI).
+ *   // User-favorited (a strong engagement signal + a star in the UI).
  *
  * The signal half shipped. The star did not. Four inbox items were
  * favorited, none of them distinguishable from the other forty — no star in the list, no favorites

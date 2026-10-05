@@ -8,11 +8,11 @@ import type { ChatTurn, Segment } from './chatTypes'
 
 // ── Hit target, focus ring, and something for reduced motion to collapse ─────────────────────
 //
-// acceptance criteria: a mark's pressable area clears the one the tick form had; `focusRingPerElement` /
+// The contract: a mark's pressable area clears the one the tick form had; `focusRingPerElement` /
 // `focusRingContrast` pass; every rail animation collapses to instant under
 // `prefers-reduced-motion`.
 //
-// 🪤 THIS CHANGE IS THE CLEAREST VACUITY TRAP IN THE SSM TAIL, and the trap is that all three named
+// 🪤 THIS CHANGE IS THE CLEAREST VACUITY TRAP IN THE SESSION MAP WORK, and the trap is that all three named
 // rails were already GREEN while none of them looked at the Session Map:
 //
 //   · `hitTargetThinHandle.test.ts` read exactly two files (`ui/NavRail`, `ui/SidePanel`) and derived
@@ -23,12 +23,12 @@ import type { ChatTurn, Segment } from './chatTypes'
 //     FIXED 24px on the element's own width, so it only enlarges something NARROWER than 24px — and
 //     it pins `top/bottom` to the element, so it only ever widened the HORIZONTAL axis. On a vertical
 //     list of marks that was never the failing axis: the tick was 4px TALL. Each marker now owns its
-//     whole row, so the clause is asserted here as the OUTCOME — the marker's own declared box, and
+//     whole row, so the requirement is asserted here as the OUTCOME — the marker's own declared box, and
 //     that it covers the full row pitch — with the real measured box asserted in
 //     `web/e2e/sessionMap.spec.ts`, where layout exists. A `hit-24-x` left on a 32px row would have
 //     been markup that `hitTargetThinHandle` went on crediting for nothing.
 //     🔑 AND THE ROW IS NOW 32×24, WHICH IS SC 2.5.8. The Codex form's 32×10 flush rows did not meet
-//     24×24; the owner listed "precise pointer movement required" among the reference's frictions,
+//     24×24; "precise pointer movement required" is among the reference's frictions,
 //     and with one marker per USER message rather than one per event there are few enough rows to
 //     afford the height. The 44px touch floor is still owed and met on the coarse-pointer form
 //     (the drawer rows, asserted in the browser gate).
@@ -170,7 +170,7 @@ describe('SessionMapRail — the focus ring', () => {
     const stop = ticks.find((el) => el.tabIndex === 0)!
     act(() => { stop.focus() })
     expect(document.activeElement).toBe(stop)
-    // Not `aria-hidden` — SSM-4 shipped the marks hidden, which is what made every a11y clause in
+    // Not `aria-hidden` — the marks first shipped hidden, which is what made every a11y check in
     // this change vacuous.
     for (const el of ticks) expect(el.getAttribute('aria-hidden')).toBeNull()
   })
@@ -199,7 +199,7 @@ describe('SessionMapRail — the rail HAS an animation for reduced motion to col
     // is the strongest ink rather than the rest neutral.
     expect(restTone).toBe('var(--color-map-rest)')
     expect(ticks[0].style.color, 'the pointed-at marker must brighten').toBe('var(--color-on-surface)')
-    // 🔑 ONLY IT. The Codex form dragged its ±3 neighbours after it; the owner's rule is that only the
+    // 🔑 ONLY IT. The Codex form dragged its ±3 neighbours after it; the rule is that only the
     // marker under the pointer or the cursor expands, so the neighbour must NOT move, in length or tone.
     expect(scaleOf(lines[1]), 'the neighbour expanded with the hovered marker').toBe(restScale)
     expect(ticks[1].style.color, 'the neighbour changed tone').toBe(restTone)

@@ -4,7 +4,7 @@ import { render } from '@testing-library/react'
 import { PermissionList } from './installConsent'
 import type { AppPermissionsWire } from '../../lib/api'
 
-// EI-12 D2. The consent surface must not present `permissions.network` as something
+// The consent surface must not present `permissions.network` as something
 // the platform polices. It cannot: an app's provider code is imported IN-PROCESS by
 // the gateway, so there is no per-app egress chokepoint (docs/security/limitations.md
 // §2). Two readings had to be killed:
@@ -54,7 +54,7 @@ describe('PermissionList — the network claim is advisory, not a grant', () => 
 
 // ── "not declared" and "declared as denied" are different facts ──────────────────────────────────
 //
-// D2 fixed the SILENCE (an undeclared app got no row at all) but collapsed the two remaining cases
+// The advisory row fixed the SILENCE (an undeclared app got no row at all) but collapsed the two remaining cases
 // into one word: an app whose manifest says `"network": false` was reported as "not declared" —
 // the reassuring statement the author actually made, reported as though they had said nothing. The
 // wire now distinguishes them (`Permissions.to_dict` keeps a `network` key the manifest mentioned,
@@ -88,7 +88,7 @@ describe('PermissionList — the network row distinguishes a denial from a silen
   })
 })
 
-// `appMessaging` is the OPPOSITE case to D2's `network`: it IS enforced — the
+// `appMessaging` is the OPPOSITE case to `network`: it IS enforced — the
 // broker (`POST /api/apps/message`) is the only app-to-app path and refuses an
 // undeclared target 403 + SEL. It belongs in the enforced bullets, and its copy must
 // not hedge. Before this, `AppPermissionsWire` did not declare the field at all, so a
@@ -143,7 +143,7 @@ describe('PermissionList — appMessaging is disclosed as the enforced grant it 
   })
 
   it('states the deny-by-default case instead of staying silent', () => {
-    // The D2 lesson applied to an enforced permission: an app that declares no target
+    // The `network` lesson applied to an enforced permission: an app that declares no target
     // may message NO app, and saying nothing would leave the user guessing whether
     // app-to-app messaging is unrestricted.
     for (const perms of [{}, { api: ['/api/tasks'] }, { storage: true }]) {
@@ -233,25 +233,25 @@ describe('PermissionList — declared proposal kinds are disclosed as enforced',
 // This file exists for the third case: a grant that is declared at install and enforced by
 // nothing. `appMessaging`/`desktop`/`proposals` are enforced, so they belong in the
 // bullets. `network` is unenforceable in principle, so it gets an always-on advisory row.
-// Under APE-1 both `backgroundTasks` and `eventSubscriptions` were the third case.
+// Originally both `backgroundTasks` and `eventSubscriptions` were the third case.
 //
-// APE-3 shipped the worker host, so `backgroundTasks` has now made the SAME move
+// The worker host has shipped, so `backgroundTasks` has now made the SAME move
 // `eventSubscriptions` made: `apps/worker_runtime` consults
 // `can_run_background_tasks()` before every spawn AND every revival, so the grant denies as
 // well as declares. With both grants enforced, the "Declared, not yet in effect" block has
 // no feeder left and is gone — a box that renders for nothing is a shape a future grant can
-// silently fall into. The reading this file now kills is the INVERSE of the original D2
+// silently fall into. The reading this file now kills is the INVERSE of the original `network`
 // defect: understating a live capability, so a user weighs a real grant as disclosure-only.
 //
-// APE-2 shipped the platform event registry, so `eventSubscriptions` is now ENFORCED —
+// The platform event registry has shipped, so `eventSubscriptions` is now ENFORCED —
 // `apps/app_events.emit` is the only path a platform event reaches an app by and it
 // consults `can_receive_platform_event` per app per event (deny by default, exact name).
 // It therefore MOVES into the enforced bullets. Leaving it in "Declared, not yet in
-// effect" would be the D2 defect inverted: understating a live capability, so the user
-// weighs a real grant as disclosure-only. `backgroundTasks` stays behind until APE-3 ships
-// a worker host. The two readings still to kill, now for `backgroundTasks` alone:
+// effect" would be the `network` defect inverted: understating a live capability, so the user
+// weighs a real grant as disclosure-only. `backgroundTasks` stays behind until a worker
+// host ships. The two readings still to kill, now for `backgroundTasks` alone:
 //
-//  1. Listing it among "Permissions the gateway enforces" — the D2 defect verbatim, and
+//  1. Listing it among "Permissions the gateway enforces" — the `network` defect verbatim, and
 //     worse here, because there is not even a partial mechanism behind it.
 //  2. Rendering nothing at all — the declaration is a STANDING grant that goes live with
 //     no second prompt once the host ships, so install is the user's only say.
@@ -274,9 +274,9 @@ describe('PermissionList — eventSubscriptions is enforced, backgroundTasks is 
     expect(rows.some((r) => /Receive platform events: session\.created, task\.completed/.test(r))).toBe(true)
   })
 
-  it('puts backgroundTasks IN the enforced bullets now that APE-3 hosts it', () => {
+  it('puts backgroundTasks IN the enforced bullets now that a worker host runs it', () => {
     // This asserted the OPPOSITE: with no worker host, listing it among
-    // "Permissions the gateway enforces" was the D2 defect verbatim. The host exists now, so
+    // "Permissions the gateway enforces" was the `network` defect verbatim. The host exists now, so
     // keeping it out would understate a live capability instead.
     const { container } = render(<PermissionList perms={PENDING_PAYLOAD} />)
     const rows = enforcedRows(container)
@@ -286,7 +286,7 @@ describe('PermissionList — eventSubscriptions is enforced, backgroundTasks is 
   })
 
   it('no longer claims the worker grant does nothing yet, and drops the empty box', () => {
-    // The three phrases below were correct under APE-1 and are now false: the host exists,
+    // The three phrases below were correct before the worker host and are now false: the host exists,
     // so the grant is not "not yet in effect", it does not "grant the app nothing today",
     // and there is no later moment when it "becomes live without asking you again" — it is
     // live at install. A disclosure that keeps saying so would train users to discount it.

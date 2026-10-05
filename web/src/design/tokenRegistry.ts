@@ -134,7 +134,7 @@ export const TOKENS: Token[] = [
   // NOTE: --content-width is driven by the Account → Content width PRESET
   // (Narrow/Default/Full), not a raw slider, so it's intentionally not a tunable
   // token here.
-  // P19 density axis (orthogonal to palette + dark/light): appearance.tsx maps this
+  // Density axis (orthogonal to palette + dark/light): appearance.tsx maps this
   // select to the <html> data-ui attribute, whose tokens.css blocks re-scale the
   // whole app's spacing/radius (and, for cli, the font family). comfortable = default.
   sel('--ui-density', 'UI density', 'Layout', 'comfortable', ['comfortable', 'dense', 'cli']),
@@ -179,7 +179,7 @@ export const TOKENS: Token[] = [
   s('--swipe-dismiss-velocity', 'Swipe flick speed', 'Motion', 500, 100, 1500, 25, 'px/s', 'swipeVelocity'),
   s('--swipe-dismiss-distance', 'Swipe distance', 'Motion', 80, 20, 240, 5, 'px', 'swipeDistance'),
 
-  // ── Elevation & glass (brand rebrand §3.1 — frosted overlay intensity) ──
+  // ── Elevation & glass (frosted overlay intensity) ──
   s('--glass-blur', 'Glass blur', 'Elevation & glass', 16, 0, 40, 1, 'px'),
   s('--glass-alpha', 'Glass opacity', 'Elevation & glass', 0.72, 0.4, 1, 0.02),
   // Duration (seconds) of ONE outward pulse of the gateway-connectivity status

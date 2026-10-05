@@ -1,8 +1,8 @@
-"""The node-inspection endpoint (WF2-A2) — `GET /api/workflows/runs/{id}/nodes/{node_id}/inspect`.
+"""The node-inspection endpoint — `GET /api/workflows/runs/{id}/nodes/{node_id}/inspect`.
 
 The load-bearing claims, each a property this module locks:
 
-* the §5 **reconstructability set** comes back for a terminal node — `resolved_prompt` (or a
+* the **reconstructability set** comes back for a terminal node — `resolved_prompt` (or a
   ref), `resolved_inputs`, `output` (or an `artifact_ref`), `attempts`, `ledger_events`,
   `cached`;
 * **secrets are absent** — the resolved prompt is stored UN-redacted on disk (the controller's
@@ -208,7 +208,7 @@ class TestSecretsAbsent:
 
 class TestArtifactOffload:
     async def test_an_offloaded_output_returns_an_artifact_ref(self) -> None:
-        """An `output_ref` that is not under `outputs/` is a pointer elsewhere (a WV-11
+        """An `output_ref` that is not under `outputs/` is a pointer elsewhere (an offloaded
         artifact); the endpoint hands back the pointer, never the raw blob."""
         run_id = _build_run(target_output_ref="artifacts/big-report.json")
         body = _body(await H.api_run_node_inspect(_req(run_id, "target")))
@@ -297,8 +297,8 @@ class TestRouteRegistration:
 
 class TestClientMethodExists:
     def test_api_ts_exposes_the_inspect_method(self) -> None:
-        """The route needs a client, or WV-10 has nothing to call. The api.ts method is that
-        client (WV-10 renders it later — the route IS today's caller)."""
+        """The route needs a client, or the node inspector has nothing to call. The api.ts
+        method is that client (the inspector drawer renders what it returns)."""
         from pathlib import Path
 
         api_ts = (

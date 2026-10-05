@@ -1,6 +1,6 @@
 """Rails for the macOS accessibility driver.
 
-`DCU-4` shipped the dispatch, the ceilinged spawn and the snapshot store, and
+The dispatch, the ceilinged spawn and the snapshot store shipped before this driver, and
 ``driver_host.resolve_driver`` has been importing ``personalclaw.computer_use.macos_driver`` and
 finding **nothing** ever since. So the question this file answers is not "does a TTL work" —
 ``test_computer_use_dispatch.py`` already proves the dispatch-side TTL and fingerprint from both
@@ -380,7 +380,7 @@ def test_the_real_pointer_can_be_read_without_any_permission():
 def test_an_absent_application_refuses_by_name():
     """Real: exact-match resolution, with no fuzzy fallback onto a similarly-named app."""
     with pytest.raises(macos_ffi.AppNotFound):
-        macos_ffi.resolve_app_pid("NoSuchApplicationExists-DCU3")
+        macos_ffi.resolve_app_pid("NoSuchApplicationExists-Probe")
 
 
 # ---------------------------------------------------------------------------

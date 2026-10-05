@@ -6,7 +6,7 @@ import { budgetKnown, filterByFit, statedSizeMb, unrunnable } from './modelFit'
 
 // ── "Will it run on THIS machine?" must never become "we could not tell, so we deleted it" ────────
 //
-// LMMV-8 gives every local model row a fit verdict and gives the catalog a filter that hides the
+// Every local model row gets a fit verdict, and the catalog gets a filter that hides the
 // ones the device cannot run. Two ways for that to go wrong, and they are not symmetric:
 //
 //   · Showing a model that turns out not to fit  → the download fails or swaps, and the user learns

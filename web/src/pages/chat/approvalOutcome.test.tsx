@@ -141,7 +141,7 @@ describe('ApprovalCard settled line', () => {
 
   it('still renders the actionable picker while PENDING', () => {
     // The `if (seg.resolved)` guard was never the bug — an unresolved card must keep
-    // offering a working decision. Since OU-8 that decision is Allow/Deny plus a
+    // offering a working decision. That decision is now Allow/Deny plus a
     // remember-scope strip (the scope moved off the verb row and into its own zone, so the
     // breadth of a grant is stated rather than encoded in which button you press).
     const { container } = render(<ApprovalCard seg={{ kind: 'approval', id: 'a1', tool: 'Terminal' }} onAct={() => {}} />)

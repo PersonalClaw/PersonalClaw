@@ -71,7 +71,7 @@ def lint_memory(vs, *, now: datetime | None = None, judge=None, vault=None) -> L
     that check is skipped (no LLM → no contradiction flags, fail-safe).
 
     ``vault`` (a :class:`~personalclaw.memory_vault.MemoryVault`) adds the readable-
-    vault checks (§5.3). Passed in rather than resolved from config here on purpose:
+    vault checks. Passed in rather than resolved from config here on purpose:
     this function must never decide by itself to go reading a directory under the
     user's real home, and a caller that has no vault gets no vault flags rather than
     a config read with a surprising side effect.
@@ -198,8 +198,8 @@ def _lint_conflicts(vs, report: LintReport) -> None:
     """Flag every standing kept-both contradiction. Never auto-resolves one.
 
     Flag-only on purpose: the whole point of keeping both rows is that nothing in the
-    system knows which is true. An auto-fix here would be the silent pick that §4.1
-    exists to refuse.
+    system knows which is true. An auto-fix here would be the silent pick that the
+    Decide phase exists to refuse.
     """
     try:
         from personalclaw.memory_formation import conflicts

@@ -2,7 +2,7 @@
 ``openai`` SDK.
 
 The ``openai`` SDK is imported lazily inside :meth:`OpenAIProvider.__init__`
-to satisfy Requirement R6.2 / Property 11 (Provider SDK Lazy Import). The
+so a provider SDK is never imported eagerly. The
 module file itself is safe to import without ``openai`` installed: only
 constructing an :class:`OpenAIProvider` instance triggers the SDK import.
 
@@ -149,7 +149,7 @@ class OpenAIProvider(ModelProvider):
 
     The ``openai`` SDK is imported inside ``__init__`` so the package
     ``personalclaw.providers`` can be imported without pulling the SDK into
-    ``sys.modules`` (R6.1 / Property 11).
+    ``sys.modules``.
     """
 
     # The Chat Completions API accepts a multi-message history + tool schemas,
@@ -158,7 +158,7 @@ class OpenAIProvider(ModelProvider):
 
     # Graded prompt-cache posture. OpenAI caches a stable prompt PREFIX
     # server-side on its own — no per-request marker, no opt-in — which is exactly what
-    # AUTOMATIC means, and PCS-1 already ordered the prompt so that prefix is stable
+    # AUTOMATIC means, and the prompt is already ordered so that prefix is stable
     # across turns. So this adapter translates NOTHING: `mark_cacheable_prefix` returns
     # the caller's list unchanged (same object) for AUTOMATIC just as it does for NONE,
     # and the wire payload is byte-identical to what an undeclared provider sends.
@@ -181,7 +181,7 @@ class OpenAIProvider(ModelProvider):
         max_tokens: int | None = None,
         extra_options: dict[str, object] | None = None,
     ) -> None:
-        # Lazy import per R6.2 / Property 11. Do NOT lift to module top.
+        # Lazy import on purpose. Do NOT lift to module top.
         # openai is an OPTIONAL SDK — require_sdk raises a clear
         # MissingSDKError naming `pip install personalclaw[openai]` when absent.
         openai = require_sdk("openai", "openai", feature="the OpenAI chat/embedding provider")

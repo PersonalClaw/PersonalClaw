@@ -1,4 +1,4 @@
-"""The durable sync outbox (DAS-6c-ii-b).
+"""The durable sync outbox.
 
 Every local export owes a push to each configured remote. That obligation must survive a
 crash, a network outage, and a restart — so it lives on disk, not in memory: one JSON file

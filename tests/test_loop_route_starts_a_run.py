@@ -5,8 +5,8 @@ own docstring, the gap this file closes: *"start_kind_run is the door that was m
 live run out"*. It was still missing from the PRODUCT. Measured at `origin/main`:
 `git grep -n start_kind_run -- src/` returned exactly ONE line in the whole package — its own
 `async def` — and `PORTED_LOOP_KINDS` occurred five times, all five inside `workflows/service.py`.
-So nothing consulted the frozenset and nothing walked through the door, and the acceptance criteria
-clause "each of the five kinds is driven end-to-end through the unified path" could not be
+So nothing consulted the frozenset and nothing walked through the door, and the requirement
+"each of the five kinds is driven end-to-end through the unified path" could not be
 witnessed for ANY kind, including the one that had been ported.
 
 **What makes these assertions real rather than restatements.** The easy false version asserts that
@@ -17,13 +17,13 @@ about OBSERVABLE OUTCOME on the two stores:
 * a `general` create leaves a **live `WorkflowRun`** in `workflows.store` AND **zero rows** in
   `loop.store`. At the base rev both halves are inverted — a loops row exists and no run does.
 * the four un-ported kinds still leave a loops row and no run, which is the regression rail: a
-  session that breaks four working kinds to land one is not a bridgehead.
+  change that breaks four working kinds to land one is not a bridgehead.
 * the branch reads `service.PORTED_LOOP_KINDS` rather than a copy of its contents, proved by
   EMPTYING the frozenset and watching `general` fall back to a loops row. A handler with
   `general` hardcoded passes every other test in this file and fails this one.
 
 The supervisor is the only thing faked, at the injection point `start_run` already offers, and
-preflight is stubbed because it checks credentials and model bindings this lane has none of —
+preflight is stubbed because it checks credentials and model bindings this test has none of —
 neither is the seam under test, and both have their own suites.
 """
 
@@ -125,7 +125,7 @@ def _launchable() -> Any:
     from a template this route failed to name. Unregistered again afterwards because the registry
     is process-global.
 
-    Preflight because it verifies credentials and model bindings, which a unit lane has none of.
+    Preflight because it verifies credentials and model bindings, which a unit test has none of.
     Stubbed rather than skipped via `skip_preflight`: the ROUTE must not skip preflight (a real
     launch has to pay for it), so the test cannot ask it to.
     """
@@ -171,7 +171,7 @@ def _payload(response: web.Response) -> dict[str, Any]:
 
 
 def test_a_general_create_starts_a_run_and_writes_no_loop_row() -> None:
-    """The one act PP-16 was missing. Both halves fail at `origin/main`.
+    """The one act that was missing. Both halves fail at `origin/main`.
 
     At the base rev this route answers 201 with a loops view carrying no `run_id`, and the row it
     describes is in `loop.store` — so `_payload(...)["run_id"]` raises `KeyError` and

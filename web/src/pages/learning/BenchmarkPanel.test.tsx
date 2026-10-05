@@ -404,7 +404,7 @@ describe('the skill-impact benchmark is CONSUMED, not merely served', () => {
               rerun_run_id: 'learnbench-B',
               reproduces: false,
               stated_variance: ['same task_set_version', 'same verdict class per task'],
-              stated_variance_source: `${DOC} §8 (Reproduction (V4))`,
+              stated_variance_source: `${DOC} §8 (Reproduction)`,
               conditions: {
                 'same task_set_version': true,
                 'same verdict class per task': false,
@@ -423,7 +423,7 @@ describe('the skill-impact benchmark is CONSUMED, not merely served', () => {
     expect(screen.getByText('Did NOT reproduce within the stated variance')).toBeTruthy()
     // The CITATION is the point: "within stated variance" is only checkable if the reader can
     // see where the variance is stated.
-    expect(screen.getByText(`${DOC} §8 (Reproduction (V4))`)).toBeTruthy()
+    expect(screen.getByText(`${DOC} §8 (Reproduction)`)).toBeTruthy()
     expect(screen.getByText(/same verdict class per task/)).toBeTruthy()
     expect(screen.getByText('not met')).toBeTruthy()
     expect(screen.getByText('met')).toBeTruthy()
@@ -438,8 +438,8 @@ describe('the skill-impact benchmark is CONSUMED, not merely served', () => {
   //
   // The two run kinds — cells bound to a real `Provider:model`, and cells that resolve the
   // offline `scripted` replay — produce identically-shaped score tables. `provider_binding` is
-  // the only field that tells them apart, and it went unread by every surface after ES-17 added
-  // it. Publishing a table without its provenance is protocol the overclaim.
+  // the only field that tells them apart, and it went unread by every surface after it was
+  // added. Publishing a table without its provenance is protocol the overclaim.
 
   it('names the model the cells actually called', () => {
     render(
@@ -479,11 +479,11 @@ describe('the skill-impact benchmark is CONSUMED, not merely served', () => {
    *  The DISCRIMINATOR changed with #2562 and this test changed with it. It used to be
    *  `'provider_binding' in report`, which worked and made the panel a second owner of the fact; it
    *  is now the schema the report STATES, which is what `REPORT_SCHEMA` was always for. So the
-   *  legacy fixture is a report that states schema 1 — the value ES-17 left it at — rather than one
-   *  with a key surgically removed. */
+   *  legacy fixture is a report that states schema 1 — the value it stayed at when `provider_binding`
+   *  was added — rather than one with a key surgically removed. */
   it('distinguishes an UNRECORDED provenance from a recorded absence of one', () => {
     const legacy = report({ report_schema: 1 })
-    // The fixture must genuinely lack the key too: a pre-ES-17 report had no `provider_binding` at
+    // The fixture must genuinely lack the key too: a pre-provenance report had no `provider_binding` at
     // all, and the panel must reach the same conclusion from the SCHEMA rather than from that.
     expect('provider_binding' in legacy).toBe(false)
     const unrecorded = render(

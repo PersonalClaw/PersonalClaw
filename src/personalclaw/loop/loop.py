@@ -50,7 +50,7 @@ class LoopStatus(str, Enum):
 
     Transitions are enforced in :mod:`personalclaw.loop.store`. Which members are terminal is
     not spelled out here: it is DERIVED from :data:`LOOP_PHASES` below, so the enum names the
-    states and the phase map names what they mean (`PP-16`, "one status vocabulary").
+    states and the phase map names what they mean.
     """
 
     INTAKE = "intake"  # submitted, classifier running
@@ -125,7 +125,7 @@ TERMINAL_STATUSES: frozenset[LoopStatus] = ENDED_STATUSES - RESUMABLE_ENDED_STAT
 
 
 class LoopStopReason(str, Enum):
-    """WHY a loop ended — the closed vocabulary persisted on the run record (`AG-14`).
+    """WHY a loop ended — the closed vocabulary persisted on the run record.
 
     :class:`LoopStatus` says WHERE a loop landed (``complete``/``failed``/``stopped``);
     this says WHY, so downstream consumers (cockpit, flywheel, reports) can act on the
@@ -270,7 +270,7 @@ class Loop:
 
     # ── workspace + run controls ──
     workspace_dir: str = ""  # validated abs dir; "" = use project context dir
-    # Scratch-workspace lifecycle (auto-campaign-scratch-workspace): when True, the
+    # Scratch-workspace lifecycle: when True, the
     # loop's own dir (config_dir()/loop/<id>/) is treated as disposable scratch and
     # is torn down automatically once the loop reaches a terminal state — UNLESS the
     # user graduates it first (saves the deliverable as a permanent artifact). Off by
@@ -283,7 +283,7 @@ class Loop:
     attended: bool = True
     autopilot: bool = True  # system drives phases vs user queues (code-ish)
     max_cycles: int = 30  # 0 = uncapped
-    #: `AG-14` ceilings — 0 = uncapped, like ``max_cycles``. ``deadline_secs`` bounds ACTIVE
+    #: Run ceilings — 0 = uncapped, like ``max_cycles``. ``deadline_secs`` bounds ACTIVE
     #: runtime (banked ``elapsed_seconds`` + the current running stretch — the same clock the
     #: cockpit displays, so a paused loop is not charged); ``max_cost_usd`` bounds the
     #: usage-ledger spend floor for the loop's worker sessions.
@@ -309,7 +309,7 @@ class Loop:
     completed_at: float | None = None
     elapsed_seconds: float = 0.0  # banked running time from PRIOR stretches (excludes pauses)
     # NO `total_cycles` here. It was a stored copy of the ledger's `step_completed` count, and
-    # PP-16 seam 4a retired it: ask `loop_files.cycles_completed(id)` (or
+    # it is retired: ask `loop_files.cycles_completed(id)` (or
     # `len(get_findings(id))` when
     # you already hold the projection). The redacted views still PUBLISH `total_cycles`, derived —
     # the API shape is unchanged, the second source of truth is gone.

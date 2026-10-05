@@ -12,7 +12,7 @@ import { join } from 'node:path'
 //   dashboard     `widgets/TasksWidget`        266px of 434  — 1.6x
 //
 // All three with `title: null`, so the second half of what the user wrote was unreachable to a sighted
-// phone user — while the row's accessible NAME already carried the whole thing (cycle 598 put the status
+// phone user — while the row's accessible NAME already carried the whole thing (the status is
 // in it too), making assistive tech the only complete reader. Nothing clips at 1440px.
 //
 // 🔑 WHY THESE THREE AND NOT FOUR. The side panel's header also clips a task title (239px of 578, 2.4x),
@@ -62,7 +62,7 @@ describe('every place a task is listed hands over its full title', () => {
   })
 
   it('the row name still carries the title AND the status — the half that already worked', () => {
-    // cycle 598's fix, which is why AT was the complete reader. It must survive this change.
+    // The earlier fix, which is why AT was the complete reader. It must survive this change.
     expect(LIST).toMatch(/<RowHitTarget label=\{`\$\{t\.title\} — \$\{sm\.label\}`\} \/>/)
   })
 

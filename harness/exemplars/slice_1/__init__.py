@@ -1,1 +1,1 @@
-"""slice_1 exemplar package (WF2 slice_1)."""
+"""slice_1 exemplar package (workflow frontier, engine and journal)."""

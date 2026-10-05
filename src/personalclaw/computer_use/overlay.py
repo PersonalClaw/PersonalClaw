@@ -1,9 +1,9 @@
 """The cursor-motion overlay's data source — observation of acting calls.
 
-**This module GRANTS NOTHING.** DESKTOP-COMPUTER-USE §3 floor 7 is the whole spec: *"The
-human-facing views grant nothing: … an optional cursor-motion overlay draws a fake cursor so
-a watching human sees where a click will land — it is not the real pointer and is invisible
-to screen capture."* The fake cursor here is a RECORD, not a pointer: the dispatch tells this
+**This module GRANTS NOTHING.** The human-facing views grant nothing: an optional
+cursor-motion overlay draws a fake cursor so a watching human sees where a click will land —
+it is not the real pointer and is invisible to screen capture. The fake cursor here is a
+RECORD, not a pointer: the dispatch tells this
 module where an approved acting call is about to land, the record sits in a bounded
 in-process buffer, and the dashboard's live view draws it. Nothing in this module can move,
 click, type, walk a window, or reach a driver — ``tests/test_computer_use_live_view.py``
@@ -11,16 +11,14 @@ asserts that by AST, the same way the shim's thinness is asserted, and the capab
 (`test_the_tool_surface_is_unchanged_with_the_views_on`) pins that turning the views on
 changes the tool surface not at all.
 
-**Why the fake cursor is drawn in the dashboard rather than on the desktop.** The plan's
-"invisible to screen capture" clause is a constraint, not a technique: the overlay must never
+**Why the fake cursor is drawn in the dashboard rather than on the desktop.** The
+"invisible to screen capture" requirement is a constraint, not a technique: the overlay must never
 contaminate what the agent (or any capture of the driven desktop) can see. Drawing it in the
 operator's browser satisfies that by construction — the marker exposes no accessibility
 element for ``computer_snapshot`` to index and paints no pixel on the driven display — where
 a native always-on-top window would have to *earn* the invisibility (`NSWindowSharingNone`)
 and would be this package's second OS-drawing surface for zero capability payoff. The
-dashboard is also where the watching human already is. Recorded as a deviation in the plan's
-execution log, because the plan's PiP phrasing predates the decision to read
-accessibility trees rather than capture pixels.
+dashboard is also where the watching human already is.
 
 **Why observing cannot refuse, and cannot raise.** The observation runs inside
 :func:`personalclaw.computer_use.service.computer_dispatch`, between the approved SEL row and
@@ -56,7 +54,7 @@ MAX_TRAIL = 60
 
 #: How the fake cursor is spelled per click path. ``ax_press`` is the default press that
 #: moves no pointer at all — the fake cursor is the ONLY cursor that "moves" for it, which is
-#: exactly the case the overlay exists for. The other two are the plan's own method names.
+#: exactly the case the overlay exists for. The other two are the ``click_method`` values.
 _AX_PRESS = "ax_press"
 
 #: Longest element label a trail point carries. The label orients a human ("Save · AXButton"),
@@ -142,7 +140,7 @@ def _label_of(element: dict | None) -> str:
 
 
 def _method_of(tool: str, params: dict) -> str:
-    """The pointer story, in the plan's vocabulary. Duplicates NO policy: the dispatch has
+    """The pointer story, in the click-method vocabulary. Duplicates NO policy: the dispatch has
     already validated the method by the time an approved call reaches here, so an unknown
     spelling can only mean a non-click tool — which is an accessibility-path action."""
     if tool == "computer_click":

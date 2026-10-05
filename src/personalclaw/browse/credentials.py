@@ -1,6 +1,6 @@
 """The credential screen — the *credentials-never-transit-the-agent* invariant, structurally.
 
-BROWSE-AUTOMATION §5.2 states the invariant as a promise: "the LLM never sees a password field's
+The invariant can be stated as a promise: "the LLM never sees a password field's
 value, never receives a 2FA code, never handles an OAuth token". A promise is enforced by whoever
 remembers it. This module is the mechanism that makes it hold whether anyone remembers or not, and
 the shape of that mechanism is the whole point of the file, so it is worth stating plainly.
@@ -48,7 +48,7 @@ composition.
 leaves its surroundings intact, for the reason `address_logins.redact_url_userinfo` records:
 taking out the secret must not take out the ability to read the line. And every replacement is a
 literal containing characters the thing it replaces cannot contain, so re-running any of these over
-its own output is a no-op — idempotence by construction, not by a guard a later session could
+its own output is a no-op — idempotence by construction, not by a guard a later change could
 delete.
 """
 

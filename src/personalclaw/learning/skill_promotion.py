@@ -1,4 +1,4 @@
-"""Retroactive promotion — what already WORKED becomes a skill PROPOSAL (LEARN E1.3).
+"""Retroactive promotion — what already WORKED becomes a skill PROPOSAL.
 
 The pieces around this already existed, which is why this module is small:
 
@@ -7,8 +7,9 @@ The pieces around this already existed, which is why this module is small:
   in-the-moment, and it already never writes a live skill on its own.
 * ``learning.proposals`` owns the one human-gated queue, with the content fingerprint and
   the prior-decision block that make a declined suggestion stay declined.
-* §3.2 already mines finished runs — but for *templates*: ``mining.positive_path_candidates`` →
-  ``mining.file_positive_trace`` files recurring successful step sequences as ``Kind.TEMPLATE``.
+* ``learning.mining`` already mines finished runs — but for *templates*:
+  ``mining.positive_path_candidates`` → ``mining.file_positive_trace`` files recurring successful
+  step sequences as ``Kind.TEMPLATE``.
 
 The gap is the skill half of that last one: nothing turned a completed run or conversation into a
 skill. ``Kind.SKILL`` was declared for exactly this and had **no writer** — the inbox even carries
@@ -37,8 +38,8 @@ scores below a real human correction).
 
 **Decision memory is reused, not reinvented.** ``proposals.enqueue`` fingerprints (kind, target,
 body) and returns ``SKIP`` when a prior decision ACCEPTED or REJECTED that fingerprint. So a
-promotion the user rejected does not come back on the next run of the same procedure — clause 3 of
-the contract is the queue's existing machinery, wired through rather than rebuilt.
+promotion the user rejected does not come back on the next run of the same procedure — that
+guarantee is the queue's existing machinery, wired through rather than rebuilt.
 """
 
 from __future__ import annotations
@@ -139,7 +140,7 @@ def _evidence(run_id: str, transcript: list[dict] | None) -> str:
 def _run_refusal(run_id: str) -> str:
     """Check a run is real and COMPLETE. Returns a `Refusal` value, or "" when it may be promoted.
 
-    Success is the gate the plan's positive-path mining uses (`mining._is_successful`) and it is
+    Success is the gate positive-path mining uses (`mining._is_successful`) and it is
     checked against the STORE rather than trusted from the caller: "promote what worked" is only
     meaningful if something other than the proposing agent decides what worked. Compared against
     `RunStatus.COMPLETE` so this cannot drift from the engine's own notion of a successful run.
@@ -164,12 +165,12 @@ def _run_refusal(run_id: str) -> str:
 
 
 def _manifest(slug: str, rationale: str, evidence_ref: str) -> proposals.ChangeManifest:
-    """The change manifest for a promotion (LEARN-R16).
+    """The change manifest for a promotion.
 
     `enqueue` flags a ``skill`` proposal carrying no manifest as ``manifest_valid=False``, so every
     promotion would otherwise render permanently warning in the inbox. The fields read oddly at
-    first because they are named for fix-shaped proposals — but a promotion IS gap-shaped, and §3.2
-    names the gap outright: the library had no entry, so the procedure got re-derived ad hoc. That
+    first because they are named for fix-shaped proposals — but a promotion IS gap-shaped, and the
+    gap is plain: the library had no entry, so the procedure got re-derived ad hoc. That
     registry miss is the failure pattern, and installing the skill is the targeted fix.
     """
     return proposals.ChangeManifest(
@@ -313,7 +314,7 @@ def install_accepted_skill(proposal_dict: dict) -> str:
 def candidate_files(proposal_dict: dict) -> dict[str, str]:
     """What an accept of this proposal WOULD write: home-relative path → content.
 
-    ES-6's gate needs the candidate artifact to stage in a throwaway home so a planted
+    The Loop-2 gate needs the candidate artifact to stage in a throwaway home so a planted
     regression is measurable before the user accepts. It lives here rather than in
     :mod:`personalclaw.evals.gate` because this module owns the target encoding and the
     install rail — the gate must not learn to spell an ``auto/`` skill a second way.

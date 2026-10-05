@@ -32,7 +32,7 @@ _READING_ID_MAX = 64
 
 
 def _record_generation(params: dict, wav_path: str, text: str) -> None:
-    """Append this generation to the resolved profile's bounded history (§1.2).
+    """Append this generation to the resolved profile's bounded history.
 
     Only profile-routed syntheses are recorded — the flat built-in path has no entity
     to remember them against. The stored text is a HASH, not the transcript: history

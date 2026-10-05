@@ -49,7 +49,7 @@ def _is_valid_mcp_name(name: str) -> bool:
     return bool(_VALID_MCP_NAME_RE.match(name))
 
 
-# THE canonical MCP config. UT3 collapsed the former dual store (this handler
+# THE canonical MCP config. The former dual store was collapsed into it (this handler
 # used to write ``~/.personalclaw/settings/mcp.json`` while the runtime
 # (mcp_client), provider instances (mcp_instances), and agent.py all read
 # ``~/.personalclaw/mcp.json``) — a divergence where a server added via the
@@ -80,8 +80,8 @@ def _installed_agent_json() -> Path:
     return agents_dir() / AGENT_FILENAME
 
 
-# There is no `_GLOBAL_MCP_JSON`. It was `_canonical_mcp_json()` frozen at import, kept after UT3
-# folded the "global" store into this file, and `/api/mcp/apply` still treated it as a second
+# There is no `_GLOBAL_MCP_JSON`. It was `_canonical_mcp_json()` frozen at import, kept after
+# the "global" store was folded into this file, and `/api/mcp/apply` still treated it as a second
 # scope: Import sent `globalMcp: false`, which removed the server from the file
 # `personalclaw: true` had just added it to. One store, one name for it.
 
@@ -496,9 +496,10 @@ async def api_mcp_probe_cached(request: web.Request) -> web.Response:
 
 
 async def api_mcp_pool_stats(request: web.Request) -> web.Response:
-    """GET /api/mcp/pool-stats — the in-process MCP connection-pool observability tile
-    (P23d): live/shared/session connection counts + lifetime spawn/reap/served/reuse
-    counters."""
+    """GET /api/mcp/pool-stats — the in-process MCP connection-pool observability tile.
+
+    Live/shared/session connection counts + lifetime spawn/reap/served/reuse counters.
+    """
     from personalclaw.mcp_client import get_mcp_client_registry
 
     return web.json_response(get_mcp_client_registry().pool_stats())
@@ -752,7 +753,7 @@ async def api_mcp_toggle_tool(request: web.Request) -> web.Response:
             logger.warning("mcp: failed to write mcp.json", exc_info=True)
             return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
     # It changes what an agent can call, the security-relevant change its native sibling
-    # (`POST /api/tools/toggle`, #45) already logs.
+    # (`POST /api/tools/toggle`) already logs.
     sel().log_api_access(
         caller=request.get("user", "dashboard"),
         operation="mcp.toggle_tool",

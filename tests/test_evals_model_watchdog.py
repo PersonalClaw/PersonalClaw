@@ -1,6 +1,6 @@
 """The model-upgrade watchdog.
 
-The acceptance clause has four parts and each gets its own rail:
+The watchdog's contract has four parts and each gets its own rail:
 
 * **computes a model fingerprint on ``active_models.json`` changes** — and the FILE's mtime
   is only a hint: the fingerprint is the truth, so a rewrite that changed no head model is
@@ -62,7 +62,7 @@ class _Notifier:
 
 
 def test_the_watchdog_only_watches_bindings_that_can_exist():
-    """§3.2 names four bindings; ``eval_judge`` is not one ``active_models.json`` can hold.
+    """Four bindings were named; ``eval_judge`` is not one ``active_models.json`` can hold.
 
     ``eval_judge`` is a PROMPT use case consumed by ``eval/judge.py``'s
     ``factory("eval_judge")``, not a member of ``providers.use_cases.VALID_USE_CASES`` — so a
@@ -304,7 +304,7 @@ def test_the_digest_reports_the_previous_fingerprints_baseline_count(watch_home)
     assert "1 scenario baseline(s)" in notifier.calls[0][2]
 
 
-# ── §4.4 mechanical revocation: a rebind voids standing grants ─────────────────
+# ── mechanical revocation: a rebind voids standing grants ──────────────────────
 
 
 def test_a_rebind_revokes_standing_autonomy_grants(watch_home, monkeypatch):

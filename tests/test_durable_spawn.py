@@ -1,4 +1,4 @@
-"""SC5, the SPAWN half — a durable worker is actually OPENED, survives the gateway,
+"""Durable work, the SPAWN half — a durable worker is actually OPENED, survives the gateway,
 and the shipped recovery machinery reattaches to it.
 
 `test_runner_lifecycle.py` proved the READER: a recovery sweep that recognises a live
@@ -22,7 +22,7 @@ and it defers to the OS for the one question that matters:
 
 The production argv composition, the subprocess spawns, the exit-code contracts, the
 rc/out file plumbing and the whole sweep chain run verbatim. The one class that needs the
-real daemon (`TestSC5RealTmux`) is skipif-gated on the binary and runs the same clauses
+real daemon (`TestRealTmux`) is skipif-gated on the binary and runs the same clauses
 against a real tmux server wherever one exists.
 
 The dead legs rely on the shim's children being reparented to init/launchd when the shim
@@ -490,7 +490,7 @@ class TestDurableStepSeam:
         Driven through the controller rather than by calling `provision` with a hand-built
         name, because the defect this catches is precisely the hand-off — a controller that
         passes nothing (or a name derived differently from the sweep's) leaves every clause
-        above true and SC5 still impossible.
+        above true and a durable worker still impossible.
         """
         spec = {
             "name": "ei6ds",
@@ -538,10 +538,10 @@ class TestDurableStepSeam:
         ), "run_step did not wait for the survivor — the two ran concurrently"
 
 
-# ── SC5 end to end: the spawn side produces the session the sweep reattaches to ─────────
+# ── End to end: the spawn side produces the session the sweep reattaches to ─────────
 
 
-class TestSC5SpawnToReattach:
+class TestSpawnToReattach:
     async def test_gateway_death_midstep_suspends_then_resumes_with_the_journal_flagging_it(
         self, tmux_shim, durable_on, tmp_path
     ):
@@ -665,16 +665,16 @@ class TestDurableWorkerName:
         assert containers.durable_worker_name(bare) == "pclaw-default-r-2-run"
 
 
-# ── SC5 against a REAL tmux daemon (skipped where none is installed) ────────────────────
+# ── Against a REAL tmux daemon (skipped where none is installed) ────────────────────
 
 
 @pytest.mark.skipif(not _REAL_TMUX, reason="tmux is not installed on this machine")
-class TestSC5RealTmux:
+class TestRealTmux:
     """The same clauses with the real daemon: skipped honestly where tmux is absent, and
     the shim classes above keep the logic railed on those machines.
 
     THE SKIP WAS NEVER A CEILING — it was an UNASKED QUESTION. "tmux is absent" was read
-    for weeks as "SC5 cannot be validated", but nobody had asked a package manager: the
+    for weeks as "a durable worker cannot be validated", but nobody had asked a package manager: the
     binary installs in seconds (`brew install tmux` / `apt-get install -y tmux`) and every
     clause below then passes against a real daemon. Absent is not unavailable. The stock
     GitHub runner images genuinely do not ship tmux (checked against the Ubuntu-24.04 and
@@ -740,9 +740,9 @@ class TestSC5RealTmux:
         """The first clause to its END against the real daemon: suspended → **running**,
         with the journal flagging `resumed`.
 
-        The sibling above stops at `suspended`, and `TestSC5SpawnToReattach` carries the
-        resume half only against the shim. That left the one transition SC5 names in full —
-        "run resumes suspended→running, journal flags `resumed`" — proven against a
+        The sibling above stops at `suspended`, and `TestSpawnToReattach` carries the
+        resume half only against the shim. That left the one transition durable work promises in
+        full — "run resumes suspended→running, journal flags `resumed`" — proven against a
         substitute daemon and never against tmux itself. The shim is a faithful stand-in for
         `has-session`/`list-panes`, but the whole point of a durable session is that a
         PROCESS THE GATEWAY DOES NOT OWN keeps the work alive, and only the real server

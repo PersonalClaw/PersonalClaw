@@ -9,7 +9,7 @@ import type { ChatTurn } from './chatTypes'
 
 // ── The find bar and the chips were POLISHED, not declared ──────────────────────────────
 //
-// The wrap-up change's acceptance criterion asks for "FindBar/chips keyboard traversal + aria-live
+// The requirement was "FindBar/chips keyboard traversal + aria-live
 // clean". Three things were measured wrong on arrival, and each one reads as fine from
 // the markup:
 //
@@ -25,7 +25,7 @@ import type { ChatTurn } from './chatTypes'
 //      page — the transcript the user was reading became unreachable without a
 //      full re-traverse.
 //
-// And the chips (S3) arrive from a WebSocket 1-3s after the reply completes: a purely
+// And the chips arrive from a WebSocket 1-3s after the reply completes: a purely
 // visual change, with `role="group"` naming them only once you already found them.
 //
 // These tests DRIVE the interactions (keydown on real nodes, focus assertions against
@@ -289,7 +289,7 @@ describe('followupAnnouncement — chips arrival is spoken, and dismissal clears
   })
 })
 
-// The chips half of the same acceptance clause, driven the way the bar's half already is.
+// The chips half of the same requirement, driven the way the bar's half already is.
 // The block above proves the chips are NAMED and that four buttons exist by role — which
 // is a count, not a traversal: a role query finds an element `Tab` may never land on, and
 // says nothing about what activating it does. That distinction is load-bearing here for

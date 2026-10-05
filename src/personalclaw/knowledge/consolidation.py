@@ -142,7 +142,7 @@ class Item:
 
     @property
     def protected(self) -> bool:
-        """Human-gold: never archived, never demoted (KNOW-R13)."""
+        """Human-gold: never archived, never demoted."""
         return self.origin.strip().lower() in PROTECTED_ORIGINS
 
     @property
@@ -150,7 +150,7 @@ class Item:
         return f"{self.title}\n{self.summary}\n{self.content}".strip()
 
 
-# ── the gate stack (§4.4 #5) ──
+# ── the gate stack ──
 
 
 @dataclass
@@ -199,7 +199,7 @@ def check_gates(
     return GateResult(True, backlog=unprocessed)
 
 
-# ── deterministic pre-dedup (§4.4 #2) ──
+# ── deterministic pre-dedup ──
 
 
 def normalize_for_dedup(text: str) -> str:
@@ -273,7 +273,7 @@ def pre_dedup(items: list[Item]) -> tuple[list[Item], list[tuple[str, str]]]:
     return survivors, merges
 
 
-# ── clustering (§4.4 #3) ──
+# ── clustering ──
 
 
 @dataclass
@@ -424,7 +424,7 @@ def synthesis_prompt(cluster: Cluster, *, conventions: str = "") -> str:
 def summary_metadata(cluster: Cluster, *, summary_chars: int) -> dict[str, Any]:
     """The lineage a summary must carry to be safe to build on.
 
-    `parent_ids` doubles as §3.2's `derived_from` relation — one mechanism, so a reader
+    `parent_ids` doubles as the `derived_from` relation — one mechanism, so a reader
     following provenance and a pass computing eligibility agree by construction.
     """
     return {
@@ -436,7 +436,7 @@ def summary_metadata(cluster: Cluster, *, summary_chars: int) -> dict[str, Any]:
     }
 
 
-# ── health checks (§3.4 #1, zero-LLM) ──
+# ── health checks (zero-LLM) ──
 
 #: A body under this is a stub — a title with nothing behind it, which reads as coverage and is
 #: not. The plan says 100 chars; measured, that over-fires badly on the content the store is
@@ -543,7 +543,7 @@ def _is_stub(item: Item) -> bool:
     return not _SUBSTANTIVE_RE.search(body)
 
 
-# ── phantom hubs (§3.4 #3, gap-healing) ──
+# ── phantom hubs (gap-healing) ──
 
 
 def phantom_hubs(
@@ -576,7 +576,7 @@ def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
 
 
-# ── lint cadence (§3.4 #2) ──
+# ── lint cadence ──
 
 
 def lint_due(*, persists_since_last: int, every_n: int, health_clean: bool) -> tuple[bool, str]:

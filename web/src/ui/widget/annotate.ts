@@ -83,7 +83,7 @@ export function composeCorrectionBody(annotations: WidgetAnnotation[]): string {
 }
 
 /** The full directive: a one-line summary the transcript reads well, then the
- *  fenced anchors. The `[UI] ` prefix and the C32 "refresh in place" suffix are
+ *  fenced anchors. The `[UI] ` prefix and the living-view "refresh in place" suffix are
  *  added by the caller through the widget bridge's shared composer, so a
  *  correction obeys the SAME clip and living-view rules a widget action does. */
 export function composeCorrectionDirective(annotations: WidgetAnnotation[]): string {

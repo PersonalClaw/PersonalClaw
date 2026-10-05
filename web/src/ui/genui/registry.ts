@@ -102,11 +102,10 @@ export type GenUiRegisterResult = { ok: true } | GenUiRegisterRefusal
  *  only registered, schema-validated components can appear in it, and a model writing
  *  `StatTile(…)` in a chat transcript must reach the CORE StatTile. If an app could
  *  take that name, model-authored text would be selecting app code, which is a new
- *  trust edge nobody consented to. (This is the "registration reading" the
- *  APP-PLATFORM-EVOLUTION APE-11 scope call deferred to a separate change with its own
- *  threat argument; the argument is: additive names only, never core names, gated on
- *  the app being installed AND enabled, args still validated by the HOST schema, and
- *  removed the moment the app is disabled.)
+ *  trust edge nobody consented to. (This is the "registration reading", deferred to a
+ *  separate change with its own threat argument; the argument is: additive names only,
+ *  never core names, gated on the app being installed AND enabled, args still validated
+ *  by the HOST schema, and removed the moment the app is disabled.)
  *
  *  Safe mode (`maxSurfaceLayer() === 0`) refuses every layered registration, so the
  *  recovery route resolves nothing but L0 even if a module somehow loaded. */
@@ -148,7 +147,7 @@ export function registerLayerComponent(
   return { ok: true }
 }
 
-/** Drop every component a `source` registered — the app-disable path (§6: an L1
+/** Drop every component a `source` registered — the app-disable path (an L1
  *  contribution is "removable by disabling the app"). Returns how many went, so a
  *  caller can log a real number instead of assuming the removal happened. */
 export function removeComponentsFrom(source: string): number {

@@ -47,7 +47,7 @@ from personalclaw.knowledge import structural as S
 def store(tmp_path):
     """A store under ``tmp_path``, with its OWN MonkeyPatch.
 
-    Its own, not the shared ``monkeypatch`` fixture: measured on KL-14, sharing it means a
+    Its own, not the shared ``monkeypatch`` fixture: measured, sharing it means a
     test calling ``monkeypatch.undo()`` for something of its own also undoes this ``setenv``,
     and the next store open lands in the developer's real ``~/.personalclaw``. Home isolation
     must not be revocable by a test.

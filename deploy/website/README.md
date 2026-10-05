@@ -1,4 +1,4 @@
-# Cross-repo deliverables (Distribution & Packaging)
+# Cross-repo deliverables (distribution and packaging)
 
 These artifacts are **produced in the core repo but land in sibling repos** — the
 maintainer hand-applies them (they're small and cross-repo). This directory is a
@@ -15,7 +15,7 @@ here before it's copied out.
 
 ---
 
-## 1. `install.sh` → the website repo (personalclaw.dev) — T2.2
+## 1. `install.sh` → the website repo (personalclaw.dev)
 
 `deploy/website/install.sh` **in this repo is the source of truth** for the bytes served at
 `https://personalclaw.dev/install`. The website repo's `public/install` is a **mirror**. It is
@@ -85,7 +85,7 @@ curl -fsSL https://personalclaw.dev/install | sh -s -- --container   # print com
 
 ---
 
-## 2. Provider-app manifests → the apps repo (PersonalClawApps) — T1.4
+## 2. Provider-app manifests → the apps repo (PersonalClawApps)
 
 `openai` and `anthropic` are no longer core dependencies. The
 branded provider apps must declare their SDK so the app-install pipeline
@@ -108,16 +108,16 @@ discovery is SDK-free). That is **12 apps, not 2**:
 Not affected: `ollama-models` (httpx — a core dep), `bedrock-models` (already declares
 `boto3`), `openai-tools` (REST via `net.fetch`, no SDK). Specifiers match core's
 canonical `[openai]`/`[anthropic]` extras exactly. The block is inserted before
-`provider` (slack-channel precedent, plan 32 T1.5 `7538b63`). After install/update the
+`provider` (slack-channel precedent, `7538b63`). After install/update the
 pipeline pip-installs these; a newly-introduced dep needs a gateway restart
 (`restart_required` in the install result). The `[openai]` / `[anthropic]` packaging
 extras remain the plain-pip/uv path for users who don't install an app.
 
 ---
 
-## Owner real-world steps (already handled per owner, or pending)
+## Owner real-world steps (already handled, or pending)
 
-- **T2.1** — first PyPI publish via `release.yml` (env `release`) + verify
+- First PyPI publish via `release.yml` (env `release`) + verify
   `uv tool install --python 3.13 personalclaw` / `pipx install --python python3.13 personalclaw`
   on a clean machine.
 - **V1** — clean-VM/empty-container wheel install → onboarding → first chat, Node
@@ -128,5 +128,4 @@ extras remain the plain-pip/uv path for users who don't install an app.
 - **V4** — per-kind self-update walkthroughs (git one-tag-behind; pip
   one-version-behind; container instructions; desktop stub; changelog panel).
 
-S5 (Homebrew / Nix) is out of scope for this plan iteration (owner decision
-2026-07-21).
+Homebrew / Nix packaging is out of scope.

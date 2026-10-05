@@ -1,4 +1,4 @@
-"""The transport-driven push half of the sync cycle (DAS-6c-ii-f).
+"""The transport-driven push half of the sync cycle.
 
 The mirror of the pull engine. Given a fresh local shard export (from ``shards.export_shards``),
 it publishes that export as this machine's next seq and announces it in the shared registry:
@@ -98,7 +98,7 @@ def publish_export(
     ``reload_registry`` is an optional ``() -> Registry`` the CAS loop calls to re-pull the
     shared registry after a lost race (the cycle passes one that reads + parses the remote
     ``registry.json``); without it a CAS failure ends the attempt (single-writer/test path).
-    ``codec`` is an optional :class:`~personalclaw.durability.crypto.SyncCodec` (DAS-8): when
+    ``codec`` is an optional :class:`~personalclaw.durability.crypto.SyncCodec`: when
     present, every non-routing object is AES-256-GCM encrypted here — the LAST step before the
     transport, so no unencrypted shard byte can reach an untrusted store.
     Returns a :class:`PushReport`. The push obligation is recorded in the durable outbox first,
@@ -115,7 +115,7 @@ def publish_export(
     if codec is not None:
         objects, refused = codec.encrypt_for_push(objects)
         if refused:
-            # §4.4 send-side rejection. Do NOT announce a seq whose objects are incomplete,
+            # Send-side rejection. Do NOT announce a seq whose objects are incomplete,
             # and do not retry: a plaintext object in an encrypted store is a contract
             # violation, so this is a permanent outcome the outbox records and stops chasing.
             entry = outbox.enqueue(

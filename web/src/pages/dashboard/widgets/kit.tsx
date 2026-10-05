@@ -83,8 +83,8 @@ export function WidgetRow({
       // and **0 of 80** Tab presses ever landed on a row. The row's ACTION pills are reachable, so
       // a keyboard user could reply to or dismiss an item but never open it — and axe reported
       // **0 blocking findings**, because a div with an onclick and no role is invisible to every
-      // rule. WCAG 2.1.1. Same shape and same fix as the tasks list (cycle 159) and the
-      // notification rows (cycle 164), applied once here because four widgets share this row.
+      // rule. WCAG 2.1.1. Same shape and same fix as the tasks list and the
+      // notification rows, applied once here because four widgets share this row.
       tabIndex={onClick ? -1 : undefined}
       className={cx(
         'flex items-center gap-s rounded-lg bg-surface-low px-m py-s',
@@ -132,7 +132,7 @@ export function RowAction({
     // (4.46-4.49) while `primary-emphasis` clears every one (worst 4.92, dark worst 8.38). Every sibling
     // tone here already passes on this ground (5.59-10.11) — `--color-primary` is the token tuned for
     // brand presence, which is exactly why the emphasis shade exists. Fourth ground for the pairing
-    // cycles 146/147/155 established.
+    // already established on three others.
     primary: 'text-primary-emphasis hover:bg-primary-container/40',
     ok: 'text-ok hover:bg-ok/15',
     danger: 'text-danger hover:bg-danger/15',

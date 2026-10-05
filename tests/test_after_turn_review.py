@@ -178,7 +178,7 @@ def test_no_vector_store_is_noop():
     )
 
 
-# ── preference-facet capture (C15) — wired into the after-turn pass ──
+# ── preference-facet capture — wired into the after-turn pass ──
 
 
 def test_facet_capture_style_nudge(vs, svc):
@@ -234,7 +234,7 @@ def test_a_veto_lesson_reads_as_the_user_said_it(vs, svc, said, lesson):
 
 
 def test_facet_capture_does_not_learn_a_never_fragment_as_a_lesson(vs, svc):
-    """G16: "…in exactly one sentence from now on, never more." used to write the
+    """The fragment "…in exactly one sentence from now on, never more." used to write the
     durable lesson ``Never: never more`` — the word 'never' as a degree adverb read as
     a prohibition. The assertion is on what reaches the STORE, not on a regex."""
     atr.run_after_turn_review(

@@ -1,8 +1,8 @@
-"""The self-model observer — the call site S72 left unbuilt (LEARN-R21 / §2.6).
+"""The self-model observer — the call site that was left unbuilt.
 
-S72 shipped the pure self-model decisions and recorded that it builds no store; S80 mapped the
-`self_model` allocator slot and recorded it had NO live producer. This suite covers the four things
-The criterion names, each against the REAL `MemoryService`/`VectorMemoryStore` and the REAL
+The pure self-model decisions shipped first and built no store; the `self_model` allocator slot
+was mapped next and had NO live producer. This suite covers the four things the observer needs,
+each against the REAL `MemoryService`/`VectorMemoryStore` and the REAL
 staging + proposal stores (monkeypatched to a tmp home), not hand-built state:
 
 * an observer records (route, tools, outcome, reaction) into the staging log after significant
@@ -341,7 +341,7 @@ def test_an_empty_self_model_produces_an_empty_snapshot(svc):
 
 def test_the_snapshot_reaches_the_allocator_self_model_slot(svc, home):
     """End-to-end: a live principle → producer → `_render_ambient(self_model=…)` → the rendered
-    ambient text. This is the slot S80 built and left producerless, now fed on the chat path."""
+    ambient text. This is the slot built and left producerless, now fed on the chat path."""
     from personalclaw.context import _render_ambient, _self_model_snapshot
 
     obs.install_accepted_principle(

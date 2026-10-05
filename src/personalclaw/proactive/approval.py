@@ -93,7 +93,7 @@ class ApprovalRule:
     #: Only meaningful for ``verdict=SUPPRESSED`` shadow rows.
     decline_count: int = 0
     cooldown_until: str | None = None
-    #: Explicit per-rule graduation for external sends (§1.6 bound 2). Off means
+    #: Explicit per-rule graduation for external sends. Off means
     #: an approve rule for a send-capable action still produces a draft.
     send_capable: bool = False
     key: str = ""
@@ -334,7 +334,7 @@ def suppression_active(state: SuppressionState | None, *, now: datetime) -> bool
 
 
 def clear_suppression(rule: ApprovalRule) -> ApprovalRule:
-    """Accepting during a cooldown clears it (§1.4) — count and clock both reset.
+    """Accepting during a cooldown clears it — count and clock both reset.
 
     Resetting the COUNT too is the point: the ladder measures a run of declines,
     and one acceptance ends that run. Keeping the count would silently put the

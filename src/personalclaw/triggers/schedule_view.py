@@ -1,8 +1,8 @@
-"""`Trigger` → the schedule wire shape (§6 API re-point).
+"""`Trigger` → the schedule wire shape, for the API re-point.
 
-"**The existing `/api/triggers` facade becomes the single API by re-pointing its three
+**The existing `/api/triggers` facade becomes the single API by re-pointing its three
 backends at
-one store** — its `kind:<raw>` id namespace is the migration map." This module is the
+one store** — its `kind:<raw>` id namespace is the migration map. This module is the
 projection that
 makes that possible for the SCHEDULE backend: it renders a clock `Trigger` in exactly the shape
 `_serialize_schedule` produced from a `ScheduleJob`, so the API contract and the frontend
@@ -22,13 +22,13 @@ destination was verified against a real migration:
     health_status / last_error_summary              ← last_status / last_error
     last_success_at / last_failure_at               ← last_run_ts
 
-Three fields map to `None` — **deliberate drops the plan already decided**, not gaps this module
+Three fields map to `None` — **deliberate drops**, not gaps this module
 should paper over: `created_ts` (a display-only timestamp), `last_result` (the run record owns the
 output — a copy on the trigger was a second truth), and `acked_items`. The last was verified dead
 before dropping it: the `/api/triggers/{id}/ack` route has **zero callers** (no frontend client
 method, no MCP tool) and the owner's real store carries **zero acked entries**, so the field is
 already-dead weight rather than a live behaviour. `LEGACY_FIELD_MAP` assigns its future owner
-("the inbox owns it — Inbox-Unification").
+(the inbox owns it).
 
 The projection is one-way on purpose. Writes go through `tools.py` / the store, which already own
 validation and the honesty contracts (a broken row refuses to enable, a patch allowlist protects the
@@ -63,8 +63,8 @@ _PINNED_PREFIX = "pinned:"
 def counts(store: Any, *, legacy: Any = None) -> dict[str, int]:
     """`{total, enabled, broken}` across the unified store — the numbers a status surface reports.
 
-    🔴 THE DEFECT (S107). Two separate surfaces counted automations by asking the legacy service,
-    which after the S100/S101 cutover holds nothing: `GET /api/status` reported
+    🔴 THE DEFECT. Two separate surfaces counted automations by asking the legacy service,
+    which after the cutover to the store holds nothing: `GET /api/status` reported
     `cron: {"running": false, "jobs": 0, "enabled": 0}` and the dashboard's SystemHealth widget
     rendered `triggers 0` — driven against a home with three valid store triggers, two enabled and
     firing. Both were honest readings of the wrong source, and `running: false` was doubly
@@ -102,7 +102,7 @@ def _inline_action(trigger: Any) -> dict[str, Any]:
     """The trigger's action as `{provider, config}`.
 
     `workflow` is `{"inline": {...}}` for a migrated cron and `{"provider": ..., "config": ...}` for
-    one the chat tools created (S92 builds the flat shape). Both are accepted because both
+    one the chat tools created. Both are accepted because both
     exist in a
     real store — reading only one would render an empty action for half the rows.
     """
@@ -144,7 +144,7 @@ def is_silent(trigger: Any) -> bool:
 def _failure_policy(trigger: Any) -> dict[str, Any]:
     """`Trigger.failure_policy` as a dict, whatever the row actually holds.
 
-    The store's load is lenient (S87), so a hand-edited `triggers.json` can put a string here and
+    The store's load is lenient, so a hand-edited `triggers.json` can put a string here and
     still list; a projection that assumed a dict would 500 the whole schedule list over one bad row.
     """
     policy = getattr(trigger, "failure_policy", None)
@@ -183,7 +183,7 @@ def to_schedule_row(
     showed the other. A save that sends the row back gets each marker restored from the stored
     trigger (`dashboard/handlers/triggers._keep_masked_trigger`).
 
-    `is_running` / `running_since` come from the CLAIM store (S97), not a process-local dict — which
+    `is_running` / `running_since` come from the CLAIM store, not a process-local dict — which
     is why they are answerable at all from an API process that does not own the scheduler loop.
     """
     from personalclaw.knowledge import report_schedules
@@ -325,7 +325,7 @@ def _next_run_ts(trigger: Any, *, now: float) -> float | None:
     """The persisted next fire, or a freshly computed one when the row is not armed yet.
 
     Reads `next_fire_at` FIRST — that is what the tick will actually act on, and a UI that
-    recomputed its own answer could disagree with the scheduler (the drift S96's one-engine rule
+    recomputed its own answer could disagree with the scheduler (the drift the one-engine rule
     exists to prevent). Falls back to `arm.next_fire` only for an unarmed row, so a just-created
     trigger still shows when it will run instead of a blank.
     """
@@ -380,14 +380,14 @@ def describe_cadence(trigger: Any) -> str:
 
 
 def _describe_adaptive(spec: dict[str, Any]) -> str:
-    """The cadence sentence for an `adaptive` clock (PR2-8).
+    """The cadence sentence for an `adaptive` clock.
 
     Names BOTH cadences and which one is live, because that is what an adaptive row's reader needs:
     "every 5m" alone would look like a misconfigured 5-minute poll rather than a system that is
     currently working harder because something is wrong.
 
     Worded by what switches the clock — whether maintenance has work it can do — and not as
-    "healthy": the health score also counts failures only a person can clear (settings B16), and
+    "healthy": the health score also counts failures only a person can clear, and
     those leave the clock on its long sleep, so "(now: healthy)" would contradict the Doctor.
     """
     healthy = _int_or_none(spec.get("interval_secs_healthy"))

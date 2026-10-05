@@ -18,7 +18,7 @@ import { join } from 'node:path'
 //
 // 🪤 AND IT IS NOT ABOUT DISCLOSURE. `ui/cappedListDisclosed.test.tsx` already censused 29 rendered
 // caps and deliberately left the dashboard widget previews alone, because they state no total and
-// adding one is a per-surface copy decision. That ruling stands and this rail does not touch it: a
+// adding one is a per-surface copy decision. That choice stands and this rail does not touch it: a
 // silent cap is fine, a silent cap BELOW the producer's is discarded work.
 
 // This file sits at `web/src/pages/dashboard/`, so the repo root is four levels up. Anchored on

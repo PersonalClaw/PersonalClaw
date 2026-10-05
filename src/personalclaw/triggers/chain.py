@@ -1,4 +1,4 @@
-"""The `run_completed` chain runtime — "when X finishes, run Y" (§7 item 8).
+"""The `run_completed` chain runtime — "when X finishes, run Y".
 
 **🔴 THE DEFECT THIS CLOSES.** `run_completed` is a declared kind with no firing path. It is in
 `KINDS`, `SPEC_KEYS` accepts `{source_trigger, source_def}`, the store persists it, `/api/triggers`
@@ -90,7 +90,7 @@ def chain_triggers(store: Any, *, source_id: str) -> list[Any]:
     rather than everything: a chain that fired on every run in the system would be a fire storm
     authored by omission.
 
-    Reads a :func:`~personalclaw.triggers.routing.routed` store (TSE-5) so a shared/team ``trigger``
+    Reads a :func:`~personalclaw.triggers.routing.routed` store so a shared/team ``trigger``
     provider can contribute the "when the team brief finishes, notify me" half of a cascade. Safe
     here, unlike the poll loops: a ``run_completed`` row holds no schedule to advance,
     and the writes its fire produces (its count and its run's record) are routed back to the serving
@@ -206,7 +206,7 @@ def carried_chain(payload: dict[str, Any] | None) -> dict[str, Any]:
 def chain_refusal(payload: dict[str, Any], *, next_id: str) -> str:
     """Why this chain must stop here, or "" to proceed.
 
-    Returns a REASON rather than a bool because §7 criterion 8 bans silent drops and the two
+    Returns a REASON rather than a bool because silent drops are banned and the two
     refusals mean different things to the person who has to fix the config: "too deep" is a
     legitimate chain that outgrew the cap, "loops" is a mistake. Reporting a cycle as a depth
     overflow sends someone off to raise a limit that was never the problem.
@@ -284,7 +284,7 @@ def next_fires(
     A trigger waiting on more than one of them fires once.
 
     `fires` is `(trigger, payload)` pairs for the caller to dispatch; `refused` carries
-    `{trigger_id, trigger_name, reason}` for `record_refusals`, which writes the rows criterion 8
+    `{trigger_id, trigger_name, reason}` for `record_refusals`, which writes the rows a refusal
     requires. Both are returned rather than the caller re-deriving refusals, because a chain that
     stopped with no row is indistinguishable from one that was never configured.
 

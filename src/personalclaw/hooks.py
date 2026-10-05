@@ -230,7 +230,7 @@ ENFORCEMENT_STATES: frozenset[str] = frozenset(
 def hook_enforcement(event: str, *, enabled: bool, bound: bool) -> str:
     """Whether a lifecycle hook on ``event`` can actually block, given its binding.
 
-    🔴 **The measured hole this exists to close (G40).** The same ``PreToolUse`` hook blocks or
+    🔴 **The measured hole this exists to close.** The same ``PreToolUse`` hook blocks or
     does not block depending on who references it, and nothing said which state a user's hook was
     in. Driven twice against the same six lifecycle hooks:
 
@@ -255,7 +255,7 @@ def hook_enforcement(event: str, *, enabled: bool, bound: bool) -> str:
     as a disarmed control. Never returns ``enforcing`` on a maybe: an unresolvable binding is
     reported ``not_enforcing``, because a control that only *looks* armed is worse than none.
 
-    **This is the hook's CAPABILITY, not a record of a fire (G89).** A hook can be
+    **This is the hook's CAPABILITY, not a record of a fire.** A hook can be
     ``enforcing`` — bound, enabled, blocking event — and still be *reached* through the
     informational seam for a given tool call, because an ACP ``EVENT_TOOL_CALL`` frame arrives
     already auto-approved. What that individual fire did is
@@ -551,7 +551,7 @@ class HookManager:
                     control="shell_denylist",
                     rule=denied.pattern or denied.why(),
                 )
-            # A SYSTEM-SCHEDULER write is offered the substrate instead (§7 crit 12). The
+            # A system-scheduler write is offered the substrate instead. The
             # ACP path gets the same gate as the native bash tool: a control on one of two dispatch
             # seams is a control the other silently skips, which is how the `web_watch` screen gap
             # opened. Reads pass — see `triggers/handoff.py` for the read/write split.
@@ -839,7 +839,7 @@ class ScriptHook:
     last_run: float = 0.0
     # "ok" | "error" | "timeout" | "launched" | "queued" | "skipped_incident" | "held_for_rung" |
     # "blocked" (the exit-2 block was HONORED, or guardrails refused the action) | "advisory" (the
-    # script asked to block and the seam could not honor it — G89) | "blocked_injection" (the
+    # script asked to block and the seam could not honor it) | "blocked_injection" (the
     # injection screen refused the text it was handed, so it did not run) | "withheld" (it ran,
     # and the screen refused what it printed). Every literal must have a key in
     # `triggers.history.HOOK_STATUS_TO_OUTCOME`, which reports an unmapped one as a failure.
@@ -1082,7 +1082,7 @@ async def run_script_hook(
 
     ``enforced`` declares that THIS fire's result is consumed as a gate — the caller reads the
     exit-2 signal and rejects the tool. It decides which status an exit 2 records: ``blocked``
-    when the block was honored, ``advisory`` when it was only reported (G89).
+    when the block was honored, ``advisory`` when it was only reported.
 
     **The default is False on purpose.** Every caller that does not gate — the informational
     :func:`fire_tool_hooks` seam, the "Run now" button in the trigger UI, any future site — gets
@@ -1227,8 +1227,8 @@ async def run_script_hook(
     from personalclaw.guardrails.denylist import enforce_action
     from personalclaw.guardrails.policy import unattended_dispatch_key
 
-    # `parent_session_key` rides the event payload when a subagent fired the hook
-    # (E11-P3); it lets the run's SafetyProfile layer its extra deny globs.
+    # `parent_session_key` rides the event payload when a subagent fired the hook;
+    # it lets the run's SafetyProfile layer its extra deny globs.
     #
     # 🔴 A top-level fire omitted it → "" → classified ATTENDED → INTERACTIVE, so the whole
     # profile layer was skipped. By the same reasoning the incident kill switch
@@ -1334,7 +1334,7 @@ async def run_script_hook(
         # `EVENT_TOOL_CALL` frame arrives already auto-approved.
         _status = "blocked" if enforced else "advisory"
     elif result.success:
-        # Honest "started ≠ succeeded" (T7): a fire-and-forget action (run-prompt/
+        # Honest "started ≠ succeeded": a fire-and-forget action (run-prompt/
         # run-workflow/invoke-agent) only LAUNCHED a background turn — record
         # "launched" so the lifecycle-trigger badge doesn't overstate it as a
         # verified success, matching the schedule path's run-record status.
@@ -1564,11 +1564,11 @@ class ScriptHookStore:
         For PreToolUse/PostToolUse, matcher filters by tool name.
         For AgentSpawn/UserPromptSubmit/Stop, all hooks for that event fire.
 
-        ``subagent_id``/``parent_session_key``/``agent_role`` (E11-P3) attribute a
+        ``subagent_id``/``parent_session_key``/``agent_role`` attribute a
         fire to the subagent that triggered it; they ride the event payload and
         are absent for top-level fires.
 
-        **This path never enforces (G89).** Its results are returned but no caller gates on
+        **This path never enforces.** Its results are returned but no caller gates on
         them — :func:`fire_tool_hooks`, ``subagent`` and ``llm_helpers`` reach it when the tool is
         already running — so an exit 2 here records ``advisory``, not ``blocked``.
         Use :meth:`fire_for_ids` for the gating seam.
@@ -1600,7 +1600,7 @@ class ScriptHookStore:
     ) -> list[ScriptHookResult]:
         """Fire only the hooks in ``hook_ids`` that match ``event`` (agent-scoped).
 
-        The agent-scoped firing primitive (E3): an agent references a subset of the
+        The agent-scoped firing primitive: an agent references a subset of the
         hook library and only those hooks fire for it — global hooks are NOT run.
         ``hook_ids=None`` is treated as "no scoped hooks" → fires nothing (use
         :meth:`fire` for the global set). An empty collection likewise fires nothing.
@@ -1610,10 +1610,10 @@ class ScriptHookStore:
         top-level agent); it is injected into the event payload as
         ``__hook_depth`` so the ``invoke-agent`` action can bound spawn recursion.
 
-        ``subagent_id``/``parent_session_key``/``agent_role`` (E11-P3) attribute the
+        ``subagent_id``/``parent_session_key``/``agent_role`` attribute the
         fire to a subagent; additive optional payload fields, absent at top level.
 
-        **This is the gating seam, and that is why it passes ``enforced=True`` (G89).** Its one
+        **This is the gating seam, and that is why it passes ``enforced=True``.** Its one
         caller for a tool call, the step every path asks (``pre_tool_hooks``), turns an exit-2
         result into the call's refusal, so a block recorded from here really happened; the chat
         runner fires the turn's other lifecycle events through it, none of which can block. A
@@ -1656,7 +1656,7 @@ class ScriptHookStore:
         that allow-set of hook ids; None fires every enabled matching hook.
 
         ``enforced`` rides down to :func:`run_script_hook` so an exit 2 is recorded as a real
-        ``blocked`` only on the gating seam (G89). It is ANDed with
+        ``blocked`` only on the gating seam. It is ANDed with
         :data:`BLOCKING_EVENTS` here: ``PreToolUse`` is the one event with a block seam at all, so
         a ``Stop`` hook that exits 2 records ``advisory`` no matter who fired it — there was
         nothing for it to block."""
@@ -1665,9 +1665,9 @@ class ScriptHookStore:
         results = []
         # Build base hook event
         hook_event: dict = {"hook_event_name": event, "cwd": os.getcwd()}
-        # Recursion depth for invoke-agent's spawn bound (E3-P3). Reserved key.
+        # Recursion depth for invoke-agent's spawn bound. Reserved key.
         hook_event["__hook_depth"] = depth
-        # Subagent attribution (E11-P3): present only when a subagent fires, so a
+        # Subagent attribution: present only when a subagent fires, so a
         # top-level chat fire's payload omits them. Hook scripts read these to
         # attribute a tool call to the subagent that made it.
         if subagent_id:
@@ -1775,10 +1775,10 @@ async def fire_tool_hooks(
 
     A hook that exits 2 here therefore records ``last_status`` ``advisory``, never
     ``blocked`` — measured on codex and claude-code alike, this seam reported a block while the
-    write it "blocked" landed on disk (G89). :meth:`ScriptHookStore.fire` owns that decision, so
+    write it "blocked" landed on disk. :meth:`ScriptHookStore.fire` owns that decision, so
     this function stays a thin adapter.
 
-    ``subagent_id``/``parent_session_key``/``agent_role`` (E11-P3) attribute the
+    ``subagent_id``/``parent_session_key``/``agent_role`` attribute the
     fire to the subagent that ran the tool; omitted for top-level tool calls.
     """
     if hook_store is None:

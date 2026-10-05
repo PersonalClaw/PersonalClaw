@@ -58,8 +58,8 @@ export function registerBuiltinContentTypes(): void {
     commentable: false,
   })
 
-  // ── genui: agent-generated UI from the typed component registry (AMBIENT-
-  //    SURFACES §5). Rendered in the HOST React tree (NOT an iframe) — safe
+  // ── genui: agent-generated UI from the typed component registry.
+  //    Rendered in the HOST React tree (NOT an iframe) — safe
   //    precisely because only registered, schema-validated components can appear;
   //    unknown/invalid lines are dropped with a typed error (no null holes). It is
   //    inline-embed ONLY (a `<widget kind="genui">` block), never a saved artifact

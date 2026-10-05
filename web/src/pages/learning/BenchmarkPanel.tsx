@@ -21,7 +21,7 @@ import type {
  *
  *  Two arms over identical work — `skills_on` (the skill is available to surfacing) and
  *  `skills_off` (it is suppressed, inside the spawned child only) — over a frozen ten-task
- *  register, each trial in a fresh seeded fixture home. The protocol was owner-signed BEFORE any
+ *  register, each trial in a fresh seeded fixture home. The protocol was frozen BEFORE any
  *  run, including the commitment to publish a modest or negative result, which is why this panel
  *  gives `inconclusive` and a skills-off win the same prominence as a win.
  *
@@ -243,7 +243,7 @@ function unrecordedCellPhrase(count: number | undefined): string {
  *  A benchmark run has two kinds and they render identically: cells bound to one real
  *  `Provider:model`, and cells that resolve the offline `scripted` replay. Publishing a score
  *  table without saying which is the overclaim protocol §8 forbids, and it is not a hypothetical
- *  — the report has carried `provider_binding` since ES-17 and no surface read it.
+ *  — the report already carried `provider_binding` and no surface read it.
  *
  *  `pin.model_fingerprint` is NOT the answer and must not be presented as one. It is read from the
  *  INVOKING home's `active_models.json`, so it describes what the operator's home was bound to
@@ -416,7 +416,7 @@ function notesFor(row: BenchmarkTaskRow): string[] {
   )
 }
 
-/** The (V4) reproduction judgement.
+/** The reproduction judgement (protocol §8).
  *
  *  The conditions are printed, not summarised to a boolean, because "within stated variance" is
  *  only meaningful if the reader can see the variance. `stated_variance_source` cites where the
@@ -485,7 +485,7 @@ function Skipped({ report }: { report: BenchmarkReport }) {
   )
 }
 
-/** The methodology link — the acceptance criteria's second half, and the reason a number here is
+/** The methodology link — the reason a number here is
  *  readable at all. The path comes from the report, so the link cannot drift from the document
  *  the runner cited. */
 function MethodologyLink({ doc }: { doc: string }) {

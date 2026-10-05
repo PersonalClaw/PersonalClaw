@@ -1,4 +1,4 @@
-"""The `auth` config section and the `personalclaw auth` CLI (REMOTE-USER-AUTH C4/C5).
+"""The `auth` config section and the `personalclaw auth` CLI.
 
 Two things are load-bearing here and are asserted rather than assumed:
 
@@ -132,7 +132,7 @@ def test_no_credential_field_is_ever_patchable() -> None:
     """A password is not a setting. Nothing password-shaped may enter the PATCH allowlist.
 
     The forbidden-word list is a NAME heuristic for the real property — "does this key carry
-    secret material" — and SH-2 produced the first true false positive: a boolean gate whose name
+    secret material" — and one key produced the first true false positive: a boolean gate whose name
     contains "credential" but whose value is `True`/`False`. Rather than rename the field away
     from the change's own vocabulary, the rail now measures the property it always meant:
 
@@ -256,7 +256,7 @@ def test_enable_then_disable_writes_only_the_flag(_isolated_home, capsys) -> Non
 
     # Read the FILE, not the loaded object: load() materialises every default section in
     # memory, so asserting on `to_dict()` would report defaults the CLI never wrote. (It no
-    # longer WRITES them back — PHF-15 made load() a pure read — but the in-memory filling
+    # longer WRITES them back — load() is a pure read — but the in-memory filling
     # is still there, and that is what this ordering guards against.) The property under
     # test is that `enable` touches one key.
     on_disk = json.loads((_isolated_home / "config.json").read_text(encoding="utf-8"))

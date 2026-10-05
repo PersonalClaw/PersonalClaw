@@ -5,7 +5,7 @@ import { join } from 'node:path'
 // ── The panel must not deny the capability it ships ──────────────────────────────────────────────
 //
 // `#/settings/routing` opened with: "Observation only: this does not change routing (that's a later
-// capability)". MRT-4 then added `RoutingPolicySection` directly below that sentence — mode, pin and
+// capability)". `RoutingPolicySection` was then added directly below that sentence — mode, pin and
 // per-class order, each written through `api.setRoutingPolicy`. So the page told a user its own
 // controls did nothing, which is worse than saying nothing: a reader who believes the header will not
 // touch the controls, and a reader who tries them has been misinformed by the product.
@@ -40,7 +40,7 @@ describe('the routing panel describes what it actually does', () => {
     const hint = headerHint(routing())
     expect(/Observation only/i.test(hint), 'the page ships routing controls — this claim is false').toBe(false)
     expect(/does not change routing/i.test(hint)).toBe(false)
-    expect(/a later capability/i.test(hint), 'the capability already shipped (MRT-4)').toBe(false)
+    expect(/a later capability/i.test(hint), 'the capability already shipped').toBe(false)
   })
 
   it('the hint points at the policy section that does the deciding', () => {

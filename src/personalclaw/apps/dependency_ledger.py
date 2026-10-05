@@ -1,4 +1,4 @@
-"""App dependency ledger — reference-counted shared-dependency tracking (A3).
+"""App dependency ledger — reference-counted shared-dependency tracking.
 
 When two apps both need the same MCP server / skill / agent, uninstalling one
 must NOT break the other. The ledger records, per shared dependency, which apps

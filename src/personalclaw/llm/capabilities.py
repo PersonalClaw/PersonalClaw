@@ -25,7 +25,7 @@ class Capability(str, Enum):
 
 
 class StructuredOutput(str, Enum):
-    """Graded native structured-output support (AUTONOMY-GUARDRAILS §2.4).
+    """Graded native structured-output support.
 
     A GRADED capability, not a boolean flag — so it rides on
     :class:`ProviderCapability` as its own field rather than joining the

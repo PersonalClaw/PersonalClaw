@@ -37,7 +37,7 @@ def _supervisor_policy(ctl: RunController, node: Node) -> supervisor_policy.Supe
     buried in the engine. A node that declares none gets the default policy, whose
     values reproduce what the engine did before it was consulted.
 
-    The run's sparse overlay composes ON TOP (PP-16 seam 4d, OWNER RULING 2): the
+    The run's sparse overlay composes ON TOP: the
     template stays the shared default source — it structurally cannot hold a
     per-instance setting — and `run.policy_overrides` carries only the knobs THIS run
     overrode. A run with an empty overlay gets the template's policy object unchanged,
@@ -79,8 +79,8 @@ def _convergence_state(
     * **The failure evidence comes from the BREAKER.** `breaker.error_signatures` is the
       record the trip detector already collected, so the stall tier fires on the trip
       instead of waiting to re-observe the same thing N more times. Re-counting the
-      failures here would be a second detector — the redundancy the R-de-dup ruling
-      forbids — and it would also make the response arrive later than the detection.
+      failures here would be a second, redundant detector — and it would also make the
+      response arrive later than the detection.
     * **The ladder position comes from persisted run state** (`_convergence_ledger`), so a
       resumed run re-derives the same rung rather than restarting at the cheapest one.
 
@@ -188,7 +188,7 @@ def _replan_ops(
                 )
             },
         },
-        "note": f"PP-15 replan {attempt}: {decision.reason}",
+        "note": f"replan {attempt}: {decision.reason}",
         "index": at,
     }
     if parent_id:

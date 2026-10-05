@@ -12,8 +12,8 @@ import { ROUTES, VIEW_ROUTES, THEMES } from '../../e2e/routes'
 // e2e/__screenshots__/…/terminal-light-darwin.png`, `1 failed`.
 //
 // So a route added to `routes.ts` without capturing baselines turns the visual suite red for a
-// missing FILE, which reads identically to a real regression. That happened, and DSC-2 measured the
-// whole of it on an untouched `main` (28924fe80, Darwin): 40 visual tests, 4 passed, 36 failed —
+// missing FILE, which reads identically to a real regression. That happened, and the whole of it
+// was measured on an untouched `main` (28924fe80, Darwin): 40 visual tests, 4 passed, 36 failed —
 // 8 of those for a MISSING golden (`artifacts`, `learning`, `knowledge-graph`, `knowledge-reading`,
 // each × both themes) and the other 28 for real render drift at 0.02–0.05 diff ratio against a 0.01
 // cap. Two thirds of a red gate was the harness racing itself and a third of it was absent files;
@@ -72,7 +72,7 @@ function byPlatform(): Map<string, Set<string>> {
 // This rail used to carry an `UNCAPTURED` allowance list of eight manifest surfaces with no golden
 // (`artifacts`, `learning`, `knowledge-graph`, `knowledge-reading` × both themes), recorded because
 // the dev machine's render disagreed with the committed set and a partial capture would have looked
-// like a mass regression. DSC-2 resolved that the only way it could be resolved — a WHOLESALE
+// like a mass regression. That was resolved the only way it could be resolved — a WHOLESALE
 // recapture — so all eight are captured and the list is DELETED rather than emptied.
 //
 // 🪤 It is deliberately not kept as an empty-but-available escape hatch. An allowance list is the

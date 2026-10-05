@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-// ── The library's narrowed-to-nothing state names its narrower (AUD-NZ10) ─────────────
+// ── The library's narrowed-to-nothing state names its narrower ─────────────
 //
 // Source pins (the page shell is too heavy to render for a copy contract). The old single
 // state — "No matching items / Try a different search or filter." — blamed both controls at

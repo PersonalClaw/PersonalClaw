@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import type { RoutingSuggestion } from './RoutingChip'
 
-// ── The routing chip's FEEDBACK-SIGNAL double-write ──
+// ── The routing chip's feedback double-write ──
 //
 // The chip's headline contract is not that it renders — it is that BOTH the accept
 // AND the dismiss become training data, each as a dual-attributed feedback record
@@ -55,7 +55,7 @@ beforeEach(() => {
   routingDismiss.mockClear()
 })
 
-describe('RoutingChip — WS-driven pill + FEEDBACK-SIGNAL double-write', () => {
+describe('RoutingChip — WS-driven pill + feedback double-write', () => {
   it('renders as a non-blocking status pill naming the suggested agent', () => {
     render(<RoutingChip suggestion={sugg()} defaultAgent="general" onRoute={() => {}} onDismiss={() => {}} />)
     const pill = screen.getByRole('status') // status, not alert/dialog — it does not trap or block

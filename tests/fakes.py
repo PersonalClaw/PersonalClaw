@@ -98,8 +98,8 @@ def ensure_fake_model_type(registry: ProviderRegistry) -> None:
 class BoundEmbedder:
     """An embedding provider that is bound and actually yields a vector.
 
-    Lives here, shared, rather than being re-stubbed per test file. RET-2 made an ingest
-    that wrote no vector and no chunk persist ``processing_status='unsearchable'`` instead
+    Lives here, shared, rather than being re-stubbed per test file. An ingest
+    that wrote no vector and no chunk persists ``processing_status='unsearchable'`` instead
     of ``done`` (``knowledge.searchability.verdict_for_ingest``), so every runner test
     whose subject is something ELSE — the graph, slicing, URL routing, the ingest queue, an
     event emit site — has to say out loud that its embedding provider IS bound, or it

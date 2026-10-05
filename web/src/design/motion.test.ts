@@ -62,7 +62,7 @@ function resolveVariant(v: unknown): Record<string, unknown> {
 const PRESETS = ['snappy', 'smooth', 'fluid', 'playful'] as const
 
 // Damping endpoints per preset: [at bounciness 0 (calm), at bounciness 1 (playful)].
-// Straight from the plan's §C1 constants — pinned so a retune is a deliberate edit
+// The tuned constants, verbatim — pinned so a retune is a deliberate edit
 // here and not a silent drift in feel.
 const ENDPOINTS: Record<(typeof PRESETS)[number], [number, number]> = {
   snappy: [40, 30],
@@ -198,7 +198,7 @@ describe('spring tiers — the fixed-damping family', () => {
     // NOT an oversight, and the reason this is a test rather than a comment. `physics`
     // is the personality family; `spring` is the neutral tier set an author reaches for
     // when the move carries no character to dial. Widening these to `--bounciness` would
-    // need three calm-damping constants the plan never specified, would move the feel of
+    // need three calm-damping constants nobody has specified, would move the feel of
     // ~112 call sites at every slider position below 1, and would leave two families
     // doing one job under two sets of names. If that widening is ever wanted it is a
     // taste decision, so it must break this line on the way in.
@@ -262,14 +262,14 @@ describe('preset-bearing variants', () => {
 })
 
 // ── "Zero springs under the off-switch", enumerated ──────────────────────────
-// The clause this pins reads: expressiveness=0 and prefers-reduced-motion both proven
+// The goal this pins: expressiveness=0 and prefers-reduced-motion both proven
 // to yield instant/crossfade with ZERO SPRINGS. Naming three families by hand would
 // prove it about today's module and nothing else — the defect being fixed here is
 // precisely a family that existed and was never named in a test. So the module's own
 // exports are WALKED and every transition-shaped value found is checked, which means a
 // family added later is covered without anyone remembering to cover it.
 //
-// (The expressiveness half of the clause is NOT asserted here, and deliberately: this
+// (The expressiveness half of the goal is NOT asserted here, and deliberately: this
 // module's shipped position is that `expr()` is the aesthetic dial and NOT the a11y
 // switch — `REGION_STEP_FLOOR` exists so "refined ≠ dead", and a green test above pins
 // `regionStagger()` at expressiveness 0 as still non-zero. Making expressiveness=0 an
@@ -386,7 +386,7 @@ describe('the reduced-motion off-switch, enumerated over the module', () => {
   })
 })
 
-// ── The surface-entrance choreography (change FM-6 / plan §S3 T3.2) ─────────
+// ── The surface-entrance choreography ─────────
 // `regionStagger()` is the single decision behind every orchestrated page entrance
 // in the app, so the two claims the change rests on are pinned here, on the pure
 // function, rather than inferred from a rendered surface:
@@ -397,8 +397,8 @@ describe('the reduced-motion off-switch, enumerated over the module', () => {
 describe('regionStagger — the surface entrance choreography', () => {
   it('is a stagger, and delays nothing before the first region', () => {
     const t = regionStagger() as { staggerChildren?: number; delayChildren?: number }
-    // A `delayChildren` here would be dead time before ANY content moved, which is the
-    // "motion that delays the user" the plan's soul guardrail rules out.
+    // A `delayChildren` here would be dead time before ANY content moved: exactly the
+    // motion that delays the user, which `docs/design/motion.md` rules out.
     expect(t.delayChildren).toBe(0)
     expect(t.staggerChildren).toBeGreaterThan(0)
   })

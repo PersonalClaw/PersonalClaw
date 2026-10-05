@@ -14,7 +14,7 @@ this module makes different, because collapsing any two of them produces a speci
   into ONE summary per trigger that still says how many.
 * **Review, don't auto-run.** A missed fire is a decision the user should make — "run the 3am backup
   now, at 9am" is sometimes right and sometimes exactly wrong. Run-now records `ran_late`; dismiss
-  records `skipped_missed`. Both are ledger rows, because §1.3 bans
+  records `skipped_missed`. Both are ledger rows, because the history allows no
   silent drops and a dismissed card
   that left no trace is a silent drop with a UI.
 * **`catch_up` fires ONCE, staggered.** launchd's RunAtLoad semantics. The storm guard is the
@@ -97,7 +97,7 @@ class MissedReview:
     different questions. A summary says
     "this trigger missed more than we listed"; `truncated` says "the
     ENUMERATION itself stopped early,
-    so even the counts are a floor". Reporting a floor as a total is the "don't lie" half of §3.4.
+    so even the counts are a floor". Reporting a floor as a total would break the "don't lie" rule.
     """
 
     rows: list[MissedSlot] = field(default_factory=list)
@@ -258,7 +258,7 @@ def enumerate_slots(
 
 
 def missed_inputs(entry: dict[str, Any], *, now: float = 0.0) -> dict[str, Any]:
-    """Derive this module's four inputs from a row `Trigger.to_dict()` actually emits (S142).
+    """Derive this module's four inputs from a row `Trigger.to_dict()` actually emits.
 
     🔴 THE KEY CONTRACT, and why it needed writing down. This module reads `last_fire_at`,
     `interval_secs`, `missed_last_slot` and `fires_automatically` off the dicts it is handed.
@@ -269,8 +269,8 @@ def missed_inputs(entry: dict[str, Any], *, now: float = 0.0) -> dict[str, Any]:
     so every trigger got `"nothing was missed"` including ones overdue by hours.
 
     A prose spec read by nothing is inert; a spec read with the WRONG KEYS is worse, because it
-    reports a confident, wrong answer. Same shape as S130's classifier disagreeing with the gate
-    names the engine walks — the logic was right and the vocabulary was not.
+    reports a confident, wrong answer. Same shape as the gate-direction classifier disagreeing
+    with the gate names the engine walks — the logic was right and the vocabulary was not.
 
     Derived rather than added as four persisted fields, deliberately:
 
@@ -409,13 +409,13 @@ def review_at_boot(
 
 
 def late_outcome(outcome: str, *, scheduled_for: float, started_at: float) -> tuple[str, str]:
-    """Refine a granted fire's outcome to `ran_late` when it missed its slot (§1.3 — S170).
+    """Refine a granted fire's outcome to `ran_late` when it missed its slot.
 
     Returns `(outcome, reason)`, unchanged for anything that is not an on-time `ran`.
 
-    🔴 WHY THIS EXISTS. §1.3 added `ran_late` and `scheduled_for` in one breath: *"a run
+    🔴 WHY THIS EXISTS. `ran_late` and `scheduled_for` were added together, because a run
     that started 40 minutes after its slot is a different story from one that started on
-    time and took 40 minutes."* `FireRecord` carries both stamps and `validate_record` even
+    time and took 40 minutes. `FireRecord` carries both stamps and `validate_record` even
     refuses a `ran_late` row without a `scheduled_for` — yet only the MANUAL missed-fire
     card (`resolve_missed`) ever wrote the value. Measured: a minutely trigger fired 40
     minutes past its slot recorded a plain `ran`, with the lateness computable on that very
@@ -432,7 +432,7 @@ def late_outcome(outcome: str, *, scheduled_for: float, started_at: float) -> tu
     `ran_late` would lose the failure entirely.
 
     A missing or zero `scheduled_for` returns unchanged. With no slot to compare against
-    lateness is not a fact, and guessing one produces the very impression §1.3 avoids.
+    lateness is not a fact, and guessing one produces the very false impression `ran_late` avoids.
 
     The threshold is the same line `slot_missed` draws, so the tick never runs a slot this would
     call late unless it catches up: a slot that late is missed, and only a `catch_up` trigger runs
@@ -463,7 +463,7 @@ def resolve_missed(action: str, *, kind: str = "missed") -> tuple[str, str]:
 
     Both branches write a ledger row. A dismissed card that left no trace
     would be a silent drop with a
-    UI on it — §1.3's rule is not about the mechanism, it is about whether the history is honest.
+    UI on it — the rule is not about the mechanism, it is about whether the history is honest.
 
     `kind` is what the card is about: a slot that never ran (`missed`), or a run a restart cut off
     (`interrupted`, which is reviewed the same way rather than retried on its own — it may already

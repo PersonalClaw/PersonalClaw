@@ -56,7 +56,7 @@ USER_EDITED_MID_FLIGHT = "user_edited_mid_flight"
 #: A queued batch failed its TOCTOU re-verify (state moved under the preview). Journaled
 #: because a silently dropped mutation is indistinguishable from an applied one.
 MUTATION_REJECTED = "mutation_rejected"
-#: A done node whose inputs changed but which is NOT being re-run (WF2-R2 #3) — better a
+#: A done node whose inputs changed but which is NOT being re-run — better a
 #: visible flag than an answer computed from inputs that no longer exist.
 INPUTS_STALE = "inputs_stale"
 CONSULTED = "consulted"
@@ -71,7 +71,7 @@ CARRYOVER = "carryover"
 DECISION = "decision"
 RUN_STARTED = "run_started"
 RUN_FINISHED = "run_finished"
-#: LOOPS-EVOLUTION R4/R14: the middleware's own observable events. `breaker_trip` and
+#: The middleware's own observable events. `breaker_trip` and
 #: `steering` are ledger kinds because a refiner needs to know a run was nudged or
 #: steered — a verdict that followed a human's mid-run instruction is not evidence about
 #: the template, and without the event there is no way to tell the two apart.
@@ -114,10 +114,10 @@ CLOCK_READ = "clock_read"
 #: data sources answered. The tile header reads exactly this row for its freshness stamp and its
 #: per-source ok/error dots, which is why the per-node outcomes ride ON the row rather than in a
 #: parallel status file: a second channel would let "the tile says fresh" and "the ledger says the
-#: fetch failed" disagree, and the silent-stale panel is the complaint §2.4 exists to kill.
+#: fetch failed" disagree, and the silent-stale panel is the complaint this row exists to kill.
 TILE_REFRESHED = "tile_refreshed"
 
-#: LEARNING-FLYWHEEL §3.3 (LEARN-R18), generalized: the pending→resolved outcome
+#: The pending→resolved outcome
 #: lifecycle, open to ANY producer. A producer journals `pending_outcome`
 #: {producer, subject, metric, metric_source, horizon, baseline} at BET time — before the
 #: outcome is knowable — and the resolver writes `outcome_resolved` once the horizon has elapsed
@@ -157,21 +157,21 @@ WORKSPACE_TEARDOWN = "workspace_teardown"
 #: digest's most dangerous failure is a SILENT one — an item the gate swallowed because a rule
 #: was broader than the user thought, or a proposal dropped because the model invented an id,
 #: both look identical to "nothing happened" from the digest body. These two rows are the only
-#: place that difference exists, and the reply grammar's `always no` audit trail (criterion 3)
+#: place that difference exists, and the reply grammar's `always no` audit trail
 #: reads the first of them.
 SKIPPED_TRIAGE = "skipped_triage"
 PROPOSAL_REFUSED = "proposal_refused"
 
 #: What the triage digest DID unattended, what it tried and could not do, and what it refused to
 #: do on spend grounds. `auto_executed` is an action that LANDED: it carries the matched rule's
-#: name and the provider's undo handle, which is what makes bound 4 ("every auto-execution is a
-#: ledger row with the rule named, and one-click undo where the provider supports it") a fact
+#: name and the provider's undo handle, which is what makes "every auto-execution is a
+#: ledger row with the rule named, and one-click undo where the provider supports it" a fact
 #: rather than a promise — without the handle on the row there is nothing for an undo click to
 #: resolve against. `auto_failed` is a dispatch the provider reported as failed (or that raised),
 #: with the provider's words in `reason`, as a `skipped_budget` row carries its own. It is a
 #: SEPARATE kind, not an `auto_executed` row with a different outcome, because a reader counting
 #: what the machine did counts a kind, and a failure counted there reads as done.
-#: `skipped_budget` is the NEW-1 floor's refusal, separate for the same reason `skipped_triage` is
+#: `skipped_budget` is the budget floor's refusal, separate for the same reason `skipped_triage` is
 #: separate from `proposal_refused`: its remedy (raise the ceiling, or wait for the window to
 #: reset) is different from every other reason a proposal stayed pending.
 AUTO_EXECUTED = "auto_executed"
@@ -179,7 +179,7 @@ AUTO_FAILED = "auto_failed"
 SKIPPED_BUDGET = "skipped_budget"
 
 #: One line-anchored Finding a review stage emitted, in the
-#: WORKFLOWS-V2 Canonical Finding shape plus `auto_fixable`. A LEDGER kind rather than a side file
+#: canonical Finding shape plus `auto_fixable`. A LEDGER kind rather than a side file
 #: because the triage panel reads findings back AFTER the node settled — sometimes after the run
 #: finished — and the ledger is the one channel that survives that. It is also the only way the
 #: flywheel can pair a reviewer's output with the `judge_divergence` rows its rejections produce:
@@ -190,7 +190,7 @@ REVIEW_FINDING = "review_finding"
 #: The user's own answer to one digest proposal, whether it was
 #: tapped in the digest card or typed as a channel reply. Written to the DIGEST'S OWN run, keyed by
 #: `(run_id, item_ordinal)`, and that is the whole point: it is what makes a reply idempotent
-#: across a gateway restart (criterion 9). A reply handler that kept its acted-set in memory would
+#: across a gateway restart. A reply handler that kept its acted-set in memory would
 #: re-execute after a restart, and one that kept it in a new store would be a second thing to back
 #: up for a fact the run's ledger is already the record of. The row carries the parsed verb, so
 #: "you answered and it did nothing" is distinguishable from "you never answered".

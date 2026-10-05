@@ -1,9 +1,9 @@
 """Platform event registry — the runtime that honours the declaration.
 
-APE-1 shipped ``permissions.eventSubscriptions`` and deliberately added no accessor and no
-delivery. This suite drives the runtime half through the path an app actually receives an
-event by: ``app_events.emit`` fans out, the app drains its broker inbox over the real
-``GET /api/apps/message`` route.
+The manifest shipped ``permissions.eventSubscriptions`` first and deliberately added no
+accessor and no delivery. This suite drives the runtime half through the path an app
+actually receives an event by: ``app_events.emit`` fans out, the app drains its broker inbox
+over the real ``GET /api/apps/message`` route.
 
 What it pins, in order of how much it would cost to get wrong:
 
@@ -14,7 +14,7 @@ What it pins, in order of how much it would cost to get wrong:
 * **Exact match, no leakage.** A near-miss (``task.completed.extra``) and a would-be
   wildcard (``task.*``) subscriber both receive nothing when ``task.completed`` fires.
 * **The two axes stay apart.** ``eventSubscriptions`` is not ``permissions.events``:
-  neither grant implies the other, asserted from both sides (APE-1's
+  neither grant implies the other, asserted from both sides (``test_app_permissions.py``'s
   ``test_event_subscriptions_do_not_widen_the_ws_event_allowlist`` is the manifest-side
   half; these are the dispatch-side half).
 * **The three emit sites are real.** Each event is driven from the production function that

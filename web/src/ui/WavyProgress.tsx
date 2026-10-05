@@ -40,8 +40,8 @@ export function WavyProgress({
   // determinate path — but with **no accessible name**, so assistive tech announced a bare
   // percentage with no subject ("progressbar, 42%"). That is the missing half of Name/Role/Value
   // (4.1.2), and axe's `aria-progressbar-name` would report it — except the bar only renders while
-  // a download job is RUNNING, so no audit of `#/settings/models` ever reached it. Cycle 178 fixed
-  // the same gap on `ui/ProgressRing` and recorded this one; this is that follow-up.
+  // a download job is RUNNING, so no audit of `#/settings/models` ever reached it. The fix for the
+  // same gap on `ui/ProgressRing` recorded this one; this is that follow-up.
   //
   // The type enforces the distinction rather than trusting a convention (the shape `WidgetRow`
   // uses): pass a `value` and you must name it; omit `value` and there is nothing to name, because

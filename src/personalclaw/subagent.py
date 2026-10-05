@@ -174,7 +174,7 @@ def _validate_agent(requested: str) -> tuple[str, str]:
     Returns ``(agent_name, error)``. An empty ``requested`` resolves to the
     default agent with no error (``("", "")``). A KNOWN agent returns its name.
     An UNKNOWN agent returns a TYPED error naming the valid agents — never a
-    silent downgrade to the default (C1.3): a fan-out that named the wrong agent
+    silent downgrade to the default: a fan-out that named the wrong agent
     used to run entirely on ``personalclaw`` with nothing but a log line, so the
     caller must fail loudly and let the user fix the name.
     """
@@ -376,7 +376,7 @@ def _run_workdir_for(parent_run: str) -> str:
 # research batch LEAF mean the same thing — write/execute tools are denied — and there is one
 # write-tool policy, not two that drift. The denial is enforced at the tool-approval layer (the
 # ``_run_inner`` permission loop below), NOT by handing the worker a filtered ``.tools`` list: the
-# native ACP runtime does not enforce such a list (WF2LEA-6 measured this), so a research spawn that
+# native ACP runtime does not enforce such a list (measured), so a research spawn that
 # was only *told* its tools would still be able to call a write tool. The seam that actually answers
 # the tool call is the only seam where the class can be made true.
 CAPABILITY_RESEARCH = "research"
@@ -384,12 +384,12 @@ CAPABILITY_MUTATING = "mutating"
 
 
 def resolve_capability_class(*, capability_class: str, approval_mode: str) -> str:
-    """The effective capability class for a spawn (§4.1).
+    """The effective capability class for a spawn.
 
     An explicit ``research``/``mutating``/``text`` always wins — a caller that decided is obeyed.
     An unset class defaults BY CONSTRUCTION: ``research`` (read-only) for an AUTO-FIRED spawn
     (``approval_mode == "auto"`` — a cron/unattended run with no human watching), ``mutating`` for a
-    human-watched spawn. This is the plan's "auto-fired runs default read-only" rule: write/execute
+    human-watched spawn. This is the "auto-fired runs default read-only" rule: write/execute
     on an unattended run is a creation-time grant a caller passes explicitly (``capability_class=
     "mutating"``), never a capability an auto-fired run acquires by default.
     """
@@ -418,7 +418,7 @@ class SubagentInfo:
     # resolves by construction via ``resolve_capability_class`` — auto-fired spawns default to
     # research so an unattended run cannot write without an explicit creation-time grant.
     capability_class: str = ""
-    dry_run: bool = False  # observe-mode: write-capable tools don't execute (T9 replay)
+    dry_run: bool = False  # observe-mode: write-capable tools don't execute (dry-run replay)
     silent: bool = False  # suppress completion notification (dashboard + channel)
     turns: int = 0
     last_tool: str = ""
@@ -428,7 +428,7 @@ class SubagentInfo:
     elapsed: float = 0.0
     _raw_task: str = ""  # the task as given; masked where the agent's prompt is composed
     model: str = ""
-    # Per-child token/cost accounting (COST-AND-TOKEN-OBSERVABILITY C2, subagent
+    # Per-child token/cost accounting (the subagent
     # write-site): carried onto the completion delivery so a fan-out's cost is
     # visible per child, not discarded at EVENT_COMPLETE.
     input_tokens: int = 0
@@ -444,7 +444,7 @@ class SubagentInfo:
     # through. ``none`` (the default builtin) composes the host path-sandbox + resource ceilings
     # with no further isolation; an installed ``sandbox`` app supplies a stronger container tier.
     sandbox: str = "none"
-    # Per-leaf env for a compiled batch branch (WF2WOR-5 C2): the lineage keys plus the
+    # Per-leaf env for a compiled batch branch: the lineage keys plus the
     # capability flag the tool-handler seam reads, already secret-filtered by `leaf_env`. Carried
     # per-SESSION rather than through `os.environ` because leaves of one batch run concurrently in
     # one gateway process — a process-global flag would leak one leaf's posture onto its siblings.
@@ -643,7 +643,7 @@ class SubagentManager:
         # gone by the time it fails, so the session-level breaker could never trip.
         self._fanout_failures: dict[str, int] = {}
         # Fan-outs that must refuse further spawns, keyed to a TYPED reason string
-        # (C1.4 breaker trip, C1.5 run-budget exceeded, kill-fan-out). A queued or
+        # (breaker trip, run-budget exceeded, kill-fan-out). A queued or
         # new spawn for one of these is refused with that reason rather than started.
         self._fanout_stops: dict[str, str] = {}
         self.hook_store: Any = None  # Optional ScriptHookStore, set by server.py
@@ -1005,7 +1005,7 @@ class SubagentManager:
         info.reaped = True
         self._maybe_clear_fanout(_fanout_key(info))
 
-        # NOT best-effort (SH6.3). This write is the only record that the reaper
+        # NOT best-effort. This write is the only record that the reaper
         # SIGKILLed a subagent, and it used to sit under `except Exception:
         # logger.exception(...)` — so a genuine audit-write failure (a read-only or full
         # home, a broken SEL chain) vanished into a log line while the kill itself
@@ -1337,7 +1337,7 @@ class SubagentManager:
 
         # --- Budget guard: refuse to spawn if the day-scope token ceiling is hit ---
         # A subagent is unattended work; if the day's token budget is already
-        # exhausted, don't start another one (§1.1 pause-into-refuse). An UNREADABLE
+        # exhausted, don't start another one (pause-into-refuse). An UNREADABLE
         # ceiling refuses too (#3458) — it follows `proactive/autoexec.py`'s "an unverified
         # ceiling authorises nothing" rather than this seam's old blanket fail-open,
         # because a spawn is exactly the unattended spend the ceiling exists to bound.
@@ -1435,7 +1435,7 @@ class SubagentManager:
             agent_work_id(agent_id), info.parent_session_key, reach=self.memory_reach
         )
 
-        # --- Fan-out stop (C1.4 breaker / C1.5 run budget / kill-fan-out): a stopped
+        # --- Fan-out stop (breaker / run budget / kill-fan-out): a stopped
         # fan-out refuses further spawns with the recorded TYPED reason. ---
         fkey = _fanout_key(info)
         stop_reason = self._fanout_stops.get(fkey)
@@ -1484,7 +1484,7 @@ class SubagentManager:
         Increments the global + run-lane counts, then routes through the same
         approval priority ``spawn`` documents. Shared by the initial spawn and the
         queue drain so a drained spawn takes the identical path with its original
-        id + parameters (C1.2). A rejection here decrements the counts it took.
+        id + parameters. A rejection here decrements the counts it took.
         """
         agent = info.agent
         agent_id = info.id
@@ -1560,7 +1560,7 @@ class SubagentManager:
             if self._on_done:
                 self._tasks[agent_id] = asyncio.ensure_future(self._safe_announce(info))
 
-        # `SubagentSpawn` (AUTO crit 5): declared, selectable in the hook UI, and fired by nothing
+        # `SubagentSpawn`: declared, selectable in the hook UI, and fired by nothing
         # until now. Gated on `not info.done` so a REJECTED spawn does not announce one: every
         # rejection path above sets `done=True` with an `error`, so a hook watching this event sees
         # only subagents that actually started.
@@ -1611,7 +1611,7 @@ class SubagentManager:
         The per-child ``subagent:<id>`` session is already released by the time a
         child fails, so the session-level breaker (``session._CIRCUIT_BREAKER_``) can
         never trip for sub-agents — the real guards were only the turn limit and the
-        reaper (C1.4). This keys the breaker on the FAN-OUT instead: a SUCCESS resets
+        reaper. This keys the breaker on the FAN-OUT instead: a SUCCESS resets
         the count; a genuine FAILURE increments it, and at
         ``_CIRCUIT_BREAKER_THRESHOLD`` consecutive failures the whole fan-out is
         stopped so a broken run cannot keep burning children. A user-CANCELLED child
@@ -1646,11 +1646,11 @@ class SubagentManager:
 
     def _charge_child_and_check_budget(self, info: SubagentInfo) -> None:
         """Fold one child's cost into the fan-out's RUN-scoped budget and, if the
-        run ceiling is now exceeded, STOP the fan-out mid-flight (C1.5).
+        run ceiling is now exceeded, STOP the fan-out mid-flight.
 
         Consumes the per-child cost/tokens already captured at ``EVENT_COMPLETE``
-        (COST-AND-TOKEN-OBSERVABILITY T1.3 — NOT a second ledger) and composes with
-        AUTONOMY-GUARDRAILS' :class:`SpendMeter` run scope: it charges the meter
+        (NOT a second ledger) and composes with
+        the guardrails' :class:`SpendMeter` run scope: it charges the meter
         keyed on the fan-out key and re-reads ``check_run`` after each child. The
         day-scope check at spawn is a point-in-time snapshot; N children each spend
         under it, so the run scope is what actually bounds a fan-out. On EXCEEDED the
@@ -1745,9 +1745,9 @@ class SubagentManager:
         """Dispatch the next queued spawn when a slot frees up.
 
         Respects BOTH the global cap and the queued spawn's own run-lane cap
-        (C1.4) — a queued spawn whose lane is still full is skipped and the next
+        — a queued spawn whose lane is still full is skipped and the next
         eligible one is tried, so a wide fan-out cannot monopolise the drain. The
-        queued ``SubagentInfo`` (with its full parameter set, C1.2) is dispatched
+        queued ``SubagentInfo`` (with its full parameter set) is dispatched
         as-is via ``_dispatch_run`` — the id and every parameter survive the drain.
         Staggers by 2 seconds to avoid CPU/memory spikes. Nothing is dispatched while the gateway
         stops: what waits is kept for the next start (``subagent_waiting``).
@@ -1957,7 +1957,7 @@ class SubagentManager:
                         "agent": _redact(info.agent),
                         "result": _done_result(info.result),
                         # Per-child cost/tokens for the activity panel — the
-                        # T1.3 ledger figures already captured at EVENT_COMPLETE.
+                        # figures already captured at EVENT_COMPLETE.
                         "cost_usd": round(info.cost_usd, 6),
                         "tokens": info.input_tokens + info.output_tokens,
                     },
@@ -2001,7 +2001,7 @@ class SubagentManager:
             self._enqueue_delivery(info)
 
     def _enqueue_delivery(self, info: SubagentInfo) -> None:
-        """Buffer a completed subagent for coalesced batch delivery (C1.1).
+        """Buffer a completed subagent for coalesced batch delivery.
 
         Groups by parent session key and (re)arms a short coalescing timer, so all
         completions that land within the window ship in ONE parent turn. A parent
@@ -2041,7 +2041,7 @@ class SubagentManager:
             )
 
     async def _flush_delivery(self, parent_key: str) -> None:
-        """Deliver one parent's buffered completions as a single batch (C1.1).
+        """Deliver one parent's buffered completions as a single batch.
 
         The whole batch is delivered under ONE ``self._on_done_timeout``. On a delivery
         FAILURE the orchestrator's context is PRESERVED — the parent session is NOT
@@ -2078,7 +2078,7 @@ class SubagentManager:
                 self.notify_injection_failed(info, reason="batch delivery failed")
 
     async def flush_deliveries(self) -> None:
-        """Await every pending coalesced delivery (C1.1). Called at graceful
+        """Await every pending coalesced delivery. Called at graceful
         shutdown so a burst of completions in flight is delivered before the loop
         stops, and by tests to make the deferred delivery deterministic."""
         for _ in range(100):  # bounded: a re-arm may enqueue one more round
@@ -2146,7 +2146,7 @@ class SubagentManager:
                 resources=f"subagent_id={info.id},inherited_agent={agent}",
             )
         # Unattended = no human can answer an interactive tool/approval prompt, so
-        # strip those tools + fail their gate fast (T5). This is true for HEADLESS
+        # strip those tools + fail their gate fast. This is true for HEADLESS
         # spawns only — cron / scheduled run-prompt/run-workflow / invoke-agent —
         # which set info.approval_mode="auto" explicitly, OR spawns with no live
         # interactive parent session to escalate to.
@@ -2227,7 +2227,7 @@ class SubagentManager:
         _rp = _agent_dir(info.id) / "result.txt"
         info.result_path = str(_rp)
         give_up_files_on_a_cli(info, str(getattr(client, "provider_id", "") or ""))
-        # §4.1 read-only research class: resolve ONCE per run, before the stream opens (`tier_for`).
+        # Read-only research class: resolve ONCE per run, before the stream opens (`tier_for`).
         # An auto-fired spawn defaults to the research (read-only) class, so its write/execute
         # tools are denied at the approval loop below. A call is within the grant by what its tool
         # DECLARES, asked as a research leaf's and a room critic's are, and an automation's own
@@ -2497,8 +2497,8 @@ class SubagentManager:
                         )
                     call_inputs.pop(event.tool_call_id or "", None)
                 elif event.kind == EVENT_COMPLETE:
-                    # Capture the child's token/cost accounting before breaking — S2k
-                    # discarded it here (subagent site).
+                    # Capture the child's token/cost accounting before breaking — it used to
+                    # be discarded here (subagent site).
                     from personalclaw.routing.rates import price_event
                     from personalclaw.usage_ledger import answered_model, answered_provider
 
@@ -2652,7 +2652,7 @@ class SubagentManager:
 
     async def cancel_fanout(self, fanout_key: str, *, reason: str = "") -> int:
         """Kill EVERY child (running + queued) of one parent/run — "stop this
-        fan-out" (C1.4). Returns the number cancelled.
+        fan-out". Returns the number cancelled.
 
         Keyed on ``_fanout_key`` so a chat fan-out (parent session) and a workflow
         fan-out (``workflow:<run_id>``) are each addressable as a unit. Marks the

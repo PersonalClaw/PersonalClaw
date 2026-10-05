@@ -1,4 +1,4 @@
-/** What a pending tool call can touch, as every approval surface shows it (Contract C2).
+/** What a pending tool call can touch, as every approval surface shows it.
  *
  *  The blast radius is composed by the BACKEND, once, where the approval is registered
  *  (`approval_brief.call_blast_radius`): from the same reading of the call that gives its risk,

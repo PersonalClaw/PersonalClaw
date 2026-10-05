@@ -1,4 +1,4 @@
-"""App Platform atomic update + rollback (A2).
+"""App Platform atomic update + rollback.
 
 Covers: a clean update bumps version + runs onUpdate + preserves data/; a
 dangerous new version is refused with the OLD app left intact; an onUpdate-hook

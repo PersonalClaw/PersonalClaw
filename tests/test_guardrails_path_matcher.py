@@ -1,4 +1,4 @@
-"""The path-matcher rule, encoded as a table (PLATFORM-HARDENING-FLOORS §5 / SH5.2).
+"""The path-matcher rule, encoded as a table.
 
 **What reds this file.** An implementation that runs the PATTERN through ``normpath``.
 ``normpath`` treats ``*``/``**`` as ordinary path segments and collapses an adjacent ``..``

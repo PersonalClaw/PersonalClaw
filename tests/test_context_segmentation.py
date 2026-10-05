@@ -1,5 +1,5 @@
-"""Topic segmentation (Context Economy §4) — the shared segmenter behind the
-background compression service and (later) LOOP-R13's in-loop compression.
+"""Topic segmentation — the shared segmenter behind the
+background compression service and (later) in-loop compression.
 
 Two tiers: embedding-drift when an embed_fn is bound, deterministic turn-count
 fallback otherwise (the designed no-model tier)."""

@@ -555,7 +555,7 @@ function CheckRow({ label, hint, checked, onChange }: { label: string; hint: str
 /** The interval composer — a count, a unit, and the cadence floor said out loud.
  *
  *  The floor line is the ONLY guard this control has, and deliberately so: `MIN_INTERVAL_SECS`
- *  mirrors the backend's `MIN_CLOCK_INTERVAL_SECS`, which WARNS rather than refuses (R1 makes it
+ *  mirrors the backend's `MIN_CLOCK_INTERVAL_SECS`, which WARNS rather than refuses (the floor is
  *  overridable — a fast local-model poll is a legitimate choice), so gating Save on it here would
  *  refuse a cadence the API accepts. Before this, `min={1}` was the whole story and the floor was
  *  mentioned nowhere, so the one thing standing between a typo and a per-minute LLM invocation was a
@@ -605,7 +605,8 @@ function NativeSelect({ value, onChange, options, label, name, wide }: { value: 
   )
 }
 
-/** Cron field — text input + live human description + quick presets. */
+/** Cron field — the expression's text input, the quick presets, and, when the server would
+ *  refuse the expression, the validator's reason under them. */
 function CronField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   // 🔴 A REAL validator, not a token count. `value.trim().split(/\s+/).length === 5` was wrong in
   // BOTH directions — `'99 99 * * *'` has five tokens and the server refuses it, `'@daily'` has one

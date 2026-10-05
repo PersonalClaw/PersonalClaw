@@ -117,7 +117,7 @@ def test_judge_exception_keeps_both(vs):
 def test_context_injection_is_vector_store_only(tmp_path, monkeypatch):
     """build_session_context reads lessons ONLY from memory.db lesson.* records.
 
-    WF2LEA-3 retired the JSONL lesson store, so memory.db is the sole source:
+    The JSONL lesson store is retired, so memory.db is the sole source:
     a lesson written to the attached record store injects; with no store
     attached, no lesson can appear (there is no parallel file to leak from)."""
     from personalclaw.context import ContextBuilder

@@ -1,4 +1,4 @@
-"""Tests for the P12 TIER-2 fuzzy dedup resolver (knowledge/dedup.py) — pure, no DB.
+"""Tests for the fuzzy dedup resolver (knowledge/dedup.py) — pure, no DB.
 
 Headline guard: the report-series date gate (same title, near-identical cosine, DIFFERENT
 date tokens ⇒ DISTINCT, never collapse a recurring series). Plus filename/cosine gates,
@@ -236,7 +236,7 @@ def test_format_recall_winner_precedence():
 
 
 def test_format_recall_prefers_content_len_over_stale_word_count():
-    """Regression (found live in Plan-2 P12 sanity): content_len is the primary richness
+    """Regression (found live in a sanity run): content_len is the primary richness
     signal, so the copy with more actual body wins even when its word_count column is stale
     (0 / not-yet-recomputed at dedup time). Before the fix, the thin copy with an equal/
     higher word_count was kept and the richer one archived."""

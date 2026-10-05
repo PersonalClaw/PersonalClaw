@@ -203,7 +203,7 @@ class StagingStore:
                 detail     TEXT NOT NULL DEFAULT ''
             );
 
-            -- One row per ambient render (LEARN-R14b). `ambient.report()` computed
+            -- One row per ambient render. `ambient.report()` computed
             -- exactly this and sent it to a debug log, so the budget-utilization the
             -- health composite needs had no persisted writer at all: a panel reading
             -- it would have rendered from a key nothing wrote.
@@ -216,7 +216,7 @@ class StagingStore:
             );
             CREATE INDEX IF NOT EXISTS idx_alloc_ts ON allocation_samples(created_ts);
 
-            -- One row per heuristic per sweep (§2.5's ablation-delta rule).
+            -- One row per heuristic per sweep (the ablation-delta rule).
             CREATE TABLE IF NOT EXISTS ablation_sweeps (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 sweep_ts   REAL NOT NULL,
@@ -496,7 +496,7 @@ class StagingStore:
         }
 
     def cost_by_op(self, *, days: int = 7, now: float | None = None) -> list[dict[str, Any]]:
-        """Per-op LLM cost aggregates (LEARN-R19e), dearest first.
+        """Per-op LLM cost aggregates, dearest first.
 
         The "op" is the flush record's `cadence` — the identity every flush already
         carries. A single total answers "was it expensive"; only the per-op split
@@ -522,7 +522,7 @@ class StagingStore:
         out.sort(key=lambda row: (-float(row["cost_usd"]), str(row["op"])))
         return out
 
-    # ── Budget utilization (LEARN-R14b) ──
+    # ── Budget utilization ──
 
     #: Rows kept in `allocation_samples`. A rolling window, not a history: the panel
     #: reports a recent mean, and an unbounded per-turn table would be the largest
@@ -637,7 +637,7 @@ class StagingStore:
         return (ts_now - newest) >= max(1.0, every_secs)
 
     def week(self, *, days: int = 7, now: float | None = None) -> dict[str, Any]:
-        """The week-at-a-glance panel: one bucket per DAY (§6 — S76).
+        """The week-at-a-glance panel: one bucket per DAY.
 
         `health()` answers "is capture working" over a WINDOW, and that aggregation hides the thing
         this panel exists to show. Measured: a day with ZERO passes is indistinguishable from a

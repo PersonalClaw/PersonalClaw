@@ -1,4 +1,4 @@
-"""Embedding re-index on model change (#51).
+"""Embedding re-index on model change.
 
 Switching the active embedding model re-embeds, in both stores, what the new model has not
 embedded (clearing a knowledge item's incompatible vector first). Pins the store-level re-embed

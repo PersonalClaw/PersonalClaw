@@ -1,4 +1,4 @@
-"""Unified Loop watchdog (Slice 2c.iii) — the kind-agnostic supervisor poll loop.
+"""Unified Loop watchdog — the kind-agnostic supervisor poll loop.
 Drives _poll_once against fake state/svc; done-ness is read off the loop's DECLARED
 `SupervisorPolicy` by the one evaluator in `loop/supervisor.py`."""
 

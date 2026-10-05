@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CI smoke test for the headless CLI turn (`personalclaw run`) — EXTERNAL-ACCESS §9.5.
+# CI smoke test for the headless CLI turn (`personalclaw run`).
 #
 # Proves the scripted entry point a user types actually completes a turn and that its
 # machine-readable output is consumable. Exits nonzero on any failure, so it can be

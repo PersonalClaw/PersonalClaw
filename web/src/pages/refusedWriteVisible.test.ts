@@ -44,8 +44,8 @@ import { join } from 'node:path'
 // (`SkillInspector.deleteSkill`, `TaskDetail.deleteTaskComment`), and three with a genuinely stated
 // best-effort reason (`KnowledgeListPage.createKnowledgeCollection`,
 // `DesignStepPreview.updateULoop` ×2, `TerminalView.createTerminal`). Generalising now would either
-// red on arrival or need an exemption set the other change cannot remove. Recorded in
-// `.validation/ux/PRODUCT-POLISH.md` so it is written once, cleanly.
+// red on arrival or need an exemption set the other change cannot remove, so it waits to be
+// written once, cleanly.
 
 const SRC = join(process.cwd(), 'src')
 const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')

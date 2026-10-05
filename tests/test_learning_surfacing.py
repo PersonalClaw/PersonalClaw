@@ -127,7 +127,7 @@ def test_one_source_cannot_exceed_the_diversification_cap():
     """Applied BEFORE trimming: trimming first lets a rich source fill every slot and
     the cap then has nothing left to spread.
 
-    Demonstrated on `memory`, not `skill`: CE2-9 exempted skills (see
+    Demonstrated on `memory`, not `skill`: skills are exempt (see
     `test_the_uncapped_kinds_are_the_ones_a_quota_would_silently_ration`), so a capped
     kind is the right subject for the capped behaviour.
     """
@@ -383,8 +383,8 @@ def test_exactly_one_slot_is_sacrificial():
 
 # ── the live lesson block: the policy, now enforced by the ONE budget ──
 #
-# These five tests originally covered `context._fit_lessons`, the char cap S71 added to stop the
-# lesson block being sliced mid-sentence. S80 replaced that cap with the real budget
+# These five tests originally covered `context._fit_lessons`, the char cap added to stop the
+# lesson block being sliced mid-sentence. The real budget replaced that cap
 # (`learning.ambient`), so the cap is gone — but the PROPERTIES it protected are exactly what the
 # budget must still guarantee, so they are migrated rather than deleted. The two that asserted the
 # cap's own withheld-count WORDING are re-expressed against the allocator's near-miss catalogue,

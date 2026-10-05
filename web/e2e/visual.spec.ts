@@ -7,8 +7,8 @@ import { seedTheme, gotoRoute, expectRouteScreenshot, assertPristineFlywheel } f
 //   npm run e2e:update        (regenerates all baselines)
 //   npm run e2e               (verifies against baselines — must be ZERO diff)
 // A consistency fix that forces a REAL visual change: implement it, run
-// e2e:update for that surface, and record the new baseline in the plan's
-// Execution log for owner review. Never silently keep/revert a visual change.
+// e2e:update for that surface, and say in the change's description which baselines
+// moved and why (e2e/README.md). Never silently keep/revert a visual change.
 //
 // ── This spec needs a PRISTINE gateway, and that is a command-level contract ─
 // Both commands above run this file as their OWN invocation, and the `@visual`

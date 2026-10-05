@@ -5,9 +5,9 @@ import type { InboxItem, InboxStatus } from '../../lib/api'
 
 // ── The tray's `?capture=1` must WRITE, not just navigate ───────────────────────────────────
 //
-// DC-4 shipped a tray row "Quick Capture Note…" that deep-links `${DEEP_LINKS.inbox}?capture=1`
+// The desktop tray ships a row "Quick Capture Note…" that deep-links `${DEEP_LINKS.inbox}?capture=1`
 // (`desktop/main.js`). Measured before this change: `capture=1` appeared in exactly ONE place in
-// the product — that producer — plus three lines of plan prose conceding it. `web/src` had zero
+// the product — that producer. `web/src` had zero
 // readers; `useHashRoute` parses every param generically into `query`, and `InboxPage` read only
 // `filter`, `kind`, `q`, `open` and `settings`. So the flag was parsed and dropped: the menu item
 // opened the inbox and wrote nothing.

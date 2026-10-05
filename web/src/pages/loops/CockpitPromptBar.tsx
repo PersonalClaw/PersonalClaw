@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { Markdown } from '../../ui/Markdown'
 
-/** A second, expandable status bar (item 14): COLLAPSED shows the first line of the
+/** A second, expandable status bar: COLLAPSED shows the first line of the
  *  loop's prompt/task; EXPANDED reveals the full prompt as markdown. Shared by the
  *  Code + Design cockpits (the Loop cockpit has its own inline variant with sub-goals).
  *  Renders nothing when there is no prompt. */

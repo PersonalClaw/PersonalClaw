@@ -71,8 +71,8 @@ REF_PREFIX = "refs/personalclaw/history"
 COMMIT_NAME = "PersonalClaw"
 COMMIT_EMAIL = "history@personalclaw.local"
 
-#: Diffs larger than this are listed, not rendered (§5: "diffs >1MB listed not
-#: rendered") — a preview must stay a preview, not a memory event.
+#: Diffs larger than this are listed, not rendered — a preview must stay a preview,
+#: not a memory event.
 MAX_DIFF_BYTES = 1_000_000
 
 #: Secret-shaped and machine-local files that must never enter a commit even when
@@ -1128,7 +1128,7 @@ def status(*, home: Path | None = None) -> dict:
 
 
 def commit_memory_roots(*, home: Path | None = None, reason: str = "hourly") -> list[dict]:
-    """Commit the memory-tree roots — §3's deferred hourly git commit.
+    """Commit the memory-tree roots — the hourly git commit.
 
     Marked ``scheduled`` so the panel's "what changed while I slept" filter has
     something real to show: these are precisely the commits nobody was watching.

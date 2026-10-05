@@ -6,14 +6,14 @@ import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── If a popup DECLARES role=menu / role=listbox, it has to implement one ──────────────────────
 //
-// Cycle 136 fixed the two context menus. This is the census that closes the family, and it started
-// by correcting the question: the ledger asked "which of the ~30 `MenuRow` call sites need this?"
+// The two context menus were fixed first. This is the census that closes the family, and it started
+// by correcting the question: the first one asked "which of the ~30 `MenuRow` call sites need this?"
 // but the promise lives on the CONTAINER, not the row. Measured both ways:
 //
 //   31 non-test MenuRow call sites → only 2 sit inside a keyboard-navigable container
 //   13 containers declaring menu/listbox/tablist → 5 are popups, and 3 had implemented NOTHING
 //
-// So the sweep the ledger imagined was 10× larger than the defect. What the three had in common,
+// So the sweep that question imagined was 10× larger than the defect. What the three had in common,
 // driven with the keyboard only (parent tree, dark, 1440×900 unless noted):
 //
 //   popup                              focus on open   ArrowDown   item tabindex   axe
@@ -24,7 +24,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //
 // 🔴 THE ONE AXE FINDING IS A ROLE DIFFERENCE WORTH KNOWING: `aria-input-field-name` (serious) on
 // ProjectPicker's listbox. A `role="listbox"` is an ARIA **input field**, so unlike `role="menu"` it
-// MUST carry a name — the nameless menu of cycle 136 was not reportable, this nameless listbox is.
+// MUST carry a name — a nameless menu was not reportable, this nameless listbox is.
 //
 // 🪤 EACH POPUP'S TAB BEHAVIOUR DEPENDED ON WHETHER IT WAS PORTALED, not on anything it declared.
 // The two INLINE popups (ProjectPicker, CollapsedSegmented) let Tab walk into their first option
@@ -65,14 +65,14 @@ describe('the declaration-implies-implementation census', () => {
    *  defect in its third variant — deferred, not forgotten, because wiring it means reaching into
    *  the CodeMirror contenteditable that holds focus, not adding an attribute. */
   //
-  //  🔑 `app/CommandPalette.tsx` joined this family in cycle 181, and it is the variant that CLOSED the
+  //  🔑 `app/CommandPalette.tsx` joined this family later, and it is the variant that CLOSED the
   //  gap named above: focus stays in its search field and `aria-activedescendant` now tracks the active
   //  option (measured: `opt-0` → `opt-1` on ArrowDown, with the option's `aria-selected` following and
   //  focus never leaving the input). Before it, the palette declared no listbox, no options and no
   //  activedescendant at all — 22 commands with a purely visual highlight. The two composer menus keep
   //  their deferral, for the reason stated: their focus lives in a CodeMirror contenteditable.
   //
-  //  🔑 `pages/code/CodeCockpitPage.tsx`'s quick-open joined in cycle 650, the same variant and for the
+  //  🔑 `pages/code/CodeCockpitPage.tsx`'s quick-open joined too, the same variant and for the
   //  same reason: its ⌘P popover had arrow keys moving a purely VISUAL highlight over the results —
   //  no listbox, no options, no activedescendant, and nothing saying the popover had opened. Focus
   //  belongs in its search field (that is the whole point of type-to-filter), so it takes the

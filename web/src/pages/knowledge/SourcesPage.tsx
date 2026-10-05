@@ -45,7 +45,7 @@ function Chip({ label, tone, icon: Icon, title }: {
 /** The two objects a remediation writes back WHOLE — the document the source's `revision` covers. */
 type SourceSettings = { spec: Record<string, unknown>; budget: Record<string, unknown> }
 
-/** The remediation strip. Its whole reason for existing is that the two failures WS-3
+/** The remediation strip. Its whole reason for existing is that the two failures the backend
  *  discriminates have OPPOSITE fixes — a page that rendered plenty of text and found nothing
  *  is the wrong URL; a page that is a JavaScript shell needs the render tier. Both the
  *  message and the action come from the backend's `remediation` verdict, so this component
@@ -235,7 +235,7 @@ export function SourceRow({ source, index, kinds, onChanged }: {
           {/* The links its scan left out because they lead outside the folder. */}
           {outsideLine && <p data-type="caption" className="mt-xs text-on-surface-low">{outsideLine}</p>}
           {!!source.last_escalations?.length && (
-            // The expensive tier, made visible. WS-3 records escalations on success too,
+            // The expensive tier, made visible. The poll engine records escalations on success too,
             // because an escalation nobody can see is indistinguishable from a cheap poll.
             <p data-type="caption" className="mt-1 text-on-surface-low">{source.last_escalations.join(' · ')}</p>
           )}
@@ -261,7 +261,7 @@ export function SourceRow({ source, index, kinds, onChanged }: {
 
 /** The Sources destination inside the Knowledge section (`#/knowledge/sources`).
  *
- *  Everything WS-2..WS-5 built was unreachable before this page: the store, the poll engine
+ *  The whole watched-sources backend was unreachable before this page: the store, the poll engine
  *  and three providers all worked, and `create_source` had no caller. So this page is
  *  deliberately the whole loop — see what you watch, how healthy it is, what the last poll
  *  cost, what to do about a failing one, and add another. */

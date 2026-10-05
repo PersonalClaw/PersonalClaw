@@ -1,4 +1,4 @@
-"""The per-turn cost/token ledger (C1).
+"""The per-turn cost/token ledger.
 
 The durable answer to "what did this cost me?" — a fail-open, append-only JSONL of
 one :class:`TurnUsage` row per model call (a turn, or a call made around one: a title, a
@@ -41,7 +41,7 @@ _GROUP_KEYS = ("model", "source", "agent", "provider", "day")
 
 @dataclass
 class TurnUsage:
-    """One model turn's token + cost accounting (§C1).
+    """One model turn's token + cost accounting.
 
     ``priced`` is False ⇒ the provider reported no cost AND no rate prices the model
     (``routing.rates.price_call``), so ``cost_usd`` is an honest 0.0 that MUST render
@@ -151,7 +151,7 @@ def _path() -> Path:
 
 
 def record_turn(u: TurnUsage) -> None:
-    """Append one row. Best-effort and NEVER raises into a turn (§2.7) — a ledger
+    """Append one row. Best-effort and NEVER raises into a turn — a ledger
     write failure degrades to a DEBUG log, never breaks the user's conversation."""
     try:
         p = _path()
@@ -214,7 +214,7 @@ def record_from_event(
     provider: str = "",
     model: str = "",
 ) -> None:
-    """Record one ledger row from a terminal ``EVENT_COMPLETE`` LLM event (C2).
+    """Record one ledger row from a terminal ``EVENT_COMPLETE`` LLM event.
 
     The one seam every write-site shares: it reads the token counts + provider cost off the
     event and prices the turn through the one pricing function (``routing.rates.price_event``):

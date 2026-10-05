@@ -1,4 +1,4 @@
-"""Natural-language schedule → a cron expression, or ONE instant (#39).
+"""Natural-language schedule → a cron expression, or ONE instant.
 
 Turns "every weekday at 9am" into a croniter-valid 5-field cron expression, and "tomorrow
 morning" into the one instant it means, via a constrained one-shot LLM call — then **validates**

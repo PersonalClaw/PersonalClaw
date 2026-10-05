@@ -1,5 +1,5 @@
-"""Regression guard for the UT1 split of the monolithic NativeBuiltinToolProvider
-into per-entity category providers (docs/plans/unified-tool-provider-universe.md).
+"""Regression guard for the split of the monolithic NativeBuiltinToolProvider
+into per-entity category providers.
 
 Invariants that hold the split together:
 1. The category providers PARTITION the full builtin tool set — their union equals

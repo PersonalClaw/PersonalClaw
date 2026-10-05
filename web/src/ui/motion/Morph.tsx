@@ -3,7 +3,7 @@ import { motion } from 'framer-motion'
 import { prefersReducedMotion } from '../../design/motion'
 import { MORPH_FAMILY, familySpring } from './vocabulary'
 
-/** Shared-element morph (§Goal 4 "morph, don't mount"): two boxes in DIFFERENT parts of
+/** Shared-element morph ("morph, don't mount"): two boxes in DIFFERENT parts of
  *  the tree that are the SAME object to the user — a library card and the page it opens —
  *  declare one `id`, and Framer flies the second out of the first's position and size
  *  instead of cross-cutting one away and popping the other in.

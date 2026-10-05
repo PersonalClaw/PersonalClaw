@@ -11,7 +11,7 @@ one export endpoint, one import endpoint, one archive list and one restore.
 ``apps.api_app_token``'s precedent (``request["app"]`` present → 403). An export hands
 the caller everything PersonalClaw knows about the user and an import/restore rewrites
 it; neither is ever an installed app's business, and least privilege here is the owner's
-own session or nothing. The plan does not name a caller for these routes, so this is the
+own session or nothing. Nothing names a caller for these routes, so this is the
 *restrictive* reading of that silence, stated rather than assumed.
 
 **Confirmation contract.** Both writing verbs are two-step by construction:
@@ -58,7 +58,7 @@ async def _read_upload_file(request: web.Request) -> tuple[Path | None, web.Resp
     returned: one it refuses, or could not check, is removed and answered as the error.
 
     Moved here from the retired ``handlers/portability.py`` — it was that module's only
-    surviving part once its three routes folded into the §6 pair.
+    surviving part once its three routes folded into the export/import pair.
     """
     ctype = request.headers.get("Content-Type", "")
     if not ctype.lower().startswith("multipart/"):
@@ -162,9 +162,9 @@ async def api_durability_status(request: web.Request) -> web.Response:
 
 
 async def api_durability_archive(request: web.Request) -> web.Response:
-    """GET /api/durability/archive — the archive browser's list (§6).
+    """GET /api/durability/archive — the archive browser's list.
 
-    Each row carries what the plan asks a browser to show: date, size, whether the
+    Each row carries what a browser needs to show: date, size, whether the
     retention tiers currently KEEP or PRUNE it (so the policy is inspectable before it
     deletes anything), the **per-domain counts read from that archive's own manifest**,
     and the **validate status from the last restore drill** for the archive the drill
@@ -177,7 +177,7 @@ async def api_durability_archive(request: web.Request) -> web.Response:
     ``last_drill.on_disk`` says whether the file the last drill checked is still here (``null``
     for a record that names none): a pass on a file that is gone verifies nothing listed.
 
-    Replaces ``GET /api/durability/snapshots``: same list, the fields §6 requires.
+    Replaces ``GET /api/durability/snapshots``: same list, with the fields above.
     """
     from personalclaw.config.loader import AppConfig
     from personalclaw.durability import archive as arch
@@ -237,7 +237,7 @@ async def api_durability_archive(request: web.Request) -> web.Response:
 
 
 async def api_durability_export(request: web.Request) -> web.Response:
-    """POST /api/durability/export {domains?} — the DSAR export (§6).
+    """POST /api/durability/export {domains?} — the DSAR export.
 
     Body ``{"domains": ["memory"]}`` scopes the zip to those inventory domains;
     omitting it (or an empty body) is the full "give me everything PersonalClaw knows
@@ -308,7 +308,7 @@ async def api_durability_export(request: web.Request) -> web.Response:
 
 
 async def api_durability_import(request: web.Request) -> web.Response:
-    """POST /api/durability/import — validate, then apply, an export zip (§6).
+    """POST /api/durability/import — validate, then apply, an export zip.
 
     Multipart with a ``file`` field. **Omitting ``mode`` validates and returns the manifest,
     changing nothing** — the same plan-first contract the archive restore uses. ``mode=merge``
@@ -391,7 +391,7 @@ async def api_durability_import(request: web.Request) -> web.Response:
 
 
 def _audit_api(request: web.Request, operation: str, outcome: str, resources: str) -> None:
-    """One audit call shape for the §6 routes. Never raises — an audit failure must not
+    """One audit call shape for these routes. Never raises — an audit failure must not
     turn a successful export into a 500, and the SEL write is already best-effort."""
     try:
         _sel().log_api_access(
@@ -470,14 +470,14 @@ def _snapshot_archive(archive_id: str) -> Path | None:
 
 
 async def api_durability_archive_restore(request: web.Request) -> web.Response:
-    """POST /api/durability/archive/{id}/restore {mode?, components?, confirm?} — §6.
+    """POST /api/durability/archive/{id}/restore {mode?, components?, confirm?}.
 
-    🔴 WHY THIS EXISTS. T2-M3 names it and it was absent: the API had `status`, `snapshots`
+    🔴 WHY THIS EXISTS. It was absent: the API had `status`, `snapshots`
     and `run`, so a user could take a backup from the dashboard and could not restore one.
     Backup without restore
-    is the shape this plan exists to remove ("recoverable through first-class restore endpoints
+    is the shape this route exists to remove (recoverable through first-class restore endpoints
     — not
-    archaeology").
+    archaeology).
 
     **Omitting `mode` returns the PLAN and changes nothing.** That is the safe default for an
     endpoint that writes into a home: a caller must see what would happen and then ask again
@@ -495,7 +495,7 @@ async def api_durability_archive_restore(request: web.Request) -> web.Response:
     a running gateway first, and found this one: the Merge-restore button refused every time.
 
     Replaces ``POST /api/durability/restore``: the archive id moves into the path, which is
-    where §6 puts it and what makes the archive browser's rows addressable.
+    what makes the archive browser's rows addressable.
     """
     denied = _reject_app(request)
     if denied is not None:
@@ -621,7 +621,7 @@ async def api_durability_archive_restore(request: web.Request) -> web.Response:
     return web.json_response(result, status=200 if result.get("ok", True) else 409)
 
 
-# ── the conflict review queue (§4.2 item 2/3) ────────────────────────────────
+# ── the conflict review queue ────────────────────────────────────────────────
 #
 # `durability/conflicts.py` shipped the detector and the durable queue with no route and no
 # screen, so a both-sides-edited divergence was recorded, held the local row, and then had no
@@ -636,11 +636,11 @@ _CONFLICT_LIMIT = 50
 
 
 async def api_durability_conflicts(request: web.Request) -> web.Response:
-    """GET /api/durability/conflicts?surface=&status=&limit= — the review queue (§4.2).
+    """GET /api/durability/conflicts?surface=&status=&limit= — the review queue.
 
     Returns the records themselves plus the COUNTS the surface needs to be honest:
 
-    * ``counts.by_surface`` — how the §4.2 item-3 routing actually landed. The Durability
+    * ``counts.by_surface`` — how the per-surface routing actually landed. The Durability
       panel reviews its own surface; memory- and knowledge-domain conflicts route to theirs,
       and a panel that showed only its own slice with no count for the others would read as
       "no conflicts" while two waited elsewhere.
@@ -711,7 +711,7 @@ async def api_durability_conflict_resolve(request: web.Request) -> web.Response:
 
     ``confirm: true`` is required for EVERY choice, including ``keep_local``: each one closes
     a held divergence, and two of the three overwrite a row the other machine also edited.
-    One signal for "look" (the GET above), two for "write" — the same contract the §6
+    One signal for "look" (the GET above), two for "write" — the same contract the
     import/restore verbs use.
 
     Refusals are typed (:func:`durability.conflict_resolve.resolve_conflict` owns the codes)
@@ -802,7 +802,7 @@ async def api_durability_conflict_resolve(request: web.Request) -> web.Response:
     )
 
 
-# ── §5 time-travel ─────────────────────────────────────────────────────────
+# ── time-travel ────────────────────────────────────────────────────────────
 #
 # Three routes, one confirmation contract. Rollback and revert share ONE endpoint
 # per operation and are **two-phase by construction**: a request without

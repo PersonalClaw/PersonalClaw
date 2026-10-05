@@ -1,4 +1,4 @@
-"""The NeedsInputItem contract: one decision per card (R1).
+"""The NeedsInputItem contract: one decision per card.
 
 `workflows/attention.py` already projects a waiting gate into the inbox through
 `emit_attention_item`, already dedups per `(run, instance_path, epoch)`, and already carries the
@@ -271,7 +271,7 @@ def _blocker_text(ask: dict[str, Any], failure: dict[str, Any] | None, node_id: 
 def _recommendation(ask: dict[str, Any], failure: dict[str, Any] | None, kind: BlockKind) -> str:
     """The planner's recommended answer, or the failure's remediation.
 
-    Both are already produced elsewhere — the ask carries a default (S45's grill protocol
+    Both are already produced elsewhere — the ask carries a default (the grill protocol
     makes every question ship one) and a failure carries `remediation`. Re-deriving either
     here would give the card a second opinion that could contradict the run's own.
     """

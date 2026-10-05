@@ -47,7 +47,7 @@ def test_the_validator_imports_jsonschema_unconditionally():
     """No `try/except ImportError` guard, because a guard is what made the pass skippable.
 
     Reads ``config/validation.py``, which is where ``_validate_config_data`` and its
-    ``import jsonschema`` live since PHF-14 split the validation machinery out of
+    ``import jsonschema`` live since the validation machinery was split out of
     ``config/loader.py``. The rail has to follow the code it guards: pointed at ``loader.py``
     it would now red on the move itself, and "fix" it by re-adding an import ``loader`` does
     not use — which is the shim this codebase forbids.

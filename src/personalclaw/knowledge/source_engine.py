@@ -6,7 +6,7 @@ whose interval has elapsed, and sleeps until the next is due (capped, like the t
 scheduler, so an external edit is picked up within one poll). It enrolls the poll-capable
 providers registered in ``knowledge_providers.registry`` — a provider is poll-capable when
 it subclasses :class:`~personalclaw.knowledge_providers.base.KnowledgeSourceProvider` (the
-``poll`` contract, §1.1) — and drives ``provider.poll(source_id, cursor)`` per due source,
+``poll`` contract) — and drives ``provider.poll(source_id, cursor)`` per due source,
 plus whichever of the optional engine-supplied extras (``spec``, ``policy``) that provider's
 own signature declares (:meth:`SourceEngine._poll_kwargs`).
 
@@ -24,7 +24,7 @@ not finish (via the ingest queue's own recovery), so no written-but-unprocessed 
 stranded by a restart.
 
 The engine NEVER fetches web content itself — it drives PROVIDERS, whose fetches route
-through ``net.fetch`` under the ``SOURCE`` egress profile (WS-3+). Re-implementing a fetch
+through ``net.fetch`` under the ``SOURCE`` egress profile. Re-implementing a fetch
 here would bypass host classification, private-IP denial and the redirect-hop re-check.
 
 A watched folder's files are the one thing it takes itself (:func:`takes_files`): the folder
@@ -118,7 +118,7 @@ def _default_providers() -> list[Any]:
 
 
 class SourceEngine:
-    """One re-armed asyncio poll loop over the WatchedSource store (§1.2).
+    """One re-armed asyncio poll loop over the WatchedSource store.
 
     ``store`` owns the tables + the atomic write/seen/cursor primitives; ``ingest_queue``
     is the single ingestion path new items enqueue onto. ``providers_lister`` yields the
@@ -170,11 +170,11 @@ class SourceEngine:
 
     @property
     def _spool(self) -> Any:
-        """The interim JSONL spool the stream events land on (§6.1).
+        """The interim JSONL spool the stream events land on.
 
-        Interim by the plan's own dependency note — AUTOMATION-SUBSTRATE's event bus does not
-        exist yet, and the note explicitly sanctions spooling until it does. The engine holds
-        exactly one emit seam so the bus replaces one object, not N call sites."""
+        Interim: the stream events stay on this spool rather than the automation event bus,
+        and the engine holds exactly one emit seam so the bus replaces one object, not N call
+        sites."""
         if self._event_spool is None:
             from personalclaw.knowledge.source_streams import SourceEventSpool
 
@@ -183,7 +183,7 @@ class SourceEngine:
 
     @property
     def _queries(self) -> Any:
-        """The saved-source-query store the ingest path evaluates against (§6.4)."""
+        """The saved-source-query store the ingest path evaluates against."""
         if self._saved_queries is None:
             from personalclaw.knowledge.source_queries import SavedQueryStore
 
@@ -191,7 +191,7 @@ class SourceEngine:
         return self._saved_queries
 
     def _emit_ingested(self, source: dict, item: Any, item_id: str, change: str) -> None:
-        """``SourceItemIngested`` for one (re-)indexed item (§6.1).
+        """``SourceItemIngested`` for one (re-)indexed item.
 
         Emitted HERE — inside the persist path, after the item is durable and enqueued —
         rather than from a batch at the end of the poll, because only this frame knows the
@@ -214,8 +214,8 @@ class SourceEngine:
                 "change": change,
             },
         )
-        # Saved queries are evaluated HERE, in the same act as the ingest event (§6.4: "the
-        # engine evaluates saved queries against each SourceItemIngested batch"). They read the
+        # Saved queries are evaluated HERE, in the same act as the ingest event: the
+        # engine evaluates saved queries against each SourceItemIngested batch. They read the
         # STRUCTURAL item — raw title/url/content — not the payload above, whose title is
         # fenced: matching a fenced string would mean seeing through the fence markers.
         # Deterministic and token-free by construction; `source_queries` imports no LLM path.
@@ -242,7 +242,7 @@ class SourceEngine:
         escalations: list[str],
         budget_spent: int = 0,
     ) -> None:
-        """``SourcePollCompleted`` for one poll (§6.1).
+        """``SourcePollCompleted`` for one poll.
 
         Emitted on EVERY exit of :meth:`poll_source`, not just the successful one — the same
         reasoning that made ``next_poll_at`` unconditional. A poll event that appears only on
@@ -272,7 +272,7 @@ class SourceEngine:
     # ── enrollment ─────────────────────────────────────────────────────────────────
 
     def _is_poll_capable(self, provider: Any) -> bool:
-        """A provider is enrolled iff it implements the poll contract (§1.1). Duck-typed
+        """A provider is enrolled iff it implements the poll contract. Duck-typed
         on the base class so an app subclass and the core fixture both qualify without a
         registration flag the provider could forget to set."""
         from personalclaw.knowledge_providers.base import KnowledgeSourceProvider
@@ -281,17 +281,17 @@ class SourceEngine:
 
     @staticmethod
     def egress_policy() -> Any:
-        """The egress posture a source poll's fetches must use (WATCHED-SOURCES §11).
+        """The egress posture a source poll's fetches must use.
 
         The ``SOURCE`` profile with the operator's ``security.egress`` config layered via
         ``egress_policy_for`` (a self-hoster's LAN allow-list, deny-list, private-network
         opt-in). Resolved HERE so the engine owns the policy and a provider never picks its
         own — a provider re-implementing the fetch (and its guard) is the exact bypass the
         boundary exists to prevent. Handed to a provider's :meth:`poll` when its signature
-        accepts a ``policy`` (the web/feed fetching providers land in WS-3+); a plain corpus
+        accepts a ``policy`` (the web/feed fetching providers do); a plain corpus
         poll ignores it.
 
-        A ``staticmethod`` because the create flow's PREVIEW (WS-9) is a real fetch on the
+        A ``staticmethod`` because the create flow's PREVIEW is a real fetch on the
         same targets and must run under the same posture, and it happens in an HTTP handler
         with no engine instance in reach. Two callers resolving the profile independently
         would be two egress postures for one act."""
@@ -313,7 +313,7 @@ class SourceEngine:
 
     def _interval_for(self, source: dict, cfg: Any) -> float:
         """A source's effective poll interval (:func:`effective_interval`). The network
-        floor is the R1-class rate discipline web_poll enforces — a too-frequent poll is
+        floor is the rate discipline web_poll enforces — a too-frequent poll is
         abusive to someone else's server — and a folder on this machine is nobody's server,
         so a watched folder set to every 5 minutes is polled every 5 minutes."""
         return effective_interval(source, cfg, self._provider_for(source["provider"]))
@@ -346,7 +346,7 @@ class SourceEngine:
     # ── one poll ───────────────────────────────────────────────────────────────────
 
     def _poll_kwargs(self, provider: Any, sid: str, cfg: Any) -> dict[str, Any]:
-        """The engine-supplied extras THIS provider's ``poll`` declares (§1.1, AECO-2).
+        """The engine-supplied extras THIS provider's ``poll`` declares.
 
         ONE negotiation for the whole of
         :data:`~personalclaw.knowledge_providers.base.ENGINE_POLL_KWARGS`, feeding the ONE
@@ -405,7 +405,7 @@ class SourceEngine:
     async def poll_source(self, source: dict, cfg: Any) -> int:
         """Poll one source once; return how many items were (re-)indexed this pass — new
         items plus re-enqueued edits, excluding archives (:meth:`_persist`). Never raises —
-        a provider fault becomes a degraded health status, not a dead loop (§1.1)."""
+        a provider fault becomes a degraded health status, not a dead loop."""
         from personalclaw.knowledge_providers.base import (
             HEALTH_DEGRADED,
             HEALTH_ERROR,
@@ -417,7 +417,7 @@ class SourceEngine:
         # on it (`_due_delay` measures from `last_poll_at`), so this is purely the rollup that
         # tells a reader when the source will be tried again — and a failing source is exactly
         # the one whose reader needs to know that a retry is coming. Withholding it on failure
-        # is the same shape WS-3 fixed for `last_escalations`: a rollup visible only on success
+        # is the same shape already fixed for `last_escalations`: a rollup visible only on success
         # makes the interesting case the invisible one.
         next_at = self._next_poll_at(source, cfg)
         provider = self._provider_for(source["provider"])
@@ -452,7 +452,7 @@ class SourceEngine:
             # A soft failure the provider chose to report: keep the cursor (retry from the
             # same position), surface the reason, do not treat the source as dead. A provider
             # that KNOWS why it failed declares its own health status (a page needing the
-            # render tier, §2.3); flattening that into `degraded` would hide the one
+            # render tier); flattening that into `degraded` would hide the one
             # remediation the user could act on.
             self._store.record_poll(
                 sid,
@@ -564,7 +564,7 @@ class SourceEngine:
 
     @staticmethod
     def _declared_attributions(item: Any) -> list[str]:
-        """A provider's own ``also_seen_in`` claims, normalized (§3.3). A provider that
+        """A provider's own ``also_seen_in`` claims, normalized. A provider that
         already knows a story ran in two places (an aggregator echoing its upstream) says
         so and the engine records it verbatim rather than re-deriving it."""
         raw = getattr(item, "also_seen_in", None) or []
@@ -574,7 +574,7 @@ class SourceEngine:
 
     def _merge_cross_source(self, source: dict, item: Any) -> bool:
         """Fold this sighting into an item ANOTHER source already wrote, if it is the same
-        story; return True when it was merged (so no second row is written) — §3.3, SC#3.
+        story; return True when it was merged (so no second row is written).
 
         The identity rule is canonicalized-URL equality and nothing else
         (:func:`~personalclaw.knowledge.source_identity.merge_key`, which returns no key
@@ -616,7 +616,7 @@ class SourceEngine:
         """First sighting → a new item, unless another source already has this story, or this
         source has had it.
 
-        Cross-source dedupe runs FIRST (§3.3): a story the library already holds from a
+        Cross-source dedupe runs FIRST: a story the library already holds from a
         different feed becomes an attribution on that item, not a second row. A sighting this
         source has had is not read again (``KnowledgeStore.source_has_seen``, the novelty gate's
         question asked before the read): a feed offers its whole document again whenever it
@@ -831,7 +831,7 @@ class SourceEngine:
         return 1
 
     def _archive_deleted(self, source: dict, item: Any) -> int:
-        """The upstream copy is gone → ARCHIVE the item with ``source_deleted_at`` (SC#5).
+        """The upstream copy is gone → ARCHIVE the item with ``source_deleted_at``.
 
         Never a hard delete, and the engine has no code path that could become one: the
         store exposes only :meth:`~personalclaw.knowledge.store.KnowledgeStore.archive_source_item`
@@ -878,7 +878,7 @@ class SourceEngine:
     # ── crash recovery + lifecycle ──────────────────────────────────────────────────
 
     def recover_pending(self) -> int:
-        """Resume cleanly after a restart (SC#4). A source item written before a crash may
+        """Resume cleanly after a restart. A source item written before a crash may
         not have finished ingesting; the ingest queue's own recovery re-enqueues every item
         left in ``queued``/``processing`` (source items included). The seen-set already
         makes any re-poll idempotent, so this is the only recovery the engine owes: no

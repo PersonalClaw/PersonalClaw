@@ -17,7 +17,7 @@ import { SlotEmptyState, WidgetRow } from './kit'
  *  not pixels), and an optional cursor-motion overlay that draws a FAKE cursor where each
  *  approved action lands. The fake cursor exists only in this rendering: it is not the real
  *  pointer, paints nothing on the driven desktop, and exposes nothing a `computer_snapshot`
- *  walk or any capture of that desktop could see — which is §3 floor 7's "invisible to
+ *  walk or any capture of that desktop could see — which is "invisible to
  *  screen capture" satisfied by construction. EVERYTHING here is a mirror served by one GET;
  *  the widget can observe the capability and cannot exercise it, and the backend census
  *  (`tests/test_computer_use_live_view.py`) pins that the tool surface is unchanged with

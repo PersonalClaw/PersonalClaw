@@ -4,11 +4,11 @@ import { Select } from '../../ui/forms'
 export interface SandboxProvider { name: string; display_name: string; available: boolean }
 
 /**
- * Per-session sandbox tier picker for a NEW terminal (EXECUTION-ISOLATION EI-4 §1.3(3)).
+ * Per-session sandbox tier picker for a NEW terminal.
  *
  * The host tier (`none`) is always selectable; a container/VM tier (docker/lima) is disabled —
  * greyed, with the reason in its `title` — when its live probe reports it unavailable, so a
- * stopped Lima instance or a missing daemon cannot be chosen (SC3 "greyed-out-with-reason"). The
+ * stopped Lima instance or a missing daemon cannot be chosen ("greyed-out-with-reason"). The
  * choice applies to the NEXT session opened; existing sessions are unaffected.
  *
  * Rides the shared form-family `Select` (a native `<select>` under the hood, so keyboard,

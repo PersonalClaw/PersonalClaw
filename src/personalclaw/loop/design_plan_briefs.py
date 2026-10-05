@@ -26,7 +26,7 @@ ARTIFACT_SENTINEL = "step_artifact.json"
 
 # Design step kinds that decide design TOKENS — their artifact carries a
 # ``token_overrides`` patch (a partial token doc) the walkthrough merges onto the loop
-# so the user sees + edits the whole-system preview before approving (D3).
+# so the user sees + edits the whole-system preview before approving.
 _TOKEN_STEP_KINDS = frozenset({"foundations", "palette", "typography"})
 
 # The canonical design-system phases (the per-kind "space expertise" breakdown). The
@@ -398,8 +398,8 @@ def collect_token_overrides(steps) -> dict:
     (foundations/palette/typography), in step order, into one override document — the
     AUTHORITATIVE approved design system. project_to_spec merges this into the loop's
     kind_config.token_overrides on finalize, so the cockpit opens populated with the
-    approved system regardless of whether the FE previewed each step (D3 merges
-    client-side as a live convenience; this is the server-side guarantee for D4)."""
+    approved system regardless of whether the FE previewed each step (the walkthrough
+    merges client-side as a live convenience; this is the server-side guarantee)."""
     from personalclaw.loop import design_tokens as dt
 
     out: dict = {}

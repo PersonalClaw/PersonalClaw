@@ -158,7 +158,7 @@ def _supplies_author(payload: object) -> bool:
 
 
 async def api_tasks_graph(request: web.Request) -> web.Response:
-    """GET /api/tasks/graph — adjacency + DependencyAnalysis (seam S3)."""
+    """GET /api/tasks/graph — adjacency + DependencyAnalysis."""
     provider = request.query.get("provider")
     return web.json_response(await registry.task_graph(provider_filter=provider))
 
@@ -166,7 +166,7 @@ async def api_tasks_graph(request: web.Request) -> web.Response:
 async def api_tasks_ready(request: web.Request) -> web.Response:
     """GET /api/tasks/ready — tasks startable now (no unfinished prerequisites).
 
-    Owner-scoped by default (TEAM-SHARED-ENTITIES §2.1): a shared provider's tasks
+    Owner-scoped by default: a shared provider's tasks
     assigned to other people are never the owner's ready work. `everyone=1` opts into
     the unfiltered view for a shared board.
     """

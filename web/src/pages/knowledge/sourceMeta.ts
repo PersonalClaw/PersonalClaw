@@ -11,7 +11,7 @@ import type { SourceKind, WatchedSource } from '../../lib/api'
 // `knowledge_providers/base.py` reds CI here instead of falling silently through a default
 // branch — which would happen to the one status that most needed its own message.
 
-/** The enrichment value §6.3 makes a structural promise about: an item from a `raw` source
+/** The enrichment value with a structural promise behind it: an item from a `raw` source
  *  runs through a graph whose LLM nodes are ABSENT, not skipped-by-flag. The 'no AI' chip is
  *  a readout of this field on the source row and nothing else — a chip driven by a UI guess
  *  would be decoration over a guarantee. */

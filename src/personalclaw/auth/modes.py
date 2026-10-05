@@ -8,7 +8,7 @@ mode is ``NONE``, the bind host is forced to ``127.0.0.1`` regardless of
 what was configured. ``local_token`` honors the configured ``bind_host``.
 
 A request for anything else — including ``api_key`` and ``oauth2``, which were declared
-here without any configuration able to select them and were deleted (ledger 317b) — is
+here without any configuration able to select them and were deleted — is
 NAMED at startup rather than downgraded in silence (see :func:`classify_auth_mode_request`).
 """
 
@@ -93,7 +93,7 @@ def classify_auth_mode_request(raw: str | None = None) -> AuthModeRequest:
     included, since they were deleted). That leaves ``LOCAL_TOKEN`` in force,
     which fails CLOSED (a client presenting some other credential is refused, not
     admitted) — the cost is lost access, not weakened auth. The defect this names
-    is legibility: before SL-8 an operator who set ``oauth2`` believed they had
+    is legibility: before this warning, an operator who set ``oauth2`` believed they had
     enforced IdP SSO and was in fact on a local token, with nothing said.
     """
     if raw is None:
@@ -140,7 +140,7 @@ class AuthConfig:
 
         Any other value (``api_key`` and ``oauth2`` included) still yields ``LOCAL_TOKEN``
         — the admission decision is unchanged — but it is WARNED about rather than
-        downgraded in silence (SL-8). ``personalclaw doctor`` prints the same sentence."""
+        downgraded in silence. ``personalclaw doctor`` prints the same sentence."""
         request = classify_auth_mode_request()
         if request.detail:
             logger.warning("%s", request.detail)

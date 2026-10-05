@@ -76,7 +76,7 @@ type Action = 'approved' | 'rejected' | 'trust' | 'trust_agent'
  *  so it must describe the backend action EXACTLY and claim nothing more. Each row cites
  *  the action it posts (`chat_handlers.api_chat_session_approve`).
  *
- *  Contract C2 names three scopes — `session`, `tool_always`, `no`. Two of them ship here.
+ *  The approval design names three scopes — `session`, `tool_always`, `no`. Two of them ship here.
  *  `tool_always` does NOT, because nothing in this codebase remembers a decision per TOOL:
  *  `trust`/`trust_agent`/`yolo` are all "every tool" at a widening blast radius, and
  *  `config.hooks.auto_approve_tools` (the one per-tool matcher, hooks.py:394) is pinned into
@@ -192,7 +192,7 @@ function offeredScopes(risk: ApprovalSegment['risk'], widened: boolean, alone: b
  *  and risk, what it can touch, its whole input a click away, and, away from the work that asked,
  *  where it came from.
  *
- *  A four-zone decision brief (Design "Approval brief", Contract C2): WHAT (tool +
+ *  A four-zone decision brief: WHAT (tool +
  *  arguments) · WHY (the runner's one-line purpose, when it supplied one) · WHAT IT CAN
  *  TOUCH (established blast-radius facets) · HOW FAR THE ANSWER REACHES (the
  *  remember-scope picker). Then one Allow and one Deny. Wires to

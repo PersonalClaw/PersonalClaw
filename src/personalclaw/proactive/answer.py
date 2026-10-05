@@ -10,14 +10,14 @@ each proposal and the same record. Only what the door is (:class:`Door`) differs
   channel. Asked before anything is read, and a refusal is audited there.
 * **That digest, and no other.** An ordinal numbers ONE window, so an answer names the run it
   answers, and a run that is no longer the current digest is refused as expired rather than acted
-  on best-effort against whatever is third today (criterion 9). A proposal you had not answered
+  on best-effort against whatever is third today. A proposal you had not answered
   when the next digest ran is in that one (`proactive.carry`), under its number there, and is
   answered there like any of its own.
 * **Attended.** A Yes runs its proposal through the digest's own stage
   (:func:`personalclaw.proactive.autoexec.auto_execute`) with ``answered=True`` and a synthetic
   approve rule standing for the answer — so the action denylist, ``enforce_action``'s SEL row and
-  the NEW-1 budget floor apply to it as they apply to the digest acting on its own, and a second
-  dispatch seam (AG §1.2) never exists. The two gates that are about work nobody answered do not:
+  the budget floor apply to it as they apply to the digest acting on its own, and a second
+  dispatch seam never exists. The two gates that are about work nobody answered do not:
   incident mode leaves attended work running, and the operator ceiling's ``ask`` is satisfied by a
   person answering, so the auto-execute grant is never asked for.
 * **Idempotency is the run's own ledger, not a new store.** Every answered ordinal leaves a
@@ -134,7 +134,7 @@ def persist_rule(door: Door, pattern: str, approve: bool) -> tuple[str, str]:
     """Teach one approval rule through the SAME guarded write the rules manager POSTs to.
 
     Returns ``(key, error)``. The write goes through ``MemoryService.set_semantic``, so the
-    injection scanner still sees the pattern text even though the user ratified it (§1.4). A
+    injection scanner still sees the pattern text even though the user ratified it. A
     proposal with no pattern has nothing to remember, which is said rather than raised: the card
     offers no "always" for one, and a typed "always" still answers the proposal once. A memory that
     cannot be reached is said the same way: the answer stands, and nothing was taught.
@@ -189,7 +189,7 @@ def answer_outcome(approves: bool, reason: str) -> str:
 async def dispatch_approved(
     view: dict, row: dict, *, session_key: str, run_id: str
 ) -> tuple[str, str]:
-    """Run ONE approved proposal through PA-3's stage. Returns ``(reason, detail)``.
+    """Run ONE approved proposal through the auto-execute stage. Returns ``(reason, detail)``.
 
     ``reason`` is empty when the action landed, and otherwise says why it did not (the stage's
     `autoexec.SKIP_*`, or that it never reached the stage); ``detail`` is then the sentence the
@@ -204,9 +204,9 @@ async def dispatch_approved(
     what one "yes" needs. The proposal runs as its run recorded it (its arguments), and the
     capability the answer admits is its own kind's alone (`autoexec.answer_capabilities`), not
     the digest's unattended set, which holds no task list. It runs as answered work
-    (``answered=True``): every guard PA-3 put in front of an unattended write runs here too, in the
-    order it runs there, but the two that hold only what nobody answered (incident mode and the
-    operator ceiling's auto-execute grant) do not.
+    (``answered=True``): every guard that stage puts in front of an unattended write runs here
+    too, in the order it runs there, but the two that hold only what nobody answered (incident
+    mode and the operator ceiling's auto-execute grant) do not.
     """
     from datetime import datetime, timezone
 
@@ -272,7 +272,8 @@ async def dispatch_approved(
 
 
 def run_ledger(run_id: str) -> Callable[[str, dict], None]:
-    """PA-3's `LedgerFn`, bound to the digest's run so an approved action lands in ITS journal."""
+    """The auto-execute stage's `LedgerFn`, bound to the digest's run so an approved action lands
+    in ITS journal."""
     from personalclaw.proactive.surface import TRIAGE_NODE_ID
     from personalclaw.workflows.journal import Journal
 
@@ -340,7 +341,7 @@ async def answer(run_id: str, text: str, *, door: Door) -> Answered:
 
     if view.get("state") != STATE_READY or str(view.get("run_id", "")) != run_id:
         # An ordinal numbers ONE window. Acting on a stale digest's "3" would address whatever
-        # happens to be third today, which is criterion 9's wrong-target execution.
+        # happens to be third today: a wrong-target execution.
         return Answered(outcome=EXPIRED, current_run_id=str(view.get("run_id", "") or ""))
 
     ordinals = [str(row.get("ordinal", "")) for row in (view.get("pending") or [])]

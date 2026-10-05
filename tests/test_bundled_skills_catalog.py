@@ -2,7 +2,7 @@
 
 Validates the two net-new ports land through the existing Skills entity with no
 code change: discovered by the native marketplace, synced by the loader,
-trigger-matched by the frontmatter contract. Plus the D2 gate — the `artifacts`
+trigger-matched by the frontmatter contract. Plus one gate: the `artifacts`
 skill may only reference `artifact_*` tools that actually exist in mcp_core, so
 the skill can never drift from (or ship ahead of) the live tool set.
 """
@@ -57,7 +57,7 @@ class TestArtifactsSkill:
         assert "artifacts" in loader.get_triggered_skills("save this widget to the library")
 
     def test_tool_existence_cross_check(self):
-        """D2: every artifact_* tool the skill names must exist on the personalclaw-core
+        """Every artifact_* tool the skill names must exist on the personalclaw-core
         MCP server surface (`@personalclaw-core` is what the skill references).
 
         Guards against the skill shipping ahead of (or drifting from) the live tool set

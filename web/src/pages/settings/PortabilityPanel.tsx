@@ -16,7 +16,7 @@ import { BUSY_REASON } from '../../ui/unavailable'
  *  to ask for part of your data, so "give me my documents" meant downloading the whole
  *  home including the memory database.
  *
- *  §6 requires memory and knowledge to be SEPARATE buttons rather than one blob, and
+ *  Memory and knowledge are SEPARATE buttons rather than one blob, and
  *  they are not interchangeable: a knowledge export is the user's own documents (the
  *  `files/` originals travel), while a memory export is the assistant's internals. The
  *  labels say which is which, because a user asking for "my data" almost always means
@@ -25,7 +25,7 @@ import { BUSY_REASON } from '../../ui/unavailable'
  *  Import is plan-first: choosing a file VALIDATES it (no `mode`, nothing written) and
  *  shows what the archive claims before the Import button does anything. */
 
-/** The domain buttons §6 names. `undefined` domains = the whole home. */
+/** The domain buttons. `undefined` domains = the whole home. */
 const EXPORTS: { key: string; label: string; domains?: string[]; hint: string }[] = [
   {
     key: 'full',

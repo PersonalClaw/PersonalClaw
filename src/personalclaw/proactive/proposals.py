@@ -46,7 +46,7 @@ from dataclasses import dataclass, field
 from personalclaw.proactive.manifest import SOURCE_INBOX, CollectedItem, Manifest
 
 #: The pre-declared action set. Proposals BIND ARGUMENTS to these; they can never introduce
-#: an action (the frozen action-set invariant, AUTOMATION-SUBSTRATE decision 7). `none` is a
+#: an action (the frozen action-set invariant). `none` is a
 #: member so a model can say "nothing to do here" inside the schema instead of omitting the
 #: item and leaving the absence ambiguous. Every other member is one a Yes can carry out
 #: (`autoexec.PROVIDER_FOR_ACTION`): a kind nothing performs would be a button that can only fail.
@@ -93,7 +93,7 @@ MAX_PROPOSALS = 8
 EXTERNAL_REACH_ACTIONS = frozenset({"reply_draft"})
 
 #: Actions that permanently remove something from the user's attention — floor `high`.
-#: `archive` and `mute_thread` are deliberately NOT here: §1.6 makes reversibility the whole
+#: `archive` and `mute_thread` are deliberately NOT here: reversibility is the whole
 #: reason they are the trivial-capable class. `dismiss` is, because a dismissed item is gone
 #: from the surface with nothing to undo it back onto.
 DESTRUCTIVE_ACTIONS = frozenset({"dismiss"})
@@ -314,7 +314,7 @@ def proposals_problem(raw: str) -> str:
 
 
 def parse_proposals(raw: object, *, manifest: Manifest) -> ProposalBatch:
-    """Turn the model's reply into a batch, enforcing every §1.3 constraint.
+    """Turn the model's reply into a batch, enforcing every proposal constraint.
 
     `raw` is the model's answer, or the dict an injected completion already read from one. An
     answer that holds no object carrying a `proposals` list is a degraded batch — zero proposals,

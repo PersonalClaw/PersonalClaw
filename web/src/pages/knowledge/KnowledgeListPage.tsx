@@ -40,8 +40,8 @@ import { BUSY_REASON } from '../../ui/unavailable'
 // per-shelf counts — as opposed to the filterable item list. FIRST in the view strip, because it
 // is the orienting lens; `library` stays the DEFAULT, which is a deliberate boundary rather than a
 // preference (see the `view` param below).
-// `decisions` is a LENS, not a destination (PROACTIVE-ASSISTANT §5.3: "a filtered knowledge view,
-// not a new nav section — decisions ARE knowledge items"). It earns a place in this strip for the
+// `decisions` is a LENS, not a destination: a filtered knowledge view,
+// not a new nav section — decisions ARE knowledge items. It earns a place in this strip for the
 // same reason Conflicts and Tags do: same library, different question asked of it.
 type View = 'home' | 'library' | 'graph' | 'intents' | 'tags' | 'conflicts' | 'decisions'
 
@@ -523,7 +523,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
               {/* The way IN to watched sources. It lives beside the
                   primary action rather than in the `view` strip because Sources is its own
                   destination (`#/knowledge/sources`) with a create flow of its own, not a
-                  fifth lens on the same item list — and everything WS-2..WS-5 built was
+                  fifth lens on the same item list — and the whole watched-sources backend was
                   unreachable until something pointed here. `priority="low"` so it sheds into
                   the `…` menu before "Add knowledge". */}
               <HeaderControl icon={Rss} label="Sources" priority="low"
@@ -1198,7 +1198,7 @@ export function IntentsView({ selectedId, onSelect, reloadKey }: {
             {/* An icon-only DESTRUCTIVE control had no accessible name at all: axe `button-name`
                 [critical] at both themes, and a screen-reader user heard "button" beside every intent.
                 Named after its row the way `RowAction` does, through the shared cap so an intent whose
-                goal is a sentence cannot turn the name into a paragraph (cycle 142's rule). */}
+                goal is a sentence cannot turn the name into a paragraph. */}
             <Button size="sm" variant="ghost" ariaLabel={`Delete intent: ${rowSubject([it.goal || it.id], 40)}`}
               onClick={async () => {
                 if (!(await confirmIntentDelete(it.goal || it.id, it.outcome_count ?? 0))) return

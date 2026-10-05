@@ -82,7 +82,7 @@ EMITTER_SITE_BASELINE = 132
 
 #: Direct ``json_response({"error": "<prose>"})`` sites — the shape that carries no
 #: code. A CEILING (may only shrink). Every one of these is a route where a client
-#: must match prose. PL-8 removed the four helpers that manufactured them wholesale;
+#: must match prose. The four helpers that manufactured them wholesale are gone;
 #: the remaining population is per-site work for later changes.
 #:
 #: Deliberately still counts DIRECT sites only, so the number stays comparable with
@@ -173,8 +173,8 @@ FLAT_TOTAL_BASELINE = FLAT_BASELINE + FLAT_VIA_WRAPPER_BASELINE
 #: takes the pin's stronger shape: that module emits NO flat envelope at all.
 #: 205 → **207**: the identity report's two new 200 SUCCESS bodies on the same learning
 #: surface — ``json_response(compose_identity_report(...).to_payload())`` and
-#: ``json_response(delivery.to_payload())``. Identical shape and identical reasoning to the LV-3
-#: row above (a composer's return value; spelling its keys out would duplicate
+#: ``json_response(delivery.to_payload())``. Identical shape and identical reasoning to the
+#: learning-summary row above (a composer's return value; spelling its keys out would duplicate
 #: ``IdentityReport``/``IdentityReportDelivery``'s schema in two places). **The slack is not
 #: spendable on an error envelope:** the four refusals go through :func:`json_error`, which
 #: needs no payload dict at all, so the learning surface's FLAT count is unchanged at 14 and
@@ -182,7 +182,7 @@ FLAT_TOTAL_BASELINE = FLAT_BASELINE + FLAT_VIA_WRAPPER_BASELINE
 #: there. The first draft used flat ``{"error": str}`` bodies and reds three of these
 #: ratchets at once, which is how the structured envelope came to be used here.
 #: **208 + 2 = 210 (union).** Both rows above were measured against the SAME base of 205 —
-#: EA-8 bought +3 and LV-4 bought +2, independently — so NEITHER side's number is correct
+#: A2A bought +3 and the identity report +2, independently — so NEITHER side's number is correct
 #: for a tree carrying both, and taking either one would silently un-pin the other surface.
 #: The ceiling is the sum, and the two per-surface FLAT pins above are what keep the slack
 #: from being spent on an error envelope.
@@ -200,9 +200,10 @@ FLAT_TOTAL_BASELINE = FLAT_BASELINE + FLAT_VIA_WRAPPER_BASELINE
 #: to :func:`json_error` (``artifact_build_failed`` 422, ``artifact_slug_invalid`` 400) rather
 #: than accommodated, so ``FLAT_BASELINE`` stayed at 1507 — it is shrink-only and was not raised.
 #: **Measured against `origin/main`, not carried forward.** An earlier revision of this branch
-#: recorded a net delta of ZERO, and that reading expired: it was taken before ES-7 landed a site
-#: of its own. The delta a branch needs is main-RELATIVE, so it has to be re-measured at every
-#: rebase rather than reused — main now measures 211 and this branch measures 212.
+#: recorded a net delta of ZERO, and that reading expired: it was taken before another change
+#: landed a site of its own. The delta a branch needs is main-RELATIVE, so it has to be
+#: re-measured at every rebase rather than reused — main now measures 211 and this branch
+#: measures 212.
 #: 212 → **213**: one 200-status SUCCESS body on the tile-action route —
 #: ``POST /api/dashboard/views/{view}/tiles/action`` answers with the record
 #: ``tile_actions.check`` builds, whose ``violations`` member is a list of tuples the checker
@@ -225,8 +226,8 @@ FLAT_TOTAL_BASELINE = FLAT_BASELINE + FLAT_VIA_WRAPPER_BASELINE
 #: design (an overlay naming a component that does not exist is reported beside the surface it
 #: belongs to, because a 4xx would be indistinguishable from a broken request), so no flat
 #: ``{"error": …}`` body was added and ``FLAT_BASELINE`` stays 1507 — shrink-only, not raised.
-#: The one added unresolved site is ``dashboard/handlers/surfaces.py:28``. AS-6 LANDED FIRST, so
-#: this row's 213 → 214 step is now part of `origin/main`'s own measurement.
+#: The one added unresolved site is ``dashboard/handlers/surfaces.py:28``. The overlay producer
+#: LANDED FIRST, so this row's 213 → 214 step is now part of `origin/main`'s own measurement.
 #: 213 → **214**: one 200-status SUCCESS body on the capture import route —
 #: ``POST /capture/import`` answers with ``web.json_response(report)`` in
 #: ``inbound/capture_proxy.py``, where ``report`` is verbatim what
@@ -242,10 +243,11 @@ FLAT_TOTAL_BASELINE = FLAT_BASELINE + FLAT_VIA_WRAPPER_BASELINE
 #: **214 + 1 = 215 (union).** The two rows above were measured against the SAME base of 213 —
 #: the overlay producer and the capture import each bought +1, independently — so NEITHER
 #: side's 214 is correct for a tree carrying both, exactly as the 208 + 2 = 210 row above records.
-#: AS-6 landed first, so `origin/main` now measures 214 and this branch measures 215; taking
-#: either row's 214 would silently un-pin the other surface. Measured at rebase time, both with
-#: ``files_scanned`` 1033 and the flat total identical at 1507 on both sides, so ``FLAT_BASELINE``
-#: stays 1507 — shrink-only, not raised. MAIN-RELATIVE, so re-measure at the next rebase.
+#: The overlay producer landed first, so `origin/main` now measures 214 and this branch
+#: measures 215; taking either row's 214 would silently un-pin the other surface. Measured at
+#: rebase time, both with ``files_scanned`` 1033 and the flat total identical at 1507 on both
+#: sides, so ``FLAT_BASELINE`` stays 1507 — shrink-only, not raised. MAIN-RELATIVE, so
+#: re-measure at the next rebase.
 #: 215 → **216**: one 200-status SUCCESS body on the durable session-map read route —
 #: ``GET /api/chat/sessions/{session}/map`` answers with
 #: ``web.json_response(session_map_marks(prepared))`` in ``dashboard/chat_session_map.py``, and
@@ -262,7 +264,7 @@ FLAT_TOTAL_BASELINE = FLAT_BASELINE + FLAT_VIA_WRAPPER_BASELINE
 #: on both sides, so ``FLAT_BASELINE`` (1499) stays — shrink-only, not raised. The one added
 #: unresolved site is ``dashboard/chat_session_map.py:424``. MAIN-RELATIVE, so re-measure at the
 #: next rebase.
-#: 216 → **218**, a re-measure rather than one change: ``main`` measured 219. Between SSM-2's
+#: 216 → **218**, a re-measure rather than one change: ``main`` measured 219. Between that row's
 #: measurement and this one, five rows LEFT and eight ARRIVED with no row here, because they
 #: merged while CI was not a merge gate. The five that left build their body at the call site or
 #: answer through :func:`json_error` now (``chat_handlers.api_chat_sessions``,
@@ -840,7 +842,7 @@ def test_the_one_emitter_is_actually_used():
     )
     files = {f for f, _ in census.emitter_sites}
     assert len(files) >= 12, (
-        f"json_error is used in only {len(files)} modules; PL-8 replaced helpers in "
+        f"json_error is used in only {len(files)} modules; it replaced helpers in "
         f"thirteen. A module reverted to a local helper."
     )
 
@@ -849,12 +851,12 @@ def test_no_module_local_error_helper_came_back():
     """The thirteen deleted helpers are deleted — no wrappers, no revivals.
 
     Any ``def _err``/``_error``/``_bad_request`` that returns a ``web.Response`` is
-    the exact hazard PL-8 removed: a second emitter whose argument order is free to
+    the exact hazard their deletion removed: a second emitter whose argument order is free to
     disagree with the shared one.
 
     **This rail is a NAME match, and that is its known limit.** It scored
     `inbound/bridge.py`'s eleven flat envelopes at zero because the helper was called
-    ``_json``. Kept as-is — the three names it lists are the ones PL-8 actually deleted,
+    ``_json``. Kept as-is — the three names it lists are the ones actually deleted,
     and a rail that says "no revival of THESE" is honest about its scope. The general
     case is not fixable by adding names, so it is not fixed here: it is fixed by
     `test_the_wrapper_routed_flat_population_never_grows`, which keys on SHAPE and
@@ -905,8 +907,8 @@ def test_the_evals_surface_hides_no_flat_envelope_in_its_unresolved_rows():
     assert [row for row in census.flat_via_wrapper if row[0] == module] == []
 
 
-#: The learning surface's flat-envelope rows at the time LV-3 bought its slack. Unlike the
-#: evals surface this module is NOT flat-free, so the pin's shape does not transfer.
+#: The learning surface's flat-envelope rows at the time the learning summary bought its slack.
+#: Unlike the evals surface this module is NOT flat-free, so the pin's shape does not transfer.
 #: 14 → **10**: the four "learning is disabled" 404s on the reads the Learning page loads to
 #: render (the proposal list, the staging week, health, the summary) now answer the decided
 #: ``_off()`` 200, which carries no error envelope at all. A shrink, so the pin moves down with it.
@@ -923,8 +925,8 @@ def test_the_learning_surfaces_new_unresolved_row_cannot_become_a_flat_envelope(
     **This pin deliberately differs from the evals one.** That test asserts the evals module
     emits NO flat envelope at all, which is what makes its slack unspendable. Measured here,
     that claim is simply false: ``handlers/learning.py`` already carries **14** flat rows
-    (its proposal-inbox and staging refusals predate LV-3 and are counted against the flat
-    ceiling, not this one; four of them have since become decided 200s, see the baseline).
+    (its proposal-inbox and staging refusals predate the learning summary and are counted against
+    the flat ceiling, not this one; four of them have since become decided 200s, see the baseline).
     Copying the evals assertion would have produced a test that reds
     for a reason unrelated to the slack — so the pin instead fixes the flat COUNT, which reds
     on a NEW flat envelope while tolerating the existing ones.
@@ -948,7 +950,7 @@ def test_the_learning_surfaces_new_unresolved_row_cannot_become_a_flat_envelope(
     flat = [row for row in census.flat if row[0] == module]
     assert len(flat) == _LEARNING_FLAT_BASELINE, (
         f"flat envelopes on the learning surface moved {_LEARNING_FLAT_BASELINE} -> "
-        f"{len(flat)}; the LV-3 unresolved slack must not be spent on a flat error envelope"
+        f"{len(flat)}; the unresolved slack must not be spent on a flat error envelope"
     )
     assert [row for row in census.flat_via_wrapper if row[0] == module] == []
 
@@ -960,11 +962,11 @@ def test_the_a2a_surface_hides_no_flat_envelope_in_its_unresolved_rows():
     A2A gateway: the agent card, and the A2A Task document returned by the task-start and
     task-poll routes.
 
-    This pin takes the **stronger** ES-3 shape rather than the one, because the stronger
-    claim is measurably true here: ``inbound/a2a.py`` emits NO flat envelope at all — every
-    refusal on the surface goes through :func:`~personalclaw.http_errors.json_error`. So a
-    future flat error built into a local on this module would land in ``census.flat`` and red
-    the flat ceiling rather than quietly occupying this slack.
+    This pin takes the **stronger** evals-surface shape rather than the learning one, because
+    the stronger claim is measurably true here: ``inbound/a2a.py`` emits NO flat envelope at
+    all — every refusal on the surface goes through :func:`~personalclaw.http_errors.json_error`.
+    So a future flat error built into a local on this module would land in ``census.flat`` and
+    red the flat ceiling rather than quietly occupying this slack.
     """
     census = scan()
     module = "src/personalclaw/inbound/a2a.py"

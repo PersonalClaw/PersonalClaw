@@ -1,11 +1,11 @@
-"""The five-stage triage pipeline, wired end to end (PROACTIVE-ASSISTANT §1.1-§1.5).
+"""The five-stage triage pipeline, wired end to end.
 
 `run_triage` is the whole digest: collect → gate → ONE proposal call → rank → deliver. The
 stages themselves are pure and live beside this module; what is here is the *order*, the two
 model calls, and the four spend decisions that make the order defensible:
 
 1. **Nothing collected ⇒ nothing spent.** The manifest is built before any model is reachable,
-   and an empty manifest asks no model anything (`llm_calls == 0`). That is §1.2's precondition
+   and an empty manifest asks no model anything (`llm_calls == 0`). That is the precondition
    guard: one cheap store read decides whether the expensive stages run at all. It returns
    without a digest only when nothing waits on you either: a proposal an earlier digest made and
    you have not answered is carried into this one (`carry`), quiet morning or not, because the
@@ -75,8 +75,8 @@ CompletionFn = Callable[..., Awaitable[object]]
 DeliverFn = Callable[[Digest], bool]
 #: the auto-execution stage, injected rather than imported-and-called so the ordering test
 #: does not also become a test of the guardrails floor. `None` means "propose only", which is
-#: what every caller before PA-3 did and what a caller with `auto_execute_enabled` off still
-#: effectively gets (the stage itself refuses, one layer down).
+#: what a caller with `auto_execute_enabled` off still effectively gets (the stage itself
+#: refuses, one layer down).
 AutoExecFn = Callable[[tuple[Proposal, ...], Manifest], Awaitable["AutoExecResult"]]
 
 
@@ -200,18 +200,17 @@ async def _default_completion(prompt: str, **kwargs: object) -> object:
 def make_notify_deliver(*, run_id: str = "", trigger_id: str = "") -> DeliverFn:
     """The default delivery: the substrate's outbound contract → the singular notify gate.
 
-    §1.5 asks for delivery "through the substrate's outbound delivery contract (decision 13)"
-    with a "stable event-id, statusUrl into the run journal" — so the digest rides
+    Delivery goes through the substrate's outbound delivery contract, with a stable event-id and
+    a statusUrl into the run journal — so the digest rides
     `triggers.delivery.Delivery.to_notify_kwargs()` rather than calling `notify(kind, title,
-    body)` bare. The two things that buys are exactly the two the criteria name: `statusUrl`
-    lands in the notification's `meta` so the digest card deep-links the run journal
-    (criterion 1), and `event_id` is DERIVED from `(trigger_id, run_id)` rather than random, so
-    a re-delivered digest dedupes instead of arriving twice (criterion 9's substrate).
+    body)` bare. That buys two things: `statusUrl` lands in the notification's `meta` so the
+    digest card deep-links the run journal, and `event_id` is DERIVED from `(trigger_id,
+    run_id)` rather than random, so a re-delivered digest dedupes instead of arriving twice.
 
     `DashboardState.notify` remains the only gate consulted: mute-all, minimum severity, then
     quiet-hours suppression for anything below `error`. A digest is `info`, so quiet hours DEFER
-    it, which is the behaviour criterion 1 asks for. Building the `Delivery` here and then
-    sending it some other way would be the second path R18 forbids.
+    it, which is the correct behaviour for a morning digest. Building the `Delivery` here and
+    then sending it some other way would be a second delivery path.
 
     A digest with proposals waiting for an answer says so in its notice
     (`channel_reply.REPLY_ANSWERS_KEY`, naming its run): where your rule sends the notice to a chat

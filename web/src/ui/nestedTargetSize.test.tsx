@@ -13,7 +13,7 @@ import { TextLink } from './TextLink'
 //   enclosing clickable row     1212×47, `cursor-pointer`, wraps all 40
 //
 // 🔑 **A CONTROL INSIDE A LARGER CLICKABLE SURFACE CAN NEVER USE THE SPACING EXCEPTION** — the 24px
-// circle is inside another target by construction. Cycle 72 recorded this for the settings hub's
+// circle is inside another target by construction. This was first recorded for the settings hub's
 // switches (inside a full-card nav button); the same probe blind spot recurred here because gaps were
 // measured against SIBLINGS only. Re-measured against ancestors: **40 of 40 nested**, so 40 real
 // failures, not 0.

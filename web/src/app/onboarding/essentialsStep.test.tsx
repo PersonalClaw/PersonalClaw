@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react'
 import type { AppCatalogEntry, AppInstallResult } from '../../lib/api'
 
-// ── OU-2, the essential-apps onboarding step ─────────────────────────────────
+// ── The essential-apps onboarding step ───────────────────────────────────────
 //
 // This step renders a Store catalog inside a flow the user is being WALKED THROUGH,
 // which is exactly the shape where an "install the essentials for me" convenience
@@ -197,7 +197,7 @@ beforeEach(() => {
   appCatalog.mockResolvedValue(CATALOG)
   apps.mockResolvedValue([])
   tools.mockResolvedValue([])
-  // OU-13 default: no local Ollama anywhere. Every existing test therefore renders the
+  // Default: no local Ollama anywhere. Every existing test therefore renders the
   // model lane exactly as before the on-ramp — no bind card, no scan fired.
   detectLocalModel.mockResolvedValue({ detected: false })
   scanLocalModels.mockResolvedValue({ endpoints: [] })
@@ -218,7 +218,7 @@ beforeEach(() => {
   // The lane's PROOF: by default the build check passes, so every test above walks the flow
   // exactly as it did before verification existed. The tests that falsify it override this.
   onboardingModelCheck.mockResolvedValue({ ok: true, source: 'binding', bound: ['openai:gpt-5'] })
-  // OU-14 default: NOTHING to download. So the bundled-model offer renders nothing and every
+  // Default: NOTHING to download. So the bundled-model offer renders nothing and every
   // test above is the lane exactly as it was before this change — the offer is proved on its own
   // surface in bundledModelOffer.test.tsx rather than by perturbing all of these.
   onboarding.mockResolvedValue({
@@ -652,7 +652,7 @@ describe('the model lane completes entirely in-flow', () => {
   })
 
   it('names the BUNDLED floor rather than calling it a finished model setup', async () => {
-    // The first thing a new user reads about their model. Before OU-14 this lane could only
+    // The first thing a new user reads about their model. Before the bundled offer this lane could only
     // be satisfied by a real provider, so "you're ready" was true; now it is also satisfied by
     // a 135M bundled weight, and a bare "ready" there would be the one surface presenting the
     // tiny default as finished setup — the exact conclusion-about-the-product the honesty
@@ -1638,7 +1638,7 @@ describe('an untested connection is not reported as a passed test', () => {
   })
 })
 
-// ── OU-14, the owner's report: step 3 offers the small model, notices the download, binds it ─
+// ── The owner's report: step 3 offers the small model, notices the download, binds it ────────
 //
 // "why does onboarding page's Essential apps Step 3 doesn't allow user to continue without
 // configuring any model?" — measured on the real image: the download was offered only behind
@@ -1842,7 +1842,7 @@ describe('the small model at step 3', () => {
 // (`"context_tokens": "4096"`) — which a provider factory checking `isinstance(v, int)` then
 // silently dropped. One typed renderer, shared with Settings, and typed values on the wire.
 
-describe('the provider settings form is typed (#5 of the report)', () => {
+describe('the provider settings form is typed', () => {
   const TYPED = {
     ...OLLAMA_TYPE,
     settingsSchema: {

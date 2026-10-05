@@ -5,7 +5,7 @@ controller cannot cover: after a restart no run has a controller, so a run left 
 RUNNING sits there forever and a user reads that as "still working" while nothing is.
 
 Retention gets the strictest tests in this file because it is the only destructive path
-in the slice. `run_id` reaches the sweep from a stored row, and a row is not a trust
+here. `run_id` reaches the sweep from a stored row, and a row is not a trust
 boundary — a `..`-shaped id must delete nothing.
 """
 
@@ -439,7 +439,7 @@ class TestPublisher:
         await wd.stop()  # flushes any window still open, so nothing is stranded
         assert published
         assert all(k == f"workflow:{run.id}" for k, _, _ in published)
-        # Node events are COALESCED (WF2-R11 batch-5), so they may arrive inside a
+        # Node events are COALESCED, so they may arrive inside a
         # `workflow_batch` envelope. Unwrap before asserting: the claim is that the event
         # reaches the run's key, not that the transport declined to batch it.
         names = set()
@@ -520,7 +520,7 @@ class TestPublisher:
 
 
 class TestLoopHubAdoption:
-    """`keys_equivalent` at its adoption call site (WORK-CONTAINERS §6.3 R10c).
+    """`keys_equivalent` at its adoption call site.
 
     The helper existed with ZERO callers, so nothing adopted anything. During coexistence a
     legacy loop can run as a template: the cockpit subscribes on `loop:<id>` while the engine
@@ -695,7 +695,7 @@ class TestRetention:
 
 
 class TestSweepContainment:
-    """The only destructive path in the slice. A stored row is not a trust boundary."""
+    """The only destructive path here. A stored row is not a trust boundary."""
 
     def test_a_traversal_id_deletes_nothing(self, tmp_path) -> None:
         sentinel = store.runs_root().parent / "MUST_SURVIVE.txt"

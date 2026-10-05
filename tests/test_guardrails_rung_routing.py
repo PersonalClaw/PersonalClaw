@@ -1,6 +1,6 @@
 """Rung routing at the dispatch seams.
 
-AG-6 shipped the ladder with NO call sites — a decision object nothing consulted. The two
+The ladder first shipped with NO call sites — a decision object nothing consulted. The two
 properties this change is defined by are:
 
 1. an app-contributed action inherits its DECLARED floor/ceiling with no dispatch-layer
@@ -13,7 +13,7 @@ properties this change is defined by are:
 ``run_script_hook``, are the production fire paths; the app declaration arrives through
 ``ActionTypeHandler.register``, the same handler the app loader calls on enable. A test that
 constructed a spec and called ``resolve_rung`` by hand would prove the decision layer works
-and say nothing about whether anything consults it — which is the exact defect AG-6 left and
+and say nothing about whether anything consults it — which is the exact defect the ladder left and
 this change exists to close. The source-level check at the bottom is an ADDITION to that, not
 a substitute: it fails when a FOURTH dispatch seam appears without routing, which no
 behavioural test can notice.
@@ -164,7 +164,7 @@ def _inbox_rows(home) -> list[dict]:
     return list(items.values()) if isinstance(items, dict) else list(items)
 
 
-# ── acceptance criteria 1: a declared floor governs a real dispatch ───────────
+# ── a declared floor governs a real dispatch ──────────────────────────────────
 
 
 def test_an_app_declared_floor_HOLDS_a_real_event_trigger_fire(_isolated_home):
@@ -248,7 +248,7 @@ def test_an_UNDECLARED_provider_keeps_its_pre_ladder_behaviour(_isolated_home):
     assert _inbox_rows(_isolated_home) == []
 
 
-# ── acceptance criteria 2: a leaves_machine ceiling cannot be claimed by a manifest ──────
+# ── a leaves_machine ceiling cannot be claimed by a manifest ─────────────────────────────
 
 
 def test_a_manifest_CANNOT_claim_autonomous_for_a_network_reaching_action(_isolated_home, caplog):
@@ -641,13 +641,13 @@ def _fire_store_trigger(action: _AppAction, kind: str = "clock") -> Any:
 
 
 def test_the_store_trigger_seam_HOLDS_a_declared_floor(_isolated_home):
-    """🔴 THE SEAM THE PLAN MISNAMED. `_run_action_job` retired with `ScheduleService`
+    """🔴 THE SEAM THAT WAS EASY TO MISS. `_run_action_job` retired with `ScheduleService`
     and the substrate GENERALISED it into `_fire_store_trigger` — which is the path
     every clock, file, webhook and chained trigger takes. Routing the other two seams and
     not this one would honour a declared floor at two of three dispatch points, which reads
     to a user exactly like not honouring it at all.
 
-    The ledger row is asserted alongside the hold: criterion 8's "zero silent drops" applies
+    The ledger row is asserted alongside the hold: "zero silent drops" applies
     to a rung refusal for the same reason it applies to a screened payload — the user sees an
     automation that stopped and needs somewhere to look.
     """
@@ -695,7 +695,7 @@ ROUTED_SEAMS: tuple[tuple[str, str], ...] = (
 
 @pytest.mark.parametrize("module_name,label", ROUTED_SEAMS)
 def test_every_unattended_dispatch_seam_ROUTES(module_name, label):
-    """🔴 THE INVARIANT AG-6 could not have. A seam that reaches a provider without asking
+    """🔴 THE INVARIANT that was missing. A seam that reaches a provider without asking
     the ladder is how a declared floor quietly stops applying — and a new seam is exactly
     the case a behavioural test cannot fail on, because it does not know it exists.
 

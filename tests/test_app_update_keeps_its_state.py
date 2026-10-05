@@ -5,7 +5,7 @@ no bundle ships is the app's state: ``data/`` (``sdk.util.app_data_dir``) and ``
 Python environment an ``execution: "sidecar"`` app's child runs in
 (``sdk.sidecar.sidecar_venv_dir``) — where Voice Clone TTS's engine is installed. On main the
 update copied ``data/`` into the new version and dropped ``venv/`` with the old version's files,
-so every update deleted the installed engine (measured by the apps/models lane on
+so every update deleted the installed engine (measured on
 ``voice-clone-tts``). A removal still takes the engine with the app, keep-data included: what
 that rung keeps is ``data/``.
 

@@ -222,7 +222,8 @@ def test_an_empty_board_groups_to_nothing():
 
 
 def test_an_isolated_run_whose_worktree_SURVIVED_is_suspended_not_aborted():
-    """The measurement §5.2 turns on. Aborting it destroys recoverable work and reports success."""
+    """The measurement the sweep turns on. Aborting it destroys recoverable work and reports
+    success."""
     decision = sweep_decision(run(status=RunStatus.RUNNING), Substrate(kind="worktree", alive=True))
     assert decision.board_state is BoardState.SUSPENDED
     assert decision.status is RunStatus.PAUSED

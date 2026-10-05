@@ -535,7 +535,7 @@ class _FakeOkProc:
 async def test_staged_holds_until_active_work_drains_then_applies_on_resolved_tag(
     monkeypatch, tmp_path, environment_made_by
 ) -> None:
-    """RUM-5 acceptance criteria centerpiece — with a session ACTIVE the staged apply HOLDS (nothing
+    """The centerpiece — with a session ACTIVE the staged apply HOLDS (nothing
     applied, a background waiter parks); once the work DRAINS it fires EXACTLY once, and the
     apply it runs lands on the RESOLVED release tag (git checkout <tag>), never main / a branch
     / a reset."""
@@ -889,7 +889,7 @@ def test_select_target_nightly_is_branch_tracking_not_a_tag() -> None:
 
 def test_select_target_prerelease_detected_by_tag_suffix() -> None:
     # The `prerelease` flag is False, but a `-rc`/`-beta` tag suffix ALSO marks a
-    # prerelease (tag convention §3.6): stable skips it, beta takes it.
+    # prerelease (by tag convention): stable skips it, beta takes it.
     rels: list[dict[str, object]] = [
         {"tag": "v0.4.0-rc.1", "prerelease": False, "name": "", "body": ""},
         {"tag": "v0.3.9", "prerelease": False, "name": "", "body": ""},
@@ -917,7 +917,7 @@ def test_select_target_empty_list_returns_empty() -> None:
 
 @pytest.mark.asyncio
 async def test_resolve_target_proves_all_four_branches(monkeypatch) -> None:
-    """The acceptance criteria headline: a faked releases list proves stable / beta /
+    """The headline: a faked releases list proves stable / beta /
     pin-hit / pin-miss through the real resolve_target seam."""
 
     async def _fake_releases() -> list[dict[str, object]]:
@@ -1106,7 +1106,7 @@ def _init_repo(path) -> None:
 
 
 def test_release_apply_leaves_head_exactly_at_the_target_tag(tmp_path, git_over_ssh) -> None:
-    """RUM-4 acceptance criteria: driven on a checkout ONE RELEASE BEHIND, the release apply
+    """Driven on a checkout ONE RELEASE BEHIND, the release apply
     (git fetch --tags + git checkout <tag>) leaves HEAD EXACTLY at the target tag —
     not at the branch tip, and with no reset."""
     origin = tmp_path / "origin"
@@ -1176,7 +1176,7 @@ def test_fast_forward_refuses_a_diverged_branch_and_leaves_it_untouched(
     tmp_path, git_over_ssh
 ) -> None:
     """A diverged local branch cannot fast-forward: ff-only fails non-zero and
-    leaves HEAD untouched — the safe answer, and why RUM-4 has no reset fallback."""
+    leaves HEAD untouched — the safe answer, and why the release apply has no reset fallback."""
     origin = tmp_path / "origin"
     _init_repo(origin)
     (origin / "f.txt").write_text("a\n")
@@ -1269,7 +1269,7 @@ def _fake_container_config(monkeypatch, channel: str, pin: str = "") -> None:
 async def test_build_update_status_container_carries_the_resolved_tag(
     monkeypatch, channel, pin, tag
 ) -> None:
-    """RUM-7 acceptance criteria: build_update_status emits the channel/pin image tag AND the
+    """build_update_status emits the channel/pin image tag AND the
     exact host commands carrying it — for the README's `docker run` install, its pull and
     its own `docker run` on that tag. Drives the REAL resolver
     (`fetch_releases` is the only stub) over the adversarial list, so stable/beta/pin

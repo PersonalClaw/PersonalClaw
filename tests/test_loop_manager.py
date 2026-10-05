@@ -1,4 +1,4 @@
-"""Unified Loop manager (Slice 2b.ii.b) — the shared lifecycle that arms/pauses/
+"""Unified Loop manager — the shared lifecycle that arms/pauses/
 stops/nudges/reaps every kind, delegating brief+nudge to the kind strategy."""
 
 from __future__ import annotations
@@ -91,7 +91,7 @@ class _FakeSvc:
         return next((lp for lp in self._loops.values() if lp.session_name == session_name), None)
 
     def list_all(self):
-        # The public surface `manager.pause` scans since WF2AUT-11 (the real service keeps its
+        # The public surface `manager.pause` scans (the real service keeps its
         # rows in the trigger store, not an in-memory dict).
         return list(self._loops.values())
 
@@ -243,9 +243,9 @@ class TestStartArmsWorker:
         _run(manager.rearm_nudge_message(_FakeSvc(), c.id))
 
     def test_design_start_does_not_provision_empty_project(self):
-        # design has no plan yet (its step walkthrough is the deferred Design slice), so
+        # design has no plan yet (its step walkthrough is deferred), so
         # provisioning would spawn a Tasks Project with ZERO lists — empty clutter. It
-        # free-runs off its brief until the slice lands (provisions_tasks=False).
+        # free-runs off its brief until the walkthrough lands (provisions_tasks=False).
         d = store.create(
             Loop(
                 id="", name="D", kind="design", task="Build a design system for the marketing site"

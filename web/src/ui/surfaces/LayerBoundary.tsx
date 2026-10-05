@@ -10,7 +10,7 @@
  *  common case for a contributed component fed model-authored args) unwinds the whole
  *  React tree above it. Without a boundary at the layer seam, one app component with a
  *  bad prop takes out the entire page — which is exactly the "agent-rewritten surface
- *  bricks the app" failure §6 exists to make structurally impossible. */
+ *  bricks the app" failure the layer model exists to make structurally impossible. */
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { layerName, type SurfaceLayer } from './layers'

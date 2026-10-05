@@ -1,7 +1,7 @@
 /** The L2 overlay band — where a user/agent surface overlay actually renders.
  *
  *  The call site that makes the L2 producer a producer. `overlay.tsx` loads and validates;
- *  this renders, and it renders through the machinery §6 already had rather than a second
+ *  this renders, and it renders through the machinery the layers already had rather than a second
  *  copy of it: each accepted overlay is a `GenUiWidget` (so its actions, its per-component
  *  `LayerBoundary` and its dropped-line notices are the ones chat already uses) wrapped in
  *  a `LayerBoundary` at L2 — a user tree that throws loses its band, never the page.

@@ -41,9 +41,9 @@ logger = logging.getLogger(__name__)
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
-#: Env vars a PAYLOAD KEY may never set (§7/R4 rule e).
+#: Env vars a PAYLOAD KEY may never set.
 #:
-#: 🔴 MEASURED. `_payload_env` merges AFTER the inherited environment (before PHF-4:
+#: 🔴 MEASURED. `_payload_env` merges AFTER the inherited environment (it used to be
 #: `os.environ`; now the allowlisted base `sandbox.build_child_env` produces — the merge
 #: ORDER, and so this hazard, is unchanged), so a payload key shadows the real variable.
 #: Driven end to end: a payload of ``{"PATH": "<dir with a fake `date`>"}``

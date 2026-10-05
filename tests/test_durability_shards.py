@@ -1,4 +1,4 @@
-"""DURABILITY §2 — deterministic shard export + manifest verification.
+"""Deterministic shard export + manifest verification.
 
 Three properties carry the whole design, so each is tested directly:
 

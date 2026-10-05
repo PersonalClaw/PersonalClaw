@@ -134,7 +134,7 @@ function mapBodies(src: string): string[] {
 
 /** Every `.tsx` under `root` that emits both a node mark and an edge mark ONE PER DATUM.
  *
- *  🔑 THE MARKS MUST COME FROM AN ITERATION. Node∧edge alone was the signal until `MC-8` produced
+ *  🔑 THE MARKS MUST COME FROM AN ITERATION. Node∧edge alone was the signal until `PairingQr` produced
  *  the real false positive its author asked for: `settings/PairingQr.tsx` renders a QR code as one
  *  `<rect>` plate and one `<path>` of modules, which is node∧edge to a text scan and is not a graph
  *  by any reading — there are no nodes, no connections, and no boundary to paint (SC 1.4.11 has
@@ -154,7 +154,7 @@ function graphMarkCensus(root: string): string[] {
   return found.sort()
 }
 
-/** 🔴 The vacuity floor the clause demands, as a callable so the suite can PROVE it fires.
+/** 🔴 The vacuity floor, as a callable so the suite can PROVE it fires.
  *  A derived census that matches nothing satisfies every "for each file, assert X" loop
  *  perfectly — this is the assertion that turns that silent pass into a red. */
 function assertCensusIsReal(census: string[]): void {
@@ -258,7 +258,7 @@ function clearsInBothModes(name: string): boolean {
   return (['dark', 'light'] as const).every((m) => ratio(token(name, m), token('--color-canvas', m)) >= MIN)
 }
 
-// 🔴 The two graphs this rail did NOT cover until KL-17 widened it, with the ratio measured from
+// 🔴 The two graphs this rail did NOT cover until it was widened, with the ratio measured from
 // tokens.css at the time: `--color-outline-variant` is 2.04:1 dark / 1.17:1 light against the
 // canvas — the SAME token, and the same shortfall, that the entity graph was fixed for above.
 //
@@ -397,7 +397,7 @@ describe('the entity graph marks meet non-text contrast', () => {
   it('resting marks use the neutral and active marks keep the accent', () => {
     // The distinction the fix must not flatten: hover/selected is what `--color-primary` means here.
     //
-    // KL-17 encoded relation weight on colour, so the RELATION's resting stroke is no longer a
+    // Relation weight is encoded on colour, so the RELATION's resting stroke is no longer a
     // literal token — it is a mix whose 0-weight end must still BE the neutral. Asserting that by
     // calling the ramp is strictly stronger than the source regex this replaces: a regex proves the
     // text, the call proves the whole ramp's floor. The entity mark keeps the literal form.
@@ -417,7 +417,7 @@ describe('the entity graph marks meet non-text contrast', () => {
   it('the resting relation is at least a whole pixel wide', () => {
     // A sub-pixel stroke lands as partial pixel coverage, so it cannot reach the ratio its colour
     // promises — the measurement above would be a paper number at 0.6.
-    // KL-17 made the width a weight ramp, so a source regex can no longer read one number off it.
+    // The width is a weight ramp, so a source regex can no longer read one number off it.
     // Calling the ramp is the stronger form: it covers EVERY weight, not just the resting literal.
     expect(weightWidth(0, false), 'the lightest resting relation is still a whole pixel')
       .toBeGreaterThanOrEqual(1)

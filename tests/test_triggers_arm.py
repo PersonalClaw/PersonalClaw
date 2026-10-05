@@ -417,9 +417,9 @@ def test_skip_dates_are_evaluated_in_the_triggers_own_timezone():
 
 
 def test_a_gates_spelling_is_honoured_too():
-    """§1.1 reserves `skip_dates` on the GATE block and the migration writes it to the spec, so a
-    real store holds both spellings. `calendar.py`'s projection accepts either, and disagreeing
-    would put a skipped day on the week grid while the engine fired on it."""
+    """The trigger entity reserves `skip_dates` on the GATE block and the migration writes it to
+    the spec, so a real store holds both spellings. `calendar.py`'s projection accepts either, and
+    disagreeing would put a skipped day on the week grid while the engine fired on it."""
     plain = A.next_fire(_clock({"kind": "cron", "expr": "0 9 * * *"}), now=NOW)
     trigger = _clock({"kind": "cron", "expr": "0 9 * * *"})
     trigger.gates = {"skip_dates": [_iso_day(plain)]}
@@ -456,7 +456,7 @@ def test_jitter_secs_is_applied_and_deterministic_per_id():
     """🔴 THE DEFECT. Measured before the fix: an interval trigger armed identically with
     `jitter_secs: 300`, with `jitter_secs: 300` + `strict: true`, and with neither — all three
     produced `now + 3600.0`. `jitter_secs` and `strict` were declared in `SPEC_KEYS["clock"]` and
-    applied by NOTHING, so AUTO-A1's bar ("migrated cron fires in its old jitter slot") was unmet.
+    applied by NOTHING, so a migrated cron did not fire in its old jitter slot.
 
     Deterministic per id, not random: a random offset re-rolls every fire, so two triggers can still
     collide on any given fire and a restart reshuffles everything.
@@ -475,7 +475,7 @@ def test_jitter_secs_is_applied_and_deterministic_per_id():
 
 
 def test_the_offset_is_byte_compatible_with_the_boot_stagger():
-    """AUTO-A1 requires the offset be "preserved byte-compatibly from schedule.py" — a migrated cron
+    """The offset must be preserved byte-compatibly from `schedule.py` — a migrated cron
     must land in the slot the job it came from occupied. So this reuses `scheduling.jitter_offset`,
     the same BLAKE2b-over-id algorithm the boot stagger and the legacy `ScheduleService` used. A
     fresh algorithm would re-phase every schedule on migration day."""

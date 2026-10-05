@@ -1,9 +1,9 @@
-# Windows-native audit (Platform-Reach rung 3)
+# Windows-native audit (rung 3)
 
 **Status:** audit only. This document costs the work of running PersonalClaw as a
 **native Windows** process (no WSL2, no Docker Desktop) and recommends whether to
-do it. It writes **no implementation code** — that is the soul guardrail of this
-rung, and the go/no-go below is an owner decision, not a foregone one.
+do it. It writes **no implementation code** — that is the guardrail of this
+rung, and the go/no-go below is the maintainer's decision, not a foregone one.
 
 Native Windows is rung 3. Rungs 1 and 2 already give Windows users a tested path:
 
@@ -341,4 +341,4 @@ Today a native-Windows process cannot even reach the "see what breaks" stage —
 `ImportError`s at boot. This is a one-line-class hardening, not a port, and it makes
 future rung-3 experimentation possible without shipping any Windows feature. It is
 noted here as a finding; implementing it is a separate, non-audit change and is
-**not** part of this rung's soul-guarded scope.
+**not** part of this rung's audit-only scope.

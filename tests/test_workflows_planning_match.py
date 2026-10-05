@@ -39,7 +39,7 @@ RIGOR_CASES = [c for c in _cases() if "rigor" in c]
 SHAPE_CASES = [c for c in _cases() if "shape" in c]
 
 
-# ── the deployment gate (UP-R13.1) ──
+# ── the deployment gate ──
 
 
 def test_routing_accuracy_clears_the_deployment_bar():
@@ -180,7 +180,7 @@ def test_route_rigor_is_pure_over_the_tuple():
     assert route_rigor(hot) == Rigor.DEEP
 
 
-# ── the tiered matcher (UP-R2) ──
+# ── the tiered matcher ──
 
 
 def library() -> list[TemplateProfile]:

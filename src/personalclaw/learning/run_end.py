@@ -1,6 +1,6 @@
 """The run-end learner — a terminal workflow run mines its own Run Ledger for lessons.
 
-LEARNING-FLYWHEEL §3.3, the RUN_END cadence. When a run reaches a terminal state
+The RUN_END cadence. When a run reaches a terminal state
 the controller routes it through the `LearningGate` (permission: not ephemeral, not restricted,
 learning enabled, this cadence on) and then calls :func:`capture`. This module is the RUN_END
 sibling of `self_model_observer.observe_turn` (PER_TURN) and the consolidation envelope
@@ -14,22 +14,22 @@ memory service) writes nothing, and an embedder-less box learns nothing rather t
 **Propose, never install.** A failed step files a `lesson_batch` PROPOSAL through the shared
 human-gated queue (`learning.proposals.enqueue`) — the same queue every other inferred lesson
 clears. Nothing here writes a live `lesson.*` row; that happens only when the human accepts. This
-closes the injection hole the plan names: a run's own failure text can no longer become a standing
+closes an injection hole: a run's own failure text can no longer become a standing
 instruction without a person in the loop.
 
 What a terminal run contributes:
 
 - **Lesson proposal per distinct terminal failure**, through the env-failure deny-filter
   (`lesson_worthy` / `is_environment_failure_claim` — a flaky network is not a lesson), keyed by
-  `(template, failure_mode, signature)` (LEARN-R8a/b) so the same mechanism failing twice is ONE
+  `(template, failure_mode, signature)` so the same mechanism failing twice is ONE
   proposal and the lesson can be re-injected on future runs of the template.
-- **A failure CAPSULE** (LEARN-R8d): repro command + failure signature + forbidden success modes
+- **A failure CAPSULE**: repro command + failure signature + forbidden success modes
   + bounded evidence, rendered into the proposal body so a later replay can verify the lesson
   still applies rather than re-reading prose.
 - **A procedural prior** per failed step (`record_procedural(tool="workflow:<template>/<step>",
   outcome="failed")`) — the existing ≥3-failure synthesis then surfaces the prior next time the
   template is planned, for free.
-- **A tier-migration proposal** (§3.5 / LEARN-R17) when the template's cross-run trajectory
+- **A tier-migration proposal** when the template's cross-run trajectory
   variance says so: a low-variance agentic template earns a DISTILL-to-fixed proposal, a
   repeatedly-failing fixed template earns a PROMOTE-to-agentic one. Pure ledger statistics with tier
   DERIVED from the run's spec structure — no `WorkflowDef` field, no model call
@@ -45,8 +45,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-#: How many failure-text samples a capsule keeps as evidence. Bounded on purpose (§3.3d says
-#: "bounded evidence"): a capsule is a checkable summary, not a transcript, and the signature
+#: How many failure-text samples a capsule keeps as evidence. Bounded on purpose: a capsule is
+#: a checkable summary, not a transcript, and the signature
 #: already collapses the mechanism — three verbatim samples orient a reviewer without unbounding
 #: the proposal body.
 _MAX_EVIDENCE = 3
@@ -64,7 +64,7 @@ _MAX_TRACE_DRAFTS = 2
 
 @dataclass
 class FailureCapsule:
-    """A checkable failure record (LEARN-R8d) — the alternative to a prose lesson.
+    """A checkable failure record — the alternative to a prose lesson.
 
     A prose lesson ages into folklore; a capsule can be REPLAYED. `repro_command` points at the
     deterministic path that reproduces or diagnoses the failure, `signature` is the refiner's own
@@ -99,7 +99,7 @@ class FailureCapsule:
 
 
 def _terminal_failures(events: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """The last terminal failure per node (§3.3 "on step_failed, post retry-exhaustion").
+    """The last terminal failure per node (on step_failed, post retry-exhaustion).
 
     `step_failed` is written once per attempt; only the retry-exhausted one is the step's real
     outcome. Keyed by node so a step that failed five times contributes ONE failure, not five —
@@ -132,7 +132,7 @@ def _repro_command(run: Any) -> str:
 
 
 def _mine_positive_signals(run: Any, service: Any, *, journal: Any) -> int:
-    """Run the §3.2 PRODUCER passes for one terminal run. Returns how many drafts were filed.
+    """Run the PRODUCER passes for one terminal run. Returns how many drafts were filed.
 
     Three producers whose detectors existed with nothing feeding them (`learning.mining`):
 
@@ -210,13 +210,13 @@ def _mine_positive_signals(run: Any, service: Any, *, journal: Any) -> int:
 
 
 def _mine_tier_migration(run: Any, *, journal: Any) -> int:
-    """§3.5 (LEARN-R17): propose an execution-tier migration from cross-run trajectory variance.
+    """Propose an execution-tier migration from cross-run trajectory variance.
 
-    The clause the plan recorded BLOCKED three times, now buildable because both absent inputs
-    exist: tier is DERIVED from the run's pinned spec structure (no new ``WorkflowDef`` field — that
-    would collide with PP-16), and the cross-run variance is the PP-7 trajectory projection this
-    gathers over the template's terminal siblings. Zero model calls, zero embedding — pure ledger
-    statistics per §3.5 — so unlike the mining passes it does not depend on ``service`` at all.
+    Buildable because both inputs it needs exist: tier is DERIVED from the run's pinned spec
+    structure (no new ``WorkflowDef`` field — that would collide with the Loop→WorkflowRun
+    unification), and the cross-run variance is the ledger trajectory projection this gathers over
+    the template's terminal siblings. Zero model calls, zero embedding — pure ledger statistics —
+    so unlike the mining passes it does not depend on ``service`` at all.
 
     Best-effort like every other run-end producer: a failure here costs a draft, never the run's
     terminal status. Returns how many drafts were filed (0 or 1).
@@ -392,8 +392,8 @@ def capture(run: Any, service: Any, *, journal: Any = None) -> dict[str, int]:
 
         # The procedural prior is recorded even when the lesson proposal is quota-suppressed:
         # it is cheap, and its ≥3-failure synthesis is what surfaces the prior next time the
-        # template is planned. The row itself still has no injection surface — WF2LEA-13 gave
-        # procedural memory a reader, but a raw `→ failed` row is deliberately NOT surfaceable
+        # template is planned. The row itself still has no injection surface — procedural
+        # memory has a reader, but a raw `→ failed` row is deliberately NOT surfaceable
         # (only the synthesized "prefer an alternative" prior is), so one workflow step failing
         # once cannot reach the prompt.
         try:
@@ -450,8 +450,8 @@ def capture(run: Any, service: Any, *, journal: Any = None) -> dict[str, int]:
             tags=["run_end", "workflow_run", mode],
             # A terminal run failure is a single first-class signal, not a pattern that must
             # recur ≥3 times to be worth PROPOSING (the ≥3 floor is for consolidation-mined
-            # habits). The dedup key already collapses repeats within a run, and R8 wants the
-            # lesson re-injectable on FUTURE runs — waiting for three separate runs to fail the
+            # habits). The dedup key already collapses repeats within a run, and the lesson must
+            # be re-injectable on FUTURE runs — waiting for three separate runs to fail the
             # same way before proposing anything is exactly the miss it exists to avoid. So the
             # evidence floor is lowered to 1 here, matching the curator's own review proposals.
             occurrences=1,

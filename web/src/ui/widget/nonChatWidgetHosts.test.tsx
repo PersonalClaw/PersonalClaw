@@ -1,5 +1,5 @@
-/** The gap AS-5 closes: a widget action raised OUTSIDE a chat used to be dropped on
- *  the floor. Both non-chat hosts named in the plan are driven here — the
+/** The gap this closes: a widget action raised OUTSIDE a chat used to be dropped on
+ *  the floor. Both non-chat hosts are driven here — the
  *  artifact-library preview and the dashboard tile band — and each must land its
  *  `[UI]` turn in a chat session through the ONE `ne:launch-chat` path.
  *

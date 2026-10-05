@@ -1,10 +1,10 @@
-"""Runtime-agnostic tool-loop breaker (gap 5).
+"""Runtime-agnostic tool-loop breaker.
 
 The native in-process runtime has counted its own tool failures since the first
 release: repeated identical failures warn the model, then refuse the call, and a
 turn drowning in failures aborts. That logic lived as a private class inside
 ``agents/native/runtime.py``, so an ACP session — where the CLI runs the tools and
-the host only *observes* the neutral event stream — got none of it. `G6` measured
+the host only *observes* the neutral event stream — got none of it. Measuring it showed
 the consequence: six consecutive failing tool calls in one ACP turn produced no
 warn, no block and no circuit trip. An unattended ACP loop could burn its whole
 budget re-running the same broken call.
@@ -247,7 +247,7 @@ def _cycle_at(recent: list[str], period: int, cycles: int) -> tuple[str, ...] | 
 ADAPTER_ARG_PREFIX = "__"
 
 #: Argument keys that ANNOTATE a call rather than determine what it does — free-text the
-#: model writes for the human reading the transcript. `AAP-6`/`G154`: claude-code sends
+#: model writes for the human reading the transcript. For example, claude-code sends
 #: ``description`` on every Bash call, and a model enumerating its own retries writes
 #: "Run boom command (1 of 4)" … "(4 of 4)". Byte-identical commands therefore produced
 #: four buckets of one and no rung fired, which is the same defect ``ADAPTER_ARG_PREFIX``
@@ -264,7 +264,7 @@ ANNOTATION_ARG_KEYS = frozenset(
 def normalize_call_args(args: object) -> object:
     """Strip adapter-injected metadata from tool arguments before keying on them.
 
-    `AAP-6`/`G152`. The breaker's whole premise is that the SAME call repeated is one
+    The breaker's whole premise is that the SAME call repeated is one
     bucket. An ACP adapter hands the host its arguments as an opaque JSON string, and
     kiro's includes a per-call narration key — so four byte-identical
     ``bash -c 'echo boom >&2; exit 3'`` calls produced four DIFFERENT keys, four streaks

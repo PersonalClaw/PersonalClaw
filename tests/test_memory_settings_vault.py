@@ -8,8 +8,8 @@ claim only became one later: until then a field's ABSENCE was a silent no-op rat
 than a 400, which is the same defect one layer up — see
 `test_config_write_paths_are_one_validated_mutator.py`.)
 
-MGAV-6 replaced the ``vault_enabled`` bool with the three-valued ``vault_mode``
-(off|mirror|two_way). The legacy key is no longer writable and no longer echoed;
+The three-valued ``vault_mode`` (off|mirror|two_way) replaced the ``vault_enabled``
+bool. The legacy key is no longer writable and no longer echoed;
 what remains of it is the ONE-WAY back-read in ``load()``, pinned below — an
 existing install that turned the mirror on must come up mirroring, and must NOT be
 silently upgraded to reading the user's files back.

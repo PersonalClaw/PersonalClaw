@@ -14,13 +14,13 @@ tool surface with **one** generic provider — never N generated ones:
   :func:`tool_providers.registry.register_provider`; it re-reads the installed
   apps live on every ``list_tools`` so enable/disable/``/update`` resync for free.
 
-* :func:`app_surfaces` renders the same declarations for ``/api/manifest`` §1's
+* :func:`app_surfaces` renders the same declarations for ``/api/manifest``'s
   ``app_surfaces[]`` — one source (the manifest ``routes[]``), two renderings.
 
 * :func:`note_proxy_status` closes the drift loop the manifest-vs-UI audit keeps
   reopening: when a declared route is proxied and the backend answers **404**,
   the route is DEAD-DECLARED (declared but not live) — a deduped warning
-  notification fires once so the operator fixes the manifest. This is the plan's
+  notification fires once so the operator fixes the manifest. This is the
   "match on first proxy 404" signal: runtime, zero false positives (real args
   resolve real path params), and it needs no app-side introspection endpoint.
 
@@ -360,7 +360,7 @@ _drift_seen: set[tuple[str, str]] = set()
 def note_proxy_status(app_name: str, op: str, status: int) -> None:
     """Record a proxy result; on the FIRST 404 for a declared route, warn once.
 
-    This is the drift half of §4.2 — the manifest-vs-UI dead-path audit as a live
+    This is the drift half — the manifest-vs-UI dead-path audit as a live
     signal instead of a later manual pass. A 404 means the app DECLARED a route
     its backend doesn't serve; the operator gets a single actionable notification."""
     if status != 404:
@@ -463,7 +463,7 @@ def register() -> None:
 
 
 def app_surfaces() -> list[dict[str, Any]]:
-    """``app_surfaces[]`` for ``/api/manifest`` §1 — per enabled app with declared
+    """``app_surfaces[]`` for ``/api/manifest`` — per enabled app with declared
     routes: its route table + the generated tool name for each agent-callable one.
 
     Declared data only (no app code executed): the same ``backend.routes[]`` the

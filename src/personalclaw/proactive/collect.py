@@ -17,7 +17,7 @@ Three lanes, three functions, one rule each about what "accumulated" means:
   run still going — the digest's own run among them — is not an outcome and is not collected,
   and a run is in the window it ENDED in, whenever it started: one that was still going when the
   last digest ran is in the next. A Morning triage run is the digest itself, never an item in one.
-  This plan adds zero run instrumentation, so a materiality this module computed itself would be
+  The digest adds zero run instrumentation, so a materiality this module computed itself would be
   a second dialect for a question the ledger answers.
 
 Each lane reads one item in one place (``_inbox_item``, ``_channel_item``, ``_run_item``), and

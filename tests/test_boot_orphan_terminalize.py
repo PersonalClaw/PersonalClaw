@@ -278,7 +278,7 @@ def test_the_pass_never_raises_on_an_unreadable_store(tmp_path):
 
 
 def test_the_boot_pass_has_a_live_caller_in_the_gateway_boot_path():
-    """The change's own criterion: a symbol with no caller is the shape this program keeps finding.
+    """A symbol with no caller is the defect shape this codebase keeps finding.
 
     Asserted against source rather than by booting a gateway because the arming line is what
     matters and it sits inside a 200-line async initializer; `test_..._is_armed_before_the_clock`

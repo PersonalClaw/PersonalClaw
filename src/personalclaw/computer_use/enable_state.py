@@ -1,4 +1,4 @@
-"""The KEYSTONE enable for desktop computer use (DESKTOP-COMPUTER-USE §3 floor 1).
+"""The KEYSTONE enable for desktop computer use.
 
 Driving the desktop is the largest physical-world blast radius in this codebase: a process
 that can press buttons and type into the operator's own applications can, in principle, do
@@ -102,7 +102,7 @@ SCHEMA_VERSION = 1
 #: a model reads and the bytes this module accepts can never drift apart.
 #:
 #: It carries a one-app ``apps`` allowlist rather than the bare version+flag pair it was
-#: before `DCU-2`, and that is not decoration. An empty allowlist drives NOTHING
+#: before the app allowlist existed, and that is not decoration. An empty allowlist drives NOTHING
 #: (:func:`allowed_apps`), so quoting the old two-key document would tell an operator to arm
 #: a capability that the very next check refuses — they would follow the FIX line exactly and
 #: hit a second refusal, one whose own FIX names nothing further to do. That is strictly
@@ -126,8 +126,8 @@ ENABLE_DOCUMENT = '{"version": 1, "enabled": true, "apps": ["TextEdit"]}'
 #: quietly.
 _ALLOWED_KEYS = ("version", "enabled", "apps", "unattended")
 
-#: The key an operator adds to name the computer-use tools an UNATTENDED run may invoke
-#: (`DCU-5`). Absent is the fail-closed default: an unattended run drives nothing.
+#: The key an operator adds to name the computer-use tools an UNATTENDED run may invoke.
+#: Absent is the fail-closed default: an unattended run drives nothing.
 #:
 #: It lives in THIS document rather than in ``config.json`` or a ceiling scope for the reason
 #: the module docstring gives for the keystone itself — a grant the agent's own process can
@@ -161,7 +161,7 @@ class EnableState:
     and read ONLY through :func:`allowed_apps`. Empty is the fail-closed default and means no
     app may be driven; it never means "all".
 
-    ``unattended`` is the third grant (`DCU-5`): the computer-use tools a run with no human
+    ``unattended`` is the third grant: the computer-use tools a run with no human
     watching may invoke. Read ONLY through :func:`unattended_tools`, empty by default, and
     empty means no unattended run drives anything. It is a THIRD act rather than a widening of
     the other two on the same reasoning ``apps`` is separate from ``enabled``: "on", "on for
@@ -442,7 +442,7 @@ def unattended_tools() -> tuple[str, ...]:
     :func:`allowed_apps` gives at length: the unset list resolving to everything would turn the
     strictest of the three grants into the widest. An armed machine with an allowlisted app and
     no ``unattended`` entry is the ordinary posture — the agent drives that app while a human is
-    watching the session, and a cron fire is refused (`DCU-5`).
+    watching the session, and a cron fire is refused.
 
     Single reader for the same measured reason ``apps`` has one: while ``enabled`` briefly had
     two, forcing one of them to return True left every refusal test GREEN.
@@ -493,7 +493,7 @@ def require_enabled(tool: str) -> EnableState:
     only worth anything if it cannot be skipped by the next tool somebody adds.
 
     Reads the decision through :func:`is_enabled` rather than off ``state.enabled``, so the
-    check the plan names is the ONE decision point rather than a convenience alias beside
+    named check is the ONE decision point rather than a convenience alias beside
     it. Measured, not assumed: with an earlier version that read the field directly, forcing
     ``is_enabled`` to return True left every refusal test GREEN — two independent readers of
     one flag is exactly how one of them ends up answering differently from the other.

@@ -14,7 +14,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //
 // 🔑 WHY AN EMPTY OVERLAY AND NOT `pointer-events` ON THE CHILDREN. The obvious fix keeps the
 // wrapper interactive and re-exposes its descendants with
-// `[&_button]:pointer-events-auto`-style selectors. That was built in cycle 46 and REVERTED,
+// `[&_button]:pointer-events-auto`-style selectors. That was built once and REVERTED,
 // because it has to ENUMERATE every control type and silently misses the conditional ones:
 //
 //   · workflows' delete button only exists in its `armed` state (`armed === r.id ? … : …`)
@@ -29,7 +29,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // stopPropagation for itself (`ui/forms.tsx`'s Checkbox does it on both onClick and onChange;
 // the tag/run/delete buttons do it inline), so bubbling was already the contract.
 
-// ── Cycle 159: THE TASKS LIST HAND-ROLLS ITS ROWS, AND OPENING ONE WAS POINTER-ONLY ──────────────
+// ── THE TASKS LIST HAND-ROLLS ITS ROWS, AND OPENING ONE WAS POINTER-ONLY ─────────────────────────
 //
 // `TasksListPage` does not use `ListRow`; it builds its own `motion.div` with `onClick={onOpen}`. So the
 // idiom above never reached it, and the surface's PRIMARY action had no keyboard equivalent — WCAG 2.1.1.
@@ -157,8 +157,8 @@ describe('the tasks list row and card carry the same overlay', () => {
     // `tabIndex={-1}` Framer's `whileTap` puts a second tab stop on the wrapper itself.
     //
     // 🪤 Strip comments first. The first version of this assertion failed on CORRECT source, because the
-    // explanatory comment at the call site quotes the very markup the scan forbids — the recorded
-    // "a ratchet counts markup in comments" trap, third occurrence in this session.
+    // explanatory comment at the call site quotes the very markup the scan forbids — the known
+    // "a ratchet counts markup in comments" trap, again.
     const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
     const wrappers = [...code.matchAll(/<motion\.div[\s\S]{0,900}?onClick=\{onOpen\}([\s\S]{0,1400}?)>/g)]
     expect(wrappers.length, 'the list row and the card').toBeGreaterThanOrEqual(2)
@@ -180,13 +180,13 @@ describe('the tasks list row and card carry the same overlay', () => {
   })
 })
 
-// ── Cycle 164: THE WHOLE FAMILY, COUNTED — because fixing rows one surface at a time never ends ──
+// ── THE WHOLE FAMILY, COUNTED — because fixing rows one surface at a time never ends ─────────────
 //
-// Cycles 159 and 161 each fixed one list's row. This censuses every clickable NON-INTERACTIVE element
-// in `pages/` + `ui/` instead, so the next mouse-only row is a red test rather than another cycle.
+// Two lists' rows were fixed one at a time. This censuses every clickable NON-INTERACTIVE element
+// in `pages/` + `ui/` instead, so the next mouse-only row is a red test rather than another one-off fix.
 // **15 such elements**, of which 9 already carried `role` + `tabIndex` and 6 did not.
 //
-// The two the ledger sent me to, driven at 1440×900 before the fix — same defect, opposite symptoms:
+// The two that started this, driven at 1440×900 before the fix — same defect, opposite symptoms:
 //
 //   `#/notifications`    83 rows, `tabindex` NULL on every one. The row is never a tab stop, so `Open`
 //                        was reachable only via Shift+F10 on a hover action that is `opacity-0` until
@@ -198,20 +198,19 @@ describe('the tasks list row and card carry the same overlay', () => {
 //                        WCAG 2.1.1 + 4.1.2.
 //
 // 🪤 `#/loops` IS NOT THAT LIST. The loops list lives at `#/loops/history`; `#/loops` renders the
-// composer (`LoopsSection` routes `seg === 'history'` to `LoopsListPage`). The capture inventory only
-// had `#/loops`, so this surface had never been in a cycle's evidence set at all — `loops-history` was
-// added to `surfaces.json` in the same pass.
+// composer (`LoopsSection` routes `seg === 'history'` to `LoopsListPage`). A survey that only
+// visits `#/loops` never sees this surface at all.
 //
 // The ones still unfixed are listed below WITH their reason, because they are the same defect and not
 // distinctions — a deferral that reads as a judgment is how a family gets half-converged forever.
 //
 // 🔑 AND THE STRENGTHENED CHECK IMMEDIATELY EARNED ITS KEEP: it failed on `TerminalPage` the moment
-// it was written, because **cycle 167 fixed that strip and left its deferral entry behind**. Under the
+// it was written, because **a fix to that strip had left its deferral entry behind**. Under the
 // old "still matches the scan" rule that entry could have sat here indefinitely describing a defect
 // that no longer existed. Both terminal entries are gone; what remains is one element that genuinely
 // does not want this file's shape.
 //
-// ── Cycle 170 CLOSED THE LAST ONE, and it did NOT use this file's primitive ───────────────────────
+// ── THE LAST ONE IS CLOSED, and the fix did NOT use this file's primitive ─────────────────────────
 //
 // `pages/tasks/TaskBoard.tsx`'s card: **30** of them on `#/tasks?view=board`, `role`/`tabindex`/
 // `aria-label` all null, **0 of 70** Tab presses landing on one, axe 0 blocking. It was deferred
@@ -223,7 +222,7 @@ describe('the tasks list row and card carry the same overlay', () => {
 // task, the coral focus outline comes free from the global `:focus-visible` rule, and native
 // `dragstart`/`dragend` still fire on a mouse drag.
 //
-// ── Cycle 168 CLOSED the largest deferral: the dashboard widget row ───────────────────────────────
+// ── The largest deferral, CLOSED: the dashboard widget row ────────────────────────────────────────
 //
 // `pages/dashboard/widgets/kit.tsx`'s `WidgetRow` is shared by four widgets (Action Center, Tasks,
 // Schedule, Pinned Artifacts). Measured on `#/dashboard` at 1440×1000 — the app's FIRST screen:
@@ -242,7 +241,7 @@ describe('every clickable non-interactive element has a keyboard route', () => {
   const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
   /** 🪤 Brace-aware: the `>` inside `onClick={() => …}` does NOT end the tag, and a matcher that
-   *  scans to the first `>` truncates it — five false positives earlier in this session. */
+   *  scans to the first `>` truncates it — that produced five false positives here. */
   function tags(src: string, name: string) {
     const out: string[] = []
     const re = new RegExp(`<${name}(?=[\\s>])`, 'g')
@@ -265,14 +264,14 @@ describe('every clickable non-interactive element has a keyboard route', () => {
   /** Same defect as the two fixed here, deliberately NOT fixed in this change, and why. */
   const DEFERRED: Record<string, string> = {
     'pages/knowledge/KnowledgeCreatePage.tsx':
-      // Cycle 169 gave this its keyboard route, and it is deliberately NOT the shape this file
+      // This has its keyboard route, and it is deliberately NOT the shape this file
       // polices: the drop area stays a plain div, and the route is the real `<input type="file">`
       // inside it, kept focusable (`sr-only`, not `hidden`) so Space/Enter opens the native picker.
       // `design/filePickerReachable.test.ts` owns that contract and drives it. The entry stays here
       // because the element still has an onClick with no role — correctly, since the input is the
       // control — so this scan must keep skipping it for a stated reason rather than by accident.
-      'a file DROPZONE, not a row: the keyboard route is the focusable `sr-only` input inside it ' +
-      '(cycle 169), policed by design/filePickerReachable.test.ts, so the div needs no role of its own',
+      'a file DROPZONE, not a row: the keyboard route is the focusable `sr-only` input inside it, ' +
+      'policed by design/filePickerReachable.test.ts, so the div needs no role of its own',
   }
 
   const hits = () => {
@@ -312,7 +311,7 @@ describe('every clickable non-interactive element has a keyboard route', () => {
       .toEqual([])
   })
 
-  it('the two rows this cycle converged go through the primitive', () => {
+  it('the two rows converged here go through the primitive', () => {
     for (const rel of ['pages/notifications/NotificationsPage.tsx', 'pages/loops/LoopsListPage.tsx', 'ui/NotificationBell.tsx']) {
       const src = readSource(join(SRC, rel))
       expect(src, `${rel}: the hit target`).toMatch(/<RowHitTarget label=/)
@@ -321,7 +320,7 @@ describe('every clickable non-interactive element has a keyboard route', () => {
   })
 
   it('the deferrals stay honest — a listed file must still FAIL the criteria', () => {
-    // 🪤 THE FIRST VERSION OF THIS ONLY CHECKED THAT THE FILE STILL MATCHED THE SCAN, and cycle 170
+    // 🪤 THE FIRST VERSION OF THIS ONLY CHECKED THAT THE FILE STILL MATCHED THE SCAN, and a later fix
     // proved that is not the same thing: `TaskBoard`'s card was fixed (`role="button" tabIndex={0}`)
     // and still matched, because the scan keys on `onClick` + `cursor-pointer` — which a FIXED
     // clickable row also has. So a stale entry could sit here forever while its file was clean, which

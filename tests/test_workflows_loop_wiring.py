@@ -1,15 +1,15 @@
 """The decision layers wired into the RunController tick.
 
-These are the end-to-end assertions for LOOPS-EVOLUTION criteria 3 and 8, driven through a
+These are the end-to-end assertions for steering and judge verdicts, driven through a
 real controller against a temp home with only the model call faked:
 
-* **steering is consumed at the iteration boundary** (R14, criterion 8) — an instruction queued
+* **steering is consumed at the iteration boundary** — an instruction queued
   mid-run lands in the next iteration's prompt and is journaled as a `steering` ledger event,
   single-use;
-* **judge verdicts reach the ledger with evidence** (R3, criterion 3) — a judge gate emits
+* **judge verdicts reach the ledger with evidence** — a judge gate emits
   `judge_verdict` with its evidence chain and discard status, on both pass and reject;
 * **a human override records `judge_divergence`** with the right direction;
-* **a nodding loop is blocked from becoming its kind's default** (R6a) — a 100%-pass gate over
+* **a nodding loop is blocked from becoming its kind's default** — a 100%-pass gate over
   enough runs fails `may_become_default`, a discriminating one passes;
 * **the breaker is not double-run** — `resilience.check_breaker` remains the sole trip authority.
 """
@@ -60,7 +60,7 @@ def _noop():
 
 class TestSteeringConsumedAtBoundary:
     async def test_a_queued_instruction_reaches_the_next_iteration_and_is_journaled(self) -> None:
-        """Criterion 8: a mid-run steer is consumed at the boundary, re-plans, and is recorded.
+        """A mid-run steer is consumed at the boundary, re-plans, and is recorded.
 
         A `fresh`-session counted loop runs 3 iterations. Before iteration 2 the second
         iteration's prompt must carry the re-plan block; the ledger must carry one `steering`
@@ -94,7 +94,7 @@ class TestSteeringConsumedAtBoundary:
         assert len(steer_events) == 1, "exactly one steering event for one queued instruction"
         assert steer_events[0]["texts"] == ["focus on the login flow"]
 
-        # The re-plan block reached a later iteration's prompt (R14: re-rank, don't append).
+        # The re-plan block reached a later iteration's prompt (re-rank, don't append).
         assert any("focus on the login flow" in p for p in prompts)
         assert any("re-rank your remaining sub-goals" in p for p in prompts)
 
@@ -145,7 +145,7 @@ class TestJudgeVerdictLedger:
         assert verdicts[0]["template"] == "judged"
 
     async def test_a_rejecting_judge_emits_a_verdict_over_the_run(self) -> None:
-        """Criterion 3: judges reject at least once, with evidence, on the ledger."""
+        """Judges reject at least once, with evidence, on the ledger."""
 
         async def judge(prompt, *, use_case="reasoning", output_type=None):
             return '{"verdict": "REJECT", "reasoning": "section 3 cites nothing"}'
@@ -159,7 +159,7 @@ class TestJudgeVerdictLedger:
         assert all("evidence" in v for v in verdicts)
 
     async def test_a_human_override_records_a_divergence(self) -> None:
-        """A judge PASS the human then rejects is a `false_pass` on the ledger (R3)."""
+        """A judge PASS the human then rejects is a `false_pass` on the ledger."""
         run = _make_run(self._judge_spec())
         c = RunController(run, self._judge_spec(), services=EngineServices(completion=_noop()))
         # The judge already passed this node earlier in the run's history.
@@ -210,7 +210,7 @@ class TestBreakerNotDoubleRun:
         """A loop repeating identical output escalates on the shipped breaker — and there is no
         second DETECTOR (`loop_middleware`'s counter breaker was deleted, not wired).
 
-        PP-15 changed what a trip MEANS, so this test changed with it. It used to assert the run
+        What a trip MEANS has changed, so this test changed with it. It used to assert the run
         stopped in "far fewer than 20" iterations, which encoded the BINARY failure: the first
         trip went straight to a human, making every middle rung of the declared ladder
         unreachable in production. The properties that actually matter survive and are now

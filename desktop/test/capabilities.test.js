@@ -308,7 +308,7 @@ describe("IPC surface — the renderer reaches nothing outside the namespace", (
     const src = fs.readFileSync(path.join(ROOT, "preload.js"), "utf8");
     const exposed = [...src.matchAll(/exposeInMainWorld\(\s*"([^"]+)"/g)].map((m) => m[1]);
     // ONE bridge story: the old `electronAPI` namespace was retired, not kept
-    // alongside `pclawDesktop` (DC-2 namespace decision).
+    // alongside `pclawDesktop`.
     assert.deepStrictEqual(exposed, ["pclawDesktop"]);
     assert.ok(!/exposeInMainWorld\(\s*"electronAPI"/.test(src));
     assert.ok(!/ipcRenderer:\s*ipcRenderer/.test(src), "ipcRenderer must not be handed to the page");

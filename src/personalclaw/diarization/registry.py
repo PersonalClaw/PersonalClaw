@@ -1,4 +1,4 @@
-"""Diarization provider registry — resolves the active diarization backend (core L1).
+"""Diarization provider registry — resolves the active diarization backend.
 
 Parallel to ``stt/registry.py``: which model serves ``diarization`` is the active
 selection in ``active_models.json`` (ref ``provider_name:model_id``). No remote adapters
@@ -44,7 +44,7 @@ def get_active_provider() -> DiarizationProvider | None:
 
 def active_diarization() -> tuple[DiarizationProvider, str] | None:
     """Resolve the active diarization provider + model id from ``active_models.json``,
-    or None when nothing is bound (feature simply off — no fallback, per L1.1)."""
+    or None when nothing is bound (feature simply off — no fallback)."""
     from personalclaw.providers.use_cases import active_model_refs, split_ref
 
     refs = active_model_refs("diarization")

@@ -243,7 +243,7 @@ def _handle_agent(args: argparse.Namespace) -> None:
 
 
 def _pair(args: argparse.Namespace) -> None:
-    """Mint a one-time channel pairing code and print it ONCE (CE-1 T1.5).
+    """Mint a one-time channel pairing code and print it ONCE.
 
     A new sender on a channel (Telegram, Discord, …) redeems this code to start talking to
     the agent: within the 10-minute TTL it allow-lists them once, then the code is spent.
@@ -277,9 +277,9 @@ def _pair(args: argparse.Namespace) -> None:
 
 
 def _discover(args: argparse.Namespace) -> None:
-    """Look for PersonalClaw gateways advertising themselves on this network (CA-5).
+    """Look for PersonalClaw gateways advertising themselves on this network.
 
-    The client half of COMPANION-APPS C3, and the reason the resolver is a shared function
+    The client half of gateway discovery, and the reason the resolver is a shared function
     rather than something each wrapper writes: a phone app, the desktop shell and this
     command all need the same answer, in the same shape.
 
@@ -312,13 +312,13 @@ def _discover(args: argparse.Namespace) -> None:
 
 
 def _automation(args: argparse.Namespace) -> None:
-    """Dispatch `automation` subcommands (AUTOMATION-SUBSTRATE §7 step 2).
+    """Dispatch `automation` subcommands.
 
     `verify-migration` exits NON-ZERO when the migration needs attention, so it composes into
     a script
     or a pre-cutover check. A read-only diff that always exited 0 could not gate anything, and
     gating
-    the cutover is the reason §8 lists this command as the migration-trust mitigation.
+    the cutover is what makes this command the migration-trust mitigation.
     """
     action = getattr(args, "automation_action", None)
     if action == "verify-migration":
@@ -430,7 +430,7 @@ def _cron_refuse(
 def _cron(args: argparse.Namespace) -> None:
     """Dispatch cron subcommands: list, add, update, remove, pause, resume, trigger.
 
-    🔴 S108 — every write here went to `crons.json`, so a cron created from the CLI DID NOT FIRE.
+    🔴 Every write here went to `crons.json`, so a cron created from the CLI DID NOT FIRE.
     The clock engine (`triggers.service.tick`) reads the unified store and nothing else, and the
     boot migration that imports `crons.json` runs only at gateway startup. Measured: `cron add`
     wrote the legacy file with `triggers.json` untouched, so the job stayed inert until the user
@@ -533,7 +533,7 @@ def _cron(args: argparse.Namespace) -> None:
             kind="clock",
             spec=spec,
             workflow=workflow,
-            # `created_by="user"`, not "agent": the agent cap (decision 5d) exists to bound what the
+            # `created_by="user"`, not "agent": the agent cap exists to bound what the
             # ASSISTANT creates unprompted. A human typing the command is the user acting directly,
             # and capping their own CLI at the agent limit would be a rule aimed at the wrong party.
             created_by="user",
@@ -612,7 +612,7 @@ def _cron(args: argparse.Namespace) -> None:
 
         if spec_update:
             # Carry the quietly-losable spec keys (`timezone`/`skip_dates`/`strict`) rather than
-            # replacing the spec wholesale — the contract §1.3 and S101 both record. The next fire
+            # replacing the spec wholesale. The next fire
             # moves with it in `tools.update`, as it does for the Triggers page and the chat.
             current = existing.trigger.spec if isinstance(existing.trigger.spec, dict) else {}
             carried = {
@@ -959,7 +959,7 @@ def _parse_csv(raw: str, default: tuple[str, ...]) -> tuple[str, ...]:
 
 
 async def _judge_bench(args: argparse.Namespace) -> None:
-    """Run the judge benchmark and print the tier-recommendation table (ES-4).
+    """Run the judge benchmark and print the tier-recommendation table.
 
     Prints the spend preflight FIRST and honours ``--dry-run``, because the full shipped
     matrix is 540 judge calls: a user who sees the count can narrow ``--tiers``/``--samples``
@@ -1077,9 +1077,9 @@ def _eval_harvest(args: argparse.Namespace) -> None:
 
 
 async def _study(args: argparse.Namespace) -> None:
-    """Run (or preview) a pre-registered template A/B study (ES-5 / §2).
+    """Run (or preview) a pre-registered template A/B study.
 
-    The invocation surface §2 had none of. Without it the instrument was complete and
+    The study instrument's invocation surface. Without it the instrument was complete and
     unreachable: `run_study` had no production caller at all, so a pre-registered study could
     be listed on the Learning page and never executed.
 
@@ -1188,7 +1188,7 @@ async def _study(args: argparse.Namespace) -> None:
 
 
 def _ablation(args: argparse.Namespace) -> None:
-    """Run (or preview) the harness-ablation runner / skills bench (ES-7 §3.1 + §3.3).
+    """Run (or preview) the harness-ablation runner / skills bench.
 
     Without this the only trigger is the monthly cadence, which is a control the operator
     cannot exercise — and a measurement you have to wait 30 days to see is one nobody trusts.
@@ -1266,7 +1266,7 @@ def _ablation(args: argparse.Namespace) -> None:
         )
     except ablation.LiveStateMutatedError as exc:
         # Loud, not swallowed: the run altered the operator's config, which is the one thing
-        # §3.1 forbids outright.
+        # an ablation must never do.
         print(f"REFUSED: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
     except (scenario_lib.ScenarioLibraryError, evals_store.PinRequiredError) as exc:
@@ -1282,7 +1282,7 @@ def _ablation(args: argparse.Namespace) -> None:
 
 
 def _ablation_bench_skill(args: argparse.Namespace, skill: str) -> None:
-    """The §3.3 half: one skill, surfaced vs suppressed, over its consulted runs."""
+    """The skill-bench half: one skill, surfaced vs suppressed, over its consulted runs."""
     from personalclaw.evals import skills_bench
 
     subject = str(getattr(args, "subject", "") or "")
@@ -1333,7 +1333,7 @@ def _ablation_bench_skill(args: argparse.Namespace, skill: str) -> None:
 
 
 def _eval_gate(args: argparse.Namespace) -> None:
-    """Run the Loop-2 cheap gate for one proposal (ES-6 / amendment E2).
+    """Run the Loop-2 cheap gate for one proposal.
 
     Lives on the CLI rather than behind an endpoint because that is what every sibling eval
     does: ``study``, ``ablation``, ``judge-bench`` and ``retrieval-eval`` all RUN from here and
@@ -1469,12 +1469,12 @@ def _print_ablation_report(report) -> None:
 
 
 def _retrieval_eval(args: argparse.Namespace) -> None:
-    """Per-arm P@k/R@k ablation over BOTH retrieval stores (ES-3 / §5).
+    """Per-arm P@k/R@k ablation over BOTH retrieval stores.
 
     ``--store`` defaults to ``both`` and every other input has a working default, so the
     command a user actually types — ``personalclaw retrieval-eval`` with no flags — mines
     the qrels, scores both stores separately and prints two tables. That default is the
-    point: ES-7's ``--subject`` defaulted to ``""`` and the bench refused on it, so the
+    point: ``--subject`` once defaulted to ``""`` and the bench refused on it, so the
     bare command could never score anything while the unit tests stayed green.
     """
     from personalclaw.evals import retrieval_bench as rb

@@ -37,7 +37,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // user can fix with one they cannot, so the reason was passed ONLY for the `!text.trim()` branch —
 // announcing "Type a steer first" while a send is in flight would be a lie. The compound gate is
 // now SPLIT at the source (`disabled={!text.trim()} loading={busy}`), which is the stronger form of
-// the same ruling: the two branches are two props, so the reason cannot fire on the wrong one. The
+// the same rule: the two branches are two props, so the reason cannot fire on the wrong one. The
 // conditional is kept anyway — `disabledReason` is only read while `disabled`, and the ternary is
 // what documents which branch it belongs to.
 
@@ -46,7 +46,7 @@ const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !
 
 /** Every `<IconButton …/>` / `<SquareIconButton …/>` tag that is gated. Matched non-greedily to `/>`:
  *  🪤 a `[^>]` matcher stops at the `>` inside `onChange={(v) => …}` and silently misses tags — that
- *  is how cycle 118's first census reported 2 sites where there were 4. */
+ *  is how an earlier census reported 2 sites where there were 4. */
 function gatedTags(src: string): string[] {
   return [...src.matchAll(/<(?:Square)?IconButton\b[\s\S]{0,500}?\/>/g)]
     .map((m) => m[0])

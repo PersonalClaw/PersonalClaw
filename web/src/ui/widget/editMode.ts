@@ -191,7 +191,7 @@ export function rewriteEditModeBlock(source: string, values: Record<string, stri
   return source.slice(0, at.start) + rendered + source.slice(at.end)
 }
 
-// ── parent → child wire (the namespace AS-5 reserved) ────────────────────────
+// ── parent → child wire (the reserved `__edit_mode_*` namespace) ─────────────
 
 /** Apply live values to the child's `:root` custom properties. Batched: one
  *  message carries every key the user moved since the last frame. */

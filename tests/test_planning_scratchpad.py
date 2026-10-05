@@ -1,4 +1,4 @@
-"""Watched-scratchpad intake (WF2UNI-9 / universal-planning crit 9).
+"""Watched-scratchpad intake.
 
 The tests are grouped by the failure each one prevents, not by function, because every one of them
 exists because the opposite behaviour would be visibly wrong to a user:
@@ -9,7 +9,7 @@ exists because the opposite behaviour would be visibly wrong to a user:
   inbox-key-only design makes a DISMISSED proposal come back (`inbox._find_open_by_dedup` matches
   PENDING/SEEN only, deliberately).
 * **backlink** — a proposal a user cannot trace back to its line is unusable.
-* **never auto-run** — the guardrail the criterion is actually about.
+* **never auto-run** — the guardrail the feature is actually about.
 """
 
 from __future__ import annotations
@@ -362,7 +362,7 @@ def test_a_dismissed_proposal_does_not_come_back(home):
 
 
 def test_nothing_on_this_path_starts_a_workflow(home):
-    """The guardrail of criterion 9, asserted structurally.
+    """The never-auto-run guardrail, asserted structurally.
 
     A grep-shaped test on purpose: the module must not reference any run/dispatch entry point. An
     assertion about behaviour would pass while a future edit quietly added a call.

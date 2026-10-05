@@ -1,4 +1,4 @@
-"""E2-P3: AgentProvider axis — dual-ABC ACP, registry resolution, readiness probe.
+"""AgentProvider axis — dual-ABC ACP, registry resolution, readiness probe.
 
 Asserts:
 - AcpAgentProvider is BOTH an ModelProvider and an AgentProvider (introduce-alongside).

@@ -5,7 +5,7 @@ import { ModelsPanel } from './ModelsPanel'
 
 // ── The prompt-cache switch (config point 5 of five) ──────────────────────────
 //
-// PCS-4 shipped the cache marker UNCONDITIONALLY for the EXPLICIT adapter. This control is
+// The cache marker shipped UNCONDITIONALLY for the EXPLICIT adapter. This control is
 // the only way a user can turn it off, so it is asserted at the level a user meets it:
 //
 //  · it RENDERS inside the Models panel a user actually opens — an allowlisted backend field

@@ -6,7 +6,7 @@ import { failedEnrichment, regenerateQueuedSentence } from './knowledgeMeta'
 import { api, ApiError, type KnowledgeEnrichment, type KnowledgeItem } from '../../lib/api'
 import { resetDataStore } from '../../lib/data/store'
 
-// ── "Regenerate intelligence" tells the user what happened (B6, day-7 live validation) ─────────────
+// ── "Regenerate intelligence" tells the user what happened ─────────────────────────────────────────
 //
 // Measured on a home with NO model bound: the request answered 200 `{"queued": 3}`, all three jobs
 // failed in the background, and the page showed nothing — `regenerate()` swallowed the result

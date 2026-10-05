@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-// ── Form hints speak the user's language, not the wire's (AUD-NZ12) ──────────────────
+// ── Form hints speak the user's language, not the wire's ──────────────────
 //
 // The auto-approve hint used to read "Run tools without approval prompts
 // (approval_mode=auto)." — a config key, in a sentence whose whole job is explaining the

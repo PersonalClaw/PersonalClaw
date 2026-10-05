@@ -19,7 +19,7 @@ export interface ContextMenuItem {
  *  ~500ms touch long-press) it opens a portaled, glass menu at the pointer,
  *  clamped to the viewport. Keyboarded (↑/↓/Enter/Esc) and closes on
  *  outside-click/scroll. This is the scoped-actions primitive the redesign adds
- *  across rows/cards (§Goal 5) — today menus are click-only Popovers. */
+ *  across rows/cards — today menus are click-only Popovers. */
 export function ContextMenu({ items, children, disabled }: { items: ContextMenuItem[]; children: ReactNode; disabled?: boolean }) {
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -37,7 +37,7 @@ export function ContextMenu({ items, children, disabled }: { items: ContextMenuI
     // Math.max(8,…) floor matters on SHORT/narrow viewports: without it, a tall
     // menu (many rows → h up to 360) opened low on a short viewport would compute
     // a negative top and clip off-screen above the fold, hiding the first (often
-    // primary) row unrecoverably. Mirrors the FileTree local clamp (see bug #32).
+    // primary) row unrecoverably. Mirrors the FileTree local clamp.
     const w = 220, h = Math.min(items.length * 40 + 12, 360)
     setPos({
       x: Math.min(x, Math.max(8, window.innerWidth - w - 8)),

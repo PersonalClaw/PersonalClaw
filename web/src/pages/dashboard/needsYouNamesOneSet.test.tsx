@@ -24,7 +24,7 @@ import { filesUnder, readSource } from '../../test/sourceTree'
 // set the reader has no way to know is narrower than the words, and it is the sentence that
 // turns a coherence collision into a defect.
 //
-// 🔑 THE RULING, AND WHY IT IS THIS WAY ROUND. Widening the card's set was the other option and
+// 🔑 THE DECISION, AND WHY IT IS THIS WAY ROUND. Widening the card's set was the other option and
 // it is unbounded: "everything waiting on you" would have to absorb blocked tasks, stalled runs,
 // suspended and review rows — which is the Work board, a surface that already exists — and none
 // of those resolve inline, which is this card's entire contract. So the NARROWER set gives up the
@@ -125,7 +125,7 @@ describe('§3 one wire value, one word', () => {
     expect(WORK_STATE_LABEL.needs_input).toBe(loopStatusLabel('needs_input'))
   })
 
-  it('and that word is "Needs you", per the registry ruling', () => {
+  it('and that word is "Needs you", per the registry', () => {
     // Pinned as a literal as well as an identity, because the identity above is also satisfied
     // by both sides drifting together to a third word.
     expect(loopStatusLabel('needs_input')).toBe('Needs you')

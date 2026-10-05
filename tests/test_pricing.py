@@ -66,13 +66,13 @@ def test_prefix_match_handles_suffix():
 
 
 def test_bedrock_inference_profile_ids_resolve():
-    """Every Bedrock inference-profile shape prices to its family row (SM-10 seam,
-    PCS-9 audit fixes). This is what makes a real Bedrock run report 'saved $X'
-    instead of 'saved unpriced' — the exact clause the telemetry verification
-    needs. Region prefixes are a pattern, not a list, because Bedrock mints new
-    ones (apac. arrived after the original us/global/eu triple was hardcoded);
-    and the version pair must re-dot BEFORE a trailing date stamp, not at $ —
-    ``…-4-8-20260101-v1:0`` anchored at the end re-dotted the wrong pair."""
+    """Every Bedrock inference-profile shape prices to its family row. This is what
+    makes a real Bedrock run report 'saved $X' instead of 'saved unpriced' — exactly
+    what the telemetry verification needs. Region prefixes are a pattern, not a list,
+    because Bedrock mints new ones (apac. arrived after the original us/global/eu
+    triple was hardcoded); and the version pair must re-dot BEFORE a trailing date
+    stamp, not at $ — ``…-4-8-20260101-v1:0`` anchored at the end re-dotted the
+    wrong pair."""
     base = estimate_cost("claude-opus-4.8", input_tokens=1_000_000)
     assert base > 0.0
     for live_id in (

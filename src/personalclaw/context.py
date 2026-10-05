@@ -298,7 +298,7 @@ _MULTIBYTE_TABLE = str.maketrans(
 _HISTORY_BUDGET_CHARS = 35_000  # thread history (fallback/truncated)
 _FALLBACK_HISTORY_MESSAGES = 20  # turns the truncation fallback restores
 # Memory-injection per-section caps. These are the BASELINE (calibrated for a 200k-
-# token window); mem-adaptive-budget scales them proportionally to the resolved
+# token window); the adaptive memory budget scales them proportionally to the resolved
 # model's context window (via _memory_caps) so a 1M-window model recalls more, and a
 # window too small to hold the baseline recalls LESS — ceiling (×5) and a
 # window-affordability bound (_MEMORY_WINDOW_FRACTION) rather than a flat floor.
@@ -311,12 +311,12 @@ _PER_MESSAGE_CAP = 8_000  # truncate individual messages on fallback path
 
 
 def _self_model_snapshot(svc) -> str:
-    """The compact self-model block for the §2.4 allocator's ``self_model`` slot, or "".
+    """The compact self-model block for the ambient allocator's ``self_model`` slot, or "".
 
-    S72/S80 left this slot with a mapped kind but NO live producer — nothing persisted
-    ``user.selfmodel.*`` (WF2LEA-8 built the observer that now does). This is that producer: it
-    reads the live entries the observer/accept-installer wrote and renders them through S72's own
-    ``snapshot`` (retrospections excluded, theories flagged unproven, bounded to
+    The slot once had a mapped kind but NO live producer — nothing persisted
+    ``user.selfmodel.*`` (the self-model observer now does). This is that producer: it
+    reads the live entries the observer/accept-installer wrote and renders them through the
+    self-model's own ``snapshot`` (retrospections excluded, theories flagged unproven, bounded to
     ``SNAPSHOT_MAX_CHARS``, whole entries dropped never cut). Reader and writer share
     ``load_live_entries`` so the injected snapshot and the promotion planner cannot disagree about
     what the self-model holds. Never raises — a self-model read failing must not cost the turn.
@@ -334,7 +334,7 @@ def _self_model_snapshot(svc) -> str:
 
 
 def _record_ambient_measurements(alloc, *, sweep_args: dict) -> None:
-    """Persist what this render measured (LEARN-R14b / §2.5). Never raises.
+    """Persist what this render measured. Never raises.
 
     Two things, one write path:
 
@@ -378,7 +378,7 @@ def _render_ambient(
     query: str = "",
     window: int | None,
 ) -> str:
-    """Render the named ambient blocks under ONE token budget (§2.4 / §7 crit 5).
+    """Render the named ambient blocks under ONE token budget.
 
     Replaces the per-block character caps that governed these independently. Those
     caps summed to ~36,750 tokens against the 4,000 that
@@ -592,7 +592,7 @@ def _instructions_budget(context_window: int | None) -> int:
 
 
 def _memory_caps(context_window: int | None, *, reserved_chars: int = 0) -> _MemoryCaps:
-    """Per-section memory caps scaled to the resolved model window (mem-adaptive-budget).
+    """Per-section memory caps scaled to the resolved model window.
 
     Baseline caps are calibrated for a 200k window; scale linearly by
     ``window / 200k``, ceilinged at 5× so a 1M-window model (e.g. Opus) recalls ~5×
@@ -1050,8 +1050,8 @@ async def compress_thread_history(
         if tail_lines:
             parts.append("## Recent exchanges (verbatim)\n" + "\n".join(tail_lines))
         final = "\n\n".join(parts)
-        # `ContextCompact` (AUTO crit 5): declared, selectable in the hook UI, and fired by nothing
-        # until now. Emitted HERE, not at the early return above: that path returns the transcript
+        # `ContextCompact` is declared and selectable in the hook UI, and this is what fires it.
+        # Emitted HERE, not at the early return above: that path returns the transcript
         # untouched because it already fits the cap, so announcing a compaction there would report
         # work that did not happen. Both sizes ride the payload — the useful signal is the ratio,
         # and a compaction that barely shrank anything is the interesting case.
@@ -1082,7 +1082,7 @@ async def compress_thread_history(
 class _Parts:
     """The assembled prompt as NAMED components rather than one opaque string.
 
-    CE2-8's refusal has to say WHICH component does not fit — "episodic memory", "skill:
+    The headroom refusal has to say WHICH component does not fit — "episodic memory", "skill:
     git-review" — and a joined string cannot be asked that question. So the labels are
     recorded where the assembly happens, which is the only place that knows what each
     piece IS; deriving them afterwards from the joined text would be guessing.
@@ -1142,7 +1142,7 @@ class _Parts:
     def deliver(self, components_out: list[Component] | None) -> str:
         """The assembled prompt as it will be SENT, and its components as they will be measured.
 
-        CE2-8: the caller gets the NAMED components, not just the joined string, so the headroom
+        The caller gets the NAMED components, not just the joined string, so the headroom
         contract can refuse by naming a specific block. The multibyte normalization is applied per
         component AND to the returned text, so what the contract measures is byte-for-byte what
         would be sent.
@@ -1332,12 +1332,12 @@ class ContextBuilder:
         return render_snippet_block("widget-instructions", {"density": density})
 
     def _slots_block(self, vector_store: object | None) -> str:
-        """The ONE bounded Slots block, or "" (MGAV-8).
+        """The ONE bounded Slots block, or "".
 
         Fails to "" rather than propagating: a slot row a user hand-edited into an unreadable
         shape must not be able to stop a session from starting.
 
-        The budget comes from `memory.slot_size_cap` (MGAV-9) through
+        The budget comes from `memory.slot_size_cap` through
         `resolve_block_limit`, which clamps it into the structural range — so a user can tune
         what slots cost each turn, and neither this wrapper nor config.json can widen it past
         the hard ceiling.
@@ -1613,7 +1613,7 @@ class ContextBuilder:
         else:
             cwd_for_memory = cwd
         memory = self.get_memory_for(cwd_for_memory, memory_store)
-        # The four blocks that share ONE budget (§2.4 / §7 crit 5). Collected rather
+        # The four blocks that share ONE budget. Collected rather
         # than appended, then rendered together by `learning.ambient` below — four
         # independent appends is what let them accrete prompt weight past the budget
         # `learning.context_budget_tokens` declares.
@@ -1626,7 +1626,7 @@ class ContextBuilder:
             from personalclaw.memory_service import service_for
 
             _svc = service_for(memory)
-            # Adaptive budget (mem-adaptive-budget): scale the per-section caps to the
+            # Adaptive budget: scale the per-section caps to the
             # window of the model actually bound to chat (1M for Opus → ~5× recall;
             # 200k baseline at the calibration point; a SMALL window now scales down too —
             # see `_MEMORY_WINDOW_FRACTION`), into what the standing instructions left of it.
@@ -1638,14 +1638,14 @@ class ContextBuilder:
             )
             if memory_ctx:
                 parts.append(memory_ctx)
-            # Session working memory (M5c): a rolling distilled summary of THIS
+            # Session working memory: a rolling distilled summary of THIS
             # session, always injected (not relevance-gated) — a consequence of
             # its scope=session, not a separate code path.
             if session_key:
                 wm = _guarded_recall("working_memory", lambda: _svc.working_memory(session_key))
                 if wm:
                     parts.append(wm)
-            # Agent self-persona (M5e): the agent's positive self-model, injected
+            # Agent self-persona: the agent's positive self-model, injected
             # always-on when its scope=agent matches the running agent. The agent
             # name is normalized to the canonical default when unset, so the most
             # common case (a default-agent chat, where ``agent`` is None) still
@@ -1671,7 +1671,7 @@ class ContextBuilder:
             if _slots:
                 parts.append(_slots + "\n")
 
-            # User preference profile (C15): the always-on ambient half of the
+            # User preference profile: the always-on ambient half of the
             # preference split — Active, decaying, typed facets (style/identity/
             # tooling/veto/goal/channel) rendered as stable DEFAULTS, distinct from
             # on-demand memory recall. Capped + Active-only inside render_profile_block.
@@ -1685,13 +1685,13 @@ class ContextBuilder:
                 logger.debug("preference profile block render failed", exc_info=True)
 
             # Self-model snapshot: the compact block of observed working
-            # principles/theories/focus, for the allocator's `self_model` slot that S72/S80 mapped
-            # but left producerless. Gated by the same knob the observer writes under — off means
+            # principles/theories/focus, for the allocator's `self_model` slot.
+            # Gated by the same knob the observer writes under — off means
             # the subsystem is silent on both the read and the write side.
             if getattr(AppConfig.load().learning, "self_model_enabled", True):
                 _self_model = _self_model_snapshot(_svc)
 
-            # How-to-work priors (M5d): the READ side of procedural memory.
+            # How-to-work priors: the READ side of procedural memory.
             # `record_procedural` had two live writers (this module's after-turn review
             # and learning/run_end) and `procedural_priors()` had no production caller
             # at all, so every turn paid to capture priors that nothing ever used.
@@ -1704,12 +1704,12 @@ class ContextBuilder:
                 logger.debug("procedural prior block render failed", exc_info=True)
 
         # Skills: the ones the agent's skill list gives its turns (`_skill_library`). Pass the
-        # agent so its agent-local skill tier (skill-agent-local-tier) overrides global for this
+        # agent so its agent-local skill tier overrides global for this
         # turn when present.
         _skills = self._skill_library(agent, is_custom=is_custom)
         if _skills is not None:
             _skill_index = _skills.get_context(agent=agent) or ""
-        # Ephemeral session skills (skill-ephemeral-promotion): drafts the user
+        # Ephemeral session skills: drafts the user
         # taught THIS session are live immediately, for every agent, until the
         # user promotes or forgets them at session end.
         if session_key:
@@ -1725,7 +1725,7 @@ class ContextBuilder:
         # Lessons — inject for ALL agents (skipped for temporary sessions). The
         # memory.db record store is the ONE lesson source of truth: lessons live
         # in it as ``lesson.*`` namespaced keys, read/written through the memory
-        # service. There is no parallel JSONL store (WF2LEA-3 retired it), so the
+        # service. There is no parallel JSONL store (it was retired), so the
         # dual-source read that let a global + a workspace lesson disagree is gone.
         lessons_ctx = ""
         lesson_cites: list[dict] | None = [] if citations_out is not None else None
@@ -1752,7 +1752,7 @@ class ContextBuilder:
 
             lessons_ctx = _guarded_recall("lessons", _lessons) or ""
 
-        # ONE budget for the named ambient blocks (§2.4 / §7 crit 5). Replaces four
+        # ONE budget for the named ambient blocks. Replaces four
         # independent per-block character caps that summed to ~9× the budget the
         # config declares: driven with 120 realistic lessons the old render passed
         # 4,000 tokens by 1,576, and at 400+ lessons reached 10,101. Lessons are
@@ -1843,7 +1843,7 @@ class ContextBuilder:
         thread_parent_text: str | None = None,
         system_prompt_override: str = "",
         system_prompt_suffix: str = "",
-        # The bound agent's VOICE (#42): layered, high-priority, over whichever system
+        # The bound agent's VOICE: layered, high-priority, over whichever system
         # prompt resolves below — the agent's own or the prompt bound for the context.
         agent_voice: str = "",
         resolved_agent_id: str = "",
@@ -2189,7 +2189,7 @@ class ContextBuilder:
 
         # ── Skills (one budget, declared tiers, a visible decision) ──
         #
-        # Both skill paths GATHER here and ALLOCATE once below. Before CE2-9 each one
+        # Both skill paths GATHER here and ALLOCATE once below. Before this, each one
         # concatenated its bodies straight into `parts` — so a large skill took the window
         # by being appended, and a matched skill that did not fit had no way to say so.
         # Now every body is a candidate in the allocator's existing `skills` slot, bounded
@@ -2220,14 +2220,14 @@ class ContextBuilder:
             if forced_skills:
                 logger.info("Force-loaded loop skills: %s", ", ".join(forced_skills))
 
-        # Surfaced skills (on-demand, any message) — semantic ∪ keyword (#26), from the
+        # Surfaced skills (on-demand, any message) — semantic ∪ keyword, from the
         # skills the agent's skill list gives its turns (`_skill_library`)
         _skills = self._skill_library(agent, is_custom=is_custom)
         if _skills is not None:
             triggered = [s for s in _skills.get_surfaced_skills(text) if s not in forced_skills]
             if triggered:
                 logger.info("Surfaced skills: %s", ", ".join(triggered))
-            # Progressive disclosure (#29): above the threshold, inject only a
+            # Progressive disclosure: above the threshold, inject only a
             # compact INDEX of the matched skills (name + one-line description) and
             # let the agent pull full bodies on demand via the skill_invoke tool —
             # instead of inlining every matched body (token efficiency at scale).
@@ -2278,9 +2278,9 @@ class ContextBuilder:
                 notices_out.extend(skill_alloc.notices)
             if skill_decisions_out is not None:
                 skill_decisions_out.extend(skill_alloc.decisions)
-            # Turn-time use counter (skill-use-counter): record the skills whose content
+            # Turn-time use counter: record the skills whose content
             # actually reached this turn — the shared signal for semantic-surfacing
-            # ranking (#26) and library GC (#27). A REFUSED skill is deliberately not
+            # ranking and library GC. A REFUSED skill is deliberately not
             # counted as used: crediting a use to a skill the agent never saw would train
             # the ranker on the allocator's failures. Advisory, never breaks a turn.
             if skill_alloc.loaded:
@@ -2291,11 +2291,11 @@ class ContextBuilder:
                 except Exception:
                     logger.debug("skill usage record skipped (error)", exc_info=True)
 
-        # WORKFLOWS-V2 Phase 1: the old `[PREFERRED WORKFLOW …]` surfacing block stood
+        # The old `[PREFERRED WORKFLOW …]` surfacing block stood
         # here — embedding-matched SOPs injected passively every turn, plus a
         # force-include path for goal-loop-confirmed ids. Deleted with the feature.
         #
-        # Slice 6 puts an `[ACTIVE WORKFLOWS]` block in this exact spot, and it is a
+        # The `[ACTIVE WORKFLOWS]` block is a
         # different thing on purpose: it lists the RUNNING workflows in this session
         # with the next action each needs, rather than guessing which definition the
         # turn resembles. Whatever lands here must keep the never-break-a-turn contract

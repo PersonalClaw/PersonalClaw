@@ -27,14 +27,13 @@ Everything else here exists to make that property survivable:
   report that echoed a secret would put credentials in the API response, the SEL row and the
   browser's memory at once.
 
-⚠️  **This is deliberately NOT a lifecycle gate/migration pair.** ``LIFECYCLE-DOCTRINE.md``
-was deleted in PR #897 and there is no ``lifecycle/`` package; ``CONTRIBUTING.md`` keeps the
+⚠️  **This is deliberately NOT a lifecycle gate/migration pair.** There is no ``lifecycle/``
+package; ``CONTRIBUTING.md`` keeps the
 regime as "a mental model, not shipped machinery", deferred until the architecture stops
 moving. Hand-rolling a ``m_*`` migration registry here would build a parallel mechanism that
-the real one deletes. What the prose actually asks for — user-consented, snapshot-backed,
+the real one deletes. What the migration actually needs — user-consented, snapshot-backed,
 reversible, idempotent, verified — is expressed with the house patterns instead: an
 ``IF NOT EXISTS``-shaped precondition check, a tolerant reader, and an explicit consent flag.
-Recorded as a DEVIATION in the plan's execution log.
 """
 
 from __future__ import annotations

@@ -5,9 +5,9 @@ import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A popup you cannot see is not a popup: the paint-order sweep ───────────────────────────────
 //
-// Cycle 137 found a menu that was fully keyboard-operable and completely invisible (an `absolute
+// A menu turned up that was fully keyboard-operable and completely invisible (an `absolute
 // z-30` flyout the page body painted over). The probe that caught it is one line —
-// `document.elementFromPoint` at the popup's own centre — so cycle 138 ran it across **every popup
+// `document.elementFromPoint` at the popup's own centre — so a sweep ran it across **every popup
 // the app can open**: 17 routes × 2 viewports, opening 58 (desktop) / 62 (phone) popups by keyboard,
 // sampling three points each, and comparing every flyout's rect against its nearest
 // overflow-clipping ancestor.

@@ -1,10 +1,10 @@
-"""Chatless tile refresh — the layout/data split, executed (AMBIENT-SURFACES §2.1-§2.4).
+"""Chatless tile refresh — the layout/data split, executed.
 
 A live tile is three things, and the whole cost argument rests on keeping them apart:
 
 * a **skeleton** — an artifact whose body carries ``{{...}}`` binding slots, authored ONCE
   by a model (a chat turn or a workflow stage);
-* **data nodes** — the "bound data workflow", whose degenerate and only pre-substrate case
+* **data nodes** — the "bound data workflow", whose degenerate and only current case
   is a list of action-provider dispatches;
 * a **render transform** — :func:`render_skeleton`: deterministic, LLM-free interpolation of
   the node outputs into the skeleton, handed to the ``artifact-update`` sink.
@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 
 #: The home-relative root of the per-tile ledgers. One directory PER TILE (bounded by
 #: ``AmbientConfig.max_tiles``), never one per refresh — a directory per fire is exactly the
-#: run-weight §2.3 refuses.
+#: run-weight a tile refresh must not carry.
 LEDGER_DIRNAME = "dashboard_tiles"
 
 #: Action providers a TTL tile may dispatch. An allowlist, not a denylist: a tile fires with
@@ -142,7 +142,7 @@ _STORE = _TileLedgerStore()
 
 @dataclass
 class TileLedger(LedgerWriter):
-    """The tile band as the ledger's SECOND producer (PP-4's stated gap).
+    """The tile band as the ledger's SECOND producer.
 
     One typed emitter, because a refresh has exactly one thing to say. It speaks the shared
     vocabulary rather than minting a `tile_refresh_done` of its own — a private kind here
@@ -165,7 +165,7 @@ class TileLedger(LedgerWriter):
     ) -> dict[str, Any]:
         """Write the one row. ``tokens``/``cost_usd`` are stated EXPLICITLY as zero rather
         than omitted: a reader that has to infer "no tokens" from a missing key cannot tell a
-        free refresh from an unrecorded one, and "what did this cost me?" is the question §2.3
+        free refresh from an unrecorded one, and "what did this cost me?" is the question the ledger
         exists to answer honestly."""
         return self.write(
             TILE_REFRESHED,
@@ -184,7 +184,7 @@ class TileLedger(LedgerWriter):
 
 @dataclass
 class NodeOutcome:
-    """One data node's result — the per-source chip's whole content (§2.4)."""
+    """One data node's result — the per-source chip's whole content."""
 
     id: str
     provider: str
@@ -223,7 +223,7 @@ class RefreshResult:
 def render_skeleton(skeleton: str, node_outputs: dict[str, Any]) -> str:
     """Interpolate ``{{nodes.<id>.output…}}`` slots into the stored skeleton.
 
-    THE deterministic, LLM-free render transform (§2.1). It is a thin binding of
+    THE deterministic, LLM-free render transform. It is a thin binding of
     :func:`personalclaw.workflows.bindings.resolve` on purpose: a second interpolator would
     be a second answer to what ``{{a.b | default('x')}}`` means, and a dashboard slot that
     resolved differently from a workflow binding is a bug nobody would find twice.
@@ -253,7 +253,7 @@ def _default_ttl() -> int:
 
 
 def last_row(view_id: str, ref: str) -> dict[str, Any]:
-    """The newest ledger row for a tile, or ``{}``. What the header renders (§2.4)."""
+    """The newest ledger row for a tile, or ``{}``. What the header renders."""
     rows = read_events(_STORE, tile_key(view_id, ref), kinds={TILE_REFRESHED})
     return rows[-1] if rows else {}
 
@@ -300,7 +300,7 @@ async def _run_data_node(
     would leave its slot unresolved and take the whole render down anyway — with a worse
     error.
 
-    🔴 This is a FOURTH UNATTENDED DISPATCH SEAM (AUTONOMY-GUARDRAILS §1.2): a TTL tile fires
+    🔴 This is a FOURTH UNATTENDED DISPATCH SEAM: a TTL tile fires
     with nobody watching, so it carries the same two gates the other three do — the kill switch
     (:func:`incident_active`) and the action denylist (:func:`enforce_action`, threaded with a
     session key so a SafetyProfile's extra globs are not silently skipped). The read-only
@@ -546,7 +546,7 @@ def _version_of(stdout: str) -> int:
 
 
 def ledger_path(view_id: str, ref: str) -> Path:
-    """Where a tile's ledger lives — the deep link's backing file (§2.4)."""
+    """Where a tile's ledger lives — the deep link's backing file."""
     from personalclaw.config.loader import config_dir
 
     return config_dir() / LEDGER_DIRNAME / tile_key(view_id, ref) / EVENTS_FILE

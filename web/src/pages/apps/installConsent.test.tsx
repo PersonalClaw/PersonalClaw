@@ -5,7 +5,7 @@ import type { AppCatalogEntry, AppDisclosure, AppInstallResult, AppScanReport } 
 
 // ── The install-consent dialog's states have to read correctly ───────────────────────────────────
 //
-// SH-3 landed this surface with no rail of its own, and it is the surface a user consents over a
+// This surface landed with no rail of its own, and it is the surface a user consents over a
 // supply-chain decision on. Every Store install now opens it — a clean scan included — so each of
 // its branches is driven here through the SHIPPED hook and dialog (`test/installDialogHarness`),
 // with only the server's review (`POST /api/apps/preview`) stubbed.

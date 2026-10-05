@@ -1,7 +1,7 @@
 """The tmux substrate — the one place that knows how PersonalClaw talks to tmux.
 
 Why this is a module and not five private helpers in ``dashboard/handlers/terminal.py``:
-tmux is now consulted by two unrelated callers with opposite jobs. P25 terminals *create*
+tmux is now consulted by two unrelated callers with opposite jobs. Persistent terminals *create*
 sessions on our socket and reap their attach-clients; the boot recovery sweeps *interrogate*
 that same socket to decide whether a run's work outlived the gateway. Two copies of "which
 socket", "is tmux installed" and "what is a legal session name" is how the reaper and the
@@ -16,15 +16,15 @@ Three things live here and nowhere else:
   One ``-L personalclaw`` server per machine used to serve every home, so a dev gateway and
   the real one listed, reattached and deleted each other's sessions.
 * **The names.** A durable session's name is derived from IDENTITY, never randomness, so a
-  restarted gateway *recomputes* it and reattaches instead of reaping (EXECUTION-ISOLATION
-  §5.1). ``terminal_session_name`` keeps P25's original mapping verbatim — it is a wire
+  restarted gateway *recomputes* it and reattaches instead of reaping.
+  ``terminal_session_name`` keeps the original terminal-persistence mapping verbatim — it is a wire
   format, not an implementation detail: renaming it would orphan every session a running
   tmux daemon is already holding.
 * **The probes.** Every call is best-effort and never raises. tmux absent, tmux hung, tmux
   answering garbage — all read as "no session", because the callers are a reaper and a boot
   sweep and neither may crash on a missing binary. Note the direction of that default:
   "no session" makes the sweep *more* conservative about claiming work survived, never less.
-* **The spawn** (:func:`new_session`, the §5.1 SPAWN half). The one writer of durable
+* **The spawn** (:func:`new_session`, the SPAWN half). The one writer of durable
   sessions, so the reader above and the writer share a socket and a name discipline by
   construction. Same never-raises stance, opposite default: a spawn that cannot happen
   returns False and the caller runs the work as a bare subprocess — durability is an
@@ -101,9 +101,9 @@ def sanitize(part: str) -> str:
 
 
 def terminal_session_name(session_id: str) -> str:
-    """tmux session name for a P25 terminal id.
+    """tmux session name for a persistent terminal's id.
 
-    Kept byte-identical to the original P25 mapping (tmux forbids '.', so map it to '_';
+    Kept byte-identical to the original terminal mapping (tmux forbids '.', so map it to '_';
     the dashboard session_id is otherwise a safe slug). This is a wire format shared with
     any tmux daemon still running from a previous gateway, so it does not get "cleaned up"
     to route through :func:`sanitize`.
@@ -112,7 +112,7 @@ def terminal_session_name(session_id: str) -> str:
 
 
 def durable_session_name(project_id: str, run_id: str, session_slug: str) -> str:
-    """The deterministic name of a durable worker session (§5.1).
+    """The deterministic name of a durable worker session.
 
     ``pclaw-<project>-<run>-<session>``, every component sanitized. Derived purely from
     identity so a gateway that lost all in-memory state can RECOMPUTE it at boot — that
@@ -193,7 +193,7 @@ async def new_session(
     command: list[str],
     env: dict[str, str] | None = None,
 ) -> bool:
-    """Open a detached durable session running *command* in *workspace* — §5.1's SPAWN half.
+    """Open a detached durable session running *command* in *workspace* — the SPAWN half.
 
     ``tmux new-session -d -s <name> -c <workspace> [-e K=V …] <command…>`` on our socket. The
     daemon — not the calling gateway — becomes the worker's owner, which is the entire point:
@@ -334,7 +334,7 @@ def pane_paths_sync() -> list[tuple[str, str]]:
     A durable worker created for a run is identified by WHERE it is working, not only by
     what it is called: a shell sitting in a run's workspace is that run's live substrate
     even when the gateway that started it is gone and its name was chosen by an earlier
-    mechanism (P25 names a terminal after its dashboard session id, not after a run).
+    mechanism (a persistent terminal is named after its dashboard session id, not after a run).
 
     Synchronous because the sweep that consumes it is. Empty list on any failure — the
     conservative answer, since an empty answer can only make the sweep decide "not alive". A

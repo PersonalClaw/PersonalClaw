@@ -327,7 +327,7 @@ def diff(name: str, a: int, b: int) -> list[dict[str, Any]]:
     return ops
 
 
-# ── maturity (R11) — the badge the Versions tab shows ────────────────────────────
+# ── maturity — the badge the Versions tab shows ──────────────────────────────────
 
 
 #: Static spec signals that raise a template's maturity (a check that never rejects is not a
@@ -362,7 +362,7 @@ def template_maturity(
     clean_runs: int = 0,
     evaluator_rejected: bool = False,
 ) -> dict[str, Any]:
-    """Compute a template's maturity level L0–L3 (R11).
+    """Compute a template's maturity level L0–L3.
 
     Level combines STATIC spec signals (does it verify, escalate, stop) with DEMONSTRATED
     ledger activity (clean runs, and — the load-bearing one — "the evaluator has rejected at

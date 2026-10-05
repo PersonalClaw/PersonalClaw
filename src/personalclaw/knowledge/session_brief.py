@@ -1,4 +1,4 @@
-"""The project Session Brief — push-based retrieval into workflow RUNS (KNOW-R12).
+"""The project Session Brief — push-based retrieval into workflow RUNS.
 
 A workflow that has to ASK for context gets it only when the template author thought to add a
 retrieve node. The Session Brief inverts that: every run in a project starts with a bounded

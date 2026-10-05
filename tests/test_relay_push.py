@@ -1,6 +1,6 @@
 """The ``relay`` backend: ids-only pings through a stateless relay.
 
-The security promise is MC-5's, extended one hop: **what leaves this process for the relay
+The ids-only promise of direct push, extended one hop: **what leaves this process for the relay
 is a routing envelope around the same two ids — platform, token, kind, item_id — and
 nothing else.** As in ``test_push_to_approval.py``, the leak tests assert on the bytes
 handed to the HTTP layer (``push._post`` patched), downstream of every composer, not on the
@@ -8,7 +8,8 @@ guard that happens to sit next to the call site.
 
 What is NOT here: the relay service itself (its content-free log audit lives in the
 push-relay repo's own suite) and the native APNs/FCM leg (a store app on a physical
-handset — the same ENVIRONMENT LIMIT MC-5 names for its locked-phone leg).
+handset — the same ENVIRONMENT LIMIT ``test_push_to_approval.py`` names for its locked-phone
+leg).
 
 Isolation follows the rule exactly: ``PERSONALCLAW_HOME`` is the lever, asserted per
 test, never a ``config_dir`` monkeypatch.
@@ -41,7 +42,8 @@ def home(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> P
 
 @pytest.fixture()
 def sent(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
-    """Capture every outbound POST at the HTTP boundary (see MC-5 on why ``_post``)."""
+    """Capture every outbound POST at the HTTP boundary (see ``test_push_to_approval.py``
+    on why ``_post``)."""
     calls: list[dict[str, object]] = []
 
     def fake_post(url: str, body: bytes, headers: dict[str, str]) -> int:
@@ -132,7 +134,7 @@ def test_the_relay_refuses_a_plaintext_url(home: Path, sent: list[dict[str, obje
     assert sent == []
 
 
-# ── The plan-42 fan-out ──────────────────────────────────────────────────────
+# ── The device fan-out ───────────────────────────────────────────────────────
 
 
 def test_deliver_fans_out_over_every_registered_device(

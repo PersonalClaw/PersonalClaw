@@ -131,7 +131,7 @@ describe('refTarget', () => {
   })
 
   it("routes a paused ROOM to its room, and never ahead of an older ref", () => {
-    // AGENT-ROOMS' pause item (`agent/room_paused`) stamps `refs.room` and nothing else, so this is
+    // The agent-rooms pause item (`agent/room_paused`) stamps `refs.room` and nothing else, so this is
     // that row's only link — and it is what makes the pause CARD the destination of the inbox row
     // rather than a second notice about one event. Same vacuity floor as the artifact branch above:
     // `room` is LAST, so a row that also names a session must still go to the session.

@@ -1,6 +1,6 @@
 """What DRIVES a pre-registered template study.
 
-`test_evals_studies.py` covers the instrument. This file covers the two acceptance clauses
+`test_evals_studies.py` covers the instrument. This file covers the two requirements
 the instrument could not satisfy on its own, and it covers them at the CALL SITE rather than
 at the mechanism — because "the mechanism exists and nothing invokes it" is the exact defect
 this change was reopened for.
@@ -56,7 +56,7 @@ def eval_home(tmp_path, monkeypatch):
     """An isolated home with a bound fingerprint — the same rail `test_evals_studies` uses.
 
     `config_dir()` re-reads `PERSONALCLAW_HOME` per call, so the env var IS the isolation.
-    The fingerprint is patched because an empty home has no `active_models.json` and ES-2's
+    The fingerprint is patched because an empty home has no `active_models.json` and
     `append_result` rightly refuses an unattributable row.
     """
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
@@ -89,7 +89,7 @@ def _install_harvested(count: int, *, workflow: str = WORKFLOW) -> None:
         (lib / f"{case['name']}.json").write_text(json.dumps(case), encoding="utf-8")
 
 
-# ── clause: "over the harvested suite" ───────────────────────────────────────
+# ── requirement: "over the harvested suite" ──────────────────────────────────
 
 
 def test_the_suite_comes_from_the_HARVEST(eval_home):
@@ -322,7 +322,7 @@ def test_a_pair_whose_arms_BOTH_finish_IS_judged(eval_home):
         """Votes on CONTENT, not on position.
 
         A judge that always names slot A would flip with the swap and produce `no_signal` —
-        which is §2.3 working, and would make this floor unable to tell a judged pair from a
+        which is the swap working, and would make this floor unable to tell a judged pair from a
         skipped one.
         """
         from personalclaw.evals.judge_bench import JudgeCall
@@ -388,7 +388,7 @@ def test_the_arm_runner_screens_its_model_output_exactly_once(eval_home):
     assert out.output.count("REDACTED") == 1
 
 
-# ── clause: "a flywheel template-diff RUNS a pre-registered study" ───────────
+# ── requirement: "a flywheel template-diff RUNS a pre-registered study" ──────
 
 
 def test_run_study_uses_the_PRODUCTION_arm_runner_by_default(eval_home, monkeypatch):

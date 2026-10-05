@@ -1,4 +1,4 @@
-"""The mcp-tools settings card reads/writes ~/.personalclaw/mcp.json (#43).
+"""The mcp-tools settings card reads/writes ~/.personalclaw/mcp.json.
 
 Store reconcile: the generic ``mcp-tools`` multi-instance provider card no
 longer writes the dead ``extensions/mcp-tools/instances/*.json`` store. Its

@@ -11,7 +11,7 @@ import { join } from 'node:path'
 //   before   clicked "Mark all read" → toasts []            no error text anywhere
 //   after    clicked "Mark all read" → "Couldn't mark all notifications read: {"detail":"probe"}"
 //
-// The read half was the cycle-86 shape: `.catch(() => [])` made a failed feed render **"You're all caught
+// The read half was the false-empty shape: `.catch(() => [])` made a failed feed render **"You're all caught
 // up"** — a reassuring sentence produced by a 500. Measured before/after with the GET at 500:
 //
 //   before   "You're all caught up …"                       alerts []

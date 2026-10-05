@@ -1,6 +1,6 @@
 """Mid-turn steering: the capability gate, the key contract, and the policy default.
 
-Steering (#37) shipped with no test coverage at all,
+Steering shipped with no test coverage at all,
 which is how three defects survived in one path:
 
 1. **The lookup key never matched.** ``chat_handlers`` called ``add_steer(session.key)``
@@ -18,7 +18,7 @@ which is how three defects survived in one path:
 The tests below fail against the pre-fix code (verified) and encode the invariant that
 matters: ``steer_drains`` tracks a WIRED DRAIN SOURCE, never a declared intention.
 
-**The ACP delivery path.** S6.2 stopped at the capability FLAG, and the flag had
+**The ACP delivery path.** The first cut stopped at the capability FLAG, and the flag had
 no consumer: ``steer_capable()`` had zero production callers and no layer exposed
 ``set_steer_source``, so the dispatcher's ``hasattr(client, "set_steer_source")`` gate found
 nothing to wire on an ACP turn. Measured before the fix: a dialect declaring
@@ -479,7 +479,7 @@ def test_a_no_tool_turn_reaches_the_drain_before_returning():
 
 # ── The ACP delivery path ────────────────────────────────────────────────────
 #
-# S6.2 stopped at the capability FLAG. `steer_capable()` had zero production callers and
+# The first cut stopped at the capability FLAG. `steer_capable()` had zero production callers and
 # no layer (`AcpAgentProvider` / `AcpClient` / `AcpSession` / `AcpSessionProvider`) exposed
 # `set_steer_source`, so the dispatcher's `hasattr(client, "set_steer_source")` gate found
 # nothing to wire: a dialect could flip `supports_mid_turn_prompt` and the measured result
@@ -862,7 +862,7 @@ def test_the_acp_cap_matches_the_native_cap():
 
 @pytest.mark.asyncio
 async def test_an_undelivered_steer_does_not_leak_into_the_next_turn():
-    """The cross-turn leak S6.1 closed must stay closed: a steer aimed at THIS answer is
+    """The cross-turn leak, once closed, must stay closed: a steer aimed at THIS answer is
     not carried into the next one by the pending list."""
     sess, q, sent = _acp_session(_LyingDialect())
     sess.set_steer_source(lambda: ["make it a haiku"])

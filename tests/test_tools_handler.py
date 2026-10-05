@@ -152,7 +152,7 @@ async def test_handler_no_failures_when_all_load(monkeypatch):
     assert payload.get("load_failures") == []
 
 
-# ── GET /api/tools/savings (Context Economy §1.3) ─────────────────────────────
+# ── GET /api/tools/savings ────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,4 @@
-"""Predict-then-verify, wired: the curator grades what a human accepted (LEARN-R16 / §3.1).
+"""Predict-then-verify, wired: the curator grades what a human accepted.
 
 `accountability.py` is the pure half — given before/after failure rates and what a change PREDICTED
 it would fix, it returns the five-way verdict and decides whether a revert is owed. It was written
@@ -7,7 +7,8 @@ record across the accept→observe→grade gap, and files the revert lives HERE,
 a pure, source-scannable module (the `test_a_revert_is_a_PROPOSAL_never_an_application` asserts it
 contains no `sqlite3`/`atomic_write`/`accept(`/`installer`).
 
-This module is that orchestration, and it is what makes criterion 9 real. Two halves join over time:
+This module is that orchestration, and it is what makes predict-then-verify real. Two halves
+join over time:
 
 **At accept-time — snapshot the bet.** `proposals.accept` DELETES the proposal file (only a
 fingerprint-keyed `Decision` survives, with no manifest and no target), so the moment a human
@@ -20,8 +21,8 @@ is a bug in waiting.
 **On the curator tick — grade it.** :func:`grade_accepted_changes` finds records with ≥N
 post-acceptance runs of their target template, recomputes the failure rates over ONLY those new
 runs, calls `accountability.attribute`, records the verdict, and — for a HARMFUL verdict — files a
-revert PROPOSAL through the shared human-gated queue. It never applies anything; "mechanical" in
-§3.1 means the revert appears in the queue without the user having to notice the regression, not
+revert PROPOSAL through the shared human-gated queue. It never applies anything; "mechanical"
+here means the revert appears in the queue without the user having to notice the regression, not
 that it rolls back on its own, and the gate refuses a non-human accept regardless.
 
 **Cluster = failure MODE, scope = the target's runs.** The join between what a proposer PREDICTED
@@ -58,8 +59,7 @@ _MAX_RUNS = 200
 _MAX_RECORDS_PER_TICK = 50
 
 #: Pending-record cap. Beyond it the oldest unresolved records expire — a change whose target never
-#: runs again would otherwise pend forever, and an unbounded store is the disk-growth bug §2.3 warns
-#: about one module over.
+#: runs again would otherwise pend forever, and an unbounded store is a disk-growth bug.
 _MAX_PENDING = 200
 
 #: How many RESOLVED records to keep as verdict history (the proposer-trust corpus). They are never
@@ -195,7 +195,7 @@ def _failure_rates(runs: list[Any]) -> dict[str, float]:
     its TERMINAL failures per node (`run_end._terminal_failures`): the retry-exhausted outcome, so a
     transient a retry recovered is not a run failure and one flapping step does not inflate its own
     mode's rate. Environment/timeout/infra modes are the world's fault, not the change's, so they
-    are excluded via the same `NON_LESSON_MODES` deny-set the rest of §3.3 uses.
+    are excluded via the same `NON_LESSON_MODES` deny-set the failure detectors use.
     """
     if not runs:
         return {}
@@ -344,7 +344,7 @@ def grade_accepted_changes(
                 if pid:
                     rec.revert_proposal_id = pid
                     report["reverts"] += 1
-                # §4.4 mechanical revocation: a HARMFUL verdict means an unattended
+                # Mechanical revocation: a HARMFUL verdict means an unattended
                 # self-modification did damage nobody predicted — the trust every
                 # standing grant rests on is void until a human re-grants it. The
                 # revert proposal above retires the CHANGE; this retires the AUTONOMY.
@@ -437,7 +437,7 @@ def verdict_history() -> list[tuple[str, str]]:
     """`(source, verdict)` for every resolved record — the input to `accountability.proposer_trust`.
 
     Kept here rather than in the pure module because it reads the store; feeds a per-source trust
-    aggregate the observability panel (WF2LEA-9) surfaces.
+    aggregate the observability panel surfaces.
     """
     return [(r.source or "unknown", r.verdict) for r in _all() if r.resolved]
 

@@ -3,7 +3,7 @@
 A schedule trigger's agent rides the canonical ``action`` (invoke-agent's ``config.agent``), not a
 top-level ``agent`` key, and a PATCH must persist that change rather than dropping it.
 
-🔴 REWRITTEN FOR S110. These tests asserted the `crons.update_job(...)` CALL SHAPE —
+🔴 REWRITTEN. These tests asserted the `crons.update_job(...)` CALL SHAPE —
 `kwargs["action"]["config"]["agent"]` on a MagicMock — the legacy fallback the facade's CRUD
 retirement deleted. A call-shape assertion proves which function was invoked, never that anything
 was stored; the mock happily accepted `action=` for as long as that path existed. These drive the

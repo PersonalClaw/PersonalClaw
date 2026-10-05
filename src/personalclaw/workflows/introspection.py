@@ -1,4 +1,4 @@
-"""The introspection checklist: what is running, costing, risky, blocked (R5/R6/R9).
+"""The introspection checklist: what is running, costing, risky, blocked.
 
 The hub and cockpit must answer nine questions **from structured state alone**: what is
 running now and
@@ -10,9 +10,9 @@ trustworthy — whether the checks that passed were real checks.
 Everything here is a PROJECTION over the existing journal. `journal.ledger()` already
 reads the event
 stream and `journal.run_totals()` already aggregates one run; this module adds the cross-run and
-per-template views, and it deliberately adds no metrics store. The plan's own words: "pass-rate,
+per-template views, and it deliberately adds no metrics store: pass-rate,
 failure distribution and latency percentiles are queries over this — not a separate
-metrics store."
+metrics store.
 
 Two facts about the real event stream shape everything below, both verified in code rather than
 assumed:
@@ -454,7 +454,7 @@ def _trajectory_verdict(kind: str, event: dict[str, Any]) -> str:
 def trajectory_steps(events: list[dict[str, Any]]) -> list[tuple[str, str, str]]:
     """The ordered (node, lane, verdict) tuples a run's ledger describes — its decision PATH.
 
-    A PURE projection over the event list, in journal order, with no store of its own: PP-7's whole
+    A PURE projection over the event list, in journal order, with no store of its own: the whole
     claim is that the path is already fully recorded and only needs reading. `lane` is read from the
     `step_started` a node emitted (the one event that carries it); a node with no recorded lane — an
     untaken branch leg the engine skipped without launching — contributes "" rather than a guess,
@@ -788,7 +788,7 @@ class JudgeStats:
 
 @dataclass
 class EdgeStats:
-    """The edge-decision projection (PP-8): per-`branch` case and per-judge verdict distributions.
+    """The edge-decision projection: per-`branch` case and per-judge verdict distributions.
 
     A pure projection over a template's runs, alongside `gate_stats` on the same surface and under
     the same sample gate. It answers the graph-engineering question `branch`/`gate`/`judge` records
@@ -935,7 +935,7 @@ def template_card(
     return card
 
 
-#: The nine questions §6.4 requires the surfaces to answer from structured state alone. Named here
+#: The nine questions the surfaces must answer from structured state alone. Named here
 #: rather than in a UI comment so the checklist is checkable: `checklist_gaps` reports which of them
 #: the supplied state cannot answer, which is what makes this a contract instead of an aspiration.
 CHECKLIST = (
@@ -1041,11 +1041,11 @@ def proof_section(stats: RunStats, *, evidence_files: list[str] | None = None) -
     return section
 
 
-# ── §4.4 human-attention accounting ───────────────────────────────────────────
+# ── human-attention accounting ────────────────────────────────────────────────
 #
 # Autonomy's honest objective is attention saved without outcome regression. The events
-# below already exist in the journal; this section is a QUERY over them — per the plan's
-# own discipline, "computed by ledger query, stored nowhere new". A human-answered gate,
+# below already exist in the journal; this section is a QUERY over them — computed by
+# ledger query, stored nowhere new. A human-answered gate,
 # a mid-flight edit, and a judge/human divergence each cost one unit of attention; an
 # auto-approved gate deliberately costs none (nobody looked at it).
 
@@ -1143,7 +1143,7 @@ def post_grant_rise(
 
 @dataclass(frozen=True)
 class AttentionStats:
-    """The §4.4 summary for one scope (a workflow template), derived per query."""
+    """The human-attention summary for one scope (a workflow template), derived per query."""
 
     scope: str
     runs: int = 0
@@ -1215,14 +1215,14 @@ def attention_stats(
     )
 
 
-# ── the two ledger rails (the ledger-rails third) ──
+# ── the two ledger rails ──
 #
 # The loop cockpit has two rails a run detail has no answer for: the FINDINGS rail (what each unit
 # of work produced, in emit order) and the VERDICT/ROI rail (what the judge said about it, and what
 # it cost). Both are PROJECTIONS over the ledger on the loop side —
 # `loop/files.py::get_findings` reads `step_completed`, `get_verdicts` reads `judge_verdict` — and
-# both were unreachable on the run side. Of the four kinds PP-16's
-# ledger-rails clause names, `step_completed` surfaced only as an introspection timeline row that
+# both were unreachable on the run side. Of the four rail kinds,
+# `step_completed` surfaced only as an introspection timeline row that
 # drops the step's own output ref, `judge_verdict` and `watcher_reaped` surfaced nowhere at all,
 # and `breaker_trip` has no run-side producer whatsoever (see `RAIL_PRODUCERS`).
 #
@@ -1294,7 +1294,7 @@ def _carried(event: dict[str, Any], key: str, cast: type) -> Any:
     `step_completed` always carries `cost_usd` — the engine's emitter writes it, `0.0` for a free
     local model, which is a real observation. A LOOP-side `step_completed` carries no cost key at
     all, because loop money lives in `usage/turns.jsonl` and `loop.manager.loop_spend` reads it
-    there. PP-16 retires the loop noun onto the run noun, so loop-shaped rows WILL flow through
+    there. The loop noun is retiring onto the run noun, so loop-shaped rows WILL flow through
     this projection — and a rail that defaulted them to zero would report "$0.00, 0 tokens" for
     work that really cost money, on the one surface a user opens to find out what it cost.
 

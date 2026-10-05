@@ -9,7 +9,7 @@ Seven routes. Five are about sessions, the one credential a device holds:
 * ``POST /api/devices/revoke-others``   — owner-authenticated, ``{"confirm": true}``; signs out
   all but the caller
 
-Two are about the tokens an external agent reaches an inbound surface with (ledger 317a), which
+Two are about the tokens an external agent reaches an inbound surface with, which
 are not sessions and never were — but the owner asking "what can reach this gateway?" asks it
 here, so they are listed here too, each with when it stops working and a revoke:
 
@@ -80,9 +80,9 @@ from personalclaw.safety_flags import confirm_granted
 
 logger = logging.getLogger(__name__)
 
-# Verbatim from the plan's C2 "Error codes (Tier-S)" row. The asymmetry (`_code_invalid` but
-# `_expired`) is the contract's, not a slip here: CA-2 maps these exact strings to copy, so
-# guessing a tidier pair would mean the frontend showing a raw code to the user.
+# The asymmetry (`_code_invalid` but `_expired`) is deliberate, not a slip here: the pairing
+# page maps these exact strings to copy, so guessing a tidier pair would mean the frontend
+# showing a raw code to the user.
 ERR_CODE_INVALID = "device_pair_code_invalid"
 ERR_CODE_EXPIRED = "device_pair_expired"
 ERR_ORIGIN = "device_pair_origin_rejected"
@@ -180,7 +180,7 @@ async def api_devices_pair_start(request: web.Request) -> web.Response:
     base = _pair_base_url(request)
     # The QR payload: a single URL a phone camera can act on. The code rides in it because a
     # two-step "scan this, then type that" flow is the one people abandon. Resolved HERE and
-    # never composed in the browser (C2 (a)) — the dashboard may be open on loopback while the
+    # never composed in the browser — the dashboard may be open on loopback while the
     # scanning phone needs the LAN address, and a browser-composed URL hands it `127.0.0.1`.
     pairing_url = f"{base}/pair?code={formatted}" if base else ""
 
@@ -212,7 +212,7 @@ def landing_for(kind: str) -> str:
 
 
 def _described(request: web.Request) -> tuple[str, str]:
-    """``(name, kind)`` for a device that did not name or declare itself (C2 (b)).
+    """``(name, kind)`` for a device that did not name or declare itself.
 
     The ONE derivation every sign-in uses (``session_store.describe_user_agent``), so a
     paired phone and a signed-in browser are described alike. Both still go through the
@@ -256,7 +256,7 @@ async def api_devices_pair_complete(request: web.Request) -> web.Response:
 
     body = await json_object_body(request)
     code = str(body.get("code") or "")
-    # `device_name` is OPTIONAL (C2 (b)): omitted, the gateway derives one, so a client with
+    # `device_name` is OPTIONAL: omitted, the gateway derives one, so a client with
     # nothing but a code can still pair.
     name = sanitize_device_name(body.get("device_name", ""))
     kind = sanitize_device_kind(body.get("kind", ""))

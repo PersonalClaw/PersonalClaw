@@ -3,7 +3,7 @@
 **What this closes.** `learning_report.py` shipped the whole composition and delivery half —
 `compose_identity_report`, the narrative pass, the versioned artifact, the notify-gated inbox
 item — plus a `POST /api/learning/identity-report` a user could reach by hand. Nothing
-scheduled it. So the plan's "scheduled (default monthly, configurable) background job" existed
+scheduled it. So a "scheduled (default monthly, configurable) background job" existed
 as a function with one caller, which is the shape this codebase calls a delivery path nothing
 drives.
 
@@ -177,7 +177,7 @@ def reconcile_identity_report_trigger(store: Any) -> None:
     built, and `remediation_provider` makes the same call so the switch stays visible on the
     Triggers page.
 
-    Writes the unified trigger store directly, never `crons.json` — S108's bug, recorded in
+    Writes the unified trigger store directly, never `crons.json` — the bug recorded in
     `reconcile_digest_cron`'s docstring: the boot import runs BEFORE reconciliation, so a row
     written to the legacy file stays inert until the next boot.
 
@@ -237,7 +237,7 @@ def reconcile_identity_report_trigger(store: Any) -> None:
         switch_from_config(trigger, cadence != CADENCE_OFF)
         trigger.workflow = {"inline": {"provider": PROVIDER_NAME, "config": {}}}
         # The run writes a durable artifact, raises an inbox row and spends one background model
-        # call, unattended, forever. The frozen grant is decision 7's requirement; a
+        # call, unattended, forever. The frozen grant is required; a
         # system-created trigger's opt-in is the code path that created it.
         trigger.capabilities = _screen.capabilities_for_action(trigger)
         armed = _arm(trigger)

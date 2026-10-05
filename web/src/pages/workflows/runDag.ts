@@ -230,7 +230,7 @@ function nestingOf(path: string): number {
  *  delimiter stands between the `1` and the `0` — so a prefix scan reparented every double-digit
  *  loop item onto item #1 and drew a wrong tree for any loop with ten or more iterations. The
  *  bracketed forms accidentally escaped it (`children[10]` does not start with `children[1]`,
- *  the `]` blocks it), which is exactly why 85 cycles of bracket-shaped test data never saw this.
+ *  the `]` blocks it), which is exactly why bracket-shaped test data never saw this.
  */
 function containsPath(ancestor: string, path: string): boolean {
   return path.length > ancestor.length

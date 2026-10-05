@@ -87,7 +87,7 @@ def hash_token(token: str) -> str:
 
 @dataclass
 class InboundClient:
-    """One external integration's identity and its pinned bindings (§1.2)."""
+    """One external integration's identity and its pinned bindings."""
 
     client_id: str = ""
     label: str = ""
@@ -128,7 +128,7 @@ class InboundClient:
     created_at: str = ""
     last_seen_at: str = ""
     #: When this client's token stops working (epoch seconds). At most 90 days after it was
-    #: issued (ledger 317a); a client registered before lifetimes existed ends 90 days after its
+    #: issued; a client registered before lifetimes existed ends 90 days after its
     #: ``created_at`` (``tokens.client_expires_at``).
     expires_at: float = 0.0
 
@@ -309,7 +309,7 @@ def revoke_client(client_id: str, *, actor: str = "owner") -> bool:
 
 
 def set_disabled(client_id: str, disabled: bool, *, reason: str = "") -> bool:
-    """Flip a client's own kill switch (§1.1 layer c). False when unknown."""
+    """Flip a client's own kill switch. False when unknown."""
     with _locked():
         clients = load_clients()
         client = clients.get(client_id)
@@ -529,5 +529,5 @@ def _sel_event(operation: str, client_id: str, detail: str) -> None:
 
 
 def log_binding_violation(client_id: str, violation: str) -> None:
-    """A binding violation is a security event, not a validation error (§1.2)."""
+    """A binding violation is a security event, not a validation error."""
     _sel_event("inbound_binding_violation", client_id, violation)

@@ -158,7 +158,7 @@ UNREPLAYED_NO_JUDGE = (
 
 # ── mining bounds ────────────────────────────────────────────────────────────
 
-#: At most three cases per capture session (the change's own bound). A cap per SESSION rather
+#: At most three cases per capture session. A cap per SESSION rather
 #: than only overall, because one chatty session would otherwise supply every case and the
 #: evidence would describe that session instead of the user's work.
 MAX_CASES_PER_SESSION = 3
@@ -459,7 +459,7 @@ def _mean(values: list[float]) -> float | None:
 
     The one-line version of this module's central rule. A filtered-to-empty scored set that
     returns ``0.0`` publishes a number nobody measured, and every reader downstream (the
-    verdict, the card, LEARN-R2) then treats a fabrication as data.
+    verdict, the card, the refiner) then treats a fabrication as data.
     """
     if not values:
         return None
@@ -852,7 +852,7 @@ async def run_pass(*, max_proposals: int = 3) -> dict[str, Any]:
 
     Mines once and reuses the case set across proposals on purpose: the cases are the user's
     work, not the proposal's, and re-mining per proposal would compare two candidates on
-    different corpora — which makes the two verdicts incomparable for LEARN-R2 downstream.
+    different corpora — which makes the two verdicts incomparable for the refiner downstream.
 
     Attaches an ``unreplayed`` report rather than nothing when replay is off or unbudgeted. A
     proposal with no ``replay`` key and one with a report saying "no budget is set" look

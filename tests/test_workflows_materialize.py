@@ -156,7 +156,7 @@ def test_a_failure_class_maps_to_a_blocked_kind(failure_class, expected):
 
 
 def test_an_UNKNOWN_failure_class_degrades_to_a_plain_block():
-    """An unrecognized kind degrades to a plain `blocked` badge on every surface (R12), so
+    """An unrecognized kind degrades to a plain `blocked` badge on every surface, so
     passing it through as "" is safe — and normalizing it into a wrong kind would not be.
     """
     assert project_blocked_kind(InstanceState.FAILED, failure_class="protocol") == ""
@@ -707,8 +707,8 @@ def test_every_projection_field_round_trips():
 
 
 def test_a_PRE_EXISTING_task_json_still_loads():
-    """Additive with empty defaults: task files written before this session have none of these
-    keys and must read back as standalone, unblocked, with no criterion.
+    """Additive with empty defaults: task files written before these fields existed have none
+    of these keys and must read back as standalone, unblocked, with no criterion.
     """
     old = {"id": "t-old", "title": "Legacy", "status": "open", "priority": "medium"}
     task = Task.from_dict(old)

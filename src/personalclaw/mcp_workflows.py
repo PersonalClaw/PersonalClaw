@@ -1,7 +1,7 @@
 """Workflows tool category — author, run, steer and inspect composable workflows.
 
 The chat surface over the v2 engine: 23 tools. Every one delegates to
-`workflows.service`, the single implementation the REST routes (Slice 7a) will also call —
+`workflows.service`, the single implementation the REST routes also call —
 two surfaces over one engine must not grow two behaviours.
 
 Exposes `_list_tools` / `_call_tool` in the same shape as `mcp_prompts` / `mcp_memory`, so
@@ -756,7 +756,7 @@ def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
 def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     """Dispatch one tool, appending the staged-turn spec echo where it applies.
 
-    The echo (WF2-R20f) is the whole reason inspect tools are worth calling before a
+    The echo is the whole reason inspect tools are worth calling before a
     mutation: the model mutates what it just SAW rather than the spec it generated earlier,
     which diverges from disk the moment anything else touches the run.
     """
@@ -1104,14 +1104,13 @@ def _plan(args: dict[str, Any]) -> str:
 
 
 def plan_answer(args: dict[str, Any]) -> tuple[dict[str, Any], str]:
-    """Scaffold + manifest, or a real TEMPLATE when one is named (WORKFLOWS-V2 §4, 9b), as
+    """Scaffold + manifest, or a real TEMPLATE when one is named, as
     ``(the service-shaped body, its summary line)``: the body the gateway's planner route answers
     the tool server an agent CLI runs with (``POST /api/workflows/agent-plans``), which holds none
     of what a plan is made from (the definitions, and the registries the grounding reads).
 
-    Returns a SCAFFOLD deliberately when no template is given: the template-aware planner is
-    UNIVERSAL-PLANNING's, and inventing a half-planner here would have to be deleted when the
-    real one lands. What the scaffold does give the model is everything it needs to author the
+    Returns a SCAFFOLD when no template is given and the library matches none. What the
+    scaffold does give the model is everything it needs to author the
     spec itself in the next turn — the shapes the engine accepts, and a starting tree it can
     edit — instead of guessing at a schema.
 
@@ -1121,7 +1120,7 @@ def plan_answer(args: dict[str, Any]) -> tuple[dict[str, Any], str]:
     returns that template's real (macro-expanded, block-resolved) tree, so "plan me a deep
     research workflow" starts from the shipped one instead of a three-node stub.
 
-    UP-R9 (WF2UNI-7): `source_session_id` mines a real transcript. "We just did this in chat" is
+    `source_session_id` mines a real transcript. "We just did this in chat" is
     the highest-volume shape of a task worth repeating, and until now the transcript proving it
     was thrown away. Mining reads the session's own record — the tools it actually ran and the
     approvals it earned — so the plan carries a PRE-VALIDATED permission signature instead of a
@@ -1258,7 +1257,7 @@ def plan_answer(args: dict[str, Any]) -> tuple[dict[str, Any], str]:
         fast_spec = rigor_mod.schedule_refinement(fast_spec)
         proposed = fast_spec["root"]
 
-    # UP-R14: the grounding preamble. A deterministic entity-resolution node goes FIRST so the
+    # The grounding preamble. A deterministic entity-resolution node goes FIRST so the
     # resolved identity (or a degraded name-only fallback) is established before any stage runs,
     # rather than each stage re-guessing who the goal names. Best-effort: a preamble that could not
     # be built loses grounding, never the plan.
@@ -1276,7 +1275,7 @@ def plan_answer(args: dict[str, Any]) -> tuple[dict[str, Any], str]:
         "ok": True,
         # Renamed: this is no longer a bare structural stub. It carries the live grounding bundle,
         # a picked shape with a validated skeleton, and the constraint block — which is the whole
-        # difference the plan measured (first-try-valid 0/5 → 4/5).
+        # difference measured (first-try-valid 0/5 → 4/5).
         "planner": "grounded-v1" if grounded else "scaffold-v1",
         "goal": goal,
         "rigor": rigor,
@@ -1287,7 +1286,7 @@ def plan_answer(args: dict[str, Any]) -> tuple[dict[str, Any], str]:
         # Which rigor path ran and why. A user who got a thin plan needs to know it was the
         # fast path rather than the planner doing badly.
         "rigor_note": rigor_mod.rigor_note(classified, requested=requested),
-        # UP-R9: what the source session actually did, when one was named. Present only when
+        # What the source session actually did, when one was named. Present only when
         # mining produced something — an empty block would read as "that session did nothing".
         **_mined_surface(mined, source_session_id),
         **({"grounding": grounded} if grounded else {}),
@@ -1296,7 +1295,7 @@ def plan_answer(args: dict[str, Any]) -> tuple[dict[str, Any], str]:
         # `NO_UPDATE` sentinel and the merge-by-id ops that make an adaptation safe only ever
         # reached the template path, so the instruction arrived without its vocabulary.
         **_review_surface(goal, {"root": proposed, "inputs": {}}, routing),
-        # UP-R3: the same run-start checker, on this path too. A generated tree resolves model
+        # The same run-start checker, on this path too. A generated tree resolves model
         # tiers and can name action providers exactly as a template does, so leaving preflight on
         # one path would reproduce the asymmetry above with a different key.
         **_preflight_surface({"root": proposed, "inputs": {}}),
@@ -1317,7 +1316,7 @@ def plan_answer(args: dict[str, Any]) -> tuple[dict[str, Any], str]:
 
 
 def freeze_authored_candidate(args: dict[str, Any]) -> None:
-    """Freeze a validated-but-unsaved spec as a SESSION-scoped candidate (UP-R9), after a
+    """Freeze a validated-but-unsaved spec as a SESSION-scoped candidate, after a
     ``workflow_check`` that found it valid.
 
     A generated spec that VALIDATED but was not saved is exactly what used to be thrown away.
@@ -1439,7 +1438,7 @@ def _mined_surface(mined: Any, session_id: str) -> dict[str, Any]:
 
 
 def _plan_topics(goal: str) -> list[str]:
-    """The goal's topics (UP-R14), the retrieval queries the grill's lookup channels run.
+    """The goal's topics, the retrieval queries the grill's lookup channels run.
 
     Best-effort: a topic-extraction failure loses the lookup queries, never the plan."""
     try:
@@ -1452,7 +1451,7 @@ def _plan_topics(goal: str) -> list[str]:
 
 
 def _prepend_grounding_preamble(goal: str, root: dict) -> dict:
-    """Prepend the deterministic entity-resolution node to the proposed tree (UP-R14).
+    """Prepend the deterministic entity-resolution node to the proposed tree.
 
     The resolver is the LIVE memory graph when one is wired, so a goal naming a known entity
     resolves it up front; with no graph the preamble still emits, degraded to name-only context so
@@ -1494,12 +1493,12 @@ def _grill_surface(
     reports the trigger and the probes (both derivable with no model call) and hands the caller the
     protocol's own vocabulary to build rounds with.
 
-    The risk scan is passed through rather than skipped: the plan makes ANY risk-registry hit
+    The risk scan is passed through rather than skipped: ANY risk-registry hit must
     force `rigor: deep`, and `deep_triggered` implements it — but measured, nothing was feeding it
     hits, so that half of the trigger was present and inert. A destructive plan the classifier
     happened to call `standard` would have gone ungrilled.
 
-    `topics` are the UP-R14 retrieval queries: the goal's nouns the lookup channels should search
+    `topics` are the retrieval queries: the goal's nouns the lookup channels should search
     BEFORE asking, so a discoverable fact is looked up rather than put to the user as a question.
 
     Best-effort: a missing grill block loses advice, never enforcement.
@@ -1651,7 +1650,7 @@ def _review_surface(goal: str, definition: dict, routing: dict | None) -> dict:
 
 
 def _preflight_surface(definition: dict) -> dict:
-    """UP-R3: what this plan needs that this system does not have — BEFORE approval.
+    """What this plan needs that this system does not have — BEFORE approval.
 
     The same `workflows/preflight` the run-start gate uses, so a plan-time green and a run-start
     green cannot disagree about credentials, binaries, models or action providers. Reached from
@@ -1664,10 +1663,10 @@ def _preflight_surface(definition: dict) -> dict:
     tree. That also makes this call identical to the two run-start ones.
 
     `provider_requirement_gap` is appended because preflight cannot see one hop past a provider
-    NAME — the plan's own execution log recorded that aggregation as blocked on requirement data
-    the grounding bundle does not carry, and it still is: `ActionProvider` declares no
-    requirements. Reporting that as a typed warning is the honest shape; letting the report say
-    `ok` with a class unexamined is the inertness this plan family exists to catch.
+    NAME — that aggregation is blocked on requirement data the grounding bundle does not carry:
+    `ActionProvider` declares no requirements. Reporting that as a typed warning is the honest
+    shape; letting the report say `ok` with a class unexamined is the inertness this check
+    exists to catch.
 
     Best-effort like the other surfaces, and deliberately non-blocking: at plan time nothing has
     started, so a missing credential is advice about what approval commits to, not a refusal.
@@ -1714,14 +1713,14 @@ def _contract_review(definition: dict) -> dict:
 
 
 def _eval_surface(template: str, definition: dict) -> dict:
-    """This template's DERIVED benchmark (UP-R13.3), produced at plan time.
+    """This template's DERIVED benchmark, produced at plan time.
 
     The eval is derived from the template artifact rather than maintained beside it, so it cannot
     go stale: a routing suite that passes while the template it picked is subtly wrong is exactly
     the false confidence this closes.
 
     `graded_checks` is reported as a COUNT and a list of what a judge would have to grade, never as
-    a verdict — grading needs a judge and LEARNING-FLYWHEEL owns that harness. A spec whose quality
+    a verdict — grading needs a judge and the learning loop owns that harness. A spec whose quality
     checks are un-gradeable here is the correct output, and saying so is the point: it separates
     "this template validated" from "this template is good", which is what makes the number
     actionable at all.
@@ -1751,7 +1750,7 @@ def _grounding_for(goal: str, classified: Any, project_id: str = "") -> dict | N
     scaffold — the bundle is an enhancement to planning, and a planner with a stub is still better
     off than one handed an exception.
 
-    When `project_id` binds an existing codebase, the brownfield context pass (UP-R17) feeds the
+    When `project_id` binds an existing codebase, the brownfield context pass feeds the
     prompt's `codebase_context` so generated stages assume the project's real language, test
     framework and layout instead of generic scaffolding.
     """
@@ -1790,7 +1789,7 @@ def _grounding_for(goal: str, classified: Any, project_id: str = "") -> dict | N
 
 
 def _codebase_context_for(project_id: str) -> str:
-    """The brownfield `CODEBASE_CONTEXT` block for a project-scoped plan, or "" (UP-R17).
+    """The brownfield `CODEBASE_CONTEXT` block for a project-scoped plan, or "".
 
     A project grounds the plan only when it BINDS a codebase on disk (`workspace_dir`): a project
     whose context dir is its own working area has no source tree to read conventions from. The
@@ -1911,7 +1910,7 @@ def _match_library(goal: str, classified: Any) -> Any:
 def _library_profiles(*, session_id: str = "") -> list[Any]:
     """The matchable library: bundled templates PLUS frozen candidates. Empty on read failure.
 
-    UP-R9: candidates join the same tiered matcher as shipped templates, which is the whole point of
+    Candidates join the same tiered matcher as shipped templates, which is the whole point of
     freezing them. A candidate stored where the matcher cannot see it would leave the next similar
     intent re-generating a spec — and two runs of one request producing two different graphs is the
     drift the freeze exists to stop.
@@ -2082,7 +2081,7 @@ def _plan_from_template(
     result = _run(service.get_def(template))
     definition = result.get("definition") or {} if result.get("ok") else {}
     if not definition:
-        # UP-R9: a frozen candidate is a real plan source. Checked after the def registry so a
+        # A frozen candidate is a real plan source. Checked after the def registry so a
         # shipped template of the same name always wins.
         definition = _candidate_definition(template) or {}
     if not definition:
@@ -2107,28 +2106,28 @@ def _plan_from_template(
         # needs to know which happened: an auto-matched template is a decision to check, a named
         # one is a decision already made.
         **({"routing": routing} if routing else {}),
-        # UP-R9: mining travels with the template path too. A user who said "template this, from
+        # Mining travels with the template path too. A user who said "template this, from
         # that conversation" needs the session's real permission signature on the plan they are
         # about to adapt — dropping it here would make mining work only on the scaffold path.
         **_mined_surface(mined, source_session_id),
-        # UP-R9: present ONLY for a frozen candidate. Its absence is what says "shipped template",
+        # Present ONLY for a frozen candidate. Its absence is what says "shipped template",
         # so a reader is never left guessing which provenance they are looking at.
         **({"candidate": definition["candidate"]} if definition.get("candidate") else {}),
-        # UP-R3/R8/R16: the review surface. Derived from the tree rather than declared, so the
+        # The review surface. Derived from the tree rather than declared, so the
         # launch form and the spec cannot disagree — measured, three shipped templates offered an
         # input nothing read.
         **_contract_review(definition),
-        # UP-R13.3: this template's derived benchmark, produced here rather than in a separate
+        # This template's derived benchmark, produced here rather than in a separate
         # script — an eval no live surface imports is an eval nobody runs.
         **_eval_surface(template, definition),
-        # UP-R4/R7: the announce block, the cost shape, and the markdown artifact. Veto-first
+        # The announce block, the cost shape, and the markdown artifact. Veto-first
         # ordering — detection and risk decide whether to read on; the pipeline is what they read
         # if they do.
         **_review_surface(goal, definition, routing),
-        # UP-R3: and whether this system can actually RUN it. Same checker as the run-start gate,
+        # And whether this system can actually RUN it. Same checker as the run-start gate,
         # so approving this plan is not approving a run that dies at node one.
         **_preflight_surface(definition),
-        # UP-R4/R6: what autonomy this plan may be RUN at, and what it will stop for. Computed at
+        # What autonomy this plan may be RUN at, and what it will stop for. Computed at
         # plan time so "this will stop you twice" is a fact before approval rather than a discovery
         # made while waiting.
         **_autonomy_surface(definition),

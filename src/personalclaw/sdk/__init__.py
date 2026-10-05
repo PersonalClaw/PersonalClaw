@@ -1,6 +1,6 @@
 """PersonalClaw App SDK — the STABLE surface an installable app may import.
 
-This is the published core/app boundary (workspace-core-app-split). A separated
+This is the published core/app boundary. A separated
 app imports ONLY from ``personalclaw.sdk.*`` — never deep core internals like
 ``personalclaw.dashboard`` or ``personalclaw.agents.native`` — so the core can evolve
 its internals without breaking apps, and an import-lint can enforce the boundary.

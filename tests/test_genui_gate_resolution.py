@@ -1,6 +1,6 @@
 """A genui FORM widget emitted by a workflow gate resolves the gate and the run ADVANCES.
 
-AMBIENT-SURFACES §5.4 / change AS-6, second routing case: *"workflow-emitted widgets (a skill
+The second genui action-routing case: *"workflow-emitted widgets (a skill
 or workflow node emits a genui tree as a gate's prompt) → the action resolves the run's
 wait/gate node through the resume-target path — closing the loop from generated UI back into
 execution."*
@@ -133,7 +133,7 @@ class TestTheGateIsReallyWaiting:
 
 class TestTheRunAdvances:
     async def test_a_form_submission_resolves_the_gate_and_the_run_advances(self) -> None:
-        """The change's clause, end to end: the widget's payload IS the gate answer, and the
+        """The routing case, end to end: the widget's payload IS the gate answer, and the
         node after the gate produces its output without anybody driving the engine."""
         controller, token = await _parked()
         result = controller.resume(token, {"amount": "12.40", "vendor": "Acme"}, by=YOU)
@@ -166,7 +166,7 @@ class TestTheRunAdvances:
         assert again["code"] in ("WF_RESUME_UNKNOWN_TOKEN", "WF_RESUME_ALREADY_USED")
 
     async def test_an_unknown_token_does_not_advance_the_run(self) -> None:
-        """The falsification leg for the clause above: with a bad token the SAME assertions
+        """The falsification leg for the test above: with a bad token the SAME assertions
         must fail, so "the run advanced" is evidence about the answer and not about time."""
         controller, _token = await _parked()
         refused = controller.resume("0" * 32, {"amount": "1", "vendor": "A"}, by=YOU)

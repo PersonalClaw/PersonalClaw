@@ -1,4 +1,4 @@
-"""The self-updating project-context review (LEARN E1.4).
+"""The self-updating project-context review.
 
 The five clauses of the contract, each pinned against the REAL proposal queue, HierarchyStore and
 SkillsLoader (monkeypatched to a tmp home), not hand-built state:

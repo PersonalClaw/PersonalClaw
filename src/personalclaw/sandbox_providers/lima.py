@@ -5,7 +5,7 @@ bind-mount container, ``lima`` runs it inside a Lima-managed guest VM via ``lima
 the isolation is a full hardware-virtualised boundary (the Firecracker-class microVM model)
 rather than a shared-kernel container. Lima is the
 macOS-first path — a stopped or missing Lima instance is the exact ``needs-input`` parking case
-EI-2 established for a no-Docker machine.
+the ``docker`` tier established for a no-Docker machine.
 
 **Unlike ``docker``, this is NOT a core builtin.** It ships as an installable ``sandbox`` app
 (``apps/lima-sandbox``) and is registered/unregistered on enable/disable through
@@ -67,7 +67,7 @@ _INSTANCE_ENV = "PERSONALCLAW_SANDBOX_LIMA_INSTANCE"
 _HOST_MOUNT_ENV = "PERSONALCLAW_SANDBOX_LIMA_HOST_MOUNT"
 _GUEST_MOUNT_ENV = "PERSONALCLAW_SANDBOX_LIMA_GUEST_MOUNT"
 
-# Cached availability probe (the plan's short-TTL cached probe — a per-spawn ``limactl list``
+# Cached availability probe (a short-TTL cache — a per-spawn ``limactl list``
 # would add latency to every launch). Keyed by instance name → ``(checked_monotonic, ok, reason)``
 # so two instances do not share a verdict.
 _PROBE_TTL_SECS = 30.0

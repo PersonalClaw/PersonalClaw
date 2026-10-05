@@ -16,16 +16,16 @@ Three claims are load-bearing here, and each has an easy false version:
    still list it and the block would still be on disk. So the assertion goes through
    `loop_convergence._supervisor_policy` and carries a POSITIVE CONTROL: the same node with the
    block removed must resolve to `orchestrated`, which is what the default was before this landed.
-3. **The four un-ported kinds are untouched.** A session that breaks four working kinds to land
+3. **The four un-ported kinds are untouched.** A change that breaks four working kinds to land
    one is a regression, not a bridgehead — so their read-time resolution and their table policy are
    both asserted, and the launch path must REFUSE them by name rather than run a stub.
 
-**What this session deliberately does NOT do, railed rather than claimed.** The declared
+**What this change deliberately does NOT do, railed rather than claimed.** The declared
 convergence is resolved into the policy but has no consumer on the run path yet:
 `loop/supervisor.done_signal` is the ONE evaluator and takes a `Loop`, reading `kind_config` and
 `workspace_dir` off it — the `node_config` / `run_input` homes that the 33-column measurement says
 require the loop's phases to already be a graph. `test_the_run_path_has_no_convergence_consumer_yet`
-holds that gap in BOTH directions per the plan's criterion 9, so the session that closes it is
+holds that gap in BOTH directions, so the change that closes it is
 forced to update the claim instead of leaving a stale docstring behind.
 """
 
@@ -63,7 +63,7 @@ PORTED = "general"
 #: renamed template moves this suite with it instead of silently testing the wrong spec.
 TEMPLATE = loop_aliases.KIND_TO_TEMPLATE[PORTED]
 
-#: The four kinds session 1 did NOT port. Derived by subtraction, so a fifth kind appearing in
+#: The four kinds this change did NOT port. Derived by subtraction, so a fifth kind appearing in
 #: the alias table joins the "must still work" set automatically rather than being forgotten.
 UNPORTED = tuple(sorted(set(loop_aliases.KIND_TO_TEMPLATE) - {PORTED}))
 
@@ -203,7 +203,7 @@ def _drive_the_template() -> tuple[RunStatus, str, _FakeSubagents]:
 
 
 def test_a_general_kind_run_executes_and_writes_its_own_ledger() -> None:
-    """THE clause: `general` runs through the engine as a `WorkflowRun`.
+    """THE claim: `general` runs through the engine as a `WorkflowRun`.
 
     Asserted on the run's OWN ledger, not on a mapping table. The behaviour this replaces —
     read-time alias resolution with no launch — produces no run and therefore no ledger at all,
@@ -639,7 +639,7 @@ def test_the_kind_launch_path_starts_a_run_for_the_ported_kind() -> None:
     Driven through the service (not the controller) because the claim is that a caller holding
     only a legacy kind name can start a run — which is what no code path could do before.
 
-    `skip_preflight` because preflight checks credentials and model bindings, which this lane has
+    `skip_preflight` because preflight checks credentials and model bindings, which this test has
     none of; the door is what is under test, not the credential gate that already has its own suite.
     """
     sup = _RecordingSupervisor()
@@ -803,17 +803,17 @@ def test_an_unported_kind_keeps_its_read_time_resolution_and_table_policy(kind: 
     ), f"{kind}'s loop-path policy no longer matches its declared table row"
 
 
-# ── the residual, railed in both directions (the plan's criterion 9) ──
+# ── the residual, railed in both directions ──
 
 
 def test_the_run_path_has_no_convergence_consumer_yet() -> None:
-    """What session 1 did NOT deliver, held so it cannot become a stale docstring.
+    """What this change did NOT deliver, held so it cannot become a stale docstring.
 
     The template's convergence is RESOLVED into the policy (asserted above) but nothing on the run
     path READS `policy.convergence`: `loop/supervisor.py` is the ONE evaluator and its
     `done_signal` takes a `Loop`, reading `kind_config` and `workspace_dir` off it. Those are the
     `node_config` / `run_input` destinations the 33-column census says require the loop's phases to
-    already be a graph — i.e. a later session's work, not a gap to paper over here.
+    already be a graph — i.e. later work, not a gap to paper over here.
 
     Railed in BOTH directions, which is the point:
 

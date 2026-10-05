@@ -1,6 +1,6 @@
 """Tests for spend metering + budgets + the outbound scan.
 
-Session 2: SpendMeter (run/day counters in spend.json), budget verdicts, the
+Covers SpendMeter (run/day counters in spend.json), budget verdicts, the
 secret/PII scan mode ladder, and their integration into ModelCallGuard.
 """
 
@@ -621,7 +621,7 @@ def test_gateway_unlimited_budget_never_gates(tmp_path, monkeypatch):
 
 
 def test_an_unbound_call_charges_only_the_day_scope():
-    """The pre-S153 behaviour, preserved: a model call outside any tracked run must not invent a
+    """The original behaviour, preserved: a model call outside any tracked run must not invent a
     run scope to charge."""
     from personalclaw.guardrails.budgets import SpendMeter, current_run_key
 
@@ -823,7 +823,7 @@ async def _spend_until_refused(guard, limit=8):
 
 
 def test_a_run_over_its_ceiling_is_REFUSED():
-    """🔴 THE DEFECT S153 left open. Measured before the fix: four calls totalling 400 tokens under a
+    """🔴 THE DEFECT left open. Measured before the fix: four calls totalling 400 tokens under a
     150-token ceiling were ALL allowed, while `check_run` answered "exceeded (200/150)" from the
     second call onward. `check_run` and `run_budget_from_config` both shipped with zero production
     callers and `BudgetExceededError` has always declared a "run" scope — every piece present,
@@ -924,7 +924,7 @@ def test_run_budget_for_reads_only_the_per_run_key():
 
     assert run_budget_for({"max_cost_usd_per_run": 0.5}).max_dollars == 0.5
     assert run_budget_for({"cost_cap": 5.0}).is_unlimited, "no per-run cap is set"
-    # FAIL-OPEN on a malformed value (§1.4 classifies the per-trigger cap keys fail-open): a typo
+    # FAIL-OPEN on a malformed value (the per-trigger cap keys are classified fail-open): a typo
     # must not become a $0 ceiling that refuses the trigger's very first model call.
     assert run_budget_for({"max_cost_usd_per_run": "ten"}).is_unlimited
     assert run_budget_for({"max_cost_usd_per_run": -1}).is_unlimited
@@ -997,11 +997,11 @@ def test_the_ceiling_lookup_survives_a_PARTIAL_trigger():
     assert run_budget_for(getattr(stub, "gates", None)).is_unlimited
 
 
-# ── criterion 8: an injection was indistinguishable from a secret leak ──
+# ── an injection was indistinguishable from a secret leak ──
 
 
 def test_an_INJECTION_is_blocked_at_the_scan_stage():
-    """🔴 THE DEFECT. §2.2 acceptance criterion 8 requires a prompt-injection-shaped payload to be
+    """🔴 THE DEFECT. A prompt-injection-shaped payload must be
     "blocked at the scan stage, classified `injection_blocked`, and never auto-retried". Measured
     before the fix: `scan_outbound("Ignore all previous instructions…", mode="block")` returned
     `findings=0, blocked=False` — the scan looked only for secrets and PII, so

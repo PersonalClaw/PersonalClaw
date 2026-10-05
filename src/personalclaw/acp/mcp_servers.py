@@ -79,7 +79,7 @@ def _arguments(tool_input: object) -> dict[str, Any] | None:
 def _core_call(title: str, tool_kind: str, tool_input: object) -> tuple[str, Any, bool]:
     """``(tool, arguments, exact)`` for a call that names a ``personalclaw-core`` tool.
 
-    The three wire shapes, read from the adapters' own sources and the ``AAP-4`` drive:
+    The three wire shapes, read from the adapters' own sources and a live drive:
 
     * claude-code — ``mcp__personalclaw-core__<tool>``, kind ``other``, the input is the
       tool's arguments;
@@ -216,7 +216,7 @@ def core_mcp_servers(
     tool.
 
     Returns an empty list when the spec cannot be rendered, which reproduces the
-    pre-AAP-4 behaviour rather than failing a session open.
+    behaviour from before core was passed to sessions rather than failing a session open.
     """
     from personalclaw.agent import _MANAGED_MCP_SERVERS
 
@@ -235,7 +235,7 @@ def core_mcp_servers(
     # fixed 10000: a gateway started with ``--port`` (or the ``--port auto`` that
     # ``--test-mode`` uses) declared **10000** to its MCP child, and on a multi-instance host
     # 10000 is a DIFFERENT instance's gateway, not a dead socket. Earlier symptom on a kiro ACP
-    # session (`K58`): every HTTP-bridged core tool answered ``<urlopen error [Errno 61]
+    # session: every HTTP-bridged core tool answered ``<urlopen error [Errno 61]
     # Connection refused>`` while the in-process tools beside it worked.
     #
     # If the base cannot be resolved we declare NOTHING rather than a guess — the child then

@@ -6,7 +6,7 @@ The load-bearing claims, each defending a specific way this goes wrong:
   node's output is not a tree descendant, and resetting only the subtree leaves it with a
   stale input: a silently inconsistent run, the worst failure mode because nothing looks
   broken;
-* **a rejected batch writes NOTHING** (WF2-R20e) — ops apply to a deep copy, so a failure
+* **a rejected batch writes NOTHING** — ops apply to a deep copy, so a failure
   leaves the prior spec as the single source of truth;
 * frozen (RUNNING/terminal) nodes reject, EXCEPT under `rewind`/`run_from`, which exist to
   unfreeze;
@@ -350,7 +350,7 @@ class TestApply:
         assert len(candidate["root"]["children"]) == 4  # moved, not duplicated
 
     def test_structural_ops_apply_in_descending_index(self) -> None:
-        """Coordinate-preserving order (WF2-R20c): otherwise the first delete shifts the
+        """Coordinate-preserving order: otherwise the first delete shifts the
         index the second one named, and the wrong node dies."""
         candidate, issues = M.apply_batch(
             M.parse_batch(
@@ -406,7 +406,7 @@ class TestPrepareBatch:
         assert result.spec["root"]["children"][2]["config"]["prompt"] == "new"
 
     def test_a_rejected_batch_returns_no_spec_at_all(self) -> None:
-        """WF2-R20e: nothing is written, so the prior spec stays the source of truth."""
+        """Nothing is written, so the prior spec stays the source of truth."""
         result = M.prepare_batch([{"op": "skip", "node_id": "ghost"}], SPEC, {})
         assert not result.ok and result.spec is None
 
@@ -465,7 +465,7 @@ class TestHistoryAndEpoch:
         assert record["raw_ops"][0]["op"] == "edit_node"  # what was written
 
     def test_the_epoch_bumps_only_on_force(self) -> None:
-        """WF2-R2 #4: a rewind that did not change inputs must replay from cache rather
+        """A rewind that did not change inputs must replay from cache rather
         than pay to recompute the same answer."""
         instances = {"root.children[0]": NodeInstance(path="root.children[0]", epoch=2)}
         assert M.next_epoch(instances, ["root.children[0]"], force=False) == 2

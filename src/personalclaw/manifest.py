@@ -12,7 +12,7 @@ one hand-maintained map the drift test audits.
 
 Two renderings, one source: the gateway serves this at ``GET /api/manifest``
 (walking the live aiohttp route table), and the build-time offline reference
-(S3) renders the same ``build_manifest()`` output — the CLI-as-truth rule.
+renders the same ``build_manifest()`` output — the CLI-as-truth rule.
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
-"""APE-3 contract half: the background-worker contract an app writes against.
+"""The contract half: the background-worker contract an app writes against.
 
-Covers the four properties the change's acceptance clauses rest on:
+Covers the four properties the contract rests on:
 
 * the SDK facade and the core contract are the SAME objects (an installed app must not end
   up holding a different class than the host checks against);

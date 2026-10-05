@@ -6,8 +6,8 @@ import { ContextLedger } from './ContextLedger'
 //
 // The link must be reachable WITHOUT the user first opening the
 // collapsed disclosure themselves. A learning you have to go looking for is not visible, and
-// visibility is this plan's whole subject — a chip pointing at something behind a closed
-// disclosure moves the work from "hidden" to "hinted", which is not what the criterion asks.
+// visibility is this ledger's whole subject — a chip pointing at something behind a closed
+// disclosure moves the work from "hidden" to "hinted", which is not what the contract asks.
 //
 // So the contract under test is ONE ACTION with TWO HALVES:
 //   A. the tap OPENS the ledger disclosure, and
@@ -105,7 +105,7 @@ describe('The learned chip reaches the approve/edit surface in ONE action', () =
   })
 
   it('DEGRADE — an unknown origin still opens, and steals neither focus nor scroll', () => {
-    // Every message persisted before T2.2 arrives without an origin, and so will anything a
+    // Every message persisted before the field existed arrives without an origin, and so will anything a
     // future emitter adds. There is no surface to land on, so nothing may move: guessing one
     // would send the user where the artifact is not.
     ledger({ learnedOrigin: 'sop' })

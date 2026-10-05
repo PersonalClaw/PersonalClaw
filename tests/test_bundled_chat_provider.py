@@ -2,7 +2,7 @@
 
 **What has to be true, and why each half needs its own kind of proof.**
 
-The clause OU-14 cannot cheat is "a first chat turn RESOLVES against the bundled model … a
+The clause the floor cannot cheat is "a first chat turn RESOLVES against the bundled model … a
 real turn rather than the calm setup-state". That splits into two claims with two different
 failure modes:
 
@@ -24,7 +24,7 @@ failure modes:
 ``bundled-model-signoff.txt``), so a test that required it would SKIP in CI —
 and a skipped test is exactly the arm that hides a broken executor. Every test below builds its
 own tiny GGUF, so the whole file runs everywhere, always. The shipped weight is driven
-separately and end to end by ``scripts/ou14_zero_config_drive.py`` (and by
+separately and end to end by ``scripts/zero_config_first_turn_drive.py`` (and by
 ``tests/test_bundled_model_gate.py``'s drive tests), which is where "the real bundle answers"
 is asserted.
 """
@@ -759,7 +759,7 @@ def test_a_fetched_weight_yields_a_credential_free_floor_entry_declaring_chat(
 def test_availability_never_greys_out_the_app_whose_card_is_the_way_to_fix_it(
     rail, home, monkeypatch
 ) -> None:
-    """🔴 The flip the owner decision forced, pinned so it cannot quietly revert.
+    """🔴 The flip the downloadable weight forced, pinned so it cannot quietly revert.
 
     Core greys out an app whose ``availability()`` is False. While the weight shipped in the
     wheel, "no weight in this install" WAS a permanent failure and this returned False. It is
@@ -1055,7 +1055,7 @@ def test_a_binding_to_the_model_before_its_download_says_why_it_cannot_answer(
 def test_the_download_makes_it_ready_listed_and_bindable_without_a_restart(
     rail, home, live, monkeypatch, tmp_path
 ) -> None:
-    """Item 3 of the report: after the download the model list stayed empty and nothing was
+    """After the download the model list stayed empty and nothing was
     bound. It must appear in the ONE chat model list, bind, and stay named as the floor."""
     from personalclaw.dashboard import handlers_system as hs
     from personalclaw.dashboard.handlers import model_registry as mr
@@ -1152,7 +1152,7 @@ def test_the_offer_names_the_model_a_person_knows(rail, live, monkeypatch) -> No
 
 
 def test_the_provider_streams_a_real_completion_from_the_bundled_weight(rail, tmp_path) -> None:
-    """The provider-level shape of clause 4: text comes out, and a COMPLETE event ends it."""
+    """The provider-level shape of a real turn: text comes out, and a COMPLETE event ends it."""
     weight, _ = tiny_gguf(tmp_path / "gen")
     provider = rail.BundledChatProvider({"weight_path": str(weight), "max_output_tokens": 6})
 
@@ -1169,7 +1169,7 @@ def test_the_provider_streams_a_real_completion_from_the_bundled_weight(rail, tm
     assert events[-1].kind == "complete"
     # A random tiny model says nothing meaningful, so what is asserted is that the pipeline
     # produced decoded TEXT — the shipped weight's coherence is driven by
-    # scripts/ou14_zero_config_drive.py, which quotes the reply.
+    # scripts/zero_config_first_turn_drive.py, which quotes the reply.
     assert any(e.kind == "text_chunk" for e in events)
     assert provider.context_usage_pct() is not None
 

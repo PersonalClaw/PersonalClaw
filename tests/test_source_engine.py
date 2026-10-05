@@ -1,6 +1,6 @@
 """WatchedSource store + SourceEngine poll loop.
 
-Covers the change's acceptance criteria: the knowledge.db migration adds the source tables + the
+Covers: the knowledge.db migration adds the source tables + the
 item source_id/guid columns with UNIQUE(source_id, guid); the engine polls a fixture
 source on schedule and writes+enqueues new items; a kill-mid-poll + restart yields no
 duplicate and no lost item (cursor + seen-set atomicity + recover_pending); the SOURCE
@@ -36,7 +36,7 @@ def store(tmp_path):
     return KnowledgeStore(str(tmp_path / "knowledge.db"))
 
 
-# ── a poll-capable fixture provider (§1.1 shape) ───────────────────────────────
+# ── a poll-capable fixture provider ────────────────────────────────────────────
 
 
 class FixtureSourceProvider(KnowledgeSourceProvider):

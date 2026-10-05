@@ -1,6 +1,6 @@
 """Generative-UI catalog + the agency-free ``visualize`` primitive.
 
-Covers the three server-side surfaces AS-4 adds:
+Covers its three server-side surfaces:
 
 * the genui component CATALOG + its mechanically-derived authoring prompt (never
   hand-maintained — it is generated from ``CORE_COMPONENTS``);

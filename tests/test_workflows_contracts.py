@@ -1,4 +1,4 @@
-"""Tests for derived parameters, stage contracts and decision typing (UP-R3/R8/R16).
+"""Tests for derived parameters, stage contracts and decision typing.
 
 Every mechanism here replaces a hand-maintained artifact with a derived one, so the tests measure
 against the SHIPPED library rather than fixtures — a fixture would let the derivation drift into
@@ -9,7 +9,7 @@ Two findings these tests encode, both measured on the real library:
 * THREE of eighteen templates declared an input nothing read. One let a user set `apply: true` on a
   consolidation pass and watch the node run with `apply: false` — no effect, no error.
 * FIVE templates ended on a write with nothing establishing the work was right. The contract lint
-  found them; four more (from an earlier slice) are recorded as findings rather than fixed here.
+  found them; four more, from earlier work, are known and not fixed here.
 """
 
 import json
@@ -52,7 +52,7 @@ def stage(node_id: str, **cfg) -> dict:
     return {"kind": "stage", "id": node_id, "config": {"prompt": "x", **cfg}}
 
 
-# ── derived parameters (UP-R8) ──
+# ── derived parameters ──
 
 
 def test_the_derived_schema_is_what_the_tree_references():
@@ -214,7 +214,7 @@ def test_the_extraction_serializes_with_both_flags():
     assert payload["extraction_failed"] is False
 
 
-# ── stage contracts (UP-R3) ──
+# ── stage contracts ──
 
 
 def test_a_gate_after_a_stage_verifies_it():
@@ -355,7 +355,7 @@ def test_an_unverifiable_contract_carries_its_review_note():
 
 @pytest.mark.parametrize("name", TEMPLATES)
 def test_every_shipped_template_still_validates(name):
-    """The gates added by this session must not break any template."""
+    """The gates added here must not break any template."""
     root = spec_of(name)["root"]
     errors = [i for i in validate_node_tree(Node.from_dict(root)).issues if i.severity == "error"]
     assert errors == [], f"{name}: {[i.code for i in errors]}"
@@ -380,7 +380,7 @@ def test_the_templates_this_program_authored_have_a_machine_check(name):
     assert not any(i.startswith("no stage") for i in issues), name
 
 
-# ── decision typing (UP-R16) ──
+# ── decision typing ──
 
 
 def test_a_gate_whose_output_is_consumed_is_blocking():

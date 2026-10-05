@@ -5,8 +5,8 @@ Mirrors :mod:`personalclaw.trigger_sources.registry` and ``sync_transports/regis
 installed store here on app enable and removes it on disable. A dict at module scope, not a class —
 the same shape the three sibling registries already use, so this is not a fourth idiom.
 
-**Registered ≠ trusted with execution.** A registered store is READ, and that is all: §3 says a
-trigger provider "contributes trigger rows, never execution". Nothing here hands a provider a fire,
+**Registered ≠ trusted with execution.** A registered store is READ, and that is all: a
+trigger provider contributes trigger rows, never execution. Nothing here hands a provider a fire,
 a payload, a run or a credential, and :func:`personalclaw.triggers.provider.armable` drops every row
 the provider attributes to somebody other than the owner before the service sees it.
 

@@ -1,4 +1,4 @@
-"""Dialect 4 — the A2A gateway.
+"""The A2A gateway.
 
 Three literal routes, all outside the dashboard's cookie-auth world, all behind the
 shared inbound seam (`gate.admission_problem` → `auth.peer_allowed` → bearer → caps):
@@ -287,18 +287,18 @@ def _lookup_client(presented: str) -> tuple[Any | None, str]:
 
 
 def outbound_policy() -> Any:
-    """The egress posture for an OUTBOUND A2A call (EXTERNAL-ACCESS §5, outbound half).
+    """The egress posture for an OUTBOUND A2A call.
 
     Lives here rather than in the ``a2a-action`` app so the *policy* decision is in core,
     reviewable, and testable, while the app supplies only the URL. An app that composed its
     own policy could compose a permissive one.
 
-    🔴 **Not** ``CONNECTOR`` layered by ``egress_policy_for``, which is what §5's prose
-    says. Measured: ``CONNECTOR`` has ``allow_only=False``, and ``egress_policy_for``
+    🔴 **Not** ``CONNECTOR`` layered by ``egress_policy_for``, the obvious
+    composition. Measured: ``CONNECTOR`` has ``allow_only=False``, and ``egress_policy_for``
     UNIONS the operator's ``allow_hosts`` onto the profile's — an additive waiver, not a
     restriction. So that composition reaches EVERY public host and the allow-list is
     decorative, which is the exact defect ``capture_proxy.capture_policy`` records for a
-    STRICT-based build. The clause's own words are "deny-by-default host allowlist", and
+    STRICT-based build. The requirement is a "deny-by-default host allowlist", and
     only ``allow_only=True`` delivers that: an empty list must mean "nowhere to go", not
     "anywhere". ``CONNECTOR``'s size and timeout ceilings are kept by copying them onto the
     LISTED base, so nothing is lost by not using it as the base.

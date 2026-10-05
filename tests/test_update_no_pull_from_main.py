@@ -1,7 +1,7 @@
-"""RUM-4 rail: pull-from-main is retired from the git auto/apply paths.
+"""Rail: pull-from-main is retired from the git auto/apply paths.
 
-The change's falsifiable clause: *"a rail test greps BOTH modules and REDS if
-``reset --hard origin/`` returns on an auto path."* The two modules that own the
+The falsifiable claim: a rail test greps BOTH modules and REDS if
+``reset --hard origin/`` returns on an auto path. The two modules that own the
 git advance are:
 
 * ``personalclaw.gateway`` — ``GatewayOrchestrator._auto_apply_update`` (the
@@ -14,7 +14,7 @@ the ``nightly`` channel, fast-forward — never ``git pull`` and never
 ``git reset --hard origin/<branch>``.
 
 **Why the matcher looks for the operational form, not one prose spelling.** The
-pre-RUM-4 destructive reset was spawned as a subprocess ARGUMENT LIST —
+retired destructive reset was spawned as a subprocess ARGUMENT LIST —
 ``"git", "reset", "--hard", f"origin/{branch}"`` — in which the contiguous string
 ``reset --hard origin/`` never actually appears. A rail that only searched for
 that one contiguous spelling would be VACUOUS against the exact form the code
@@ -34,7 +34,7 @@ import personalclaw.gateway as gateway_mod
 
 # Every operational residue of pull-from-main, in the forms it can actually take.
 _BANNED = (
-    '"--hard"',  # `git reset --hard` as a subprocess arg (the pre-RUM-4 form)
+    '"--hard"',  # `git reset --hard` as a subprocess arg (the retired form)
     "'--hard'",
     "reset --hard",  # the same as a command string / shell invocation / prose
     "--hard origin/",
@@ -68,8 +68,8 @@ def test_auto_and_apply_modules_carry_no_pull_from_main_residue() -> None:
 
 def test_the_rail_is_not_vacuous_it_fires_on_each_reintroduction() -> None:
     """Vacuity floor: prove the matcher would catch the residue in every form it
-    can take, including the arg-list spelling the pre-RUM-4 code actually used."""
-    # The exact pre-RUM-4 arg list — the contiguous phrase "reset --hard origin/"
+    can take, including the arg-list spelling the retired code actually used."""
+    # The exact retired arg list — the contiguous phrase "reset --hard origin/"
     # is NOT in it, but the "--hard" arg is, which is why the rail bans the arg.
     arg_list_reset = '"git", "reset", "--hard", f"origin/{branch}"'
     assert _residues(arg_list_reset)  # caught via '"--hard"'

@@ -58,7 +58,7 @@ def _capture_retention(section: dict) -> float:
     """The capture retention window, resolved ONCE from either spelling.
 
     Two keys can express it in `config.json` — the nested `capture.retention_days`
-    (the §7.2 contract the store and the proxy read, and since #2950 the ONLY spelling
+    (the contract the store and the proxy read, and since #2950 the ONLY spelling
     `_EDITABLE_CONFIG`/the ExternalAccessPanel control write) and the legacy flat
     `capture_retention_days` (kept as a read-only mirror for older external readers).
     Resolving here and mirroring into both fields is what keeps the shipped operator
@@ -73,7 +73,7 @@ def _capture_retention(section: dict) -> float:
 
 @dataclass
 class ExternalAccessSurfaceConfig:
-    """One inbound surface's switches (EXTERNAL-ACCESS §1.1).
+    """One inbound surface's switches.
 
     Both default to the CLOSED position. `enabled` in particular is fail-closed by
     design: a missing or corrupt value reads False, because an inbound network
@@ -103,7 +103,7 @@ class ExternalAccessSurfaceConfig:
 
 @dataclass
 class CaptureSurfaceConfig(ExternalAccessSurfaceConfig):
-    """The capture proxy's surface switches PLUS its two operator knobs (§7.1, §7.2).
+    """The capture proxy's surface switches PLUS its two operator knobs.
 
     Capture is the one surface that owns durable state and outbound forwarding, so it
     needs two fields the other four do not: how long recorded sessions are kept, and
@@ -112,8 +112,8 @@ class CaptureSurfaceConfig(ExternalAccessSurfaceConfig):
     than restating them, so a future change to the shared pair cannot drift here.
 
     `upstream_allowlist` is fail-closed in the strong sense: empty means the streaming
-    proxy has no approved egress hosts, not "allow anything". §7.1 requires an
-    operator-visible allow-list precisely so upstream forwarding is never
+    proxy has no approved egress hosts, not "allow anything". The
+    operator-visible allow-list exists precisely so upstream forwarding is never
     hand-rolled unguarded egress, and a default that allowed all hosts would make the
     guard decorative.
     """
@@ -149,9 +149,9 @@ class CaptureSurfaceConfig(ExternalAccessSurfaceConfig):
 
 @dataclass
 class ExternalAccessConfig:
-    """The shared inbound access seam (EXTERNAL-ACCESS §1, §11). Off unless configured.
+    """The shared inbound access seam. Off unless configured.
 
-    Replaces MCP-READONLY-INBOUND's single-surface `InboundConfig` outright (clean
+    Replaces the read-only MCP surface's single-surface `InboundConfig` outright (clean
     break, no `inbound` back-read): that section could only describe one surface, and
     four more were arriving. The kill switches are LAYERED — master, per-surface,
     per-client (`inbound_clients.json`) and the guardrails incident flag — and every
@@ -198,7 +198,7 @@ class ExternalAccessConfig:
     )
     rate_rps: float = field(
         default=1.0,
-        metadata=_meta("Rate (req/s)", "Sustained per-client request rate (§1.3 cap override)."),
+        metadata=_meta("Rate (req/s)", "Sustained per-client request rate."),
     )
     rate_burst: int = field(
         default=20,

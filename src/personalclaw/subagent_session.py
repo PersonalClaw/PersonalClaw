@@ -36,7 +36,7 @@ def session_kwargs(info: SubagentInfo, *, unattended: bool) -> tuple[str | None,
         extra["sandbox"] = info.sandbox
     if unattended:
         extra["unattended"] = True
-    # Dry-run replay (T9): observe-mode — write-capable tools don't execute, so
+    # Dry-run replay: observe-mode — write-capable tools don't execute, so
     # the run previews what WOULD happen with no side effects.
     if info.dry_run:
         extra["dry_run"] = True

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { FormFooter } from './FormFooter'
 
-// ── Sticky edit-mode action bar contract (design-system consistency S2/T2.2) ──
+// ── Sticky edit-mode action bar contract ────────────────────────────────────
 // This wrapper was rendered byte-identically inline by seven *Detail edit forms
 // (Task, Schedule, Lifecycle, Workflow, Agent, Prompt, Snippet). The primitive is
 // the single source; this test locks the four traits that make it a *sticky pinned

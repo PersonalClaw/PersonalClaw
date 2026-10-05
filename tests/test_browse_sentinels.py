@@ -1,7 +1,7 @@
 """The sentinel action vocabulary + parser (browse/sentinels.py).
 
-Covers acceptance criteria part 3: ref-based sentinels ``CLICK <ref>`` / ``TYPE <ref>(value)`` parse
-correctly, the full §2 verb set is recognized, and every action round-trips (an action the
+Covers: ref-based sentinels ``CLICK <ref>`` / ``TYPE <ref>(value)`` parse
+correctly, the full verb set is recognized, and every action round-trips (an action the
 agent emits parses back to the same ref+value).
 """
 

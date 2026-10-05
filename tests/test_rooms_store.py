@@ -55,7 +55,7 @@ def enabled(monkeypatch):
 
 
 def test_room_round_trips_create_list_archive(enabled):
-    """The first acceptance clause, end to end through the persisted index."""
+    """Create, list and archive, end to end through the persisted index."""
     room = store.create_room("Pricing debate")
     assert room.id == "pricing-debate", "the id is a slug derived from the title"
     assert store.list_rooms()[0].id == room.id
@@ -99,7 +99,7 @@ def test_a_blank_title_is_refused(enabled):
 
 
 def test_the_transcript_lands_at_the_declared_path(enabled):
-    """AR-2 names ``rooms/<id>/transcript.jsonl`` verbatim; this is that path."""
+    """The declared path is ``rooms/<id>/transcript.jsonl``; this is that path."""
     room = store.create_room("Path check")
     store.append_message(room.id, role="user", content="hello")
 
@@ -288,7 +288,7 @@ def test_members_persist_with_their_role_blurb_and_policy(enabled):
 
 @pytest.mark.parametrize("policy", ["all", "mention", "silent"])
 def test_all_three_listen_policies_persist_and_reload(enabled, policy):
-    """The acceptance criterion names exactly these three; each must survive a round trip."""
+    """There are exactly these three; each must survive a round trip."""
     room = store.create_room(f"Policy {policy}")
     store.add_member(room.id, "analyst", listen_policy=policy)
     assert store.get_room(room.id).members[0].listen_policy == policy
@@ -792,7 +792,7 @@ def test_a_non_member_gets_no_session(enabled):
 
 
 def test_a_room_session_key_leaves_the_human_as_sole_approver(enabled):
-    """The by-absence property the criterion names, pinned so a later change can't undo it.
+    """The by-absence property, pinned so a later change can't undo it.
 
     ``room:`` is in no stateless or unattended prefix tuple, so the INTERACTIVE profile
     applies and its approval mode is ``ask``. If a future change registered ``room:`` as
@@ -927,7 +927,7 @@ def _drain_after(sessions, room_id: str, content: str) -> list[str]:
 
 
 def test_a_human_message_makes_every_listening_member_hold_its_own_session(enabled):
-    """The residual AR-3 clause: a member HOLDS the session, in production, on the real path.
+    """A member HOLDS the session, in production, on the real path.
 
     The three properties that together mean the module is no longer test-only: a key per
     member (not one per room), a reply persisted under that member's own ``speaker``, and
@@ -1684,7 +1684,7 @@ def _pin_window(monkeypatch, input_tokens: int):
 
 
 def _long_room(room_id: str, count: int = 200) -> None:
-    """200 messages, the count AGENT-ROOMS T2.3 names."""
+    """200 messages by default: a long room."""
     for i in range(count):
         store.append_message(
             room_id,

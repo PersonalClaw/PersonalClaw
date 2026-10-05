@@ -291,7 +291,7 @@ def find_source(store: Any) -> dict | None:
 def ensure_source(store: Any) -> tuple[str, bool]:
     """The aggregate source row's id, plus whether THIS call created it.
 
-    The row's existence is the first-enable idempotency marker (§6.1 choice 3) — there is no
+    The row's existence is the first-enable idempotency marker — there is no
     separate "did the backfill run" flag to get out of step with it. A caller runs the
     backfill exactly when ``created`` is True, so a reboot (row present) never re-runs it,
     and a home that never enabled the mirror has no row at all.

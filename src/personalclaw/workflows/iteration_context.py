@@ -159,7 +159,7 @@ def capture_iteration_context(
                 parent_path, node.id, epoch=inst.epoch, decision=decision.to_dict()
             )
 
-        # LEARN-R18: a node that made a measurable bet says so in a `pending_outcome`
+        # A node that made a measurable bet says so in a `pending_outcome`
         # key {subject, metric, horizon_secs, baseline}. It is journaled as an OPEN
         # question at decision time — a single/list of dicts, mirroring `decision` —
         # and the curator's resolver measures ground truth once the horizon elapses.
@@ -199,7 +199,7 @@ def capture_iteration_context(
 
 
 def rehydrate_context(ctl: RunController) -> None:
-    """Rebuild the context lifecycle from the ledger on start/resume (WF2-R6).
+    """Rebuild the context lifecycle from the ledger on start/resume.
 
     Replays in ledger ORDER, so the last handoff per container wins and the carryover arrives
     already merged (each write journaled the merged state, so the final one is complete). A
@@ -301,7 +301,7 @@ def _carried_context(ctl: RunController, item: ReadyNode) -> str:
     node = dict(walk(ctl.root)).get(parent_path)
     if node is None:
         return ""
-    # Steering (R14) reaches BOTH session policies: a mid-run instruction must land even in a
+    # Steering reaches BOTH session policies: a mid-run instruction must land even in a
     # `continuous` loop, whose transcript otherwise carries no fresh block. Consume it single-
     # use — once it is in a prompt, a re-render must not repeat it. It goes LAST, after the
     # handoff/carryover, because it is the newest and highest-priority instruction.

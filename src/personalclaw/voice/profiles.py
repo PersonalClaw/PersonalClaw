@@ -32,7 +32,7 @@ path is resolved and asserted to live under the resolved profiles root, so a pla
 symlink (``voice_profiles/vp-evil -> /etc``) cannot be read or written through.
 Same posture as the uploads store's destination validation.
 
-Naming discipline (§ plan Overview): this is NOT ``AgentConfig.voice``, which is the
+Naming discipline: this is NOT ``AgentConfig.voice``, which is the
 agent's persona *text*. Nothing here adds a bare ``voice`` config key.
 """
 
@@ -327,7 +327,7 @@ def recompute_verified(profile: VoiceProfile) -> bool:
 def assert_artifact_release_allowed(profile: VoiceProfile, artifact: str) -> None:
     """Gate reading a clone profile's audio back out of the store.
 
-    Consent gates *off-machine* use (§1.3): plain local synthesis is never gated, but
+    Consent gates *off-machine* use: plain local synthesis is never gated, but
     handing the reference/locked clip of a cloned voice back over HTTP is the machine
     boundary, so a clone-kind profile must be verified. Revoking consent deletes the
     recording, the recompute goes false, and this starts refusing — the revocation is

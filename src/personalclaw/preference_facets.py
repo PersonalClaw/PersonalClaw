@@ -1,4 +1,4 @@
-"""Typed, decaying preference-facet model (learn-preference-facets).
+"""Typed, decaying preference-facet model.
 
 A principled user-profile layer distinct from contextual memory: preferences are
 **typed facets** with a **stability score that decays by class half-life**, so a
@@ -119,7 +119,7 @@ def base_stability(cue: str) -> float:
 
 def decay(value: float, age_days: float, half_life_days: float) -> float:
     """Exponential half-life decay: ``value × 0.5**(age/half_life)`` — the ONE decay
-    machinery PClaw's read-time-decay stores share (preference facets here + P11's
+    machinery PClaw's read-time-decay stores share (preference facets here + the
     engagement signals). Non-positive half-life ⇒ no decay (guards div-by-zero)."""
     if half_life_days <= 0:
         return value

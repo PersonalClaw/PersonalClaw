@@ -15,7 +15,7 @@ whose egress tier takes the network away (``net.policy.no_network_for_commands``
 source's poll, made for no run, is not; and on a host where ``detect_backend()`` answers
 ``none`` it is not applied at all. So the OS sandbox is a real control over the *filesystem*
 and no control a parse can count on over *egress*, and pretending otherwise would leave the
-property this change exists for resting on nothing.
+property this module exists for resting on nothing.
 
 The live rail is therefore in-process, installed by :data:`_PARSE_HARNESS_SRC` before the pack
 script is executed. It is **three mechanisms plus a verification**, and the division of labour

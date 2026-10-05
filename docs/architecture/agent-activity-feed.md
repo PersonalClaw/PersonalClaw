@@ -11,7 +11,6 @@ about loops, sessions or subagents beyond what is written here.
 - Contract + hook: `web/src/lib/useAgentActivity.ts`
 - First-party world: `web/src/pages/dashboard/world/` (`AgentWorld.tsx` paints,
   `worldScene.ts` is the pure scene model)
-- Plan: the plan (internal) §"Amendment" (b), task `A2-3`
 
 ## The shape
 
@@ -55,8 +54,8 @@ The fold reads only endpoints the dashboard already reads:
 | `GET /api/spawn` | background subagents | the monitor's own bounded list |
 | `GET /api/approvals` | **the `waiting_approval` state** | join key is `PendingApproval.session` |
 
-> The plan's contract text names **three** sources. The fourth is deliberate and was
-> added while implementing `A2-3`: `waiting_approval` is in the declared state
+> The contract was first written with **three** sources. The fourth is deliberate and was
+> added during implementation: `waiting_approval` is in the declared state
 > vocabulary and is **not reachable** from the other three. A loop parked on a tool
 > approval still reports `status: 'running'`, and the session LIST endpoint
 > (`ChatSessionSummary`) carries no `pending_approval` field — only the per-session
@@ -128,8 +127,8 @@ see a fetch in a branch it did not reach.
   at (reduced motion must not cost information). Audited with a positive control that
   the animated path *does* schedule frames.
 - **Rendering tier.** Orbit is a high-craft **canvas 2D** scene (layered additive glow,
-  per-node tone crossfade, eased orbits) — the "high-craft canvas" half of the plan's
-  "WebGL/shader-grade OR high-craft canvas" disjunction. A `webgl` tier was drafted and
+  per-node tone crossfade, eased orbits) — the "high-craft canvas" half of a
+  "WebGL/shader-grade OR high-craft canvas" choice. A `webgl` tier was drafted and
   removed rather than shipped untested: a shader pipeline cannot be exercised in jsdom,
   so it would have been a declared tier with an unverified runtime — a black rectangle
   for anyone whose shader compile failed. With no drawing context at all (headless, or
@@ -145,11 +144,10 @@ depends on seeing the animation to know what is running.
 ## Coordination note — app-contributed worlds
 
 **This is a doc note, not code.** Nothing in this repository loads a third-party world
-today, and this section is the forward hook `A2-3` owes
-APP-PLATFORM-EVOLUTION.
+today, and this section is the forward hook for the app platform.
 
 When app-contributed worlds land there, the contract above is the seam and needs no
-change. What that plan has to add:
+change. What the app platform has to add:
 
 1. **A `world` UI-module kind** in the manifest's existing UI seam. A world is a
    render-only module: it declares no `permissions.api` and no `permissions.events`,

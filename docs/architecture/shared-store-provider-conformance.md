@@ -4,16 +4,14 @@ A **shared-store provider** is any provider that serves records some of which we
 attributed to somebody *other than the local owner*: a multi-tenant task backend, a
 `trigger` store (the bundled `shared-automations` app), a future shared-memory provider.
 The moment a store is shared, four failure modes that a single-user store never sees
-become possible — and the internet-research companion
-(`instances/personalclaw/state/research/team-shared-harness-research.md`, private) found
-that every vendor building on shared agent state has hit at least one of them.
+become possible.
 
 This document is the **contract** every shared-store provider must satisfy, and it is
 **executable**: `personalclaw.sdk.shared_store.assert_shared_store_contract` turns "this
 provider handles a shared store safely" from a promise into a gate. A provider runs its
 own records against the kit in its test suite; a deliberately-unsafe provider *fails*.
 
-The soul guardrail (from `TEAM-SHARED-HARNESS`): the harness is a **client** of shared
+The soul guardrail: the harness is a **client** of shared
 stores, never a shared-store *server*, and the research's sharpest negative result —
 **nobody applies CRDTs (Automerge/Loro/Yjs) to shared agent state; everyone uses
 server-authoritative identity + ownership conventions** — is a constraint we *adopt*, not

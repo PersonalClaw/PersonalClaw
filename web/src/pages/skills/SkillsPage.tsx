@@ -52,7 +52,7 @@ export function SkillsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
     query={query} setQuery={setQuery} />
 }
 
-// ── Proposals (skill-evolution-proposal-only) ─────────────────────────────────
+// ── Proposals ─────────────────────────────────────────────────────────────────
 function ProposalsView({ onBack }: { onBack: () => void }) {
   return (
     <WorkbenchLayout

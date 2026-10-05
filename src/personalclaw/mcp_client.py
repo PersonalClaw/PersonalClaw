@@ -461,7 +461,7 @@ class McpServerConn:
                 ok, output = self._unanswered(call)
             else:
                 ok, output = call.answer.result()
-        # Dev-only event-trace tap (Self-Verification §2.1 MCP rider): record the
+        # Dev-only event-trace tap: record the
         # request/response pair so `replay` can serve it back as a fake MCP server for
         # deterministic offline debugging. No-op unless PERSONALCLAW_TRACE_DIR is set.
         if _trace.is_recording():
@@ -939,7 +939,7 @@ def _is_poolable(spec: dict[str, Any]) -> bool:
 def _spec_hash(spec: dict[str, Any]) -> str:
     """A stable content hash of the connection-defining fields of a server spec, so two
     servers sharing a NAME but differing in command/args/env/url/transport/headers get DISTINCT
-    pool entries instead of colliding on one connection (P23e) — and a remote server whose token
+    pool entries instead of colliding on one connection — and a remote server whose token
     was rotated behind an unchanged reference reconnects with the new one, as a stdio server's
     environment does. Uses sha256 over a sort-keyed JSON of only the fields that change what
     process/endpoint we talk to — NEVER Python ``hash()`` (its per-process salt would give a
@@ -972,7 +972,7 @@ def _spec_hash(spec: dict[str, Any]) -> str:
 #   name       — the configured server name (listing / reconcile / removal key on k[0]).
 #   scope      — "" for a poolable (shared) server, else the owning session_key (isolation
 #                / eviction key on k[1]); unchanged semantics.
-#   spec_hash  — content hash (P23e) so same-name/different-config servers don't collide.
+#   spec_hash  — content hash so same-name/different-config servers don't collide.
 _ConnKey = tuple[str, str, str]
 
 
@@ -997,7 +997,7 @@ class McpClientRegistry:
         self._conns: dict[_ConnKey, McpServerConn] = {}
         self._specs: dict[str, dict[str, Any]] = {}
         self._sweeper: asyncio.Task | None = None
-        # P23d observability counters (process-lifetime totals).
+        # Pool observability counters (process-lifetime totals).
         self._stats = {"spawns": 0, "reaps": 0, "served": 0, "evicted": 0}
 
     def _canonical_key(self, name: str) -> _ConnKey | None:
@@ -1112,7 +1112,7 @@ class McpClientRegistry:
                 logger.debug("MCP idle sweep failed", exc_info=True)
 
     def pool_stats(self) -> dict[str, Any]:
-        """P23d observability: process-lifetime counters + a live snapshot of the pool.
+        """Pool observability: process-lifetime counters + a live snapshot of the pool.
 
         ``shared_conns`` counts poolable (scope ``""``) connections — the ones serving
         many callers from ONE process; ``session_conns`` counts per-session (isolated)

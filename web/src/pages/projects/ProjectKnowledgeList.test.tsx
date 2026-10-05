@@ -53,7 +53,7 @@ describe('ProjectKnowledgeList', () => {
   })
 
   it('a policy value the wire invents renders humanized, never as "unmapped:" jargon', () => {
-    // AUD-NZ11: wire/UI drift used to print `unmapped: org_wide` at the user. The closed
+    // Wire/UI drift used to print `unmapped: org_wide` at the user. The closed
     // Record still catches KNOWN-value drift at typecheck; a runtime surprise now renders a
     // humanized word (the console warning is where the developer-facing signal moved).
     render(<ProjectKnowledgeList items={[

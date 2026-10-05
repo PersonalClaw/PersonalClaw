@@ -13,17 +13,17 @@ import { join } from 'node:path'
 //   the health score     **"Loading…" forever**                  "Couldn't load the health score: …"
 //   the Run now button   **ENABLED**                             disabled, "The health score could not be read"
 //
-// Two shapes in one panel. The report was the cycle-92 half — a message that renders but is not announced,
+// Two shapes in one panel. The report was the silent half — a message that renders but is not announced,
 // on a HEALTH surface where "we could not probe" changes what the whole screen means. The remediation read
-// was the cycle-96 half (fabricated PENDENCY: a dead end indistinguishable from a slow network) *plus*
-// cycle 91's: an action offered against state nobody could read. Pressing Run now performs a real
+// was the pending half (fabricated PENDENCY: a dead end indistinguishable from a slow network) *plus*
+// an action offered against state nobody could read. Pressing Run now performs a real
 // maintenance pass whose result would have been unverifiable.
 //
 // `Run now` is disabled ONLY on a read failure, not during the initial load — the same distinction the
 // incident kill switch draws.
 //
 // Also checked and left alone: the report's own failure copy already existed. `DoctorPanel` was the one
-// sibling of the `null`-substituting panels that had a real message, which is why this cycle is about
+// sibling of the `null`-substituting panels that had a real message, which is why this change is about
 // announcement and armed actions rather than adding a message.
 
 const SRC = join(process.cwd(), 'src', 'pages', 'settings', 'DoctorPanel.tsx')

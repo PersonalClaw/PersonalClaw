@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Slice 5 smoke — run the exemplar through the real engine with a fake model and assert
+# Smoke test — run the exemplar through the real engine with a fake model and assert
 # the expected outcome. No network, no real LLM. Target: well under 30s.
 #
 # Isolates PERSONALCLAW_HOME to a throwaway dir so nothing touches the default home.

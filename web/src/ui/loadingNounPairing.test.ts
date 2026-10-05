@@ -5,7 +5,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The loading state borrows a noun the surface has already declared ─────────────────────────────
 //
-// Cycles 143-144 gave every loading placeholder a voice. It said "Loading…" — accurate and anonymous,
+// Every loading placeholder was given a voice first. It said "Loading…" — accurate and anonymous,
 // 57 times. The noun was already in the file: the app's canonical load-failure shape names the data,
 // and it sits ONE OR TWO LINES from the skeleton it guards.
 //
@@ -20,7 +20,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // 🔑 THE SOURCE OF TRUTH WAS ALREADY IN THE FILE. No noun here is invented; each is copied from a
 // sibling declaration. That is what makes this a rail and not a taste call.
 //
-// ── Cycle 148: THERE IS A SECOND DECLARATION, AND IT IS SPOKEN ALOUD TOO ──────────────────────────
+// ── THERE IS A SECOND DECLARATION, AND IT IS SPOKEN ALOUD TOO ─────────────────────────────────────
 //
 // `ui/ListControls` takes `results={{ count, noun, active }}` and `ResultAnnouncement` says
 // "39 triggers" / "No matching triggers" out of a live region. So a list page that declares its rows
@@ -39,7 +39,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //
 // 🪤 THE SCAN THAT DECLARED 35 SITES "UNNAMEABLE" COULD NOT SEE A DYNAMIC NOUN. `#/prompts` serves
 // prompts and snippets from one page and declares `what={isSnips ? 'snippets' : 'prompts'}` on the
-// LoadError ONE LINE above its skeleton — a textbook cycle-144 pair. It was invisible because the
+// LoadError ONE LINE above its skeleton — a textbook `LoadError`/skeleton pair. It was invisible because the
 // noun regex only matched `what="…"`. It matches `what={…}` now, and the site is named.
 //
 // 🪤 SAME NAME, DIFFERENT COMPONENT, DIFFERENT DATA. `KnowledgeListPage` counts `items` (the library)
@@ -54,9 +54,9 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // `undefined` while `LoopsListPage` is mounted. The noun is applied because the rule holds, and
 // recorded as unverified rather than claimed.
 //
-// ── Cycle 152: THE THIRD DECLARATION IS THE EMPTY STATE, AND IT IS THE SAME GATE ────────────────
+// ── THE THIRD DECLARATION IS THE EMPTY STATE, AND IT IS THE SAME GATE ───────────────────────────
 //
-// Cycle 148 left the rest for "the settings panels, which declare `PanelHeader title=`". That turned
+// That pass left the rest for "the settings panels, which declare `PanelHeader title=`". That turned
 // out to be the wrong source: a panel title often names a CONCERN rather than a thing, so
 // "Loading security…", "Loading doctor…", "Loading memory…" would all be wrong. The right source was
 // one branch further along the very same conditional:
@@ -79,7 +79,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // Driven cold on the two route-level ones (fresh context, `/api/**` held, 150ms poll):
 // `#/tasks` and `#/tools` go from "Loading…" to "Loading tasks…" / "Loading tools…".
 //
-// 🪤 DISTANCE IS NOT THE TEST, AND NEITHER IS ANY REGEX I TRIED. Cycle 144's "within 3 lines" is right
+// 🪤 DISTANCE IS NOT THE TEST, AND NEITHER IS ANY REGEX I TRIED. The old "within 3 lines" is right
 // for a `LoadError`/skeleton `return` pair and useless here — a JSX ternary puts its empty branch 8-11
 // lines down. But widening the window makes the scan pick up copy from a DIFFERENT gate in the same
 // component, and my first attempt at this rail claimed the component scope would exclude those. It
@@ -116,7 +116,7 @@ const SKELETON = /<(?:List|Form|CardGrid)Skeleton\b[^>]*?\/>/
  *  prop doc reads *"A lowercase bare noun, same convention as `LoadError`"*, it renders through the
  *  same `loadErrorMessage`, and it is what a section-sized failure inside a busy panel uses instead
  *  of the centred block. So a surface could declare its noun in the sanctioned way and still be
- *  reported as having invented it — the cycle-148 blind spot ("could not see a dynamic noun") in a
+ *  reported as having invented it — the earlier blind spot ("could not see a dynamic noun") in a
  *  second costume. Measured before widening, because a rail that grows quietly is not a rail:
  *  99 skeletons, errPaired **78 → 79**, and the ONE site that gains a noun is the one being fixed
  *  in this commit (`settings/UsagePanel`, at −1 line). No existing site's noun or distance changes.
@@ -221,9 +221,9 @@ const carries = (tag: string, noun: string) => {
   return forms.some((f) => tag.includes(f))
 }
 
-/** The sites cycle 152 named from their own gate's empty branch. Explicit, because deciding that a
+/** The sites named from their own gate's empty branch. Explicit, because deciding that a
  *  nearby "No …" belongs to the SAME gate is a judgement the scanner cannot make. */
-/** 🪤 THIS LIST USED TO PIN LINE NUMBERS, and cycle 159 broke it by inserting 24 lines ABOVE two of the
+/** 🪤 THIS LIST USED TO PIN LINE NUMBERS, and a later change broke it by inserting 24 lines ABOVE two of the
  *  entries — a red that said nothing about the rule it guards. Keyed on file + noun instead: the pair
  *  that matters is "this file's skeleton says this word", and neither part moves when the file does. */
 const FROM_EMPTY_STATE: [string, string][] = [
@@ -295,7 +295,7 @@ describe('a skeleton borrows a noun its own surface already declares', () => {
   })
 
   it('the dynamic-noun form is visible to the scan — the blind spot that hid #/prompts', () => {
-    // Before cycle 148 the noun regex only matched `what="…"`, so a page whose rows change name with
+    // The noun regex once only matched `what="…"`, so a page whose rows change name with
     // its tab looked unnameable. If this stops matching, 1 site silently goes bare again.
     const dyn = all.find((s) => s.rel === 'pages/prompts/PromptsListPage.tsx')
     expect(dyn?.errNoun, 'the LoadError one line above declares the noun as an expression')
@@ -362,7 +362,7 @@ describe('a skeleton borrows a noun its own surface already declares', () => {
 
   it('the unnamed ones stay bare rather than guessing', () => {
     // Asserted from the other side: a `what` that matches NONE of the three declarations is an
-    // invented word, and the ledger is where proposals belong until someone names them deliberately.
+    // invented word, and a proposal stays a proposal until someone names it deliberately.
     const invented = all.filter((s) => /what=/.test(s.tag) && !s.errNoun && !s.resultsNoun
       && !(s.emptyTitle && carriesFromEmpty(s.tag, s.emptyTitle)))
       .map((s) => `${s.rel}:${s.line} — ${s.tag}`)

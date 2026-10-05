@@ -10,7 +10,7 @@ interface Stop extends SpotlightStep {
   route: string | null
 }
 
-/** The five stops (ONBOARDING-UX ruling b: rail → chat → inbox → approvals → settings).
+/** The five stops (rail → chat → inbox → approvals → settings).
  *
  *  Every route here is in `STARTER_NAV_IDS`, and that is load-bearing rather than a
  *  coincidence: the shell auto-pins a rail surface the moment it is REACHED, so a
@@ -46,7 +46,7 @@ const STOPS: Stop[] = [
   },
 ]
 
-/** The replayable product tour (ONBOARDING-UX Session 5 / T5.1).
+/** The replayable product tour.
  *
  *  Mounted in the shell, once, and normally renders nothing. It runs when something asks
  *  for it — the onboarding done screen, or the Discover hub's "Replay the tour" card, both

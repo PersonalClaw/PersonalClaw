@@ -64,7 +64,7 @@ async function mount(name: string, muted: string[]) {
 }
 
 describe('a muted agent reads as muted whatever case its name is in', () => {
-  it('the lowercase case still works — the half AR2-8 shipped', async () => {
+  it('the lowercase case still works — the half that shipped first', async () => {
     await mount('zz414-probe-agent', ['zz414-probe-agent'])
     expect(await screen.findByText(/Muted — the auto-router stopped suggesting this agent/)).toBeTruthy()
     expect(await screen.findByRole('button', { name: /^Unmute$/ })).toBeTruthy()

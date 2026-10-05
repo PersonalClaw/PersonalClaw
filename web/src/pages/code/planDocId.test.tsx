@@ -28,7 +28,7 @@ import { installFakeDocCommentServer, type FakeDocCommentServer } from '../files
 // becomes a factory closing over `projectId` (exactly LoopPlanningView's `makeCfg`), which is what
 // a module-level `const CFG` could not do — the reason the scope went missing in the first place.
 //
-// The census that found it (cycle 32) also ruled the two `ArtifactView` renderers a DISTINCTION:
+// The census that found it also judged the two `ArtifactView` renderers a DISTINCTION:
 // they read disjoint artifact schemas (stories/decisions/entities vs sub_goals/roster/criteria) and
 // even their `phases` agree only on the NAME (title/stage/objective/tasks vs role/min_cycles/
 // target/phase_exit). This docId was the real divergence hiding underneath.

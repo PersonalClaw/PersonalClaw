@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { DocumentBlock, DocumentLossReport, DocumentModelJson, DocumentRun } from '../../lib/api'
 
-// ── §C5, the lossy-edit contract — as a mechanism, not a notice ────────────────
+// ── The lossy-edit contract — as a mechanism, not a notice ─────────────────────
 //
 // Re-rendering a document can only emit what the model can hold, so a save on a document
 // whose parse reported losses DELETES things the user never saw. The repo's standing lesson

@@ -66,8 +66,8 @@ def _write_finding(loop_id: str, cycle: int, stage: str, **extra) -> None:
 
 
 def test_flywheel_produces_a_proposal_from_loop_evidence(home):
-    """Before PP-5 a loop's findings were files the flywheel could not read; after, its cycles are
-    on the ledger and `learning.mining` produces a TEMPLATE proposal from them.
+    """Before the ledger emit a loop's findings were files the flywheel could not read; after,
+    its cycles are on the ledger and `learning.mining` produces a TEMPLATE proposal from them.
 
     The before/after is in ONE test on purpose: the worker files exist the whole time; what changes
     is whether they were ingested into the ledger the mining reader reads.
@@ -87,7 +87,7 @@ def test_flywheel_produces_a_proposal_from_loop_evidence(home):
     assert traces_before == []
     assert not P.list_pending(kind=P.Kind.TEMPLATE.value)
 
-    # THE PP-5 EMIT: ingest each loop's cycles into the ledger (`step_started`/`step_completed`).
+    # THE EMIT: ingest each loop's cycles into the ledger (`step_started`/`step_completed`).
     for loop in loops:
         assert loop_files.record_cycle_findings(loop.id) == 2
 
@@ -174,8 +174,8 @@ def test_trajectory_reconstructs_from_the_ledger_alone(home):
 
 
 def test_judge_verdict_carries_the_reconciled_vocabulary(home):
-    """A supervisor assessment is a `judge_verdict` carrying the reconciled `JudgeVerdict` shape
-    (WF2LOO-16), not a loop-local dialect."""
+    """A supervisor assessment is a `judge_verdict` carrying the reconciled `JudgeVerdict` shape,
+    not a loop-local dialect."""
     from personalclaw.workflows.judge_contract import JudgeVerdict, Verdict
 
     loop = _loop("goal")

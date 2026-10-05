@@ -21,7 +21,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 // 🪤 THE FIRST TWO DISMISSALS MUST STAY QUIET. A toast on every ✕ turns the chip's own dismissal into
 // a nag, which is the thing the cooldown exists to prevent; the message is for the state CHANGE only.
 // And the chip still hides on all three (a dismissal is a request to get something out of the way) —
-// `dismissalFailureReported.test.ts` owns that ruling and this rail must not contradict it.
+// `dismissalFailureReported.test.ts` owns that decision and this rail must not contradict it.
 
 const notified: { msg: string; level?: string }[] = []
 let dismissResponse: { ok: boolean; count: number; muted: boolean } = { ok: true, count: 1, muted: false }
@@ -77,7 +77,7 @@ describe('crossing the mute threshold is announced, and names the undo', () => {
     expect(notified, 'a toast on every dismissal would be the nag the cooldown prevents').toEqual([])
   })
 
-  it('the chip still hides on the muting dismissal — the pinned opposite ruling', async () => {
+  it('the chip still hides on the muting dismissal — the pinned opposite decision', async () => {
     const onDismiss = await dismissOnce({ ok: true, count: 3, muted: true })
     expect(onDismiss, 'a dismissal is a request to get something out of the way').toHaveBeenCalled()
   })

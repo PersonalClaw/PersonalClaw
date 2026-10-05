@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 
-// ── A polled source that cannot be read says why, in the Inbox (ledger 279/280) ──────────────────────
+// ── A polled source that cannot be read says why, in the Inbox ───────────────────────────────────────
 //
 // The gateway polled the drop folder alone, so an installed Mail Inbox did nothing, and a source whose
 // poll failed read exactly like a quiet one: the banner said "Also polling mail-inbox" over an inbox

@@ -36,9 +36,8 @@ function capLabel(key: string): string {
  *  landed: `FixButton` applies a confirm-gated, SEL-audited repair and `RemediationSection` runs
  *  the maintenance engine behind its own confirm. The header hint names both, because a promise
  *  that outlives the code it described is how issue 537 happened — this docstring's own closing
- *  clause ("Nothing here changes any state; fixes and simulators land in later
- *  sessions") was the same claim one layer up, still describing a panel that shipped two sessions
- *  ago. */
+ *  clause (that nothing here changes any state, and fixes and simulators land later) was the
+ *  same claim one layer up, still describing a panel that had already shipped. */
 export function DoctorPanel() {
   const [report, setReport] = useState<DoctorReport | SwitchedOffView | null>(null)
   // `true` from the start: the mount effect below starts the first read. It was `false`, so the first
@@ -173,7 +172,7 @@ function DoctorOff({ onTurnedOn }: { onTurnedOn: () => void }) {
 // deterministic scorer a real turn runs, and the automation one walks the dry
 // fire. Neither executes anything, spends a token, or resolves a credential.
 /** Exported for test: the five-fact rendering is only observable by rendering this against a
- *  stubbed response, and the whole point of §3.3 is that a user can READ the description. */
+ *  stubbed response, and the whole point is that a user can READ the description. */
 export function SimulatorsSection() {
   return (
     <Section
@@ -330,7 +329,7 @@ function AutomationSimulator() {
   )
 }
 
-/** The five facts §3.3 names, in one block. Exported for test. */
+/** The five facts, in one block. Exported for test. */
 export function WouldExecute({ d }: { d: AutomationWouldExecute }) {
   const nf = d.next_fire
   const ac = d.action_config
@@ -390,7 +389,7 @@ export function WouldExecute({ d }: { d: AutomationWouldExecute }) {
           </span>}
       </Fact>
 
-      {/* 5 — the observe-mode result, from the dry fire. The T9 rule is in
+      {/* 5 — the observe-mode result, from the dry fire. The preview rule is in
           the copy: only the spawn-based providers have a real observe mode, so for everything
           else this says PREVIEW rather than promising a safety property it does not have. */}
       <Fact label={om.mode === 'observe' ? 'Observe-mode dry fire' : 'Preview (no observe mode)'}>
@@ -411,7 +410,7 @@ export function WouldExecute({ d }: { d: AutomationWouldExecute }) {
         )}
       </Fact>
 
-      {/* AUTO-R15's `closest` suggestion. "Invalid" with no next step is how a near-miss becomes
+      {/* Each issue's `closest` suggestion. "Invalid" with no next step is how a near-miss becomes
           a dead row nobody diagnoses, so the suggested key is surfaced with the issue. */}
       {d.trigger.issues.length > 0 && (
         <Fact label="Problems with this row">
@@ -542,8 +541,8 @@ export function RemediationSection({ rev = 0, onRan }: { rev?: number; onRan?: (
             tell "nothing wrong" from "nothing the engine will act on".
 
             EVERY row counts. health_score() used to sum REACHABLE deficits only, so the number
-            meant "what maintenance can still do" while reading as "how healthy this is": B16
-            measured "Health score 100 · no deficits measured" directly under the Doctor's failed
+            meant "what maintenance can still do" while reading as "how healthy this is": one run
+            showed "Health score 100 · no deficits measured" directly under the Doctor's failed
             "faiss index desync" and "4 unclaimed paths" checks. Failed checks are now rows here
             (a `check:` key, labelled by their probe title), and an unreachable row subtracts like
             any other. `reachable` still decides what Run now touches: the rest are greyed and
@@ -749,7 +748,7 @@ export function ProbeRow({ probe, onFixed }: { probe: DoctorProbe; onFixed: () =
   const hasEvidence = probe.evidence && Object.keys(probe.evidence).length > 0
   const dot = probe.ok ? 'var(--color-success)' : probe.tier <= 2 ? 'var(--color-error)' : 'var(--color-warning)'
   // A failed probe offers its Fix, or says there is none and what to do. The page header promises
-  // "a failed probe's Fix", and a failed row carrying neither was a dead end (settings B16: two
+  // "a failed probe's Fix", and a failed row carrying neither was a dead end (two
   // failed checks, no Fix, and nothing on either row saying so). The probe's own `remedy` names
   // the next step; a probe that has not written one still gets a true sentence, pointing at the one
   // control every card carries.

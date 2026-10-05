@@ -28,7 +28,7 @@
     ],
     "cost_tier": "metered",
     "why_parallel_lenses": "One prompt asked to extract five different things does all five badly — it optimizes for a single coherent answer. Five prompts each with one job, one schema, and one vocabulary do not compete with each other.",
-    "writes_no_memory": "Knowledge items and tasks only. Episodic and preference capture is the MEMORY subsystem's job (LEARNING-FLYWHEEL); a template that wrote both would put user-modeling in an ingest path nobody audits.",
+    "writes_no_memory": "Knowledge items and tasks only. Episodic and preference capture is the MEMORY subsystem's job; a template that wrote both would put user-modeling in an ingest path nobody audits.",
     "steering_examples": [
       {
         "event": "kickoff",

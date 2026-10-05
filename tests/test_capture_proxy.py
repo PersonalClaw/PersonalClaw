@@ -63,7 +63,7 @@ def _enable(
     """Point ``AppConfig.load()`` at an external-access config without writing config.json.
 
     ``nested`` selects which spelling of the allow-list is present — the
-    ``capture.upstream_allowlist`` §7.1 describes, or the flat
+    nested ``capture.upstream_allowlist``, or the flat
     ``capture_upstream_allowlist`` the neighbouring ``capture_retention_days`` follows.
     Both are exercised because this module reads whichever exists and neither field is
     owned here.

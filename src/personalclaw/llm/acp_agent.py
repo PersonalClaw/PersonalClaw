@@ -12,7 +12,7 @@ are another.
 
 Capabilities are negotiated through the ACP ``initialize`` handshake:
 ``declared_capabilities`` reflects the capability set declared by the
-spawned agent in its initialize response (R5.4).
+spawned agent in its initialize response.
 """
 
 import asyncio
@@ -139,7 +139,7 @@ class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentP
     :class:`~personalclaw.llm.base.ModelProvider` (the surface the factory/bridge
     return today) and an :class:`~personalclaw.agents.provider.AgentProvider`
     (the stateful-runtime axis the SessionManager probes for session/pid/resume
-    capabilities via ``isinstance``). The native loop (E2-P4) is the second
+    capabilities via ``isinstance``). The native loop is the second
     ``AgentProvider``.
     """
 
@@ -423,11 +423,10 @@ class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentP
         )
         dialect = get_dialect(options.get("dialect"))
         result = dialect.normalize_discovery(snapshot or {})
-        # Persist the capability matrix into the runner catalog (EXECUTION-ISOLATION
-        # §3.1(3), EI-5). This is the ONE place where a runner's models/modes/efforts
-        # arrive normalized off the wire, so it is the only honest source for the
-        # Settings → Agents capability chips: a runner with no recorded matrix renders
-        # as unknown rather than as an assumed-uniform set.
+        # Persist the capability matrix into the runner catalog. This is the ONE place where a
+        # runner's models/modes/efforts arrive normalized off the wire, so it is the only honest
+        # source for the Settings → Agents capability chips: a runner with no recorded matrix
+        # renders as unknown rather than as an assumed-uniform set.
         try:
             from personalclaw.agents.runners import record_capabilities
 
@@ -531,7 +530,7 @@ class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentP
         # Per-turn reasoning effort — one of the backend's declared effort options
         # (verbatim); applied via the dialect's set_effort_request. Empty = default.
         self._reasoning_effort: str = reasoning_effort or ""
-        # Unattended run (§2.3 gap 3): nobody is watching this session, so nobody can answer
+        # Unattended run: nobody is watching this session, so nobody can answer
         # the agent's own questions (``AcpClient._owner_answers``). Its calls still ask the host,
         # which fails a permission request no grant answers fast, with its reason, instead of
         # parking the turn on a human.
@@ -544,7 +543,7 @@ class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentP
         )
 
         # Negotiated capability set, populated after ``start()`` completes
-        # the ACP ``initialize`` handshake (R5.4). Empty until then.
+        # the ACP ``initialize`` handshake. Empty until then.
         self._negotiated_capabilities: frozenset[str] = frozenset()
 
         # The provider holds the protocol-level client. The client is
@@ -585,7 +584,7 @@ class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentP
         while a turn generates may be serviced, queued, or clobbered depending on
         the CLI. Only a dialect that declares ``supports_mid_turn_prompt`` (proven
         by a live spike) opts in; everything else routes to the visible queue rather
-        than pretending to steer (PLATFORM-RESILIENCE S6.2).
+        than pretending to steer.
         """
         from personalclaw.acp.dialect import get_dialect
 
@@ -595,7 +594,7 @@ class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentP
             return False
 
     def set_steer_source(self, pull: "Callable[[], list[str]] | None") -> bool:
-        """Arm the ACP tool-boundary steer drain (PR2-10). Returns whether a drain is now
+        """Arm the ACP tool-boundary steer drain. Returns whether a drain is now
         armed — the dispatcher records THAT and never the declaration.
 
         This is the method whose absence made ``steer_capable()`` inert: a dialect could
@@ -625,7 +624,7 @@ class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentP
 
         After this returns, :attr:`declared_capabilities` reflects the
         capability set declared by the spawned agent in its ACP
-        ``initialize`` response (R5.4).
+        ``initialize`` response.
         """
         await self._client.ensure_ready()
         self._snapshot_capabilities()
@@ -662,7 +661,7 @@ class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentP
         self._negotiated_capabilities = frozenset(names)
 
     async def shutdown(self) -> None:
-        """Send ACP shutdown, drain stdio, and reap the subprocess (R5.7)."""
+        """Send ACP shutdown, drain stdio, and reap the subprocess."""
         await self._client.shutdown()
 
     @property
@@ -904,8 +903,8 @@ class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentP
     # :class:`ModelProvider`. Filesystem cleanup of agent-specific session
     # files is the protocol layer's responsibility and is wired through
     # :mod:`personalclaw.subagent_persistence`. Keeping the provider free of
-    # any hardcoded path satisfies R5.5 (no internal binary discovery
-    # paths or vendor-specific defaults at the provider boundary).
+    # any hardcoded path keeps internal binary discovery
+    # paths and vendor-specific defaults out of the provider boundary.
 
 
 # ── Capability descriptor ────────────────────────────────────────────────
@@ -988,7 +987,7 @@ def _factory(
 
     Reads launch parameters from ``entry.options``:
 
-    * ``command`` — required, the full launch argv (R5.6).
+    * ``command`` — required, the full launch argv.
     * ``cwd`` — optional working directory.
     * ``env`` — optional extra environment variables.
     * ``env_passthrough`` — optional names of the gateway's variables the CLI reads to pick
@@ -1066,7 +1065,7 @@ def _factory(
     # verbatim). Empty → adapter default; dialects without an effort axis ignore it.
     reasoning_effort = str(kwargs.get("reasoning_effort_override") or "").strip()
 
-    # Unattended run (§2.3 gap 3): nobody can answer the agent's own questions. Absent/false →
+    # Unattended run: nobody can answer the agent's own questions. Absent/false →
     # an ordinary interactive session.
     unattended = bool(kwargs.get("unattended", False))
     # The owner let this work's CLI approve its own calls (``agent_cli_self_approval``), which

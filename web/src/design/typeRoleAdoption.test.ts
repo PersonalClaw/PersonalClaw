@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { join } from 'node:path'
 import { filesUnder, readSource } from '../test/sourceTree'
 
-// ── Type-role adoption ratchet (audit AB-1) ─────────────────────────────────
+// ── Type-role adoption ratchet ─────────────────────────────────
 // The type system's sanctioned voice is the data-type role ladder in
 // design/tokens.css (display/headline/title/body/label/caption): each role
 // carries size + line-height + variable-font weight together, so text set

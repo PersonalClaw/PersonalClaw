@@ -8,8 +8,8 @@ import { MIN_INTERVAL_SECS } from './scheduleMeta'
 // invocation was the backend's 900s warning — which the backend computed and every surface then
 // dropped. The floor now renders beside the control, at author time, before the save.
 //
-// An ADVISORY, never a gate: the backend deliberately warns rather than refusing (R1 makes the floor
-// overridable — a fast local-model poll is a legitimate choice), so a form that blocked Save would
+// An ADVISORY, never a gate: the backend deliberately warns rather than refusing (the floor is
+// overridable: a fast local-model poll is a legitimate choice), so a form that blocked Save would
 // refuse a cadence the API accepts. The assertions below pin BOTH halves of that: the hint appears,
 // and nothing about the control becomes invalid or disabled when it does.
 //

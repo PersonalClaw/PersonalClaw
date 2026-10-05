@@ -1,7 +1,7 @@
 """The platform-neutral vocabulary every accessibility driver speaks.
 
 One element shape, one fingerprint definition, one error envelope — shared by the macOS driver
-today and by the Windows/Linux drivers `DCU-6` will add. The alternative, each driver inventing
+today and by the Windows/Linux drivers still to be written. The alternative, each driver inventing
 its own dictionary keys, would put the dispatch's secure-field screen
 (:func:`personalclaw.computer_use.policy.check_input_target`) at the mercy of whichever driver
 answered: that screen reads ``role``/``subrole``/label/value keys off the element, so a driver
@@ -35,7 +35,7 @@ MAX_DEPTH = 25
 class Element:
     """One addressable element of a walked window, at a stable index.
 
-    ``frame`` is screen coordinates — it exists for the located-coordinate path §2 reserves for
+    ``frame`` is screen coordinates — it exists for the located-coordinate path reserved for
     canvas/custom-drawn UI, and it participates in the fingerprint so a moved window
     invalidates the indices taken from it.
     """
@@ -97,7 +97,7 @@ def fingerprint_of(elements: list[Element]) -> str:
     whole usefulness of the check: including ``value`` would mean typing one character into a
     field invalidated the very snapshot the model is working through, so every second
     ``computer_type`` would refuse and the honest fix would be to stop checking. Excluding it
-    means the fingerprint answers the question §2 actually asks — *has this window moved or
+    means the fingerprint answers the question that actually matters — *has this window moved or
     changed shape since it was walked* — for which a button's title flipping ``Play``→``Pause``
     and a window being dragged both count, and a user finishing a sentence does not.
 
@@ -125,12 +125,12 @@ class DriverError:
 
     A typed object rather than a module-level ``def error_envelope(...) -> dict`` on purpose.
     This codebase has repeatedly re-derived the ``{"error": {"code", ...}}`` wire shape as a
-    tiny local helper — PL-8 deleted thirteen such clones and the structural-duplication ratchet
+    tiny local helper — thirteen such clones were deleted and the structural-duplication ratchet
     counts the survivors — and each clone is a place the envelope drifts silently, because every
     caller's test asserts against its own copy. Making the shape a value with ONE serialiser
     gives the driver layer what :class:`~personalclaw.errors.AgentError` gives the agent layer:
     somewhere for the fields to be named once. The dispatch turns this into an ``AgentError``;
-    the two envelopes stay deliberately separate (the two-error-envelope ruling), and this is a
+    the two envelopes stay deliberately separate, and this is a
     third, narrower one — the stdio protocol between the gateway and its ceilinged child.
 
     WHAT/WHY/FIX are all required. A driver never reports failure as a falsy or empty result: to

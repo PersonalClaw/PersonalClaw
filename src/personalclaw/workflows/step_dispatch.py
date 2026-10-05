@@ -3,7 +3,7 @@
 `execute` is the task `RunController._launch` schedules for a node: the retry correction and the
 carried iteration context go onto a COPY of the node, the write-scope snapshot is taken for nodes
 that opted in, the dispatcher runs under `timeout_total` — a real kill — and the result is
-narrowed by the node's declared `success_when` (LOOPS-EVOLUTION R5f).
+narrowed by the node's declared `success_when`.
 """
 
 from __future__ import annotations
@@ -73,7 +73,7 @@ def _with_retry_hint(ctl: RunController, item: ReadyNode) -> Node:
 
 def _worker_model(ctl: RunController) -> str:
     """The concrete model this run's WORKERS resolve to — the family a `cross_model`
-    judge gate must avoid (WF2LOO-11).
+    judge gate must avoid.
 
     A stage spawn records no model synchronously (it returns RUNNING with a
     subagent id and the model is chosen inside the async turn), so the honest,
@@ -225,7 +225,7 @@ async def execute(ctl: RunController, item: ReadyNode, ctx: BindingContext) -> N
 def _check_success_when(
     ctl: RunController, node: Node, result: NodeResult, ctx: BindingContext
 ) -> NodeResult:
-    """Apply a node's declared `success_when` predicate (LOOPS-EVOLUTION R5f).
+    """Apply a node's declared `success_when` predicate.
 
     **It can only NARROW success, never widen it.** A node that already failed stays
     failed — otherwise `success_when` would be a way to bless a broken node, and the
@@ -234,8 +234,8 @@ def _check_success_when(
     The use it exists for is INVERTED semantics: `code-project`'s reproduction stage
     must not count as done because it ran. Reproducing the bug (or documenting why it is
     infeasible) IS the success condition, and a stage that quietly failed to reproduce
-    and moved on to editing is the exact "no repro, straight to a fix" pattern R5c
-    forbids.
+    and moved on to editing is the exact "no repro, straight to a fix" pattern this
+    guards against.
 
     Evaluated against the node's OWN output, bound as `output.*`. Written WITHOUT `{{}}`
     braces on purpose: `resolve_config` resolves every braced binding in a config
@@ -292,7 +292,7 @@ def _check_write_scope(
     allowed: list[str],
     watched: list[str],
 ) -> NodeResult:
-    """Diff the tree and flag writes that escaped the declared scope (WF2-R19).
+    """Diff the tree and flag writes that escaped the declared scope.
 
     DETECTIVE, not preventive: a real sandbox is the OS-seatbelt layer this leaves
     room for. `warn` records and continues; `reject` flips the node to

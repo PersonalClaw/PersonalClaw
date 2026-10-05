@@ -8,7 +8,7 @@ const { shutdownGateway, OUTCOMES } = require("../gatewayShutdown");
 
 /**
  * A stand-in for the spawned gateway. Records every signal it was sent, and only
- * "exits" when the test says so — which is the whole point: the pre-DC-4 quit path
+ * "exits" when the test says so — which is the whole point: the earlier quit path
  * sent SIGTERM and never waited, and a fake that exits on its own would hide exactly
  * that bug.
  */
@@ -90,7 +90,7 @@ describe("shutdownGateway", () => {
 
     // SIGTERM must already be out…
     assert.deepStrictEqual(child.signals, ["SIGTERM"]);
-    // …and the promise must NOT be settled yet. This is the defect DC-4 fixes: the
+    // …and the promise must NOT be settled yet. This is the defect graceful shutdown fixes: the
     // old path returned here, letting Electron exit while the gateway was still
     // writing.
     await new Promise((r) => setImmediate(r));

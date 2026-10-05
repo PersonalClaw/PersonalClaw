@@ -474,7 +474,7 @@ def unattended_not_granted_error(
 
 
 def check_autonomy(tool: str, *, caller_identity: str = "") -> None:
-    """Refuse an unattended drive without the operator's standing grant (`DCU-5`).
+    """Refuse an unattended drive without the operator's standing grant.
 
     Step 4b of the dispatch chain — the LAST screen before the approved audit row, deliberately
     after ``check_app`` and ``check_input_target`` so a refusal is still recorded against the

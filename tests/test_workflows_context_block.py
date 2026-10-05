@@ -1,4 +1,4 @@
-"""The `[ACTIVE WORKFLOWS]` block, the staged-turn echo, and blocking mode (Slice 6c).
+"""The `[ACTIVE WORKFLOWS]` block, the staged-turn echo, and blocking mode.
 
 The load-bearing claims:
 
@@ -7,7 +7,7 @@ The load-bearing claims:
   must never cost someone their turn;
 * the block orders by URGENCY, not recency: a run waiting on a human is the one actionable
   thing in the session;
-* the staged echo carries the CURRENT spec + version (WF2-R20f), so a model mutates what it
+* the staged echo carries the CURRENT spec + version, so a model mutates what it
   just saw rather than the spec it generated earlier — those diverge the moment anything
   else touches the run;
 * the echo STRIPS credentials, because it lands in a chat turn;
@@ -274,7 +274,7 @@ class TestTreeRender:
 
 class TestStagingTools:
     def test_inspect_tools_stage_a_spec_echo(self) -> None:
-        """WF2-R20f: the model's next move after an inspect is likely a mutation."""
+        """The model's next move after an inspect is likely a mutation."""
         for name in ("workflow_status", "workflow_get_def", "workflow_observe"):
             assert CB.needs_staging(name), name
 

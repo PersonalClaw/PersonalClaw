@@ -3,7 +3,7 @@ import type { UiDoc } from './uiDoc'
 // Doc object for StatusPill — the canonical tinted status pill. Encodes the
 // tint+ink pairing rule (tokens.css AA audit note) and Tone-Not-Line as
 // machine-readable Do/Don't so an app-building agent reaches for the
-// primitive, not the ~90-site inline color-mix drift it replaces (audit AB-2).
+// primitive, not the ~90-site inline color-mix drift it replaces.
 const doc: UiDoc = {
   name: 'StatusPill',
   keywords: ['status', 'pill', 'chip', 'badge', 'tone', 'tint', 'verdict', 'state', 'ok', 'warn', 'danger', 'info'],

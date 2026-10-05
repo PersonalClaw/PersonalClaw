@@ -1,9 +1,9 @@
 """The inbound tool table + the fencing wrapper.
 
-Session 1 ships the TABLE MACHINERY with an empty table; Session 2 adds the five
-curated read-only tools. That split is deliberate: the transport, auth, caps and
-audit are verifiable on their own (an MCP client can connect and see zero tools),
-and the tools then land against a substrate already proven.
+The TABLE MACHINERY is kept apart from the six curated read-only tools it holds.
+That split is deliberate: the transport, auth, caps and audit are verifiable on their
+own (an MCP client can connect and see zero tools), and the tools sit on a substrate
+already proven without them.
 
 The load-bearing piece here is :func:`wrap_result`. Everything an inbound tool
 returns came from the user's own stores, but it flows to a MODEL — and content in
@@ -41,7 +41,7 @@ def wrap_result(text: str, tool: str, client_id: str = "") -> dict:
     """The ONLY way a tool result reaches a caller.
 
     Delegates to `framing.mcp_tool_result` — the ONE wrapper shared by all five
-    surfaces (§1.4). It used to cap and fence inline here, which made this the MCP
+    surfaces. It used to cap and fence inline here, which made this the MCP
     dialect's private fencing path; a second dialect would have grown a second one,
     and the rule "a new dialect cannot forget to fence" would have been untrue on the
     day it mattered.
@@ -69,7 +69,7 @@ def _clamp_limit(arguments: dict, *, default: int, ceiling: int) -> int:
     """A limit within bounds. Out-of-range CLAMPS rather than erroring.
 
     An over-large limit is a caller being optimistic, not a caller being wrong — and
-    the cap is ours to enforce either way (§C3: "out-of-range limit clamped").
+    the cap is ours to enforce either way (an out-of-range limit is clamped).
     """
     raw = arguments.get("limit", default)
     if raw is None:
@@ -82,7 +82,7 @@ def _clamp_limit(arguments: dict, *, default: int, ceiling: int) -> int:
 def _enum_value(value: Any) -> str:
     """An enum's wire value, never its Python repr.
 
-    MRI-5's client drive got `[TaskStatus.OPEN]` back from `tasks_list` — the repr of a
+    A client drive got `[TaskStatus.OPEN]` back from `tasks_list` — the repr of a
     Python enum, handed to a model as if it were the status vocabulary. Anything crossing
     this boundary is read by a machine that has never seen our class names.
     """
@@ -90,7 +90,7 @@ def _enum_value(value: Any) -> str:
 
 
 def _reject_unknown(arguments: dict, allowed: "tuple[str, ...]") -> None:
-    """Refuse arguments we don't recognize (§C3: unknown args → invalid-params).
+    """Refuse arguments we don't recognize (unknown args → invalid-params).
 
     Naming them beats ignoring them: a typo'd `quesry` that silently returns
     everything looks like a bug in the answer rather than a bug in the call.

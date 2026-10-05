@@ -40,7 +40,7 @@ def resolve_project_id(chosen_id: str = "", *, auto_name: str = "") -> str:
     - Otherwise a fresh project is auto-created (the "initiate a project for the
       session" behavior): named ``auto_name`` if given (deduped against existing
       names), else routed to the persistent ``Personal`` catch-all. The auto-named
-      project is created UNLOCKED so the LLM can rename it later (S4).
+      project is created UNLOCKED so the LLM can rename it later.
 
     Always returns a real, existing project id.
     """

@@ -1,13 +1,12 @@
 /** The deck editor — a slide list plus per-slide fields over a `DeckModel`.
  *
  *  Mounted by `<ContentSurface>` for a `.pptx` artifact, in place of Monaco, through the
- *  same non-Monaco renderer slot the document editor and the sheet grid use
- *  (DOCUMENT-FIDELITY-EDITOR §C4).
+ *  same non-Monaco renderer slot the document editor and the sheet grid use.
  *
- *  **Structural, not WYSIWYG.** This follows the ratified decision (owner task 2,
- *  option (c)) for the third time and for the same reason: a slide canvas's whole value is
- *  owning its own geometry model, so adopting one would mean a second representation of a
- *  deck plus a lossy mapping to ours — exactly the second fidelity story the plan refuses.
+ *  **Structural, not WYSIWYG.** This follows the same structural decision for the third
+ *  time and for the same reason: a slide canvas's whole value is owning its own geometry
+ *  model, so adopting one would mean a second representation of a deck plus a lossy
+ *  mapping to ours — exactly the second fidelity story the design refuses.
  *  So: controlled inputs over the model, no embedded widget, no new frontend dependency.
  *
  *  **A bullet's depth is a FIELD, not a typing behaviour.** No tab-to-indent, no leading
@@ -24,9 +23,9 @@
  *  **The lossy-edit contract is a MECHANISM, not a notice** — same posture as
  *  `DocumentEditor` and `SheetGrid`: while the parse's loss report is non-empty and
  *  unacknowledged, every control is disabled and carries a reason. A warning a user can
- *  type past has already failed. (Its own copy rather than a shared component, per the
- *  owner ruling recorded in the execution-log entry; if the three loss stories really
- *  diverge once every branch lands, that is a follow-up coherence pass.)
+ *  type past has already failed. (Its own copy rather than a shared component, on purpose;
+ *  if the three loss stories really diverge once every branch lands, that is a follow-up
+ *  coherence pass.)
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertTriangle, FileWarning, Loader2, Plus, Presentation, Save, Trash2 } from 'lucide-react'

@@ -1,6 +1,6 @@
 """Staleness of a SYNTHESIZED knowledge item — the count a "sources changed" banner names.
 
-WF2KNO-11 (synthesis legibility), clause A. A synthesis is a claim
+A synthesis is a claim
 about a slice of the corpus at one moment. The corpus keeps moving; the document does not.
 Serving it unchanged and unmarked is the failure this module exists to prevent — a reader
 cannot tell a two-minute-old overview from one written before the three items that

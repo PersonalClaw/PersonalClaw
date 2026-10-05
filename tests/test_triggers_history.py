@@ -1,11 +1,11 @@
-"""One run-history feed across all three trigger kinds (AUTO §7 criterion 4).
+"""One run-history feed across all three trigger kinds.
 
-Criterion 4: "A hook, an event trigger, and a cron all show run history in the same feed with the
-same record shape and typed outcomes."
+A hook, an event trigger, and a cron all show run history in the same feed with the
+same record shape and typed outcomes.
 
 **Measured before writing.** `/api/triggers/history` existed and its own docstring said "(schedule
 runs)". The per-trigger route answered `supported: false` for the other two kinds — honest then,
-since only schedules had rows. And `FireRecord`, the typed row S62 designed for exactly this, was
+since only schedules had rows. And `FireRecord`, the typed row designed for exactly this, was
 **exported and never constructed** (`grep 'FireRecord('` outside its module: nothing).
 
 The load-bearing tests are the two honesty ones: a counter must not become N fabricated rows
@@ -93,8 +93,9 @@ def test_a_timeout_folds_into_failed_but_says_so():
 
 
 def test_launched_maps_to_deferred_not_ran():
-    """🔴 The T7 distinction, preserved. `launched` means the action kicked off a background turn and
-    nobody has seen the result; calling it `ran` would report success for unfinished work."""
+    """🔴 The launched-is-not-success distinction, preserved. `launched` means the action kicked off
+    a background turn and nobody has seen the result; calling it `ran` would report success for
+    unfinished work."""
     rec = schedule_run_to_record(_run(status="launched", summary="", error=""))
     assert rec.outcome == Outcome.DEFERRED.value
     assert rec.outcome != Outcome.RAN.value
@@ -186,7 +187,7 @@ def _hook(status: str, **over):
 
 
 def test_a_launched_hook_maps_to_deferred_not_ran():
-    """🔴 `hooks.py` writes `launched` to say "started ≠ succeeded" (T7), and this table — alone of
+    """🔴 `hooks.py` writes `launched` to say "started ≠ succeeded", and this table — alone of
     the three — had no key for it, so the honest status landed on the `RAN if last_run` default and
     reported success for a background turn nobody has seen."""
     rec = hook_to_record(_hook("launched"))
@@ -246,7 +247,7 @@ def test_a_screened_payload_is_blocked_not_failed():
 
 @pytest.mark.parametrize("status", sorted(INERT_OUTCOMES))
 def test_a_suppressed_fire_projects_as_the_suppression_it_was(status):
-    """🔴 `service._record_suppression_row` persists all six so criterion 8's "zero silent drops" is
+    """🔴 `service._record_suppression_row` persists all six so "zero silent drops" is
     real, and every one of them projected as `failed`: a quiet-hours skip rendered as a red failure
     AND stayed in the `did` half, burying the fires that mattered."""
     rec = schedule_run_to_record(_run(status=status, error="quiet hours until 08:00"))
@@ -257,7 +258,7 @@ def test_a_suppressed_fire_projects_as_the_suppression_it_was(status):
 
 
 def test_a_suppressed_fire_with_no_reason_still_says_something():
-    """§7 criterion 8 is that a user can ask "why did my automation not run" and get an answer."""
+    """Zero silent drops means a user can ask "why did my automation not run" and get an answer."""
     rec = schedule_run_to_record(_run(status=Outcome.SKIPPED_GATE.value, error="", summary=""))
     assert "suppressed" in rec.reason
 
@@ -316,7 +317,7 @@ def _feed():
 
 
 def test_a_hook_an_event_trigger_and_a_cron_appear_in_one_feed():
-    """The criterion, stated directly."""
+    """One feed for all three kinds, stated directly."""
     ids = {r.trigger_id for r in _feed()}
     assert ids == {"schedule:j1", "schedule:event:e1", "lifecycle:h1"}
 
@@ -397,7 +398,7 @@ def app_with_all_kinds(tmp_path, monkeypatch):
     """A real app with a real hook store, a real trigger store, and REAL run records.
 
     All three projections read real state. The schedule half used to fake
-    `ScheduleService.list_all_runs`, but S105 re-pointed the history endpoint at `ScheduleRunStore`
+    `ScheduleService.list_all_runs`, but the history endpoint was re-pointed at `ScheduleRunStore`
     directly — so that fake became unreachable and every schedule assertion silently saw zero rows.
     Writing the rows the store's own `append()` writes is strictly stronger: it also pins the
     on-disk shape, which a hand-built dict does not.
@@ -511,9 +512,9 @@ def test_the_legacy_shape_is_still_available(app_with_all_kinds):
     Asserts `summary`, NOT `trace`: the store's cross-job INDEX is written without a trace on
     purpose (`append_sync` writes `include_trace=False` there), and the FE lazy-loads the full
     record from `/api/triggers/{id}/history/{run_id}` on expand — `api.ts` says so in as many words
-    ("no trace" from /history). Before S105 this asserted `trace`, and it passed only because the
+    ("no trace" from /history). This once asserted `trace`, and it passed only because the
     fixture's fake service returned a hand-built dict that the real store never writes. Pinning a
-    fake's shape is exactly the defect this program keeps finding.
+    fake's shape is exactly the defect this suite keeps finding.
     """
     app, _hook_id = app_with_all_kinds
     _status, body = _get(app, "/api/triggers/history?shape=legacy")
@@ -564,13 +565,13 @@ def test_firerecord_is_now_actually_constructed():
     assert isinstance(schedule_run_to_record(_run()), FireRecord)
 
 
-# ── criterion 11: no credential reaches the feed (found while auditing the sibling) ──
+# ── no credential reaches the feed (found while auditing the sibling) ──
 
 CANARY = "sk-ant-api03-LEAKCANARY99887766554433"
 
 
 def test_a_credential_in_a_run_error_never_reaches_the_reason():
-    """🔴 Found by driving criterion 11 across every surface, in code written the same day.
+    """🔴 Found by driving the no-credential rule across every surface, in code written the same day.
 
     `reason` carries a schedule run's raw `error`/`summary`. A run that failed while printing a
     token put that token straight into the feed. The live endpoint happens to pre-redact via

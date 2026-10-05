@@ -20,7 +20,7 @@ which ``tests/test_ci_tier_enforcement.py`` requires to exist.
 
 **What no rail here can prove:** that a real iPhone or Android device renders the companion inside
 its safe area. Those two keys are read by native code, so the assertions below establish only that
-they are shipped. See the dated PARTIAL in `the plan (internal, not in this repo)`.
+they are shipped.
 """
 
 from __future__ import annotations
@@ -213,7 +213,7 @@ def test_the_served_companion_still_relies_on_the_shell_for_insets():
 def test_the_shell_reuses_the_endpoint_registry_contract():
     """``endpoints.ts`` names mobile as a consumer; this asserts the shell really is one.
 
-    Before ``MC-7`` that module had zero production importers, so its format was declared and
+    That module once had zero production importers, so its format was declared and
     unconsumed — exactly the state in which a second shell quietly invents its own key. The three
     literals below are the whole shared vocabulary.
     """

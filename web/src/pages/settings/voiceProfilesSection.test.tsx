@@ -8,16 +8,16 @@ import type { VoiceProfile, VoiceResolution } from '../../lib/api'
 // look like a working panel:
 //
 //  1. The effective voice must be the RESOLVER'S answer. A client-side copy of the
-//     §3 precedence chain (explicit > binding > default > built-in) is a second
+//     precedence chain (explicit > binding > default > built-in) is a second
 //     implementation that can disagree with the server, and the disagreement is
 //     invisible — the table would confidently state the wrong voice. Test 1 makes
 //     the server's answer deliberately CONTRADICT the naive client computation.
-//  2. A profile with no recorded consent must not read as broken. §1.3 gates only
+//  2. A profile with no recorded consent must not read as broken. Consent gates only
 //     agentic/off-machine use; plain local synthesis is never gated, so rendering
 //     absence as an error would tell the user to fix something that is fine.
 //  3. A bind that returns a consent warning still SUCCEEDED. Showing that warning
 //     as a failure would misreport the outcome of an action that did happen.
-//  4. Migration is §6-explicit: nothing may call it on a render/startup path, or a
+//  4. Migration is explicit: nothing may call it on a render/startup path, or a
 //     user's flat voice silently becomes a profile they never asked for.
 
 const voiceProfiles = vi.fn()
@@ -158,7 +158,7 @@ describe('a bind that warns still succeeded', () => {
 
   it('still says something when the reason code is one it does not know', async () => {
     // Falling back to silence would hide the warning entirely — the one outcome
-    // §1.3 rules out. Showing the raw code is worse copy but honest.
+    // that must not happen. Showing the raw code is worse copy but honest.
     voiceProfiles.mockResolvedValue({ profiles: [profile()], bindings: {} })
     voiceBindingSet.mockResolvedValue({ bindings: {}, warning: 'some_future_reason' })
 

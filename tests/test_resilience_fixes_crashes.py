@@ -1,5 +1,4 @@
-"""Confirm-gated fixes + crash capture + surfacing-simulator tests
-(§3.1)."""
+"""Confirm-gated fixes + crash capture + surfacing-simulator tests."""
 
 from __future__ import annotations
 
@@ -8,7 +7,7 @@ import json
 from personalclaw.resilience import crashes, fixes
 from personalclaw.skills.surfacing import surface_skills
 
-# ── §2 confirm-gated fixes ────────────────────────────────────────────────────
+# ── confirm-gated fixes ───────────────────────────────────────────────────────
 
 
 def test_builtin_fixes_registered():
@@ -72,7 +71,7 @@ def test_symlink_repair_apply_backs_up_and_links(tmp_path, monkeypatch):
     assert (pkg / "static" / "dist.shadow" / "index.html").read_text() == "STALE"
 
 
-# ── §6.5 crash capture ────────────────────────────────────────────────────────
+# ── crash capture ─────────────────────────────────────────────────────────────
 
 
 def test_record_and_read_crash_roundtrip(tmp_path, monkeypatch):
@@ -126,7 +125,7 @@ def test_read_crash_rejects_traversal(tmp_path, monkeypatch):
     assert crashes.read_crash("a/b.json") is None
 
 
-# ── §3.1 surfacing simulator (explain mode) ───────────────────────────────────
+# ── surfacing simulator (explain mode) ────────────────────────────────────────
 
 _SKILLS = [
     {

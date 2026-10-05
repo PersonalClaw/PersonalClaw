@@ -83,7 +83,7 @@ def _fake_spawn(monkeypatch, *, score=1.0):
 
 
 def test_old_packaged_scenarios_dir_is_gone():
-    """ES-2 is a clean break: the pre-ES-2 read path must not exist to fall back to."""
+    """The library move is a clean break: the old read path must not exist to fall back to."""
     import personalclaw.eval as eval_pkg
 
     old = scenario_lib.Path(eval_pkg.__file__).resolve().parent / "scenarios"
@@ -279,7 +279,7 @@ def test_run_matrix_persists_the_pin_and_the_pinned_ledger_row(home, monkeypatch
 
 
 def test_rebinding_the_model_yields_a_new_fingerprint_for_the_same_scenario(home, monkeypatch):
-    """The amendment's own acceptance sentence, driven end to end."""
+    """A rebind yields a new fingerprint for the same scenario, driven end to end."""
     _pinnable(home, model="Acme:m1")
     _fake_spawn(monkeypatch)
     run_matrix(MatrixSpec(subject="s", trial_count=1), matrix_id="m-1")
@@ -403,7 +403,7 @@ class _Stop(RuntimeError):
 def test_eval_cli_resolves_scenarios_from_the_installed_library(home, monkeypatch):
     """``personalclaw eval`` runs the SAME files the matrix runner pins.
 
-    Before ES-2 it read the packaged dir, so a user scenario was invisible to it and a
+    Before the library move it read the packaged dir, so a user scenario was invisible to it and a
     library edit was invisible to the runner. The user's own ``mine.json`` resolving
     here is the proof that both now read one library.
     """

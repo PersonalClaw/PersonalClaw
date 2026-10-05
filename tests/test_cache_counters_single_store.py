@@ -1,6 +1,6 @@
 """The prompt-cache tallies must stay ONE store, provably.
 
-The change's acceptance criterion says the per-turn aggregate reuses ``stats.py``'s counters "with
+The rule is that the per-turn aggregate reuses ``stats.py``'s counters "with
 no second store". Three rails already ship, and none of them can see a second store
 appear:
 
@@ -13,8 +13,8 @@ appear:
 * ``TestCallSiteRail`` pins that the call site CALLS the shared helpers. Calling them
   and also keeping a private accumulator are not mutually exclusive.
 
-So "no second store" was, until this file, an invariant held by a hand-run census
-recorded in the plan's execution log. Anything a human counted once, a later change
+So "no second store" was, until this file, an invariant held by a hand-run census.
+Anything a human counted once, a later change
 un-counts silently. This is the executable version: over
 ``src/personalclaw/**/*.py``, by AST rather than by grep (a docstring naming
 ``cache_read_tokens`` is not a store), (1) nothing ACCUMULATES a prompt-cache-named
@@ -215,7 +215,7 @@ def test_no_module_on_the_live_path_accumulates_a_prompt_cache_quantity() -> Non
     assert hits == [], (
         "a second prompt-cache accumulator appeared: "
         + ", ".join(hits)
-        + " — PCS-7's aggregate must derive from `Stats`' counters and the terminal "
+        + " — the per-turn aggregate must derive from `Stats`' counters and the terminal "
         "event, never from a parallel running total"
     )
 

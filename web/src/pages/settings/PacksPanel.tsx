@@ -83,8 +83,8 @@ export function PacksPanel() {
 
       {/* 🔴 THE "CONNECTOR CATALOG" SECTION IS GONE, and `packs.connector_catalog_url` with it
           (issue #3490). It offered a URL the local connector set "refreshes from" and no refresh
-          exists: `packs/connectors.py` said so in its own docstring ("a later change drives the
-          refresh; AP-3 only reads the URL") and did not read it either. The connector catalog is
+          exists: `packs/connectors.py` said so in its own docstring (the refresh was left to
+          "a later change") and did not read it either. The connector catalog is
           the seeded, user-extendable `connector_catalog.json`; a field promising a fetch that
           nothing performs is worse than no field, because it reads as configured. */}
       <ProposalsSection onInstalled={onInstalled} />
@@ -100,7 +100,7 @@ export function PacksPanel() {
   )
 }
 
-// ── §7 propose-only fingerprint cards ────────────────────────────────────────
+// ── Propose-only fingerprint cards ────────────────────────────────────────
 
 /** Suggested packs, per project, from the zero-LLM file-shape scanner.
  *
@@ -285,7 +285,7 @@ export function PackStoreSection({ installed, installedErr, onRetryInstalled, on
   // The installed set is the PARENT's read, passed down — not a second copy of the same query.
   // `null` when the ledger is unknown, which is the state the `[]` fallback used to erase: an
   // unreadable ledger became "you have nothing", and every row offered Install for a pack the
-  // user already had. Install is not a no-op — it re-runs the whole §3 import over components
+  // user already had. Install is not a no-op — it re-runs the whole import over components
   // the user may have edited — so the honest row here withholds the button and says why.
   const have = installed ? new Set(installed.map((p) => p.name)) : null
 
@@ -637,7 +637,7 @@ export function UpdatePreview({ update, busy, onApply }: {
           <Button variant="primary" size="sm" disabled={busy} disabledReason={BUSY_REASON} onClick={onApply}>Apply update</Button>
         )}
       </div>
-      {/* Every kept copy, named, with the reason. This is the "visible drift note" the §1
+      {/* Every kept copy, named, with the reason. This is the "visible drift note" the update
           contract requires — an update that skipped silently would look identical to one that
           quietly overwrote the user's work. */}
       {kept.map((c) => (

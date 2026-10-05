@@ -1,18 +1,17 @@
-"""LEARN-R4's `surfacing_events` log — one row per candidate the surfacing engine offered.
+"""The `surfacing_events` log — one row per candidate the surfacing engine offered.
 
 **This table was NAMED before it existed.** `measure.per_arm_precision` was written to consume
 it, `evals/retrieval_bench.py` documented mining it and shipped a SUBSTITUTE instead, and
 `dashboard/handlers/learning.py` explained in prose why it could not read it — three consumers
-referring to a table with "no schema, no reader, no writer". `WORKFLOWS-V2-LEARNING-FLYWHEEL`
-§2.5 recorded the gap precisely: *"NOT DONE (by scope): the `surfacing_events` TABLE and
-its 90d prune on the curator tick."* This module is that table.
+referring to a table with "no schema, no reader, no writer". The gap was the `surfacing_events`
+TABLE and its 90d prune on the curator tick. This module is that table.
 
 **What one row means.** A candidate ENTERED the allocator for one turn — it was offered, with a
 named match arm and the score it competed on — and either its content reached the prompt or it
-did not. That second fact is the `used` column, and §2.5 is emphatic about where it may come
-from: *"'Used' is derived MECHANICALLY — skill body loaded after surfacing, template run started
+did not. That second fact is the `used` column, and it may only ever come from observation:
+it is derived MECHANICALLY — skill body loaded after surfacing, template run started
 from a suggestion, run outcome success/failure, lesson referenced by after_turn_review — never a
-voluntary model feedback call (unenforced 'helpful' scores stay ornamental forever)."* So this
+voluntary model feedback call (unenforced 'helpful' scores stay ornamental forever). So this
 store has no API for recording an opinion. `used` is a fact the writer observed, or it is False.
 
 **Every column earns its place from a real reader**, because a speculative wide table is worse
@@ -27,7 +26,7 @@ than a narrow correct one:
 | `session` | self-similar dedup: ten retrievals in one session are one act of attention |
 | `created_ts` | the 90d prune |
 
-**Storage rides `learning.db`**, the one file §2.5 assigns the flywheel's lifecycle tables, and
+**Storage rides `learning.db`**, the one file for the flywheel's lifecycle tables, and
 declares its own table lazily with `IF NOT EXISTS` — the same shape `usage.UsageStore` uses over
 the same connection. That idempotent declaration IS the migration story here; this project ships
 no migration machinery and is not getting any.
@@ -46,8 +45,8 @@ from personalclaw.durability import numbered_rows
 
 logger = logging.getLogger(__name__)
 
-#: "Events prune at 90d on the curator tick." A flat constant rather than a config knob —
-#: the plan states one number, and a knob nobody has asked to turn is a surface to keep in sync
+#: Events prune at 90d on the curator tick. A flat constant rather than a config knob —
+#: there is one number, and a knob nobody has asked to turn is a surface to keep in sync
 #: through four wiring points for no answer the constant does not already give.
 DEFAULT_RETENTION_DAYS = 90
 
@@ -150,7 +149,7 @@ class SurfacingEventStore:
         """Make the events table in the learning log on *conn*, each event in it with its
         identity (``numbered_rows.give_identity``). Idempotent."""
         conn.executescript("""
-            -- One row per candidate offered per turn (LEARN-R4 / §2.5). Append-only:
+            -- One row per candidate offered per turn. Append-only:
             -- `used` is written once, by the same call that observed the surfacing, because
             -- the writer knows both facts at the same moment. An UPDATE path would exist
             -- only to let a later caller assert a use it did not observe.
@@ -246,7 +245,7 @@ class SurfacingEventStore:
         """Events, newest first. The one read path.
 
         One method rather than one per consumer: `per_arm_precision` takes a list precisely so
-        the store is a separate concern (§2.5's own note), so a second reader shaped for a second
+        the store is a separate concern, so a second reader shaped for a second
         aggregator would be a surface with no caller. Callers that want the aggregator's shape
         map `to_dict` over the result.
 
@@ -294,7 +293,7 @@ class SurfacingEventStore:
         """Drop events past the retention window. Returns rows removed.
 
         Unconditional, unlike `staging.prune`'s consumed-only rule: an event's value is the
-        aggregate it already contributed to, and §2.5 prunes at 90d precisely because the raw
+        aggregate it already contributed to, and events prune at 90d precisely because the raw
         rows are not the artifact. Nothing is owed a later pass over them.
         """
         stamp = time.time() if now is None else now

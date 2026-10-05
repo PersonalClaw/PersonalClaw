@@ -3,12 +3,12 @@
 Local-first means a closed lid stops the loop, so the honest question after a restart is not "what
 should have run" but "what do I tell the user about what didn't".
 
-**The defect this session found in its own first draft.** The shared enumeration budget originally
+**The defect found in this module's own first draft.** The shared enumeration budget originally
 bounded the COUNT. Driven with thirty triggers each down a week: the alphabetically-first minutely
 trigger spent all 480 counting its own 10,080 missed slots, and **twenty-nine triggers got no review
 card at all** — the page would have shown one trigger and silently
 omitted the rest, which is precisely
-the "don't lie" failure §3.4 names. The budget now bounds the ROWS BUILT: counting is one division,
+the "don't lie" failure. The budget now bounds the ROWS BUILT: counting is one division,
 allocating objects is what makes boot slow. Same budget, 24 of 30
 triggers get cards, and every count
 stays exact so the summaries are honest.
@@ -75,7 +75,7 @@ def test_the_NEWEST_slots_become_the_review_rows():
 
 
 def test_the_budget_bounds_the_ROWS_not_the_count():
-    """The defect this session fixed. Budgeting the count let one noisy
+    """The defect fixed here. Budgeting the count let one noisy
     trigger consume the whole pass;
     counting is one division, allocating is what costs."""
     rows, summary, spent = enumerate_missed(
@@ -367,7 +367,7 @@ def _real_row(**over):
 
 
 def test_the_review_reads_the_keys_the_STORE_ACTUALLY_WRITES():
-    """🔴 THE DEFECT S142 FOUND. This module reads `last_fire_at` / `interval_secs` /
+    """🔴 THE DEFECT. This module reads `last_fire_at` / `interval_secs` /
     `missed_last_slot` / `fires_automatically`, and `Trigger.to_dict()` emits **none of the four**.
     So the enumeration guard saw `0.0` and `0.0` for every trigger on every machine and the review
     was EMPTY however long the lid had been shut — a confident, wrong answer.
@@ -417,7 +417,7 @@ def test_missed_last_slot_is_UNANSWERABLE_without_an_instant():
 
 
 def test_an_AUTOPAUSED_trigger_never_catches_up():
-    """S139 pauses a failing automation; a catch-up that restarted it would undo that."""
+    """Autopause stops a failing automation; a catch-up that restarted it would undo that."""
     row = _real_row(catch_up=True, state="autopaused", next_at=NOW - HOUR)
     _tid, fire_at, why = catch_up_plan([row], now=NOW)[0]
     assert fire_at == 0.0
@@ -438,7 +438,7 @@ def test_an_explicit_key_still_WINS_over_the_derivation():
 
 
 def test_an_OVERDUE_fire_is_recorded_as_ran_late():
-    """🔴 THE DEFECT. §1.3 added `ran_late` and `scheduled_for` in the same breath — *"a run that
+    """🔴 THE DEFECT. `ran_late` and `scheduled_for` were added in the same breath — *"a run that
     started 40 minutes after its slot is a different story from one that started on time and took 40
     minutes"* — and `validate_record` even REFUSES a `ran_late` row without a
     `scheduled_for`. But the only writer was the manual missed-fire card, so the tick
@@ -496,7 +496,7 @@ def test_a_FAILED_fire_keeps_its_own_outcome():
 
 def test_NO_slot_means_lateness_is_not_a_FACT():
     """A missing/zero `scheduled_for` returns unchanged. With no slot to compare against, lateness
-    cannot be measured — and guessing one produces exactly the "impression" §1.3 says to avoid.
+    cannot be measured — and guessing one produces an impression, not a fact.
     `validate_record` enforces the same pairing from the other side."""
     from personalclaw.triggers.missed import late_outcome
 

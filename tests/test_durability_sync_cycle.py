@@ -1,7 +1,7 @@
-"""DURABILITY-AND-SYNC §4.1 / DAS-6c-ii-i — one full sync cycle, and criterion 4 end to end.
+"""One full sync cycle, and two-machine convergence end to end.
 
 run_sync_cycle assembles pull+merge+export+push against a shared transport. The crown test is
-the plan's Success Criterion 4: two machines syncing through one shared object store converge —
+the convergence promise: two machines syncing through one shared object store converge —
 a task made on A and a knowledge row on B both exist on both after a cycle each way, and a task
 deleted on A stays deleted on B. Transport failures are contained, never raised.
 """
@@ -103,8 +103,8 @@ class TestOneCycle:
         assert (report.ok, report.error, report.pushed) == (False, "pull: network down", None)
 
 
-class TestCriterion4Convergence:
-    """The plan's Success Criterion 4, end to end through run_sync_cycle."""
+class TestTwoMachineConvergence:
+    """Two-machine convergence, end to end through run_sync_cycle."""
 
     def test_two_machines_converge_on_tasks(self, tmp_path):
         store = SharedStore()

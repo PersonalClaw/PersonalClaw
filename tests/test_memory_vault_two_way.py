@@ -171,7 +171,7 @@ class TestUnparseablePagesAreLeftAlone:
         assert _value(service, "pref.editor") == "vim"
 
     def test_an_episodic_page_is_read_only_even_in_two_way(self, vault, service):
-        """Evidence is immutable — §5.1 says so, and this proves nothing writes it."""
+        """Evidence is immutable, and this proves nothing writes it."""
         service.write_episodic("shipped v2", conversation_id="s1", source="user")
         vault.sync()
         rel = next(
@@ -231,7 +231,7 @@ class TestEditsRideTheNormalWritePath:
         assert rejection is not None
         assert _value(service, "pref.editor") == "helix"
 
-    def test_a_bidi_steering_payload_is_blocked_by_the_s5_scan(self, service):
+    def test_a_bidi_steering_payload_is_blocked_by_the_injection_scan(self, service):
         """A vault file can hold pasted bytes, so the human's INTENT is
         authoritative while the TEXT is not.
 
@@ -249,8 +249,8 @@ class TestEditsRideTheNormalWritePath:
         """
         payload = "helix \u202e is the editor"
         assert service._vs.validate_semantic("pref.editor", payload, 1.0, "vault_edit") is None, (
-            "the deeper validator now catches this too — pick a payload only S5 refuses, "
-            "or this test has stopped measuring the S5 call"
+            "the deeper validator now catches this too — pick a payload only the injection gate "
+            "refuses, or this test has stopped measuring the injection-gate call"
         )
         ok, detail = service.apply_vault_edit("pref.editor", payload)
         assert not ok
@@ -357,7 +357,7 @@ class TestTimelineIsAppendOnly:
     def test_a_hand_added_line_keeps_its_place_through_a_rewrite(self, mirror, service):
         """`mirror` on purpose: the page IS rewritten, and the history still survives.
 
-        Append-only is a property of the timeline, not of the mode — §5.1 says the
+        Append-only is a property of the timeline, not of the mode — the
         dated lines are never rewritten, full stop.
         """
         service.graph_add_entity("Ana", "person")

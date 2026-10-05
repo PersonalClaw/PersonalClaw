@@ -220,7 +220,7 @@ describe("there is no second retry loop racing the SPA", () => {
 });
 
 describe("every `desktop/main.js:N` citation in the repo still resolves", () => {
-  // 🪤 THIS RAIL EXISTS BECAUSE THE DRIFT HAPPENED TWICE IN ONE SESSION. `CA-6` and `CA-7` both
+  // 🪤 THIS RAIL EXISTS BECAUSE THE DRIFT HAPPENED TWICE IN ONE SESSION. Two earlier changes both
   // recorded that they had to fix stale `desktop/main.js:<line>` anchors BY HAND because no test
   // checks line numbers. This change then staled them a third time — first by renaming `backendUrl`,
   // and again by adding code above the cited lines after having just corrected them. A citation

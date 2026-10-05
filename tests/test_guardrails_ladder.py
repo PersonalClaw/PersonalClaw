@@ -15,7 +15,7 @@ constructed object:
    above the ceiling or during a cooldown.
 
 The withhold → grant → execute → undo round trip runs a memory write through a stored ``event``
-trigger — the gateway's router and ``_fire_store_trigger``, the dispatch AG-7 wired — so nothing
+trigger — the gateway's router and ``_fire_store_trigger``, the real dispatch — so nothing
 here proves a code path a user cannot reach.
 """
 
@@ -181,7 +181,7 @@ def _row(view: dict, key: str) -> dict:
     return next(t for t in view["types"] if t["key"] == key)
 
 
-# ── acceptance criteria 2: the whole round trip, as a user drives it ──────────
+# ── the whole round trip, as a user drives it ─────────────────────────────────
 
 
 def test_withheld_then_granted_then_undone_through_the_REAL_endpoints(_isolated_home):
@@ -304,7 +304,7 @@ def test_the_undo_record_is_what_the_notification_carries(_isolated_home):
     assert "undo" in notes[0]["body"].lower()
 
 
-# ── acceptance criteria 1: promotion is a click, and only a click ─────────────
+# ── promotion is a click, and only a click ────────────────────────────────────
 
 
 def _seed_clean_record(key: str, *, approvals: int = 12, days: int = 9) -> None:
@@ -404,7 +404,7 @@ def test_nothing_but_the_api_handler_grants_a_rung():
     assert callers == {"dashboard/handlers/autonomy.py"}, callers
 
 
-# ── acceptance criteria 4 (the refusals): a grant is validated, never trusted ──────────
+# ── the refusals: a grant is validated, never trusted ──────────────────────────────────
 
 
 def test_the_api_refuses_a_grant_ABOVE_the_declared_ceiling(_isolated_home):
@@ -733,7 +733,7 @@ def test_the_reversal_store_is_bounded(_isolated_home):
     assert records[0].handle == f"task:native:{ld._MAX_RECORDS + 11}"
 
 
-# ── acceptance criteria 3: the chip's sentence ────────────────────────────────
+# ── the chip's sentence ───────────────────────────────────────────────────────
 
 
 def test_the_authority_sentence_names_the_DECLARED_floor(_isolated_home):

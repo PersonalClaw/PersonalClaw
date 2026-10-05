@@ -72,8 +72,8 @@ class CapabilityMatrix:
     """Per-model feature flags a binding UI renders as chips instead of guessing.
 
     Optional on :class:`LocalModel` (default ``None`` = "unknown, don't assert"). Kept a
-    flat, extensible dataclass on purpose — MI-2 added the cloning / voice-design flags
-    below — so a new capability is one field, not a schema migration.
+    flat, extensible dataclass on purpose — the cloning / voice-design flags below were
+    added that way — so a new capability is one field, not a schema migration.
     """
 
     word_timestamps: bool = False
@@ -110,7 +110,7 @@ class LocalModel:
     capabilities: list[str] = field(default_factory=list)
     gated: bool = False  # needs a token / license acceptance (e.g. pyannote)
     source: str = ""  # display-only origin hint (HF repo, GitHub release, ollama.com)
-    # Catalog-contract fields (LMMV §2.1/§2.2/§2.3) — all optional, appended so every
+    # Catalog-contract fields — all optional, appended so every
     # keyword constructor and the old bool-shaped providers stay valid untouched.
     matrix: CapabilityMatrix | None = None  # per-model feature chips (None = unknown)
     runtime: str = ""  # ctranslate2 / onnx / torch / piper / gguf-llamacpp
@@ -225,7 +225,7 @@ class LocalModelProvider(ABC):
         return None
 
     #: Instance attributes that hold a LOADED model, declared by the provider so the
-    #: residency surface can see what is occupying RAM (LMMV §7). An attribute holding a
+    #: residency surface can see what is occupying RAM. An attribute holding a
     #: dict contributes one row per key. Empty → the reflective default below guesses from
     #: the conventional names, which is honest-but-coarse.
     _MODEL_ATTRS: tuple[str, ...] = ()
@@ -236,7 +236,7 @@ class LocalModelProvider(ABC):
     _MODEL_ATTR_GUESSES: tuple[str, ...] = ("_model", "model", "_pipeline", "_models")
 
     def loaded_models(self) -> list[dict[str, Any]]:
-        """The models this provider currently holds IN MEMORY (LMMV §7).
+        """The models this provider currently holds IN MEMORY.
 
         ``[]`` means nothing is resident — which is different from "this provider has no
         models". The reflective default reads :attr:`_MODEL_ATTRS` (or the conventional
@@ -298,7 +298,7 @@ class LocalModelProvider(ABC):
         return (True, "ready") if ok else (False, "unavailable")
 
     async def availability_detail(self) -> tuple[bool, str]:
-        """``(ok, message)`` — availability plus a human reason (LMMV §6).
+        """``(ok, message)`` — availability plus a human reason.
 
         The health endpoint's source of truth. The bool half is exactly
         :meth:`is_available`'s answer (so the ``-> bool`` contract and the
@@ -320,7 +320,7 @@ class LocalModelProvider(ABC):
         *,
         cache_root: Path | None = None,
     ) -> list[LocalModel]:
-        """Build the model list from a declarative ``catalog.json`` (LMMV §2.3).
+        """Build the model list from a declarative ``catalog.json``.
 
         A fixed-catalog provider's :meth:`list_models` becomes a one-liner over this: the
         catalog file is the source of truth, so adding or deprecating a model is a file
@@ -412,7 +412,7 @@ class LocalModelProvider(ABC):
         cache_root: Path,
         layouts: Any,
     ) -> None:
-        """Fill ``downloaded`` and the ``truncated`` integrity flag from disk (LMMV §2.3).
+        """Fill ``downloaded`` and the ``truncated`` integrity flag from disk.
 
         A finished, non-``config_only`` model whose on-disk bytes fall below
         :data:`_TRUNCATION_FLOOR` of its declared footprint — and which has no unfinished

@@ -97,8 +97,8 @@ export const ERROR_TREATMENTS: Record<ErrorTreatmentId, ErrorTreatment> = {
  *  so `getErrorTreatment('constructor')` used to return the `Object` constructor
  *  instead of `null` — and `treatmentPaint` then threw `Cannot read properties of
  *  undefined (reading 'bg')`, on the one render path this function's own contract
- *  says must never throw. Found while closing the same hole in `getShellElement`
- *  (PT-3); the two registries now resolve identically. */
+ *  says must never throw. Found while closing the same hole in `getShellElement`;
+ *  the two registries now resolve identically. */
 export function getErrorTreatment(id: string | undefined): ErrorTreatment | null {
   if (!id || !Object.hasOwn(ERROR_TREATMENTS, id)) return null
   return ERROR_TREATMENTS[id as ErrorTreatmentId]

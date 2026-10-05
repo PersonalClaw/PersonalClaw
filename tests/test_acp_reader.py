@@ -1,4 +1,4 @@
-"""Tests for the P9 FrameRouter (acp/reader.py) — the single-reader stdout demux.
+"""Tests for the FrameRouter (acp/reader.py) — the single-reader stdout demux.
 
 Driven by a fake readline feeding scripted JSON-RPC frames; no real ACP process.
 The load-bearing property is SESSION ISOLATION: frames for session A and B are

@@ -21,7 +21,7 @@ import { chatFindPath, searchCoverage } from '../pages/chat/searchDeepLink'
  *   · tasks: `POST /api/tasks/search`, opened in the task list's side panel.
  *
  *  A source that fails says so in its own words, beside the others' results, rather than looking
- *  like a source with nothing in it. That is the failure F-41 was about on the chat list. */
+ *  like a source with nothing in it. That is the failure the chat list used to have. */
 
 export type ContentSource = 'chats' | 'memory' | 'knowledge' | 'tasks'
 

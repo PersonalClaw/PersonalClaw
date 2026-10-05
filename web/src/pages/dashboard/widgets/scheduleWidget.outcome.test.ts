@@ -8,7 +8,7 @@
  * fell through to the default branch, and rendered as **"ran"** with an info dot.
  *
  * A quiet-hours SUPPRESSION displayed as "ran" is the feed reporting that the machine did work it
- * explicitly had not done — the opposite of §7 criterion 8's "zero silent drops", and worse than
+ * explicitly had not done — the opposite of "zero silent drops", and worse than
  * showing nothing, because the user has no reason to look further.
  *
  * `statusMeta` already maps the whole vocabulary. A second local copy is how two surfaces
@@ -62,7 +62,7 @@ describe('the Schedule widget outcome mapping', () => {
 
 describe('the completeness guard this pattern earned', () => {
   // The backend vocabulary is closed (`models.Outcome`), so it can be restated here and asserted
-  // whole. S137 mapped part of it and S163 found three members still missing — including `failed`,
+  // whole. An earlier mapping covered part of it and left three members missing — including `failed`,
   // rendering as "never run". A per-value test catches the next addition instead of letting it
   // fall through the default branch, which is where every one of these bugs has lived.
   const OUTCOMES = [
@@ -76,7 +76,7 @@ describe('the completeness guard this pattern earned', () => {
   })
 
   it('keeps a FAILED fire visually distinct from a never-run one', () => {
-    // The pair that matters most: before S163 both were grey "never run", so a broken automation
+    // The pair that matters most: both used to be grey "never run", so a broken automation
     // was indistinguishable from an idle one.
     expect(statusMeta('failed').tone).toBe('var(--color-danger)')
     expect(statusMeta(undefined as unknown as string).tone).not.toBe('var(--color-danger)')

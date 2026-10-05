@@ -80,11 +80,11 @@ _CALL_SITE_SURFACES = {
     # offered; a history is cut to fit rather than condensed; the suggestions are the fallback
     # list.
     "chores.py": "assistant_reasoning",
-    # visualize(data, hint) — the agency-free data→genui primitive (AMBIENT-SURFACES
-    # §5.3). Reasoning-axis one-shot; no-model floor: no visualization produced and
+    # visualize(data, hint) — the agency-free data→genui primitive.
+    # Reasoning-axis one-shot; no-model floor: no visualization produced and
     # the caller keeps the raw data (the MCP tool + WF2 node both say so honestly).
     "visualize.py": "assistant_reasoning",
-    # UNIVERSAL-PLANNING matcher T5: summarize-then-rematch. Its no-model
+    # The workflow matcher's T5: summarize-then-rematch. Its no-model
     # floor is BUILT IN — a missing/failing summarizer degrades to the deterministic
     # matcher tiers (T1-T3) and the keyword scorer stays authoritative, so the caller
     # always gets a bounded match result rather than an error.
@@ -130,25 +130,25 @@ _CALL_SITE_SURFACES = {
     # BUILT IN like the compressor's above: a raise or an empty answer returns "", and `compact`
     # then folds the same region with its deterministic digest, so the member's turn still runs.
     "rooms/turn.py": "assistant_reasoning",
-    # INU-6 second-opinion verification (verify_attention_item). Background reasoning
+    # Second-opinion verification (verify_attention_item). Background reasoning
     # one-shot whose no-model floor is BUILT IN: no model / timeout / budget / parse-fail →
     # verdict "skipped", so the attention notification is DELIVERED unverified rather than
     # blocked (fail-open). Same shape as the built-in-floor reasoning call sites above.
     "notification_verify.py": "assistant_reasoning",
-    # DAS-7 propose-only sync conflict merge. Background reasoning one-shot whose no-model
+    # Propose-only sync conflict merge. Background reasoning one-shot whose no-model
     # floor is BUILT IN: no model / open breaker / timeout / budget / unparseable answer →
     # the conflict record STAYS needs-review with no proposal and a recorded
     # proposal_error. A missing model costs the suggestion, never the conflict — and it can
     # never resolve one, because this surface only ever proposes.
     "durability/conflict_merge.py": "assistant_reasoning",
-    # HC-3 best-of-N sampling: N temperature-varied background
+    # Best-of-N sampling: N temperature-varied background
     # one-shots + an LLMJudge pass. Its no-model floor is BUILT IN and two-tiered —
     # a failed sample loses that candidate only, and if EVERY sample fails the caller
     # gets an explicit no-candidate envelope (winner=None + note) rather than an error
     # or a fabricated answer; a dead judge returns the slate judged=False with the
     # lowest-temperature survivor. Fail-open, never a raise.
     "sampling.py": "assistant_reasoning",
-    # AP-4 prompt-card importer. Background reasoning one-shot, and the
+    # Prompt-card importer. Background reasoning one-shot, and the
     # ONLY call site here whose no-model floor is deliberately a LOUD REFUSAL rather than a
     # built-in degradation: mapping a prose card onto a typed PromptTemplate/WorkflowDef/
     # AgentDefinition has no deterministic fallback, and a heuristic one would fabricate an
@@ -222,7 +222,7 @@ def test_every_one_shot_call_site_is_mapped():
     assert not unmapped, (
         "New one_shot_completion call-site(s) with no degraded-contract mapping: "
         f"{sorted(unmapped)}. Add each file to _CALL_SITE_SURFACES in this test AND "
-        "ensure it maps to a registered DegradedContract surface (PLATFORM-RESILIENCE §5)."
+        "ensure it maps to a registered DegradedContract surface."
     )
 
 

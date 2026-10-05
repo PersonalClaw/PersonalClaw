@@ -217,7 +217,7 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/apps/{name}/disable` | _(no summary)_ |
 | `POST` | `/api/apps/{name}/enable` | _(no summary)_ |
 | `POST` | `/api/apps/{name}/token` | the app-scoped identity token this app should use. |
-| `GET` | `/api/apps/{name}/uninstall-preview` | classify shared deps (A3) and report what the app's ``data/`` holds. |
+| `GET` | `/api/apps/{name}/uninstall-preview` | classify shared deps and report what the app's ``data/`` holds. |
 | `POST` | `/api/apps/{name}/update` | atomic update from ``{source, consent?}``. |
 | `GET` | `/api/artifacts` | metadata-only rows; ``q`` searches metadata and body. |
 | `POST` | `/api/artifacts` | create (or bump an existing file-backed artifact). |
@@ -226,7 +226,7 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/artifacts/folders` | create a folder (``{name, parent_id?, icon?}``). |
 | `DELETE` | `/api/artifacts/folders/{id}` | members fall back to unfiled; nothing is destroyed. |
 | `PATCH` | `/api/artifacts/folders/{id}` | rename / re-nest / reorder. No artifact is touched. |
-| `GET` | `/api/artifacts/pinned` | the dashboard pin list (WORK-CONTAINERS §6.5d). |
+| `GET` | `/api/artifacts/pinned` | the dashboard pin list. |
 | `DELETE` | `/api/artifacts/{slug}` | _(no summary)_ |
 | `GET` | `/api/artifacts/{slug}` | full content (live-pointer read for file-backed). |
 | `PATCH` | `/api/artifacts/{slug}` | save (silent) or snapshot; or metadata-only. |
@@ -238,10 +238,10 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/artifacts/{slug}/extract` | extracted text for a binary document artifact. |
 | `PATCH` | `/api/artifacts/{slug}/folder` | file an artifact (``{folder_id}``; "" = unfiled). |
 | `GET` | `/api/artifacts/{slug}/model` | the parsed document model + its loss report. |
-| `PUT` | `/api/artifacts/{slug}/model` | re-render a posted model into the artifact (§C3). |
+| `PUT` | `/api/artifacts/{slug}/model` | re-render a posted model into the artifact. |
 | `POST` | `/api/artifacts/{slug}/pin` | pin or unpin (``{"pinned": bool}``). |
 | `GET` | `/api/artifacts/{slug}/raw` | stream a binary artifact's bytes. |
-| `PUT` | `/api/artifacts/{slug}/raw` | replace a binary artifact's bytes (§C3). |
+| `PUT` | `/api/artifacts/{slug}/raw` | replace a binary artifact's bytes. |
 | `POST` | `/api/artifacts/{slug}/regenerate` | re-run image generation at this slug. |
 | `GET` | `/api/artifacts/{slug}/versions` | _(no summary)_ |
 | `GET` | `/api/artifacts/{slug}/versions/{version}` | immutable historical content. |
@@ -377,8 +377,8 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/chat/task-mode` | set the per-session TASK mode. |
 | `GET` | `/api/companion/discovery` | the live state of the LAN advertiser. |
 | `POST` | `/api/computer-use/dispatch` | run one computer-use tool through the chain. |
-| `GET` | `/api/computer-use/live-view` | the human-facing live view + overlay data (`DCU-7`). |
-| `GET` | `/api/config-fs/stream` | SSE feed of out-of-band config-tree changes (#44). |
+| `GET` | `/api/computer-use/live-view` | the human-facing live view + overlay data. |
+| `GET` | `/api/config-fs/stream` | SSE feed of out-of-band config-tree changes. |
 | `GET` | `/api/config/default-agent` | read or set the default agent. |
 | `PUT` | `/api/config/default-agent` | read or set the default agent. |
 | `GET` | `/api/config/personalclaw` | read or update PersonalClaw config. |
@@ -397,8 +397,8 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/dashboard/views/{view_id}/tiles` | {slug, size?} — pin an artifact tile. |
 | `POST` | `/api/dashboard/views/{view_id}/tiles/action` | POST .../tiles/action {ref, action, payload?} — a genui control re-firing this tile. |
 | `PUT` | `/api/dashboard/views/{view_id}/tiles/binding` | {ref, mode, ttl_secs?, skeleton?, data?} |
-| `GET` | `/api/dashboard/views/{view_id}/tiles/refresh` | POST .../tiles/refresh {ref, force?} — run one chatless refresh (§2.3). |
-| `POST` | `/api/dashboard/views/{view_id}/tiles/refresh` | POST .../tiles/refresh {ref, force?} — run one chatless refresh (§2.3). |
+| `GET` | `/api/dashboard/views/{view_id}/tiles/refresh` | POST .../tiles/refresh {ref, force?} — run one chatless refresh. |
+| `POST` | `/api/dashboard/views/{view_id}/tiles/refresh` | POST .../tiles/refresh {ref, force?} — run one chatless refresh. |
 | `POST` | `/api/dashboard/views/{view_id}/tiles/resolve` | {ref, keep} — accept/dismiss/unpin. |
 | `GET` | `/api/design/tokens/default` | PersonalClaw's canonical |
 | `GET` | `/api/desktop/capabilities/{cap}` | one capability, gateway-mediated. |
@@ -428,25 +428,25 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/doctor/simulate/automation` | {trigger_id} — what this automation WOULD do. |
 | `POST` | `/api/doctor/simulate/surfacing` | {text} — dry-run the skill scorer in |
 | `GET` | `/api/doctor/{capability}` | re-run one capability's probes (uncached). |
-| `GET` | `/api/durability/archive` | the archive browser's list (§6). |
-| `POST` | `/api/durability/archive/{id}/restore` | {mode?, components?, confirm?} — §6. |
-| `GET` | `/api/durability/conflicts` | the review queue (§4.2). |
+| `GET` | `/api/durability/archive` | the archive browser's list. |
+| `POST` | `/api/durability/archive/{id}/restore` | {mode?, components?, confirm?}. |
+| `GET` | `/api/durability/conflicts` | the review queue. |
 | `POST` | `/api/durability/conflicts/{id}/resolve` | {choice, confirm} — apply one decision. |
-| `POST` | `/api/durability/export` | {domains?} — the DSAR export (§6). |
+| `POST` | `/api/durability/export` | {domains?} — the DSAR export. |
 | `GET` | `/api/durability/history` | per-root repo status for the Time Travel panel. |
 | `GET` | `/api/durability/history/{root}/timeline` | the timeline. |
 | `POST` | `/api/durability/history/{root}/{op}` | {sha, paths?, confirm?, expected_head?, |
-| `POST` | `/api/durability/import` | validate, then apply, an export zip (§6). |
+| `POST` | `/api/durability/import` | validate, then apply, an export zip. |
 | `POST` | `/api/durability/run` | {job} — run one backup job now, recorded as a scheduled run is. |
 | `GET` | `/api/durability/status` | schedule state + what's due, and what each job's last run did. |
-| `GET` | `/api/evals/ablation` | the newest keep/remove/lighten report (ES-7 §3.1). |
-| `GET` | `/api/evals/field-metrics` | Loop-3 field metrics beside lab results (E3 / ES-9). |
+| `GET` | `/api/evals/ablation` | the newest keep/remove/lighten report. |
+| `GET` | `/api/evals/field-metrics` | Loop-3 field metrics beside lab results. |
 | `GET` | `/api/evals/judge-bench` | the newest tier-recommendation table. |
-| `GET` | `/api/evals/learning-benchmark` | the newest skill-impact benchmark report (LV-7). |
-| `GET` | `/api/evals/retrieval` | the newest per-arm P@k/R@k table for BOTH stores (§5). |
-| `GET` | `/api/evals/retrieval/card` | §5.2's hand-labeling card. |
+| `GET` | `/api/evals/learning-benchmark` | the newest skill-impact benchmark report. |
+| `GET` | `/api/evals/retrieval` | the newest per-arm P@k/R@k table for BOTH stores. |
+| `GET` | `/api/evals/retrieval/card` | the hand-labeling card. |
 | `POST` | `/api/evals/retrieval/labels` | save a completed hand-label card. |
-| `GET` | `/api/evals/studies` | one compact row per pre-registered study (§2.4 / ES-5). |
+| `GET` | `/api/evals/studies` | one compact row per pre-registered study. |
 | `GET` | `/api/evals/studies/{study_id}` | one study's verdict, agreement and per-run rows. |
 | `GET` | `/api/external-access` | the whole operator view of the inbound seam. |
 | `POST` | `/api/external-access/bridge/confirmations/{id}` | your answer to a control-bridge action. |
@@ -486,10 +486,10 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/inbox/digest` | on-demand channel digest. |
 | `POST` | `/api/inbox/dismiss-all` | dismiss every OPEN item (pending or seen). |
 | `GET` | `/api/inbox/kinds` | item kinds present, with open counts, for the filter chips. |
-| `POST` | `/api/inbox/notes` | the USER writes their own inbox item (INU-9). |
+| `POST` | `/api/inbox/notes` | the USER writes their own inbox item. |
 | `GET` | `/api/inbox/open` | every row still wanting the user (PENDING or SEEN). |
 | `GET` | `/api/inbox/owners` | owners present in the store, with counts, for the filter chips. |
-| `POST` | `/api/inbox/proposals` | an APP raises a proposal (INU-7 T7.2). |
+| `POST` | `/api/inbox/proposals` | an APP raises a proposal. |
 | `GET` | `/api/inbox/providers` | every message source the inbox knows, and whether it polls it. |
 | `POST` | `/api/inbox/restart` | stop and reinitialize the inbox service. |
 | `POST` | `/api/inbox/seen` | mark items SEEN (the read/unread boundary). |
@@ -504,7 +504,7 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/inbox/{id}/favorite` | {favorited: bool} — set the favorite flag + record a |
 | `POST` | `/api/inbox/{id}/open` | record that the user opened/read this item (a moderate |
 | `POST` | `/api/inbox/{id}/pair` | let someone new talk to your agent on the channel they wrote on. |
-| `POST` | `/api/inbox/{id}/restore` | undo a verification filter (INU-6). |
+| `POST` | `/api/inbox/{id}/restore` | undo a verification filter. |
 | `POST` | `/api/inbox/{id}/sort` | sort a message again, after its sorting failed. |
 | `GET` | `/api/incident` | current state; POST /api/incident — activate. |
 | `POST` | `/api/incident` | current state; POST /api/incident — activate. |
@@ -520,7 +520,7 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/knowledge/collections/{id}/items` | shelve one or many items. |
 | `DELETE` | `/api/knowledge/collections/{id}/items/{item_id}` | unshelve one item. |
 | `GET` | `/api/knowledge/conflicts` | every recorded disagreement in the store. |
-| `GET` | `/api/knowledge/decisions` | §5.3's journal view and §2.5's calibration strip. |
+| `GET` | `/api/knowledge/decisions` | the journal view and the calibration strip. |
 | `GET` | `/api/knowledge/embedding/status` | - embedding config and progress. |
 | `GET` | `/api/knowledge/entities` | _(no summary)_ |
 | `GET` | `/api/knowledge/entities/by-name/{name}/items` | - items that MENTION the entity. |
@@ -573,7 +573,7 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/knowledge/source-recipes` | - the bundled source-recipe directory. |
 | `GET` | `/api/knowledge/sources` | the watched sources, with health, plus the kind catalog. |
 | `POST` | `/api/knowledge/sources` | save a source, after its provider validates the spec. |
-| `POST` | `/api/knowledge/sources/preview` | §2.4's dry run for the paste-URL create flow. |
+| `POST` | `/api/knowledge/sources/preview` | the dry run for the paste-URL create flow. |
 | `PATCH` | `/api/knowledge/sources/{id}` | apply a remediation, rename, or pause a source. |
 | `GET` | `/api/knowledge/stats` | _(no summary)_ |
 | `GET` | `/api/knowledge/tag-tree` | every tag with its parent and live usage count. |
@@ -581,7 +581,7 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `DELETE` | `/api/knowledge/tags/{id}` | remove a tag from the taxonomy and every item. |
 | `PATCH` | `/api/knowledge/tags/{id}` | rename, or re-parent via `parent_id`. |
 | `POST` | `/api/knowledge/tags/{id}/merge` | {into} — fold this tag into another. |
-| `GET` | `/api/learning/health` | the flywheel observability panel (LEARN-R14b). |
+| `GET` | `/api/learning/health` | the flywheel observability panel. |
 | `GET` | `/api/learning/identity-report` | the deterministic report, no model call. |
 | `POST` | `/api/learning/identity-report` | compose, narrate, persist, surface. |
 | `GET` | `/api/learning/proposals` | the inbox across all six kinds. |
@@ -589,7 +589,7 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/learning/proposals/{id}` | one full record. |
 | `POST` | `/api/learning/proposals/{id}/accept` | install it. |
 | `GET` | `/api/learning/staging/week` | the week-at-a-glance capture panel. |
-| `GET` | `/api/learning/summary` | the learning summary block (LV-3). |
+| `GET` | `/api/learning/summary` | the learning summary block. |
 | `GET` | `/api/legibility/always-on` | what every session receives, with provenance. |
 | `GET` | `/api/legibility/always-on/doc` | one body, verbatim, for the editor. |
 | `PUT` | `/api/legibility/always-on/doc` | replace an editable project instruction. |
@@ -600,7 +600,7 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/lessons` | _(no summary)_ |
 | `POST` | `/api/lessons` | add a lesson to memory.db ``lesson.*``. |
 | `GET` | `/api/lexicon/corrections` | list learned corrections (most-corrected first). |
-| `POST` | `/api/lexicon/corrections` | {heard, meant, always?} — record a learned fix |
+| `POST` | `/api/lexicon/corrections` | {heard, meant, always?} — record a learned fix. |
 | `DELETE` | `/api/lexicon/corrections/{id}` | forget one learned correction. |
 | `PATCH` | `/api/lexicon/corrections/{id}` | {auto_apply} — toggle 'always fix this'. |
 | `POST` | `/api/lexicon/rebuild` | resync graph-sourced terms from knowledge entities now |
@@ -648,7 +648,7 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/mcp/apply` | batched per-scope apply for MCP servers. |
 | `GET` | `/api/mcp/importable` | MCP servers configured in an external backend |
 | `GET` | `/api/mcp/oauth/callback` | where an authorization server sends the browser back to. |
-| `GET` | `/api/mcp/pool-stats` | the in-process MCP connection-pool observability tile |
+| `GET` | `/api/mcp/pool-stats` | the in-process MCP connection-pool observability tile. |
 | `GET` | `/api/mcp/probe` | return cached probe results (non-blocking): each switched-on server |
 | `POST` | `/api/mcp/probe` | probe all MCP servers and return live status. |
 | `POST` | `/api/mcp/probe/{name}` | reconnect (re-probe) a SINGLE MCP server: its card's Retry. |
@@ -669,10 +669,10 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `DELETE` | `/api/memory/approval-rules/{key}` | revoke one rule. |
 | `POST` | `/api/memory/consolidate` | trigger immediate consolidation for testing. |
 | `GET` | `/api/memory/context-preview` | preview what gets injected into prompts. |
-| `GET` | `/api/memory/daily-digests` | the per-day rollup nodes (mem-tree), |
+| `GET` | `/api/memory/daily-digests` | the per-day rollup nodes, |
 | `GET` | `/api/memory/entities` | the entity set with inbound-link counts. |
 | `POST` | `/api/memory/entities` | declare an entity, then re-link the store. |
-| `GET` | `/api/memory/entities/proposals` | the accept queue (§7.1). |
+| `GET` | `/api/memory/entities/proposals` | the accept queue. |
 | `POST` | `/api/memory/entities/proposals` | accept or reject a proposed entity. |
 | `DELETE` | `/api/memory/entities/{entity_id}` | remove a hand-declared entity. |
 | `GET` | `/api/memory/entities/{entity_id}/backlinks` | what mentions this entity. |
@@ -685,8 +685,8 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/memory/facets/{key}/forget` | retire a facet. FINAL. |
 | `POST` | `/api/memory/facets/{key}/pin` | hold a facet at full stability, or release it. |
 | `GET` | `/api/memory/graph` | return all memory as nodes + edges for graph visualization. |
-| `GET` | `/api/memory/graph/entities` | the entity topology (§7.2). |
-| `GET` | `/api/memory/graph/export` | the entity graph as ONE self-contained HTML file (§7.2). |
+| `GET` | `/api/memory/graph/entities` | the entity topology. |
+| `GET` | `/api/memory/graph/export` | the entity graph as ONE self-contained HTML file. |
 | `POST` | `/api/memory/graph/rebuild` | seed entities, then link every record. |
 | `GET` | `/api/memory/history` | the days of the daily history, newest first, with their entries. |
 | `GET` | `/api/memory/history/{day}` | one day of the daily history, as its file holds it. |
@@ -703,7 +703,7 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `PUT` | `/api/memory/projects` | _(no summary)_ |
 | `POST` | `/api/memory/promote` | promote repeated episodic patterns to semantic facts. |
 | `GET` | `/api/memory/recall` | deep on-demand recall for the agent. |
-| `GET` | `/api/memory/record-links` | one record's entity links (§7.1). |
+| `GET` | `/api/memory/record-links` | one record's entity links. |
 | `GET` | `/api/memory/semantic` | list all semantic memory entries. |
 | `PUT` | `/api/memory/semantic` | create/update a semantic entry. |
 | `DELETE` | `/api/memory/semantic/{key}` | tombstone a semantic entry. |
@@ -715,7 +715,7 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/memory/stats` | memory system statistics. |
 | `GET` | `/api/memory/vault` | the readable-vault status (mode, path, file count). |
 | `POST` | `/api/memory/vault/sync` | reconcile the vault against the store. |
-| `GET` | `/api/memory/volunteer-stats` | per-arm volunteered-vs-used precision (§3). |
+| `GET` | `/api/memory/volunteer-stats` | per-arm volunteered-vs-used precision. |
 | `GET` | `/api/model-provider-types` | installable model-provider types. |
 | `GET` | `/api/model-providers` | every configured model-provider instance. |
 | `POST` | `/api/model-providers` | add a new model provider to config. |
@@ -750,11 +750,11 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `DELETE` | `/api/models/rates` | reset your price for one key, so the model's default |
 | `GET` | `/api/models/rates` | the rates you set, and what each bound or recent model costs. |
 | `PUT` | `/api/models/rates` | set your price for one key, a model a known price is listed for |
-| `GET` | `/api/models/routing-policy` | the inspectable routing table (§6.1). |
-| `PUT` | `/api/models/routing-policy` | set one of the three user levers (§6.2). |
-| `GET` | `/api/models/routing-proposals` | the propose-don't-write review queue (§6.3). |
-| `DELETE` | `/api/models/routing-proposals/{id}` | decline it, and remember the decision (§6.3). |
-| `POST` | `/api/models/routing-proposals/{id}/accept` | apply it to the table (§6.3). |
+| `GET` | `/api/models/routing-policy` | the inspectable routing table. |
+| `PUT` | `/api/models/routing-policy` | set one of the three user levers. |
+| `GET` | `/api/models/routing-proposals` | the propose-don't-write review queue. |
+| `DELETE` | `/api/models/routing-proposals/{id}` | decline it, and remember the decision. |
+| `POST` | `/api/models/routing-proposals/{id}/accept` | apply it to the table. |
 | `DELETE` | `/api/models/sidecar/{provider}/install` | remove a CORE-created venv. |
 | `POST` | `/api/models/sidecar/{provider}/install` | start the resumable install. |
 | `GET` | `/api/models/sidecar/{provider}/install/status` | the rich install poll shape. |
@@ -791,22 +791,22 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/outbox` | list files in the outbox. |
 | `POST` | `/api/outbox/notify` | agent sent a file, notify the user. |
 | `GET` | `/api/outbox/{filename}` | download a file from the outbox. |
-| `GET` | `/api/packs/bundled` | List the Domain OS packs shipped in this build (§4.1). |
-| `POST` | `/api/packs/bundled/{name}/install` | Build a shipped Domain OS pack and import it through the §3 pipeline. |
+| `GET` | `/api/packs/bundled` | List the Domain OS packs shipped in this build. |
+| `POST` | `/api/packs/bundled/{name}/install` | Build a shipped Domain OS pack and import it through the pack import pipeline. |
 | `GET` | `/api/packs/installed` | List installed packs with connector-resolution, roster + setup-binding state. |
-| `POST` | `/api/packs/one-link` | Import a one-link JSON document (§2.3/§4.4) through the same §3 pipeline. |
-| `POST` | `/api/packs/prompt-card` | Import a pasted prompt card (§4.3) — files a proposal, writes no entity. |
-| `GET` | `/api/packs/proposals` | The propose-only fingerprint cards (§7) — an ON-DEMAND scan. Writes nothing. |
-| `POST` | `/api/packs/proposals/reject` | Remember that this project's user does not want this pack — the never-re-nag write (§7). |
-| `POST` | `/api/packs/{name}/bindings` | Record one setup-interview answer (§3.4/§4.1) — the folder the pack will read. |
+| `POST` | `/api/packs/one-link` | Import a one-link JSON document through the same import pipeline. |
+| `POST` | `/api/packs/prompt-card` | Import a pasted prompt card — files a proposal, writes no entity. |
+| `GET` | `/api/packs/proposals` | The propose-only fingerprint cards — an ON-DEMAND scan. Writes nothing. |
+| `POST` | `/api/packs/proposals/reject` | Remember that this project's user does not want this pack — the never-re-nag write. |
+| `POST` | `/api/packs/{name}/bindings` | Record one setup-interview answer — the folder the pack will read. |
 | `POST` | `/api/packs/{name}/finish-setup` | Return a pack's re-runnable setup interview (the "Finish setup" chip). |
-| `POST` | `/api/packs/{name}/roster/deploy` | One-click team deploy: promote a pack's ``always`` roster tier (§4.2). |
-| `POST` | `/api/packs/{name}/triggers/deploy` | Add a pack's staged triggers to Automations — DISABLED (§3.1/§4, AP-7). |
+| `POST` | `/api/packs/{name}/roster/deploy` | One-click team deploy: promote a pack's ``always`` roster tier. |
+| `POST` | `/api/packs/{name}/triggers/deploy` | Add a pack's staged triggers to Automations — DISABLED. |
 | `POST` | `/api/packs/{name}/uninstall` | Uninstall a pack, never a copy you edited. DRY-RUN unless ``confirm`` is true. |
-| `POST` | `/api/packs/{name}/update` | The §1 ``pack_owned`` update flow. DRY-RUN unless ``confirm`` is true. |
-| `GET` | `/api/proactive/digest` | §5.1's card, assembled from the last digest run. |
+| `POST` | `/api/packs/{name}/update` | The ``pack_owned`` update flow. DRY-RUN unless ``confirm`` is true. |
+| `GET` | `/api/proactive/digest` | the digest card, assembled from the last digest run. |
 | `POST` | `/api/proactive/digest/reply` | one tap or one typed reply. Body ``{run_id, text}``. |
-| `POST` | `/api/proactive/install` | §5.4's pack card. Idempotent; also the reconcile. |
+| `POST` | `/api/proactive/install` | the pack card. Idempotent; also the reconcile. |
 | `GET` | `/api/projects` | _(no summary)_ |
 | `POST` | `/api/projects` | _(no summary)_ |
 | `POST` | `/api/projects/import` | import a project archive (multipart `file`). |
@@ -868,7 +868,7 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/rooms/{room_id}/members` | {name, role_blurb?, listen_policy?, profile_narrowing?}. |
 | `DELETE` | `/api/rooms/{room_id}/members/{name}` | remove a member. |
 | `POST` | `/api/rooms/{room_id}/messages` | {content} — the human speaks, then the room answers. |
-| `GET` | `/api/sandbox/providers` | the sandbox tiers the terminal picker offers (EI-4 §1.3(3)). |
+| `GET` | `/api/sandbox/providers` | the sandbox tiers the terminal picker offers. |
 | `POST` | `/api/screenshot` | capture screen region and return file path. |
 | `GET` | `/api/search/active` | bound provider name per use-case. |
 | `PUT` | `/api/search/active/{use_case}` | bind a provider to a use-case. |
@@ -951,7 +951,7 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/tasks` | _(no summary)_ |
 | `POST` | `/api/tasks` | _(no summary)_ |
 | `POST` | `/api/tasks/bulk` | validate-all-then-apply bulk create/update/delete. |
-| `GET` | `/api/tasks/graph` | adjacency + DependencyAnalysis (seam S3). |
+| `GET` | `/api/tasks/graph` | adjacency + DependencyAnalysis. |
 | `GET` | `/api/tasks/providers` | _(no summary)_ |
 | `GET` | `/api/tasks/ready` | tasks startable now (no unfinished prerequisites). |
 | `POST` | `/api/tasks/search` | query + status/priority/tag/scope filters + sort. |
@@ -971,21 +971,21 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `PUT` | `/api/themes/{slug}` | get, update, or delete a custom theme. |
 | `GET` | `/api/token/local` | issue a token for the CLI, a script or a local app. |
 | `GET` | `/api/tools` | Return all tools from all active tool sources. |
-| `GET` | `/api/tools/groups` | the tool-GROUP partition (Context Economy §5). |
+| `GET` | `/api/tools/groups` | the tool-GROUP partition. |
 | `POST` | `/api/tools/invoke` | execute one tool through the Tool entity. |
 | `POST` | `/api/tools/provider-toggle` | enable/disable a whole NATIVE tool provider. |
 | `GET` | `/api/tools/savings` | the TokenJuice savings (counterfactual) summary. |
 | `POST` | `/api/tools/toggle` | enable/disable a native-provider tool. |
 | `GET` | `/api/triggers` | every trigger. |
 | `POST` | `/api/triggers` | create a schedule, lifecycle or data-event trigger. |
-| `GET` | `/api/triggers/doctor` | structural problems across every trigger (§7 criterion 12). |
-| `GET` | `/api/triggers/history` | the run feed across every kind (AUTO crit 4). |
+| `GET` | `/api/triggers/doctor` | structural problems across every trigger. |
+| `GET` | `/api/triggers/history` | the run feed across every kind. |
 | `POST` | `/api/triggers/restore-hold/resume` | Resume all: every automation a restore holds. |
-| `GET` | `/api/triggers/review` | POST /api/triggers/review — what a restart left for you to decide (§3.4). |
-| `POST` | `/api/triggers/review` | POST /api/triggers/review — what a restart left for you to decide (§3.4). |
+| `GET` | `/api/triggers/review` | POST /api/triggers/review — what a restart left for you to decide. |
+| `POST` | `/api/triggers/review` | POST /api/triggers/review — what a restart left for you to decide. |
 | `GET` | `/api/triggers/variables` | the ``$variables`` each trigger kind exposes. |
-| `POST` | `/api/triggers/view/render` | the `view` kind's production render caller (WF2AUT-6). |
-| `GET` | `/api/triggers/week` | the week-grid projection, from `?start=` (AUTO-A1 — S70). |
+| `POST` | `/api/triggers/view/render` | the `view` kind's production render caller. |
+| `GET` | `/api/triggers/week` | the week-grid projection, from `?start=`. |
 | `DELETE` | `/api/triggers/{id}` | DELETE /api/triggers/{id}. |
 | `PUT` | `/api/triggers/{id}` | DELETE /api/triggers/{id}. |
 | `POST` | `/api/triggers/{id}/answer` | answer the question a trigger's action stopped on. |
@@ -1036,7 +1036,7 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/workflows` | validate a definition and, unless ``save: false``, save it. |
 | `POST` | `/api/workflows/agent-plans` | an agent's ``workflow_plan``, planned here. |
 | `POST` | `/api/workflows/agent-saves` | save an agent's workflow, or ask its owner to allow it. |
-| `GET` | `/api/workflows/attention` | per-template §4.4 attention summaries. |
+| `GET` | `/api/workflows/attention` | per-template attention summaries. |
 | `GET` | `/api/workflows/audit` | Diagnose/heal. `dry_run` defaults TRUE — a GET-shaped repair that ran by default |
 | `POST` | `/api/workflows/batches` | start a batch `subagent_run` compiled (`batch_start`). |
 | `GET` | `/api/workflows/batches/{name}` | where a `subagent_run` batch stands (`batch_start`). |
@@ -1048,29 +1048,29 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/workflows/runs/{run_id}/cancel` | _(no summary)_ |
 | `POST` | `/api/workflows/runs/{run_id}/confirm` | Resolve a pending confirmation by verb — the seam the DagView's Approve/Deny binds to. |
 | `GET` | `/api/workflows/runs/{run_id}/continuations` | The pending resume tokens for a run — what a needs-input inbox renders. |
-| `GET` | `/api/workflows/runs/{run_id}/deliverable` | GET the run's document deliverable + working log (PP-16 unit 1). |
-| `GET` | `/api/workflows/runs/{run_id}/drop` | GET the run's file-drop policy + what has been dropped (WORK-CONTAINERS §2.5). |
-| `POST` | `/api/workflows/runs/{run_id}/drop` | POST multipart to the run's approval-gated file drop (WORK-CONTAINERS §2.5, R17). |
+| `GET` | `/api/workflows/runs/{run_id}/deliverable` | GET the run's document deliverable + working log. |
+| `GET` | `/api/workflows/runs/{run_id}/drop` | GET the run's file-drop policy + what has been dropped. |
+| `POST` | `/api/workflows/runs/{run_id}/drop` | POST multipart to the run's approval-gated file drop. |
 | `POST` | `/api/workflows/runs/{run_id}/edit` | _(no summary)_ |
 | `GET` | `/api/workflows/runs/{run_id}/events` | Per-run event stream, snapshot-then-subscribe. |
 | `POST` | `/api/workflows/runs/{run_id}/fork` | _(no summary)_ |
-| `GET` | `/api/workflows/runs/{run_id}/introspect` | The §6.4 nine-question introspection projection for one run (WORK-CONTAINERS R6). |
-| `GET` | `/api/workflows/runs/{run_id}/ledger-rails` | GET the run's two ledger rails — findings and verdict/ROI (PP-16 seam 4). |
-| `GET` | `/api/workflows/runs/{run_id}/nodes/{node_id}/inspect` | The §5 reconstructability set for one node (WF2-A2), live while the run is. |
+| `GET` | `/api/workflows/runs/{run_id}/introspect` | The nine-question introspection projection for one run. |
+| `GET` | `/api/workflows/runs/{run_id}/ledger-rails` | GET the run's two ledger rails — findings and verdict/ROI. |
+| `GET` | `/api/workflows/runs/{run_id}/nodes/{node_id}/inspect` | The reconstructability set for one node, live while the run is. |
 | `GET` | `/api/workflows/runs/{run_id}/observe` | watch a run for a bounded window, and answer what |
-| `GET` | `/api/workflows/runs/{run_id}/outbox` | GET the run's published-artifact listing — the §2.5 outbox half of R17. |
+| `GET` | `/api/workflows/runs/{run_id}/outbox` | GET the run's published-artifact listing — the outbox half of the file drop. |
 | `GET` | `/api/workflows/runs/{run_id}/outputs/{node_id}` | GET one node's output, masked the way the inspect drawer masks it. |
 | `POST` | `/api/workflows/runs/{run_id}/pause` | _(no summary)_ |
-| `PUT` | `/api/workflows/runs/{run_id}/policy-overrides` | PUT the run's sparse SupervisorPolicy overlay (PP-16 seam 4f) — prelaunch only. |
+| `PUT` | `/api/workflows/runs/{run_id}/policy-overrides` | PUT the run's sparse SupervisorPolicy overlay — prelaunch only. |
 | `POST` | `/api/workflows/runs/{run_id}/resume` | Answer a gate, or clear a pause. |
 | `GET` | `/api/workflows/runs/{run_id}/review` | GET this run's review findings, anchored against its workspace diff as it is right now. |
 | `POST` | `/api/workflows/runs/{run_id}/review/triage` | POST accept/reject decisions; dispatch the accepted subset to the originating worker. |
 | `POST` | `/api/workflows/runs/{run_id}/rewind` | _(no summary)_ |
 | `POST` | `/api/workflows/runs/{run_id}/run-from` | _(no summary)_ |
 | `POST` | `/api/workflows/runs/{run_id}/start` | Start an existing DRAFT run — the launch a forked run had no verb for (#372). |
-| `POST` | `/api/workflows/runs/{run_id}/steer` | POST a mid-run steering instruction (LOOPS-EVOLUTION R14). |
+| `POST` | `/api/workflows/runs/{run_id}/steer` | POST a mid-run steering instruction. |
 | `GET` | `/api/workflows/runs/{run_id}/steering` | GET what is queued but unconsumed — so the UI can show it as pending. |
-| `GET` | `/api/workflows/runs/{run_id}/workspace` | GET the run's workspace review: changed files + the two reintegration verbs (§4.1). |
+| `GET` | `/api/workflows/runs/{run_id}/workspace` | GET the run's workspace review: changed files + the two reintegration verbs. |
 | `GET` | `/api/workflows/surfacing` | The templates list with its surfacing state — what the UX renders. |
 | `DELETE` | `/api/workflows/{name}` | _(no summary)_ |
 | `GET` | `/api/workflows/{name}` | one definition, and the ``revision`` a save over it names. |
@@ -1078,7 +1078,7 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/workflows/{name}/automations` | the automations that run it, and each one's version. |
 | `GET` | `/api/workflows/{name}/ledger` | recent runs of this template with their ledger totals. |
 | `POST` | `/api/workflows/{name}/refine` | fire the refiner over this template on demand. |
-| `GET` | `/api/workflows/{name}/trajectory` | The trajectory-signature distribution and regression signal for one template (PP-7). |
+| `GET` | `/api/workflows/{name}/trajectory` | The trajectory-signature distribution and regression signal for one template. |
 | `GET` | `/api/workflows/{name}/versions` | the version history, who saved each, and the maturity. |
 | `GET` | `/api/workflows/{name}/versions/diff` | the typed-op diff between two versions. |
 | `GET` | `/api/workflows/{name}/versions/{version}` | one recorded version's full definition. |

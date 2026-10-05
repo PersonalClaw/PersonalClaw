@@ -30,7 +30,7 @@ import { HELD_CHANGE_REASON } from '../../lib/staleWrite'
  *  silently revert a live edit — and the route answers 409 `run_not_prelaunch`, which this
  *  panel surfaces as-is rather than pretending the edit landed. */
 
-/** The five ruled per-instance knobs (`supervisor_policy.OVERRIDABLE_POLICY_KEYS`), with the
+/** The five overridable per-instance knobs (`supervisor_policy.OVERRIDABLE_POLICY_KEYS`), with the
  *  presentation each needs. Exported so the test can assert the editor covers the whole
  *  vocabulary rather than a remembered subset. */
 export const POLICY_KNOBS: ReadonlyArray<{

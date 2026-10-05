@@ -17,7 +17,7 @@
  *  sibling, the `gateFail` banner, is `role="alert"`. Two adjacent banners, one announced.
  *
  *  Both halves go through the ONE registry (`lib/loopStatus`), so this surface cannot become the
- *  fifth loop-status vocabulary — the drift `PP-16` collapsed for four others.
+ *  fifth loop-status vocabulary — the drift the registry collapsed for four others.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
@@ -161,7 +161,7 @@ describe('the blocked explanation is reachable', () => {
   })
 
   it('every status word on this page comes from the registry', () => {
-    // The invariant that keeps this surface from becoming the vocabulary PP-16 deleted four times.
+    // The invariant that keeps this surface from growing back a vocabulary the registry replaced.
     // A literal label for a status is what "a fifth table" looks like on arrival.
     for (const word of ['Stalled', 'Needs you', 'Ended early', 'Analyzing']) {
       expect(CODE).not.toContain(`>${word}<`)

@@ -1,6 +1,6 @@
 """A power user's week, written by the REAL writers, comes back whole from a snapshot.
 
-Settings B17 and day 8's "Durability degraded": after a week of normal use `audit_home()` named
+The Doctor reported "Durability degraded": after a week of normal use `audit_home()` named
 the rotated audit log (10.4 MB, 19,212 rows after Audit → Rotate), `incident.json` (Guardrails →
 Incident mode), `routing_stats.json`, `trigger-idle/` and `capture/` as "in NO snapshot" — and the
 Doctor was right. `personalclaw snapshot` is what the pre-1.0 release notes tell a user to run

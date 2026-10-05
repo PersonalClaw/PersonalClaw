@@ -301,7 +301,7 @@ def test_prompt_syntax_lists_functions_and_constructs():
     assert "If / elif / else" in labels and "Include snippet" in labels
 
 
-# ── runnable "campaign template" launch (#17) ────────────────────────────────
+# ── runnable "campaign template" launch ──────────────────────────────────────
 
 
 class TestCampaignTemplateLaunch:

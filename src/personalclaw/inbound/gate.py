@@ -6,7 +6,7 @@ Four kill switches stack here, and a request must clear all four:
 2. **per-surface** — ``external_access.<surface>.enabled``.
 3. **per-client** — the client record's own ``disabled`` flag, enforced in
    ``clients.lookup_by_token`` rather than here (see the note at the bottom).
-4. **incident mode** — AUTONOMY-GUARDRAILS' ``~/.personalclaw/incident.json``. An
+4. **incident mode** — the autonomy guardrails' ``~/.personalclaw/incident.json``. An
    active incident refuses every inbound request with 503, the same one-check
    pattern the other execution seams use.
 

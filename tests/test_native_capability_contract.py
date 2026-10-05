@@ -95,7 +95,7 @@ def test_the_rail_is_not_vacuous():
     with_code = {name: mods for name, mods in shipped.items() if mods}
     assert with_code, (
         "no bundled app ships a Python module — the import lint above is vacuous. "
-        "APE-5's whole claim is that a bundled app CAN own its provider code; if this "
+        "The contract's whole claim is that a bundled app CAN own its provider code; if this "
         "fails, either the exemplar regressed to a core dotted path or the contract "
         "was never used."
     )
@@ -182,7 +182,7 @@ def _fake_ext(name: str, ext_dir: Path, implementation: str):
 def test_two_bundles_shipping_provider_py_do_not_collide(tmp_path, monkeypatch):
     """Two apps that both ship ``provider.py`` each load THEIR OWN module.
 
-    Before APE-5 the loader chose the namespaced file-load by TIER (installed apps only)
+    The loader once chose the namespaced file-load by TIER (installed apps only)
     and sent bundled apps through a plain ``import provider`` with the bundle dir on
     sys.path — so the first bundle to load would win ``sys.modules["provider"]`` and the
     second would silently receive the first one's factory.

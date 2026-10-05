@@ -1,6 +1,6 @@
 """The config round-trip still closes when a section is declared OUTSIDE ``config/loader.py``.
 
-PHF-14 split ``config/loader.py`` (5652 lines, 348 from an absolute 6000-line ceiling) into
+``config/loader.py`` (5652 lines, 348 from an absolute 6000-line ceiling) was split into
 per-domain sibling modules. ``AppConfig`` and its ``load()`` mapping stayed; sixty-odd
 ``_meta``-carrying fields moved. That seam is invisible to every existing config rail, and each
 half of it fails silently:
@@ -18,9 +18,9 @@ half of it fails silently:
 So this file asserts the seam directly: the declarations live in the siblings, the mapping still
 reaches them, the metadata survived the move, and the trap above stays shut.
 
-On the acceptance clause 4 (the "add a NEW field end-to-end as proof" clause): that
-clause names the ``learning.identity_report_cadence``, which shipped separately in
-``06861fc2`` BEFORE this split, so adding it again is not available as a proof. What the clause
+On "add a NEW field end-to-end as proof": the obvious candidate,
+``learning.identity_report_cadence``, shipped separately in
+``06861fc2`` BEFORE this split, so adding it again is not available as a proof. What that proof
 is actually protecting against is a decomposition that leaves the file unable to carry a field.
 A one-off new field would demonstrate that once, at the moment of the split. These rails
 demonstrate it on every run, for all 87 moved fields at once, and
@@ -38,7 +38,7 @@ import pytest
 
 _CONFIG_DIR = Path(__file__).resolve().parent.parent / "src" / "personalclaw" / "config"
 
-#: The modules PHF-14 extracted. Named explicitly rather than globbed so that DELETING one (or
+#: The modules the split extracted. Named explicitly rather than globbed so that DELETING one (or
 #: quietly folding a section back into loader.py) reds here instead of shrinking the sweep to
 #: nothing — a glob would make this whole file vacuous the moment the split was reverted.
 SECTION_MODULES = ("safety", "learning", "external_access")

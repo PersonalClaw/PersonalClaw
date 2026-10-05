@@ -367,7 +367,7 @@ def test_a_balanced_pair_carries_no_imbalance_note():
 # Protocol §3 runs `k` trials per arm over IDENTICAL work, so per-trial and total spend are the same
 # comparison whenever a run is whole. They diverge in exactly one case and it is §6's: an arm that
 # lost cells to `VERIFIER_ABSENT`. `compare()`'s default basis is TOTALS and is right for the
-# experiment it belongs to — amendment (e) matches budget by giving the cheaper arm more samples, so
+# experiment it belongs to — its design matches budget by giving the cheaper arm more samples, so
 # ITS arms are unequal on purpose. Reusing that denominator here published, about a real run:
 #
 #     token_ratio 0.5139 — "token spend differs by 48.6%"

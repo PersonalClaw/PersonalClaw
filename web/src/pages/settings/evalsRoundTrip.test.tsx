@@ -32,8 +32,8 @@ import { EvalsPanel } from './EvalsPanel'
 // vacuously green if the field were deleted, so this also asserts the field is still IN the
 // dataclass and still OUT of the allowlist — the distinction is the property, not the absence.
 //
-// DRIVEN on a real gateway before this was written (port 10788, `PERSONALCLAW_HOME=/tmp/wave2-ux-
-// blast-radius`, `--seed demo-home`): each of the five patched from the UI, read back through
+// DRIVEN on a real gateway before this was written (port 10788, a scratch `PERSONALCLAW_HOME`,
+// `--seed demo-home`): each of the five patched from the UI, read back through
 // `GET /api/config/personalclaw`, and `#/learning` re-rendered from four "off" panels to four
 // live ones. `bakeoff_capture_enabled` was `curl`-ed at the same endpoint and answered 400.
 //
@@ -109,7 +109,7 @@ function balanced(src: string, from: number): string {
 
 /** `EvalsConfig`'s fields → their `_meta` label, `_meta` help, and literal default. */
 function evalsMeta(): Record<string, MetaField> {
-  // PHF-14 moved this dataclass: the config sections were extracted out of `config/loader.py` into
+  // This dataclass moved: the config sections were extracted out of `config/loader.py` into
   // per-domain siblings, and `evals` is one of the six that `config/learning.py` now owns. The
   // parse below is unchanged — only the file it reads moved.
   const src = py('config/learning.py')

@@ -36,7 +36,7 @@ rows — so every passage vector survived a model switch untouched, forever.
    that hits is the one embedded by model B, and the model-A query stops hitting.
 
 **Its own negative cases** (a rail that cannot fail is not a rail): with nothing bound
-there is no staleness concept and chunks still score (that state is RET-2's
+there is no staleness concept and chunks still score (that state is
 ``no_embedding_provider``); a chunk written under the model that is still bound is never
 flagged; and ``stale_index`` is never persisted as an ingest status, because the fact that
 changed is the bound model and not the item.
@@ -221,7 +221,7 @@ def test_knowledge_search_names_stale_index_instead_of_answering_nothing_found(
     assert degradation.item_count == 1
     assert degradation.item_ids == (item_id,)
     assert "different embedding model" in degradation.detail
-    # The vocabulary is RET-2's, extended — not a second one minted here.
+    # The existing degradation vocabulary, extended — not a second one minted here.
     assert STALE_INDEX in REASONS
 
 

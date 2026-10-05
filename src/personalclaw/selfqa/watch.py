@@ -1,7 +1,7 @@
 """Commit-delta state for the Self-QA watcher.
 
-The Wave-2 companion shipped this logic inside a sandboxed cron script
-(``crons/selfqa_commit_watch.py``) because no vcs trigger existed yet. AUTOMATION-SUBSTRATE's
+An earlier companion shipped this logic inside a sandboxed cron script
+(``crons/selfqa_commit_watch.py``) because no vcs trigger existed yet. The automation engine's
 ``vcs`` preset now does (:func:`personalclaw.triggers.file_watch.vcs_patterns` watches
 ``.git/refs/heads/*`` + ``.git/HEAD``), so the interim script retires and the delta logic
 lives HERE — in-process, with real package access, freed of the sandbox constraints the
@@ -113,8 +113,8 @@ def fix_branch_enabled() -> bool:
     """``agent.self_qa.fix_branch_enabled`` — the template input, read at FIRE time.
 
     The `self-qa` template declares ``fix_branch_enabled`` as an input and routes its
-    ``fix-route`` branch on it, and the config leaf has had a Settings control (behind a
-    confirmation dialog) since SV-10. Nothing joined the two: :func:`check` supplied only
+    ``fix-route`` branch on it, and the config leaf has a Settings control (behind a
+    confirmation dialog). Nothing joined the two: :func:`check` supplied only
     ``{"repo", "commits"}``, so ``with_declared_defaults`` filled the template's own
     ``false`` and the switch could never reach the gate — issue #3490. This is that join.
 

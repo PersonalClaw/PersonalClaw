@@ -1,5 +1,4 @@
-"""The governance CEILING — level one of "two levels, one rule: tightest wins"
-(AUTONOMY-GUARDRAILS S5.2).
+"""The governance CEILING — level one of "two levels, one rule: tightest wins".
 
 Level 1 is this :class:`Ceiling`, loaded ONCE at boot from an operator-owned path the
 running agent does not own. Level 2 is the existing :class:`~personalclaw.guardrails.

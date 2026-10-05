@@ -220,7 +220,7 @@ def the_leg(text: str) -> tuple[str, str]:
     matches = [(name, block) for name, block in jobs(text).items() if modules_named(block) & wanted]
     assert matches, (
         "no job in ci.yml runs pytest on any browse-proof module "
-        f"({sorted(wanted)}), so BA-2's behavioural clauses are proven on no gate — their "
+        f"({sorted(wanted)}), so the behavioural clauses are proven on no gate — their "
         f"green is 20 skips. The job that owned this was `{EXPECTED_LEG}`."
     )
     assert len(matches) == 1, (

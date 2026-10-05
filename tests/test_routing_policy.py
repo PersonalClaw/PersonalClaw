@@ -155,7 +155,7 @@ def test_heuristic_orders_local_first(home: Path, monkeypatch: pytest.MonkeyPatc
 def test_learned_mode_falls_back_to_the_heuristic(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """MRT-5 owns learned scoring; until then ``learned`` behaves as the heuristic floor —
+    """When the fold is silent, ``learned`` behaves as the heuristic floor —
     it must not error and must not silently mean 'off'."""
     _enable(monkeypatch, mode="learned")
     _locals_are("ollama-models")
@@ -492,7 +492,7 @@ def _bind(monkeypatch: pytest.MonkeyPatch, refs: list[str]) -> None:
 def test_seam_walks_the_routed_order_and_stamps_routed(
     home: Path, monkeypatch: pytest.MonkeyPatch, seam
 ) -> None:
-    """SC #3, first half: with local+cloud bound on ``reasoning`` and the heuristic enabled, the
+    """With local+cloud bound on ``reasoning`` and the heuristic enabled, the
     LOCAL ref is attempted first and the attempt carries ``routed`` provenance."""
     pb, calls = seam
     _enable(monkeypatch)
@@ -507,7 +507,7 @@ def test_seam_walks_the_routed_order_and_stamps_routed(
 def test_a_cloud_rescue_of_the_routed_local_bet_stamps_routed_fallback(
     home: Path, monkeypatch: pytest.MonkeyPatch, seam
 ) -> None:
-    """SC #3, second half: when the routed-first local ref can't serve (breaker OPEN — the same
+    """When the routed-first local ref can't serve (breaker OPEN — the same
     state a killed local server produces), the chain reaches the cloud ref and THAT attempt is
     stamped ``routed_fallback``. One pass over the chain: no extra attempt, no stacked timeout."""
     pb, calls = seam
@@ -553,7 +553,7 @@ def test_routing_off_stamps_no_provenance(
 def test_model_override_bypasses_routing_entirely(
     home: Path, monkeypatch: pytest.MonkeyPatch, seam
 ) -> None:
-    """SC #4: an explicit model choice never reaches the routing seam, and is never stamped as
+    """An explicit model choice never reaches the routing seam, and is never stamped as
     routed — the provenance says truthfully that the CALLER chose, not the router."""
     pb, calls = seam
     _enable(monkeypatch)
@@ -567,7 +567,7 @@ def test_model_override_bypasses_routing_entirely(
 def test_pin_short_circuit_is_visible_in_what_the_seam_walks(
     home: Path, monkeypatch: pytest.MonkeyPatch, seam
 ) -> None:
-    """SC #4, the pin half: a cloud pin beats local-first, and the attempt is still ``routed``
+    """A cloud pin beats local-first, and the attempt is still ``routed``
     (routing decided the order — the user's pin is what it decided WITH)."""
     pb, calls = seam
     _enable(monkeypatch, pin="cloud")
@@ -581,7 +581,7 @@ def test_pin_short_circuit_is_visible_in_what_the_seam_walks(
 def test_unresolvable_routed_first_ref_still_raises(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """SC #6: routing changes ORDER, not resolution semantics. A chain whose every entry is
+    """Routing changes ORDER, not resolution semantics. A chain whose every entry is
     unbuildable still raises ProviderResolutionError — routing must never convert a stale pin into
     a silent fall-through to some other provider."""
     from personalclaw.providers import provider_bridge as pb
@@ -600,7 +600,7 @@ def test_unresolvable_routed_first_ref_still_raises(
 def test_a_ref_removed_from_active_models_drops_from_candidates(
     home: Path, monkeypatch: pytest.MonkeyPatch, seam
 ) -> None:
-    """SC #6, second half: the candidate pool is READ from active_models.json every resolution, so
+    """The candidate pool is READ from active_models.json every resolution, so
     unbinding a ref removes it on the next load. Nothing in routing caches a pool."""
     pb, calls = seam
     _enable(monkeypatch)

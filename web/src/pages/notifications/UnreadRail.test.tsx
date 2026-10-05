@@ -6,7 +6,7 @@ import { UnreadRail } from './UnreadRail'
 
 // ── An inline box-shadow was eating both notification rows' focus ring ────────────────────────
 //
-// Cycle 164 gave the `#/notifications` row and the bell's dropdown row a keyboard route
+// The `#/notifications` row and the bell's dropdown row were given a keyboard route
 // (`ui/RowHitTarget`), and the ring that route draws — `has-[>button:focus-visible]:ring-*`, the
 // idiom the tasks / projects / apps / loops rows all use — painted NOTHING on either of them.
 //
@@ -51,8 +51,8 @@ describe('UnreadRail', () => {
     const rail = container.firstElementChild as HTMLElement
     expect(rail.style.boxShadow, 'the rail must not use box-shadow').toBe('')
     // 🪤 Comments stripped first: this file's own doc comment EXPLAINS the box-shadow collision, and
-    // the first version of this assertion failed on correct source because of it. Fourth occurrence of
-    // "a scan counts its own prose" in this session.
+    // the first version of this assertion failed on correct source because of it — the recurring
+    // "a scan counts its own prose" trap.
     const code = readFileSync(join(process.cwd(), 'src/pages/notifications/UnreadRail.tsx'), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
     expect(code).not.toMatch(/boxShadow|box-shadow:/)

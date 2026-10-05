@@ -319,7 +319,7 @@ def test_git_nightly_fetch_failure_exits_nonzero_before_touching_the_tree(
     assert not git.ran("merge") and not git.ran("reset")
 
 
-# ── git: a dirty tree is REFUSED, never discarded (RUM-4 has no reset) ────────
+# ── git: a dirty tree is REFUSED, never discarded (the update has no reset) ───
 
 
 def test_release_checkout_refuses_a_dirty_tree(
@@ -327,7 +327,7 @@ def test_release_checkout_refuses_a_dirty_tree(
 ) -> None:
     """A tracked edit blocks the checkout and is NEVER discarded — exit 1.
 
-    RUM-4 advances by `git checkout`, which is non-destructive; there is no
+    The git update advances by `git checkout`, which is non-destructive; there is no
     "discard my work?" prompt any more, so the safe answer is always to keep the
     edits and tell the user to commit or stash."""
     _as_git_checkout(monkeypatch, tmp_path)
@@ -467,8 +467,8 @@ def test_pip_kind_no_installer_available_exits_one(
 # A releases list ADVERSARIAL to a "blind latest" install: the newest release is a
 # PRERELEASE, so stable and beta resolve to DIFFERENT tags, and the pin points at an
 # even older one. A `-U personalclaw==<releases/latest>` implementation would install
-# 0.2.1 for all three rows and fail beta + pin — which is exactly the bug RUM-6 kills.
-_RUM6_RELEASES = [
+# 0.2.1 for all three rows and fail beta + pin — exactly the bug channel/pin resolution kills.
+_CHANNEL_PIN_RELEASES = [
     {"tag": "v0.3.0-rc.1", "prerelease": True},
     {"tag": "v0.2.1", "prerelease": False},
     {"tag": "v0.2.0", "prerelease": False},
@@ -488,11 +488,11 @@ _RUM6_RELEASES = [
 #: fixture altogether, so these rows are version-INDEPENDENT rather than
 #: correct-until-the-next-bump. ``0.0.1`` is below every published release, and versions
 #: only go up, so it is a value this project can never take again.
-_RUM6_RUNNING_VERSION = "0.0.1"
+_CHANNEL_PIN_RUNNING_VERSION = "0.0.1"
 
-#: ``(channel, pin, expected wheel spec)`` over ``_RUM6_RELEASES``, extracted so the
+#: ``(channel, pin, expected wheel spec)`` over ``_CHANNEL_PIN_RELEASES``, extracted so the
 #: fixture's own non-vacuity floor can assert over the same rows the parametrisation drives.
-_RUM6_ROWS = [
+_CHANNEL_PIN_ROWS = [
     ("stable", "", "personalclaw==0.2.1"),  # newest non-prerelease
     ("beta", "", "personalclaw==0.3.0-rc.1"),  # newest INCLUDING prereleases
     ("stable", "0.2.0", "personalclaw==0.2.0"),  # pin overrides the channel exactly
@@ -503,12 +503,12 @@ def _fake_release_list(monkeypatch: pytest.MonkeyPatch) -> None:
     """Feed the REAL resolver a fixed releases list (no network, no resolve_target stub)."""
 
     async def _list() -> list:
-        return [dict(r) for r in _RUM6_RELEASES]
+        return [dict(r) for r in _CHANNEL_PIN_RELEASES]
 
     monkeypatch.setattr(su, "fetch_releases", _list)
 
 
-def test_the_rum6_rows_resolve_to_distinct_versions() -> None:
+def test_the_channel_pin_rows_resolve_to_distinct_versions() -> None:
     """The fixture's own floor: the three rows must name THREE DIFFERENT versions.
 
     This is the non-vacuity the parametrised test's docstring claims, asserted instead of
@@ -516,30 +516,30 @@ def test_the_rum6_rows_resolve_to_distinct_versions() -> None:
     they differ from stable's latest, so a future edit that collapses two rows onto one
     version would quietly make this a single-row test that any blind-latest build passes.
     """
-    versions = [spec.split("==", 1)[1] for _, _, spec in _RUM6_ROWS]
+    versions = [spec.split("==", 1)[1] for _, _, spec in _CHANNEL_PIN_ROWS]
     assert len(set(versions)) == len(versions), f"rows collapsed onto one version: {versions}"
-    tags = {su.normalize_version(str(r["tag"])) for r in _RUM6_RELEASES}
+    tags = {su.normalize_version(str(r["tag"])) for r in _CHANNEL_PIN_RELEASES}
     assert set(versions) <= tags, f"a row names a version no release publishes: {versions}"
 
 
-@pytest.mark.parametrize("channel, pin, expected", _RUM6_ROWS)
+@pytest.mark.parametrize("channel, pin, expected", _CHANNEL_PIN_ROWS)
 def test_pip_installs_the_channel_pin_resolved_spec(
     monkeypatch: pytest.MonkeyPatch, spawns, channel: str, pin: str, expected: str
 ) -> None:
-    """RUM-6 core: the wheel installed is the channel/pin-resolved tag, never a blind latest.
+    """The wheel installed is the channel/pin-resolved tag, never a blind latest.
 
     Non-vacuous by construction — beta (0.3.0-rc.1) and the pin (0.2.0) resolve to
     versions DIFFERENT from stable's latest (0.2.1) over the same releases list, so a
     `releases/latest` implementation would fail the beta and pin rows (asserted by
-    `test_the_rum6_rows_resolve_to_distinct_versions`). Drives the REAL
-    `resolve_wheel_target`/`select_target` over `_RUM6_RELEASES` (only `fetch_releases`
+    `test_the_channel_pin_rows_resolve_to_distinct_versions`). Drives the REAL
+    `resolve_wheel_target`/`select_target` over `_CHANNEL_PIN_RELEASES` (only `fetch_releases`
     is stubbed), so the resolver policy itself is exercised, not mocked away.
 
-    The running version is pinned to `_RUM6_RUNNING_VERSION` so the resolved target is
+    The running version is pinned to `_CHANNEL_PIN_RUNNING_VERSION` so the resolved target is
     always something to move TO; see that constant for why inheriting the project's
     version made this row fail on exactly one release.
     """
-    monkeypatch.setattr(cli_server, "__version__", _RUM6_RUNNING_VERSION)
+    monkeypatch.setattr(cli_server, "__version__", _CHANNEL_PIN_RUNNING_VERSION)
     _channel(monkeypatch, channel, pin)
     _fake_release_list(monkeypatch)
     _fake_installer(monkeypatch)
@@ -565,7 +565,7 @@ def test_pip_pin_miss_refuses_and_never_installs_latest(
     """A pin naming no release must REFUSE, not silently install the latest wheel.
 
     The whole point of a pin is "stay exactly here"; falling back to `releases/latest`
-    on a miss would violate it. Distinguishes RUM-6 from the offline/no-pin case, which
+    on a miss would violate it. Distinguishes a pin miss from the offline/no-pin case, which
     does upgrade unpinned."""
     _channel(monkeypatch, "stable", "0.9.9")  # no such release in the list
     _fake_release_list(monkeypatch)
@@ -585,13 +585,13 @@ def test_pip_pin_miss_refuses_and_never_installs_latest(
 def test_container_kind_prints_the_readme_installs_commands_and_exits_zero(
     monkeypatch: pytest.MonkeyPatch, capsys, spawns
 ) -> None:
-    # Default config (stable/no-pin) over `_RUM6_RELEASES`, on a running version older than
+    # Default config (stable/no-pin) over `_CHANNEL_PIN_RELEASES`, on a running version older than
     # all of them: the commands print, carry the moving minor `:0.2`, exit 0. They are the
     # README's `docker run` install's, which is what a container started without the compose
     # file is.
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
     monkeypatch.delenv(container_host.STARTED_BY_ENV, raising=False)
-    monkeypatch.setattr(cli_server, "__version__", _RUM6_RUNNING_VERSION)
+    monkeypatch.setattr(cli_server, "__version__", _CHANNEL_PIN_RUNNING_VERSION)
     _fake_release_list(monkeypatch)
     git = _Git()
     monkeypatch.setattr(su, "_run_git", git)
@@ -617,15 +617,15 @@ def test_container_kind_prints_the_readme_installs_commands_and_exits_zero(
 def test_container_prints_the_channel_pin_resolved_tag(
     monkeypatch: pytest.MonkeyPatch, capsys, spawns, channel: str, pin: str, tag: str
 ) -> None:
-    """RUM-7 core: the container commands carry the channel/pin-resolved image tag,
-    never a bare `latest`. Non-vacuous — over `_RUM6_RELEASES` stable/beta/pin resolve
+    """The container commands carry the channel/pin-resolved image tag,
+    never a bare `latest`. Non-vacuous — over `_CHANNEL_PIN_RELEASES` stable/beta/pin resolve
     to DIFFERENT tags (0.2 / beta / 0.2.0), so a constant-`latest` implementation fails
     the beta and pin rows. Drives the REAL `resolve_image`/`select_image` (only
-    `fetch_releases` is stubbed). The running version is `_RUM6_RUNNING_VERSION` for the
+    `fetch_releases` is stubbed). The running version is `_CHANNEL_PIN_RUNNING_VERSION` for the
     reason the pip rows pin it: every resolved release has to be a move from it."""
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
     monkeypatch.delenv(container_host.STARTED_BY_ENV, raising=False)
-    monkeypatch.setattr(cli_server, "__version__", _RUM6_RUNNING_VERSION)
+    monkeypatch.setattr(cli_server, "__version__", _CHANNEL_PIN_RUNNING_VERSION)
     _channel(monkeypatch, channel, pin)
     _fake_release_list(monkeypatch)
     git = _Git()
@@ -646,7 +646,7 @@ def test_container_pin_miss_refuses_and_prints_no_pull(
     """A container pin naming no release must REFUSE — never print a bare `latest` pull
     (mirrors the wheel pin-miss refusal)."""
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
-    _channel(monkeypatch, "stable", "0.9.9")  # no such release in _RUM6_RELEASES
+    _channel(monkeypatch, "stable", "0.9.9")  # no such release in _CHANNEL_PIN_RELEASES
     _fake_release_list(monkeypatch)
     git = _Git()
     monkeypatch.setattr(su, "_run_git", git)
@@ -672,7 +672,7 @@ def test_desktop_kind_delegates_to_the_app_and_exits_zero(
 
     # The delegation must name WHERE the new version comes from. "the app updates itself"
     # (the wording this asserted before #2673) described the unbuilt electron-updater half
-    # of DC-1, so a reader followed an instruction with nothing behind it.
+    # of the desktop update path, so a reader followed an instruction with nothing behind it.
     out = capsys.readouterr().out
     assert "desktop install" in out
     assert "https://github.com/PersonalClaw/PersonalClaw/releases" in out
@@ -685,7 +685,7 @@ def test_container_env_beats_a_git_tree(
     """A container built from a checkout must not run the git pipeline."""
     _as_git_checkout(monkeypatch, tmp_path)
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
-    monkeypatch.setattr(cli_server, "__version__", _RUM6_RUNNING_VERSION)
+    monkeypatch.setattr(cli_server, "__version__", _CHANNEL_PIN_RUNNING_VERSION)
     _fake_release_list(monkeypatch)
     git = _Git()
     monkeypatch.setattr(su, "_run_git", git)
@@ -729,7 +729,7 @@ def _real_config_home(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
 def test_pip_rollback_installs_the_older_pinned_spec(
     monkeypatch: pytest.MonkeyPatch, tmp_path, capsys, spawns
 ) -> None:
-    """RUM-9 core: `update --to <older>` installs `personalclaw==<older>`, a DOWNGRADE.
+    """`update --to <older>` installs `personalclaw==<older>`, a DOWNGRADE.
 
     Drives the whole path for real — `_pin_before_update` writes `updates.pin` to a
     config file, `AppConfig.load()` reads it back, and the REAL

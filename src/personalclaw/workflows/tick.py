@@ -16,8 +16,8 @@ why `container_outcome()` exists and why nothing writes a container's state dire
 **Ordering is DERIVED, not declared.** A node waits for the nodes its bindings
 read. The edge list comes from `validator.dep_ordering_edges` — the same derivation the
 validator's own rules use — so admission and validation cannot disagree about what "ordered
-first" means; keeping a second, hand-maintained list was the defect `PP-1` made visible and
-this module's gate deletes. A hand-written `needs` is folded into that same list and honoured
+first" means; keeping a second, hand-maintained list was a defect, and
+this module's gate deletes it. A hand-written `needs` is folded into that same list and honoured
 GLOBALLY, so a diamond may span two containers. Nothing here trusts a `needs` on its own: an
 edge the spec's structure cannot honour is refused at authoring time and never reaches the
 frontier, because a scheduler that waits on an impossible edge hangs instead of failing.
@@ -65,7 +65,7 @@ tightest-wins. Three schedulers elsewhere in the repo answer the same question w
 rules; this seam is where they converge. The list is built once per `frontier()` call and threaded
 down the recursion, so a run-level invariant cannot become per-node-optional by accident.
 
-Lane admission itself is WF2-R21: ready work is admitted per-lane, derived from node kind, so a
+In lane admission, ready work is admitted per-lane, derived from node kind, so a
 `foreach` over minute-long local-model actions saturates the `io` lane while `llm` stages keep
 flowing. Excess is `deferred` rather than dropped — the next tick admits it.
 
@@ -204,7 +204,7 @@ def _is_success(st: InstanceState) -> bool:
 def tolerate_failures(
     children: list[Node], child_states: list[InstanceState]
 ) -> list[InstanceState]:
-    """Mask a FAILED child that declared `allow_failure: true` to DEGRADED (S148).
+    """Mask a FAILED child that declared `allow_failure: true` to DEGRADED.
 
     🔴 `allow_failure` was DECLARED BY FIVE NODES IN A SHIPPED TEMPLATE AND READ BY NOTHING. All five
     of `rich-ingest`'s extraction lenses set it, and they run in a `parallel` with `join: all` —
@@ -216,7 +216,7 @@ def tolerate_failures(
     DEGRADED, so the join proceeds — but the container does not claim clean success, and
     `container_outcome`'s existing ALL branch already propagates "any DEGRADED child ⇒ DEGRADED
     container". Masking to DONE instead would make a partial extraction indistinguishable from a
-    complete one, which is the silent-drop shape this program keeps finding: the run would report
+    complete one, which is the silent-drop shape this codebase keeps finding: the run would report
     success and nothing would ever say a lens was missing.
 
     Only FAILED is masked. A CANCELLED child is a decision someone made and a BLOCKED one is waiting
@@ -309,7 +309,7 @@ def _worst(states: list[InstanceState]) -> InstanceState:
 
 @dataclass(frozen=True)
 class Ordering:
-    """The ordering graph the frontier admits work against, derived from the spec (`PP-2`).
+    """The ordering graph the frontier admits work against, derived from the spec.
 
     Keyed by SPEC path — the position in the definition, `root.children[1].body`, with no
     fan-out decoration. Instance paths (`…body#2`) are resolved per reader at admission time
@@ -680,7 +680,7 @@ def _visit_parallel(
 
     The `needs` gate used to live HERE, over a sibling-only `by_id` map, which is why a
     `needs` naming anything else was refused by the validator and a `needs` declared anywhere
-    but a parallel child was silently inert. `PP-2` moved it into `_visit`, where the derived
+    but a parallel child was silently inert. It now lives in `_visit`, where the derived
     graph applies to every node at any depth — so a leg's inner leaf can wait on another leg's
     inner leaf, which is the cross-container diamond the tree shape used to make inexpressible.
     """
@@ -725,7 +725,7 @@ def _ordering_satisfied(
 ) -> bool:
     """May this node be visited yet, given the ordering its bindings and `needs` imply?
 
-    Three outcomes, and the difference between the last two is the whole of WF2-R18:
+    Three outcomes, and the difference between the last two is the whole point:
 
     * **Satisfied** — every producer is TERMINAL (done, degraded, skipped, failed alike).
       "After" is the whole contract of an ordering edge.
@@ -796,7 +796,7 @@ def _edge_declined(declined: set[str], src: str, dst: str) -> bool:
 
     A declined edge can never be satisfied by execution, so the frontier marks its target
     SKIPPED, which makes it terminal, which is what lets a downstream join proceed
-    instead of deadlocking (WF2-R18).
+    instead of deadlocking.
     """
     return edge_key(src, dst) in declined
 
@@ -818,7 +818,7 @@ def _visit_foreach(
     """One body instance per item. Item paths are `<path>.body#<i>` — the `#i` suffix is
     what lets many instances of one body node coexist in a flat state map.
 
-    **On `pipeline` (WF2-R5).** The plan describes it as "no barrier between stages". Measured
+    **On `pipeline`.** It reads as "no barrier between stages". Measured
     against the real engine, there is no barrier to remove: because each item's body is an
     independent subtree and the frontier is re-derived every tick, item 0 enters stage 2 as soon as
     its own stage 1 finishes, regardless of where the other items are. Streaming handoff is
@@ -838,7 +838,7 @@ def _visit_foreach(
     lock, a rate-limited endpoint), and releasing it between stages would defeat that.
 
     Both `max_concurrency` and the run-level **WIP=1 invariant** (`single_active_feature`,
-    LOOPS-EVOLUTION R5b: +37% feature completion) reach this container through the same policy list
+    worth +37% feature completion) reach this container through the same policy list
     (`admission.ContainerConcurrency` and `admission.Wip`), composed tightest-wins. WIP therefore
     OVERRIDES whatever this node declared — and wins even the TIE at `max_concurrency: 1`, because a
     run-level invariant a per-node knob can contradict is not an invariant, and clamping silently is
@@ -1184,7 +1184,7 @@ def _resolve_items(node: Node, ctx: BindingContext) -> list[Any] | None:
 
 def item_error_policy(node: Node) -> ItemErrorPolicy:
     """One `foreach`'s declared item-error policy. Public because the controller needs it to
-    decide whether a fan-out owes the ledger a collected-failure record (WV-13)."""
+    decide whether a fan-out owes the ledger a collected-failure record."""
     raw = str((node.config or {}).get("on_item_error", "skip") or "skip")
     try:
         return ItemErrorPolicy(raw)
@@ -1203,7 +1203,7 @@ def foreach_outcome(policy: ItemErrorPolicy, item_states: list[InstanceState]) -
     exactly why it survived: nothing was visibly broken, and nothing anywhere said what the
     member meant. A fourth member added tomorrow would have inherited `SKIP`'s wait and
     `HALT`'s verdict just as silently. So the choice is made HERE, once, exhaustively over the
-    enum, and the unreachable tail RAISES rather than defaulting (WV-13).
+    enum, and the unreachable tail RAISES rather than defaulting.
 
     Every member's branch is driven by a test, and the three produce three DIFFERENT run-level
     observables for the same seeded failure — which is the only proof that the members are
@@ -1247,7 +1247,7 @@ def foreach_outcome(policy: ItemErrorPolicy, item_states: list[InstanceState]) -
         # failure is a FAILED container and `_ROOT_TO_RUN` makes that a FAILED run. Returning
         # DEGRADED here instead would make COLLECT indistinguishable from SKIP at the run
         # level, and the one policy whose entire point is "the failures matter" would report
-        # success — the silent-drop shape this program keeps finding.
+        # success — the silent-drop shape this codebase keeps finding.
         return container_outcome(item_states)
 
     raise AssertionError(
@@ -1465,8 +1465,8 @@ def reap_watchers(
 ) -> list[str]:
     """Paths of `until_cancelled` loops whose reason to exist has finished.
 
-    The plan describes a watcher as cancelled by "a sibling completing in a `join: any`
-    parallel". Measured, that does not happen on its own: `container_outcome` checks for
+    A watcher is expected to be cancelled by a sibling completing in a `join: any`
+    parallel. Measured, that does not happen on its own: `container_outcome` checks for
     non-terminal children BEFORE the ANY rule, so a parallel whose watcher is still running
     reads RUNNING and the run never completes. That check is correct and deliberate
     (a join must not fire early on a fan-out whose other legs are still working) — so the

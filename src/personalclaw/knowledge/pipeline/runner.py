@@ -1,4 +1,4 @@
-"""Ingestion runner — orchestrates one item through its node-graph (#30).
+"""Ingestion runner — orchestrates one item through its node-graph.
 
 Entry point ``ingest_item``: load the item → pick its code-owned graph → execute the
 DAG (each node output → the extracted-content pool) → run terminal stages over the
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 def _enrichment_for(store, item: dict) -> str:
-    """The enrichment mode governing this item's ingestion (WATCHED-SOURCES §6.3).
+    """The enrichment mode governing this item's ingestion.
 
     ``full`` for everything the user created locally (no ``source_id``) — the native path
     is unchanged. For an item a WatchedSource wrote, its source's setting decides.
@@ -96,7 +96,7 @@ async def ingest_item(
     raises — a failure is recorded on the item as ``processing_status='failed'`` +
     ``processing_error``.
 
-    ``unsearchable`` (RET-2) means the item persisted but nothing can retrieve it: no text
+    ``unsearchable`` means the item persisted but nothing can retrieve it: no text
     was extracted, or no vector/chunk was written. It is deliberately NOT ``done`` — see
     :mod:`personalclaw.knowledge.searchability` for the reason vocabulary.
 
@@ -327,10 +327,10 @@ async def ingest_item(
         embed_phase = await asyncio.to_thread(_embed, store, item_id, embedder)
         _emit("node", node="embed", phase=embed_phase.status)
 
-        # P12 TIER-2 semantic dedup — must run AFTER embed (the vector doesn't exist at
+        # Tier-two semantic dedup — must run AFTER embed (the vector doesn't exist at
         # create time). Fuzzy-matches this item against same-type neighbours (filename +
         # cosine + date-gate) and archives the format-recall loser on a confirmed dup.
-        # Inert when no embedder / no vector (behaves as pre-P12); never fails the ingest.
+        # Inert when no embedder / no vector (exact dedup only); never fails the ingest.
         _emit("node", node="dedup", phase="running")
         dedup_phase, dedup_result = await asyncio.to_thread(_dedup, store, item_id, embedder)
         _emit("node", node="dedup", phase=dedup_phase.status)
@@ -654,7 +654,7 @@ def _item_text(graph, result) -> str:
 
 
 def _lying_extractors(result) -> list[str]:
-    """Pooled nodes that reported SUCCESS and produced no text (RET-2).
+    """Pooled nodes that reported SUCCESS and produced no text.
 
     The distinction this draws is the whole basis of the ``no_extractable_text`` verdict:
     a node that reported ``done`` while yielding nothing LIED, and its item ends up
@@ -667,7 +667,7 @@ def _lying_extractors(result) -> list[str]:
     Non-pooled nodes are excluded because their product never reaches the text pool at all
     (``exif`` writes structural metadata), so "produced no text" is not a claim about them.
 
-    **A node whose gap another node CLOSED has not lied** (KOCR-1). Since a text-less PDF is
+    **A node whose gap another node CLOSED has not lied**. Since a text-less PDF is
     routed to rasterize → OCR, ``document_read`` returning empty on a scan is a TRUE report —
     "this PDF has no text layer" — that a downstream node then covered. Measured on a real
     ingest through the gateway before this condition existed: the item's content was the
@@ -691,7 +691,7 @@ def _lying_extractors(result) -> list[str]:
 
 
 def _searchability_reason(store, item_id: str, embedder, empty_success_extractors) -> str | None:
-    """The typed reason this item is not retrievable, or ``None`` (RET-2).
+    """The typed reason this item is not retrievable, or ``None``.
 
     Reads the LANDED state — a count of the item's rows in ``chunks``, whether its own
     vector column is populated, whether it has any text at all — because every stage's
@@ -779,7 +779,7 @@ def _persist_structural_metadata(store, item_id: str, item, result) -> None:
     # Fetch-and-slice → the document's detected sections and its
     # extracted references onto the item. The SLICES are pool rows; these are the
     # structural findings ABOUT the document, which belong on the item the same way
-    # page_count does. Reference LINKING is deliberately not here — §5 extracts and
+    # page_count does. Reference LINKING is deliberately not here — slicing extracts and
     # stores, and the relate-on-persist step resolves.
     sliced = result.outputs.get("document_slice")
     if (
@@ -894,7 +894,7 @@ async def _run_entities_stage(store, item_id: str, content: str, pool) -> PhaseO
 
     Two passes, deliberately in this order:
 
-    1. **The deterministic alias pre-pass** (MEMORY-GRAPH §1.3) — every entity the graph
+    1. **The deterministic alias pre-pass** — every entity the graph
        ALREADY knows whose name or alias literally appears gets a mention. Zero LLM calls,
        and crucially it runs **even when `pool is None`**: without it, a user with no model
        bound ingests a document that plainly names a known entity and gets nothing, because
@@ -1041,7 +1041,7 @@ async def _run_entities_stage(store, item_id: str, content: str, pool) -> PhaseO
 
 
 def _run_conflict_pass(store, item_id: str) -> None:
-    """Flag contradictions between this item's claims and what is already stored (§3.2).
+    """Flag contradictions between this item's claims and what is already stored.
 
     Delegates to `knowledge_persist_provider.run_ingest_conflict_pass`, which is the SAME seam
     the action-provider persist path uses — the detector, the conflict record shape and the typed
@@ -1264,7 +1264,7 @@ def _embed(store, item_id: str, embedder) -> PhaseOutcome:
     vector exists. Reporting "done" for a no-op made an item with no embedding look
     fully processed, hiding the missing-vector condition from the ingest view.
 
-    KL-9: after the WHOLE-ITEM vector, the item's consolidated text is structurally
+    After the WHOLE-ITEM vector, the item's consolidated text is structurally
     chunked (``knowledge.chunking``) and each chunk embedded into the ``chunks`` table.
     Chunks are ADDITIVE — the item row keeps its own vector; the chunk index is what
     gives retrieval reach into content deep in a long document."""
@@ -1277,7 +1277,7 @@ def _embed(store, item_id: str, embedder) -> PhaseOutcome:
         if not item:
             return oc.not_applicable("The item was removed while it was being read.")
         # The whole-item vector is a compact title+summary identity/topic signal; the
-        # body's semantic recall lives in the chunk index built below (KL-9 clean break —
+        # body's semantic recall lives in the chunk index built below (a clean break —
         # the old body top-up is gone; see compose_item_text).
         vec = embedder.embed_for_item(
             item.get("title") or "",
@@ -1344,11 +1344,11 @@ def embed_item_chunks(store, item_id: str, content: str, embedder) -> None:
 
     Public because it is the ONE chunk-write unit: the ingest path calls it for a new item
     and ``knowledge.chunk_backfill`` calls it for every pre-chunking item. Both therefore
-    go through ``store.replace_chunks``, which is what keeps the ANN index (KL-11) in step
+    go through ``store.replace_chunks``, which is what keeps the ANN index in step
     — a bulk writer taking any other route would leave that index stale.
 
     All of an item's chunks are embedded in ONE pass through ``embed_batch.embed_texts``
-    (KL-15) rather than one provider call per chunk. Two things change beyond the round
+    rather than one provider call per chunk. Two things change beyond the round
     trips: a transient failure is now retried with backoff instead of being swallowed by an
     inline ``except Exception: vec = None``, and a group that fails in a batch-shaped way is
     bisected, so a provider's undeclared ceiling costs a split rather than an item's whole
@@ -1422,7 +1422,7 @@ def embed_item_chunks(store, item_id: str, content: str, embedder) -> None:
 
 
 def _dedup(store, item_id: str, embedder) -> tuple[PhaseOutcome, dict | None]:
-    """P12 TIER-2 semantic dedup — runs AFTER `_embed` (the vector must exist; it doesn't at
+    """Tier-two semantic dedup — runs AFTER `_embed` (the vector must exist; it doesn't at
     create time in the create-fast/enrich-async model). Fetches same-type candidates carrying
     an embedding and asks the pure `dedup.resolve_duplicate` (filename + cosine + date-gate) if
     the just-enriched item duplicates one. On a confirmed dup it ARCHIVES the format-recall
@@ -1448,7 +1448,7 @@ def _dedup(store, item_id: str, embedder) -> tuple[PhaseOutcome, dict | None]:
     phase was previously hardcoded ``done`` at the call site, so an instance with embeddings
     OFF reported a dedup pass it had never performed.
 
-    TIER-1 exact dedup (URL/byte-hash, create-time in store.py) is unaffected."""
+    Tier-one exact dedup (URL/byte-hash, create-time in store.py) is unaffected."""
     if not embedder or not getattr(embedder, "is_available", lambda: True)():
         return _no_embedding_model(), None
     try:

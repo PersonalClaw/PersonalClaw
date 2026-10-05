@@ -79,11 +79,11 @@ export function BentoCard({ icon: Icon, title, query, onClick, loading, failed, 
    *
    *  🪤 NOT A LIVE REGION, AND THE NUMBER IS WHY. Measured on a cold open of `#/settings`: 22 tiles
    *  are in flight simultaneously, so a `role="alert"` per tile queues up to 22 assertive
-   *  announcements for one page load — the same ruling `aria-busy` and `StaleNotice`'s
+   *  announcements for one page load — the same decision `aria-busy` and `StaleNotice`'s
    *  `announce={false}` already carry on this component. The failure reaches assistive tech as an
    *  `aria-describedby` DESCRIPTION on the nav button the user actually lands on, which adds the
    *  fact without renaming the control (a tile whose label changes on failure stops being findable
-   *  by the name it has when it works — the ruling this file applied to `loading`). */
+   *  by the name it has when it works — the decision this file applied to `loading`). */
   failed?: boolean
   /** The rejection itself, so the band can show the server's own message. Passed through
    *  `readableErrText`, which drops the closed set of useless strings (`Failed to fetch`,
@@ -95,7 +95,7 @@ export function BentoCard({ icon: Icon, title, query, onClick, loading, failed, 
   /** The tile is showing a CACHED value that is past its freshness window, from `useQuery`'s
    *  `stale`. Renders the shared `StaleNotice` in the header, unannounced — see the note on the
    *  nav overlay below for why 22 live regions on one page is not an option. A tile that paints a
-   *  stale number with no indication and then swaps it is the defect DSC-14 exists to remove; it
+   *  stale number with no indication and then swaps it is the defect this marker exists to remove; it
    *  was measured on THIS component (Inbox tile, retention 30 → 7 out of band, hard reload with
    *  the revalidation held: first paint 30, no marker anywhere, then 7). */
   stale?: boolean
@@ -297,7 +297,7 @@ export function SegToggle<T extends string>({ value, options, onPick, ariaLabel 
           // the group's `p-0.5`, so SC 2.5.8's spacing exception cannot apply however wide each pill is.
           // Measured on `#/settings`: 43.70×22, 41.30×22, 42.48×22 (the Mode row) and the same for every
           // other adopter. `h-6` with `-my-px` gives 24px and hands the 2px back, so the group keeps its
-          // height and no tile row reflows — the shape cycle 113 established for `RowAction`.
+          // height and no tile row reflows — the shape already established for `RowAction`.
           data-type="caption" className="rounded-pill px-2 h-6 -my-px transition-colors"
           style={o.key === value ? { background: 'var(--color-surface-highest)', color: 'var(--color-on-surface)' } : { color: 'var(--color-on-surface-low)' }}>
           {o.label}

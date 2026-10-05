@@ -4,22 +4,20 @@
 
     NOTE: this set MUST equal the runtime type-handler registry
     (providers/registry.py register_type_handler(...) calls). ``prompt`` was a
-    registered handler (PromptTypeHandler) but was missing here (#47, the split-era
-    #1-'action'-rejected class) — so ProviderConfig.validate() rejected any prompt
-    provider manifest, blocking reinstall/update + third-party prompt providers.
+    registered handler (PromptTypeHandler) but was missing here — so
+    ProviderConfig.validate() rejected any prompt provider manifest, blocking
+    reinstall/update + third-party prompt providers.
     native-prompts is native (auto-seeded, bypasses install-time validation), which
     masked it. test_manifest_types_match_handlers guards this equality going forward.
 
 **That guard did not exist.** Measured 2026-09-01 on `origin/main`:
 `git grep -l 'def test_manifest_types_match_handlers' -- tests/` returned **zero files**,
-while `test_manifest_types_match_handlers` was cited **46 times across 18 files** —
-`docs/roadmap/atomic/{DAS,EI,INU,TSE,WF2AUT,WS}.md`, ten plans, and **six `dag.json`
-acceptance criteria entries**. `DAS-6`, `EI-1`, `TSE-4`, `WF2AUT-4` and `WF2AUT-8` each declare
-"test_manifest_types_match_handlers green/passes" as part of what made them done. Five
-changes rested their completion claim on a test nobody had written.
+while `test_manifest_types_match_handlers` was cited **46 times across 18 files**, and five
+changes each declared "test_manifest_types_match_handlers green/passes" as part of what made
+them done: five completion claims rested on a test nobody had written.
 
 **The invariant itself held when this file was added** — 19 declared, 19 registered, both
-directions empty — so nothing here changes behaviour. What changes is that #47's shape can
+directions empty — so nothing here changes behaviour. What changes is that this defect's shape can
 no longer recur in silence. The failure it guards is quiet and expensive in exactly one
 direction: a handler registered without being declared makes `ProviderConfig.validate()`
 reject every manifest of that type, so installing or updating such an app fails while a
@@ -55,7 +53,7 @@ def test_manifest_types_match_handlers() -> None:
 
     Both directions, reported separately, because they break differently:
 
-    * **registered but not declared** is #47 itself — `ProviderConfig.validate()` rejects
+    * **registered but not declared** — `ProviderConfig.validate()` rejects
       every manifest of that type, so install and update fail for it while a native
       provider of the same type keeps working and hides the fault.
     * **declared but not registered** is the inverse — a manifest validates at install
@@ -69,7 +67,7 @@ def test_manifest_types_match_handlers() -> None:
 
     assert not registered_not_declared, (
         "these provider types have a registered handler but are missing from "
-        f"apps/manifest.PROVIDER_TYPES: {registered_not_declared}. This is #47: "
+        f"apps/manifest.PROVIDER_TYPES: {registered_not_declared}. "
         "ProviderConfig.validate() will reject every app manifest declaring one of them, so "
         "installing or updating such an app fails — while a NATIVE provider of the same type "
         "keeps working, because native providers are auto-seeded and skip install-time "

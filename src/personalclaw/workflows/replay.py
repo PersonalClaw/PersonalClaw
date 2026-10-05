@@ -17,8 +17,8 @@ run depended on is already journaled:
   carries the prompt each node actually ran, and the replay re-resolves the prompt FRESH from the
   (possibly edited) spec and compares. A prompt edit shows up here and nowhere else;
 * **the wall clock** is the one thing `frontier()` cannot supply — it is pure and reads no clock.
-  The controller reads it in `_wake_due_nodes` and now journals that read as a `clock_read` event
-  (PP-6). Replay resolves a parked node against that RECORDED clock, so a `wait` lands at the same
+  The controller reads it in `_wake_due_nodes` and now journals that read as a `clock_read` event.
+  Replay resolves a parked node against that RECORDED clock, so a `wait` lands at the same
   point in the trajectory instead of against a live clock that could never match.
 
 **Divergence is a first-class outcome, not a failure.** A template edit is SUPPOSED to diverge; the
@@ -127,7 +127,7 @@ class _Recorded:
 
 
 class RecordedResponses:
-    """The recorded-response provider — a node's OWN output, keyed off `output_ref` (PP-4).
+    """The recorded-response provider — a node's OWN output, keyed off `output_ref`.
 
     A completed run journaled a terminal event per executed leaf, each carrying the `output_ref`
     the run's output was spilled to. Replay hands that same output back so downstream routing and
@@ -174,7 +174,7 @@ class RecordedResponses:
 
 
 class RecordedClock:
-    """The recorded wall clock, substituted for the live one at replay (PP-6).
+    """The recorded wall clock, substituted for the live one at replay.
 
     Built from the run's `clock_read` envelope, keyed by the instance path the clock resolved. A
     node the run resolved against the clock gets its recorded value back; everything else gets "".

@@ -89,7 +89,7 @@ def _now() -> str:
 
 
 def _refuse_if_readonly(art: Artifact) -> None:
-    """Guard every content-mutating store method against a frozen artifact (SM-9).
+    """Guard every content-mutating store method against a frozen artifact.
 
     Enforced in the STORE, not the route, because the route is not the only caller: the
     MCP artifact tools and the workflow action providers reach the provider directly, so a
@@ -579,7 +579,7 @@ class NativeArtifactProvider(ArtifactProvider):
         self, name: str, *, kind: str | None = None, project_id: str | None = None
     ) -> Artifact | None:
         """The most-recent existing artifact whose name matches *name* by slug — the
-        list-before-save dedup hint (ARTIFACTS S1). Same slug derivation as save, so a
+        list-before-save dedup hint. Same slug derivation as save, so a
         re-save of "Sales Dashboard" finds the prior one instead of minting a ``-2``.
         Returns None when nothing matches. A read-only scan; never raises into save.
 
@@ -690,7 +690,7 @@ class NativeArtifactProvider(ArtifactProvider):
         source: str = "chat",
         slug: str | None = None,
         description: str = "",
-        tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
+        tags: list[str] | None = None,  # type: ignore[valid-type]
         actor: str | None = None,
         session_id: str | None = None,
         project_id: str = "",
@@ -897,7 +897,7 @@ class NativeArtifactProvider(ArtifactProvider):
         slug: str | None = None,
         source_path: str = "",
         description: str = "",
-        tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
+        tags: list[str] | None = None,  # type: ignore[valid-type]
         actor: str | None = None,
         session_id: str | None = None,
         project_id: str = "",
@@ -996,13 +996,13 @@ class NativeArtifactProvider(ArtifactProvider):
         session_id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
+        tags: list[str] | None = None,  # type: ignore[valid-type]
         collection: str | None = None,
         event_metadata: dict | None = None,
         source_path: str | None = None,
         expect_revision: str | None = None,
-        add_tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
-        remove_tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
+        add_tags: list[str] | None = None,  # type: ignore[valid-type]
+        remove_tags: list[str] | None = None,  # type: ignore[valid-type]
     ) -> Artifact | None:
         # Validate event type BEFORE any side effect so an invalid type can't
         # orphan a versions/vN.html. 'reverted' is NOT an update event — it has its
@@ -1227,7 +1227,7 @@ class NativeArtifactProvider(ArtifactProvider):
         changes.emit(changes.DELETE, slug)
         return True
 
-    def list_versions(self, slug: str) -> list[int]:  # type: ignore[valid-type]  # CI-1
+    def list_versions(self, slug: str) -> list[int]:  # type: ignore[valid-type]
         with self._lock:
             if self._read_meta(slug) is None:
                 return []

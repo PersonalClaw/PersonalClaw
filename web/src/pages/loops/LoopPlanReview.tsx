@@ -55,7 +55,7 @@ type LaunchSpec = Record<string, unknown>
 
 const HELD_REASON = HELD_CHANGE_REASON
 
-// One phase of the role-phased execution plan (IT-6). Capabilities are per-phase.
+// One phase of the role-phased execution plan. Capabilities are per-phase.
 interface PlanPhase {
   role: string; agent_name: string; target: string; min_cycles: number
   phase_exit: string; skill_ids: string[]; workflow_ids: string[]
@@ -116,7 +116,7 @@ function fieldsOf(raw: Loop): LaunchFields {
 /** The clarifying-question walk — ONE model, two sources (no dual path), typed as the QuestionSlider's
  *  `SliderQuestion` (typed kinds, phase ribbon, recommendation, required flag) so the deep-rigor Round
  *  renders as a one-at-a-time stepper:
- *   - guided decomposition (#16): grill's memory-checked phases, each step tagged with its phase
+ *   - guided decomposition: grill's memory-checked phases, each step tagged with its phase
  *     title/index (id `p<phase>s<step>`) so the stepper shows "Phase N of M · <title>". A phase step
  *     may carry the typed grill fields (kind/choices/recommended/required) — mapped straight through
  *     so a `choice`/`slider`/`boundary` question renders its typed control with no shim; absent fields
@@ -202,7 +202,7 @@ function launchSpec(f: LaunchFields, name: string, task: string): LaunchSpec {
       sub_goals: f.subGoals,
       execution_plan: f.phases.length ? f.phases : null,
       verify_command: f.goalType === 'verifiable' ? f.verifyCommand.trim() : null,
-      // Guided decomposition (#16): persist the memory-checked phases + the structured answers
+      // Guided decomposition: persist the memory-checked phases + the structured answers
       // so a resumed/inspected loop keeps the guided-decomposition record.
       grill_phases: hasGrill ? f.grillPhases : null,
       phase_answers: hasGrill
@@ -261,7 +261,7 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
   })
   const streamingPlan = review.buffer.trim().length > 0
 
-  // ── guided decomposition (#16): grill's memory-checked question-TREE, the richer
+  // ── guided decomposition: grill's memory-checked question-TREE, the richer
   // intake behind intake_rigor='thorough'. When phases load they REPLACE the flat
   // clarify walk (same WalkQuestion model, phase-tagged). Auto-fetched for a thorough
   // classification; also user-triggerable from the overview. `null` = not fetched.
@@ -288,7 +288,7 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
   // plan), so auto-firing a second question-tree here would re-interrogate after the
   // fact. `isThorough` only surfaces a soft "recommended" nudge on the affordance.
 
-  // ── capabilities (IT-4): installed skills/workflows the loop loads each cycle,
+  // ── capabilities: installed skills/workflows the loop loads each cycle,
   // pre-checked with the picks stored on the loop — the planner's suggestions, threaded
   // onto it at create (`fieldsOf`); plus marketplace skills to install.
   const [installedSkills, setInstalledSkills] = useState<SkillItem[]>([])
@@ -299,7 +299,7 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
   const [installed, setInstalled] = useState<Set<string>>(new Set())
   const marketplaceSuggestions = draft.classification.marketplace_suggestions ?? []
 
-  // ── execution plan (IT-6): the planner's role-phased plan, each phase carrying
+  // ── execution plan: the planner's role-phased plan, each phase carrying
   // its own capabilities (loaded only during that phase). Editable; persisted on
   // launch. Present only when the planner emitted phases. Unified shape: it lives in
   // kind_config (goal-specific), painted from there (`fieldsOf`).
@@ -335,9 +335,9 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
     api.savedAgents().then((list) => { if (alive) setAgentNames(list.map((a) => a.name)) }).catch(() => {})
     // Installed capabilities for the picker (best-effort).
     api.skills().then((s) => { if (alive) setInstalledSkills(s) }).catch(() => {})
-    // No workflow catalog until WORKFLOWS-V2 Slice 0 lands the def store. The
+    // No workflow catalog is read here (`installedWorkflows` stays empty). The
     // picker below is length-guarded, so an empty list renders no section; the
-    // persisted `workflow_ids` field is left intact for the v2 defs to fill.
+    // persisted `workflow_ids` field is left intact for workflow definitions to fill.
     return () => { alive = false }
   }, [draft.loopId, attempt])  // eslint-disable-line
 
@@ -424,7 +424,7 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
       // Fold the answered clarifications into the goal task so the worker's brief
       // reflects them (pre-launch nudges are rejected by the unified backend; the
       // durable spec is the task text + kind_config). Mirrors CodeCreatePage.
-      // Guided decomposition (#16) groups the fold BY PHASE for a richer scoped brief;
+      // Guided decomposition groups the fold BY PHASE for a richer scoped brief;
       // the flat walk stays a single "Clarifications:" block (identical to before).
       const answered = answeredOf(questions, answers)
       let taskText = loop.goal
@@ -715,7 +715,7 @@ function OverviewStep({ loop, goalType, setGoalType, rigor, subGoals, setSubGoal
   )
 }
 
-/** Guided decomposition (#16) — the overview affordance for grill's memory-checked
+/** Guided decomposition — the overview affordance for grill's memory-checked
  *  question-tree. Idle: an opt-in "Guide me" button (auto-run for thorough goals).
  *  Loading: a spinner. Loaded: a preview of the phases + a note when memory shaped
  *  them, so the user knows the upcoming walk is phased. The walk itself renders the
@@ -821,10 +821,10 @@ function CapabilitiesStep({ skills, skillIds, workflowIds, onToggleSkill, sugges
         )}
       </Section>
 
-      {/* The workflow picker section stood here. Removed with the old feature
-          (WORKFLOWS-V2 Phase 1): with no catalog it could only ever render empty,
-          and a length-guarded block that can never be true is dead code. Slice 7
-          brings back a v2 def picker; `workflow_ids` still persists meanwhile. */}
+      {/* The workflow picker section stood here. Removed with the old feature:
+          with no catalog it could only ever render empty,
+          and a length-guarded block that can never be true is dead code.
+          `workflow_ids` still persists. */}
 
       {marketplaceToShow.length > 0 && (
         <Section label="Suggested to install — from the marketplace">

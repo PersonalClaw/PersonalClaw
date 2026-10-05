@@ -248,12 +248,12 @@ class TestRoute:
         assert app_state._mode_calls == [("dashboard:chat-1", "ask")]
 
 
-# ── The adoption sweep — every owner-confirmed kind resolves ─────────────────
+# ── Every kind a surface investigates resolves ───────────────────────────────
 
 
-class TestS2Registry:
-    def test_all_owner_confirmed_kinds_registered(self):
-        """The sweep's vocabulary. A missing kind means a surface's button 400s."""
+class TestSurfaceKindsRegistry:
+    def test_every_surface_kind_is_registered(self):
+        """The surfaces' vocabulary. A missing kind means a surface's button 400s."""
         for kind in (
             "notification",
             "task",

@@ -5,7 +5,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A dismissible overlay needs a KEYBOARD way out ──────────────────────────────
 //
-// Cycle 38 covered the `aria-modal` dialogs. This is the rest of the family: every overlay a user
+// The `aria-modal` dialogs are covered elsewhere. This is the rest of the family: every overlay a user
 // can OPEN and must be able to CLOSE. A mouse user always has the click-away scrim; a keyboard user
 // has only Escape, so an overlay whose sole dismissal is a scrim tap strands them.
 //
@@ -122,10 +122,10 @@ describe('the rail: an overlay with a click-away scrim also binds Escape', () =>
   })
 
   it('the rail is not vacuously green — it finds the scrim-bearing files', () => {
-    // Two cycles ago a rail matched nothing and reported a clean sweep, because
+    // A rail once matched nothing and reported a clean sweep, because
     // `expect(offenders).toEqual([])` cannot tell "nothing is broken" from "my matcher is broken".
     // Measured 10, floored at 4. Raising it to the measurement means a scrim-bearing overlay that stops
-    // being scanned is caught, instead of being absorbed by six overlays' worth of slack (cycle 134).
+    // being scanned is caught, instead of being absorbed by six overlays' worth of slack.
     expect(withScrim.length, 'the scanner must find the scrim-bearing overlays').toBeGreaterThanOrEqual(10)
     const rels = withScrim.map((f) => f.rel)
     expect(rels).toContain('ui/DegradedChip.tsx')

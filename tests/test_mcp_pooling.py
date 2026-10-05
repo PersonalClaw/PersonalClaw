@@ -1,5 +1,4 @@
-"""Tests for MCP connection pooling, session isolation and idle eviction
-(rel-mcp-server-pooling #46).
+"""Tests for MCP connection pooling, session isolation and idle eviction.
 
 These exercise the registry's routing/lifecycle logic directly — no real MCP
 subprocess is spawned (connections are created but never `ensure_started`), so
@@ -33,7 +32,7 @@ def test_poolable_flag():
 
 def test_conn_key_poolable_shares_scope():
     # Poolable server → scope "" regardless of session → shared connection. The key is
-    # now (name, scope, spec_hash) (P23e); the scope component (k[1]) is still "".
+    # now (name, scope, spec_hash); the scope component (k[1]) is still "".
     k1 = _conn_key("s", _POOLABLE, "sess-1")
     k2 = _conn_key("s", _POOLABLE, "sess-2")
     assert k1 == k2  # same spec → identical key → one shared conn
@@ -48,7 +47,7 @@ def test_conn_key_stateful_scopes_by_session():
 
 
 def test_conn_key_same_name_different_spec_disambiguates():
-    # P23e: two servers sharing a NAME but differing in command/args/env must get
+    # Two servers sharing a NAME but differing in command/args/env must get
     # DISTINCT keys (no collision on one pooled connection).
     a = _conn_key("dup", {"command": "server-a", "poolable": True}, "")
     b = _conn_key("dup", {"command": "server-b", "poolable": True}, "")
@@ -203,7 +202,7 @@ async def test_with_mcp_session_eviction_none_prior():
     await wrapped("sess-9")  # no prior → just eviction, no error
 
 
-# ── P23e: reconcile drops a stale-hash canonical conn on a spec change ──
+# ── reconcile drops a stale-hash canonical conn on a spec change ──
 def test_reconcile_replaces_conn_when_spec_content_changes():
     reg = McpClientRegistry()
     reg.load_from_specs({"srv": {"command": "old", "poolable": True}})
@@ -217,7 +216,7 @@ def test_reconcile_replaces_conn_when_spec_content_changes():
     assert len(canon) == 1
 
 
-# ── P23d: pool-stats counters ──
+# ── pool-stats counters ──
 def test_pool_stats_counts_spawns_reuse_and_shape():
     reg = McpClientRegistry()
     reg.load_from_specs({"shared": _POOLABLE, "browser": _STATEFUL})

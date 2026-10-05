@@ -29,7 +29,7 @@ available everywhere:
    long syntax with ``required: false``, and at least one entry per service resolves
    *inside* the compose file's own directory. That is exactly the property that makes a
    standalone copy work, so it is the property the rail pins.
-   ``test_the_structural_rail_reds_on_the_old_shape`` feeds it the pre-DIST-16 shape and
+   ``test_the_structural_rail_reds_on_the_old_shape`` feeds it the old shape and
    watches it fail, so the rail is not vacuous.
 2. **Behavioural, when a container runtime is installed and the run opts in** — copy
    ``compose.yaml`` ALONE into a scratch directory (no ``.env``, no ``deploy/`` nesting) and run
@@ -132,7 +132,7 @@ def test_the_repo_root_location_still_works_from_a_checkout():
 
 
 def test_the_structural_rail_reds_on_the_old_shape():
-    """The pre-DIST-16 shape, fed to the same predicate the assertion above uses."""
+    """The old shape, fed to the same predicate the assertion above uses."""
     old = yaml.safe_load("""
         services:
           personalclaw-gateway:

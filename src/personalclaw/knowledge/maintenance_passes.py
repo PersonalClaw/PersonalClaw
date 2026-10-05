@@ -12,7 +12,7 @@ the consolidation planner and an action-provider module. So the host knows nothi
 passes and this module is imported once, at gateway startup, where paying for those imports
 is already the cost of being a gateway.
 
-**KL-19 added a fifth pass: `derived_refresh`.** The structural editing verbs invalidate the
+**A fifth pass: `derived_refresh`.** The structural editing verbs invalidate the
 chunk layer and the whole-item vector of every item they touch (a split whose halves keep the
 parent's vectors is silently wrong), and something has to rebuild them on a cadence. Before it
 the chunk backfill ran only at gateway boot and nothing at all drained a NULLed item vector, so
@@ -167,7 +167,7 @@ def _similarity_edge_pass(*, batch_size: int = 0) -> int:
 def _derived_refresh_pass(*, batch_size: int = 0) -> int:
     """Rebuild the chunk layer and the whole-item vectors that have been INVALIDATED.
 
-    KL-19's structural editing verbs (split, extract, merge, retitle …) rewrite item bodies,
+    The structural editing verbs (split, extract, merge, retitle …) rewrite item bodies,
     and every derived artifact computed from the old text is wrong the instant they do. The
     verbs therefore INVALIDATE rather than recompute — drop the chunks, NULL the item vector,
     release the similarity claims, clear the sweep markers — and this pass is what makes that
@@ -207,12 +207,12 @@ def _derived_refresh_pass(*, batch_size: int = 0) -> int:
 
 
 def _vault_projection_pass(*, batch_size: int = 0) -> int:
-    """Reconcile the markdown projection of the library against the store (KL-20).
+    """Reconcile the markdown projection of the library against the store.
 
-    Hosted HERE rather than on a cadence of its own, which is what the atom asks for: the
-    projection is idempotent, set-shaped, watermark-triggered work — the exact shape KL-14
+    Hosted HERE rather than on a cadence of its own, on purpose: the
+    projection is idempotent, set-shaped, watermark-triggered work — the exact shape the host
     exists for — and a second loop writing the owner's files would be the second projector
-    this atom was written to avoid, arriving as a scheduler instead of as a module.
+    this pass exists to prevent, arriving as a scheduler instead of as a module.
 
     RESUMABLE (`batched=True`) and the return value is PROGRESS, not backlog size, for the
     reason `_derived_refresh_pass` states: every refusal (a two-sided conflict, a page the

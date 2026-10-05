@@ -1,9 +1,9 @@
 // ── A QR Code (model 2) encoder, written here rather than installed ─────────────────────────────
 //
-// `CA-2` shipped Settings → Devices with a LABELLED PLACEHOLDER where the scannable code belongs
-// and recorded the reason twice: there is no QR encoder in either ecosystem, and "hand-rolling
+// Settings → Devices first shipped with a LABELLED PLACEHOLDER where the scannable code belongs,
+// with the reason recorded twice: there is no QR encoder in either ecosystem, and "hand-rolling
 // Reed-Solomon + masking to render a *wrong* QR would be worse than the labelled placeholder".
-// `MC-8` is the change that makes the call, and the call is: encode it here, and prove it with a
+// This module makes the call, and the call is: encode it here, and prove it with a
 // DECODER rather than with confidence.
 //
 // Why not a dependency. The one thing this needs is `pairing_url → module matrix`; the npm

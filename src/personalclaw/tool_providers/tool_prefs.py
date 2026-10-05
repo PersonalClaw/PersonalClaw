@@ -1,4 +1,4 @@
-"""User tool preferences (PT3) — which tools the user has turned OFF entirely.
+"""User tool preferences — which tools the user has turned OFF entirely.
 
 A harder gate than per-turn retrieval: a disabled tool is removed from the
 runtime's ``_tool_defs`` AND ``_tool_index`` (so the model never sees it and can't

@@ -33,8 +33,8 @@ moves between the two the test fails instead of the harvest silently going quiet
 
 **Provenance is mandatory.** Each case carries the run id, the workflow name and the `event_id` of
 every record it was built from. A study that cannot name its population is the fabricated-evidence
-shape — the same one ES-7's config-target refusal exists to prevent — and a case with no run id is
-indistinguishable from an invented one.
+shape — the same one the overlay's config-target refusal exists to prevent — and a case with no
+run id is indistinguishable from an invented one.
 
 **An empty population is a refusal, not a suite of zero.** :func:`load_harvested_suite` RAISES on an
 empty suite rather than returning `[]`, because `[]` scored against a threshold reads as a pass.
@@ -542,7 +542,7 @@ def harvest(
 def ref_names_skill(ref: str, skill_name: str) -> bool:
     """Does one `consulted` ref name this skill?
 
-    THE matcher for the WF2-R13 `consulted` event's `ref`, shared by both readers of that
+    THE matcher for the `consulted` event's `ref`, shared by both readers of that
     field so they cannot disagree about what "this run used that skill" means:
 
     * :func:`personalclaw.evals.skills_bench.consulted_runs` matches the LIVE event as it sits in
@@ -592,8 +592,8 @@ def installed_harvested_cases(
 
     `consulted_ref` narrows the suite to the runs that ACTUALLY loaded that skill/template, via
     :func:`case_consulted`. It is the same shape of filter as `workflow_name` — keyword-only, `""`
-    means "do not filter" — because ES-7 §3.3's population ("replay the runs that consulted this
-    skill") is a scope over the suite, not a second suite.
+    means "do not filter" — because the skills benchmark's population ("replay the runs that
+    consulted this skill") is a scope over the suite, not a second suite.
     """
     out: list[dict[str, Any]] = []
     directory = scenarios.installed_dir()

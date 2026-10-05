@@ -38,7 +38,7 @@ import { PartialCount } from '../../ui/MoreRow'
  *  fields get their control (the config contract's fifth leg), and the existing
  *  status/snapshots endpoints finally have a reader.
  *
- *  §6 adds the ARCHIVE BROWSER below: each snapshot's per-domain counts read
+ *  It also carries the ARCHIVE BROWSER below: each snapshot's per-domain counts read
  *  from its own manifest, the last drill's verdict, a plan-first preview and a
  *  merge-restore. `replace` restore is still command-line only — the server refuses one
  *  while the gateway runs and this panel IS the gateway, so a replace button here would
@@ -692,7 +692,7 @@ function RetentionSection({ cfg, setCfg, snaps }: {
 
 // ── The archive browser ──────────────────────────────────────────────────────
 
-/** The archive browser §6 asks for: date, size, per-domain counts read from each
+/** The archive browser: date, size, per-domain counts read from each
  *  archive's own manifest, the last drill's verdict on the archive it exercised, and a
  *  restore that is plan-first.
  *
@@ -811,7 +811,7 @@ function ArchiveSection({ snaps, onChanged }: {
 // ── Sync ─────────────────────────────────────────────────────────────────────
 
 /** The review surface this panel owns. Memory- and knowledge-domain conflicts route to
- *  theirs (§4.2 item 3); their counts are reported here so a filtered view never reads as
+ *  theirs; their counts are reported here so a filtered view never reads as
  *  "nothing anywhere". */
 const SURFACE_DURABILITY = 'durability'
 
@@ -825,7 +825,7 @@ const ENCRYPT_OPTIONS = [
  *
  *  Each transport is an installed `type: "sync"` provider app, so its OWN settings (repo
  *  URL, folder, host) live on its provider card under Settings → Providers — the standard
- *  `/api/providers` schema-driven form, which is what criterion 10 requires and what a
+ *  `/api/providers` schema-driven form, which a
  *  third-party transport gets for free. What belongs HERE is the durability side of the
  *  decision: whether sync runs at all, which registered transport it uses, how stale is
  *  stale, and whether shards are encrypted before they leave.
@@ -1206,7 +1206,7 @@ function DeletedChoices({ c, side, busy, onResolve }: {
   )
 }
 
-/** Where a both-sides-edited divergence gets decided (§4.2 item 2).
+/** Where a both-sides-edited divergence gets decided.
  *
  *  The queue itself shipped with the sync engine — a detector, a durable JSONL, and the rule
  *  that the LOCAL row stays authoritative until a human chooses. What it never had was a way

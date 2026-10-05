@@ -4,7 +4,7 @@ import { join, relative } from 'node:path'
 import { lineViolations, stripComments } from './tokenLintRule'
 import { filesUnder, readSource } from '../test/sourceTree'
 
-// ── Token-lint (component-redesign Slice 0) ────────────────────────────────
+// ── Token-lint ─────────────────────────────────────────────────────────────
 // Design-system adherence guard: no raw color hex or raw px literals in app
 // source. Everything must go through design tokens (--color-*, --radius-*,
 // --spacing-*, tailwind scale). The design/ dir is exempt — it DEFINES the

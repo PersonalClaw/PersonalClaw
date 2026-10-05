@@ -92,7 +92,7 @@ def _check_work_offer_enabled() -> bool:
 
 
 def turn_earns_check_work_offer(assistant_text: str, tool_calls: int) -> bool:
-    """The §3.3 heuristic, deterministic and free: ≥3 tool calls in the turn AND
+    """The heuristic, deterministic and free: ≥3 tool calls in the turn AND
     completion language in the reply. No model call — an offer must never cost
     anything, since the user may not click it."""
     if (tool_calls or 0) < _CHECK_WORK_MIN_TOOL_CALLS:
@@ -107,7 +107,7 @@ def maybe_offer_check_work(
 
     OFFER only: this never invokes the ``check-work`` skill. Invocation is always the
     user's click on the chip, which sends "check your work" as a normal message — so the
-    cost and latency of verification stay user-consented (§3.3). Synchronous and
+    cost and latency of verification stay user-consented. Synchronous and
     model-free, so it cannot delay or fail the turn. Independent of ``followup_chips``:
     an operator who turned suggestions off may still want the verification offer.
     """

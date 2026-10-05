@@ -1,8 +1,7 @@
-"""The provider-registration invariant: no execution without a policy check (§7 item 6 / R3 am.5).
+"""The provider-registration invariant: no execution without a policy check.
 
-The plan asks for "a test asserting no execution without a policy check". Measured before writing
-it — and the honest result is that the invariant HOLDS today, so this file exists to keep it holding
-rather than to fix a defect:
+Measured before writing this test, the honest result is that the invariant HOLDS today, so this
+file exists to keep it holding rather than to fix a defect:
 
     hooks._run_provider (lifecycle)                  incident_active   + enforce_action
     gateway._fire_store_trigger (clock/file/event)   incident_active   + enforce_action
@@ -20,7 +19,7 @@ The `enforce_action` column is the addition, and it is a SECOND invariant over t
 `POLICY_CHECKS` below is satisfied by ANY one check, which is right for its question ("does this
 site consult policy at all?") but blind to a specific control going missing at a specific seam.
 That is precisely what happened — the gateway seam kept the kill switch and gained the rung ladder
-while the denylist §1.2 promises at all three seams was 0 there — so `DENYLIST_SEAMS` names that
+while the denylist every unattended seam promises was 0 there — so `DENYLIST_SEAMS` names that
 one control and requires it everywhere it was declared.
 
 That last line is the reason this is a source-level test rather than a behavioural one. The
@@ -29,10 +28,10 @@ behavioural test can only prove the sites it knows about, so it cannot fail when
 FIFTH execution site — the exact regression this invariant is written against. The failure mode
 prevented is not "the check is wrong", it is "a new call path skipped the check entirely".
 
-🔴 What is deliberately NOT asserted: the plan also describes providers each *declaring* their
+🔴 What is deliberately NOT asserted: providers each *declaring* their
 enforcement chokepoint as an attribute. None of the 16 shipped providers declares one.
 That is left alone rather than half-built, because an attribute nothing reads is exactly the
-inert-control defect this program keeps finding — enforcement lives at the call sites, and this
+inert-control defect this codebase keeps finding — enforcement lives at the call sites, and this
 test guards the call sites. Recorded so the next author knows it was a decision, not an oversight.
 """
 
@@ -74,7 +73,7 @@ EXECUTION_SITES: tuple[tuple[str, str], ...] = (
     # nobody watching, so it is a real UNATTENDED execution site and joins the denylist seams
     # below rather than claiming an exemption. Its providers are additionally narrowed to a
     # frozen capability set (`autoexec.AUTO_CAPABLE_PROVIDERS`) and its actions bounded by a
-    # per-run cap and the NEW-1 budget floor — more fences, not a substitute for these gates.
+    # per-run cap and the budget floor — more fences, not a substitute for these gates.
     ("personalclaw.proactive.autoexec", "the triage auto-execution path"),
     # Every action step of a workflow run, whatever started the run and whatever lookup the
     # engine was handed: a run is unattended work, so it is a denylist seam below. It resolves
@@ -101,7 +100,7 @@ POLICY_CHECKS: tuple[str, ...] = (
 )
 
 
-#: The THREE seams AUTONOMY-GUARDRAILS §1.2 names, each of which must call `enforce_action`
+#: The unattended dispatch seams, each of which must call `enforce_action`
 #: BEFORE it reaches a provider. This is narrower than `EXECUTION_SITES` by exactly one entry —
 #: the manual Run path, exempted below — and the two lists are cross-checked by
 #: `test_the_denylist_seam_list_covers_every_unattended_execution_site` so a FOURTH unattended
@@ -112,7 +111,7 @@ POLICY_CHECKS: tuple[str, ...] = (
 #: (`_fire_store_trigger`) kept the kill switch and gained the rung ladder but silently lost the
 #: denylist — measured at 1 / 1 / 0 `enforce_action` calls across hooks / event_triggers / gateway
 #: while gateway is the busiest of the three (every clock, file, webhook and chained trigger).
-#: AG-12 restored it; this rail is what stops the next retirement dropping it again.
+#: It is restored; this rail is what stops the next retirement dropping it again.
 DENYLIST_SEAMS: tuple[tuple[str, str], ...] = (
     ("personalclaw.hooks", "script hooks"),
     ("personalclaw.gateway", "clock / file / webhook / chained / data-event triggers"),
@@ -130,8 +129,8 @@ DENYLIST_SEAMS: tuple[tuple[str, str], ...] = (
 #: `manual_refusal`. Asserted in `test_only_your_run_reaches_the_hand_dispatch`.
 MANUAL_SEAM = "personalclaw.dashboard.handlers.trigger_runs"
 
-#: The ONE site that resolves an action provider to UNDO an action rather than to run one
-#: (AUTONOMY-GUARDRAILS §6.1). Exempt from the execution invariant, and asserted separately by
+#: The ONE site that resolves an action provider to UNDO an action rather than to run one.
+#: Exempt from the execution invariant, and asserted separately by
 #: `test_the_reversal_site_undoes_and_never_executes` rather than merely trusted. Why it is
 #: exempt: it calls `reverse`, never `execute`; the provider it may reach is bounded by the
 #: recorded action type's own declaration plus the handle kind that provider claims; and the
@@ -189,14 +188,14 @@ def _enforce_action_calls(module_name: str) -> list:
 
 @pytest.mark.parametrize("module_name,label", DENYLIST_SEAMS)
 def test_every_unattended_seam_enforces_the_denylist(module_name, label):
-    """🔴 THE §1.2 INVARIANT. The denylist's whole promise is that "an app-contributed provider
+    """🔴 THE DENYLIST INVARIANT. The denylist's whole promise is that "an app-contributed provider
     inherits the denylist without knowing it exists" — which holds only if EVERY unattended
     dispatch seam calls it. Two of three is the same shape as none, because an author only needs
     to reach the unguarded one."""
     calls = _enforce_action_calls(module_name)
     assert calls, (
         f"the {label} seam ({module_name}) dispatches an action provider without calling "
-        "guardrails.denylist.enforce_action. §1.2 requires it at all three dispatch seams."
+        "guardrails.denylist.enforce_action, which every unattended dispatch seam must call."
     )
 
 
@@ -321,7 +320,7 @@ def test_only_your_run_reaches_the_hand_dispatch():
 @pytest.mark.parametrize("module_name,label", EXECUTION_SITES)
 def test_every_execution_site_has_a_policy_check(module_name, label):
     """🔴 THE INVARIANT. A new provider-execution path that forgot its policy check is how an
-    automation surface quietly stops being fenced — the defect S117 found for the kill switch, where
+    automation surface quietly stops being fenced — the defect once found for the kill switch, where
     three unattended entry points existed and only one checked the flag."""
     src = _source(module_name)
     found = [c for c in POLICY_CHECKS if c in src]
@@ -378,19 +377,19 @@ def test_the_would_execute_preview_site_only_reads_the_declaration():
     """The third exemption, and the properties that earn it.
 
     `dashboard/handlers/doctor.py`'s would-execute simulator resolves a provider to read ONE
-    declaration — `supports_dry_run` — because that is the T9 honesty rule: only the spawn-based
+    declaration — `supports_dry_run` — because that is the honesty rule: only the spawn-based
     LLM providers have a real observe mode, and a panel that labelled a deterministic provider's
     description "observe-mode result" would promise a safety property the provider does not have.
 
     The kill-switch check every `EXECUTION_SITES` entry shares would be wrong here, because this
-    site is not an entry point at all: the dry fire it renders returns before AUTOMATION-SUBSTRATE
+    site is not an entry point at all: the dry fire it renders returns before the automation engine
     consults a runner. "It's different" is not an exemption, so the difference is asserted —
     it must never execute, and it must never dispatch a fire with a runner attached.
     """
     src = _source("personalclaw.dashboard.handlers.doctor")
     assert "get_action_provider(" in src, "the exemption is stale if this site no longer resolves"
     assert ".execute(" not in src, "the preview site must never execute a provider"
-    assert "supports_dry_run" in src, "the only reason to resolve here is the T9 declaration"
+    assert "supports_dry_run" in src, "the only reason to resolve here is the dry-run declaration"
     # 🪤 The load-bearing one. `triggers.tools.run` executes when handed a runner, so a `runner=`
     # that ever became anything but None would turn this read-only panel into a fire path.
     assert "runner=None" in src, "the dry fire must be dispatched with no runner"
@@ -565,7 +564,7 @@ def test_the_create_time_provider_check_only_asks_existence():
     """The properties that earn `triggers.tools`'s exemption (#779).
 
     `create` refuses an unregistered action provider BEFORE the row exists — the
-    green-row-silent-failure-loop this repo's BA-7 rule exists to prevent. That takes one
+    green-row-silent-failure-loop that refusal exists to prevent. That takes one
     registry question, "is this name registered?", and nothing more: the resolved provider
     is never bound to a name, never handed to a runner, and never executed. "It's different"
     is not an exemption, so the difference is asserted here — if `create` ever starts USING

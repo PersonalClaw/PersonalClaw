@@ -1,7 +1,7 @@
 import { BarChart3 } from 'lucide-react'
 import type { RunSnapshotViewModel } from './runFold'
 
-/** The compact, shared run-progress strip (P16) — the visual half of the run
+/** The compact, shared run-progress strip — the visual half of the run
  *  view-model that every compact surface (in-chat SdlcProgressCard, and later the
  *  Code cockpit's compact header) renders IDENTICALLY, so they can't drift:
  *   • a done/total STAGE FILL bar (phased kinds only; warn-toned when parked), and

@@ -1,6 +1,6 @@
 """api_inbox_digest query-param validation.
 
-Regression for bug #23: ``hours = float(request.query.get("hours"))`` sat BEFORE
+Regression: ``hours = float(request.query.get("hours"))`` sat BEFORE
 the try block, so a non-numeric ``?hours=abc`` raised an unhandled ValueError →
 raw 500 "Server got itself in trouble" instead of a clean 400. (The other
 int/float(request.query…) casts across the dashboard handlers are already inside
@@ -40,7 +40,7 @@ async def test_digest_missing_channel_id_is_400():
 
 @pytest.mark.asyncio
 async def test_digest_non_numeric_hours_is_400_not_500():
-    """The core of bug #23 — a bad hours param must be a clean 400."""
+    """The core of the bug — a bad hours param must be a clean 400."""
     resp = await api_inbox_digest(_req({"channel_id": "C123", "hours": "abc"}))
     assert resp.status == 400
     assert "hours" in (await _json(resp))["error"]

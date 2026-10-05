@@ -1,6 +1,6 @@
-"""Slice 3 exemplar — secrets: `{{secret:KEY}}` resolution + RedactingSink.
+"""Workflow exemplar — secrets: `{{secret:KEY}}` resolution + RedactingSink.
 
-Slice 3 added side-effect, scope, termination and secret handling. This exemplar isolates
+The engine handles side effects, scope, termination and secrets. This exemplar isolates
 the secret half — the part with the sharpest failure mode (a leaked credential in the
 journal, which the flywheel reads, bug reports ship, and the UI renders). Two mechanisms:
 

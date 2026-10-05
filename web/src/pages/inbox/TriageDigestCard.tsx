@@ -112,7 +112,7 @@ export function TriageDigestCard() {
   }
 
   // The PACK CARD. Not an empty state — there is nothing to be empty. The cron field is the
-  // "editable trigger" the criterion asks for: it is editable BEFORE the install, so the user
+  // "editable trigger": it is editable BEFORE the install, so the user
   // never has to install a schedule at a time they did not choose and then go fix it.
   if (view.state === 'uninstalled') {
     return (
@@ -151,7 +151,7 @@ export function TriageDigestCard() {
     )
   }
 
-  // Dormant but KEPT (criterion 10). The schedule and every taught rule survive; re-enabling is
+  // Dormant but KEPT. The schedule and every taught rule survive; re-enabling is
   // lossless. Saying "no digest yet" here would be a different, wrong sentence.
   if (view.state === 'off') {
     return (

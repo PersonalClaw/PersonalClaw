@@ -1,4 +1,4 @@
-"""`{{secret:KEY}}` in a trigger's action config (§7 item 6 / decision 11).
+"""`{{secret:KEY}}` in a trigger's action config.
 
 **🔴 THE DEFECT THIS CLOSES.** Workflows have carried `{{secret:KEY}}` — the validator
 rejects an inline credential and tells the author to use that form, and three separate surfaces say
@@ -9,7 +9,7 @@ so in their error text. A TRIGGER action did not resolve it. Driven before writi
 
 So a user following the documented pattern got a broken command, and the only way to make a trigger
 authenticate was to paste the credential into `triggers.json` — a file that is world-readable in the
-home, copied into every snapshot (S113 just made sure of that), and echoed into run records and the
+home, copied into every snapshot, and echoed into run records and the
 UI. The guidance and the mechanism disagreed, and the mechanism won.
 
 **Why this module and not `workflows/secrets.py`.** That module's resolution lives inside the

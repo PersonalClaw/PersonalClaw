@@ -4,7 +4,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { PromptItem } from '../../lib/api'
 
-// ── c1b-105 / c1b-137 (day-7 validation): the user's prompts were buried under the system's ─────
+// ── The user's prompts were buried under the system's ───────────────────────────────────────────
 //
 // On a default install the Prompts page's default "User" tab listed 39 built-in INTERNAL prompts
 // around the one the user wrote, and the chat prompt picker LED with "Eval Judge" and "Task Code

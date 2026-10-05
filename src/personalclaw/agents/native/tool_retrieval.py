@@ -1,4 +1,4 @@
-"""Per-turn tool retrieval (TR1) — a thin sibling of skills surfacing.
+"""Per-turn tool retrieval — a thin sibling of skills surfacing.
 
 Stop riding the **entire** tool-schema set on every model turn. Surface only a
 per-turn relevant projection: a small always-include CORE ∪ top-K by
@@ -567,8 +567,8 @@ class ToolRetriever:
         ranked against the whole prompt, every hint its own boilerplate trips (a path, "run",
         "task", "remember") fired on every turn whatever was asked.
 
-        ``restrict`` limits selection to those tool names — the tool-GROUP seam
-        (CONTEXT-ECONOMY §5.3): retrieval selects *within* the active groups, so
+        ``restrict`` limits selection to those tool names — the tool-GROUP seam:
+        retrieval selects *within* the active groups, so
         the K budget is spent on tools whose schemas can actually ride this turn,
         while :meth:`search` still ranks the FULL catalog across inactive groups.
 

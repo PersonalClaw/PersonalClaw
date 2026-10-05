@@ -24,7 +24,7 @@ Two things make this bench honest rather than decorative:
    on the live event. Without that scope the bench gated on the consulted runs and then
    replayed something else, which is a delta attributed to a skill the artifact never used.
 
-Arm vocabulary: "surfaced"/"suppressed" is how §3.3 SAYS on/off for a skill, so it is an
+Arm vocabulary: "surfaced"/"suppressed" is how this bench SAYS on/off for a skill, so it is an
 ALIAS of the shared :mod:`personalclaw.evals.overlay` arms, not a second dialect. Minting a
 second set of arm names would give the substrate two vocabularies for one axis.
 """
@@ -64,7 +64,7 @@ _BODY_PROBE_CHARS = 120
 def consulted_runs(skill_name: str, *, limit: int = DEFAULT_RUN_SCAN) -> list[dict[str, Any]]:
     """Runs whose ledger says they CONSULTED ``skill_name``.
 
-    Reads the WF2-R13 ``consulted`` event (``personalclaw.ledger.kinds.CONSULTED``) written
+    Reads the ``consulted`` event (``personalclaw.ledger.kinds.CONSULTED``) written
     by :meth:`personalclaw.workflows.journal.WorkflowJournal.consulted`, matching on the
     event's ``ref``. Returns ``[]`` when nothing consulted the skill — and callers must
     treat that as "no population to bench", NOT as a zero delta.
@@ -131,7 +131,7 @@ class ReplayPopulation:
 def replay_population(skill_name: str) -> ReplayPopulation:
     """The consulted runs' OWN inputs, as harvested scenario names.
 
-    This is what makes §3.3's *"replays consulted runs"* literal in INPUTS rather than only in
+    This is what makes the bench's *"replays consulted runs"* literal in INPUTS rather than only in
     population and attribution. The filter is
     :func:`personalclaw.evals.harvest.installed_harvested_cases`'s ``consulted_ref`` scope, which
     matches the run's frozen ``harvest.consulted_refs`` through the SAME
@@ -144,7 +144,7 @@ def replay_population(skill_name: str) -> ReplayPopulation:
 
     The NEWEST case is chosen because a bench measures the skill as it is used now, and because
     :class:`~personalclaw.evals.matrix.MatrixSpec` carries exactly ONE subject. Scoring the whole
-    `candidates` list needs a per-skill subject form, which the plan records as an unmade design
+    `candidates` list needs a per-skill subject form, which is an unmade design
     decision (``MatrixSpec.subject``'s own vocabulary does not include a skill), so this reports
     the population it did not score instead of inventing a shape for it.
     """
@@ -356,7 +356,7 @@ def bench_skill(
 
     ``subject`` is OPTIONAL and normally left empty: the artifact replayed is then derived from
     the consulted runs' own harvested inputs via :func:`replay_population`, which is what makes
-    §3.3's *"replays consulted runs"* true of the inputs and not only of the population. An
+    the bench's *"replays consulted runs"* true of the inputs and not only of the population. An
     explicit ``subject`` overrides the derivation and is recorded as ``subject_origin="operator"``,
     because an operator-chosen scenario is a different claim from a replayed run.
 

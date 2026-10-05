@@ -1,4 +1,4 @@
-"""Tests for the task-pool concurrency semantics (R7, R16).
+"""Tests for the task-pool concurrency semantics.
 
 Two things were MEASURED before this module asserted anything.
 
@@ -10,8 +10,8 @@ this module builds, and the event-name constant is asserted equal to the shipped
 cannot silently create a second vocabulary.
 
 **Acyclicity is already server-authoritative.** `tasks/native.py` calls
-`reconcile.would_create_cycle` on BOTH create (line ~245) and update (line ~311). The plan's "the
-server-side write path adds the authoritative check" was already satisfied, so `plan_edges`
+`reconcile.would_create_cycle` on BOTH create (line ~245) and update (line ~311). An authoritative
+server-side check on the write path therefore already exists, so `plan_edges`
 delegates to that function instead of shipping a second DFS — and a test asserts the delegation, not
 a reimplementation, because two cycle checkers means the looser one lets a deadlock through.
 """
@@ -388,7 +388,7 @@ def test_a_MISSING_checker_does_not_read_as_safe(monkeypatch):
     assert error.startswith("cycle check unavailable")
 
 
-# ── hand-off edges (R7) ──
+# ── hand-off edges ──
 
 
 def test_a_completing_def_SUGGESTS_its_declared_successor():
@@ -399,7 +399,7 @@ def test_a_completing_def_SUGGESTS_its_declared_successor():
 
 
 def test_review_to_fix_requires_an_EXPLICIT_user_request():
-    """The plan calls this out: a review that auto-proposes fixing what it just criticized reads as
+    """A review that auto-proposes fixing what it just criticized reads as
     the system arguing with itself."""
     assert suggest_handoffs("code-review") == []
     assert suggest_handoffs("code-review", user_requested=True)[0].target_def == "bug-fix"
@@ -433,7 +433,7 @@ def test_a_handoff_round_trips_to_dict():
     assert payload["context_fields"] == ["f"]
 
 
-# ── blueprint sessions (R16) ──
+# ── blueprint sessions ──
 
 
 def test_a_blueprint_numbers_its_steps():
@@ -460,7 +460,7 @@ def test_EMPTY_steps_are_dropped():
 
 
 def test_a_blueprint_serializes_with_the_FE_key_name():
-    """`openOnFirstLoad` is the plan's declared key; renaming it here would silently not open."""
+    """`openOnFirstLoad` is the key the frontend reads; renaming it here would silently not open."""
     assert "openOnFirstLoad" in Blueprint(id="b", title="t").to_dict()
 
 
@@ -553,7 +553,7 @@ def test_an_OFF_def_never_routes_to_a_BLUEPRINT():
 
 
 def test_STRUCTURE_wins_over_the_mode():
-    """Corrected in S61 after measuring it: short-circuiting on `off` first reported a GATED def as
+    """Corrected after measuring it: short-circuiting on `off` first reported a GATED def as
     PASSIVE, which tells a caller it may be injected as text and silently drops the gate. This
     function answers what a def IS; whether it may surface is `surfacing.veto_reasons`."""
     assert (

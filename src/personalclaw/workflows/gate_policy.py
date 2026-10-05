@@ -1,6 +1,6 @@
 """Gate policy — who may answer, and what auto-approves.
 
-Slice 5a made a gate durable. This decides whether a human is asked at all, and whose
+A gate is already durable. This decides whether a human is asked at all, and whose
 answer counts.
 
 **Auto-approve is scoped by RISK, never blanket.** A scheduled run that stops for every
@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 #: Risk levels a trigger-origin run may auto-approve. DESTRUCTIVE is deliberately absent:
 #: an unattended run that waves through arbitrary shell exec or an outward side effect is
-#: the failure this whole slice exists to prevent.
+#: the failure this whole module exists to prevent.
 AUTO_APPROVABLE_RISKS = frozenset({RiskLevel.SAFE, RiskLevel.CAUTION})
 
 #: Origins that run with nobody watching, so they get the auto-approve policy.
@@ -236,7 +236,7 @@ def may_answer(run: Any, *, responder: str, channel: str = "") -> tuple[bool, st
 
 
 def remote_timeout_decision(node_config: dict[str, Any]) -> PolicyVerdict:
-    """What an unanswered REMOTE gate becomes: DENY (WF2-R7).
+    """What an unanswered REMOTE gate becomes: DENY.
 
     Default-DENY is the whole point. A remote gate that passed on timeout would let a
     deployment ship because nobody was reading a channel — silence is not consent.
@@ -252,7 +252,7 @@ def remote_timeout_decision(node_config: dict[str, Any]) -> PolicyVerdict:
 
 
 def clarification_from_output(output: Any) -> dict[str, Any] | None:
-    """Extract a clarification REQUEST from an action provider's output (WF2-R7).
+    """Extract a clarification REQUEST from an action provider's output.
 
     Any action node may ask for input without a template author pre-placing a gate: a
     provider that cannot proceed says so in its own output, and the run pauses into

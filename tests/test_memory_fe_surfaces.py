@@ -1,4 +1,4 @@
-"""The FE-facing memory surfaces MGAV-9 added: entity topology, slots editor, export.
+"""The FE-facing memory surfaces: entity topology, slots editor, export.
 
 Each of these exists because something in the panel had no way to reach the backend:
 
@@ -10,7 +10,7 @@ Each of these exists because something in the panel had no way to reach the back
   and the topology block the model reads described different graphs;
 * the slots primitive had no editor at all, which made a human-owned register machine-only.
 
-The export test is the load-bearing one: the plan sketched an interactive `graph.html`, and
+The export test is the load-bearing one: an interactive `graph.html` was the first sketch, and
 this repo's export posture forbids script in an exported document. The test pins the static
 form so nobody "fixes" it back into something that executes.
 """
@@ -75,7 +75,7 @@ def test_isolated_entities_stay_in_the_picture(svc, store):
 
 
 def test_entity_graph_is_empty_not_broken_without_a_graph(store):
-    """`graph_enabled: false` degrades to an empty answer, not an exception (criterion 10)."""
+    """`graph_enabled: false` degrades to an empty answer, not an exception."""
     store.graph_enabled = False
     svc = MemoryService.over_vector_store(store)
     assert svc.entity_graph() == {"nodes": [], "edges": []}
@@ -124,7 +124,7 @@ def test_only_the_two_real_kinds_resolve(svc, store):
 def test_slots_list_includes_unwritten_builtins(svc):
     """Every built-in is listed, materialized or not.
 
-    MGAV-8 keeps built-ins LAZY so a fresh install pays nothing. An editor that listed only
+    Built-ins stay LAZY so a fresh install pays nothing. An editor that listed only
     written rows would show a new user nothing to edit — the register the system will actually
     read would be unreachable until something else wrote to it first.
     """

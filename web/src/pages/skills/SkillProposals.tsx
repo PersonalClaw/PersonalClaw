@@ -9,7 +9,7 @@ import { useQuery, useMutation, invalidateKeys } from '../../lib/data'
 import { TextLink } from '../../ui/TextLink'
 import { acceptedLabel } from './skillMeta'
 
-/** Skill-proposals inbox (skill-evolution-proposal-only).
+/** Skill-proposals inbox.
  *
  *  Autonomous skill synthesis PROPOSES, never installs — this is where a human
  *  reviews each proposal (its procedure + the fenced source trace that drove it)
@@ -45,15 +45,15 @@ export function SkillProposals() {
       <p className="text-on-surface-low text-[0.8125rem]">
         {proposals.length} proposal{proposals.length === 1 ? '' : 's'} awaiting review. These were
         synthesized from your sessions — accept to add to your library, or reject.
-        {/* Cross-link, not a second queue: each proposal also appears in the inbox (plan 42
-            S4) so it can't be missed while you're away. Both surfaces call the same
+        {/* Cross-link, not a second queue: each proposal also appears in the inbox
+            so it can't be missed while you're away. Both surfaces call the same
             accept/reject endpoints, and answering on either resolves the other. */}
         {' '}They also appear in your <TextLink href="#/inbox?kind=proposal">inbox</TextLink>.
       </p>
       {/* No `onChanged` prop. Each row's accept/reject DECLARES the keys it affects, and the layer
           re-reads them for every mounted reader — including this list and the SkillsPage badge that
           reads the same collection under `skill-proposals-count`. A callback threaded down to say
-          "something changed, please refetch" is the manual refetch DSC-14 removes. */}
+          "something changed, please refetch" is the manual refetch the shared data layer removes. */}
       {proposals.map((p) => <ProposalRow key={p.id} proposal={p} />)}
     </div>
   )

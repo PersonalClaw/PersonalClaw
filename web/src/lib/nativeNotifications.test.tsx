@@ -10,7 +10,7 @@ import {
   useNativeNotifications,
 } from './nativeNotifications'
 
-// ── The renderer half of plan-42's `native` target ───────────────────────
+// ── The renderer half of the `native` delivery target ────────────────────
 //
 // The audit finding this closes: `native` was in the notification-rules target vocabulary
 // with NOTHING dispatching to it. So the legs below are paired — every positive assertion

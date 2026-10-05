@@ -16,7 +16,7 @@ import { render, screen, waitFor, cleanup } from '@testing-library/react'
 // against the RENDERED title, so neither can drift from the other or from a hardcoded literal here.
 //
 // 🪤 This rail used to regex `Onboarding.tsx` for an `<input>` tag carrying both `placeholder="Your
-// name"` and an `aria-label=`, and TSE-1 broke it without touching the property: the identity step
+// name"` and an `aria-label=`, and a refactor broke it without touching the property: the identity step
 // gained a second field, the two were de-duplicated into one local `PillField`, and the literals
 // moved apart — the label to the call site, the attribute to the component. The scan read that as
 // "the name input does not exist". A refactor that PRESERVES the accessible name must not be able to

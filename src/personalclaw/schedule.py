@@ -8,7 +8,7 @@ which that store owns directly.
 What survives here, and why:
 
 * `ScheduleJob` / `ScheduleDefinition` — the shape `crons.json` is written in. The boot migration
-  (`triggers/migrate.py`) still READS that file, and §6 keeps it on disk read-only so
+  (`triggers/migrate.py`) still READS that file, and it stays on disk read-only so
   `automation verify-migration` can diff both sides, so the dataclasses that describe it stay.
 * `format_schedule` / `get_local_tz` / `compute_next_run_ts` / `validate_cron_expr` /
   `cron_expr_matches` — shared formatters and cron helpers. `schedule_view.describe_cadence`
@@ -49,7 +49,7 @@ _MIN_INTERVAL_SECS = 60
 _JOB_TIMEOUT_SECS = 1800  # 30 min per job
 # Transient sentinel for ScheduleJob.last_status during a run: "the callback has
 # not reported a verdict yet". _execute seeds it, then defaults to "ok" only if it
-# survives — so an action that self-reports "error" is not clobbered (T7).
+# survives — so an action that self-reports "error" is not clobbered.
 _STATUS_PENDING = "_pending"
 _TIMER_POLL_SECS = 30  # check for due cron-expr jobs
 
@@ -97,9 +97,9 @@ class ScheduleJob:
     last_error: str | None = None
     # Runtime-only (not persisted): the ActionResult.outcome of the last run —
     # "launched" for a fire-and-forget spawn (run-prompt/run-workflow/invoke-agent),
-    # so _record_run can report honest "started ≠ succeeded" status (T7).
+    # so _record_run can report honest "started ≠ succeeded" status.
     last_outcome: str = ""
-    # Runtime-only (not persisted): set for a dry-run REPLAY (T9) so the action
+    # Runtime-only (not persisted): set for a dry-run REPLAY so the action
     # dispatch injects dry_run into the action config — the run previews what WOULD
     # happen with no side effects. Cleared after the run.
     dry_run: bool = False

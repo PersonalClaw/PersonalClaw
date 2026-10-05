@@ -120,7 +120,7 @@ async def api_sessions(request: web.Request) -> web.Response:
 async def api_sessions_search(request: web.Request) -> web.Response:
     """GET /api/sessions/search — content search across session transcripts.
 
-    Served from the FTS5 index (SESSION-MANAGEMENT §C1), which also yields a highlighted
+    Served from the FTS5 index, which also yields a highlighted
     ``snippet`` showing why each session matched, and read directly from the transcripts for
     what the index cannot answer (:func:`personalclaw.session_search.search`).
 

@@ -237,8 +237,8 @@ _SEMANTIC_VECTOR_WEIGHT = 0.6  # weight for vector score in hybrid semantic retr
 _SEMANTIC_KEYWORD_WEIGHT = 0.4  # weight for keyword score in hybrid semantic retrieval
 
 # ── the recall arm vocabulary ─────────────────────────────────────────────────
-# Spelled to MATCH `knowledge.retrieval.ARMS` exactly. §5.1 runs one ablation runner
-# against two stores; two arm vocabularies over one report would make "the graph arm's
+# Spelled to MATCH `knowledge.retrieval.ARMS` exactly. One ablation runner measures
+# both stores; two arm vocabularies over one report would make "the graph arm's
 # contribution" mean two different things depending on which store produced the row.
 RECALL_ARM_KEYWORD = "keyword"
 RECALL_ARM_GRAPH = "graph"
@@ -253,10 +253,9 @@ RECALL_ARMS = (RECALL_ARM_KEYWORD, RECALL_ARM_GRAPH, RECALL_ARM_VECTOR)
 # decide relevance.
 _OWNER_RANK_BONUS = 0.05
 
-# ── Dreaming: 6-signal weighted promotion score (mem-dreaming-signals, C5) ──
+# ── Dreaming: 6-signal weighted promotion score ──
 # A cluster earns promotion by being USEFUL ACROSS VARIED CONTEXTS, not merely
-# frequent. Weights tuned for
-# PClaw's available per-row signals). Sum = 1.0.
+# frequent. Weights tuned for PersonalClaw's available per-row signals. Sum = 1.0.
 _DREAM_WEIGHTS = {
     "relevance": 0.30,  # avg importance of the cluster
     "frequency": 0.24,  # how many episodic rows clustered (repetition)
@@ -527,15 +526,15 @@ def _migrate_v5(db: sqlite3.Connection) -> None:
 
 
 def _migrate_v6(db: sqlite3.Connection) -> None:
-    """Add the TIER × SCOPE axes (memory-architecture.md §3.5) to both record
+    """Add the TIER × SCOPE axes to both record
     tables. TIER (durability: working/episodic/segment/semantic) deepens via
     sealing; SCOPE (reach: session/workspace/agent/global) widens via heat-gated
     promotion. ``category`` drives category-TTL; ``visit_count`` feeds heat;
     ``scope_ref`` matches a record to a turn (cwd / agent binding).
 
     Defaults preserve today's behavior exactly: everything is global + durable
-    (semantic→tier=semantic, episodic→tier=episodic), so M0–M4 reads/writes are
-    byte-identical until the M5 write paths start minting narrower scopes.
+    (semantic→tier=semantic, episodic→tier=episodic), so reads/writes stay
+    byte-identical until a write path starts minting narrower scopes.
     Idempotent (ADD COLUMN guarded)."""
     axis_cols = [
         ("tier", "TEXT"),
@@ -558,20 +557,19 @@ def _migrate_v6(db: sqlite3.Connection) -> None:
 
 
 def _migrate_v7(db: sqlite3.Connection) -> None:
-    """Add the typed entity graph (MEMORY-GRAPH-AND-VAULT §1).
+    """Add the typed entity graph.
 
     Three tables plus a proposal tally, all inside memory.db — the graph is the
     memory store's skeleton, not a sidecar, so a link write shares the record
     write's connection and transaction.
 
-    The plan also asks this migration to audit legacy ``knowledge_facts`` /
+    This migration was also meant to audit legacy ``knowledge_facts`` /
     ``knowledge_edges`` tables and adopt-or-drop them. **Those tables do not exist**
     in any schema this ladder has ever produced (v1-v6 create exactly
     semantic_memory / episodic_memories / memory_events / schema_version), and the
     real store confirms it. Rather than carry a no-op DROP for tables we never
     made, the audit runs as an assertion: if a future store ever does surface one,
     the orphan lint reports it instead of this migration silently dropping data.
-    See the plan's Execution log (2026-07-28) for the premise correction.
 
     Idempotent — every statement is IF NOT EXISTS.
     """
@@ -596,7 +594,7 @@ def _migrate_v7(db: sqlite3.Connection) -> None:
 
 
 def _migrate_v8(db: sqlite3.Connection) -> None:
-    """Add the push reflex's volunteer log (MEMORY-GRAPH-AND-VAULT §3).
+    """Add the push reflex's volunteer log.
 
     One table recording what the reflex volunteered and the record's recall count at
     that moment, so volunteered-vs-used precision can be computed from data instead of
@@ -610,7 +608,7 @@ def _migrate_v8(db: sqlite3.Connection) -> None:
 
 
 def _migrate_v9(db: sqlite3.Connection) -> None:
-    """Add ``contributor`` to both record tables (TEAM-SHARED-ENTITIES §2.3).
+    """Add ``contributor`` to both record tables.
 
     Who contributed a memory, for the case where the store is shared and not every
     record came from this harness's owner. Empty is the honest default and means
@@ -637,7 +635,7 @@ def _migrate_v9(db: sqlite3.Connection) -> None:
 
 
 def _migrate_v10(db: sqlite3.Connection) -> None:
-    """Add the holder-attribution axis to semantic rows (MEMORY-GRAPH-AND-VAULT §4.2).
+    """Add the holder-attribution axis to semantic rows.
 
     Two columns, both optional:
 
@@ -916,10 +914,10 @@ _MAX_BACKFILLS_PER_CALL = 5  # cap lazy embedding backfills to bound latency
 
 # Keys that are NOT user/world facts and must never surface in the user-fact
 # injection paths (L1 manifest, semantic context). lesson.* rides the lesson
-# block; the M5 agent-facing classes (procedural priors, self-persona,
+# block; the agent-facing classes (procedural priors, self-persona,
 # commitments) inject through their own paths (or not at all, for commitments).
 #
-# `user.selfmodel.*` joins them (LEARN-R21 / §2.6). Measured before adding
+# `user.selfmodel.*` joins them. Measured before adding
 # it: the prefix was absent, so a behavioural principle the harness observed about
 # its OWN working patterns would have rendered as a FACT ABOUT THE USER. It is a
 # statement about the harness, and only the compact snapshot may inject it —
@@ -1094,7 +1092,7 @@ def _attribution_note(lines: list[str]) -> str:
 
 
 def _owner_rank_bonus(contributor: object, owner: str) -> float:
-    """The owner-preference ordering term for one record (TEAM-SHARED-ENTITIES §2.3).
+    """The owner-preference ordering term for one record.
 
     Returns ``_OWNER_RANK_BONUS`` when the record is the owner's, else 0.0.
 
@@ -1391,12 +1389,12 @@ class VectorMemoryStore(MemoryProvider):
             )
 
     def capabilities(self) -> "MemoryCapabilities":
-        """Declare what this provider can do (L2 contract — M0 introduces it).
+        """Declare what this provider can do (the L2 contract).
 
         The native SQLite+FAISS store is fully capable EXCEPT vector ops degrade
         to FTS when no embedding function is wired (the honest expression of
-        today's ``vector_store is None`` fallback — see memory-architecture.md
-        §3.4). ``vector`` therefore tracks ``embed_fn`` presence.
+        today's ``vector_store is None`` fallback). ``vector`` therefore tracks ``embed_fn``
+        presence.
         """
         from personalclaw.memory_record import MemoryCapabilities
 
@@ -1496,7 +1494,7 @@ class VectorMemoryStore(MemoryProvider):
         Memory changes it on the next write rather than at a restart — and so every store
         instance applies one value. It used to be pinned at construction by the two servers and
         defaulted to 0.8 by every other instance, while its only control was a Vector Memory app
-        field nothing read (settings B10). Fail-safe to the default: an unreadable config must
+        field nothing read. Fail-safe to the default: an unreadable config must
         not turn the gate off.
         """
         if self._confidence_threshold is not None:
@@ -1548,7 +1546,7 @@ class VectorMemoryStore(MemoryProvider):
         self._alias_generation += 1
 
     def _graph_boosts(self, query_text: str) -> dict:
-        """Per-record graph boosts for a query, or ``{}`` (MEMORY-GRAPH-AND-VAULT §2.1).
+        """Per-record graph boosts for a query, or ``{}``.
 
         Best-effort by contract: recall must never fail because the graph is off,
         empty, or broken — it degrades to today's vector+keyword behavior.
@@ -1602,7 +1600,7 @@ class VectorMemoryStore(MemoryProvider):
         backing table (semantic_memory for fact/lesson/preference, episodic_
         memories for episodic). Persists the TIER × SCOPE axes the record carries
         (set_semantic/write_episodic handle the base row; ``_apply_axes`` writes
-        the axis columns) — this is the axis-aware write surface M5 uses, while
+        the axis columns) — this is the axis-aware write surface, while
         the legacy typed methods keep today's global/durable defaults."""
         from personalclaw.memory_record import MemoryKind
 
@@ -1701,8 +1699,8 @@ class VectorMemoryStore(MemoryProvider):
         limit: int | None = None,
     ) -> "list[MemoryRecord]":
         """Filtered record query. ``scope``/``scope_ref`` are accepted for the
-        M5+ axis (records default to global today, so a scope filter other than
-        'global' yields nothing until M5+ populates the columns)."""
+        scope axis (records default to global today, so a scope filter other than
+        'global' yields nothing until scoped writes populate the columns)."""
 
         recs = self.iter_records(kinds=kinds, include_deleted=include_deleted)
         if scope is not None:
@@ -1879,10 +1877,10 @@ class VectorMemoryStore(MemoryProvider):
         ).fetchall()
         return [dict(r) for r in rows]
 
-    # ── Typed-record view (M0) ────────────────────────────────────────────────
+    # ── Typed-record view ─────────────────────────────────────────────────────
     # One ``MemoryRecord`` view over BOTH backing tables, so the service (L3) and
     # the provider contract (L2) can speak one shape instead of two row dicts.
-    # Read-only in M0 (no behavior change); the write path keeps using the typed
+    # Read-only (no behavior change); the write path keeps using the typed
     # set_semantic/write_episodic methods, which these mirror.
 
     def get_record(self, record_id: str) -> "MemoryRecord | None":
@@ -1963,8 +1961,8 @@ class VectorMemoryStore(MemoryProvider):
 
         Returns None if written, (code, message) if rejected.
 
-        ``holder``/``weight`` are the optional attribution axis (MEMORY-GRAPH-AND-VAULT
-        §4.2). ``None`` means "don't touch": a plain write leaves an existing row's
+        ``holder``/``weight`` are the optional attribution axis. ``None`` means
+        "don't touch": a plain write leaves an existing row's
         attribution alone rather than silently converting a recorded claim into an
         unattributed fact.
 
@@ -2413,7 +2411,7 @@ class VectorMemoryStore(MemoryProvider):
         """Rank semantic-memory rows against ``query_text`` — the recall ARITHMETIC.
 
         Extracted out of :meth:`get_semantic_context` so the ranking is measurable apart
-        from the prompt block it renders into (EVALUATION-SUBSTRATE §5.1's memory target).
+        from the prompt block it renders into (the memory target evaluation scores).
         The formatter now calls this; there is exactly ONE hybrid-recall rule
         (:meth:`_rank_rows`), and an offline P@k/R@k measured here is measured on the object a
         live turn ranks with.
@@ -2571,7 +2569,7 @@ class VectorMemoryStore(MemoryProvider):
         # SORT KEY, deliberately NOT added to `score` above — `score > 0` is the
         # ADMISSION gate, and a provenance bonus that could lift a zero-relevance
         # row into the result set would make locality decide what the model sees,
-        # not just what order it sees it in. The plan's rule is "ordering only,
+        # not just what order it sees it in. The rule is "ordering only,
         # never admission", so the term lives on the far side of that gate.
         #
         # Bounded and small for the same reason the graph boost is bounded: it must
@@ -2781,7 +2779,7 @@ class VectorMemoryStore(MemoryProvider):
         run, so a write the store refuses (work that may change nothing) never reaches a trigger.
         A write that does not happen at all is recorded with :meth:`_record_event` alone."""
         self._record_event(event_type, memory_type, key, old_value, new_value, source)
-        # Notify data-event triggers (#38) — fires MemoryUpdate/KeyPattern/ContentMatch
+        # Notify data-event triggers — fires MemoryUpdate/KeyPattern/ContentMatch
         # triggers. Best-effort, never blocks or breaks a memory write.
         try:
             import time as _time
@@ -2834,7 +2832,7 @@ class VectorMemoryStore(MemoryProvider):
         """Reverse a logged memory mutation by id. Returns ``(ok, message)``.
 
         The WAL applier: each event type maps to its inverse, using the recorded
-        old/new values + the supersession pointer (#17). Idempotent — an already-
+        old/new values + the supersession pointer. Idempotent — an already-
         undone event is a no-op. Reversible ops:
         - create / promotion → soft-delete the key (it didn't exist before).
         - update → restore old_value.
@@ -2878,7 +2876,7 @@ class VectorMemoryStore(MemoryProvider):
                 (now, key),
             )
         elif etype == "supersede":
-            # Reverse the #17 pointer: un-delete the old key + clear the pointer.
+            # Reverse the supersession pointer: un-delete the old key + clear the pointer.
             self.db.execute(
                 "UPDATE semantic_memory SET is_deleted = 0, superseded_by = NULL, "
                 "invalidated_at = NULL, updated_at = ? WHERE key = ?",
@@ -2894,7 +2892,7 @@ class VectorMemoryStore(MemoryProvider):
         return (True, f"undid {etype} on {key}")
 
     def _undo_link_event(self, ev: dict, event_id: int) -> tuple[bool, str]:
-        """Reverse a graph edge event (MEMORY-GRAPH-AND-VAULT §1).
+        """Reverse a graph edge event.
 
         ``link_add`` → delete the edge; ``link_remove`` → re-insert it. The event's
         payload carries the full edge, so neither direction needs the graph to still
@@ -4181,7 +4179,7 @@ class VectorMemoryStore(MemoryProvider):
         Only :func:`recallable_episode` hits are injected: no workflow run's spec, and no vector
         hit below the relevance floor, so irrelevant context is not handed over.
 
-        When *citations_out* is supplied (MEMORY-GRAPH-AND-VAULT §5.4), each emitted
+        When *citations_out* is supplied, each emitted
         fragment is labelled ``[Memory N]`` (contiguous, 1-based) instead of ``N.``,
         and a resolvable manifest entry ``{"n", "id", "preview"}`` is appended per
         fragment — so the model can cite a fact by index and the frontend can turn
@@ -5095,11 +5093,11 @@ class VectorMemoryStore(MemoryProvider):
         Reads through :meth:`lessons_visible_in`, so a caller that does not declare a
         workspace gets GLOBAL lessons only.
 
-        Then the confidence gate (WF2LEA-15). Visibility answers "may this session be
+        Then the confidence gate. Visibility answers "may this session be
         shown the lesson"; confidence answers "is the lesson supported well enough to
         act on". A lesson below the floor is RETAINED — left in the store, still
         accumulating observations — and simply does not appear in this block. That is
-        the whole point of the atom: injection is gated on evidence rather than on the
+        the whole point of the floor: injection is gated on evidence rather than on the
         row existing, so one unrepeated inference cannot steer every future turn.
 
         *beside* is another store whose lessons a session here follows too: a chat working in
@@ -5318,7 +5316,7 @@ class VectorMemoryStore(MemoryProvider):
     def import_memory(self, data: dict) -> dict[str, int]:
         """Import memory from an export dict with 'semantic' and 'episodic' arrays.
 
-        A record that carries a ``contributor`` keeps it (TEAM-SHARED-ENTITIES §2.3).
+        A record that carries a ``contributor`` keeps it.
         Stamping the importer over it would relabel a colleague's memory as the
         importer's own — the same falsification ``identity.py`` forbids for renames.
         A record with no contributor is stamped normally, because it genuinely has no

@@ -1,12 +1,12 @@
 """`automation verify-migration` — the row-for-row diff.
 
-"**Trigger store unification**: `triggers.json` + row-for-row cron migration (old
-file read-only one release; `personalclaw automation verify-migration` diff command)." §8 names
-the risk it mitigates: "Migration trust (crons are the most-loved automations) → Row-for-row
-migration + read-only legacy file + verify-migration diff command".
+**Trigger store unification**: `triggers.json` + row-for-row cron migration (old
+file read-only one release; `personalclaw automation verify-migration` diff command). The risk
+it mitigates is migration trust (crons are the most-loved automations), answered by a row-for-row
+migration + read-only legacy file + verify-migration diff command.
 
-S87 shipped the store and the migration; my own docstring there promised this command by name
-and it did not exist. It is the plan's named prerequisite for the cutover, so it lands before
+The store and the migration shipped first; their docstring promised this command by name
+and it did not exist. It is a prerequisite for the cutover, so it lands before
 the cutover, not after.
 
 **🔴 WHAT DRIVING IT AGAINST THE OWNER'S REAL STORE FOUND.** Four jobs migrate `lossless:
@@ -21,7 +21,7 @@ would run a half-understood automation unattended."
 But `lossless: true` alongside two silently-paused automations is a report that is technically
 accurate and practically misleading. A user reading "lossless" concludes nothing needs doing;
 their 5-minute automation has stopped. **That gap is precisely what this command exists to
-close** — and it is why the plan put a diff command in the same breath as the migration rather
+close** — and it is why a diff command ships beside the migration rather
 than trusting the migration's own summary.
 
 So this module reports THREE things a `lossless` flag cannot say:
@@ -32,7 +32,7 @@ So this module reports THREE things a `lossless` flag cannot say:
 * **`missing` — rows in `crons.json` with no counterpart at all.** The one true data loss, and
   the thing a row-for-row diff exists to make impossible to miss.
 * **`field_drift` — per-row field comparison.** `skip_dates` dropped fires on a holiday and
-  nobody knows why; that is the quietly-losable class §1.3 keeps warning about.
+  nobody knows why; that is the quietly-losable class.
 
 Pure functions over both stores. Nothing here writes: a verify that mutated would be a
 migration, and the whole point is to be safe to run before deciding.
@@ -49,8 +49,8 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 #: Legacy fields whose loss changes WHEN or WHETHER a job fires. Compared per row and reported
-#: individually, because these are the ones §1.3 calls quietly-losable: "a dropped `skip_dates`
-#: fires on a holiday and nobody knows why".
+#: individually, because these are the quietly-losable ones: a dropped `skip_dates`
+#: fires on a holiday and nobody knows why.
 TIMING_FIELDS: tuple[str, ...] = (
     "skip_dates",
     "timezone",

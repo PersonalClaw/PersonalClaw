@@ -1,4 +1,4 @@
-"""PCS-1 / F1: prompt-cache wire-order repair for the Anthropic translation.
+"""Prompt-cache wire-order repair for the Anthropic translation.
 
 Anthropic prompt caching matches on an EXACT prefix, and Anthropic serves the
 out-of-band ``system=`` param AHEAD of ``messages[0]``. The native loop appends
@@ -16,11 +16,11 @@ was the newest thing "the user" said after every tool result, and a model answer
 chat ("The catalog notice doesn't ask for anything, so I've made no further calls"). The note
 moves position, never existence.
 
-Guardrail-2 (byte-identical when off): a message list with NO volatile tag must produce
-byte-for-byte the pre-PCS-1 ``(system, messages)``. This is pinned below.
+Byte-identical when off: a message list with NO volatile tag must produce
+byte-for-byte the original ``(system, messages)``. This is pinned below.
 
-Note: the plan's V1 "no comprehension regression" check — that the model still calls
-``tool_schema`` after the catalog moved to the tail — is a live-model owner-validation step,
+Note: the "no comprehension regression" check — that the model still calls
+``tool_schema`` after the catalog moved to the tail — is a live-model validation step,
 not headless-runnable. The structural property it depends on (the catalog still REACHES the
 model, just late) is asserted here instead.
 """
@@ -44,8 +44,8 @@ from personalclaw.tool_providers.base import ToolDefinition, ToolProvider, ToolR
 # ── guardrail-2: byte-identical when no message is tagged volatile ──
 
 
-def test_untagged_list_is_byte_identical_to_pre_pcs1_behavior():
-    """A plain system + user + assistant list → exactly the pre-PCS-1 output.
+def test_untagged_list_is_byte_identical_to_the_original_behavior():
+    """A plain system + user + assistant list → exactly the original output.
 
     The expected ``(system, messages)`` is constructed by hand from the original
     logic: system content concatenated into ``system=``; plain user/assistant
@@ -326,7 +326,7 @@ def test_native_shape_stable_context_leads_volatile_at_tail():
 
     There is no stable base system message in the native loop, so ``system=`` is
     empty; the stable assembled context (the user message) leads at ``messages[0]``
-    and the volatile note ends the request — exactly the reordering F1 requires.
+    and the volatile note ends the request — exactly the reordering the fix requires.
     """
     messages = [
         {"role": "user", "content": "ASSEMBLED CONTEXT (stable across the turn)"},
@@ -377,11 +377,11 @@ def test_stable_system_leads_when_present():
     assert out[-1]["content"][-1] == _note("volatile")
 
 
-def test_v1_catalog_still_reaches_the_model_just_late():
-    """V1 structural: the tool catalog (in the turn_note) is still in the final wire payload.
+def test_the_catalog_still_reaches_the_model_just_late():
+    """Structural: the tool catalog (in the turn_note) is still in the final wire payload.
 
     A full-live-model recency check (does the model still call ``tool_schema`` after the
-    catalog moved late?) is an owner-validation step, not a unit test. The structural
+    catalog moved late?) is a live validation step, not a unit test. The structural
     property it rests on is: the catalog is delivered — present in ``messages`` — not
     dropped. It just no longer leads.
     """

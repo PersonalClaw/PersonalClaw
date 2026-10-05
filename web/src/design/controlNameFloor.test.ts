@@ -5,8 +5,8 @@ import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The control-name floor, held where it was MEASURED ───────────────────────────────
 //
-// Cycle 54 censused the raw-control population the `primitiveAdoption` ratchet tracks
-// (`rawInput: 149`) and found the a11y half of it CLEAN. That negative result is worth a
+// A census of the raw-control population the `primitiveAdoption` ratchet tracks
+// (`rawInput: 149`) found the a11y half of it CLEAN. That negative result is worth a
 // rail, because the next pass would otherwise re-derive it from the same misleading source
 // signal:
 //
@@ -40,8 +40,8 @@ const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !
  *
  *  Never scan to the first `>` and never use a lookahead across the tag: an attribute value
  *  like `onChange={(e) => f(e)}` contains a `>`, which truncates the match and drops any
- *  later attribute. That mistake has now produced wrong counts three times in this session
- *  (cycles 47, 51, 53) — collect the whole tag, then test its text. */
+ *  later attribute. That mistake has produced wrong counts three times
+ *  already — collect the whole tag, then test its text. */
 function inputTags(): Array<{ file: string; line: number; tag: string }> {
   const out: Array<{ file: string; line: number; tag: string }> = []
   for (const abs of walk(SRC)) {
@@ -114,7 +114,7 @@ describe('an on-demand edit input carries its own name', () => {
 
   it('finds the on-demand inputs (not vacuously green)', () => {
     // Measured 18, floored at 6 — the six the header names are the ones that EXISTED when it was written.
-    // Twelve more shipped since, and none of them was protected (cycle 134's audit).
+    // Twelve more shipped since, and none of them was protected (a later audit found them).
     expect(autoFocused.length, 'expected the inline rename/edit inputs').toBeGreaterThanOrEqual(18)
   })
 

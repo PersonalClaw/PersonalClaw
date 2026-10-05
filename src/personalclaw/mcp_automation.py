@@ -3,8 +3,7 @@
 Exposes ``_list_tools`` / ``_call_tool`` (the same shape as ``mcp_core`` / ``mcp_schedule``), so
 the native ``InProcessMcpToolProvider`` and the aggregating ``mcp-core`` server both surface these
 tools in chat. Without this module `triggers/tools.py` would be a tested library nothing calls —
-the present-and-inert defect this whole program keeps finding, and the exact thing S83 warned
-about when it deferred criterion 2 for lack of a store to write to.
+the present-and-inert defect.
 
 The tool LOGIC lives in `triggers/tools.py` (pure functions over a `TriggerStore`, driven end to
 end in tests without a model). This module is the thin adapter: schema in, store built from
@@ -13,7 +12,7 @@ against the real store while this layer stays a translation with nothing to hide
 
 **Runner boundary.** `automation_run` needs the LLM turn, which this stdio-shaped surface does not
 own — the executor + `SubagentManager.spawn` do. So an immediate run routes through the gateway's
-HTTP `/run` (the shipped `schedule_trigger` pattern the plan's recon note calls out) rather than
+HTTP `/run` (the shipped `schedule_trigger` pattern) rather than
 executing here; `automation_dry_run` needs no turn and is answered locally.
 """
 
@@ -87,7 +86,7 @@ def _catch_up_hint() -> str:
 
 
 def _list_tools() -> list[dict[str, Any]]:
-    """§4's eight-tool namespace. `automation_pause`/`automation_resume` share a handler but are
+    """The eight-tool namespace. `automation_pause`/`automation_resume` share a handler but are
     separate tools, so an agent reads the intent from the name it called."""
     trigger_id = {"type": "string", "description": "The automation id (e.g. 'file:my-notes')."}
     return [

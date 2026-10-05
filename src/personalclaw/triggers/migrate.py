@@ -80,7 +80,7 @@ def clock_spec(schedule: dict[str, Any], job: dict[str, Any]) -> tuple[dict[str,
 
     * `cron` → `{kind: cron, expr}` — the clean case.
     * `at` → `{kind: at, at, delete_after_run}` — a one-shot, and `delete_after_run` rides along
-      because §1.2 makes it the default for `at` and the legacy row carries the user's choice.
+      because it is the default for `at` and the legacy row carries the user's choice.
     * `every` → `{kind: cron, ...}` is WRONG and `{kind: at}` is worse. An interval has no cron
       expression and is not a one-shot, so it converts to an explicit
       `interval_secs` spec. Mapping it
@@ -165,7 +165,7 @@ def _session(job: dict[str, Any]) -> str:
 def _workflow(job: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """What the trigger runs.
 
-    A legacy `agent_sequence` becomes a NOTE, not a field: §2 says a sequence becomes a def, and
+    A legacy `agent_sequence` becomes a NOTE, not a field: a sequence becomes a def, and
     silently flattening a multi-step sequence into a single inline action would run only its first
     step. Converting it needs a def written, which is authoring work, not migration work — so the
     migration preserves the list in the note and leaves the trigger disabled.
@@ -175,7 +175,7 @@ def _workflow(job: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     if sequence:
         notes.append(
             f"agent_sequence has {len(sequence)} steps ({', '.join(sequence[:3])}"
-            f"{'…' if len(sequence) > 3 else ''}); §2 converts a sequence to a workflow "
+            f"{'…' if len(sequence) > 3 else ''}); a sequence converts to a workflow "
             "DEF, which is authoring work — the trigger is left disabled rather than "
             "running only its first step"
         )
@@ -276,7 +276,7 @@ def unconverted_fields(job: dict[str, Any]) -> list[str]:
     """Fields present on this job that the map does not account for at all.
 
     The load-bearing audit. A field here is one the migration would carry into the void — not
-    dropped on purpose (the map records those with a reason), but unnoticed. S62 wrote the map
+    dropped on purpose (the map records those with a reason), but unnoticed. The map exists
     so this check is possible; running it per row is what makes "lossless" a measurement
     rather than a claim.
 

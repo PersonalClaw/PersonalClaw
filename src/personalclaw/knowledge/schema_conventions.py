@@ -1,4 +1,4 @@
-"""The per-store `schema.md` conventions contract (KNOW-R16).
+"""The per-store `schema.md` conventions contract.
 
 A knowledge base accumulates conventions whether or not anyone writes them down: what
 counts as a `fact` versus an `insight`, how titles are phrased, when two articles should

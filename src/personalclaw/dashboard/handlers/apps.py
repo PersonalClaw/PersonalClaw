@@ -1,6 +1,6 @@
-"""App Platform REST API (A4).
+"""App Platform REST API.
 
-The lifecycle layer (A1–A3) exposed over HTTP, plus the backend reverse-proxy:
+The lifecycle layer exposed over HTTP, plus the backend reverse-proxy:
 
     GET    /api/apps                      — installed apps + state
     GET    /api/apps/{name}               — manifest + status + config + backend
@@ -11,7 +11,7 @@ The lifecycle layer (A1–A3) exposed over HTTP, plus the backend reverse-proxy:
     POST   /api/apps/{name}/update        — atomic update from source
     DELETE /api/apps/{name}               — deactivate | ?remove=1 remove-keep-data
                                             | ?force=1 remove-everything (dep ledger)
-    GET    /api/apps/{name}/uninstall-preview — classify shared deps (A3) + data/ facts
+    GET    /api/apps/{name}/uninstall-preview — classify shared deps + data/ facts
     GET    /api/apps/{name}/config        — read config + the configSchema
     PUT    /api/apps/{name}/config        — validate + persist config
     *      /apps/{name}/api/{tail:.*}      — reverse-proxy to the app's backend
@@ -162,7 +162,7 @@ def _reconcile_app_crons(request: web.Request) -> None:
     so calling it on each transition simply converges the scheduler. Best-effort:
     any error is swallowed, never blocking the lifecycle response.
 
-    Reconciles into the unified TRIGGER STORE (S108). It used to pass `state.crons`, which wrote
+    Reconciles into the unified TRIGGER STORE. It used to pass `state.crons`, which wrote
     `crons.json` — a file the clock engine does not read — so a freshly enabled app's cron was inert
     until the next boot imported it, which is exactly the restart this seam exists to avoid.
     The `--no-crons` guard moved with it: the store is a file, not a service, so the `state.crons`
@@ -215,7 +215,7 @@ def _runs_a_sidecar(manifest: dict[str, Any]) -> bool:
 
 
 def _quality_wire(raw: Any) -> dict[str, Any]:
-    """The DECLARED quality axes, and only those (APE-4).
+    """The DECLARED quality axes, and only those.
 
     Routed through :class:`~personalclaw.apps.manifest.QualityDeclaration` rather than
     passed through raw, so the tri-state survives one hop: an axis the app never
@@ -238,7 +238,7 @@ def _quality_wire(raw: Any) -> dict[str, Any]:
 async def api_apps_list(request: web.Request) -> web.Response:
     """GET /api/apps — installed apps with manifest summary + runtime state.
 
-    APE-7: on this existing read path (no polling loop) we also compute which installed
+    On this existing read path (no polling loop) we also compute which installed
     apps have a newer version available from their source — a local source, or the Store
     source the app was installed from, as the Store's own discovery last read it — tag each
     such app ``updateAvailable`` + ``latestVersion`` for the Library card badge, and emit ONE
@@ -278,7 +278,7 @@ async def api_apps_list(request: web.Request) -> web.Response:
         # app's provider.settingsSchema. Reading only setup.configSchema wrongly
         # reported hasConfig=false for provider apps whose config lives under
         # provider.settingsSchema (e.g. native-vector-memory/tasks/skills/
-        # notifications) — so the Apps UI hid their Configure action (bug #29).
+        # notifications) — so the Apps UI hid their Configure action.
         config_schema = (manifest.get("setup", {}) or {}).get("configSchema") or {}
         provider_block = manifest.get("provider", {}) or {}
         provider_schema = provider_block.get("settingsSchema") or {}
@@ -391,7 +391,7 @@ async def api_apps_list(request: web.Request) -> web.Response:
             }
         )
 
-    # UT6: the bundled PROVIDER extensions (native tool/knowledge/memory/… providers
+    # The bundled PROVIDER extensions (native tool/knowledge/memory/… providers
     # + the mcp/openai adapters) register via the extension loader, not the app
     # manager's installed-apps dir, so list_apps() above never sees them — yet they
     # ARE app-platform-registered providers the user expects in the Library. Append
@@ -584,11 +584,11 @@ async def api_app_get(request: web.Request) -> web.Response:
     manifest = _manifest_of(name)
     # Effective schema (setup.configSchema OR a provider app's provider.settingsSchema) —
     # same source the dedicated /config endpoint uses, so a provider app's detail view shows
-    # its real config surface, not empty (the #29 class: reading only setup.configSchema
+    # its real config surface, not empty (reading only setup.configSchema
     # hides provider settings).
     schema = _effective_config_schema(manifest) if manifest else {}
     # This route serves the SAME stored config as ``GET /api/apps/{name}/config``, which has
-    # masked since #43 — and it did not, so an app's credentials travelled in the clear here
+    # masked it — and this one did not, so an app's credentials travelled in the clear here
     # while the neighbouring route two functions below withheld them. Measured on a live
     # gateway: ``GET /api/apps/openai-models`` returned the stored api_key verbatim. One
     # policy, one owner; a route that carries a config is not exempt for being a detail view.
@@ -921,7 +921,7 @@ async def api_app_uninstall(request: web.Request) -> web.Response:
 
 
 async def api_app_uninstall_preview(request: web.Request) -> web.Response:
-    """classify shared deps (A3) and report what the app's ``data/`` holds.
+    """classify shared deps and report what the app's ``data/`` holds.
 
     The ``data`` block lets the removal-confirm dialogs name the trade the user is about
     to make instead of describing it in the abstract.
@@ -1012,8 +1012,8 @@ async def api_app_config_get(request: web.Request) -> web.Response:
     if refusal:
         return web.json_response({"error": refusal}, status=409)
     schema = _effective_config_schema(manifest)
-    # Write-only sensitive fields: mask the stored secret, never send it in the clear
-    # (#43). ``_secret_set`` tells the UI which sensitive fields are already set. Served from
+    # Write-only sensitive fields: mask the stored secret, never send it in the clear.
+    # ``_secret_set`` tells the UI which sensitive fields are already set. Served from
     # the STORED form, so this route never reads a credential: each reference is masked,
     # whether or not the schema declared its field sensitive.
     masked, secret_set = mask_secrets(read_stored(name), schema)
@@ -1066,7 +1066,7 @@ async def api_app_config_put(request: web.Request) -> web.Response:
         _sel_log("apps.config", refusal_outcome(stale), name, request)
         return stale
     # A sensitive field carrying the mask sentinel (or empty when it was already set)
-    # means "keep the stored secret" — don't overwrite it with the placeholder (#43). What is
+    # means "keep the stored secret" — don't overwrite it with the placeholder. What is
     # folded back is the stored REFERENCE, which the write keeps as it is; a reference that
     # names another owner's credential is refused there, with what to do instead.
     values = preserve_unchanged_secrets(values, stored, schema)
@@ -1298,7 +1298,7 @@ async def api_app_agent_run_status(request: web.Request) -> web.StreamResponse:
 
 
 # ---------------------------------------------------------------------------
-# Per-app identity token (untrusted-app sandbox, P1)
+# Per-app identity token (untrusted-app sandbox)
 # ---------------------------------------------------------------------------
 
 
@@ -1504,7 +1504,7 @@ async def api_app_proxy(request: web.Request) -> web.StreamResponse:
     except (aiohttp.ClientError, TimeoutError) as exc:
         # The raw exception text ("Cannot connect to host 127.0.0.1:41733 ssl:default [...]")
         # used to travel to the app UI verbatim — appSdk's fetch helper surfaces `error` in a
-        # toast (AUD-A12). One owned sentence per failure class on the wire; the raw text goes
+        # toast. One owned sentence per failure class on the wire; the raw text goes
         # to the log, which is the caller's job per providers/failure_copy's contract.
         # TimeoutError first: a total-timeout raises builtin TimeoutError (not a ClientError),
         # while connect/read-phase ServerTimeoutError IS one — the isinstance catches both.

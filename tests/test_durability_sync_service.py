@@ -1,4 +1,4 @@
-"""DURABILITY-AND-SYNC §4 / DAS-6c-ii-j — sync config round-trip + the service due-job.
+"""Sync config round-trip + the service due-job.
 
 The sync knobs (sync_enabled/sync_transport/sync_stale_after_secs) survive a save/load cycle
 (they're in load()'s explicit mapping, not just asdict), and run_sync_job is a self-guarding
@@ -64,7 +64,7 @@ class _Cfg:
         self.sync_transport = transport
         self.sync_stale_after_secs = stale
         self.restore_drills = False
-        # DAS-9 added the `time_travel` guard flag, and `service._due_schedule` reads it on
+        # `service._due_schedule` also reads the `time_travel` guard flag on
         # the sync path. Default False here: this stub exists to exercise SYNC scheduling,
         # and leaving history off keeps that the only variable under test.
         self.time_travel = False

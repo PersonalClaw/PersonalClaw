@@ -1,7 +1,7 @@
 """Every third-party module the APP INSTALLER imports must be a declared core dependency.
 
-The installer's dependency guard (`apps/app_manager.py::_reject_core_dependency_conflicts`,
-EI-12 D3) proves that an app's declared `pythonDependencies` cannot move a gateway dependency,
+The installer's dependency guard (`apps/app_manager.py::_reject_core_dependency_conflicts`)
+proves that an app's declared `pythonDependencies` cannot move a gateway dependency,
 and it **fails closed**: no evaluator means the install is refused. So a module it imports that
 core does not declare is not a soft degradation — it refuses every app that declares any
 `pythonDependencies` at all.

@@ -1,4 +1,4 @@
-"""LEARN-R4's `surfacing_events` table, its writer, and the call site that reaches it.
+"""The `surfacing_events` table, its writer, and the call site that reaches it.
 
 **The defect this file guards against is the one it was built to fix.** `surfacing_events` was
 named by three consumers and created by none — no schema, no reader, no writer. Shipping a schema
@@ -284,7 +284,7 @@ def test_a_turn_that_surfaces_nothing_writes_nothing(home, tmp_path):
 def test_used_follows_what_reached_the_prompt(home, tmp_path):
     """A refused skill records `used=False`; an admitted one records `used=True`.
 
-    §2.5 allows `used` to come only from a mechanical observation, and
+    `used` may come only from a mechanical observation, and
     `SkillAllocation.loaded` is that observation — REFUSED is excluded there because crediting
     a use to a skill the agent never saw would train the ranker on the allocator's failures.
     """
@@ -374,15 +374,15 @@ def test_prune_drops_old_events_and_keeps_fresh_ones(home):
         store.close()
 
 
-def test_the_retention_window_is_the_ninety_days_the_plan_states():
-    """§2.5: "Events prune at 90d on the curator tick." Pinned so a silent edit is visible."""
+def test_the_retention_window_is_ninety_days():
+    """Events prune at 90d on the curator tick. Pinned so a silent edit is visible."""
     assert DEFAULT_RETENTION_DAYS == 90
 
 
 def test_the_curator_tick_prunes_surfacing_events():
     """An AST assertion on the tick, following `test_learning_promotion_wire`'s precedent.
 
-    §2.5 puts the prune "on the curator tick", so the wire is part of the deliverable. Read from
+    The prune runs "on the curator tick", so the wire is part of the deliverable. Read from
     the syntax tree rather than the file's text because a text scan also matches the word in a
     comment, and would keep passing over a prune that had been commented out.
     """

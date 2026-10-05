@@ -57,7 +57,7 @@ export function Reorderable<T>({
     <Reorder.Group axis={axis} values={draggable} onReorder={handleReorder} className={className} as="div">
       {items.map((item) => {
         // A locked item is rendered as a PLAIN div, not a `Reorder.Item` with `drag={false}`.
-        // Measured (S61k): `Reorder.Item` makes the whole row draggable, so styling the grip as
+        // Measured: `Reorder.Item` makes the whole row draggable, so styling the grip as
         // disabled is cosmetic — the row still picks up and reorders. Keeping it out of the
         // reorder group is what actually locks it.
         const locked = canDrag ? !canDrag(item) : false

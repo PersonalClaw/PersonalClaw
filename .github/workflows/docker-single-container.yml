@@ -1,6 +1,6 @@
-# The rail over the single-container `docker run` one-liner in README.md — DIST-15.
+# The rail over the single-container `docker run` one-liner in README.md.
 #
-# The clause is "on a machine with only Docker and no PersonalClaw files, ONE command copied
+# The requirement is "on a machine with only Docker and no PersonalClaw files, ONE command copied
 # verbatim from README.md reaches a USABLE dashboard", and it explicitly rejects a
 # healthz-only assertion: the gateway image used to answer `/api/healthz` 200 while serving
 # no dashboard at all, because `setup.py`'s `BuildWithWeb` grafts `web/dist` into the
@@ -99,11 +99,11 @@ jobs:
           docker build \
             --file deploy/docker/Dockerfile.backend \
             --target runtime \
-            --tag personalclaw-gateway:dist15-ci \
+            --tag personalclaw-gateway:single-container-ci \
             .
 
       - name: Assert the README one-liner reaches a usable dashboard
-        # Run from a scratch directory, per the clause. The tool makes its own temp cwd so the
+        # Run from a scratch directory, per the requirement. The tool makes its own temp cwd so the
         # checkout cannot satisfy the command by accident, and rewrites only the image ref,
         # the container name and the volume name.
-        run: python3 tools/docker_single_container_smoke.py --image personalclaw-gateway:dist15-ci
+        run: python3 tools/docker_single_container_smoke.py --image personalclaw-gateway:single-container-ci

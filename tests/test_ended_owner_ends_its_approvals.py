@@ -1,6 +1,6 @@
 """An approval ends with the work that asked for it, and nothing is approved for work that ended.
 
-Measured on a running gateway (day-8 validation, run ``df5827ca``): a ``deep-research`` run was
+Measured on a running gateway (run ``df5827ca``): a ``deep-research`` run was
 cancelled while its ``sweep`` stage waited for spawn approval. The run read ``cancelled``, yet its
 page still offered Approve/Reject, Home still said "1 approval waiting", and approving it from Home
 logged ``subagent_run spawned`` for ``workflow:df5827ca:sweep`` — a subagent started for a run
@@ -151,7 +151,7 @@ def _real_manager(state):
     sessions.get_approval_policy = MagicMock(return_value="")
     ctx = MagicMock()
     ctx.build_message = MagicMock(return_value=("sweep sources", None))
-    ctx.hooks.auto_approve_subagent_spawn = False  # the interactive gate, as on the day-8 host
+    ctx.hooks.auto_approve_subagent_spawn = False  # the interactive gate, as on the measured host
     holder: dict[str, Any] = {}
 
     async def _spawn_approve(event: Any, parent_key: str = "") -> Any:
@@ -208,7 +208,7 @@ async def _until_spawn_waits(w) -> str:
 
 @pytest.mark.asyncio
 async def test_cancelling_a_run_ends_its_stage_approval_everywhere_as_cancelled(run_world):
-    """The day-8 repro, end to end: cancel while the stage waits, then look at every surface."""
+    """The measured repro, end to end: cancel while the stage waits, then look at every surface."""
     w = run_world
     driving = asyncio.create_task(w.controller.run_to_completion(timeout=20.0))
     approval_id = await _until_spawn_waits(w)

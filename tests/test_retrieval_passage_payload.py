@@ -1,10 +1,10 @@
 """The retrieval payload returns the passage that matched, not a neighbor.
 
-Research draft T02: the retriever computes exactly where a match lives
+The retriever computes exactly where a match lives
 (``line_range`` from ``_attach_locator``), but the tool payload returned
 ``content[:cap]`` — the document HEAD. For any match deeper than the cap the
 model received text that never matched. These tests pin the fix with distinct
-sentinel chunks and the exact off-by-one join T02 warns about.
+sentinel chunks and the exact off-by-one join the window must get right.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ _MID_START = len(_HEAD.split("\n")) + 1  # 1-based first line of the middle regi
 
 class TestPassageWindow:
     def test_deep_match_returns_the_matched_passage_not_the_head(self) -> None:
-        """The T02 defect, reproduced then fixed: a match in the MIDDLE sentinel
+        """The head-cap defect, reproduced then fixed: a match in the MIDDLE sentinel
         region must yield middle text — the old head-cap payload contained only
         alpha-head text for the same hit."""
         cap = DETAIL_CAPS["compact"]

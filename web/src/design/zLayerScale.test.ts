@@ -3,23 +3,22 @@ import { describe, it, expect } from 'vitest'
 import { join, relative } from 'node:path'
 import { filesUnder, readSource } from '../test/sourceTree'
 
-// ── z-layer scale ratchet (CD-05) ───────────────────────────────────────────
+// ── z-layer scale ratchet ───────────────────────────────────────────
 // Layering used to be scattered magic numbers (50 / 55 / 60 / 70 / 80 / 100 /
 // 200 / 9999) living only in comments — so the composer menus at z-[9999]
-// painted OVER a firing toast and the Cmd-K palette. CD-05 replaced them with
+// painted OVER a firing toast and the Cmd-K palette. They were replaced with
 // one named ladder in design/tokens.css (--z-content < --z-overlay < --z-modal
 // < --z-menu < --z-toast); overlays reference a rung via z-[var(--z-*)].
 //
 // Two rails, so the fix cannot silently regress:
 //   1. the ladder stays well-ordered, and in particular --z-menu < --z-toast —
-//      the whole point of CD-05 (menus below toasts + palette);
+//      the whole point of the ladder (menus below toasts + palette);
 //   2. no NEW numeric z-[N] appears in app source. The files that still carry
 //      one at introduction are baselined (zLayerScale.baseline.json) and may
 //      only shrink — the same ratchet shape as primitiveAdoption.baseline.json.
 //
 // design/ DEFINES the tokens and *.test files are exempt, mirroring
-// tokenLint.test.ts. (CD-07 / FIX-2 will later fold a general z-[…] check into
-// the unified arbitrary-value lint; this focused rail is the CD-05 slice.)
+// tokenLint.test.ts.
 
 const SRC = join(process.cwd(), 'src')
 const TOKENS_CSS = join(SRC, 'design/tokens.css')
@@ -80,7 +79,7 @@ function resolveScale(): Record<'content' | 'overlay' | 'modal' | 'menu' | 'toas
   return { content, overlay: rung('overlay'), modal: rung('modal'), menu: rung('menu'), toast: rung('toast') }
 }
 
-describe('z-layer scale is a well-ordered ladder (CD-05)', () => {
+describe('z-layer scale is a well-ordered ladder', () => {
   const z = resolveScale()
 
   it('defines all five rungs as finite numbers', () => {
@@ -96,7 +95,7 @@ describe('z-layer scale is a well-ordered ladder (CD-05)', () => {
     expect(z.menu).toBeLessThan(z.toast)
   })
 
-  it('keeps control-anchored menus BELOW toasts and the command palette — the CD-05 payload', () => {
+  it('keeps control-anchored menus BELOW toasts and the command palette — the point of the ladder', () => {
     // The reported bug: composer menus at z-[9999] painted over a firing toast
     // and Cmd-K. Both the palette and the Toaster ride --z-toast, so this single
     // inequality is the whole fix.
@@ -148,7 +147,7 @@ describe('no bespoke numeric z-[N] outside the shrinking baseline', () => {
 // ── THE SECOND SPELLING, which this rail could not see ──────────────────────
 //
 // 🔴 `NUMERIC_Z` above is `/\bz-\[-?\d/` — the ARBITRARY-value form only. Tailwind's STANDARD scale
-// (`z-50`, `z-40`, `z-30`) expresses exactly the same thing and never matches it. So CD-05 migrated one
+// (`z-50`, `z-40`, `z-30`) expresses exactly the same thing and never matches it. So the first migration moved one
 // spelling of two, and both this file and the baseline went on to state the stronger claim:
 // *"With the migration complete the tree holds no live offender to find"* and *"Every fixed/portaled
 // overlay rides the --z-* scale"*. **15 `fixed` overlays were on the standard scale, every

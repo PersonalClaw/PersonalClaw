@@ -6,14 +6,14 @@ hands it to a model that can act. Two independent controls, because either alone
 1. **The screen** (this module's `screen()`) rejects payloads carrying injection attempts BEFORE
    any token is spent. Regex, ~0.2ms, zero cost.
 2. **The frozen capability set** bounds what the run can do even if the screen misses something.
-   The acceptance criterion is explicit that a payload "cannot cause any action outside the
-   trigger's frozen capability set" — verified adversarially, not asserted.
+   A payload cannot cause any action outside the
+   trigger's frozen capability set — verified adversarially, not asserted.
 
 Defence in depth is the point: a screen is a filter, not a proof, and the honest design assumes it
 will be evaded.
 
 **Measured before writing.** `vector_memory._INJECTION_PATTERNS` (14 patterns) is the only screen in
-the repo, and it is private to memory writes. Probed against the plan's six OWASP groups it caught
+the repo, and it is private to memory writes. Probed against six OWASP injection groups it caught
 **5 of 18** adversarial payloads — 0 of 3 on token smuggling, jailbreak, and indirect injection —
 while tripping on **2 of 3 ordinary sentences** ("summarize the system prompt design doc", "act as
 if the deploy already happened"). So it is wrong in BOTH directions, and reusing it would have
@@ -292,8 +292,8 @@ def decoded_segments(text: str, *, limit: int = 8) -> list[str]:
 class ScreenResult:
     """One screening verdict, with everything a ledger row needs.
 
-    `matched_group` and `matched_pattern` are both carried because §1.3 requires a blocked payload's
-    row to NAME the pattern: "blocked_injection" with no detail is unauditable, and a user who
+    `matched_group` and `matched_pattern` are both carried because a blocked payload's
+    row must NAME the pattern: "blocked_injection" with no detail is unauditable, and a user who
     thinks the screen is wrong has nothing to appeal against.
     """
 
@@ -416,7 +416,7 @@ def screen(text: str) -> ScreenResult:
     )
 
 
-# ── the frozen capability set (the second adversarial criterion) ──
+# ── the frozen capability set (the second adversarial control) ──
 
 #: Capability keys a trigger may declare. A closed vocabulary, because an allowlist whose KEYS are
 #: open is not an allowlist: a typo'd `tool` (singular) would silently grant nothing and read as
@@ -467,9 +467,9 @@ def _matches_entry(value: str, entry: str) -> bool:
     return value == entry
 
 
-#: 🔴 Decision 7's READ-ONLY DEFAULT, as data. "Auto-fired triggers (clock/event/file/webhook/
+#: 🔴 THE READ-ONLY DEFAULT, as data. Auto-fired triggers (clock/event/file/webhook/
 #: view/web_watch) default to read-only action providers; write-capable actions require explicit
-#: opt-in rendered as a badge on the Automations row."
+#: opt-in rendered as a badge on the Automations row.
 #:
 #: Classified by what each provider DOES, read from its own module — not by grepping for
 #: write-shaped calls, which mis-sorted two on the first pass (`run-script` runs a sandboxed Python
@@ -531,15 +531,15 @@ WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
         "usage-recap",  # emits a notification — unattended, so it needs the opt-in
         # The remediation engine DELETES history files, prunes the SEL and rebuilds indexes,
         # unattended, forever — the most destructive local writer in this table, and the only one
-        # whose failure mode is silent (an absent prune is invisible by nature). The frozen grant is
-        # decision 7's requirement, and this is the only honest side of the table for it.
+        # whose failure mode is silent (an absent prune is invisible by nature). A frozen grant is
+        # required, and this is the only honest side of the table for it.
         "self-remediation",
         # The HEARTBEAT.md task queue: every task is an unattended agent turn with its tools, on a
         # 60-second clock, forever — the strictest side of this table, like `run-prompt`.
         "heartbeat-tasks",
         # The morning digest: writes a knowledge item AND notifies, on a cron, forever. It
-        # also spends a model call over SCRAPED text, which is the untrusted-input boundary §8
-        # fences — the strictest side of this table is the only honest one for it.
+        # also spends a model call over SCRAPED text, which crosses the untrusted-input
+        # boundary — the strictest side of this table is the only honest one for it.
         "source-digest",
         # The periodic identity report: writes a versioned artifact AND raises an inbox item,
         # on a cron, forever, and spends one background model call over FENCED user prose (a
@@ -587,7 +587,7 @@ WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
         # Drives a real browser. Write-capable is not a close call
         # — a SUBMIT is an irreversible POST on somebody else's site — but even a read-only browse
         # belongs here, because the loop spends a model call PER STEP over attacker-controlled page
-        # text. That is both the untrusted-input boundary §8 fences and an unbounded unattended
+        # text. That is both the untrusted-input boundary and an unbounded unattended
         # spend, and either alone earns the opt-in.
         "browse",
         # `net-fetch` performs a GET, and a GET is NOT read-only for this table's purpose.
@@ -622,7 +622,7 @@ WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
         # this opt-in: the proposer's edits are already on disk by the time the re-diff runs, so
         # what the gate protects is whether we BELIEVE the result, not whether files were written.
         "second-opinion",
-        # EA-8 (outbound half): `a2a-call` hands a task to an external agent over the network.
+        # The outbound A2A half: `a2a-call` hands a task to an external agent over the network.
         # Fail-closed already answers this one correctly — `provider_is_read_only` returns False
         # for any unclassified name — but the classification is stated rather than inferred
         # because the honest reason is specific: a delivered A2A task is IRREVERSIBLE in a way
@@ -700,14 +700,14 @@ def action_config(trigger: Any) -> dict[str, Any]:
 def requested_capabilities(trigger: Any) -> dict[str, list[str]]:
     """What a trigger's own declared action asks for, in the fence's vocabulary.
 
-    🔴 THE GAP THIS FILLS (S116). `FireContext.requested` defaulted to `{}` and **nothing in
+    🔴 THE GAP THIS FILLS. `FireContext.requested` defaulted to `{}` and **nothing in
     production ever populated it** — the only real construction (`service.tick`) omitted it, so
     `if ctx.requested:` was always false and the frozen-capability fence had never run on a real
-    fire. It passed its own unit tests, which supplied `requested` by hand. Same shape as S97's
-    `existing_claim`: a gate whose input nobody supplied.
+    fire. It passed its own unit tests, which supplied `requested` by hand. Same shape as the old
+    `existing_claim` gap: a gate whose input nobody supplied.
 
     Reads both action shapes, because a real store holds both — `workflow.inline` for a migrated
-    cron, a flat `{provider, config}` for one the chat tools created (S92).
+    cron, a flat `{provider, config}` for one the chat tools created.
 
     A workflow REF (`workflow.ref`) requests nothing here: the def's own nodes are fenced by the
     workflow engine's capability layer, and naming the ref as a "provider" would refuse every
@@ -724,20 +724,20 @@ def requested_capabilities(trigger: Any) -> dict[str, list[str]]:
 
 
 def capabilities_for_action(trigger: Any) -> dict[str, Any]:
-    """The `capabilities` block a trigger's declared ACTION implies (decision 7 — S116).
+    """The `capabilities` block a trigger's declared ACTION implies.
 
     Distinct from `freeze_capabilities` below, which NORMALIZES a block the author supplied. This
     one DERIVES the block from the action the trigger already carries, so a writer can freeze the
     right set without asking the user to restate a choice they made by picking the action.
 
-    Decision 7: "Every non-manual trigger carries a `capabilities` block frozen at save time …
-    write-capable actions require explicit opt-in." The opt-in is the owner's yes to the action,
+    Every non-manual trigger carries a `capabilities` block frozen at save time, and
+    write-capable actions require explicit opt-in. The opt-in is the owner's yes to the action,
     asked where they author it (the create dialog, the editor, `cron add --yes`) or given by the
     code that makes one of PersonalClaw's own triggers — so this records that yes rather than asking
     twice. Authoring alone is not it: a trigger the chat makes waits for the owner's Allow
     (`triggers.grants`). `provider_is_read_only` is what decides whether a row needs one.
 
-    🔴 WHY THIS EXISTS (S116). Measured: NO writer set `capabilities` — not `tools.create`, not the
+    🔴 WHY THIS EXISTS. Measured: NO writer set `capabilities` — not `tools.create`, not the
     app-cron reconciler, not the digest reconciler, not the CLI, not the API. And every one of them
     creates a WRITE-CAPABLE action (`invoke-agent`, `run-prompt`, `notification-digest`), so wiring
     the fence without freezing at save would refuse 100% of real automations on their next fire.
@@ -749,7 +749,7 @@ def capabilities_for_action(trigger: Any) -> dict[str, Any]:
 
     Existing rows are never rewritten here. A trigger whose block does not cover its action is
     refused on every run, which is visible and fixable — the direction that cannot silently lose
-    the property. `automation doctor` reports it (S116), the Triggers page offers Allow, and the
+    the property. `automation doctor` reports it, the Triggers page offers Allow, and the
     owner's yes is the only thing that grants it (`triggers.grants`).
     """
     requested = requested_capabilities(trigger)
@@ -865,7 +865,7 @@ def grant_action(trigger: Any) -> list[str]:
 
 
 def freeze_capabilities(capabilities: dict[str, Any] | None) -> dict[str, list[str]]:
-    """Normalize a capability block for persistence AT SAVE (R3).
+    """Normalize a capability block for persistence AT SAVE.
 
     Frozen at save, not resolved at fire time, because a trigger authored when a provider was
     harmless must not inherit whatever that provider can do a year later. Normalizing here means the
@@ -932,7 +932,7 @@ def unfenced_actions(
 ) -> list[tuple[str, str, str]]:
     """Every requested action the frozen set refuses. Returns `(key, value, reason)`.
 
-    The adversarial-verification helper §7's criterion needs: instead of asserting "the fence
+    The adversarial-verification helper: instead of asserting "the fence
     works", a test enumerates what a payload TRIED to do and proves the refused list covers all
     outside the allowlist. Returning the reasons too means a failing assertion says which fence let
     it through.
@@ -962,7 +962,8 @@ def screen_to_outcome(verdict: str) -> str:
     """The fire `Outcome` a screen verdict produces.
 
     `SUSPICIOUS` maps to `ran`, not to a refusal: the payload is FENCED and the run proceeds, so
-    recording a suppression would be a lie in the ledger — and §1.3's rule cuts both ways. An
+    recording a suppression would be a lie in the ledger — and the ledger's honesty rule cuts both
+    ways. An
     unrecognized verdict maps to `blocked_injection`, the fail-closed direction: a verdict nobody
     classified must not become a run.
     """
@@ -982,7 +983,7 @@ def screen_ledger_row(
     because "we fenced this and ran it anyway" is exactly the decision a user needs to be able to
     audit after the fact.
 
-    The row NAMES the matched pattern (§1.3): `blocked_injection` with no detail is unauditable, and
+    The row NAMES the matched pattern: `blocked_injection` with no detail is unauditable, and
     a user who believes the screen is wrong has nothing to appeal against.
     """
     if result.clean:
@@ -1040,7 +1041,7 @@ def budget_ledger_row(
 ) -> dict[str, Any]:
     """The row for a budget decision. ALWAYS returns a row — there is no silent budget skip.
 
-    `check_failed` is the fail-OPEN case R3's amendment calls for, and it still writes a row saying
+    `check_failed` is the fail-OPEN case, and it still writes a row saying
     the check could not complete. That combination is the whole point: a budget probe that hangs
     must not stop every automation on the machine (so the fire proceeds), but a fire that ran with
     no verified budget check is a fact the user must find later. Failing open silently would

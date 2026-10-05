@@ -1,6 +1,6 @@
 """The Proposal Inbox: one surface for six kinds, and the accept gate.
 
-The criterion 1 has two halves: one inbox shows all six proposal kinds with provenance, evidence
+The contract has two halves: one inbox shows all six proposal kinds with provenance, evidence
 manifests, and risk-tier metadata — **and the model cannot accept its own proposals under any trust
 mode**. The second half is the load-bearing one, and this module is where it becomes a control
 rather than a coincidence.
@@ -16,7 +16,7 @@ The rest of the module is the inbox's own discipline:
 * **Six kinds, one queue.** `proposals.Kind` already has exactly six, so this reuses them rather
 than
   minting a parallel vocabulary — a second kind list is how a surface silently stops showing one.
-* **Risk tier is METADATA, never a lane.** §3.1 is explicit: any "auto" tier is guardrail-violating.
+* **Risk tier is METADATA, never a lane.** Any "auto" tier is guardrail-violating.
   Tiers order and filter the queue; they never decide.
 * **`manifest_valid=false` surfaces, never rejects.** The validation is lenient-but-recording: a
   proposal with a broken manifest is still reviewable, flagged, because dropping it would hide a
@@ -47,7 +47,7 @@ def _actor_enum():
 
 #: Actors permitted to ACCEPT a proposal. Deliberately just the user.
 #:
-#: The ENGINE is excluded as well as the agent, and that is not an oversight: §7 says the
+#: The ENGINE is excluded as well as the agent, and that is not an oversight: the
 #: human-installs
 #: invariant is absolute, so "the engine observed the work" — sufficient authority to record a task
 #: outcome — is NOT sufficient authority to install autonomously-authored behaviour. An
@@ -58,20 +58,20 @@ ACCEPT_ACTORS: frozenset[str] = frozenset({"user"})
 #: Actors permitted to REJECT. The agent may not, for a subtler reason than accepting: an agent that
 #: could reject could clear its own bad proposals out of the queue before a human ever read them,
 #: and
-#: the rejection exemplars §2.2 learns from would silently stop accumulating.
+#: the rejection exemplars the flywheel learns from would silently stop accumulating.
 REJECT_ACTORS: frozenset[str] = frozenset({"user"})
 
-#: Actors permitted to FILE a proposal. All three — filing is the safe verb, and §2.6/§3.1/§3.2 all
-#: depend on non-human proposers.
+#: Actors permitted to FILE a proposal. All three — filing is the safe verb, and the self-model,
+#: the refiner and the detectors all depend on non-human proposers.
 FILE_ACTORS: frozenset[str] = frozenset({"user", "agent", "engine"})
 
 
 class Denial(str, Enum):
     """Why a review action was refused. Typed because the refusal is audited.
 
-    `SELF_ACCEPT` is the one §7 names. Kept distinct from a generic permission denial so the SEL row
-    says what was actually attempted — "an agent tried to accept its own proposal" is an incident,
-    while "an unknown actor tried to accept" is a bug.
+    `SELF_ACCEPT` is the case the invariant exists for. Kept distinct from a generic permission
+    denial so the SEL row says what was actually attempted — "an agent tried to accept its own
+    proposal" is an incident, while "an unknown actor tried to accept" is a bug.
     """
 
     SELF_ACCEPT = "self_accept"
@@ -100,11 +100,11 @@ def require_human(
 ) -> Gate:
     """THE gate. Fails CLOSED for anything that is not a human reviewer.
 
-    §7: "the model cannot accept its own proposals under ANY trust mode" — so this deliberately
+    The model cannot accept its own proposals under ANY trust mode — so this deliberately
     takes no trust parameter. A gate that could be relaxed by a mode is a gate whose invariant is a
-    default, and the plan is explicit that this one is absolute. Tool-set scoping is the structural
-    (§3.1: the refiner agent gets only `propose_*` tools); this is the enforcement half, so the
-    invariant survives someone adding a tool without reading the plan.
+    default, and this one is absolute. Tool-set scoping is the structural
+    half (the refiner agent gets only `propose_*` tools); this is the enforcement half, so the
+    invariant survives someone adding a tool without knowing the rule.
 
     An UNKNOWN actor is denied rather than assumed human. The failure directions are not symmetric:
     denying a human costs one click through the UI, while admitting an unrecognized caller is the
@@ -154,7 +154,7 @@ def can_file(actor: str) -> bool:
 # ── the inbox view model ──
 
 
-#: Risk tiers, in display order. Imported from the refiner rather than restated — §3.1 assigns them
+#: Risk tiers, in display order. Imported from the refiner rather than restated — they are assigned
 #: deterministically by edit type, and a second ordering here would let the inbox sort by a scale
 #: the
 #: refiner does not use.
@@ -164,7 +164,7 @@ def _tier_order() -> list[str]:
     return [RiskTier.LOW.value, RiskTier.REVIEW.value, RiskTier.MANUAL_ONLY.value]
 
 
-#: Tiers a bulk-accept control may include. `manual_only` is excluded BY NAME: §3.1 stamps it on
+#: Tiers a bulk-accept control may include. `manual_only` is excluded BY NAME: it is stamped on
 #: destructive edits, and "bulk" plus "destructive" is the combination that turns an ergonomic
 #: affordance into an accident. Note this bounds a UI CONTROL, not the gate — every accept in a bulk
 #: action still passes `require_human` individually.
@@ -175,7 +175,7 @@ BULK_ACCEPTABLE_TIERS: frozenset[str] = frozenset({"low", "review"})
 class Row:
     """One inbox row: everything a reviewer needs to decide without opening anything else.
 
-    §6.1 names the fields, and each is here because its absence produces a specific bad review:
+    Each field is here because its absence produces a specific bad review:
     without provenance the reviewer cannot weigh the source, without the evidence manifest they
     cannot check the claim, without `manifest_valid` they cannot tell a flagged proposal from a
     and without the reinforcement count they cannot tell one observation from twenty.
@@ -190,7 +190,7 @@ class Row:
     evidence_refs: list[str] = field(default_factory=list)
     #: WHICH KIND of evidence the refs are — `anecdotal` / `correlated` / `causal` / `ablation`,
     #: the tier the proposer stamped at `enqueue`. The count alone cannot distinguish a paired
-    #: on/off measurement (EVALUATION-SUBSTRATE §3.1 files retirements with `ablation`) from a
+    #: on/off measurement (evaluation files retirements with `ablation`) from a
     #: co-occurrence (`correlated`, the default), and "retire this" backed by two co-occurrences
     #: is a different claim from "retire this" backed by a measured null result. An EMPTY string
     #: is UNGRADED — a record from before the tier existed — and must never read as a grade.
@@ -346,11 +346,11 @@ def filter_rows(
     tier: str = "",
     flagged_only: bool = False,
 ) -> list[Row]:
-    """Filter the queue. §6.1's "filter by kind/source".
+    """Filter the queue.
 
     `flagged_only` surfaces the `manifest_valid=false` rows specifically. That is the view a
-    maintainer wants when the refiner starts producing broken manifests — §3.1 records those rather
-    than rejecting them, and a flag nobody can filter to is a flag nobody sees.
+    maintainer wants when the refiner starts producing broken manifests — those are recorded rather
+    than rejected, and a flag nobody can filter to is a flag nobody sees.
     """
     out = list(rows or [])
     if kind:
@@ -366,7 +366,7 @@ def filter_rows(
 class InboxView:
     """The whole inbox, ordered and counted.
 
-    Counts per kind and per tier are here because §6.1's surface offers filtering: a filter chip
+    Counts per kind and per tier are here because the surface offers filtering: a filter chip
     with no count is a chip a user has to click to discover is empty.
     """
 
@@ -450,7 +450,7 @@ def build_view(
 def audit_denial(*, action: str, actor: str, pid: str, gate: Gate) -> dict[str, Any]:
     """The SEL row for a refused review action.
 
-    §3 requires a SEL audit of accepts; a refused accept is at least as worth recording. A blocked
+    Accepts get a SEL audit; a refused accept is at least as worth recording. A blocked
     self-accept in particular is the signal that something is calling the wrong path — and it would
     be invisible if only successes were logged.
     """

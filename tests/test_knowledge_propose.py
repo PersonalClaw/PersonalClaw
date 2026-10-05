@@ -7,7 +7,7 @@ them are the happy path on its own:
    saves, and then fails at run time — so the template's node name, the registry, the hook
    allowlist and the capability fence are all asserted.
 2. **The silent drop.** `proposals.enqueue` SKIPS an unknown kind and logs at *debug*. That
-   is what made the pre-WF2KNO-8 workaround necessary and invisible, so the kind's presence
+   is what made the old workaround necessary and invisible, so the kind's presence
    is asserted directly rather than inferred from a green filing.
 3. **SKIP is success.** A prior decision forbidding a re-file is the queue working. A
    provider that failed the node on it would make a correct cadence look broken.
@@ -129,7 +129,7 @@ def test_a_draft_reaches_enqueue_under_the_knowledge_draft_kind(home, ctx):
 
 
 def test_it_writes_nothing_into_the_knowledge_store(home, ctx):
-    """The whole point of the change: propose, don't write. The pre-WF2KNO-8 node persisted a
+    """The whole point of the change: propose, don't write. The old node persisted a
     TTL'd probe, so an assertion that the store stays untouched is the regression guard."""
     run(
         KnowledgeProposeActionProvider().execute(

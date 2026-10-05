@@ -452,7 +452,7 @@ class ModelCallGuard(ModelProvider):
         property with a False default, so normal lookup finds the ABC's answer on the
         wrapper and the transparent-fallback hook below never fires — the guard would
         report "no commands" for an agent that has them, and every slash command would
-        silently degrade to text (`G4`)."""
+        silently degrade to text."""
         return bool(getattr(self._inner, "supports_native_commands", False))
 
     @property
@@ -525,10 +525,10 @@ class ModelCallGuard(ModelProvider):
         findings — audited and never retried (retrying would let a payload brute-force the
         scan).
 
-        🔴 The failure mode is now CHOSEN, not assumed (S156). Every block recorded
+        🔴 The failure mode is now CHOSEN, not assumed. Every block recorded
         ``secret_leak``, so ``FailureMode.INJECTION_BLOCKED`` — declared, listed in
         ``NON_RETRYABLE``, and carrying its own retry semantics — could never be recorded by
-        anything. §2.2's taxonomy separates the two deliberately: they are both non-retryable
+        anything. The failure taxonomy separates the two deliberately: they are both non-retryable
         for *different* reasons, and an operator reading the audit trail cannot tell a
         credential slip from an attack if both say ``secret_leak``.
 
@@ -1003,8 +1003,8 @@ class ModelCallGuard(ModelProvider):
             priced=price is None or price.priced,
         )
         record_attempt(rec)
-        # Fold the same attempt into the rolling routing stats (MODEL-ROUTING-TELEMETRY
-        # §1.3, MRT-1c) — the router reads that O(1) fold, never scans the JSONL per call.
+        # Fold the same attempt into the rolling routing stats — the router reads that
+        # O(1) fold, never scans the JSONL per call.
         # Best-effort inside record_routing_stats; a fold failure never breaks a call.
         try:
             from personalclaw.config.loader import config_dir

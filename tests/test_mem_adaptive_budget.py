@@ -1,4 +1,4 @@
-"""Adaptive memory-injection budget (mem-adaptive-budget) + shared model-window lookup."""
+"""Adaptive memory-injection budget + shared model-window lookup."""
 
 from __future__ import annotations
 
@@ -86,7 +86,7 @@ def test_caps_scale_down_when_the_baseline_cannot_fit_the_window():
     The bug this pins: `max(1.0, win / 200_000)` is 1.0 for every window below the
     calibration point, so a 2,048-token model was handed the identical 59,000-char memory
     budget as a 200,000-token one — roughly 14x its entire context window. Measured on the
-    OU-14 bundled floor (`SmolLM2-135M-Instruct-Q8_0`, a 2,048-token card), that is what
+    bundled floor (`SmolLM2-135M-Instruct-Q8_0`, a 2,048-token card), that is what
     made the FIRST message of a new chat exceed the window before the user had said
     anything of substance.
     """

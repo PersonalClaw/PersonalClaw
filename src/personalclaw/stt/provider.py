@@ -1,4 +1,4 @@
-"""Abstract base for STT providers + the rich-transcript contract (core L0).
+"""Abstract base for STT providers + the rich-transcript contract.
 
 The flat ``transcribe() -> str`` is the primitive every provider implements. The rich
 ``transcribe_detailed() -> TranscriptResult`` is an ADDITIVE capability: a provider that
@@ -26,7 +26,7 @@ class TranscriptWord:
 @dataclass
 class TranscriptSegment:
     """A contiguous span of speech. ``speaker`` is filled later by the speaker-fusion
-    node (L1) when diarization is present; ``words`` carries word-level timestamps when
+    node when diarization is present; ``words`` carries word-level timestamps when
     the provider supports them."""
 
     start: float
@@ -40,7 +40,7 @@ class TranscriptSegment:
 class TranscriptResult:
     """The rich transcript: a flat ``text`` (back-compat / FTS / embeddings) PLUS the
     structured ``segments`` (click-to-seek, speaker labels, timestamp chunking). Persisted
-    as JSON in a node output's ``metadata`` (no schema migration — see L0.5)."""
+    as JSON in a node output's ``metadata`` (no schema migration)."""
 
     text: str
     language: str = ""
@@ -134,13 +134,13 @@ class SttProvider(ABC):
         language: str = "",
         bias_terms: list[str] | None = None,
     ) -> "TranscriptResult | None":
-        """Rich transcription → segments + word timestamps (core L0).
+        """Rich transcription → segments + word timestamps.
 
         Default implementation wraps the flat :meth:`transcribe` output in a
         single-field :class:`TranscriptResult` (no segments), so every existing provider
         keeps working. Providers that can emit structure (e.g. faster-whisper) override
         this and flip :attr:`supports_segments` / :attr:`supports_word_timestamps`.
-        ``bias_terms`` is the Lexicon's pre-decode vocabulary hint (L2); providers
+        ``bias_terms`` is the Lexicon's pre-decode vocabulary hint; providers
         without :attr:`supports_bias_terms` ignore it. Fails as :meth:`transcribe` does.
         """
         text = await self.transcribe(audio_path, model=model, language=language)

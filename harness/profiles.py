@@ -28,7 +28,7 @@ def resolve_python(repo_root: Path | None = None) -> str:
     (``[Errno 2] No such file or directory: '.venv/bin/python'``), so reference
     resolution collapsed into one "could not collect the test suite" error and three
     tests in ``tests/test_harness_validate.py`` failed in EVERY worktree — for long
-    enough that sessions learned to wave them off as pre-existing (SH6.x).
+    enough that sessions learned to wave them off as pre-existing.
 
     Resolution, most specific first:
 
@@ -119,7 +119,7 @@ _register(
 _register(
     Profile(
         name="exemplars",
-        description="Per-slice WF2 milestone exemplars (§4.1): run every exemplar's ≤30s "
+        description="Per-slice workflow-engine exemplars: run every exemplar's ≤30s "
         "smoke script through the real engine with a fake model. Regression anchors.",
         # `python -m harness.exemplars` discovers every exemplars/slice_* bundle and runs its
         # smoke script; a non-zero exit from any one fails the profile.
@@ -192,7 +192,7 @@ def resolve_commands(profiles: list[str], tests: list[str] | None = None) -> lis
     return out
 
 
-# Registration hook for later sessions: Session 2's scanner and Session 3's replay driver
+# Registration hook: the scanner and the replay driver
 # call this to swap their placeholder profile for the real command once implemented,
 # keeping the profile *name* (and every spec that references it) stable.
 def override_commands(name: str, commands: tuple[str, ...], *, needs_tests: bool = False) -> None:

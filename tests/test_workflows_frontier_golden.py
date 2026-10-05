@@ -1,6 +1,6 @@
 """Golden-file proof that `frontier()` still decides exactly what it always did.
 
-PP-11 moves the frontier's admission step behind an ordered list of `AdmissionPolicy` objects.
+The frontier's admission step moved behind an ordered list of `AdmissionPolicy` objects.
 "Pure refactor" is a claim a passing suite cannot settle: the suite asserts the properties someone
 thought to assert, and the whole risk of rewriting a scheduler is the decision nobody wrote down —
 an admission order, a tie between two caps, which refusals get a name. So the bar is the decisions

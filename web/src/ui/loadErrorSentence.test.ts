@@ -7,7 +7,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //
 // `<LoadError what={x} />` renders `Couldn't load your {x}`. That is a copy surface wearing a prop:
 // every value has to read as a sentence, and NO per-call assertion catches this because they all
-// match a noun regex — cycle ux-669 shipped `what="the inbox"` with every test green and the screen
+// match a noun regex — one change shipped `what="the inbox"` with every test green and the screen
 // reading "Couldn't load your the inbox". This rail reads the composed sentence instead of the prop.
 //
 // The contract (also in the prop's doc comment): lowercase, no leading article. The headline always
@@ -15,7 +15,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // body was reworded off the noun (see below), so "Couldn't load your project" is correct and "Your
 // project are safe" no longer exists to be wrong.
 //
-// Census this cycle (dev gateway + a proxy 500-ing only each surface's endpoint):
+// Census (dev gateway + a proxy 500-ing only each surface's endpoint):
 //   #/settings/guardrails  "Couldn't load your the autonomy ladder"   → fixed to "autonomy ladder"
 //   #/apps                 "…your the Store catalog"                   → "Store catalog"
 //   #/settings/packs       "…your the pack catalog"                    → "pack catalog"
@@ -96,7 +96,7 @@ describe("LoadError's what composes a grammatical headline", () => {
     // The bug this rail exists for was in TWO templates; the headline is asserted above, and the body
     // is asserted here by pinning that it dropped the `${what}` that made it "Your <noun> are safe".
     // 🪤 Strip comments first — the doc comment QUOTES the old "Your ${what} are safe" to explain the
-    // change, and a raw scan would flag its own explanation (the same trap ux-669's rails hit twice).
+    // change, and a raw scan would flag its own explanation (the same trap earlier rails hit twice).
     const scaffold = readSource(join(SRC, 'ui/ListScaffold.tsx'))
       .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
     const body = /The server didn't respond[^`"]*/.exec(scaffold)?.[0] ?? ''

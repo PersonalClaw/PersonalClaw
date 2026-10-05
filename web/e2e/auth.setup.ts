@@ -14,9 +14,10 @@ import { SHELL_SELECTOR } from './helpers'
 // PW_TOKEN comes from playwright.config.ts's gateway webServer: its
 // `wait.stdout` regex captures the token out of the `PERSONALCLAW_READY:` line
 // into process.env.PW_TOKEN. Nothing to pass by hand for a normal run. To drive
-// an already-running gateway instead:
+// an already-running gateway instead (one on a scratch home and a port of its
+// own, never the install's: the suite drives real turns into the home it reaches):
 //
-//   PW_TOKEN=<owner token> PW_NO_SERVER=1 PW_BASE_URL=http://localhost:10000 \
+//   PW_TOKEN=<its owner token> PW_NO_SERVER=1 PW_BASE_URL=http://localhost:<its port> \
 //     npx playwright test
 //
 // Auth stays ON throughout — no PERSONALCLAW_AUTH_MODE=none. That flag swaps

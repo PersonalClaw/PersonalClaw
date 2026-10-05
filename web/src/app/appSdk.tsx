@@ -1,4 +1,4 @@
-// SDK host map (A6) — the runtime backing for `@personalclaw/app-sdk`.
+// SDK host map — the runtime backing for `@personalclaw/app-sdk`.
 //
 // A contributed app ships an ESM bundle that imports from `@personalclaw/app-sdk`.
 // The built SDK stub re-exports from `window.__personalclaw_modules['@personalclaw/app-sdk']`;
@@ -8,14 +8,14 @@
 //
 // The hooks are backed by the same gateway the rest of web talks to:
 //   useAppApi    — fetch scoped to the app's permissions.api allowlist (client-side
-//                  enforcement; the gateway re-checks server-side in A5 — defense
+//                  enforcement; the gateway re-checks server-side — defense
 //                  in depth). An undeclared path throws before the request.
 //   useAppEvents — the shared /api/ws multiplexed socket, filtered to the app's
 //                  permissions.events.
 //   useTheme     — the resolved light/dark mode, live.
 //   useNotify    — surface a toast (CustomEvent the shell renders).
 //   useNavBadge  — set/clear a count badge on the app's nav tile.
-//   useChatLauncher — open a PClaw chat session (A8 ChatEmbed extends this).
+//   useChatLauncher — open a PClaw chat session (ChatEmbed extends this).
 //
 // Call `installAppSdk()` once at startup (from main.tsx) before any contributed
 // page mounts.
@@ -92,7 +92,7 @@ const AppCtx = createContext<AppContext>({ name: '', permissions: {} })
 
 /** Wraps a contributed app's mounted page so its hooks know which app they
  *  belong to (name + permission scope). The host mounts this around an app's
- *  page in A7. */
+ *  page. */
 export function AppApiProvider({ app, children }: { app: AppContext; children: React.ReactNode }) {
   return <AppCtx.Provider value={app}>{children}</AppCtx.Provider>
 }
@@ -114,7 +114,7 @@ export class AppPermissionError extends Error {
 
 const SK = { 'X-Session-Key': 'dashboard:ui' }
 
-// ── per-app identity token (untrusted-app sandbox, P1) ──
+// ── per-app identity token (untrusted-app sandbox) ──
 // Every app request carries a short-lived app-scoped token (minted from
 // /api/apps/{name}/token) as `Authorization: Bearer`, layered on the owner cookie
 // the browser attaches automatically. The gateway reads its `app` claim to scope
@@ -169,7 +169,7 @@ export interface AppApiClient {
  *  React render context needed. This is the primitive; pass the app identity
  *  (the `ctx` your mount function receives). An app's own backend
  *  (`/apps/<name>/api/*`) is always reachable; any other path must be declared
- *  or the call throws (and the gateway rejects it too — A5).
+ *  or the call throws (and the gateway rejects it too).
  *
  *  A write that replaces a whole document names the revision its read reported —
  *  `api.put(path, next, { basedOn: read.revision })` — or the gateway refuses it
@@ -473,7 +473,7 @@ export function useChatLauncher() {
   return launchChat
 }
 
-/** Embed a live PClaw chat session inside a contributed app's own UI (A8).
+/** Embed a live PClaw chat session inside a contributed app's own UI.
  *  Renders the host chat route in an iframe: a separate DOCUMENT with its own React
  *  root, so the app composes the chat surface without reaching into its internals.
  *  Resumes `session` if given, else starts a fresh session optionally seeded with
@@ -542,7 +542,7 @@ export function ChatEmbed(props: {
 // contract, not a sandbox — a contributed page runs in the host React tree with the
 // host `window`, so an undeclared app is not *prevented* from reaching these
 // components, only from importing them under the SDK's name. Same posture as
-// `permissions.network` (EI-12 D2): stated as advisory, never badged as enforced.
+// `permissions.network`: stated as advisory, never badged as enforced.
 
 /** Render a generative-UI widget from a contributed app.
  *
@@ -551,7 +551,7 @@ export function ChatEmbed(props: {
  *  drops invalid ones with a typed error. The app contributes a *widget*, never a
  *  component TYPE — the registry stays host-owned, so an app (or a model writing
  *  the app's spec) can only reach components the host already registered. That is
- *  what keeps AMBIENT-SURFACES' controlled-rendering safety model intact: the
+ *  what keeps generative UI's controlled-rendering safety model intact: the
  *  reason a genui block may render in the host tree at all is that only registered,
  *  schema-validated components can appear in it, and this path adds nothing to that
  *  set. `library.prompt()` is the authoring surface for what `spec` may contain. */
@@ -561,8 +561,8 @@ export function GenerativeWidget({ spec, title }: { spec: string; title?: string
 
 /** Register a genui component contributed by an app.
  *
- *  This is the "registration reading" APE-11 deferred to AS-6, and it ships with the
- *  threat argument that scope call asked for. Four properties make it safe:
+ *  This is the "registration reading" deferred when the SDK subpaths shipped, and it ships
+ *  with the threat argument that deferral asked for. Four properties make it safe:
  *
  *   1. **Declared** — refused unless the app's manifest names `generative-component`.
  *      A `generative-widget` declaration does NOT grant it: supplying a DSL body and
@@ -695,7 +695,7 @@ export function installAppSdk(): void {
       readAppTheme,
       ChatEmbed,
     },
-    // APE-11 subpaths. Present in the map for EVERY app (the map is one global
+    // The capability-gated subpaths. Present in the map for EVERY app (the map is one global
     // object; there is no per-app map to build). What is per-app is which of these
     // specifiers a bundle's imports get REWRITTEN to — see resolvableAppSpecs.
     '@personalclaw/app-sdk/ui': APP_SDK_UI,
@@ -738,7 +738,7 @@ export function appModuleShimUrl(spec: string): string | null {
  *
  *  *app* supplies the declared `uiCapabilities`: a subpath the app did not
  *  declare is left OUT of the rewrite set, so its bare import stays bare and fails to
- *  resolve. Omit *app* and only the ungated head resolves — the pre-APE-11 behaviour,
+ *  resolve. Omit *app* and only the ungated head resolves — the behaviour before the gate,
  *  which is the right default for any caller that has no manifest in hand. */
 /** The URL an installed app's UI bundle is served at, versioned by the app's `uiRevision`.
  *
@@ -763,7 +763,7 @@ export async function loadContributedModule(
     return import(/* @vite-ignore */ src) as Promise<Record<string, unknown>>
   }
   // Rewrite `from "<spec>"` / `from '<spec>'` for each known bare specifier to its shim URL.
-  // Before APE-11 `@personalclaw/app-sdk/ui` was in this list but ALIASED back to the
+  // `@personalclaw/app-sdk/ui` used to be in this list but ALIASED back to the
   // base module — the subpath resolved to the same exports, so it named nothing of its
   // own. It is a real module now (the primitives) and the alias is gone.
   const specs = resolvableAppSpecs(app)

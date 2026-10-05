@@ -1,6 +1,6 @@
 """Write-back routing: an app-served trigger row autonomously fires.
 
-TSE-4 shipped the read half of the ``trigger`` provider seam and named the gap it stopped at: a
+The read half of the ``trigger`` provider seam shipped first and named the gap it stopped at: a
 provider's rows rendered but could not ARM, because the arm path PERSISTS and the store it persisted
 into was the native one. Arming anyway had two possible outcomes, and this file is written to fail
 if either one comes back:
@@ -301,7 +301,7 @@ def test_a_delete_routes_to_the_provider_too(native, team):
 
 @pytest.mark.parametrize("label", sorted(FOUR_TARGETS))
 def test_an_app_served_owner_row_autonomously_fires_each_target(native, team, label):
-    """Criterion 5, measured per target: a real `tick` over a real gate walk produces a real fire.
+    """Measured per target: a real `tick` over a real gate walk produces a real fire.
 
     Four assertions, because "it fired" is the weakest of them:
       1. the fire exists and names the right action provider;

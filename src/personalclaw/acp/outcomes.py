@@ -1,6 +1,6 @@
 """Per-turn tool-outcome accumulation for the ACP seam.
 
-Procedural memory (M5d) learns "tool X works / fails for this shape" from the
+Procedural memory learns "tool X works / fails for this shape" from the
 ``(tool, outcome)`` pairs a runtime accumulated during the turn. The dashboard reads
 them through one duck-typed hook — ``drain_tool_outcomes`` — which until now existed
 on exactly ONE provider (:class:`personalclaw.agents.native.runtime.NativeAgentRuntime`).

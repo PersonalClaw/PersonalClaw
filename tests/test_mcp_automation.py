@@ -3,7 +3,7 @@
 The logic is tested in `test_triggers_tools.py`; these tests pin the ADAPTER — that the eight
 tools list, validate, dispatch to the store, and are reachable through the same aggregation and
 native-app registration every other category uses. A module that exposed `_list_tools` but was
-never registered would be the present-and-inert defect this program keeps finding, so the
+never registered would be the present-and-inert defect that keeps recurring, so the
 registration itself is asserted, not assumed.
 """
 
@@ -39,14 +39,14 @@ def _data(text: str) -> dict:
 # ── the surface lists and every tool validates ──
 
 
-#: WF2LOO-9 added two self-scheduling tools to this surface. They are NOT in
+#: Two self-scheduling tools were added to this surface. They are NOT in
 #: `triggers.tools.TOOL_NAMES` on purpose: that tuple is the table of `automation_*` handlers
 #: living in that module, and these two live here and delegate into `tools.create`. Naming them
 #: separately keeps both meanings honest — "handlers there" and "names an agent may call here".
 SELF_SCHEDULE_TOOLS = frozenset({"set_onetime_task", "set_recurring_task"})
 
 
-def test_the_surface_is_section_4s_table_plus_the_self_schedule_pair():
+def test_the_surface_is_the_tool_table_plus_the_self_schedule_pair():
     from personalclaw.triggers.tools import TOOL_NAMES
 
     listed = {t["name"] for t in A._list_tools()}
@@ -67,17 +67,17 @@ def test_every_tool_declares_an_input_schema():
         assert tool["inputSchema"]["type"] == "object"
 
 
-def test_create_advertises_the_criterion_2_example():
+def test_create_advertises_the_file_watch_example():
     """The description is the only thing steering a model toward this tool; it must name the
     file-watch shape, or an agent reaches for `schedule_add` and gets a cron."""
     create = next(t for t in A._list_tools() if t["name"] == "automation_create")
     assert "~/notes" in create["description"]
 
 
-# ── 🔴 criterion 2 through the real dispatch ──
+# ── 🔴 the file-watch example through the real dispatch ──
 
 
-def test_criterion_2_through_the_full_dispatch(home):
+def test_the_file_watch_example_through_the_full_dispatch(home):
     """🔴 validate → route → store → text, no shortcut. The one-message bar, end to end through the
     surface an agent actually calls."""
     out = A._call_tool(

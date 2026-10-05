@@ -20,7 +20,7 @@ import type { InboxItem, InboxItemStatus, InboxStatus } from '../../lib/api'
 // falls because the user looked at something. And `dismissAll`'s confirm was sized from the same
 // field: it offered to dismiss 33 and the endpoint answered `{"dismissed": 37}`.
 //
-// The ruling: a row you have read but not answered is still your work. SEEN is open, the wire
+// The decision: a row you have read but not answered is still your work. SEEN is open, the wire
 // carries ONE count (`open_count`), and "new" stays a per-ROW signal — the unread dot and accent
 // rail, which still key off `pending`. That distinction is asserted here too, because collapsing it
 // would be the opposite over-correction.
@@ -147,8 +147,8 @@ describe('the inbox header and its filters show the same number', () => {
 
   it('lists every open row, including the ones already read', async () => {
     renderInbox()
-    // The default filter is `open`; a SEEN row must still be in the list. Before the ruling was
-    // settled, "make the header match the filters" was the tempting fix — it would have deleted
+    // The default filter is `open`; a SEEN row must still be in the list. Before this was
+    // decided, "make the header match the filters" was the tempting fix — it would have deleted
     // these two rows from the user's queue instead.
     await waitFor(() => expect(screen.getByText('row b1')).toBeTruthy())
     expect(screen.getByText('row b2')).toBeTruthy()

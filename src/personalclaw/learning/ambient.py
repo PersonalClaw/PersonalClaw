@@ -1,10 +1,10 @@
-"""The ambient render, put under ONE budget (§2.4 / §7 crit 5).
+"""The ambient render, put under ONE budget.
 
-The criterion 5: "the lesson block, skill INDEX, template suggestion, voice/facet blocks, and
+The requirement: the lesson block, skill INDEX, template suggestion, voice/facet blocks, and
 self-model snapshot fit ONE per-turn slot-allocated token budget; lessons are never crowded out
-(sacrificial-slot truncation only); the authority preamble renders."
+(sacrificial-slot truncation only); the authority preamble renders.
 
-S71 built the allocator (`learning/surfacing.py`) and deliberately stopped short of owning the
+The allocator (`learning/surfacing.py`) deliberately stopped short of owning the
 render, recording why: "replacing the whole render is behaviour-visible and needs the measurement
 floor to prove nothing stops surfacing." That floor landed in its own measure module. This is the
 adapter that finally routes the named blocks through it.
@@ -25,14 +25,14 @@ adapter that finally routes the named blocks through it.
 
 **The budget must scale with the model window.** `context._memory_caps` scales its sections by
 `window/200k` clamped to [1,5], so at 1M the memory sections get 5x more room. A FLAT budget
-next to that silently inverts the plan's own adaptive-recall design: the ambient blocks would be the
+next to that silently inverts the adaptive-recall design: the ambient blocks would be the
 only thing that does not grow. `budget_for_window` applies the SAME multiple, so the two halves of
 the prompt scale together.
 
 **The skill INDEX is a catalogue, not a candidate set.** Fed as one candidate per entry, the
 diversification cap (`MAX_PER_SOURCE = 3`) kept 3 of 12 skills while 3,539 tokens sat unused — it
 would HIDE most of the user's skills to enforce source diversity on a block whose whole purpose is
-completeness. So the index is ONE candidate with the plan's three-step degradation (full →
+completeness. So the index is ONE candidate with a three-step degradation (full →
 hint-capped descriptions → names only), which is also why it can shrink instead of vanishing.
 
 **🔴 The skills block holds TWO populations, and the first version dropped one.** Caught by the
@@ -44,9 +44,9 @@ its own `[Skills:]` frame (either can be dropped independently, so one shared wr
 sometimes frame nothing), and the bodies rank above the index because a pointer list should yield
 before content does.
 
-**Scope is the five blocks the criterion names**, not the whole eight-part assembly. The memory
+**Scope is the five blocks named above**, not the whole eight-part assembly. The memory
 context keeps `_memory_caps` — it is a different, already-window-scaled mechanism, and swapping a
-working recall render for an unproven one is what S71 refused to do blind. Two of the five have no
+working recall render for an unproven one is not something to do blind. Two of the five have no
 producer yet (see `SLOT_KINDS`); their slot mapping is asserted so a future producer joins it
 instead of appending beside it.
 """
@@ -91,7 +91,7 @@ MIN_BUDGET_TOKENS = 64
 #: would need a sixth slot, which is how "one budget" becomes six again.
 #:
 #: `template` and `self_model` have NO live producer: nothing on the chat path matches a query to a
-#: workflow def, and nothing persists `user.selfmodel.*` (S72 built the decisions, not the store).
+#: workflow def, and nothing persists `user.selfmodel.*` (the decisions were built, not the store).
 #: They are mapped anyway, and `test_every_named_block_has_a_slot` asserts it, so whoever builds
 #: those producers finds a budgeted slot waiting instead of appending a sixth independent block.
 #: `procedural` maps onto the EXISTING `lesson` kind. A how-to-work prior is a learned
@@ -117,9 +117,8 @@ PROCEDURAL_SCORE = 0.8
 #: kind alone would read a surviving procedural block as "a lesson survived" and never retry.
 LESSON_KEY_PREFIX = "lesson:"
 
-#: Cap on an index entry's description at the middle tier. From the R12 note ("an 80-char hint
-#: cap on the agent-side index") — the plan's own number, so the middle degradation step is not one
-#: this module invented.
+#: Cap on an index entry's description at the middle tier: an 80-char hint cap on the agent-side
+#: index.
 HINT_CHARS = 80
 
 #: Header lines the block renderers emit. Kept so a degraded render still LOOKS like the block it
@@ -139,7 +138,7 @@ def budget_for_window(window: int | None, base: int) -> int:
     a 200,000-token one, since `max(1.0, 2048/200000)` is 1.0. The docstring already named the
     hazard it then failed to prevent — "guessing a large window would let the ambient blocks crowd
     a small one" — which is precisely what a flat floor guarantees for every window below the
-    baseline. Measured on the OU-14 bundled floor (a 2,048-token card, 1,728 tokens of input room
+    baseline. Measured on the bundled floor (a 2,048-token card, 1,728 tokens of input room
     after its declared 320-token reply reserve): the skill index alone arrived at 2,482 tokens, and
     the first message of a new chat was refused before the user had said anything of substance.
 
@@ -162,7 +161,7 @@ def lesson_candidates(block: str) -> list[Candidate]:
     """One candidate per LESSON, so the pool ranks corrections individually.
 
     Per-lesson rather than one block candidate: a 40-lesson block is either wholly in or wholly out,
-    and "wholly out" is precisely the crowd-out the criterion forbids. Ranked individually, the
+    and "wholly out" is precisely the crowd-out the requirement forbids. Ranked individually, the
     query-relevant correction survives a budget that cannot hold all forty — measured: at 800
     lessons the allocator kept 112 including the one matching the query, where the block form
     injected 8,733 tokens or nothing.
@@ -415,7 +414,7 @@ def render(
     budget_tokens: int = 4000,
     window: int | None = None,
 ) -> Allocation:
-    """Rank the named blocks into ONE budget and render them. The criterion's mechanism.
+    """Rank the named blocks into ONE budget and render them. The requirement's mechanism.
 
     `window` scales the budget when given; pass None to use `budget_tokens` as-is.
 
@@ -549,7 +548,7 @@ def _is_lesson_block(part: str, alloc: Allocation) -> bool:
     """Whether this rendered chunk is the lessons slot's output.
 
     "Contains a bullet line", not "starts with one": the allocator renders a whole slot as ONE
-    chunk, and once WF2LEA-13's procedural block shares the lesson slot the chunk can OPEN with that
+    chunk, and once the procedural block shares the lesson slot the chunk can OPEN with that
     block's header while the lessons follow below it. Keying on the first line alone sent the header
     to `frame`'s append-at-the-end fallback — an authority statement printed after the rules it
     governs. The lessons slot has priority 2, so it is still the FIRST rendered chunk with bullets
@@ -564,7 +563,8 @@ def report(alloc: Allocation) -> dict[str, object]:
     """A structured account of one ambient allocation, for logging and the panel.
 
     Includes what was LEFT OUT. An allocator that reports only what it injected cannot be audited
-    for crowd-out — the whole failure this criterion is about is invisible from the surviving text.
+    for crowd-out — the whole failure this requirement is about is invisible from the surviving
+    text.
     """
     kinds: dict[str, int] = {}
     for kind, _key, _tier in alloc.included:
@@ -586,7 +586,7 @@ def preamble_cost() -> int:
     """Token cost of the authority preamble — measured, not asserted.
 
     Exposed because it is the one fixed overhead in the budget: a caller choosing a very small
-    `context_budget_tokens` deserves to know the floor, and S71 already measured that adding the
+    `context_budget_tokens` deserves to know the floor, and it was measured that adding the
     preamble unconditionally blew a 50-token budget before a single item was considered.
     """
     return count_tokens(AUTHORITY_PREAMBLE)

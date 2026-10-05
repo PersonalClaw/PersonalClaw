@@ -95,7 +95,7 @@ def stub_advertiser(monkeypatch):
 
 
 def test_txt_keys_are_a_closed_set():
-    """The record may carry only the four C3 keys — a new one has to be argued for here."""
+    """The record may carry only these four keys — a new one has to be argued for here."""
     txt = disc.build_txt(instance_name="Living room Mac", port=10166)
     assert set(txt) == {"name", "port", "requires_pairing", "schema"}
     assert txt == {
@@ -160,7 +160,7 @@ def test_instance_label_is_one_safe_dns_label():
 
 
 def test_loopback_only_bind_does_not_advertise_and_logs_why(caplog):
-    """The change's no-op case: announcing 127.0.0.1 to a LAN publishes a broken record."""
+    """The no-op case: announcing 127.0.0.1 to a LAN publishes a broken record."""
     with caplog.at_level("INFO", logger="personalclaw.companion.discovery"):
         decision = disc.decide(enabled=True, bind_host="127.0.0.1", port=10166, instance_name="Mac")
     assert decision.advertise is False
@@ -347,7 +347,7 @@ def _enable_discovery(enabled: bool, name: str = "Living room Mac") -> None:
 
 
 def test_default_config_does_not_advertise(stub_advertiser):
-    """Off by default: a fresh install announces nothing (Success Criterion 5)."""
+    """Off by default: a fresh install announces nothing."""
     disc.set_gateway_bind(LAN_HOST, 10166)
     decision = disc.reconcile()
     assert (decision.advertise, decision.reason) == (False, "disabled")
@@ -517,7 +517,7 @@ def test_audit_emits_a_real_sel_row(_isolate, stub_advertiser):
 
 
 def test_discovery_off_leaves_the_manual_pairing_path_working(_isolate, stub_advertiser):
-    """Success Criterion 5: with discovery off, the typed-URL + code path is untouched.
+    """With discovery off, the typed-URL + code path is untouched.
 
     The manual path is `personalclaw auth enroll` → redeem the code from the other device,
     reached at a URL the user typed (or scanned from a QR, which renders the same URL). None

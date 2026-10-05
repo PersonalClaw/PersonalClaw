@@ -37,7 +37,7 @@ function draftCriterion(e: ExitCriterion): ExitCriterion {
 /** The single form behind both the create PAGE and the in-panel edit mode.
  *  `compact` tightens spacing for the narrower SidePanel. Sections mirror the
  *  TasksMultiServer construct; all fields (exit criteria, action plan, typed
- *  dependencies, agent instructions) are persisted by the backend (P5a). */
+ *  dependencies, agent instructions) are persisted by the backend. */
 export function TaskForm({ draft, onChange, compact, allTasks = [] }: { draft: TaskDraft; onChange: (d: TaskDraft) => void; compact?: boolean; allTasks?: TaskItem[] }) {
   const set = <K extends keyof TaskDraft>(k: K, v: TaskDraft[K]) => onChange({ ...draft, [k]: v })
   const gap = compact ? 'gap-l' : 'gap-xl'
@@ -275,7 +275,7 @@ function Section({ title, right, compact, children }: { title: string; right?: R
             Both hosts want h2: on `#/tasks/new` the page h1 is "New task", and in the task detail panel
             on `#/tasks` the page h1 is "Tasks" while the panel itself carries no heading (a docked panel
             is not the page — `PageTitle`'s own rule), so these sections sit one level under the page
-            either way. Same resolution as the dashboard's section headers in cycle 150. */}
+            either way. Same resolution as the dashboard's section headers. */}
         <h2 className="text-on-surface text-[0.8125rem]" style={fvs(550)}>{title}</h2>
         {right}
       </div>

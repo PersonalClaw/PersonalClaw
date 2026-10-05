@@ -12,7 +12,7 @@ import { RowGroup } from './settingsUI'
 // more sites were the SAME SHAPE (a group whose only child is a self-padding `Row`/`Field`) at a
 // different vertical padding:
 //
-//   GuardrailsPanel.tsx:70    py-3   one <Field>   ← the brief's census missed this one
+//   GuardrailsPanel.tsx:70    py-3   one <Field>   ← an earlier census missed this one
 //   AgentDefaultsPanel.tsx:165 py-2  one <Row>
 //   PacksPanel.tsx:262        py-3   one <Row>
 //   PacksPanel.tsx:394        py-3   one <Row>
@@ -23,15 +23,15 @@ import { RowGroup } from './settingsUI'
 //
 // WHY THE SPELLING MATTERED — the actual defect, not a tidiness preference. `px-4` and `py-1` are
 // Tailwind's OWN defaults, not the project scale, so they are frozen against the density and
-// space-scale sliders (`system.md` trap 3: "Tailwind's own defaults leak past the scale … and bypass
-// the roundness slider and cli density"). Driven on `#/settings/agent` before the change, a converted
+// space-scale sliders (`web/DESIGN.md` §6: "the whole app must survive a scheme retint and the
+// density/roundness sliders"). Driven on `#/settings/agent` before the change, a converted
 // group's computed padding versus the token-spelled sibling in the same subtree:
 //
 //                                   comfortable    dense      cli      --space-scale: 1.4
 //   raw `px-4 py-1`  (42 sites)     16 / 4px     16 / 4px   16 / 4px      16 / 4px      ← frozen
 //   token `px-l py-m` (DesignPanel) 16 / 12px    12.8/9.6   10.88/8.16    22.4 / 16.8   ← tracks
 //
-// AFTER (driven at the same three densities, §"What I validated"): the converted group reads
+// AFTER (driven at the same three densities): the converted group reads
 // 16/4px at comfortable — byte-identical to before — then 12.8/3.2px at dense and 10.88/2.72px at
 // cli. `--spacing-l` is `16px * --space-scale` and `--spacing-xs` is `4px * --space-scale`, so
 // `px-l py-xs` IS `px-4 py-1` at default. 43 of the 47 adopted sites are therefore zero-pixel

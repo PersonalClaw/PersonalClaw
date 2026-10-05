@@ -8,7 +8,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A live region with no text announces nothing, however well it is marked up ────────────────────
 //
-// Cycle 142 could not drive this lens and recorded it as UNMEASURED rather than passing. Driven here
+// Earlier work could not drive this lens and recorded it as UNMEASURED rather than passing. Driven here
 // properly — a fresh context per route (cold `sessionStorage`), every `/api/**` response held back,
 // and a 150ms poll for the FIRST frame at which a skeleton exists:
 //
@@ -24,7 +24,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // announcement. Perfectly marked up, entirely silent, from the first frame to the moment data arrived.
 //
 // 🔑 AND THE RESULT-COUNT STATUS DOES NOT COVER IT. `ui/ListControls`' ResultAnnouncement speaks only
-// while a query or filter narrows — deliberately, because cycle 121 fixed the opposite defect (an idle
+// while a query or filter narrows — deliberately, because that fixes the opposite defect (an idle
 // surface announcing "39 items" unprompted). So a cold first load announced nothing before OR after.
 //
 // 🪤 ONE CLAIM DIED ON RE-MEASUREMENT. A 4s-per-request hold left an `aria-busy` region up AFTER the
@@ -35,7 +35,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // 🪤 `#/settings/apps` CARRIED `aria-busy` ON THREE SECTIONS WITH NO ROLE AND NO NAME — not a live
 // region at all, and unfindable. It is one region now.
 //
-// 🪤 CYCLE 144 FOUND THE HOLE IN THIS VERY CENSUS. It keyed on `aria-busy="true"`, and `ui/Loading` —
+// 🪤 A LATER PASS FOUND THE HOLE IN THIS VERY CENSUS. It keyed on `aria-busy="true"`, and `ui/Loading` —
 // the app's OTHER loading state, 6 call sites — is a bare text `<div>` with no `aria-busy` and no role,
 // so the ratchet never looked at it. Measured mid-load on `#/workflows`: "Loading…" visible for 2.8
 // seconds, `SPOKEN=[]`. **A census that keys on one mechanism cannot see a second one.** Both are
@@ -114,7 +114,7 @@ describe('Loading — the other loading state — announces too', () => {
   it('every call site names what is loading', () => {
     // 🪤 COMMENTS STRIPPED FIRST. `InboxSettingsPanel` documents an old bug by quoting the markup
     // (`rendered <Loading /> FOREVER`), and the first version of this counted that prose as a call
-    // site — the third time this session a scan measured a comment.
+    // site — not the first scan to measure a comment.
     const code = (abs: string) => readSource(abs).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
     const sites = walk(SRC).filter((abs) => /<Loading\b/.test(code(abs)) && !abs.endsWith('ListScaffold.tsx'))
     expect(sites.length, 'Loading call sites').toBeGreaterThanOrEqual(6)
@@ -126,7 +126,7 @@ describe('Loading — the other loading state — announces too', () => {
 describe('the census is closed: no busy region without an announcement', () => {
   it('every file with a busy region renders LoadingStatus', () => {
     // THE RATCHET. A new skeleton that marks itself busy and says nothing is exactly the defect this
-    // cycle measured; it fails here instead of shipping.
+    // change measured; it fails here instead of shipping.
     const offenders = walk(SRC)
       .filter((abs) => /aria-busy="true"/.test(readSource(abs)))
       .filter((abs) => !/LoadingStatus/.test(readSource(abs)))
@@ -136,7 +136,7 @@ describe('the census is closed: no busy region without an announcement', () => {
 
   it('finds the population — the scan is not vacuous', () => {
     const files = walk(SRC).filter((abs) => /aria-busy="true"/.test(readSource(abs)))
-    // At the MEASURED population (cycle 134's rule): ui/ListScaffold + ChatPage + ProvidersPanel +
+    // At the MEASURED population, not below it: ui/ListScaffold + ChatPage + ProvidersPanel +
     // ModelBackends + AppsPanel + NodeInspectorDrawer + WorkspacePanel.
     expect(files.length, 'files with a busy region').toBeGreaterThanOrEqual(7)
   })
@@ -171,7 +171,7 @@ describe('the census is closed: no busy region without an announcement', () => {
 // other, and a line-based variant flagged `ui/Button.tsx`, whose spinner is inside a button and
 // needs no announcement. An inline spinner beside visible text must NOT gain a live region, so a
 // sweep that cannot tell the two apart would either miss real cases or demand noise. These two are
-// the verified full-region states; a later cycle that finds another adds it here.
+// the verified full-region states; a later change that finds another adds it here.
 describe('the route-level and app-host loading states announce', () => {
   const SRC = join(process.cwd(), 'src')
   const read = (rel: string) => readSource(join(SRC, rel))

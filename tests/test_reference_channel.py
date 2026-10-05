@@ -1,4 +1,4 @@
-"""Reference echo channel transport (#41) — proves the ADDING_A_CHANNEL example works."""
+"""Reference echo channel transport — proves the worked example works."""
 
 from __future__ import annotations
 

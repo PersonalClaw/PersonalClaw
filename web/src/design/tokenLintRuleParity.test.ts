@@ -11,7 +11,7 @@ import {
 } from './tokenLintRule'
 
 // ── Two-sided pin: one token-lint rule, two consumers ──────────────────────
-// APE-4 verifies an app's `quality.designSystem: "v2"` claim by running token-lint
+// An app's `quality.designSystem: "v2"` claim is verified by running token-lint
 // over the app BUNDLE's frontend — from Python, in the apps-repo CI, with only a
 // core wheel installed. So the patterns had to become data
 // (src/personalclaw/apps/token_lint_rules.json) with a thin consumer on each side.

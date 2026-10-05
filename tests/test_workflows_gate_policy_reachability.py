@@ -32,7 +32,7 @@ so it fires on a name that does not exist yet.
 
 ## Shrink-only, and seeded at the MEASURED population
 
-``KNOWN_UNREACHABLE`` is one name, not zero, and that is deliberate: the ruling is that
+``KNOWN_UNREACHABLE`` is one name, not zero, and that is deliberate: the reason is that
 a never-run gate given teeth at zero reds every pre-existing case at once, which is an
 outage. Adding a name here is FORBIDDEN — the fix for a red is to wire the code or delete
 it, exactly as #375 was resolved. Removing one is the point.

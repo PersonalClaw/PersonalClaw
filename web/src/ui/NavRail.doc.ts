@@ -16,7 +16,7 @@ const doc: UiDoc = {
     { name: 'overlay', description: 'Mobile: render the rail as a fixed OVERLAY drawer (out of layout flow) instead of an in-flow column, so an expanded rail never squeezes the page. Always shows full labels.' },
     { name: 'overlayOpen', description: 'Overlay drawer expanded (slid in). When false the drawer is off-screen (translateX -100%) and no scrim shows.' },
     { name: 'onScrimClick', description: 'Tap the scrim behind the open overlay drawer → close it.' },
-    { name: 'disclosure', description: 'Progressive disclosure (ONBOARDING-UX C4): {expanded, moreCount, onToggle}. Renders an "Everything / Show fewer" row at the end of scroll order, with aria-expanded and the count in its accessible name. Omit it (or pass moreCount 0) and no expander renders. The rail is handed already-FILTERED items — which surfaces are starter, which are pinned and how pins persist all live in app/navDisclosure.ts.' },
+    { name: 'disclosure', description: 'Progressive disclosure: {expanded, moreCount, onToggle}. Renders an "Everything / Show fewer" row at the end of scroll order, with aria-expanded and the count in its accessible name. Omit it (or pass moreCount 0) and no expander renders. The rail is handed already-FILTERED items — which surfaces are starter, which are pinned and how pins persist all live in app/navDisclosure.ts.' },
   ],
   bestPractices: [
     { guidance: true, description: 'Reach for NavRail for the app-level side navigation rather than hand-rolling — drag-resize, width persistence, the collapsed icon rail, and the sliding active pill come built in.' },

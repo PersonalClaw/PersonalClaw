@@ -11,10 +11,10 @@ import { encodeQr, qrPath } from '../../lib/qr'
 
 // ── Settings → Devices ────────────────────────────────────────────────────────────────────────
 //
-// The backend shipped in CA-1 with FOUR routes and zero consumers, so every clause below was
+// The backend shipped with FOUR routes and zero consumers, so every clause below was
 // unreachable rather than wrong. Four ways this panel could look finished while lying:
 //
-//  • `last_seen` OF 0 MEANS "NEVER MADE AN AUTHORIZED REQUEST", and the C1 author held the field
+//  • `last_seen` OF 0 MEANS "NEVER MADE AN AUTHORIZED REQUEST", and the field was held
 //    back specifically because a value backfilled from the pairing time "would read as fresh
 //    forever, which is worse than an absent column: the owner would use it to decide a device is
 //    still in use". So "never" is asserted as its own state, and the pairing time is asserted
@@ -252,7 +252,7 @@ describe('pairing surfaces the code and the link', () => {
   })
 
   it('renders a QR of the PAIRING URL — the payload, not the bare code', async () => {
-    // The clause is "renders a QR of {pairing_url, one-time code}", and the two are one thing:
+    // The requirement is a QR of {pairing_url, one-time code}, and the two are one thing:
     // the URL already contains the code, which is what makes a single scan enough. So the
     // assertion is on the PAYLOAD, and its counter-assertion is the mistake that would look
     // identical on a screenshot — encoding the eight-character code, which a phone camera would
@@ -331,9 +331,9 @@ describe('pairing surfaces the code and the link', () => {
   })
 })
 
-// ── 2026-08-19 (ux-718): the code appeared, and the flow said nothing while dropping your place ────
+// ── 2026-08-19: the code appeared, and the flow said nothing while dropping your place ─────────────
 //
-// `#/settings/devices` was the ONE shipped settings panel missing from the polish loop's capture
+// `#/settings/devices` was the ONE shipped settings panel missing from the screenshot capture
 // inventory (it is in the axe manifest, so `npm run e2e:a11y` covered it — the two lists had drifted
 // while staying the same LENGTH, 32 each, which is how a set difference hides from a count). Adding
 // it and driving the pairing flow with the keyboard found two things a scan cannot see:
@@ -494,7 +494,7 @@ describe('the list names every sign-in, and signs any of them out', () => {
     const dialog = await screen.findByRole('alertdialog')
     expect(dialog.textContent ?? '').toMatch(/iPhone/)
     expect(dialog.textContent ?? '', 'a paired device signs back in by pairing').toMatch(/pair it again/)
-    // Ledger 359: its pushes end with its sign-in, and the owner is told before choosing.
+    // Its pushes end with its sign-in, and the owner is told before choosing.
     expect(dialog.textContent ?? '').toMatch(/gets no more push notifications from it/)
     fireEvent.click(Array.from(dialog.querySelectorAll('button')).find((b) => /^sign out$/i.test(b.textContent ?? ''))!)
     await waitFor(() => expect(revoke).toHaveBeenCalledWith('phone'))
@@ -541,7 +541,7 @@ describe('the list names every sign-in, and signs any of them out', () => {
   })
 })
 
-// ── Integration tokens (ledger 317a) ───────────────────────────────────────────────────────────
+// ── Integration tokens ─────────────────────────────────────────────────────────────────────────
 //
 // The tokens an external agent reaches an inbound surface with had no lifetime and no list: an
 // MCP token pasted into an editor's config long ago still worked, and the owner could not see it,

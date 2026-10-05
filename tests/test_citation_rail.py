@@ -7,11 +7,11 @@ load-bearing prose: a reader who cannot follow it has no way to check the arithm
 reader who follows a citation into unrelated code is actively misled.
 
 Prose citations rot silently. Two of this docstring's citations already did, and neither of
-the change's two hand-run audit passes caught it, because nothing executes a docstring:
+the two hand-run audit passes caught it, because nothing executes a docstring:
 
 * ``dashboard/chat_runner.py:3712-3714`` was cited as composing the rendered "cached"
-  figure as ``cache_read + cache_creation``. PCS-7 DELETED that pre-summed composition —
-  splitting it into ``N read / N written`` is the change's own change — so the citation
+  figure as ``cache_read + cache_creation``. That pre-summed composition was DELETED —
+  it was split into ``N read / N written`` — so the citation
   pointed into ACP JSON-string commentary. The cited code did not move; it ceased to exist.
 * ``dashboard/chat_runner.py:492-525`` was cited for the ``context_pct`` honesty rule and
   pointed at agent-name resolution and a redaction helper.

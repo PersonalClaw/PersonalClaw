@@ -8,13 +8,13 @@ const PROVIDERS: SandboxProvider[] = [
   { name: 'docker', display_name: 'Docker (bind-mount container)', available: true },
 ]
 
-describe('SandboxPicker (EI-4 §1.3(3))', () => {
+describe('SandboxPicker', () => {
   it('renders one option per provider, greying unavailable tiers so they cannot be chosen', () => {
     render(<SandboxPicker providers={PROVIDERS} value="none" onChange={() => {}} />)
     const opts = screen.getAllByRole('option') as HTMLOptionElement[]
     expect(opts.map((o) => o.value)).toEqual(['none', 'lima', 'docker'])
     const lima = opts.find((o) => o.value === 'lima')!
-    // SC3 "greyed-out-with-reason": a stopped tier is disabled and says so.
+    // "Greyed-out-with-reason": a stopped tier is disabled and says so.
     expect(lima.disabled).toBe(true)
     expect(lima.textContent).toContain('unavailable')
     expect(opts.find((o) => o.value === 'docker')!.disabled).toBe(false)

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { resolveOpenTrigger, scheduleToTrigger, storeToTrigger, hookToTrigger, type Trigger } from './triggerMeta'
 import type { HookItem, ScheduleJob, Trigger as WireTrigger } from '../../lib/api'
 
-// ── `?open=` resolves the id the trigger SUBSTRATE mints, not only the page's own (B8) ───────────
+// ── `?open=` resolves the id the trigger SUBSTRATE mints, not only the page's own ────────────────
 //
 // `delivery.status_url`, the autopause attention card and the triage digest all link
 // `#/triggers?open=<store id>` — `clock:standup-nudge` — while the list names that row

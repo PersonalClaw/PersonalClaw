@@ -1,4 +1,4 @@
-"""Unit tests for the unified loop plan walkthrough (Slice 2d(ii)) — the kind-
+"""Unit tests for the unified loop plan walkthrough — the kind-
 agnostic state machine + the goal/code Walkthrough delegates' spec projection."""
 
 from __future__ import annotations
@@ -197,7 +197,7 @@ class TestDesignWalkthrough:
         assert spec["kind_config"]["design_steps"] == ["Foundations", "Document & export"]
 
     def test_finalize_merges_approved_token_overrides_into_kind_config(self):
-        # D4 approve→populate: every approved token-step's token_overrides deep-merge
+        # Approve→populate: every approved token-step's token_overrides deep-merge
         # into kind_config.token_overrides on finalize, so the cockpit opens populated
         # with the approved system (authoritative server-side, not reliant on the FE).
         kinds.ensure_loaded()

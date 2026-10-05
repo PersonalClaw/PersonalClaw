@@ -3,7 +3,7 @@
 - ``config_dir()`` — PersonalClaw's home dir (``~/.personalclaw`` or ``PERSONALCLAW_HOME``).
 - ``app_data_dir(name)`` — an app's private, persisted data dir (survives updates).
 - ``shared_app_data_dir(name)`` — a READ-ONLY handle to another app's data dir, when
-  this app holds a consented APE-10 ``storageRead`` grant on it (else ``None``).
+  this app holds a consented ``storageRead`` grant on it (else ``None``).
 - ``sandbox_wrap_argv(argv, mode)`` — wrap a command in the host sandbox (an app that
   shells out runs under the same confinement core does). It raises, with the sentence to show,
   where that sandbox cannot be applied (the desktop app on a Linux host); the command then must
@@ -52,15 +52,15 @@ from personalclaw.sandbox import wrap_argv as sandbox_wrap_argv  # noqa: F401
 
 
 class _ReadOnlyPath(type(Path())):  # type: ignore[misc]
-    """A ``Path`` into ANOTHER app's data dir, handed to a CONSUMER under an APE-10
+    """A ``Path`` into ANOTHER app's data dir, handed to a CONSUMER under a
     ``storageRead`` grant. Read-only is the contract: the consumer is never handed a
     writable handle. Reads pass through unchanged; every mutating operation raises
     ``PermissionError``. Child paths (``shared / "notes.json"``) inherit read-only,
     because pathlib rebuilds children through ``with_segments`` as the same class."""
 
     _RO_MSG = (
-        "shared app data is read-only (APE-10 storageRead grant): another app's data "
-        "cannot be written — send it data over the appMessaging broker (APE-9) instead"
+        "shared app data is read-only (storageRead grant): another app's data "
+        "cannot be written — send it data over the appMessaging broker instead"
     )
 
     def _readonly(self, *_args: object, **_kwargs: object):
@@ -85,7 +85,7 @@ class _ReadOnlyPath(type(Path())):  # type: ignore[misc]
 
 
 def shared_app_data_dir(name: str) -> Path | None:
-    """A READ-ONLY handle to app ``name``'s data dir, or ``None`` if not granted (APE-10).
+    """A READ-ONLY handle to app ``name``'s data dir, or ``None`` if not granted.
 
     Returns the dir the gateway mounts for this backend as
     ``PERSONALCLAW_APP_SHARED_DIR_<NAME>`` (``name`` upper-snaked, matching
@@ -93,7 +93,7 @@ def shared_app_data_dir(name: str) -> Path | None:
     declared ``storageRead`` grant on ``name`` (this app named it AND ``name`` declared
     ``storageShared``). No grant → no env var → ``None`` (deny by default). The returned
     path (and any child) refuses writes with ``PermissionError``; cross-app writes stay
-    broker-only (``appMessaging``, APE-9)."""
+    broker-only (``appMessaging``)."""
     raw = os.environ.get(shared_dir_env_name(name))
     if not raw:
         return None

@@ -34,10 +34,10 @@ function SummaryRow({ icon, label, group }: { icon: React.ReactNode; label: stri
 /** The learning summary block — "what did this thing
  *  learn lately", as new/refined/pending counts with the names behind them.
  *
- *  **This is the FALLBACK surface, and deliberately so.** T2.3 asked for the block to be
- *  registered with the digest builder; that builder does not exist in the tree (no
- *  digest-section registry of any name), and the task row plus the change's acceptance criteria both
- *  sanction rendering the same block on the skills page header instead. The gather itself
+ *  **This is the FALLBACK surface, and deliberately so.** The block's natural home is the
+ *  digest builder; that builder does not exist in the tree (no
+ *  digest-section registry of any name), so the same block renders on the skills page
+ *  header instead. The gather itself
  *  lives in ONE place server-side (`learning_summary.compose_learning_summary`), so a
  *  digest builder consumes it rather than growing a second implementation.
  *

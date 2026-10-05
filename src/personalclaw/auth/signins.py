@@ -2,7 +2,7 @@
 ``session_signed_out``.
 
 One spelling for every credential that lets something reach the gateway: a dashboard session
-(``dashboard/token_auth.py``) and an integration's token (``inbound/tokens.py``, ledger 317a)
+(``dashboard/token_auth.py``) and an integration's token (``inbound/tokens.py``)
 write the same two operations with the same metadata, so the security log answers "what could
 reach this gateway, and when did that stop" in one query rather than one per kind.
 

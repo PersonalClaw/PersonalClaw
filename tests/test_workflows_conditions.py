@@ -1,7 +1,7 @@
 """The engine's ONE boolean-condition dialect (`workflows/conditions.py`).
 
 Three engine sites ask "is this true?" — an `expression` gate, an `until` loop, and a
-node's `success_when` — and before WF2LOO-10 the gate answered it by INTERPOLATING the
+node's `success_when` — and the gate used to answer it by INTERPOLATING the
 expression into a string and asking whether the string was truthy. The regression test at
 the bottom of this file pins the consequence: two shipped templates carried a gate that
 could not reject, because `"false == true"` is a non-empty string.
@@ -110,7 +110,7 @@ class TestComparison:
         assert evaluate('{{nodes.audit.output.verdict}} == "fail"', _ctx()) is False
 
     def test_inequality_against_the_empty_string(self) -> None:
-        """The form R5f's inverted repro predicate needs."""
+        """The form the inverted repro predicate needs."""
         assert evaluate("nodes.init.output.blocked_by != ''", _ctx()) is True
         assert evaluate("inputs.reason != ''", _ctx(reason="")) is False
 

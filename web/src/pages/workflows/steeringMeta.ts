@@ -1,6 +1,6 @@
 import type { WorkflowNodeState } from '../../lib/api'
 
-/** Judge-comment triage + interrupt-queue helpers (LOOPS-EVOLUTION R14 / criterion 8).
+/** Judge-comment triage + interrupt-queue helpers.
  *
  *  Pure so the interesting decisions — which node carries a judge comment worth acting on,
  *  and what text an "accept" sends to the worker — are unit-testable without a rendered run.

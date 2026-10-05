@@ -123,7 +123,7 @@ def test_vacuity_floor_the_loop_side_holds_no_logic_of_its_own() -> None:
         materialize.is_resolved = lambda status: True  # type: ignore[assignment]
         assert tasks_link._is_resolved(TaskStatus.OPEN) is True, (
             "tasks_link._is_resolved did not follow materialize.is_resolved — it is carrying its "
-            "own implementation again, which is the duplication PP-16 removed"
+            "own implementation again, which is the duplication that was removed"
         )
     finally:
         materialize.is_resolved = original  # type: ignore[assignment]

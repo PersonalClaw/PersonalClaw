@@ -252,9 +252,9 @@ class WorkflowTypeHandler(_TypeHandler):
 
     def register(self, ext: RegisteredProvider, instance: Any) -> None:
         # Repointed from the deleted `workflows.registry` to the v2 def-provider
-        # registry (WORKFLOWS-V2 Phase 1). This handler must stay live: `PROVIDER_TYPES`
+        # registry. This handler must stay live: `PROVIDER_TYPES`
         # and the runtime handler set have to be equal, or installing/reinstalling any
-        # app declaring a workflow provider is refused (#47's bug class).
+        # app declaring a workflow provider is refused.
         from personalclaw.workflows.defs import register_provider
 
         register_provider(instance)
@@ -426,7 +426,7 @@ class SearchTypeHandler(_TypeHandler):
 
 
 def _app_action_type_key(app_name: str, action_name: str) -> str:
-    """The action-type key for an app-contributed action (AUTONOMY-GUARDRAILS §5.2)."""
+    """The action-type key for an app-contributed action."""
     return f"app:{app_name}.{action_name}"
 
 
@@ -490,7 +490,7 @@ class ActionTypeHandler(_TypeHandler):
     Builds an ActionProvider via the manifest factory, then registers it in
     the action_providers registry so triggers can dispatch to it by name.
 
-    Registration and DEclaration move together (AUTONOMY-GUARDRAILS §5.2): the app's
+    Registration and DEclaration move together: the app's
     ``autonomy`` block becomes an ``ActionTypeSpec`` keyed ``app:<app>.<action>`` here, and
     disabling the app drops both. A declaration outliving its provider would keep claiming a
     dispatch name a different app could later take — which is how one app would inherit
@@ -524,21 +524,21 @@ class ActionTypeHandler(_TypeHandler):
 
 
 class DutyGateTypeHandler(_TypeHandler):
-    """Handler for ``provider.type == 'duty_gate'`` extensions (AUTOMATION-SUBSTRATE AUTO-A2).
+    """Handler for ``provider.type == 'duty_gate'`` extensions.
 
     A duty gate answers "is the user on duty right now" so a trigger can hold its fire outside
     working hours — the canonical supplier is a future calendar app. Registered in the
     ``triggers.calendar`` flat registry, matching the ``action_providers`` shape rather than
     inventing a second registry idiom.
 
-    Lands in the SAME commit as its ``PROVIDER_TYPES`` entry (the #47 rule): a manifest type with no
+    Lands in the SAME commit as its ``PROVIDER_TYPES`` entry: a manifest type with no
     runtime handler installs successfully and then does nothing, which is the failure
     ``test_manifest_types_match_handlers`` exists to prevent.
 
     Deregistration matters more here than for most types: the gate is consulted on every fire, and
     ``evaluate_duty`` treats an unregistered name as fail-OPEN. So uninstalling the app that
     supplied
-    a gate makes its triggers run unfiltered rather than stopping them — deliberate (§1.4), and what
+    a gate makes its triggers run unfiltered rather than stopping them — deliberate, and what
     ``automation doctor``'s ``unknown_duty_gate`` finding exists to surface.
     """
 
@@ -604,7 +604,7 @@ class SyncTypeHandler(_TypeHandler):
     ``sync_transports`` registry so the sync cycle can resolve the configured back-end by
     name. Enabling ``git-sync`` registers the git transport; disabling it unregisters it —
     the same one-source-of-truth lifecycle the channel transports follow. Lands in the same
-    commit as the ``sync`` entry in ``PROVIDER_TYPES`` (the #47 rule).
+    commit as the ``sync`` entry in ``PROVIDER_TYPES``.
     """
 
     def create(self, ext: RegisteredProvider) -> Any:
@@ -631,7 +631,7 @@ class SyncTypeHandler(_TypeHandler):
 
 
 class TriggerSourceTypeHandler(_TypeHandler):
-    """Handler for ``provider.type == 'trigger_source'`` extensions (AUTOMATION-SUBSTRATE AUTO-A4).
+    """Handler for ``provider.type == 'trigger_source'`` extensions.
 
     An app-contributed ORIGIN of trigger events: the app observes something core knows nothing
     about and pushes typed events onto the ONE event bus under a namespaced source
@@ -639,13 +639,13 @@ class TriggerSourceTypeHandler(_TypeHandler):
     ``{source, pattern}`` spec. Registered in the ``trigger_sources`` flat registry, matching the
     ``sync_transports`` / ``sandbox_providers`` shape rather than inventing a fourth idiom.
 
-    Lands in the SAME commit as its ``PROVIDER_TYPES`` entry (the #47 rule): a manifest type with no
+    Lands in the SAME commit as its ``PROVIDER_TYPES`` entry: a manifest type with no
     runtime handler installs successfully and then does nothing, which is the failure
     ``test_manifest_types_match_handlers`` exists to prevent.
 
     **Deregistration PARKS, it does not silently drop** — the difference from every other type
-    handler here, and the plan's explicit requirement ("triggers bound to a vanished source park
-    with a typed reason, never silently die"). Contrast ``DutyGateTypeHandler``, whose gate fails
+    handler here: triggers bound to a vanished source park with a typed reason, never silently
+    die. Contrast ``DutyGateTypeHandler``, whose gate fails
     OPEN on deregistration: a duty gate only ever REFINES when a trigger fires, so losing it means
     running unfiltered; a trigger SOURCE is the reason the fire happens at all, so losing it means
     nothing fires and a user must be able to see why. `trigger_sources.parking` reuses
@@ -739,7 +739,7 @@ class TriggerSourceTypeHandler(_TypeHandler):
 
     @staticmethod
     async def _run_start(instance: Any, name: str, emit_fn: Any) -> None:
-        """Await the source's `start`, logging a raise legibly (PLATFORM-LEGIBILITY §2).
+        """Await the source's `start`, logging a raise legibly.
 
         Fire-and-forget has no result surface, so the log line IS the report — a source whose watch
         cannot start must not fail as an unretrieved-task warning nobody reads.
@@ -774,7 +774,7 @@ class TriggerSourceTypeHandler(_TypeHandler):
 
 
 class TriggerTypeHandler(_TypeHandler):
-    """Handler for ``provider.type == 'trigger'`` extensions (TEAM-SHARED-ENTITIES §3 — TSE-4).
+    """Handler for ``provider.type == 'trigger'`` extensions.
 
     An app-contributed STORE of trigger ROWS: a shared or team trigger backend whose rows appear on
     the Automations page beside the local ones. Registered in the ``triggers.registry`` flat
@@ -790,7 +790,7 @@ class TriggerTypeHandler(_TypeHandler):
     provider-emitted event — which is exactly what collapsing the two types would make unsayable.
     See ``personalclaw.triggers.provider`` for the long form.
 
-    Lands in the SAME commit as its ``PROVIDER_TYPES`` entry (the #47 rule): a manifest type with no
+    Lands in the SAME commit as its ``PROVIDER_TYPES`` entry: a manifest type with no
     runtime handler installs successfully and then does nothing, which is the failure
     ``test_manifest_types_match_handlers`` exists to prevent.
 
@@ -839,14 +839,14 @@ class TriggerTypeHandler(_TypeHandler):
 
 
 class SandboxTypeHandler(_TypeHandler):
-    """Handler for ``provider.type == 'sandbox'`` extensions (EXECUTION-ISOLATION EI-1).
+    """Handler for ``provider.type == 'sandbox'`` extensions.
 
     Builds a ``SandboxProvider`` via the manifest factory and registers it in the
     ``sandbox_providers`` registry so a spawn site can resolve the configured isolation backend
     by name. Enabling a container-tier app registers it; disabling it unregisters it — the same
     one-source-of-truth lifecycle the sync + channel transports follow. The ``none`` provider is
     a core builtin (self-registered on import), not an app. Lands in the same commit as the
-    ``sandbox`` entry in ``PROVIDER_TYPES`` (the #47 rule).
+    ``sandbox`` entry in ``PROVIDER_TYPES``.
     """
 
     def create(self, ext: RegisteredProvider) -> Any:
@@ -873,14 +873,14 @@ class SandboxTypeHandler(_TypeHandler):
 
 
 class OcrTypeHandler(_TypeHandler):
-    """Handler for ``provider.type == 'ocr'`` extensions (KNOWLEDGE-OCR-INGESTION KOCR-2).
+    """Handler for ``provider.type == 'ocr'`` extensions.
 
     Builds an ``OcrProvider`` via the manifest factory and registers it in the ``ocr``
     registry so the ingestion graph's engine-backed OCR node can resolve an engine with NO
     model bound. Enabling an OCR app registers it; disabling it unregisters — so a user with
     no OCR app sees exactly the pre-seam behaviour (the node finds no runnable backend and is
     skipped). There is no in-core builtin: core ships no engine. Lands in the same commit as
-    the ``ocr`` entry in ``PROVIDER_TYPES`` (the #47 rule).
+    the ``ocr`` entry in ``PROVIDER_TYPES``.
     """
 
     def create(self, ext: RegisteredProvider) -> Any:
@@ -956,7 +956,7 @@ class MemoryTypeHandler(_TypeHandler):
 
 
 class VectorStoreTypeHandler(_TypeHandler):
-    """Handler for ``provider.type == 'vector_store'`` extensions (KBVS-1).
+    """Handler for ``provider.type == 'vector_store'`` extensions.
 
     Builds a :class:`~personalclaw.vector_stores.base.VectorStoreProvider` from the app's
     own settings and registers it, which IS the binding: ``HybridRetriever``'s chunk arm
@@ -965,7 +965,7 @@ class VectorStoreTypeHandler(_TypeHandler):
     naming the backend, so enabling the app and "knowledge searches that store" cannot
     disagree.
 
-    Lands in the SAME commit as its ``PROVIDER_TYPES`` entry (the #47 rule).
+    Lands in the SAME commit as its ``PROVIDER_TYPES`` entry.
     """
 
     def create(self, ext: RegisteredProvider) -> Any:
@@ -1019,14 +1019,14 @@ class VectorStoreTypeHandler(_TypeHandler):
 
 
 class KnowledgeTypeHandler(_TypeHandler):
-    """Handler for ``provider.type == 'knowledge'`` extensions (WATCHED-SOURCES §1.3).
+    """Handler for ``provider.type == 'knowledge'`` extensions.
 
     Builds a :class:`~personalclaw.knowledge_providers.base.KnowledgeProvider` via
     the manifest factory and registers it in ``knowledge_providers.registry`` so
     ``list_provider_info`` surfaces it as ``kind:external`` and ``search_all`` can
     fan queries to it. This graduates ``knowledge`` from an :class:`EntitySeamHandler`
     no-op to a real handler now that the registry has a consumer (the knowledge
-    handlers + WATCHED-SOURCES' engine).
+    handlers + the watched-sources engine).
 
     The bundled native provider's manifest factory returns ``None`` (its instance
     needs the ``DashboardState`` store, so it self-registers via
@@ -1061,7 +1061,7 @@ class KnowledgeTypeHandler(_TypeHandler):
 
 
 class InboxTypeHandler(_TypeHandler):
-    """Handler for ``provider.type == 'inbox'`` extensions (INU-8).
+    """Handler for ``provider.type == 'inbox'`` extensions.
 
     Builds a :class:`~personalclaw.inbox_providers.base.MessageSourceProvider` via
     the manifest factory and registers it in ``inbox_providers.registry``, which is
@@ -1076,7 +1076,7 @@ class InboxTypeHandler(_TypeHandler):
     enable-time and its result was discarded, so an app's source could never be
     resolved (resolution read only the ``personalclaw.message_source_providers``
     entry-point group, which an installed app cannot contribute to). That is the
-    #47 class the manifest-vs-handler guard exists to prevent.
+    bug class the manifest-vs-handler guard exists to prevent.
 
     **Deregistration is load-bearing.** An unregistered source is a PHANTOM: a
     disabled or uninstalled app whose ``source_name`` is still in the inbox's poll
@@ -1112,7 +1112,7 @@ class InboxTypeHandler(_TypeHandler):
 
 
 class NotificationTypeHandler(_TypeHandler):
-    """Handler for ``provider.type == 'notification'`` extensions (`TSE2-5`).
+    """Handler for ``provider.type == 'notification'`` extensions.
 
     Builds a
     :class:`~personalclaw.notification_providers.base.NotificationDeliveryProvider` via the
@@ -1125,7 +1125,7 @@ class NotificationTypeHandler(_TypeHandler):
     replaced said out loud that it was empty — *"No provider declares type=notification;
     pluggable delivery backends remain a future design"* — and that made the type
     declarable-but-dead: the factory ran at enable-time and its result was discarded, so an
-    app's backend could never be reached. That is the #47 class the manifest-vs-handler guard
+    app's backend could never be reached. That is the bug class the manifest-vs-handler guard
     exists to prevent.
 
     **Deregistration is load-bearing, and more so here than for a source.** A phantom inbox
@@ -1393,7 +1393,7 @@ def get_provider_registry() -> ProviderRegistry:
         # inbox_providers.registry, which the inbox's poll catalog reads FIRST (ahead of
         # the personalclaw.message_source_providers entry-point group an installed app
         # cannot contribute to). Graduated from an EntitySeamHandler no-op — the seam
-        # now has a consumer, so dropping the instance would be the #47 dead end.
+        # now has a consumer, so dropping the instance would leave the type declarable-but-dead.
         _registry.register_type_handler("inbox", InboxTypeHandler())
         _registry.register_type_handler("notification", NotificationTypeHandler())
         _registry.register_type_handler("channel", ChannelTypeHandler())

@@ -1,7 +1,7 @@
 """Ollama provider — local Ollama server via the ``httpx`` HTTP client.
 
 The ``httpx`` SDK is imported lazily inside :meth:`OllamaProvider.__init__`
-to satisfy Requirement R6.5 / Property 11 (Provider SDK Lazy Import). The
+so importing this module never imports the SDK. The
 module file itself is safe to import without ``httpx`` installed: only
 constructing an :class:`OllamaProvider` instance triggers the SDK import.
 
@@ -499,7 +499,7 @@ class OllamaProvider(ModelProvider):
 
     The ``httpx`` SDK is imported inside ``__init__`` so the package
     ``personalclaw.providers`` can be imported without pulling the SDK into
-    ``sys.modules`` (R6.5 / Property 11).
+    ``sys.modules``.
     """
 
     @property
@@ -525,7 +525,7 @@ class OllamaProvider(ModelProvider):
         extra_options: dict[str, object] | None = None,
         instance: str = "",
     ) -> None:
-        # Lazy import per R6.5 / Property 11. Do NOT lift to module top.
+        # Lazy import, so importing this module never imports httpx. Do NOT lift to module top.
         import httpx  # noqa: WPS433
 
         # Ollama is typically unauth'd on localhost; ``credential`` is
@@ -1092,7 +1092,7 @@ class OllamaProvider(ModelProvider):
 
 # ── Capability descriptor ────────────────────────────────────────────────
 #
-# Per design § A.5, Ollama supports streaming and embeddings fully. Tools are
+# Ollama supports streaming and embeddings fully. Tools are
 # advertised here (Ollama's /api/chat forwards a tools schema and streams back
 # tool_calls) but remain model-dependent: each instance says whether ITS model
 # calls them, from what the server said (`OllamaProvider.supports_tools`), and
@@ -1341,7 +1341,7 @@ def _factory(
         options.pop(_OUTPUT_TYPE_KEY, None)
         options.update(_requested)
 
-    # A per-call sampling TEMPERATURE arrives the same way (HARNESS-CRAFT §2.1: best-of-N needs
+    # A per-call sampling TEMPERATURE arrives the same way (best-of-N needs
     # N genuinely different samples), and on ollama's wire it is not a top-level field: it lives
     # in the request's `options` object. This factory used to read neither — the kwarg was
     # dropped, and a proxy in front of a live ollama saw every best-of-n candidate request carry

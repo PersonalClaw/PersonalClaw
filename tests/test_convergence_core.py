@@ -103,7 +103,7 @@ def _corpus() -> dict[str, tuple[TickConfig, TickState]]:
             stall_cfg,
             _fail(_state(nudges_issued=1), n=3, text="still failing", fix="null check line 52"),
         ),
-        # 8-13: the progress branches, unchanged by PP-15
+        # 8-13: the progress branches, unchanged by the widening
         "rollback": (
             TickConfig(steps=(gated, gated)),
             _state(step_index=1, metric=0.2, prior_step_floor=0.6),
@@ -132,7 +132,7 @@ CORPUS = _corpus()
 def test_the_corpus_actually_reaches_every_action_including_the_new_two():
     """Vacuity control. A purity suite that only ever exercised EXECUTE would pass forever
     while the branches that gained state stayed unproven, so the corpus must be shown to
-    reach every member of `Action` — above all the two PP-15 added."""
+    reach every member of `Action` — above all the two the widening added."""
     reached = {evaluate(cfg, state, NOW).action for cfg, state in CORPUS.values()}
     missing = set(Action) - reached
     assert not missing, f"the corpus never reaches {sorted(a.value for a in missing)}"
@@ -243,7 +243,7 @@ def test_the_rung_a_stall_takes_is_a_function_of_persisted_position_only():
 
 
 def test_the_supervisor_policy_supplies_the_thresholds():
-    """The wiring PP-14 declared and PP-15 owed: a template's `supervisor:` block must be what
+    """The declared wiring, made real: a template's `supervisor:` block must be what
     the engine applies. A policy whose ladder is one rung long must surface a stall that a
     default policy would only escalate."""
 

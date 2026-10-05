@@ -5,19 +5,19 @@ import { BrowseMirror } from './BrowseMirror'
 import type { WsMessage } from '../../../lib/useChatSocket'
 import type { BrowsePendingGrant, BrowseStatus } from '../../../lib/api'
 
-// ── The dashboard's "Browse live view" band (BA-5 + BA-9, BROWSE-AUTOMATION §(b)/(c)) ──
+// ── The dashboard's "Browse live view" band ──
 //
 // The browser-side sibling of DesktopLiveView, pinned by the thing that would falsify it:
 //
 //  · it CONSUMES the `browse_step` WS frame — url + last action + the screenshot PATH — and renders
-//    it live. This is the clause the 2026-09-10 audit found missing: on origin/main there is no
+//    it live. Before the panel there was no
 //    web/src consumer of `browse_step` at all, so this test cannot pass without the panel.
 //  · the kill control POSTs `/api/browse/kill` in ONE click (a running browse stops within a step).
 //  · an expired session raises a PERSISTENT banner (role=alert), from the status read the panel
 //    polls, refreshed by the `browse_auth_expired` signal.
 //  · a FAILED status read says it could not read — it does not impersonate a calm, idle browser.
-//  · **BA-9: a pending per-task grant is ANSWERABLE here.** The audit found `approve_grant` /
-//    `reject_grant` / `pending_grants` with zero non-test callers and zero `web/src` references, so
+//  · **A pending per-task grant is ANSWERABLE here.** `approve_grant` /
+//    `reject_grant` / `pending_grants` had zero non-test callers and zero `web/src` references, so
 //    every `user_browser` task could only ever end in the fail-closed 300s refusal. These tests are
 //    the falsifier: they fail unless the card renders the scope and both verbs POST.
 

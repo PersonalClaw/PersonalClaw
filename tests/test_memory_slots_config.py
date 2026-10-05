@@ -1,7 +1,7 @@
 """The Slots block budget: `memory.slot_size_cap`'s four-point wiring + its clamp.
 
-MGAV-8 shipped slots with the block ceiling as a code constant. The acceptance criterion requires
-"slot caps" reachable from the settings tab through the `_EDITABLE_CONFIG` PATCH allowlist, so
+Slots first shipped with the block ceiling as a code constant. "Slot caps" have to be
+reachable from the settings tab through the `_EDITABLE_CONFIG` PATCH allowlist, so
 the number became a config field — which means it now has to survive the round trip AND stay
 inside a range config alone cannot leave. Both properties are asserted here because either one
 alone is a hole: a field that round-trips but is unbounded is an unbounded always-injected

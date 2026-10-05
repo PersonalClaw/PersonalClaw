@@ -1,4 +1,4 @@
-"""Structural redaction layer — the files a pack NEVER opens (AGENT-PACKS §2.2 layer 1).
+"""Structural redaction layer — the files a pack NEVER opens.
 
 A pack is shareable *capability configuration*, not a backup. So its exclude-set is
 strictly WIDER than a portable export's: an export carries the owner's own data to a new
@@ -8,7 +8,7 @@ documents, or session transcripts, let alone a credential.
 
 This is the STRUCTURAL half of the two-layer defence. It EXTENDS
 ``portability.EXPORT_EXCLUDE`` (imported, not re-listed — a second hand-maintained list is
-exactly the drift that let stores escape coverage before, per portability.py's own S182
+exactly the drift that let stores escape coverage before, per portability.py's own
 note) with the user-DATA stores a pack additionally refuses. The rule the whole pack
 build obeys: a path under any denied name is **never opened**, not merely dropped after
 reading — the exporter's readers are an allowlist of the component stores, and every
@@ -40,7 +40,7 @@ def _export_exclude() -> frozenset[str]:
 
 #: User-DATA basenames a pack refuses ON TOP of the export secret-set. A pack carries
 #: capability config, so none of the owner's own accumulated data may ride along — this is
-#: the §1 "memory vs knowledge boundary" made structural. Databases are matched by exact
+#: the memory vs knowledge boundary made structural. Databases are matched by exact
 #: name AND by their WAL/SHM sidecars below, so a live store can't leak through a sidecar.
 _PACK_DATA_FILES: frozenset[str] = frozenset(
     {

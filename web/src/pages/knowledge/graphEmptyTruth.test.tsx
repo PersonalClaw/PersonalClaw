@@ -76,7 +76,7 @@ describe('the graph empty state tells the truth about why it is empty', () => {
   })
 })
 
-// ── …and says WHICH truth, from the library's enrichment tally (B6, day-7 live validation) ─────────
+// ── …and says WHICH truth, from the library's enrichment tally ────────────────────────────────
 //
 // On a home with no model bound, every item had been through entity extraction and FAILED — each
 // item's page showed Entities ✕ — while this state said "Your items have not been through entity

@@ -171,8 +171,8 @@ const CLASSIFIED: Record<string, { n?: number; why: string }> = {
  *
  *  This map was keyed `path:line` and was renumbered FOUR times without a single control changing:
  *
- *    · `pages/settings/InboxSettingsPanel.tsx`  91 → 129 / 95 → 133   (PA-5 inserted a section above)
- *    · `pages/knowledge/KnowledgeListPage.tsx`  918 → 941 → 953       (KL-8 added the Home lens above)
+ *    · `pages/settings/InboxSettingsPanel.tsx`  91 → 129 / 95 → 133   (a section was inserted above)
+ *    · `pages/knowledge/KnowledgeListPage.tsx`  918 → 941 → 953       (the Home lens was added above)
  *    · `pages/tasks/TaskDetail.tsx`  197/208/226/254 → 210/221/239/267 (exit-criteria bar adopted
  *      `ui/Meter`) → 226/247/267/295 (two tick targets raised to 24px) → 227/248/268/296 (#2234 added
  *      ONE import line)

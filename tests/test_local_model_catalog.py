@@ -2,7 +2,7 @@
 
 These are the CALLERS that keep the new contract from being dead code: they drive
 ``LocalModelProvider._models_from_catalog`` against a fixture ``catalog.json`` and assert
-every Success-Criterion-6/7 behavior — an active model, a deprecated model (chip, still
+every catalog behavior — an active model, a deprecated model (chip, still
 bindable), a ``config_only`` gated model (pyannote-shape, never truncation-flagged), a
 non-commercial license (warning flag), and a hand-truncated on-disk case (<60% →
 ``integrity:truncated``). Plus unit tests for the byte-sum helper, the host token, and the
@@ -185,7 +185,7 @@ async def test_loads_every_card_and_maps_fields(tmp_path):
 
 @pytest.mark.asyncio
 async def test_fields_flow_through_to_dict(tmp_path):
-    """The API serializes via to_dict() with no handler change (LMMV §2.1)."""
+    """The API serializes via to_dict() with no handler change."""
     models = await _load(tmp_path)
     d = models[0].to_dict()
     assert d["runtime"] == "ctranslate2"
@@ -196,7 +196,7 @@ async def test_fields_flow_through_to_dict(tmp_path):
     assert models[1].to_dict()["matrix"] is None
 
 
-# ── Success Criterion 6: deprecated shows a chip but stays bindable ───────
+# ── deprecated shows a chip but stays bindable ────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -207,7 +207,7 @@ async def test_deprecated_model_kept_with_status(tmp_path):
     assert old in models  # still listed → still bindable
 
 
-# ── Success Criterion 7: non-commercial license flagged ──────────────────
+# ── non-commercial license flagged ───────────────────────────────────────
 
 
 @pytest.mark.asyncio

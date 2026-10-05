@@ -327,7 +327,7 @@ def mint_review_trigger(
     # The review card is an attention event, so it routes to the inbox — the notify gate
     # (quiet hours) applies there, which is the whole reason not to hand-roll a channel post.
     trigger.delivery = "inbox"
-    # Decision 7 / R3: FREEZE the capability set at save. A system-created trigger's opt-in
+    # FREEZE the capability set at save. A system-created trigger's opt-in
     # is the code path that created it; without the frozen grant the fence denies on empty
     # and every review would refuse on its only fire.
     trigger.capabilities = _screen.capabilities_for_action(trigger)
@@ -512,7 +512,7 @@ def abandon_decision(item_id: str, *, store: Any = None, trigger_store: Any = No
 def lesson_text(
     *, summary: str, expectation: str, confidence: float, outcome: str, grade: str
 ) -> str:
-    """The R18 lesson body: expectation vs outcome, in the write-time contract's shape.
+    """The lesson body: expectation vs outcome, in the write-time contract's shape.
 
     Composed deterministically rather than by a model. The contract the research source
     proved is "2-4 sentences, plain prose, cite the stated expectation against the captured
@@ -575,7 +575,7 @@ def resolve_decision(
     """Capture an outcome. ``too_early`` defers; every other grade resolves.
 
     A resolution does four things in order: update the item, retire the reminder, write the
-    R18 lesson, stamp the soft reference back. The lesson is written LAST so a memory store
+    lesson, stamp the soft reference back. The lesson is written LAST so a memory store
     that is unavailable cannot leave the knowledge item stuck pending — the user's answer is
     recorded either way, and ``lesson_memory_key`` stays null to say so honestly.
     """

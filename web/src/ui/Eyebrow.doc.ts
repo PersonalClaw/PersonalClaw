@@ -3,12 +3,12 @@ import type { UiDoc } from './uiDoc'
 // Doc object for Eyebrow — the canonical caption-tier micro-label. Encodes the
 // Weight-First rule (web/DESIGN.md §3/§6) as machine-readable Do/Don't so an
 // app-building agent reaches for the role, not the uppercase-tracked drift it
-// replaces (audit CD-02).
+// replaces.
 const doc: UiDoc = {
   name: 'Eyebrow',
   keywords: ['eyebrow', 'label', 'section', 'caption', 'kicker', 'overline', 'meta', 'chip', 'micro-label', 'weight-first'],
   description:
-    "The one canonical caption-tier micro-label — the small grey label that heads a section, tags a chip, or captions a row. Renders the `caption` type role (0.75rem / wght 470) in sentence case per the Weight-First rule (web/DESIGN.md §3/§6); it replaces the uppercase-with-tracking eyebrow treatment that had drifted across the app (audit CD-02).",
+    "The one canonical caption-tier micro-label — the small grey label that heads a section, tags a chip, or captions a row. Renders the `caption` type role (0.75rem / wght 470) in sentence case per the Weight-First rule (web/DESIGN.md §3/§6); it replaces the uppercase-with-tracking eyebrow treatment that had drifted across the app.",
   props: [
     { name: 'children', description: 'The label text (sentence case — never shouted in caps).' },
     { name: 'as', description: "Element to render: a block 'div'/'p' section label, an inline 'span' for a chip label or an eyebrow sharing a flex row with a value, or a semantic 'h2'/'h3' — a section heading whose visual treatment is the caption-tier label (the outline keeps its level). Defaults to 'div'." },

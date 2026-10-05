@@ -1,6 +1,6 @@
-"""The ambient render under ONE budget (§2.4 / §7 crit 5).
+"""The ambient render under ONE budget.
 
-Criterion 5: "the lesson block, skill INDEX, template suggestion, voice/facet blocks, and self-model
+Required: "the lesson block, skill INDEX, template suggestion, voice/facet blocks, and self-model
 snapshot fit ONE per-turn slot-allocated token budget; lessons are never crowded out
 (sacrificial-slot truncation only); the authority preamble renders."
 
@@ -11,7 +11,7 @@ governed by per-block CHARACTER caps summing to ~36,750 tokens against a declare
 with 120 realistic lessons the old render exceeded the budget by 1,576 tokens, and at 400+
 lessons reached 10,101.
 
-The tests are grouped by the criterion's own clauses: one budget, lessons never crowded out, the
+The tests are grouped by the requirement's own clauses: one budget, lessons never crowded out, the
 preamble renders. Plus the two defects driving the code found (a header added AFTER the budget was
 spent, and the preamble outranking the lessons it speaks for), which are the regressions.
 """
@@ -85,7 +85,7 @@ PERSONA = (
 
 @pytest.mark.parametrize("budget", [60, 120, 300, 600, 1200, 4000])
 def test_the_framed_render_never_exceeds_the_budget(budget):
-    """The criterion's core claim, at every budget size.
+    """The requirement's core claim, at every budget size.
 
     Parameterized because the interesting failures are at the SMALL end: a budget large enough for
     everything cannot demonstrate a budget at all.
@@ -149,7 +149,7 @@ def test_the_budget_scales_with_the_model_window():
     """Same multiple and clamp as `context._memory_caps`.
 
     A FLAT budget beside window-scaled memory sections would make the ambient blocks the only part
-    of the prompt that never benefits from a larger window — silently inverting the plan's own
+    of the prompt that never benefits from a larger window — silently inverting the
     adaptive-recall design.
     """
     assert ambient.budget_for_window(200_000, 4000) == 4000
@@ -194,7 +194,7 @@ def test_the_window_multiple_matches_the_memory_caps_multiple():
 
 
 def test_lessons_survive_at_every_budget_that_can_hold_one():
-    """The criterion's load-bearing clause.
+    """The requirement's load-bearing clause.
 
     Measured on the pre-fix code: at a 120-token budget the 73-token preamble fit and ZERO lessons
     survived, while at 60 tokens (preamble skipped as oversized) one did — the authority statement
@@ -236,7 +236,7 @@ def test_a_rich_skill_index_cannot_crowd_out_the_lessons():
 def test_the_query_relevant_lesson_survives_a_budget_that_cannot_hold_all():
     """Per-lesson candidates, not one block candidate.
 
-    A block candidate is wholly in or wholly out, and "wholly out" is the crowd-out the criterion
+    A block candidate is wholly in or wholly out, and "wholly out" is the crowd-out the requirement
     forbids. Ranked individually, the lesson that matches THIS turn survives.
     """
     block = lesson_block(200, marked=137)
@@ -346,7 +346,7 @@ def test_the_index_degrades_instead_of_vanishing():
     The assertion is on the RENDERED tier, not on `degraded`. Driving it showed why: the allocator
     assigns L2 only to items within 0.9 of the top score and caps them at 3, so a lone index
     candidate is usually assigned L1 *up front* and never "degrades" from anything. What matters to
-    the criterion is that a shrinking budget shrinks the block instead of dropping it.
+    the requirement is that a shrinking budget shrinks the block instead of dropping it.
     """
     full = ambient.index_candidate(skill_index(12))
     assert full is not None
@@ -438,8 +438,8 @@ def test_an_index_with_no_entries_is_not_a_candidate():
     assert ambient.index_candidate("[Skills:]\n### Skill: alpha\n\nbody\n[End of skills]") is None
 
 
-def test_the_hint_cap_comes_from_the_plan():
-    """80 chars is the R12 number, not one this module invented."""
+def test_the_hint_cap_is_eighty_chars():
+    """80 chars is the agent-side index hint cap; pinned so a silent edit is visible."""
     assert ambient.HINT_CHARS == 80
 
 
@@ -477,10 +477,10 @@ def test_the_voice_and_persona_blocks_do_not_dedupe_each_other():
 
 
 def test_every_named_block_has_a_slot():
-    """All five blocks the criterion names map to an allocator kind.
+    """All five blocks the requirement names map to an allocator kind.
 
     `template` and `self_model` have NO live producer: nothing on the chat path matches a query to
-    a workflow def, and nothing persists `user.selfmodel.*` (S72 built the decisions, not a store).
+    a workflow def, and nothing persists `user.selfmodel.*` (the decisions exist, not a store).
     Mapping them anyway is what makes a future producer join the budget instead of appending a sixth
     independent block beside it.
     """
@@ -532,7 +532,7 @@ def test_a_template_suggestion_would_fit_the_budget_when_a_producer_exists():
 
 def test_the_report_names_what_did_not_fit():
     """An allocator that reports only what it injected cannot be audited for crowd-out — the whole
-    failure this criterion is about is invisible from the surviving text."""
+    failure this requirement is about is invisible from the surviving text."""
     alloc = ambient.render(lessons=lesson_block(200), skill_index=skill_index(), budget_tokens=400)
     report = ambient.report(alloc)
     assert report["near_misses"] > 0

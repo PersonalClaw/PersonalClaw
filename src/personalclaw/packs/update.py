@@ -1,7 +1,7 @@
 """Pack UPDATE — overwrite only what the pack owns, never a copy the user edited.
 
 Installing a pack is a one-way write; *updating* one is the dangerous direction, because the
-files a new version wants to replace may be files the user has since been editing. The §1
+files a new version wants to replace may be files the user has since been editing. The
 ``pack_owned`` rule (the ``distribution_owned`` pattern) makes that decidable rather than a
 judgement call, and this module is that rule's whole implementation:
 
@@ -150,7 +150,7 @@ class ComponentUpdate:
 class UpdatePlan:
     """What an update WOULD do (``applied=False``) or DID do (``applied=True``).
 
-    ``drift_notes`` is the visible half of the §1 contract: one human-readable line per
+    ``drift_notes`` is the visible half of the ``pack_owned`` contract: one human-readable line per
     user-edited component that was deliberately left alone. An update that silently skipped
     them would be indistinguishable from one that quietly clobbered them.
     """
@@ -195,7 +195,7 @@ class PackUpdateError(Exception):
 
 
 def _decide(plan: "ImportPlan", installed: Any, home: Path) -> list[ComponentUpdate]:
-    """The whole §1 decision table, one row per component in the incoming pack."""
+    """The whole decision table, one row per component in the incoming pack."""
     owned = list(installed.pack_owned)
     locks = installed.component_locks
     out: list[ComponentUpdate] = []
@@ -271,7 +271,7 @@ def plan_update(pack_name: str, archive: Path | str, *, tier: Any = None) -> Upd
     """Dry-run an update: what a commit WOULD overwrite and what it would skip. No writes.
 
     Runs the archive through :func:`packs.import_.inspect_pack` (so integrity, lint and scan
-    verdicts are computed exactly as on a fresh install) and then applies the §1 decision
+    verdicts are computed exactly as on a fresh install) and then applies the decision
     table. Raises :class:`PackUpdateError` when the pack is not installed, or when the incoming
     archive is refused outright — an update never proceeds on a plan a fresh install would
     reject.
@@ -312,7 +312,7 @@ def apply_update(
     """Apply an update: overwrite only the pack-owned, undrifted components. Journaled.
 
     The same refusal gates as a fresh install run first (a blocked archive never writes, a
-    WARNING archive needs ``consent``). Then only the components the §1 decision table marked
+    WARNING archive needs ``consent``). Then only the components the decision table marked
     ``overwrite`` are committed — in place, keeping their original ids, because the colliding
     entity IS this pack's own previous copy. Any mid-commit fault unwinds every journaled write.
 

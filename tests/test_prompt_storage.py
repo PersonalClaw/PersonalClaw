@@ -183,7 +183,7 @@ def test_seed_writes_shared_snippets_and_prompts_include_them(provider, monkeypa
 
     seed_bundled_system_prompts()
 
-    # All bundled snippets seeded (the 2 from S7 + the 5 atomic ones from the
+    # All bundled snippets seeded (the first 2 + the 5 atomic ones from the
     # full breakdown).
     for sname in (
         "safety-rules",
@@ -221,7 +221,7 @@ def test_seed_writes_shared_snippets_and_prompts_include_them(provider, monkeypa
 def test_reseed_updates_pristine_bundled_snippet(provider, monkeypatch):
     """A snippet still pristine from a PRIOR bundled seed (its content hashes to the
     recorded bundled_sha) is refreshed when the bundled source changes — so a security
-    rule added to a bundled snippet reaches an existing instance. (#150)"""
+    rule added to a bundled snippet reaches an existing instance."""
     import hashlib
 
     monkeypatch.delenv("PERSONALCLAW_SKIP_PROMPT_SEED", raising=False)

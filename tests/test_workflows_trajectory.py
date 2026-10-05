@@ -1,6 +1,6 @@
 """The trajectory signature and template regression detection.
 
-The change's bar, verbatim: a `trajectory_signature` derived as a PURE projection over the existing
+The bar: a `trajectory_signature` derived as a PURE projection over the existing
 ledger (ordered node/lane/verdict tuples) with no new store; a regression signal that fires when a
 template's runs shift to a signature class that historically failed more often; and verified by —
 two runs of one template with the same inputs producing EQUAL signatures, a rewind producing a
@@ -312,7 +312,7 @@ async def test_a_rewind_produces_a_distinguishable_signature(_isolated_home) -> 
 @pytest.mark.anyio
 async def test_the_run_projection_exposes_the_trajectory_signature(_isolated_home) -> None:
     """`introspect(run_id)` carries the run's signature and its steps — exposed on the run
-    projection, per the change."""
+    projection."""
     from personalclaw.workflows import run_cockpit
 
     run_id = await _drive(_pipeline_spec())

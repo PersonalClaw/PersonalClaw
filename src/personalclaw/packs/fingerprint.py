@@ -59,8 +59,8 @@ logger = logging.getLogger(__name__)
 #: another pair.
 REJECTIONS_FILE = "fingerprint_rejections.json"
 
-#: The ONLY reasons a scan may run (§7: "on project creation and on-demand, never on a
-#: background loop in v1"). :func:`scan_project` refuses any other value, which is what makes
+#: The ONLY reasons a scan may run: on project creation and on demand, never on a
+#: background loop. :func:`scan_project` refuses any other value, which is what makes
 #: the negative clause enforceable instead of aspirational — a timer cannot pass this gate
 #: without a code change that a reviewer sees.
 SCAN_REASON_CREATE = "project-create"
@@ -115,7 +115,7 @@ _MAX_SIGNAL_BYTES = 64 * 1024
 
 @dataclass(frozen=True)
 class Fingerprint:
-    """One declared file-shape rule, as a pack's ``pack.json`` carries it (§7).
+    """One declared file-shape rule, as a pack's ``pack.json`` carries it.
 
     ``globs`` scope the rule to a file shape and are REQUIRED: a signals-only rule would
     have nothing to bound its reads with, so :func:`parse_fingerprints` drops it. ``signals``
@@ -141,7 +141,7 @@ class Fingerprint:
 def parse_fingerprints(raw: Any) -> list[Fingerprint]:
     """Parse a ``fingerprints`` manifest value into rules, dropping unusable rows.
 
-    Lenient by design (the .ovsvoice best-effort forward-import rule, §1): a pack from a
+    Lenient by design (best-effort forward import): a pack from a
     future schema may carry rule shapes this build does not understand, and one such row must
     not make the whole pack unfingerprintable. A row with no usable ``globs`` is dropped —
     it could otherwise match every project on signals alone.
@@ -228,9 +228,9 @@ class FingerprintMatch:
 
 @dataclass
 class PackProposal:
-    """A propose-only pack card (§7): what matched, how strongly, and what it WOULD install.
+    """A propose-only pack card: what matched, how strongly, and what it WOULD install.
 
-    ``inspect`` is the §3.1 dry-run report (:func:`packs.import_.inspect_pack`'s
+    ``inspect`` is the dry-run report (:func:`packs.import_.inspect_pack`'s
     ``ImportPlan.to_dict``) — the "here's what it would install" half of the card, computed
     without a single write to home state. It is None only when the plan could not be built
     (a broken bundled pack); the proposal still surfaces so a user is not left wondering why a
@@ -427,7 +427,7 @@ def is_rejected(project_id: str, pack: str, home: Path | None = None) -> bool:
 
 
 def reject_proposal(project_id: str, pack: str, home: Path | None = None) -> None:
-    """Remember that this project's user does not want this pack — forever (§7).
+    """Remember that this project's user does not want this pack — forever.
 
     The ONLY write in this module. Idempotent: re-rejecting keeps the FIRST decision's
     timestamp, because the durable fact is *when the user said no*, and overwriting it every
@@ -454,7 +454,7 @@ def reject_proposal(project_id: str, pack: str, home: Path | None = None) -> Non
 
 
 def fingerprinting_enabled(config: Any = None) -> bool:
-    """``packs.fingerprint_enabled`` — the one kill switch (§8).
+    """``packs.fingerprint_enabled`` — the one kill switch.
 
     Read through the real config so the toggle a user flips in Settings is the value that
     governs. Fails OPEN to the dataclass default only when the config itself is unreadable,
@@ -515,7 +515,7 @@ def scan_project(
     if reason not in SCAN_REASONS:
         raise ValueError(
             f"fingerprint scans run on {sorted(SCAN_REASONS)} only, not {reason!r} "
-            "(§7: never on a background loop)"
+            "(never on a background loop)"
         )
     if not fingerprinting_enabled(config):
         return []
@@ -581,7 +581,7 @@ def _installed_names(home: Path | None) -> set[str]:
 
 
 def _inspect_report(pack_name: str) -> tuple[dict[str, Any] | None, str]:
-    """The §3.1 dry-run report for a bundled pack — the "what it would install" half.
+    """The dry-run report for a bundled pack — the "what it would install" half.
 
     Built by assembling the pack into a SYSTEM tempdir and running :func:`inspect_pack`, which
     extracts to its own tempdir and writes nothing to home state. The archive is deleted

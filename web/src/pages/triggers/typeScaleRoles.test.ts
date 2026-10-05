@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-// ── Text sits on the type scale, through data-type roles (AUD-NZ13, minimal slice) ────
+// ── Text sits on the type scale, through data-type roles (minimal fix) ────
 //
 // tokens.css defines the scale (1.75 / 1.5 / 1.25 / 1.0625 / 0.9375 / 0.8125 / 0.75rem)
 // and the caption tier's own comment says it exists to eliminate "sub-0.8125rem drift".

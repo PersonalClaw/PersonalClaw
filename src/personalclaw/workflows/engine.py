@@ -84,7 +84,7 @@ from personalclaw.workflows.verify import (
 
 logger = logging.getLogger(__name__)
 
-#: Max nested workflow/stage depth (WF2-R21 sibling). Mirrors the `__hook_depth` pattern
+#: Max nested workflow/stage depth. Mirrors the `__hook_depth` pattern
 #: at hooks.py:831 / invoke_agent_provider.py:66. Today's "no recursion" contract is
 #: PROMPT-level only — this is the code check that did not previously exist.
 MAX_WF_DEPTH = 3
@@ -125,8 +125,8 @@ def _commits_effects(dispatcher: Any) -> Any:
 @dataclass
 class NodeResult:
     """What a dispatcher produces. `state` is advisory — the controller applies it, so a
-    dispatcher cannot flip a node terminal on its own (WF2-R10 terminal-write ownership,
-    and the engine-owned-completion rule from WF2-R3)."""
+    dispatcher cannot flip a node terminal on its own (terminal-write ownership,
+    and the engine-owned-completion rule)."""
 
     state: InstanceState = InstanceState.DONE
     output: Any = None
@@ -140,7 +140,7 @@ class NodeResult:
     declined_edges: list[str] = field(default_factory=list)
     #: Populated for wait/gate: when the controller should look at this node again.
     wake_at: float = 0.0
-    #: The prompt as the PROVIDER received it, journaled for trajectory replay (§5 ledger).
+    #: The prompt as the PROVIDER received it, journaled for trajectory replay.
     #:
     #: 🔴 Post-scan, not post-binding (#3166). This used to be the text the dispatcher composed,
     #: while the outbound secret/PII scan substitutes at the model-call seam far below — so a
@@ -202,7 +202,7 @@ def _failed_with(cls: FailureClass, cause: str, remediation: str, output: Any) -
 
 def _judge_pretier_screen(cfg: dict[str, Any]) -> NodeResult | None:
     """Run the free rule tier on a judge gate's declared `evidence`. Returns a NodeResult to
-    SHORT-CIRCUIT the model call, or None to proceed to the judge (LOOPS-EVOLUTION criterion 2).
+    SHORT-CIRCUIT the model call, or None to proceed to the judge.
 
     🔴 Gated on the gate DECLARING `evidence`, and that guard is the whole reason this is additive.
     A judge that binds no evidence (every judge shipped before this) has nothing for the mechanical
@@ -265,7 +265,7 @@ def _judge_pretier_screen(cfg: dict[str, Any]) -> NodeResult | None:
 
 
 def _judge_gate_outcome(decision: JudgeVerdict, node: Node) -> tuple[InstanceState, Failure | None]:
-    """One contract-validated verdict → the node's state and failure (WF2LOO-13).
+    """One contract-validated verdict → the node's state and failure.
 
     The map is exhaustive over the merged `Verdict`, so a new member must add its branch
     rather than inheriting a pass — the same rule `_dual_guard` applies to `GuardOutcome`.
@@ -343,8 +343,8 @@ async def dispatch_transform(node: Node, ctx: BindingContext) -> NodeResult:
     no expression language beyond the closed pipe set, which is what keeps a spec from
     becoming an eval surface.
 
-    `skeleton: "<artifact-slug>"` is the same transform over a body stored OUTSIDE the spec
-    (AMBIENT-SURFACES §2.1). A live dashboard's template is an artifact a model authored once;
+    `skeleton: "<artifact-slug>"` is the same transform over a body stored OUTSIDE the spec.
+    A live dashboard's template is an artifact a model authored once;
     interpolating it here — rather than pasting the whole HTML into `expr` — is what makes the
     steady-state refresh a pure substitution the spec stays readable through. Zero tokens
     either way: the render transform is the reason a refresh costs nothing.
@@ -394,7 +394,7 @@ async def dispatch_infer(
     `completion` is injected so tests can drive this without a provider; production
     passes `llm_helpers.one_shot_completion`.
 
-    The call goes through the compaction ladder (WV-12): a long-horizon prompt is
+    The call goes through the compaction ladder: a long-horizon prompt is
     compacted proactively at ~80% of the bound model's window, and a length rejection
     triggers one aggressive re-compaction + retry before the node fails. `compaction_saves`
     is this node's compaction history, which the anti-thrashing rule reads.
@@ -476,7 +476,7 @@ async def dispatch_visualize(
     *,
     completion: Any = None,
 ) -> NodeResult:
-    """ONE bounded model call → a genui widget spec, agency-free (AMBIENT-SURFACES §5.3).
+    """ONE bounded model call → a genui widget spec, agency-free.
 
     The workflow-node face of the shared `visualize(data, hint)` primitive: it renders a
     node's `data` binding into a generative-UI widget with no tools, no session, no
@@ -556,7 +556,7 @@ def claim_holder(run_id: str, node_id: str) -> str:
     or even that plus the PID — therefore made every second attempt a renewal rather than a refusal,
     and the guard passed both executions through while a lease file sat there looking like
     protection. The PID version failed for the case that matters most: two concurrent co-tenant
-    sessions in ONE gateway share a PID, which is exactly the threat §1.5 names.
+    sessions in ONE gateway share a PID, which is exactly the co-tenant threat this guards.
 
     The cost of per-attempt identity is that a genuinely dead holder's branch waits out the TTL
     instead of being re-claimed instantly. That is the correct direction to be wrong in: a stalled
@@ -571,8 +571,8 @@ def release_execution_claim(claim_target: str, holder: str) -> None:
     Public because the second caller is the controller. A stage's claim is taken here and outlives
     this function — the spawn is live when `dispatch_stage` returns — so the only code that can know
     the attempt is over is the code that settles it
-    (`stage_settlement.reconcile_dispatched_stages`), and WF2-R10 puts that in the controller.
-    `NodeResult.claim_target`/`claim_holder` are how the identity gets there; see `dispatch_stage`.
+    (`stage_settlement.reconcile_dispatched_stages`), which the one-writer rule puts in the
+    controller. `NodeResult.claim_target`/`claim_holder` carry the identity; see `dispatch_stage`.
 
     Never raises: a failed release costs one TTL of a stalled branch, while an exception here would
     turn a recoverable no-spawn return into a crashed dispatch — or a settled node into an unsettled
@@ -587,7 +587,7 @@ def release_execution_claim(claim_target: str, holder: str) -> None:
 
 
 def stage_capability(cfg: dict[str, Any]) -> str:
-    """The ONE capability decision for a stage leaf (§4.1): ``"mutating"`` or ``"research"``.
+    """The ONE capability decision for a stage leaf: ``"mutating"`` or ``"research"``.
 
     An explicit ``capability`` wins. Absent one, ``tools_posture: full`` IS the declaration: a
     stage that declares the full tool posture has asked for write access in the only words the
@@ -596,7 +596,7 @@ def stage_capability(cfg: dict[str, Any]) -> str:
     ``test_workflows_loop_templates.test_a_writing_template_declares_write_capability``).
 
     🔴 Measured before this existed: 12 stages across 6 bundled templates declare
-    ``tools_posture: full`` and NONE declares ``capability``, so since AG-11 made ``capability`` the
+    ``tools_posture: full`` and NONE declares ``capability``, so once ``capability`` became the
     one decision every one of them ran READ-ONLY — `general-project`'s ``work``, `code-project`'s
     ``code``, `deep-research`'s ``synthesize``. The worker's writes were denied at the tool-grant
     layer, the judge found no artifacts, and a General loop could never produce the file its task
@@ -726,7 +726,7 @@ async def dispatch_stage(
     the run's overlay, which is exactly the headless-caller case `SubagentManager.spawn` documents
     for `approval_mode="auto"`. It widens nothing else: the capability class below still decides
     whether the stage may write, the operator ceiling still bounds the auto-approval grant
-    (`subagent._run_inner`'s PHF-8 check), and the spawn and every auto-approved tool call are
+    (`subagent._run_inner`'s ceiling check), and the spawn and every auto-approved tool call are
     SEL-audited as they are for any other auto-approved spawn.
 
     **A run that is an app's work** (`apps.app_work`) is held as the app's: each stage starts only
@@ -750,8 +750,8 @@ async def dispatch_stage(
             "check the prompt template and its bindings",
         )
 
-    # A run that inherited a temporary/incognito origin skips its learning nodes OUTRIGHT
-    # (S50). Skipping at the engine is the primary control: letting the node
+    # A run that inherited a temporary/incognito origin skips its learning nodes OUTRIGHT.
+    # Skipping at the engine is the primary control: letting the node
     # run and trusting the persist provider's own gate would make correctness depend on every write
     # path checking a flag, and a write path added later would leak by default. DEGRADED rather than
     # FAILED — the node was deliberately not run, which is a success with a machine-readable
@@ -832,7 +832,7 @@ async def dispatch_stage(
     # happened to start it.
     parent_session_key = ownership.owned_key(run_id, node.id or "node")
     agent = str(cfg.get("agent", "") or "")
-    # Per-leaf model pin (WORK-CONTAINERS amendment (a)). Homogeneous by DEFAULT: an absent `model`
+    # Per-leaf model pin. Homogeneous by DEFAULT: an absent `model`
     # sends `None`, which is what makes `spawn` resolve the `orchestration` chain and inherit the
     # parent's binding. Only a declared pin overrides it, because the one measured heterogeneity
     # win in the fan-out literature is by MODEL, and passing `""` here would look like a pin to
@@ -878,10 +878,10 @@ async def dispatch_stage(
             silent=True,
             approval_mode=approval_mode,
             capability_class=capability,
-            # The leaf's lineage + capability posture, secret-filtered (WF2WOR-5 C2). This is the
+            # The leaf's lineage + capability posture, secret-filtered. This is the
             # WRITER for the flags `mcp_shared.leaf_tool_denial` reads: without it the depth counter
             # and the read-only flag would never be set, and the handler seam would be a gate on a
-            # value nobody writes — the exact inert-control shape this clause exists to close.
+            # value nobody writes — the exact inert-control shape this writer exists to close.
             extra_env=leaf_spawn_env(node, cfg, run_id=run_id, project_id=project_id, depth=depth),
             request_key=request_key,
             # Her earlier Allow, only when it was for exactly this request.
@@ -957,7 +957,7 @@ def _held_by_incident(prompt: str) -> NodeResult:
 async def dispatch_branch(node: Node, ctx: BindingContext) -> NodeResult:
     """Evaluate the selector, then record every edge the branch did NOT take.
 
-    Declines are recorded, not inferred (WF2-R18). The frontier turns a declined edge's
+    Declines are recorded, not inferred. The frontier turns a declined edge's
     target into SKIPPED — terminal — which is what lets a downstream join proceed. Trying
     to infer "not taken" from "routed elsewhere" would also starve any sibling whose
     `needs` merely names this branch, since routing among cases says nothing about it.
@@ -1015,7 +1015,7 @@ async def dispatch_subworkflow(
     timeout: int = 60,
     on_progress: Any = None,
 ) -> NodeResult:
-    """Run a named workflow as a CHILD run, and wait for it (WF2-R13).
+    """Run a named workflow as a CHILD run, and wait for it.
 
     **A real child run, not an inlined subtree.** The child gets its own run id, its own journal,
     its own state map and its own terminal-status writer. That costs a row and a directory, and it
@@ -1404,7 +1404,7 @@ def _park_question(output: Any, stderr: Any) -> str:
 async def dispatch_wait(node: Node, ctx: BindingContext, *, now: float) -> NodeResult:
     """Park until a deadline. Returns WAITING with a `wake_at`.
 
-    Outgoing edges activate at WAIT-ENTRY, not on completion (WF2-R18). This is the
+    Outgoing edges activate at WAIT-ENTRY, not on completion. This is the
     subtle half of active-edge gating: a 3-way fan-out with one fast leg and two waiting
     legs would otherwise fire its join after the fast leg alone.
     """
@@ -1531,7 +1531,7 @@ class GuardOutcome(str, Enum):
 
 
 async def _dual_guard(block: dict[str, Any], verify: Any) -> NodeResult:
-    """The REGRESSION half of a dual verify+guard gate (LOOPS-EVOLUTION R5e).
+    """The REGRESSION half of a dual verify+guard gate.
 
     The metric command has already passed when this runs: `command` says the deliverable is
     done, and `guard` says nothing else got worse. Two commands rather than one because
@@ -1542,7 +1542,7 @@ async def _dual_guard(block: dict[str, Any], verify: Any) -> NodeResult:
     guard failure is only a regression if the guard was PASSING before the change, which is
     what `guard_baseline` carries (captured by a baseline node before the first mutating
     step). Without that comparison the honest answers "you broke this" and "this was
-    already broken" are indistinguishable, and criterion 6 exists because they must not be.
+    already broken" are indistinguishable, and the guard exists because they must not be.
     """
     from personalclaw.workflows.conditions import truthy
 
@@ -1637,7 +1637,7 @@ async def dispatch_gate(
     #: empty rubric the ratchet cannot fail anything against — rather than a loosening.
     judge_hints: JudgeHints | None = None,
 ) -> NodeResult:
-    """A checkpoint the engine — never the worker — resolves (WF2-R3).
+    """A checkpoint the engine — never the worker — resolves.
 
     An `expression` gate is decided here. `approval` parks in WAITING with a typed ask
     payload. `verify_command`/`verify_script` run a deterministic validator through the
@@ -1783,12 +1783,12 @@ async def dispatch_gate(
                 "add the rubric the judge should apply",
             )
 
-        # 🔴 THE FREE RULE TIER, BEFORE the model call (LOOPS-EVOLUTION §judge / criterion 2).
-        # The plan is explicit: "A free rule tier runs BEFORE any LLM judge call … Anything
-        # rule-solvable never reaches the probabilistic model. Loop judges run every cycle — this
-        # is the single biggest token saver in the plan." `judge_pretier.run_pretier` implements
+        # 🔴 THE FREE RULE TIER, BEFORE the model call.
+        # A free rule tier runs BEFORE any LLM judge call: anything rule-solvable never reaches
+        # the probabilistic model, and because loop judges run every cycle this is the single
+        # biggest token saver there is. `judge_pretier.run_pretier` implements
         # exactly that (mechanical length, failure-pattern regex, stub markers, structural checks)
-        # and shipped in session 30 with **no caller** — measured: an empty artifact, a whitespace
+        # and shipped with **no caller** — measured: an empty artifact, a whitespace
         # artifact and a `TODO: implement` stub all reached the judge and spent a reasoning-tier
         # completion on output there was provably nothing to judge.
         #
@@ -1870,7 +1870,7 @@ async def dispatch_gate(
         # then hold the answer to. See that module's posture section for why generating both from
         # one object is what keeps enforcement off the 7 live templates' throat.
         hints = judge_hints or JudgeHints()
-        # 🔴 The judge's evidence is BLINDED and role-filtered (WF2LOO-13, closing
+        # 🔴 The judge's evidence is BLINDED and role-filtered (closing
         # `judge_actors.blind_provenance` / `assemble_judge_evidence`, which had no caller because
         # the one-word gate produced no evidence to blind). Two typed parts, both in
         # `JUDGE_EVIDENCE_ROLES`: the template's rubric prose is `spec`, and whatever the gate
@@ -1966,7 +1966,7 @@ async def dispatch_gate(
                 if answer is None:
                     # Unparseable is PROTOCOL, and it fails the whole gate even mid-sample: a
                     # terminal accept decided from 2 of 3 samples is a quieter version of the
-                    # single-sample bug this session exists to fix.
+                    # single-sample bug that sampling exists to fix.
                     unparseable = True
                     break
                 judged.append(
@@ -2018,13 +2018,13 @@ async def dispatch_gate(
         decision = aggregate_samples(judged, hints)
         state, failure = _judge_gate_outcome(decision, node)
         # Carry the evidence chain out on the node output so the controller can emit a
-        # `judge_verdict` Run Ledger event at the settle (criterion 3).
+        # `judge_verdict` Run Ledger event at the settle.
         # `judge_evidence` holds the per-sample verdicts + raw texts (the proof a reader replays);
         # `judge_status` is "discard" when a sample was outvoted by the median aggregation.
         judge_status = (
             "kept" if not sample_values or decision.verdict.value in sample_values else "discard"
         )
-        # 🔴 THE ACTOR RULING (WF2LOO-13, closing `judge_actors.check_transition` /
+        # 🔴 THE ACTOR RULING (closing `judge_actors.check_transition` /
         # `resolve_transition`, which had no caller because nothing carried an actor to a node
         # transition). The gate DOES: an independent judge is the JUDGE actor and is
         # terminal-capable, but a gate that opted into `self_judge` is the producer grading itself
@@ -2092,7 +2092,7 @@ async def dispatch_gate(
 
 
 def _ask_payload(node: Node, cfg: dict[str, Any]) -> dict[str, Any]:
-    """The typed human-input ask (WF2-R7). One renderer covers every gate, which is why
+    """The typed human-input ask. One renderer covers every gate, which is why
     the shape is fixed by `human_input.Ask` rather than left to each template.
 
     An `event` gate asks EVENT, from its own kind and never from `ask_kind`. It waits for
@@ -2130,7 +2130,7 @@ def _ask_payload(node: Node, cfg: dict[str, Any]) -> dict[str, Any]:
 
 
 def apply_artifact_gate(node: Node, result: NodeResult, workspace: Any) -> NodeResult:
-    """Refuse a node's completion until its declared `required_artifacts` exist (WF2-R3).
+    """Refuse a node's completion until its declared `required_artifacts` exist.
 
     Applied at the dispatch seam rather than inside each producing dispatcher, so a new
     node kind inherits the gate instead of silently skipping it. A node that CLAIMS to have
@@ -2181,7 +2181,7 @@ def apply_judge_contract(
     *,
     fallback_result: bool | None = None,
 ) -> NodeResult:
-    """Validate a judge STAGE's output against the contract (WF2LOO-13).
+    """Validate a judge STAGE's output against the contract.
 
     Six bundled templates carry a `judge` stage whose prompt asks for this exact object —
     `{reasoning, verdict, scores, evidence_refs, proof, cannot_judge}` — and before this seam
@@ -2482,7 +2482,7 @@ async def dispatch(
     run_id: str = "",
     #: The run's owning project, threaded for the same reason `run_id` is: an action provider
     #: attributes what it writes without the template having to restate an id it cannot know
-    #: (WORK-CONTAINERS §1.6). Only the ACTION branch reads it.
+    #: Only the ACTION branch reads it.
     project_id: str = "",
     #: This node instance's engine key (`root.children[0]`, `root.body#2`). Threaded for the third
     #: time for the same reason as `run_id`/`project_id`, and it is the one id a provider CANNOT

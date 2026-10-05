@@ -1,6 +1,6 @@
 """``selfqa-commit-watch`` action provider — the vcs trigger's action.
 
-Fired by the ``system:selfqa-commit-watch`` ``file``-kind trigger (the AUTOMATION-SUBSTRATE
+Fired by the ``system:selfqa-commit-watch`` ``file``-kind trigger (the automation engine's
 ``vcs`` preset watching the configured repo's ``.git/refs/heads/*``). It resolves the commit
 delta through :mod:`personalclaw.selfqa.watch` and starts the ``self-qa`` run by delegating
 to the registered ``run-workflow`` provider — the one place that already owns caller dedupe

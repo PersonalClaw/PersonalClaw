@@ -9,7 +9,7 @@
 // A cached authenticated API response is a data leak — a later visitor, or the
 // same browser after logout, would be served the previous session's approvals,
 // inbox rows or file listings off disk. Beyond leaking, stale approval data is
-// dangerous on its own terms (plan §2.7 fail-closed for correctness): answering
+// dangerous on its own terms (fail-closed for correctness): answering
 // a tool call that already timed out is worse than seeing nothing.
 //
 // `mayCache()` is the ONE gate. `strategyFor()` is defined in terms of it, so a

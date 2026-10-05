@@ -393,7 +393,7 @@ def test_mine_knowledge_qrels_keeps_named_intents_and_drops_unnamed(knowledge_st
     assert all(q.query.strip() for q in mined), "a blank-named intent was mined as a query"
 
 
-# ── §5.2 source (a): LEARN-R4's surfacing_events ──────────────────────────────
+# ── the surfacing_events source ───────────────────────────────────────────────
 
 
 def _record_surfacing(*events) -> None:
@@ -646,7 +646,7 @@ def test_store_files_excludes_the_shm_sidecar(tmp_path):
 
 
 def test_the_sibling_of_a_live_store_is_the_other_live_store():
-    """§5.1 forbids a write to EITHER store, and a run only ever opens one of them."""
+    """A write to EITHER store is forbidden, and a run only ever opens one of them."""
     siblings = rb.sibling_store_paths(rb.knowledge_db_path(create=False))
     assert [p.name for p in siblings] == ["memory.db"]
     assert rb.knowledge_db_path(create=False).resolve() not in siblings
@@ -1132,7 +1132,7 @@ def test_a_benchmark_file_declaring_the_wrong_store_is_refused():
 
 
 def test_each_store_has_its_own_benchmark_file():
-    """§5.1's "never share a corpus", enforced by the filename rather than by a field."""
+    """The two stores never share a corpus, enforced by the filename rather than by a field."""
     assert rb.benchmark_path(rb.STORE_KNOWLEDGE) != rb.benchmark_path(rb.STORE_MEMORY)
     with pytest.raises(rb.RetrievalBenchError):
         rb.benchmark_path("both")
@@ -1145,9 +1145,9 @@ def test_a_retrieval_run_is_not_claimed_by_the_judge_bench(knowledge_store, boun
     """🔴 The collision this change actually caused, measured in a browser first.
 
     The `list_bench_runs` claimed every `matrices/<id>/` dir that had a `table.json` —
-    a working proxy for "is a judge bench" only while ES-4 was the ONLY writer of one.
-    ES-3 is a second writer, so the newest retrieval run was served as the newest judge
-    bench, and `JudgeBenchPanel` read `row.wall_secs` off a P@k row and took the whole
+    a working proxy for "is a judge bench" only while the judge bench was the ONLY writer of
+    one. The retrieval bench is a second writer, so the newest retrieval run was served as the
+    newest judge bench, and `JudgeBenchPanel` read `row.wall_secs` off a P@k row and took the whole
     Learning page down with `Cannot read properties of undefined`.
     """
     from personalclaw.evals import judge_bench as jb
@@ -1207,7 +1207,7 @@ def test_an_unstamped_table_is_claimed_by_neither_consumer(knowledge_store):
 
 
 def test_the_retrieval_latest_is_scoped_to_the_store_asked_for(knowledge_store, bound_models):
-    """A knowledge run must never be served as the memory store's report — §5.1 again."""
+    """A knowledge run must never be served as the memory store's report — the stores stay apart."""
     retrieval = rb.run_retrieval_bench(
         rb.STORE_KNOWLEDGE,
         handle=knowledge_store,

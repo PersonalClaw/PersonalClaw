@@ -4,12 +4,12 @@
 **Why this file exists.** The render-smoke chain costs ~20 minutes
 (the ``npm ci`` note at the top of the script) and an autonomous worker's stream watchdog is
 600s, so no worker could push a frontend branch at all. Measured on this repo the day of the
-ruling: 72 of 184 remote branches ahead of ``main`` touched ``web/``, and 76 open issues were
+change: 72 of 184 remote branches ahead of ``main`` touched ``web/``, and 76 open issues were
 labelled ``area:frontend``. A gate that cannot be satisfied is not protection; it is a queue
 that quietly stops moving.
 
 **The invariant that must NOT be weakened, and the direction that matters.** The dangerous
-change is not "topic branches skip" — that is the ruling. It is the skip *spreading* to a
+change is not "topic branches skip" — that is the policy. It is the skip *spreading* to a
 release ref, which is exactly where the v0.1.0 blank-dashboard regression this rail was built
 for actually shipped from. So the legs below pin BOTH directions:
 
@@ -186,7 +186,7 @@ def _run(
 
 
 def test_a_topic_branch_lets_ci_gate_the_frontend(sandbox: Sandbox) -> None:
-    """The ruling itself: a topic branch touching ``web/`` does not run the chain locally."""
+    """The policy itself: a topic branch touching ``web/`` does not run the chain locally."""
     result = _run(
         sandbox.push_line("refs/heads/improvement-something"),
         cwd=sandbox.root,
@@ -194,7 +194,7 @@ def test_a_topic_branch_lets_ci_gate_the_frontend(sandbox: Sandbox) -> None:
     )
     assert result.returncode == 0, f"the push was refused: {result.stderr!r}"
     assert CI_GATES in result.stdout, (
-        "a topic branch still ran the ~20-minute chain, so the ruling did not take: "
+        "a topic branch still ran the ~20-minute chain, so the policy did not take: "
         f"stdout={result.stdout!r}"
     )
     assert GATING not in result.stdout, (

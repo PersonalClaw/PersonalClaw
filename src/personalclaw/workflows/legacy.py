@@ -3,8 +3,8 @@
 The old feature stored one `<name>/WORKFLOW.md` directory per SOP under
 `~/.personalclaw/workflows/`. Those files are the user's own writing, and the v2 engine
 cannot read them — its definitions are graph specs, not ordered checklists. Deleting
-them would be the wrong call, and leaving them in place is worse than it sounds: Slice 0
-puts the v2 def store in the same parent directory, so a stray `WORKFLOW.md` tree would
+them would be the wrong call, and leaving them in place is worse than it sounds: the
+v2 def store lives in the same parent directory, so a stray `WORKFLOW.md` tree would
 sit alongside real definitions looking like something the engine ignores for no reason.
 
 So they move once, to `workflows/_legacy_sops/`, and the leading underscore keeps them

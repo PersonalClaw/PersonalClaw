@@ -1,4 +1,4 @@
-"""Portable ``.pclaw`` packs — the shareable bundle format (AGENT-PACKS §1-§2).
+"""Portable ``.pclaw`` packs — the shareable bundle format.
 
 A pack is a ZIP of *capability configuration only* — skills, workflow templates,
 prompts and agents — that one user can hand to another. The existential risk is a
@@ -11,14 +11,14 @@ secret riding along, so redaction is TWO independent layers, defence-in-depth:
   ``security.redact`` + ``guardrails.scan_outbound`` and BLOCKS any credential-bearing
   component rather than shipping it redacted.
 
-AP-1 is the format + export core: the dependency-closure walker, the two redaction layers,
-and a look-before-write :func:`preview_pack`. AP-2 (this change) is the import inverse:
+The format + export core is the dependency-closure walker, the two redaction layers,
+and a look-before-write :func:`preview_pack`. The import inverse is
 :func:`inspect_pack` (dry-run, no writes) and :func:`import_pack` (leaves-first commit with
-a journaled rollback, referential-integrity lint, and scan-by-origin trust). AP-5
-(:mod:`packs.external_formats`) is the OUTBOUND direction — rendering an entity into another
+a journaled rollback, referential-integrity lint, and scan-by-origin trust).
+:mod:`packs.external_formats` is the OUTBOUND direction — rendering an entity into another
 tool's own format, where the same content layer runs on the rendered bytes.
 
-AP-7 closes the loop with DISCOVERY and MAINTENANCE: :mod:`packs.fingerprint` is the
+DISCOVERY and MAINTENANCE close the loop: :mod:`packs.fingerprint` is the
 deterministic, zero-LLM scanner that PROPOSES a pack for a project whose workspace matches a
 declared file shape (never installs, remembers a rejection forever), and
 :mod:`packs.update` is the ``pack_owned`` update flow that overwrites only the pack's own

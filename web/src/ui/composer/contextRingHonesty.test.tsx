@@ -4,7 +4,7 @@ import { ModelPill } from './controls'
 
 // ── The chip that stated a number nobody supplied ──────────────────────────────────────
 //
-// ACP-AGENT-PARITY G8/O7: the backend emitted a `context_usage` frame every turn with
+// The backend emitted a `context_usage` frame every turn with
 // `pct: 0.0` and the composer's model pill drew its ring from it, so the surface asserted
 // "Context: 0% used" on turns that were carrying 18 KB of injected context. The producer
 // could not say "unknown" — `AcpPromptStats.context_pct` was a bare defaulted float.

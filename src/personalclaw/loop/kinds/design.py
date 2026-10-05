@@ -6,8 +6,8 @@ user through choosing overrides and generating React components against it. As a
 loop it follows the shared spine (understand → phase → plan → execute), but its
 surfaces add a live component canvas, screenshot palette/primitive extraction,
 drag-drop composition, and design-system exports (token artifacts, exportable
-components, DESIGN.md). Slice 1 supplies the config/phase shape; the full
-behavior + canvas land in the Design slice (last).
+components, DESIGN.md). This module supplies the config/phase shape; the full
+behavior + canvas come later.
 """
 
 from __future__ import annotations
@@ -27,11 +27,11 @@ class DesignKind(LoopKindStrategy):
     description = "Build a design system — tokens, components, live canvas, exports."
     wants_workspace = False  # the project context dir holds the design artifacts
     default_agent = "personalclaw-loop"
-    # NOT task-driven yet: until the Design slice adds the step walkthrough that emits a
+    # NOT task-driven yet: until a design step walkthrough exists that emits a
     # real plan, classify returns plan=[] — so provisioning would create a Tasks Project
-    # with ZERO TaskLists (the same empty-Project clutter goal avoids, cycle 26). Design
+    # with ZERO TaskLists (the same empty-Project clutter goal avoids). Design
     # currently free-runs off its brief/cycle_nudge like general. Flip to True when the
-    # Design slice produces a step plan that should seed per-step TaskLists.
+    # design kind produces a step plan that should seed per-step TaskLists.
     provisions_tasks = False
     tracks_phases = True  # on_new_cycle advances the design step (set_phase_status below)
 
@@ -443,7 +443,7 @@ class DesignKind(LoopKindStrategy):
 
     def cycle_nudge(self, loop: Loop, loop_dir: str) -> str:
         """Per-cycle trigger for the design loop. The rich design surfaces (canvas,
-        screenshot extraction, exports) layer on in the Design slice; the loop spine
+        screenshot extraction, exports) layer on later; the loop spine
         — read status/brief/guidance, advance the current design step, MUST write a
         finding — holds now so the kind runs on the unified engine."""
         return "\n".join(
@@ -541,7 +541,7 @@ class _DesignWalkthrough:
                 break
         # Mirror the phase titles into kind_config + merge the APPROVED token system
         # (every token-step's token_overrides, deep-merged in order) so the cockpit
-        # opens populated with the approved palette/type — the D4 approve→populate
+        # opens populated with the approved palette/type — the approve→populate
         # guarantee, authoritative server-side (not reliant on the FE previewing each
         # step). Layer the approved overrides over any already on the loop.
         from personalclaw.loop import design_tokens as dt

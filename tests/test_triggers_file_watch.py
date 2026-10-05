@@ -1,6 +1,6 @@
-"""The `file` trigger kind's runtime (AUTO §7 criterion 2).
+"""The `file` trigger kind's runtime.
 
-Criterion 2: "*When a file in ~/notes changes, summarize it into my knowledge base*" is creatable in
+The bar: "*When a file in ~/notes changes, summarize it into my knowledge base*" is creatable in
 chat in one message.
 
 **Measured before writing.** The `file` kind is fully DECLARED — in `models.KINDS`, spec keys
@@ -38,7 +38,7 @@ from personalclaw.triggers.file_watch import (
 
 @pytest.fixture
 def notes(tmp_path):
-    """A small notes tree, the criterion's own example shape."""
+    """A small notes tree, the shape of the `~/notes` example above."""
     root = tmp_path / "notes"
     root.mkdir()
     (root / "a.md").write_text("alpha")
@@ -181,7 +181,7 @@ def test_a_real_edit_is_modified_and_fires(notes):
 
 
 def test_an_identical_rewrite_does_NOT_fire(notes):
-    """🔴 The defect the plan names: dedup keyed on "(path, content_hash), not path-only (R12)".
+    """🔴 The defect to avoid: dedup is keyed on (path, content_hash), not path-only.
 
     An editor saving twice, a `touch`, or a rewrite with the same bytes all move `mtime`. A
     path-only or mtime-only key re-fires the automation on a no-op save.
@@ -212,7 +212,7 @@ def test_a_deleted_file_is_removed(notes):
 
 
 def test_the_three_classes_stay_separate(notes):
-    """§2 says fired workflows "foreach only over new items". A summarize automation wants
+    """Fired workflows foreach only over new items. A summarize automation wants
     added+modified; a cleanup automation wants removed. One merged list forces every consumer to
     re-derive this."""
     _d, state = changed_files(_pat(notes), WatchState())

@@ -92,7 +92,7 @@ export function PageGeometryPreview({ page }: { page: DocumentPageSetup }) {
 
 /** Why the controls are not here, when they are not.
  *
- *  **Absent, not disabled** — the same call DFE-5 recorded for the editor itself: a row of
+ *  **Absent, not disabled** — the same call the editor itself makes: a row of
  *  dead dropdowns over a historical version is worse than a sentence saying why there is
  *  nothing to set, and a disabled control that never states its reason is a control a
  *  keyboard user tabs onto and learns nothing from.

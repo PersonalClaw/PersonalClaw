@@ -4,7 +4,7 @@
 workflow node — with `instance_path`/`node_id`/`epoch` welded into the record shape. This module
 covers the generalized facility and the two non-decision producers wired onto it in the same
 change, because a facility that is available and uncalled is exactly the declared-but-inert class
-`PLATFORM-PRIMITIVES` §3 exists to kill.
+that must not ship.
 
 What is asserted here, and why each clause is load-bearing:
 
@@ -150,7 +150,7 @@ def test_a_question_with_no_event_id_is_ignored(home):
 
 
 def test_a_pre_generalization_record_reads_back_as_a_decision(home):
-    """Records written before PP-9 carry no `producer`/`metric_source`. Tolerant reads mean the
+    """Older records carry no `producer`/`metric_source`. Tolerant reads mean the
     resolver grades them as the decision questions they were instead of skipping them."""
     (question,) = outcomes.open_questions(
         [{k: v for k, v in _question().items() if k not in ("producer", "metric_source")}]
@@ -400,7 +400,7 @@ def test_publishing_an_artifact_opens_an_outcome(home, monkeypatch):
     (question,) = journal_mod.ledger(run.id, kinds={journal_mod.PENDING_OUTCOME})
     assert question["producer"] == outcomes.PRODUCER_PUBLISH
     assert question["metric"] == "artifact.weekly-digest.consumed"
-    # PP-10 moved this off `SOURCE_MEMORY`: the metric was a semantic key nothing wrote, so the bet
+    # This moved off `SOURCE_MEMORY`: the metric was a semantic key nothing wrote, so the bet
     # always closed `inconclusive`. Consumption is read off the artifact's own timeline and the pin
     # list instead, which grades for real and needs no vector store.
     assert question["metric_source"] == outcomes.SOURCE_CONSUMPTION

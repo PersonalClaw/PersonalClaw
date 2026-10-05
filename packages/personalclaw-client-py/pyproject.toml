@@ -36,7 +36,7 @@ dependencies = ["aiohttp>=3.9"]
 # NOTE: [project.urls] MUST come after the bare `dependencies` key — a table
 # header placed earlier would absorb `dependencies` into the urls table (a TOML
 # table runs until the next header), zeroing the runtime deps. (Same footgun
-# fixed in the core pyproject, plan 34 T1.1.)
+# fixed in the core pyproject.)
 [project.urls]
 Homepage      = "https://personalclaw.dev"
 Documentation = "https://github.com/PersonalClaw/PersonalClaw/tree/main/docs"

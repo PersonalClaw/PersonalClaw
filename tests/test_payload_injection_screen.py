@@ -1,4 +1,4 @@
-"""The injection screen, on a payload that actually carries untrusted text (§7/R4 rule a).
+"""The injection screen, on a payload that actually carries untrusted text.
 
 🔴 THE DEFECT. `FireContext.payload_text` defaulted to `""` and `service.tick` never set it, so
 `evaluate`'s `if ctx.payload_text:` was permanently false — **the injection screen had never run
@@ -18,12 +18,12 @@ Measured:
     _file_watch_poll_loop      walks firepath: False
 
 **FOURTH `FireContext` field found defaulted-and-unsupplied**, after `existing_claim`,
-`requested` and `budget_remaining` — which is why this session audited the whole
-dataclass at once rather than one field per session, and found this one by doing so.
+`requested` and `budget_remaining` — which is why the whole dataclass was audited
+at once rather than one field at a time, and this one was found by doing so.
 
 Screened at the dispatch seam rather than by threading a payload back into `tick`: that is the one
-place every polled payload passes through on its way to a provider (the same reasoning S122 used for
-chaining), and a clock trigger genuinely has no payload at tick time.
+place every polled payload passes through on its way to a provider (the same reasoning chaining
+follows), and a clock trigger genuinely has no payload at tick time.
 """
 
 from __future__ import annotations
@@ -166,7 +166,7 @@ def test_the_table_does_not_list_a_CLOCK_kind():
 
 def test_the_DISPATCH_seam_screens():
     """🔴 The wiring, not the helper. Screened where every polled payload passes on its way to a
-    provider — a screen the dispatch does not call is the state this session found."""
+    provider — a screen the dispatch does not call is the state that was found."""
     import inspect
 
     src = inspect.getsource(GatewayOrchestrator._fire_store_trigger)
@@ -175,8 +175,8 @@ def test_the_DISPATCH_seam_screens():
 
 
 def test_a_BLOCKED_payload_is_NOT_RETRIED():
-    """§7/R4 rule (a): "blocked payloads → `blocked_injection` ledger row naming the pattern, never
-    auto-retried (no-retry prevents trigger loops brute-forcing the guard)"."""
+    """Blocked payloads → a `blocked_injection` ledger row naming the pattern, never
+    auto-retried (no-retry prevents trigger loops brute-forcing the guard)."""
     import inspect
 
     src = inspect.getsource(GatewayOrchestrator._fire_store_trigger)
@@ -248,7 +248,7 @@ def test_an_ORIGIN_fenced_payload_is_not_DOUBLE_wrapped():
     fence (`<untrusted_content source=… source_type=…>`) does not contain the bare marker — so every
     origin-fenced `web_watch` item would have been re-wrapped, and the outer call escapes the inner
     marker, turning the origin's `source_id`/`transformation_path` into literal text. Fail-open in
-    the direction that destroys the provenance chain S127 built."""
+    the direction that destroys the provenance chain."""
     from personalclaw.security import fence_untrusted
 
     item = fence_untrusted(

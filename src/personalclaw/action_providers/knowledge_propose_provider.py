@@ -51,7 +51,7 @@ MAX_DRAFTS_PER_CALL = 10
 
 
 class KnowledgeProposeActionProvider(ActionProvider):
-    """Route knowledge drafts to the LEARNING-FLYWHEEL proposal queue.
+    """Route knowledge drafts to the learning-loop proposal queue.
 
     ``action_config`` shape — one draft::
 

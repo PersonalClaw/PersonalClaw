@@ -1,6 +1,6 @@
 """The local A/B replay harness's honesty rails.
 
-Six clauses in the change, and each one names a specific way a measurement surface lies. The
+Six clauses, and each one names a specific way a measurement surface lies. The
 tests below are organized by clause rather than by function, because the risk here is not that
 an arithmetic helper returns the wrong float — it is that a card tells a reviewer something
 nobody measured, or that evidence quietly becomes a veto.
@@ -28,11 +28,11 @@ from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 class ScriptedProvider:
     """A zero-cost provider that returns scripted text. Drives the REAL ``LLMJudge``.
 
-    Deliberately not a mock of ``judge_turn``: the change's composition clause is about
+    Deliberately not a mock of ``judge_turn``: the composition clause is about
     ``one_shot_completion`` + ``LLMJudge`` working together, so the judge under test is the
     shipped class, streaming through the shipped event protocol and running its own JSON
     parser on the result. A test that stubbed ``judge_turn`` would leave the parse-failure
-    contract — the thing clause 2 is about — completely unexercised.
+    contract completely unexercised.
     """
 
     def __init__(self, responses: list[str]):
@@ -67,7 +67,7 @@ def judge_scoring(*scores: float, reason: str = "ok"):
     """A real ``LLMJudge`` whose provider returns these scores in order.
 
     ``prompt_template`` is left at ``None`` so the judge renders through the ``eval_judge``
-    prompt binding the change names — the shipped path, not a test-local string.
+    prompt binding — the shipped path, not a test-local string.
     """
     from personalclaw.eval.judge import LLMJudge
 
@@ -421,7 +421,7 @@ class TestParseFailureRejects:
 
 
 class TestNeverTheEvalRunner:
-    """The change's explicit hazard: ``eval/runner.py`` spawns a child with an env override.
+    """The explicit hazard: ``eval/runner.py`` spawns a child with an env override.
 
     Vacuity partner for `test_the_replay_path_never_imports_the_eval_runner`:
     `test_the_guard_would_have_caught_an_import`. The guard is an import hook, and an import
@@ -443,7 +443,9 @@ class TestNeverTheEvalRunner:
             def find_spec(self, name, path=None, target=None):
                 if name == forbidden:
                     Guard.hit = True
-                    raise AssertionError(f"EA-6 imported {forbidden} — the env-mutation hazard")
+                    raise AssertionError(
+                        f"the replay path imported {forbidden} — the env-mutation hazard"
+                    )
                 return None
 
         return Guard, forbidden
@@ -550,7 +552,7 @@ class TestNeverTheEvalRunner:
                     docstrings.add(doc)
         assert not any("PERSONALCLAW_HOME" in s for s in strings - docstrings)
 
-    def test_it_does_compose_the_two_halves_the_atom_names(self):
+    def test_it_does_compose_the_completion_and_the_judge(self):
         """The positive side: the arms go through a `one_shot_completion`-shaped call and the
         score comes from a real `LLMJudge` over the `eval_judge` session key."""
         judge = judge_scoring(3.0, 4.5)
@@ -938,8 +940,8 @@ class TestTheCuratorPass:
         assert replay_mod.replay_enabled() is False
 
     def test_the_curator_tick_awaits_the_replay_pass(self):
-        """The hook itself. A pass with no scheduled caller is the shape this program keeps
-        finding — `capture_store.prune`'s docstring named a "curator tick" for a whole release
+        """The hook itself. A pass with no scheduled caller is the shape that keeps
+        turning up — `capture_store.prune`'s docstring named a "curator tick" for a whole release
         while nothing called it."""
         from pathlib import Path
 
@@ -1012,7 +1014,7 @@ class TestTheWholeSeam:
     """Capture files → mined cases → replay → attach → the row the API actually serves.
 
     Every class above tests one hop. This is the one that would have caught a hop wired to the
-    wrong shape — the defect class its own execution log records twice ("each half's suite was
+    wrong shape — the defect class that has already happened twice ("each half's suite was
     green in isolation", and `stage_records` rejecting every record the importer produced). The
     projection is the specific risk here: `build_view` reads through `getattr`, so a field named
     differently on either side degrades to a default rather than raising, and the card would go

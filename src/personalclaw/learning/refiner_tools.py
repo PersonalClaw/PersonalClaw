@@ -1,4 +1,4 @@
-"""The template refiner's propose-only tool set — WF2LEA-6 (§3.1 substrate/trust/shape).
+"""The template refiner's propose-only tool set.
 
 The refiner ships as a trigger-fired ``run-workflow`` template
 (``workflows/bundled/refine-template``) whose stage runs the reserved ``template-refiner``
@@ -41,7 +41,7 @@ def gather_evidence(workflow_name: str, *, limit: int = 50) -> dict[str, Any]:
 
     Returns the top failure cluster (the one the refiner should target) and the fenced evidence
     a prompt may carry. Screening drops injection-bearing events before they can steer which
-    cluster ranks (S79's BLOCKED→dropped rule); fencing wraps every surviving untrusted field so
+    cluster ranks (the BLOCKED→dropped rule); fencing wraps every surviving untrusted field so
     the model boundary is safe. Never writes anything.
     """
     from personalclaw.workflows import journal, store
@@ -99,7 +99,7 @@ def file_template_diff(
     human-gated queue with its typed ops carried on the change manifest's ``targeted_fix`` (the
     field the inbox already reads to stamp a risk tier), so acceptance can apply it mechanically.
 
-    A filed diff also PRE-REGISTERS its §2 A/B study (``study_id`` in the outcome) — see
+    A filed diff also PRE-REGISTERS its A/B study (``study_id`` in the outcome) — see
     :func:`_preregister_study` for why registering here and running elsewhere is the split.
     """
     if not isinstance(ops, list) or not ops:
@@ -142,14 +142,14 @@ def file_template_diff(
 
 
 def _preregister_study(workflow_name: str, prop: Any, rationale: str) -> str:
-    """Pre-register the §2 A/B study for a just-filed template diff (ES-5). Spends nothing.
+    """Pre-register the A/B study for a just-filed template diff. Spends nothing.
 
     THIS is the flywheel's link into the evaluation substrate. Pre-registration must precede
-    arm 1 — that is the whole of §2.1's immutability — and it is free, so it belongs here, at
+    arm 1 — that is the whole of a study's immutability — and it is free, so it belongs here, at
     the moment the diff exists. What deliberately does NOT happen here is the RUN: a study
     over the harvested suite is ``cases x k x 2`` arm calls plus twice that many judge calls,
     and an agent tool call that silently started a three-digit model-call matrix is precisely
-    what ES-4's spend preflight exists to prevent. The run is `personalclaw study --run`.
+    what the study's spend preflight exists to prevent. The run is `personalclaw study --run`.
 
     Best-effort by construction: the proposal is already filed and returning a 500 here would
     strand a legal diff over a missing eval artifact. A failure yields ``""`` — an honest "no

@@ -2,7 +2,7 @@
 
 A recoverable denial feeds a model-visible observation that says WHY + adapt-
 don't-repeat; a hard (security) denial is terminal + non-circumventable with no
-recovery hint. format_tool_result surfaces the #7 result contract (recovery_hints
+recovery hint. format_tool_result surfaces the result contract (recovery_hints
 on failure, truncation notice on success) instead of dropping it.
 """
 

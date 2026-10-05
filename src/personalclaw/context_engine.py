@@ -64,7 +64,7 @@ class AssembledContext:
     context was prepended (0 on a follow-up turn) — for the activity ticker and
     the context-transparency window.
 
-    ``components`` is the same prompt as NAMED pieces (CE2-8), in assembly order, so
+    ``components`` is the same prompt as NAMED pieces, in assembly order, so
     :func:`check_headroom` can refuse by naming the specific block that will not fit.
     ``notices`` carries assembly-time drops the user must hear about. Both default to
     empty, and a custom engine that leaves them empty degrades to a single unnamed
@@ -185,11 +185,11 @@ class DefaultContextEngine:
         # conversation — see chat_runner's own comment at the get_or_create call. So a
         # reflex sharing that guard would fire on turn 1 and then go quiet for the rest
         # of the conversation, which is the opposite of an ambient per-turn reflex. The
-        # plan's §3 says the reflex "rides the proven context_engine seam"; the seam is
+        # reflex rides the proven context_engine seam; the seam is
         # `assemble`, which runs per turn — the *condition* is what had to change.
         #
         # Gated on `blocks_reads` (work that reads no memory), same as active recall. Incognito
-        # is NOT blocked here: it suppresses memory WRITES, and §3 wants the reflex to
+        # is NOT blocked here: it suppresses memory WRITES, and the reflex should
         # run there with only its volunteer logging suppressed. Its words reach no model:
         # the reflex resolves the entities a turn names by their names.
         if not kwargs.get("blocks_reads") and active_recall:
@@ -223,7 +223,7 @@ class DefaultContextEngine:
         return None
 
 
-# ── Active recall (the assemble-hook half of D-MEM-INJECT) ──
+# ── Active recall (the assemble-hook half of memory injection) ──
 # A bounded, pre-reply recall that surfaces query-relevant memory at the natural
 # moment on interactive turns — distinct from the always-on L1 manifest (cheap
 # facts) and the agent-initiated memory_recall tool (deep search). Bounded by a
@@ -255,7 +255,7 @@ def active_recall_block(
     breaker after repeated timeouts (then stays off this process). Any failure →
     "" (the turn proceeds ungrounded rather than stalling).
 
-    **Partition-first for a project-local session (WORK-CONTAINERS §1.6).** A session whose
+    **Partition-first for a project-local session.** A session whose
     cwd is a project's ``context_dir`` recalls from its OWN memory partition first, then
     from the global partition, whose hits are source-labeled and fenced by
     ``memory_locality.compose_recall``. Ordering only — a global-only hit still surfaces.
@@ -340,7 +340,7 @@ _PUSH_TIMEOUT_MS = 400
 def _push_settings() -> tuple[bool, float]:
     """``(enabled, min_confidence)`` read LIVE from config.
 
-    Read per turn rather than captured at construction: S1's kill switch shipped
+    Read per turn rather than captured at construction: an earlier kill switch shipped
     captured-at-construction and flipping the toggle updated config.json while the
     running gateway kept going. Same mistake, same fix — read it when you need it.
     """
@@ -598,7 +598,7 @@ def headroom_components(assembled: AssembledContext) -> list[Component]:
 
 
 def check_headroom(assembled: AssembledContext, *, window: Window) -> Headroom:
-    """The headroom contract for one assembly — computed BEFORE the model call (CE2-8).
+    """The headroom contract for one assembly — computed BEFORE the model call.
 
     ``window`` is the turn's ONE resolved window (``context_headroom.resolve_window``), the
     same object the assembly was budgeted by — the check never resolves a second one, which

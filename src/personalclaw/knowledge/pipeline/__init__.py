@@ -1,4 +1,4 @@
-"""Knowledge ingestion node-graph engine (#30).
+"""Knowledge ingestion node-graph engine.
 
 A conditional DAG ingestion pipeline: an item's ``type`` selects a code-owned
 :class:`~personalclaw.knowledge.pipeline.graph.PipelineGraph`; the

@@ -1,4 +1,4 @@
-"""Content-free push delivery — MOBILE-COMPANION `MC-5` (S3 T3.2 + T3.3).
+"""Content-free push delivery.
 
 This is the module the ``push`` delivery target calls. It exists to solve exactly
 one problem: **the phone is locked and a run is blocked on a permission decision.** A
@@ -13,7 +13,7 @@ not its arguments, not a title, not a session key. Two independent reasons:
 
 1. **A push service is a third party.** Web push goes through whichever endpoint the
    browser vendor assigned (FCM, Mozilla autopush, WNS); ntfy goes through whatever host
-   the user configured. The soul guardrail for this plan is "no cloud middle tier holding
+   the user configured. The guardrail is "no cloud middle tier holding
    state" — a payload carrying a tool's arguments would make every one of those hosts a
    holder of the thing the approval is about.
 2. **Encrypted is not the same as absent.** RFC 8291 encryption means the push service
@@ -697,7 +697,7 @@ def send_relay(payload: dict[str, str], relay_url: str, platform: str, token: st
     return 200 <= status < 300
 
 
-# ── The plan-42 `push` target ───────────────────────────────────────────────
+# ── The `push` delivery target ──────────────────────────────────────────────
 
 
 def push_backend() -> str:
@@ -736,15 +736,15 @@ def relay_url() -> str:
 
 
 def send_push(device_id: str, payload: dict[str, Any]) -> bool:
-    """Plan C3's per-device sender. Gated on the payload contract before anything else."""
+    """The per-device sender. Gated on the payload contract before anything else."""
     return send_webpush(device_id, assert_content_free(payload))
 
 
 def deliver(kind: str, item_id: str) -> int:
     """Send one content-free ping for ``(kind, item_id)``. Returns the number delivered.
 
-    **This is plan 42's ``push`` target.** The rules engine decides WHETHER to call it
-    (``push`` in the resolved rule's targets); this function only decides HOW, from
+    **This is the notification rules' ``push`` target.** The rules engine decides WHETHER to
+    call it (``push`` in the resolved rule's targets); this function only decides HOW, from
     ``mobile.push_backend``. Never raises — see the module docstring on fail-open.
     """
     payload = content_free_payload(kind, item_id)
@@ -812,12 +812,12 @@ def deliver_async(kind: str, item_id: str) -> None:
 
 
 def push_cmd(args: Any) -> int:
-    """``personalclaw push {init,status,test}`` — the CLI half of MC-5.
+    """``personalclaw push {init,status,test}`` — the CLI half of phone push.
 
-    ``init`` is the command the criterion names: it mints the VAPID keypair into the
-    credential store. ``test`` exists because the last leg of this atom's validation (a
-    locked phone on cell data, timed) can only be driven by a human holding the phone — so
-    the tool that drives it ships with the feature instead of being improvised later.
+    ``init`` mints the VAPID keypair into the credential store. ``test`` exists because the
+    last leg of validating push (a locked phone on cell data, timed) can only be driven by a
+    human holding the phone — so the tool that drives it ships with the feature instead of
+    being improvised later.
     """
     action = getattr(args, "push_command", "") or "status"
 
@@ -857,7 +857,7 @@ def push_cmd(args: Any) -> int:
 
 
 def approval_targeted() -> bool:
-    """True when plan 42's rule for ``approval/requested`` routes to the ``push`` target.
+    """True when the notification rule for ``approval/requested`` routes to the ``push`` target.
 
     Surfaced because the transport and the routing are two separate decisions, and a device
     that is subscribed while approvals are NOT routed to it is silent for a reason the user

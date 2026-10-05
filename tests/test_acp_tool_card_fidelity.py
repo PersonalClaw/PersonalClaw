@@ -128,8 +128,8 @@ class TestStructuredInputSurvivesToTheRenderer:
         assert _redact_tool_input_obj(acp_event_to_agent_event(ev).tool_input) is None
 
     def test_an_absent_rawinput_is_none_not_empty_dict(self):
-        """SC #6's "native-only meta stays empty (not fabricated) where frames are
-        empty": ``None`` means the frame supplied nothing. An empty dict would read as
+        """Native-only meta stays empty (not fabricated) where frames are
+        empty: ``None`` means the frame supplied nothing. An empty dict would read as
         "the tool was called with no arguments", which is a different claim."""
         ev = extract_tool_event(_call_frame(None), {}, {}, [])
         assert ev is not None

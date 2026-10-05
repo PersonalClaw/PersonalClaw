@@ -215,7 +215,7 @@ class TestTimingLine:
         assert int(rows[1]["ms"]) <= int(rows[0]["ms"])
 
     def test_a_failed_creation_still_reports_its_duration(self, tmp_path, caplog):
-        """The timeout case is the one §1 worries about ("inside the 30s _TIMEOUT budget").
+        """The timeout case is the one that matters ("inside the 30s _TIMEOUT budget").
 
         A failure that logged nothing would make the most expensive outcome the only invisible
         one.

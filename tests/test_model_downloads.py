@@ -1,4 +1,4 @@
-"""P3d — async local-model downloads (registry + HTTP handlers).
+"""Async local-model downloads (registry + HTTP handlers).
 
 Drives the :class:`ModelDownloadRegistry` and the /api/models/downloads/*
 handlers with the provider resolution/catalog functions monkeypatched, so no real

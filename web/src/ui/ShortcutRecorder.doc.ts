@@ -1,7 +1,7 @@
 import type { UiDoc } from './uiDoc'
 
 // Doc object for ShortcutRecorder — the click-then-press keyboard-shortcut control
-// (DESKTOP-CAPABILITIES S3, first used by the push-to-talk chord in Settings →
+// (first used by the push-to-talk chord in Settings →
 // Speech & Transcription). Lives in ui/ because the keyboard semantics are the
 // reusable, fiddly part; the caller keeps the policy about what a valid chord is.
 const doc: UiDoc = {

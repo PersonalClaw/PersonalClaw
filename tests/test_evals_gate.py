@@ -1,4 +1,4 @@
-"""EVALUATION-SUBSTRATE amendment E2 / ES-6 — the Loop-2 cheap gate subset.
+"""The Loop-2 cheap gate subset.
 
 Four clauses, and a section per clause:
 
@@ -222,7 +222,7 @@ def test_the_shipped_library_declares_exactly_twelve_gate_scenarios():
     """The "curated dozen" is a fact about what SHIPS, asserted against the package.
 
     Read off the packaged library rather than an installed home, so a stale home cannot make this
-    pass. Twelve is the change's own number; a thirteenth would silently make the cheap tier less
+    pass. Twelve is the designed number; a thirteenth would silently make the cheap tier less
     cheap, and an eleventh would silently narrow the coverage a reviewer is trusting.
     """
     tagged = []
@@ -743,8 +743,8 @@ def test_an_unpinnable_home_is_ungated_and_INVENTS_NO_FINGERPRINT(
     """No model bound ⇒ no honest ``model_fingerprint`` ⇒ ungated.
 
     Minting one would poison every per-fingerprint baseline that reads the same ``results.tsv``,
-    which surfaces months later as an inexplicable regression. The ruling ES-11 recorded for its
-    own unscored candidate transfers verbatim.
+    which surfaces months later as an inexplicable regression. The same rule already holds for an
+    unscored candidate, and it transfers verbatim.
     """
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     _write_home(tmp_path)

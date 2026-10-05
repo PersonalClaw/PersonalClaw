@@ -8,7 +8,7 @@ import { RunnableTemplateField } from './RunnableTemplateField'
 import { VariableRow } from './VariableRow'
 import { TextLink } from '../../ui/TextLink'
 
-// Runnable template (#17): the draft carries a launch_spec (undefined = plain prompt).
+// Runnable template: the draft carries a launch_spec (undefined = plain prompt).
 export type PromptDraft = { name: string; kind: PromptKind; title: string; description: string; content: string; variables: PromptVariable[]; tags: string[]; source?: string; launchSpec?: LaunchSpec }
 
 export function emptyDraft(kind: PromptKind = 'user'): PromptDraft {

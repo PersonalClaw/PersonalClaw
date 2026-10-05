@@ -1,4 +1,4 @@
-"""Guardrail tests for the URL-navigation doctrine (url-navigation-unification.md).
+"""Guardrail tests for the URL-navigation doctrine.
 
 ONE canonical routing model: all navigation goes through the hash router
 (`navigate`/`setQuery` from `useHashRoute.ts`). Pages must never write the URL
@@ -102,7 +102,7 @@ def test_no_startediting_seed_prop_in_pages():
 
 
 def test_replace_keys_use_replace_semantics():
-    """Canonical model §3: in-place view refinements — search/tab/view-mode/filter/
+    """The canonical model: in-place view refinements — search/tab/view-mode/filter/
     sort — are `replace` (they must NOT stack Back-undoable history). A
     `useQueryParam(query, setQuery, '<key>', …)` binding for one of these keys must
     pass `{ replace: true }`; otherwise it defaults to PUSH and every toggle spams a
@@ -119,8 +119,8 @@ def test_replace_keys_use_replace_semantics():
                 offenders.append(f"{f}:{lineno}  {code.strip()[:90]}")
     assert not offenders, (
         "A replace-class query key (search/tab/view/filter/sort/…) is bound without "
-        "{ replace: true } — it will PUSH per toggle and spam history (canonical §3 "
-        "says these are replace):\n  " + "\n  ".join(offenders)
+        "{ replace: true } — it will PUSH per toggle and spam history (the canonical "
+        "model says these are replace):\n  " + "\n  ".join(offenders)
     )
 
 

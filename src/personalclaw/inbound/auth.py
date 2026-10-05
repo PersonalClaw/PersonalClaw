@@ -41,7 +41,7 @@ BRIDGE_SURFACE = "bridge"
 def surfaces() -> tuple[str, ...]:
     """The five inbound surfaces. Re-exported from the config loader, which owns the
     single declaration, so this module cannot drift into its own shorter list — which
-    is exactly what `_SURFACES = ("mcp",)` was before EA-1 widened the seam."""
+    is exactly what `_SURFACES = ("mcp",)` was before the seam was widened."""
     from personalclaw.config.external_access import EXTERNAL_ACCESS_SURFACES
 
     return EXTERNAL_ACCESS_SURFACES
@@ -55,7 +55,7 @@ def client_surfaces() -> tuple[str, ...]:
 
 
 def token_env_key(surface: str) -> str:
-    """The credential key a surface's token is stored under (EXTERNAL-ACCESS §1.1).
+    """The credential key a surface's token is stored under.
 
     One spelling, derived, imported by every reader — the CLI, the mount check and
     the settings surface. A hand-built ``f"PERSONALCLAW_INBOUND_{s}_TOKEN"`` at three
@@ -150,7 +150,7 @@ def _forbidden_token_values(surface: str = "") -> set[str]:
     (`.local_secret`: the dashboard session secret and `mcp_core._internal_secret`
     read it), so one read covers the pair.
 
-    Since EA-1 this also refuses **another surface's token**. Five surfaces sharing
+    This also refuses **another surface's token**. Five surfaces sharing
     one bearer would collapse five independently revocable credentials into one, so
     turning off the capture proxy would not stop a capture client from reaching the
     MCP surface with the same string.

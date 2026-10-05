@@ -138,7 +138,7 @@ EXPECTED_CONSUMERS: dict[str, dict[str, str | None]] = {
     # builder, which left `service.py` for `run_cockpit.py` in #3689.)
     "src/personalclaw/workflows/run_cockpit.py": {"event.tokens": None},
     "scripts/learning_benchmark.py": {
-        "spend.tokens": "_verdict_for_task builds the §4 token denominator",
+        "spend.tokens": "_verdict_for_task builds the verdict's token denominator",
         "provider_binding": "writes the report's provenance and its schema",
         "cell_model": "writes the pin's cells-reach fields into the report",
     },

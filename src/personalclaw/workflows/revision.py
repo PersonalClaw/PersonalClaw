@@ -582,7 +582,7 @@ def announce_block(
     decisions: list[Any] | None = None,
     cost: dict[str, Any] | None = None,
 ) -> str:
-    """The review header (UP-R4): what was detected, what it risks, what it will cost.
+    """The review header: what was detected, what it risks, what it will cost.
 
     Ordered so the two things a user might VETO come first. Detection and risk decide whether to
     read further; the pipeline is what they read if they do. Putting the pipeline first would bury

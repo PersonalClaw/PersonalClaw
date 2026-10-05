@@ -332,7 +332,7 @@ def get(run_id: str) -> WorkflowRun | None:
 
 
 def save(run: WorkflowRun) -> WorkflowRun:
-    """Upsert. The engine's tick loop is the only writer of terminal status (WF2-R10),
+    """Upsert. The engine's tick loop is the only writer of terminal status,
     but every caller uses this same path — the ownership rule is enforced there, not by
     hiding the setter."""
     conn = _connect()
@@ -502,7 +502,7 @@ def list_loop_runs(*, project_id: str = "", kind: str = "") -> list[WorkflowRun]
 
 
 def delete(run_id: str) -> bool:
-    """Remove the row. The DIRECTORY sweep is retention's job (Slice 1) — it has to
+    """Remove the row. The DIRECTORY sweep is retention's job — it has to
     enumerate every sibling artifact kind and refuse paths escaping the run dir, which
     is more than a delete belongs doing."""
     conn = _connect()
@@ -552,7 +552,7 @@ def def_names() -> list[str]:
 
 
 def set_policy_overrides(run_id: str, overrides: dict[str, Any]) -> WorkflowRun | None:
-    """Persist a run's sparse ``SupervisorPolicy`` overlay (PP-16 seam 4d, OWNER RULING 2).
+    """Persist a run's sparse ``SupervisorPolicy`` overlay.
 
     The caller passes ONLY the knobs the user overrode; the dict REPLACES the stored overlay,
     so ``{}`` clears every override and the run falls back to its kind/template defaults —
@@ -568,11 +568,11 @@ def set_policy_overrides(run_id: str, overrides: dict[str, Any]) -> WorkflowRun 
     newer key on re-save. A narrow single-column UPDATE, like `loop/store.py`'s
     ``update_spec``, so a concurrent engine save of the row's other columns is not clobbered.
 
-    The production caller is the prelaunch write surface (PP-16 seam 4f): ``PUT
+    The production caller is the prelaunch write surface: ``PUT
     /api/workflows/runs/{run_id}/policy-overrides`` (`handlers.api_run_policy_overrides`),
     via `service.set_policy_overrides` — which owns the prelaunch PHASE gate and records
     the two reasons that gate is forced. This function stays gate-free on purpose: it is
-    the storage contract, and the lifecycle ruling lives one layer up where the run's
+    the storage contract, and the lifecycle gate lives one layer up where the run's
     status is already being read.
 
     Returns the updated run, or ``None`` when no such row exists.
@@ -682,7 +682,7 @@ def write_output(run_id: str, node_path: str, output: Any) -> str:
 
 
 def write_artifact(run_id: str, node_path: str, output: Any) -> str:
-    """Persist an OFFLOADED node output under `runs/<id>/artifacts/` (WV-11).
+    """Persist an OFFLOADED node output under `runs/<id>/artifacts/`.
 
     Same envelope and same path-hash as :func:`write_output`, so :func:`read_output` finds
     an offloaded body by node path with no extra bookkeeping. The distinction is the
@@ -733,12 +733,12 @@ def read_artifact(run_id: str, ref: str) -> Any:
 def archive_output(run_id: str, node_path: str, version: int) -> str:
     """Move a node's output into `outputs/attic/v<NNN>/` before a rewind overwrites it.
 
-    ARCHIVED, not deleted (WF2-R2 #5). A rewind that discarded the prior answer would make
+    ARCHIVED, not deleted. A rewind that discarded the prior answer would make
     the edit irreversible and leave a reader unable to see what the run used to say. Named
     by the spec version that superseded it, so the attic reads as a history rather than a
     pile of orphans.
 
-    An OFFLOADED body (WV-11) lives under `artifacts/`, not `outputs/`; it is archived from
+    An OFFLOADED body lives under `artifacts/`, not `outputs/`; it is archived from
     there too, into the SAME attic, so a rewind leaves no stale artifact a later read could
     resolve through the `outputs/`→`artifacts/` fallback.
 
@@ -765,7 +765,7 @@ def read_output(run_id: str, node_path: str) -> Any:
     """A node's stored output, or None.
 
     Checks `outputs/` first, then falls back to `artifacts/` — an oversized or binary output
-    the journal spilled (WV-11) lives in the latter. One path-hash, two candidate directories,
+    the journal spilled lives in the latter. One path-hash, two candidate directories,
     so every existing caller reads an offloaded body back transparently.
     """
     filename = _output_filename(node_path)

@@ -1,7 +1,7 @@
-"""Topic segmentation of a conversation transcript (Context Economy §4).
+"""Topic segmentation of a conversation transcript.
 
 The shared primitive behind the background compression service and — when it
-lands — LOOP-R13's proactive in-loop compression. ONE segmenter, two callers.
+lands — proactive in-loop compression. ONE segmenter, two callers.
 
 A transcript is split into contiguous topic segments so a compressor can weight
 attention by recency (recent topic near-verbatim, older topics folded). Two tiers,

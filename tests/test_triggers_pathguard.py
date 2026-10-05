@@ -1,6 +1,6 @@
-"""PathGuard: the `paths` capability, compared as paths rather than strings (decision 7).
+"""PathGuard: the `paths` capability, compared as paths rather than strings.
 
-🔴 THE DEFECT. `paths` has been a fail-closed member of `CAPABILITY_KEYS` since S69 and is
+🔴 THE DEFECT. `paths` has been a fail-closed member of `CAPABILITY_KEYS` and is
 rendered as a fence in the UI — but `capability_allows` compared it with `_matches_entry`, which
 is prefix matching built for tool names like `mcp__github__*`. Measured against the real function
 before a line was written, with the allowlist `["/Users/me/notes/*"]`:
@@ -118,7 +118,7 @@ def test_a_file_out_of_scope_is_DENIED(tree):
 
 
 def test_THE_TRAVERSAL_IS_NOW_REFUSED(tree):
-    """🔴 THE DEFECT, pinned. This exact assertion failed before this session: it ALLOWED."""
+    """🔴 THE DEFECT, pinned. This exact assertion failed before the fix: it ALLOWED."""
     caps = {"paths": [f"{tree / 'notes'}/*"]}
     escape = str(tree / "notes" / ".." / "secrets.txt")
     decision = capability_allows(caps, key="paths", value=escape)
@@ -174,7 +174,7 @@ def test_an_unresolvable_candidate_FAILS_CLOSED():
 
 
 def test_a_SENSITIVE_path_is_refused_even_when_ALLOWLISTED():
-    """🔴 decision 7 reserves checks "no allowlist may silence". An entry naming `~/.ssh` is far
+    """🔴 The fence reserves checks "no allowlist may silence". An entry naming `~/.ssh` is far
     likelier to be a mistake — or an edit nobody intended — than a real grant."""
     ssh = os.path.expanduser("~/.ssh")
     allowed, reason = path_allowed([ssh], os.path.join(ssh, "id_rsa"))
@@ -208,7 +208,7 @@ def test_the_PROVIDERS_key_still_matches_exactly():
 
 
 def test_a_bare_star_is_reported_as_bounding_NOTHING():
-    """A fence the user believes in that grants everything is this program's recurring failure."""
+    """A fence the user believes in that grants everything is this codebase's recurring failure."""
     assert [e for e, _ in unsafe_entries(["*"])] == ["*"]
     assert [e for e, _ in unsafe_entries(["/*"])] == ["/*"]
 

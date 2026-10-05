@@ -1,4 +1,4 @@
-"""Native in-process agent runtime (E2-P4).
+"""Native in-process agent runtime.
 
 The native ``AgentProvider`` runs the agent turn loop *inside* the PersonalClaw
 process: it inferences through a :class:`~personalclaw.llm.base.ModelProvider`

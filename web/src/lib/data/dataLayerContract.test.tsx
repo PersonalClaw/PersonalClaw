@@ -7,7 +7,7 @@ import { StaleNotice } from '../../ui/StaleNotice'
 
 // ── The four properties one data layer has to have ────────────────────────────────────────────
 //
-// DSC-14 replaced `useCachedData` (124 files reached for it) with `lib/data`. These are the
+// `lib/data` replaced `useCachedData` (124 files reached for it). These are the
 // behaviours that were not merely refactored but ADDED, each pinned against the shape it replaced.
 //
 //   1. requests are DEDUPLICATED          N mounts of one key → one request

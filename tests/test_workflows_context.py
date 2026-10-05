@@ -1,4 +1,4 @@
-"""Context lifecycle for long-horizon nodes (Slice 10b).
+"""Context lifecycle for long-horizon nodes.
 
 The templates this engine ships — `deep-research`, `audit-sweep` — are exactly the shapes where
 compaction alone demonstrably fails. Compaction keeps the WHAT and drops the WHY, so a compacted
@@ -177,7 +177,7 @@ class TestDecision:
         assert "in-memory cache" in text
 
     def test_both_field_spellings_are_accepted(self) -> None:
-        """The journal writes `rejected_alternatives` (the plan's name); a model authoring one
+        """The journal writes `rejected_alternatives` (the canonical name); a model authoring one
         naturally writes `rejected`. Refusing either would silently drop the load-bearing field."""
         assert Decision.from_dict({"choice": "x", "rejected": ["a"]}).rejected == ["a"]
         assert Decision.from_dict({"choice": "x", "rejected_alternatives": ["b"]}).rejected == ["b"]

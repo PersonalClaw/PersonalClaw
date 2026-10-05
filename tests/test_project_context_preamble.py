@@ -37,7 +37,7 @@ def test_preamble_names_project_workspace_and_context_dir(store):
 
 
 def test_preamble_lists_context_dir_files(store):
-    """The Slice-6 gap: the path alone wasn't enough — enumerate the files in it."""
+    """The path alone wasn't enough — enumerate the files in it."""
     p = store.create_project("Website")
     cdir = store.context_dir(p.id)
     cdir.mkdir(parents=True, exist_ok=True)

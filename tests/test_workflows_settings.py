@@ -1,19 +1,17 @@
 """The four config knobs, and the wiring that keeps them from being inert.
 
-§8 names four `WorkflowsConfig` fields and the four points each must pass through: dataclass +
+There are four `WorkflowsConfig` fields and four points each must pass through: dataclass +
 `_meta`, `AppConfig.load()` mapping, `to_dict()`, and the PATCH allowlist. All four are wired here.
 
 **The part that actually matters is the fifth point nobody writes down.** `materialize`,
 `confirmation` and `pool` each carry their own module constant, so a field can be set, persisted,
 echoed by `to_dict` and rendered in Settings while the runtime goes on using 20 / 7 days / 900s.
-That is the present-and-inert control this program keeps finding, and it is what these tests pin:
+That is the present-and-inert control this codebase keeps finding, and it is what these tests pin:
 knob is read through `workflows.settings`, and the call sites are asserted to resolve from config.
 
-**A stale plan premise, measured.** The recon says `workflows.match_threshold` already exists.
-It does not — `WorkflowsConfig`'s own docstring records that it was DELETED with the old SOP feature
-under the namespace-reuse clean break, and a repo-wide grep finds it only in that docstring. It is
-deliberately NOT re-added: the new semantic channel is session-59 scope and its threshold is not
-user-tunable yet, so a knob nothing reads would be the exact defect this file exists to prevent.
+**`workflows.match_threshold` returns only with a live reader.** `WorkflowsConfig`'s own docstring
+records that it was DELETED with the old SOP feature under the namespace-reuse clean break, and a
+knob nothing reads would be the exact defect this file exists to prevent.
 """
 
 import dataclasses as dc
@@ -66,7 +64,7 @@ def test_the_field_carries_a_LABEL_and_HELP(name):
 
 
 def test_match_threshold_RETURNS_with_a_live_reader():
-    """It was deleted with the old SOP feature (a knob nothing read), and WF2UNI-11 brings it back
+    """It was deleted with the old SOP feature (a knob nothing read), and it is back now
     with a real owner: the tiered matcher's T4 embedding tie-break reads it as
     the cosine floor. A live reader is what makes the field legitimate this time — a knob nothing
     consumes is the inert control this codebase keeps deleting."""

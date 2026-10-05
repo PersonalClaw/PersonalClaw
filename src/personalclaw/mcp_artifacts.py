@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 def _current_project_id() -> str:
-    """The Project this save scopes under (S5), resolved for BOTH runtimes.
+    """The Project this save scopes under, resolved for BOTH runtimes.
 
     Two callers, two mechanisms, one answer:
 
@@ -41,8 +41,7 @@ def _current_project_id() -> str:
       that contextvar is empty by construction. ``provider_bridge`` pops ``project_id``
       unconditionally and hands it only to the native builder, so nothing about the
       binding crosses into the ACP branch. Every ACP ``artifact_save`` therefore stamped
-      ``project_id=""`` and the artifact never appeared on its Project page
-      (ACP-AGENT-PARITY §2.6 gap 10, atom ``AAP-9``).
+      ``project_id=""`` and the artifact never appeared on its Project page.
 
     The ACP half resolves SERVER-SIDE from the session key rather than by threading a new
     argument through the protocol: the key already crosses as ``PERSONALCLAW_SESSION_KEY``
@@ -1473,7 +1472,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                         f"(slug: {same.slug}) under the same tag — updated it in place "
                         f"(version {version}) instead of saving a duplicate.{kept}"
                     )
-            # List-before-save dedup (ARTIFACTS S1): a fresh save (no explicit slug,
+            # List-before-save dedup: a fresh save (no explicit slug,
             # not forced) whose name matches an existing artifact refuses with a hint
             # so the agent updates the existing one instead of minting a "-2" twin.
             if not slug and yes_or_no(args.get("force")) is not True:
@@ -2168,7 +2167,7 @@ def regenerate_image_at_slug(
 
 
 def _visualize(args: dict[str, Any], _audit: Any) -> str:
-    """`visualize` — the agency-free data→genui-widget primitive (AMBIENT-SURFACES §5.3).
+    """`visualize` — the agency-free data→genui-widget primitive.
 
     Thin wrapper over ``personalclaw.visualize.visualize`` (the ONE reasoning-axis
     ``one_shot_completion`` call site — tools disabled by construction). Its degraded
@@ -2409,7 +2408,7 @@ def _document_create(
 
     The reply carries slug + version + base + the raw URL (for a csv, a text kind the raw route
     does not serve, where it opens in Artifacts) — NEVER the bytes and never base64.
-    Generated document bytes must not enter a prompt (CONTEXT-ECONOMY); when the agent
+    Generated document bytes must not enter a prompt; when the agent
     needs the content back it reads it with ``artifact_get``, which hands it the text.
 
     A call that names an existing document (by slug, or by its name) writes its next version, and

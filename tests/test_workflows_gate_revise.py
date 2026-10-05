@@ -1,4 +1,4 @@
-"""The `revise{step_ref, comment}` answer verb on a waiting gate (UP / WF2UNI-8).
+"""The `revise{step_ref, comment}` answer verb on a waiting gate.
 
 A reviewer who wants ONE step changed used to have only two answers: approve the plan as
 written, or reject it and re-run — which re-rolls every stage nobody complained about (the
@@ -257,7 +257,7 @@ class TestARejectedReviseKeepsTheToken:
 
 
 class TestWhatRunsMatchesWhatWasRecorded:
-    """The substantive correctness clause. The revision is written ONCE, by
+    """The substantive correctness property. The revision is written ONCE, by
     `mid_flight.commit_mutation`, so the executing spec and the persisted one cannot diverge."""
 
     async def test_the_spec_on_disk_equals_the_spec_the_engine_runs(self) -> None:

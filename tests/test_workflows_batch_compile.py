@@ -14,7 +14,7 @@ whole subject
 is least-privilege, four keys that look like enforcement and enforce nothing is the worst possible
 failure — so unenforced declarations travel under a name that says so.
 
-`capability` is the ONE that has since earned its place in node config (WF2WOR-5 C2): it is read by
+`capability` is the ONE that has since earned its place in node config: it is read by
 `engine.leaf_spawn_env`, which writes the leaf's read-only flag into the per-session spawn env, and
 `mcp_shared.leaf_tool_denial` refuses a denied tool at the handler on every call. The same rule
 decided both directions — the key was withheld while nothing read it, and is emitted now that
@@ -162,8 +162,8 @@ def test_the_node_config_carries_ONLY_keys_the_engine_reads():
     `fail_run` and defaults to `null_continue`). Keys that look like controls and enforce nothing —
     in a module about least-privilege, that is the worst kind of bug.
 
-    The rule is "only keys something READS", not a frozen list. `capability` joined the set in
-    WF2WOR-5 because it acquired a reader — `engine.leaf_spawn_env` turns it into the leaf's
+    The rule is "only keys something READS", not a frozen list. `capability` joined the set
+    because it acquired a reader — `engine.leaf_spawn_env` turns it into the leaf's
     read-only flag and `mcp_shared.leaf_tool_denial` enforces it per tool call. The other three are
     still absent, and `unenforced()` still names them."""
     config = compile_batch(leaves(2)).spec["root"]["children"][0]["config"]
@@ -185,7 +185,7 @@ def test_the_unenforced_posture_travels_under_a_name_that_SAYS_SO():
     write access and a reassuring payload. Naming it is what stops the caller believing it.
 
     Both directions matter, so this holds the honest complement too: the tool-handler AND
-    workspace_mode lines both LEFT `unenforced()` in WF2WOR-5 when their seams were actually built,
+    workspace_mode lines both LEFT `unenforced()` when their seams were actually built,
     and claiming a pending control that now exists understates the system exactly as badly as
     claiming an absent one. `timeout_secs` stays pending because it is a real absence — the engine's
     node timeout is per-RUN and there is no per-node override to bind to."""
@@ -253,7 +253,7 @@ def test_a_mutating_leaf_may_declare_writes():
     assert result.ok is True
 
 
-# ── The leaf contract is load-bearing (amendment (b)) ──
+# ── The leaf contract is load-bearing ──
 
 
 @pytest.mark.parametrize("field_name", ["objective", "output_format", "boundary"])
@@ -270,8 +270,8 @@ def test_a_leaf_missing_ANY_contract_field_fails_COMPILATION(field_name):
 
 def test_the_contract_fields_have_NO_dataclass_DEFAULT():
     """A defaulted field is an unsupplied input that satisfies the gate nobody supplied. If
-    `objective` defaulted to `""`, every existing caller would keep compiling and C2.1 would be a
-    docstring."""
+    `objective` defaulted to `""`, every existing caller would keep compiling and the contract
+    would be a docstring."""
     with pytest.raises(TypeError):
         LeafTask(task="a")  # type: ignore[call-arg]
 
@@ -321,7 +321,7 @@ def test_the_declared_SCHEMA_is_shown_to_the_worker_VERBATIM():
 
 
 def test_OFF_FORMAT_leaf_output_is_CAUGHT_by_the_engines_own_validator():
-    """The acceptance criteria's second half, driven end-to-end: the declared format compiles into
+    """The contract's second half, driven end-to-end: the declared format compiles into
     `output_contract`, and `check_output_contract` — the EXISTING validator the engine already runs
     before any `{{nodes.x.output}}` binding resolves — is what refuses the off-format value. No
     second checker: two validators over one field would disagree eventually, and the one that ran
@@ -420,7 +420,7 @@ def test_the_boundary_PROSE_is_never_read_as_a_fence():
     assert findings == []
 
 
-# ── Capability enforcement, homogeneity, and the model pin (amendment (a)/(c)) ──
+# ── Capability enforcement, homogeneity, and the model pin ──
 
 
 def _mut_leaves(n: int, mutating: set[int]) -> list[LeafTask]:
@@ -457,8 +457,8 @@ def _drive(node: Node, *, fail: set[str] | None = None) -> list[list[str]]:
 
 
 def test_two_MUTATING_leaves_never_become_ready_TOGETHER():
-    """The acceptance criteria, driven through `tick.frontier` rather than asserted about the spec.
-    Writes stay single-threaded (amendment (c)); the `needs` chain makes the engine honour it."""
+    """Serialization, driven through `tick.frontier` rather than asserted about the spec.
+    Writes stay single-threaded; the `needs` chain makes the engine honour it."""
     result = compile_batch(_mut_leaves(8, {2, 5, 7}))
     node = Node.from_dict(result.spec["root"])
     mutating = {"root.children[2]", "root.children[5]", "root.children[7]"}
@@ -558,7 +558,7 @@ def test_the_leaf_contract_is_reported_as_ENFORCED():
 
 
 def test_NO_PERSONA_field_exists_on_the_leaf_contract():
-    """An explicit acceptance clause, and a standing prohibition rather than a one-time decision.
+    """A standing prohibition rather than a one-time decision.
     The best-powered direct test of personas (162 roles, 4 model families, 2,410 questions) found NO
     improvement with per-persona effects "largely random", and persona churn is bidirectional — one
     measured case fixed 4% while breaking 18%, which is strictly worse than a uniform loss for an
@@ -586,8 +586,8 @@ def test_a_leaf_may_PIN_a_different_model():
 
 
 def test_the_pin_field_is_NOT_named_model_on_the_leaf():
-    """`mutations._FIELD_ALIASES` already maps the author-facing `model` onto `model_tier`
-    (WF2-R20d), so a `workflow_edit` op saying `fields: {model: ...}` on a compiled leaf rewrites
+    """`mutations._FIELD_ALIASES` already maps the author-facing `model` onto `model_tier`,
+    so a `workflow_edit` op saying `fields: {model: ...}` on a compiled leaf rewrites
     the TIER and leaves the pin untouched — the author would then debug a key never written."""
     from personalclaw.workflows.mutations import normalize_fields
 
@@ -808,17 +808,16 @@ def test_the_batch_carries_the_subagent_tool_ORIGIN():
     assert compile_batch(leaves(2)).spec["origin"]["kind"] == "subagent-tool"
 
 
-# ── VC: an 8-wide fan-out with mutating leaves, driven through the real engine ──
+# ── an 8-wide fan-out with mutating leaves, driven through the real engine ──
 
 
 def test_an_EIGHT_WIDE_fanout_with_three_mutators_delivers_all_eight():
-    """The VC row's provable half, in ONE test so the three properties are asserted about the SAME
+    """The provable half, in ONE test so the three properties are asserted about the SAME
     driven run rather than three runs that each held one of them.
 
-    Two VC clauses are NOT proved here and are not claimed to be: per-child cost visibility and the
-    one-click kill belong to rows C1.4/C1.5, and the production `subagent_run` call site does not
-    exist yet (WF2WOR-5 owns the cutover and depends on this step). The plan's execution log records
-    that split explicitly — an over-claimed VC is worse than a deferred one.
+    Two properties are NOT proved here and are not claimed to be: per-child cost visibility and the
+    one-click kill. The production `subagent_run` call site is the cutover's to prove
+    (`test_workflows_batch_cutover.py`) — an over-claimed proof is worse than a deferred one.
     """
     result = compile_batch(_mut_leaves(8, {2, 5, 7}), run_name="vc-eight-wide")
     assert result.ok is True

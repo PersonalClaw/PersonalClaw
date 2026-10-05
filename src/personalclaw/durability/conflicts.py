@@ -14,7 +14,7 @@ Three properties this module exists to guarantee:
   ancestor is the version this home and that peer last agreed on, or a later one this home
   published that the peer now holds (:mod:`durability.ancestors`). No ancestor on record (a
   record the two have never agreed on) is likewise NOT a conflict: with no common point there
-  is nothing to say both sides moved *from*, and §4.2 item 1 hands those to the deterministic
+  is nothing to say both sides moved *from*, and those go to the deterministic
   merge.
 * **The local version stays authoritative.** A recorded conflict HOLDS its id: the caller
   (:func:`reconcile.reconcile_entry`) drops the remote row for that id before merging, so
@@ -41,7 +41,7 @@ regardless. It is deliberately NOT an inventory entry: an inventory entry under
 ``sync/`` would be exported into the very shards a pull rewrites mid-cycle, i.e. a
 self-referential synced store. ``sync/`` is IGNORED by the home audit for that reason.
 
-Routing (§4.2 item 3): the record carries the surface its entry's ``domain`` maps to —
+Routing: the record carries the surface its entry's ``domain`` maps to —
 memory-domain conflicts to the memory review surface, knowledge-domain to the knowledge
 UI, everything else to the Durability queue. The boundary holds in the failure path too:
 a conflict with no drafted proposal still carries its surface.
@@ -75,7 +75,7 @@ STATUS_NEEDS_REVIEW = "needs-review"
 #: version the user chose is exactly the part worth keeping.
 STATUS_RESOLVED = "resolved"
 
-# ── review surfaces (§4.2 item 3) ────────────────────────────────────────────
+# ── review surfaces ──────────────────────────────────────────────────────────
 SURFACE_MEMORY = "memory"
 SURFACE_KNOWLEDGE = "knowledge"
 SURFACE_DURABILITY = "durability"
@@ -95,7 +95,7 @@ ID_KEYED_MERGES = frozenset({inv.MERGE_UNION_BY_ID, inv.MERGE_LWW})
 
 
 def surface_for_domain(domain: str) -> str:
-    """The review surface a conflict in ``domain`` routes to (§4.2 item 3)."""
+    """The review surface a conflict in ``domain`` routes to."""
     if domain == inv.DOMAIN_MEMORY:
         return SURFACE_MEMORY
     if domain == inv.DOMAIN_KNOWLEDGE:
@@ -242,7 +242,7 @@ def detect_conflicts(
     ancestor == local, remote differs   edited there — the reconcile takes the peer's
     ancestor == remote, local differs   edited here — this home's stays
     local == remote                     converged — nothing to review
-    no ancestor recorded                no common point — deterministic merge (§4.2.1)
+    no ancestor recorded                no common point — deterministic merge
     all three differ                    **CONFLICT** — a record, local held
     ==================================  ===============================================
 
@@ -431,7 +431,7 @@ class ConflictQueue:
         """Queue contents, newest last, optionally filtered by surface/status/entry.
 
         The surface filter is what routes a memory-domain conflict to the memory review
-        surface and a knowledge-domain one to the knowledge UI (§4.2 item 3) without either
+        surface and a knowledge-domain one to the knowledge UI without either
         surface knowing about the other's records.
         """
         out = self._read()
@@ -444,7 +444,7 @@ class ConflictQueue:
         return out
 
     def get(self, record_id: str) -> ConflictRecord | None:
-        """The queued record with this id, or ``None``. The review surface's read (DAS-10):
+        """The queued record with this id, or ``None``. The review surface's read:
         a resolve acts on one record, and "not queued" has to be distinguishable from
         "queued but already reviewed" rather than both collapsing into an empty list."""
         for rec in self._read():

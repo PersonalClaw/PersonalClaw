@@ -8,7 +8,7 @@ import type { DashboardView, DashboardTile } from '../../lib/api'
 // dashboard is byte-identical to today's fixed layout. The tile schema carries a ref +
 // size + order + added_by and NEVER a coordinate.
 
-// AS-2 added `refresh` — a DATA seam (where a tile's content comes from), never a spatial one.
+// The tile's `refresh` is a DATA seam (where a tile's content comes from), never a spatial one.
 const tile = (ref: string, order = 0, added_by: 'user' | 'agent' = 'user'): DashboardTile =>
   ({ ref, size: 'm', order, added_by, refresh: { mode: 'manual', ttl_secs: 0, skeleton: '', data: [] } })
 

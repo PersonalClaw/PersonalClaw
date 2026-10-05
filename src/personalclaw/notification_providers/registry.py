@@ -1,4 +1,4 @@
-"""The app-contributed notification-delivery registry (MULTI-TENANCY-ENTITY `TSE2-5`).
+"""The app-contributed notification-delivery registry.
 
 Mirrors ``inbox_providers/registry.py`` exactly: the ``notification`` provider-type handler
 (``providers/registry.py::NotificationTypeHandler``) registers an installed app's backend here

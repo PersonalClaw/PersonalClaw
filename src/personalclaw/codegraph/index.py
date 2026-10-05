@@ -24,7 +24,7 @@ from personalclaw.sqlite_compat import connect_shared, sqlite3
 
 logger = logging.getLogger(__name__)
 
-# The plan's ~30s budget for a full rebuild. Fail-soft: whatever is indexed stays.
+# A ~30s budget for a full rebuild. Fail-soft: whatever is indexed stays.
 DEFAULT_BUDGET_SECS = 30.0
 DEFAULT_MAX_FILES = 20_000
 

@@ -1,7 +1,7 @@
 /**
  * SOUND CUES — three synthesised earcons, off by default.
  *
- * PERSONALITY-THEMES §S2 (contract C2). The app has three moments a user
+ * The app has three moments a user
  * genuinely wants to hear while looking somewhere else: a turn finished, an
  * approval is waiting, something failed. Everything else is chatter, so the set is
  * CLOSED at those three.
@@ -101,10 +101,10 @@ export const CUE_POINTS: readonly CuePoint[] = ['turn_complete', 'approval_neede
  *  Validated at the BOUNDARY rather than at every read, and both sides are checked:
  *  a key is copied only if it is one of the three points, and a value only if it is a
  *  registered recipe. That matters because the map arrives from a registry the
- *  compiler may not have seen — a persisted override, the plan's forward-hooked
+ *  compiler may not have seen — a persisted override, a future
  *  app-contributed manifest. `Object.hasOwn`, not truthiness: a plain index reads the
  *  PROTOTYPE CHAIN, so a voice named `'constructor'` would otherwise resolve to
- *  `Object` and be handed to `synth` as a recipe (the same hole PT-3 measured live in
+ *  `Object` and be handed to `synth` as a recipe (the same hole once measured live in
  *  both personality registries). Anything rejected leaves the point on its own voice.
  *
  *  Passing `undefined` is the restore path and must leave NOTHING behind — a

@@ -1,4 +1,4 @@
-"""Core types for the knowledge ingestion node-graph engine (#30).
+"""Core types for the knowledge ingestion node-graph engine.
 
 A processing pipeline is a **conditional DAG** of :class:`ProcessingNode`s. Each node
 consumes the outputs of its upstream nodes and emits a :class:`NodeOutput`; an edge
@@ -25,7 +25,7 @@ class PoolRow:
 
     A node is one STEP, and one step is normally one row. But a step whose product is a
     SET of role-sized views of the same document — the fetch-and-slice ``brief``/``body``/
-    ``meta`` cut (WATCHED-SOURCES §5) — needs several rows with names of its own choosing
+    ``meta`` cut — needs several rows with names of its own choosing
     (``slice:brief``, not ``document_slice``). Modelling that as three graph NODES was the
     alternative and it is worse: each would have to re-run the same section detection,
     which gives one deterministic cascade three chances to disagree with itself.

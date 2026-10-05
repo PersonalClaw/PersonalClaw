@@ -1,4 +1,4 @@
-"""Media + video processing nodes (#47).
+"""Media + video processing nodes.
 
 Pure-python nodes (exif, thumbnail, ffmpeg split, frame-extract) need no model.
 Model-backed nodes resolve DIRECTLY to a default capability binding — OCR / vision /
@@ -115,7 +115,7 @@ def _cannot_read(node_type: str, backend: str, ctx: NodeContext) -> NodeOutput:
 
 
 async def _lexicon_bias_terms(ctx: NodeContext) -> list[str] | None:
-    """Pre-decode bias terms for this item's transcription (core L2 hook).
+    """Pre-decode bias terms for this item's transcription: the Lexicon's hook.
 
     Returns the Lexicon's ranked, budget-capped term list — context-scoped to the item's
     siblings when the Lexicon can resolve them, else the globally top-weighted terms.
@@ -123,7 +123,7 @@ async def _lexicon_bias_terms(ctx: NodeContext) -> list[str] | None:
     which case the STT provider transcribes with no bias (today's behavior). Best-effort:
     a Lexicon error must never fail transcription."""
     try:
-        from personalclaw.lexicon import select_bias_terms  # available from C2
+        from personalclaw.lexicon import select_bias_terms
     except Exception:
         return None
     try:
@@ -253,7 +253,7 @@ class VisionNode:
 class TranscriptionNode:
     node_type = "transcription"
     backend = "stt"
-    uses_use_case = "stt"  # REUSE stt (Q1 hybrid: transcription == the stt capability)
+    uses_use_case = "stt"  # REUSE stt (transcription == the stt capability)
 
     async def run(self, inputs, ctx: NodeContext) -> NodeOutput:
         audio = _audio_from(inputs, ctx)
@@ -264,7 +264,7 @@ class TranscriptionNode:
         try:
             from personalclaw.transcribe import transcribe_audio_detailed
 
-            # L2 hook: bias the decoder toward the user's Lexicon terms (context-scoped
+            # Lexicon hook: bias the decoder toward the user's Lexicon terms (context-scoped
             # to this item's siblings when available, else globally top-weighted). No-op
             # for providers without supports_bias_terms.
             bias_terms = await _lexicon_bias_terms(ctx)
@@ -291,8 +291,8 @@ class TranscriptionNode:
                 metadata={"no_speech": True},
             )
         # Flat text flows to FTS + embeddings unchanged; the structured transcript (segments
-        # + word timestamps) rides in metadata["transcript"] (L0.5 — the runner persists
-        # node metadata to extracted_contents; no items/extracted_contents schema change).
+        # + word timestamps) rides in metadata["transcript"]: the runner persists node
+        # metadata to extracted_contents, so it needs no items/extracted_contents schema change.
         metadata: dict = {}
         if result.segments:
             metadata["transcript"] = result.to_dict()
@@ -305,16 +305,17 @@ class TranscriptionNode:
 
 
 class LexiconCorrectionNode:
-    """Post-decode phonetic correction over a structured transcript (core LEX.4).
+    """Post-decode phonetic correction over a structured transcript.
 
     Runs after speaker_fusion (or after transcription when no diarization). Reads the
-    upstream ``metadata['transcript']`` (the L0 TranscriptResult JSON), asks the Lexicon to
+    upstream ``metadata['transcript']`` (the TranscriptResult JSON), asks the Lexicon to
     correct mis-heard terms (hybrid: auto-apply learned/high-confidence, propose the rest),
     and re-emits the corrected transcript + ``corrections_applied``/``corrections_suggested``
     so the UI can render accept/reject highlights. No model, no tokens.
 
     Skips gracefully (passes the transcript through unchanged) when the Lexicon is empty or
-    the item carries no structured transcript — so L0 works with or without LEX."""
+    the item carries no structured transcript — so transcription works with or without the
+    Lexicon."""
 
     node_type = "lexicon_correction"
     backend = "lexicon"
@@ -396,7 +397,7 @@ class LexiconCorrectionNode:
 
 
 class DiarizationNode:
-    """Speaker diarization ("who spoke when") — core L1. Emits ``metadata['speaker_turns']``
+    """Speaker diarization ("who spoke when"). Emits ``metadata['speaker_turns']``
     = [{start,end,speaker}]. The executor skips it when no diarization model is bound, so the
     audio graph works with or without one. Structural (``pooled=False``): its product is the
     turns speaker_fusion reads, never text of its own."""
@@ -435,12 +436,12 @@ class DiarizationNode:
 
 
 class SpeakerFusionNode:
-    """Deterministic fusion (core L1.3, no model, no tokens): assign each transcript
+    """Deterministic fusion (no model, no tokens): assign each transcript
     word/segment the speaker whose diarization turn has MAXIMUM temporal overlap, then roll
     words up to segments (splitting a segment when the speaker changes mid-segment). Emits
     the transcript with ``segment.speaker`` filled + a speaker-attributed flat text. When no
     speaker turns are present (no diarization model), passes the transcript through
-    unchanged — so L0 works with or without L1."""
+    unchanged — so transcription works with or without diarization."""
 
     node_type = "speaker_fusion"
     backend = "native"

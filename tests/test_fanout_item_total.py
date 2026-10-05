@@ -1,6 +1,6 @@
 """#3403 — a fan-out's `item_total` is ONE number, and both surfaces that carry it report it.
 
-`item_total` is the denominator of the `[i/total]` progress marker that exists, per the WF2-R5
+`item_total` is the denominator of the `[i/total]` progress marker that exists, per the controller's
 comment, so "a fan-out of twelve does not render as twelve identical rows". Two surfaces render
 it, each used to derive it for itself, and each derivation was wrong in a different way:
 
@@ -132,8 +132,8 @@ async def _drive(home: Path, spec: dict[str, Any]) -> tuple[str, list[tuple[str,
     """Run `spec` to completion, returning its run id and every event it PUBLISHED.
 
     The events are captured through the engine's own `publish` seam rather than reconstructed,
-    because arm F2 lives at the moment of publication: a payload rebuilt after the run would be
-    built against a complete instance map and could not exhibit the defect.
+    because the stream's defect lives at the moment of publication: a payload rebuilt after the
+    run would be built against a complete instance map and could not exhibit the defect.
     """
     published: list[tuple[str, dict[str, Any]]] = []
     with _isolated(home):
@@ -203,11 +203,11 @@ async def test_the_old_keying_would_still_report_six_on_this_data(tmp_path: Path
     assert totals[fanout_key] == 6, totals
 
 
-# ── F1: the REST node list ───────────────────────────────────────────────────
+# ── the REST node list ───────────────────────────────────────────────────────
 
 
 async def test_the_rest_list_reports_the_item_count_not_the_iteration_sum(tmp_path: Path) -> None:
-    """F1. Six rows previously claimed to be items 1–3 **of 6**; there are three items."""
+    """Six rows previously claimed to be items 1–3 **of 6**; there are three items."""
     home = tmp_path / "home"
     run_id, _ = await _drive(home, _FANOUT_IN_LOOP)
     with _isolated(home):
@@ -234,8 +234,8 @@ async def test_a_loop_iteration_still_carries_its_own_coordinate(tmp_path: Path)
 
     A loop's total is unknowable until it ends (`until_dry` has no count), so an iteration's
     coordinate is the size of its expansion group. Keying that by `sibling_group` keeps it separate
-    from a nested fan-out's items — the regression risk of fixing F1 by widening the key instead of
-    narrowing it.
+    from a nested fan-out's items — the regression risk of fixing the REST list by widening the
+    key instead of narrowing it.
     """
     home = tmp_path / "home"
     run_id, _ = await _drive(home, _LOOP_IN_FANOUT)
@@ -268,11 +268,11 @@ async def test_a_fanout_wrapping_a_loop_still_counts_its_own_items(tmp_path: Pat
     assert per_item == {"root.body#0", "root.body#1"}, sorted(per_item)
 
 
-# ── F2: the live event stream ────────────────────────────────────────────────
+# ── the live event stream ────────────────────────────────────────────────────
 
 
 async def test_every_streamed_event_of_a_twelve_item_fanout_reports_twelve(tmp_path: Path) -> None:
-    """F2, at full size. The stream must read `[1/12] … [12/12]`.
+    """The live stream, at full size. It must read `[1/12] … [12/12]`.
 
     The broken stream was `""`, `[2/2]`, `[3/3]` … `[12/12]`: the FIRST item carried no
     `item_total` at all (one instance in the map, so the `> 1` gate suppressed it) and every later

@@ -1,4 +1,4 @@
-"""The global kill switch, on the unified trigger path (decision 7).
+"""The global kill switch, on the unified trigger path.
 
 🔴 THE DEFECT. `personalclaw incident on` did NOT stop a clock trigger. The CLI calls it
 "Suspend/resume all unattended work", `guardrails/incident.py` is SEL-audited, and three other
@@ -91,7 +91,7 @@ def test_the_kill_switch_is_the_FIRST_gate():
 
 
 def test_the_gate_vocabulary_covers_the_new_gate():
-    """§7 criterion 8's zero-silent-drops rule is enforced structurally: a gate with no outcome
+    """The zero-silent-drops rule is enforced structurally: a gate with no outcome
     raises `KeyError` mid-fire, which loses the fire instead of refusing it."""
     from personalclaw.triggers.firepath import gate_order_is_intact
 
@@ -139,7 +139,7 @@ def test_resuming_lets_fires_through_again():
 
 
 def test_a_due_clock_trigger_does_NOT_fire_during_an_incident(store, tmp_path):
-    """🔴 THE DEFECT, pinned end to end. This exact assertion failed before this session."""
+    """🔴 THE DEFECT, pinned end to end. This exact assertion failed before the fix."""
     _due(store)
     incident.activate(reason="test")
     result = _tick(store, tmp_path)
@@ -157,7 +157,7 @@ def test_the_same_trigger_fires_once_the_incident_is_over(store, tmp_path):
 
 
 def test_a_refused_fire_still_writes_a_LEDGER_ROW(store, tmp_path):
-    """§7 criterion 8: zero silent drops. An operator must be able to see that the switch is what
+    """Zero silent drops. An operator must be able to see that the switch is what
     stopped the work — a suspended automation with no row is indistinguishable from a broken one."""
     _due(store)
     incident.activate(reason="test")
@@ -227,8 +227,8 @@ def test_a_DRY_RUN_still_reports_during_an_incident(store, tmp_path):
 
 def test_the_plan_the_tool_REPORTS_matches_what_it_ENFORCES():
     """The invariant the inert plan violated: every gate named "enforced" must have an enforcement
-    point. `incident` is the one this session wired; the rest are enforced where their inputs exist
-    (documented on `manual_refusal`), so this asserts the specific claim that was false."""
+    point. `incident` is the one wired on the unified path; the rest are enforced where their inputs
+    exist (documented on `manual_refusal`), so this asserts the specific claim that was false."""
     plan = T.manual_gate_plan()
     assert "incident" in plan["enforced"]
     incident.activate(reason="test")

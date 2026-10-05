@@ -1,11 +1,11 @@
-"""``triage-digest`` action provider — the triage pipeline's one call site (PA §1.1-§1.5).
+"""``triage-digest`` action provider — the triage pipeline's one call site.
 
 The bundled "Morning triage" template fires ONE `action` node, and this is it. Everything the
 pipeline needs that only the running gateway has — the inbox store, the live channel sessions,
 the run store, the notification gate — is reached from here, so the pipeline itself stays a
 pure function of an item list and two callables.
 
-**Why an action node rather than a chain of `infer` nodes.** Three properties the plan asks for
+**Why an action node rather than a chain of `infer` nodes.** Three properties triage needs
 are only obtainable from code:
 
 * the zero-item short-circuit has to happen BEFORE a model is reachable, and an `infer` node is
@@ -15,7 +15,7 @@ are only obtainable from code:
   code can refuse a proposal that named one the manifest never minted;
 * the drop and refusal rationales have to be *recorded*. `journal.step_skipped` carries no
   reason, so a model-authored gate leaves "why did nothing surface?" unanswered in the one place
-  the plan says it must be answered.
+  it must be answered.
 
 **Where the filter rules live: on this node, in `action_config`.** Not in a new store. The
 bundled template is copied into the user's own `defs/` the moment they instantiate it, so the
@@ -251,7 +251,7 @@ def _record(result: Any, ctx: ActionContext) -> int:
 def _approval_rules(memory: Any = None) -> list[Any]:
     """The user's taught approval rules, decoded. An exact prefix scan, never a vector search.
 
-    §1.4 is explicit that approval lookups are exact — a rule is policy, and a nearest-neighbour
+    Approval lookups are exact by design — a rule is policy, and a nearest-neighbour
     match on policy would auto-execute against a pattern the user never taught. Undecodable rows
     are dropped by `rules_from_rows` rather than guessed at; the rules-manager surface is where a
     broken row gets reported, and a matcher that invented a verdict for one would be worse than
@@ -259,7 +259,7 @@ def _approval_rules(memory: Any = None) -> list[Any]:
 
     Returns `[]` on any failure, which degrades auto-execution to trivial-tier only. That is the
     safe direction: a missing rule store can never manufacture an approve verdict, it can only
-    fail to find one, and the proposal then queues pending exactly as it did before PA-3.
+    fail to find one, and the proposal then queues pending exactly as it does with no taught rule.
     """
     from personalclaw.proactive.approval import APPROVAL_KEY_PREFIX, rules_from_rows
 
@@ -288,8 +288,8 @@ def _ledger_writer(ctx: ActionContext) -> Any:
     Same reason `_record` returns 0 rather than writing: a row stamped with a bare node id is
     durably written and then INVISIBLE in the runs surface, because `inspect_node` slices a
     run's ledger on the engine's instance key. An auto-execution the user cannot find in the
-    ledger is exactly the silent unattended write §1.6 exists to prevent, so the absence is
-    reported (`auto_ledger_rows: 0`) instead of faked.
+    ledger is exactly the silent unattended write the auto-execution bounds exist to prevent, so
+    the absence is reported (`auto_ledger_rows: 0`) instead of faked.
     """
     run_id = run_identity(ctx, "run_id")
     instance_path = run_identity(ctx, "instance_path")
@@ -314,7 +314,7 @@ def _ledger_writer(ctx: ActionContext) -> Any:
 
 
 def _capabilities(action_config: dict[str, Any]) -> frozenset[str]:
-    """The frozen set of providers this digest may DISPATCH (§1.6 bound 2).
+    """The frozen set of providers this digest may DISPATCH.
 
     Read off the node, defaulting to `AUTO_CAPABLE_PROVIDERS` (just `inbox-op`). This is a
     second, narrower fence than the trigger-level one in `triggers/screen.py`: that one decides
@@ -338,7 +338,7 @@ def _capabilities(action_config: dict[str, Any]) -> frozenset[str]:
 
 
 def _auto_stage(action_config: dict[str, Any], ctx: ActionContext, cfg: Any) -> Any:
-    """The §1.6 stage, bound to this run's config, rules, budget and journal.
+    """The auto-execution stage, bound to this run's config, rules, budget and journal.
 
     Built here rather than inside the pipeline because every input is a live handle the pipeline
     deliberately does not hold — the config, the memory store, the run's journal. The pipeline
@@ -408,7 +408,7 @@ class TriageDigestActionProvider(ActionProvider):
         if not getattr(cfg, "triage_enabled", False):
             # Fail CLOSED, and visibly. A refusal reported as success is how a switch that is
             # off becomes indistinguishable from a pipeline that found nothing — and this
-            # switch is the plan's soul guardrail, so the run says which one it was.
+            # switch is the feature's soul guardrail, so the run says which one it was.
             return ActionResult(
                 success=False,
                 error=(
@@ -450,7 +450,7 @@ class TriageDigestActionProvider(ActionProvider):
             max_proposals=cap,
             window_start=since_iso,
             # The run id is what makes the digest's `statusUrl` deep-link THIS run's journal and
-            # what makes its `event_id` derived rather than random (§1.5 / criterion 9). Empty
+            # what makes its `event_id` derived rather than random. Empty
             # when a caller fires the provider outside a run — the delivery then falls back to
             # the trigger link rather than pointing at a run that does not exist.
             run_id=run_identity(ctx, "run_id"),

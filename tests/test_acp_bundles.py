@@ -1,4 +1,4 @@
-"""P1: the public removable ``acp:<cli>`` bundles (claude-code / codex).
+"""The public removable ``acp:<cli>`` bundles (claude-code / codex).
 
 Proves the bundle wiring matches how ACP agents are actually selected today:
 
@@ -457,7 +457,7 @@ def test_enable_is_idempotent(monkeypatch, tmp_path):
     assert get_default_registry().get_entry("acp:claude-code") is not None
 
 
-# ── claude config isolation (the E12 §6 security control) ────────────────────
+# ── claude config isolation (a security control) ─────────────────────────────
 #
 # Since apps #137 the spawned Claude runs with a config of its own unless the
 # ``isolated_config`` setting turns it off. It starts as ``{}``: nothing comes from the

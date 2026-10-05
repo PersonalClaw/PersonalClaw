@@ -1,12 +1,12 @@
-"""Entity-id origin keying (MULTI-TENANCY-ENTITY TSE2-2).
+"""Entity-id origin keying.
 
 A locally-minted task / project / trigger now carries an ``origin_harness`` sidecar — this
 home's ``durability`` ``machine_id`` — so two harnesses' stores merge *attributably*: every row
 knows WHICH machine minted it, even when a ``t-<hex8>``-class id collides by chance. The field is
-attribution, never authority (the plan's soul guardrail): it is optional, defaults to ``""`` (=
+attribution, never authority (the soul guardrail): it is optional, defaults to ``""`` (=
 "this harness's"), and changes no behavior — a single-home install is byte-unchanged.
 
-Four falsifiable claims, mirroring the change's acceptance criteria:
+Four falsifiable claims:
 
 1. A NEW record's ``origin_harness`` is the local ``machine_id`` — the SAME string
    ``durability.shards.machine_id`` returns for the home, REUSED not minted here. (create-path)
@@ -14,7 +14,7 @@ Four falsifiable claims, mirroring the change's acceptance criteria:
    sidecar, not an id-format change.
 3. Merging two stores minted under DIFFERENT ``machine_id``s keeps every row attributable to its
    origin — and a same-id collision across the two does NOT silently collapse.
-4. A pre-plan store (rows with no ``origin_harness`` key) round-trips BYTE-IDENTICAL but for the
+4. A legacy store (rows with no ``origin_harness`` key) round-trips BYTE-IDENTICAL but for the
    new field, which reads back as its ``""`` default.
 
 Each create-path claim is paired with the independent ``machine_id`` value rather than "non-empty"
@@ -179,31 +179,31 @@ def test_a_trigger_provider_served_origin_is_preserved_not_overwritten(tmp_path)
     assert trigger.to_dict()["origin_harness"] == "alices-laptop"
 
 
-# ── 4: a pre-plan store round-trips byte-identical but for the new default field ──
+# ── 4: a legacy store round-trips byte-identical but for the new default field ──
 
 
-def test_a_pre_plan_task_round_trips_byte_identical_but_for_the_default(tmp_path):
+def test_a_legacy_task_round_trips_byte_identical_but_for_the_default(tmp_path):
     full = Task(id="t-abc12345", title="legacy").to_dict()
     assert full["origin_harness"] == ""  # the field's default IS the empty string
-    pre_plan = {
+    legacy = {
         k: v for k, v in full.items() if k != "origin_harness"
-    }  # a row written before TSE2-2
-    revived = Task.from_dict(pre_plan).to_dict()
-    # The ONLY difference from a pre-plan row is the new field, defaulted to "".
+    }  # a row written before the field existed
+    revived = Task.from_dict(legacy).to_dict()
+    # The ONLY difference from a legacy row is the new field, defaulted to "".
     assert revived == full
     assert revived["origin_harness"] == ""
 
 
-def test_a_pre_plan_project_round_trips_byte_identical_but_for_the_default(tmp_path):
+def test_a_legacy_project_round_trips_byte_identical_but_for_the_default(tmp_path):
     full = Project(id="p-abc12345", name="legacy").to_dict()
     assert full["origin_harness"] == ""
-    pre_plan = {k: v for k, v in full.items() if k != "origin_harness"}
-    revived = Project.from_dict(pre_plan).to_dict()
+    legacy = {k: v for k, v in full.items() if k != "origin_harness"}
+    revived = Project.from_dict(legacy).to_dict()
     assert revived == full
     assert revived["origin_harness"] == ""
 
 
-def test_a_pre_plan_trigger_round_trips_byte_identical_but_for_the_default(tmp_path):
+def test_a_legacy_trigger_round_trips_byte_identical_but_for_the_default(tmp_path):
     base = {
         "id": "clock:legacy",
         "name": "legacy",
@@ -212,7 +212,7 @@ def test_a_pre_plan_trigger_round_trips_byte_identical_but_for_the_default(tmp_p
     }
     full = parse_trigger(base)[0].to_dict()
     assert full["origin_harness"] == ""
-    pre_plan = {k: v for k, v in full.items() if k != "origin_harness"}
-    revived = parse_trigger(pre_plan)[0].to_dict()
+    legacy = {k: v for k, v in full.items() if k != "origin_harness"}
+    revived = parse_trigger(legacy)[0].to_dict()
     assert revived == full
     assert revived["origin_harness"] == ""

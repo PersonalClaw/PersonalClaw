@@ -119,7 +119,7 @@ def test_over_cap_detects_a_hand_edited_row(store):
 
 
 def test_builtin_slots_are_declared(store):
-    """The six §6 built-ins, by name."""
+    """The six built-ins, by name."""
     assert set(memory_slots.BUILTIN_SLOTS) == {
         "persona",
         "preferences",
@@ -209,7 +209,7 @@ def test_hook_appends_and_never_rewrites(store):
         has_vector = True
         _vs = store
 
-    written = capture_slot_lines(_Svc(), "pending_items", ["Ship MGAV-8.", "Review the plan."])
+    written = capture_slot_lines(_Svc(), "pending_items", ["Ship the release.", "Review the plan."])
     assert written == 2
     first = memory_slots.load(store, "pending_items")
 

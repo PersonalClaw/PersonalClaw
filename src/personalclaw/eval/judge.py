@@ -22,9 +22,9 @@ logger = logging.getLogger(__name__)
 class JudgeVerdict:
     score: float
     reason: str
-    # A bounded chain-of-thought the judge writes BEFORE the score (AUTONOMY-
-    # GUARDRAILS §2.4): a structured-output constraint must not suppress the
-    # model's reasoning. Optional so an older/blank response still parses.
+    # A bounded chain-of-thought the judge writes BEFORE the score: a structured-output
+    # constraint must not suppress the model's reasoning. Optional so an older/blank
+    # response still parses.
     reasoning: str = ""
 
 
@@ -58,7 +58,7 @@ class LLMJudge:
         ``learning.replay`` weighs arm A against arm B — so two turns graded by two
         different models produce numbers that cannot be compared, and a max over them is
         not a winner. That is why the direct-resolve chain advance the non-interactive
-        one-shot consumers get (MODEL-USE-CASES-V2 T2.4, ``llm_helpers``) stops at this
+        one-shot consumers get (``llm_helpers``) stops at this
         seam: the factory a caller hands in has already returned by the time a call fails,
         so advancing to chain entry N+1 would have to happen HERE, mid-slate, and swap the
         grader out from under a comparison already in progress. Chain fallback still

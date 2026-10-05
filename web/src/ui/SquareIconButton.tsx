@@ -35,7 +35,7 @@ export function SquareIconButton({
   /** This button reveals adjacent content, and the content is currently shown.
    *
    *  🔑 SAME SPELLING AS `Button` AND `QuietButton`, deliberately — `ariaExpanded`, not a third name for
-   *  the same question. Cycle 129 gave this primitive `on` → `aria-pressed` and measured 18 nodes gaining
+   *  the same question. An earlier pass gave this primitive `on` → `aria-pressed` and measured 18 nodes gaining
    *  it on `#/settings/providers`; what it did not do (it did do it for `QuietButton`) was classify the
    *  callers. Three of them are disclosures — `ProviderCard`'s Configure, `WidgetFrame`'s iteration rail,
    *  `MultiInstanceCard`'s Edit — and two are true toggles (Bookmark, Pin), which keep `on`.

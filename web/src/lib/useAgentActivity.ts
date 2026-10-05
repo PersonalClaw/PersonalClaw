@@ -5,7 +5,7 @@ import { useVisiblePoll } from './useVisiblePoll'
 import { loopRoute } from './loopKind'
 import type { ChatSessionSummary, Loop, PendingApproval, SpawnedAgent } from './api'
 
-// ── AgentActivityFeed (AMBIENT-SURFACES A2-3) ────────────────────────────────
+// ── AgentActivityFeed ────────────────────────────────
 // ONE typed read surface describing "what my agents are doing right now", so an
 // ambient WORLD can render the live picture without knowing a single endpoint.
 // The full contract — including why it exists and what a world may assume — is

@@ -1,6 +1,6 @@
 """The L2 surface-overlay producer — user/agent surface overrides as DATA.
 
-AMBIENT-SURFACES §6 names three surface layers (L0 core, L1 app, L2 user/agent) and
+There are three surface layers (L0 core, L1 app, L2 user/agent), and
 `surface_layers.py` + `ui/surfaces/layers.ts` build the ceiling, the boundary and the
 refusals for all three. Until this module there was **no L2 producer**: nothing wrote a
 user/agent overlay, so the layer was declared and empty. This is the loader that fills

@@ -63,7 +63,7 @@ _TRACKING_PARAMS = frozenset(
 
 
 def _external_vector_store():
-    """The user's bound external chunk-vector index, or None (KBVS-1).
+    """The user's bound external chunk-vector index, or None.
 
     Resolved per call rather than cached on the store: a provider is enabled/disabled through
     the Store UI at runtime, and a store instance outlives that. The lookup is a dict length
@@ -110,7 +110,7 @@ _EXTERNAL_ROW_ARITY = 8
 
 
 def _external_replace_item(item_id: str, rows) -> None:
-    """Replace *item_id*'s vectors in the bound external store with *rows* (KBVS-1).
+    """Replace *item_id*'s vectors in the bound external store with *rows*.
 
     *rows* carries `_EXTERNAL_ROW_COLUMNS` — ``(id, item_id, chunk_index, text, embedding,
     section, line_start, line_end, model_id, provider)`` — read positionally so the per-item
@@ -501,7 +501,7 @@ class KnowledgeStore:
                 summary TEXT,
                 embedding BLOB,
                 status TEXT DEFAULT 'active',
-                -- first-class typed-item fields (P6b)
+                -- first-class typed-item fields
                 gist_language TEXT,
                 url TEXT, url_title TEXT, url_description TEXT,
                 mime_type TEXT, file_size INTEGER, thumbnail_path TEXT,
@@ -511,9 +511,9 @@ class KnowledgeStore:
                 insights TEXT DEFAULT '{}',
                 ai_title TEXT,
                 provider TEXT DEFAULT 'native',
-                -- ingestion node-graph lifecycle (#30)
+                -- ingestion node-graph lifecycle
                 processing_status TEXT DEFAULT '', processing_error TEXT,
-                -- library curation (KNOWLEDGE-LIBRARY S1)
+                -- library curation
                 read_state TEXT DEFAULT 'unread', favorited INTEGER DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -521,7 +521,7 @@ class KnowledgeStore:
 
             CREATE INDEX IF NOT EXISTS idx_items_status ON items(status);
 
-            -- Collections (KNOWLEDGE-LIBRARY S1). A shelf is either MANUAL (an explicit
+            -- Collections. A shelf is either MANUAL (an explicit
             -- membership list) or SMART (a saved query re-run on read), which is why the
             -- query lives on the collection rather than membership rows existing for it.
             CREATE TABLE IF NOT EXISTS collections (
@@ -549,7 +549,7 @@ class KnowledgeStore:
             CREATE INDEX IF NOT EXISTS idx_collection_items_item ON collection_items(item_id);
             CREATE INDEX IF NOT EXISTS idx_collections_position ON collections(position);
 
-            -- Tags (KNOWLEDGE-LIBRARY S2, T2.2). AUTHORITATIVE: tags live here, not in a
+            -- Tags. AUTHORITATIVE: tags live here, not in a
             -- JSON column on `items` (that column is dropped by _migrate). A surrogate
             -- integer id with `name` merely UNIQUE — rather than `name` as the PK — is
             -- what makes RENAME a single-row update instead of a cascade across every
@@ -629,7 +629,7 @@ class KnowledgeStore:
                 created_at TEXT NOT NULL
             );
 
-            -- Typed ITEM-level edges (KNOWLEDGE-SYNTHESIS §3.2), sibling to the
+            -- Typed ITEM-level edges, sibling to the
             -- entity-level table below. Deliberately item-fields-plus-report rather than a
             -- graph database: five verbs, upserted on (source, target, relation).
             CREATE TABLE IF NOT EXISTS item_relations (
@@ -647,7 +647,7 @@ class KnowledgeStore:
             CREATE INDEX IF NOT EXISTS idx_item_relations_target
                 ON item_relations(target_item_id);
 
-            -- Per-MARKER attribution for a synthesized item (WF2KNO-11). Sibling to
+            -- Per-MARKER attribution for a synthesized item. Sibling to
             -- item_relations, and deliberately NOT the same thing: a relation says two items
             -- are connected, a citation says WHICH numbered source supports which sentence.
             -- The synthesis path used to store the whole retrieved set as its "citations",
@@ -688,7 +688,7 @@ class KnowledgeStore:
                 PRIMARY KEY (item_id, entity_id)
             );
 
-            -- "The entity linker has LOOKED at this item" (KL-14 clause 7). One row per
+            -- "The entity linker has LOOKED at this item". One row per
             -- item, written by `link_backfill` after it runs the deterministic alias
             -- linker over the item's text — whether or not that found anything.
             --
@@ -709,11 +709,8 @@ class KnowledgeStore:
                 swept_at TEXT NOT NULL
             );
 
-            -- Reading annotations (KNOWLEDGE-LIBRARY S3, T3.1). The plan left this an
-            -- open question — "annotations as `mentions` vs a dedicated `annotations`
-            -- table — default: reuse `mentions`; promote to its own table only if
-            -- reading-notes need richer structure (revisit in S3)" — and S3 is where it
-            -- gets answered: its own table. `mentions` is (item_id, entity_id) keyed, so
+            -- Reading annotations get their own table rather than reusing `mentions`:
+            -- `mentions` is (item_id, entity_id) keyed, so
             -- storing a highlight there would require MINTING AN ENTITY per highlighted
             -- sentence, which would put reading debris into the entity graph, the
             -- `/entities` surfaces and orphan-pruning. A highlight is also not an
@@ -738,7 +735,7 @@ class KnowledgeStore:
 
             CREATE INDEX IF NOT EXISTS idx_annotations_item ON annotations(item_id);
 
-            -- Extracted-content pool (knowledge node-graph engine, #30). Each row is
+            -- Extracted-content pool (knowledge node-graph engine). Each row is
             -- one node's output for an item — the drillable per-item bundle the
             -- ingestion DAG produces (transcript, video-text, pdf-table, …). Many
             -- rows per item; insights + chunk/embed read the whole bundle.
@@ -754,14 +751,14 @@ class KnowledgeStore:
 
             CREATE INDEX IF NOT EXISTS idx_extracted_item_id ON extracted_contents(item_id);
 
-            -- Chunk index (KL-9). ADDITIVE to the item's whole-item embedding: the item
+            -- Chunk index. ADDITIVE to the item's whole-item embedding: the item
             -- row keeps its own vector, and each chunk carries a vector over a
             -- structural slice of the document so retrieval can reach content deep in a
             -- long doc and cite it to a section/line span. `chunk_index` is the 0..N-1
             -- order within the item (a chunker detail, distinct from the retired legacy
             -- source/chunk model). ON DELETE CASCADE means a deleted item drops its
             -- chunks with it.
-            -- `embedding_model_id`/`embedding_provider` fingerprint the vector (RET-4):
+            -- `embedding_model_id`/`embedding_provider` fingerprint the vector:
             -- the dimension partition in `vector_index` cannot tell two DIFFERENT 384-dim
             -- models apart, so without these a model swap leaves old vectors being scored
             -- against the new model's queries. NULL means "provenance unknown" and reads
@@ -781,7 +778,7 @@ class KnowledgeStore:
 
             CREATE INDEX IF NOT EXISTS idx_chunks_item_id ON chunks(item_id);
 
-            -- Item-similarity edges (KL-13). The store had no similarity-derived edge of
+            -- Item-similarity edges. The store had no similarity-derived edge of
             -- any kind: the chunk vector index was queried at READ time and never
             -- materialised into a graph, so "related items" could only be answered by an
             -- unthresholded shared-entity COUNT. This table is that graph.
@@ -830,7 +827,7 @@ class KnowledgeStore:
             CREATE INDEX IF NOT EXISTS idx_item_sim_edges_target
                 ON item_similarity_edges(target_item_id);
 
-            -- The similarity sweep marker (KL-13), keyed the same way KL-14's
+            -- The similarity sweep marker, keyed the same way the linker's
             -- `mention_sweeps` is and for the identical reason: the backlog must be keyed
             -- on whether the pass LOOKED at an item, never on whether it produced an
             -- edge. An item can legitimately have no neighbour above the cosine floor, so
@@ -845,7 +842,7 @@ class KnowledgeStore:
                 swept_at TEXT NOT NULL
             );
 
-            -- The markdown-projection ledger (KL-20). One row per item that has a file in
+            -- The markdown-projection ledger. One row per item that has a file in
             -- the knowledge vault, carrying everything the two-way sync needs to tell four
             -- states apart without asking the file system twice: which file it is, which
             -- `items.updated_at` it was rendered from, and the `body_hash` of the bytes we
@@ -904,7 +901,7 @@ class KnowledgeStore:
             CREATE INDEX IF NOT EXISTS idx_intent_outcomes_intent ON intent_outcomes(intent_id);
             CREATE INDEX IF NOT EXISTS idx_intent_outcomes_item ON intent_outcomes(item_id);
 
-            -- Undo snapshots for the structural editing verbs (KL-19). One row per applied
+            -- Undo snapshots for the structural editing verbs. One row per applied
             -- restructure, holding the COMPLETE prior state of every item the verb touched:
             -- the item rows, their tags, collection memberships, mentions, annotations,
             -- item-level relations and citations. `undo` replays it.
@@ -938,7 +935,7 @@ class KnowledgeStore:
         """)
         self.db.commit()
 
-    # First-class typed-item columns added in P6b (knowledge-entity-vision). Each
+    # First-class typed-item columns. Each
     # is nullable/defaulted so older DBs migrate transparently. ``item_type`` stays
     # the storage column; the API exposes it as ``type`` (the 12-value enum).
     _NEW_ITEM_COLUMNS = (
@@ -978,7 +975,7 @@ class KnowledgeStore:
         # name, so "still titled by its file name" could not tell hers from the placeholder.
         ("title_source", "TEXT"),
         ("provider", "TEXT DEFAULT 'native'"),
-        # Ingestion node-graph lifecycle (#30): queued|processing|done|failed|partial.
+        # Ingestion node-graph lifecycle: queued|processing|done|failed|partial.
         ("processing_status", "TEXT DEFAULT ''"),
         ("processing_error", "TEXT"),
         # Library curation. Read state is a THREE-value cycle,
@@ -1022,8 +1019,8 @@ class KnowledgeStore:
         # dropped first so deleting chunk-item rows can't trip a stale FK. FK
         # enforcement is suspended for the structural rewrite (toggle outside any txn).
         #
-        # Keyed on `chunk_index` ALONE — not `source_id` — because WATCHED-SOURCES §3.3
-        # reclaims `items.source_id` (and the `sources` table name) with new meaning: a
+        # Keyed on `chunk_index` ALONE — not `source_id` — because the watched sources
+        # reclaim `items.source_id` (and the `sources` table name) with new meaning: a
         # WatchedSource item's origin identity. The legacy chunk model ALWAYS carried
         # `chunk_index`, so it is the reliable marker; keying on `source_id` too would
         # make this block drop the column (added below in `_migrate_sources`) on
@@ -1084,12 +1081,12 @@ class KnowledgeStore:
         backfill_zone_less(self.db)
 
     def _migrate_chunk_fingerprint(self) -> None:
-        """Add the RET-4 embedding fingerprint columns to a ``chunks`` table without them.
+        """Add the embedding fingerprint columns to a ``chunks`` table without them.
 
         Deliberately leaves the existing rows NULL rather than back-stamping them with the
         currently-active model: nothing in a database written before this column knows which
         model produced those vectors, and inventing the answer is precisely the silent
-        same-dimension comparison this atom removes. A NULL fingerprint reads as stale, so
+        same-dimension comparison the fingerprint removes. A NULL fingerprint reads as stale, so
         an upgraded library reports its chunk layer as needing a re-index — which is the
         true statement — instead of quietly scoring unknown vectors.
         """
@@ -1306,14 +1303,14 @@ class KnowledgeStore:
     _MAX_SEEN_PER_SOURCE = 5000
 
     def _migrate_sources(self) -> None:
-        """WATCHED-SOURCES §1.2/§3 — the WatchedSource store, added idempotently.
+        """The WatchedSource store, added idempotently.
 
         Three tables + two item columns, all ``IF NOT EXISTS`` / column-presence guarded
         (knowledge.db has no schema-version counter — this matches `_init_schema`'s and
         `_migrate_tags_to_rows`'s idempotence discipline). ``source_seen`` carries the
         ``UNIQUE(source_id, guid)`` novelty gate; the twin index on ``items(source_id,
         guid)`` makes the same key queryable on the item itself (cross-feed dedupe reads
-        it in later atoms) and rejects a second item for one sighting even if a caller
+        it) and rejects a second item for one sighting even if a caller
         bypasses the seen-set."""
         item_cols = {r[1] for r in self.db.execute("PRAGMA table_info(items)").fetchall()}
         # A source item's origin identity. Nullable so every native/imported row
@@ -1332,7 +1329,7 @@ class KnowledgeStore:
                 "ALTER TABLE sources ADD COLUMN last_escalations TEXT NOT NULL DEFAULT '[]'"
             )
         self.db.executescript("""
-            -- A WatchedSource: user-library configuration (§1.2), not harness state, so it
+            -- A WatchedSource: user-library configuration, not harness state, so it
             -- lives here in knowledge.db beside the items it produces. `spec`/`budget` are
             -- per-kind JSON; the runtime rollups (last_poll_at/health_status/…) are
             -- engine-written so the UI can show a source's health without re-polling it.
@@ -1353,8 +1350,8 @@ class KnowledgeStore:
                 last_new_count INTEGER DEFAULT 0,
                 health_status TEXT DEFAULT 'ok',
                 last_error_summary TEXT DEFAULT '',
-                -- The tiers the last poll had to climb, or was refused (WATCHED-SOURCES
-                -- §2.3): a render escalation is the expensive one, and an escalation nobody
+                -- The tiers the last poll had to climb, or was refused: a render
+                -- escalation is the expensive one, and an escalation nobody
                 -- can see is indistinguishable from a cheap poll. JSON array of strings.
                 last_escalations TEXT NOT NULL DEFAULT '[]',
                 created_at TEXT NOT NULL,
@@ -1363,7 +1360,7 @@ class KnowledgeStore:
 
             CREATE INDEX IF NOT EXISTS idx_sources_enabled ON sources(enabled);
 
-            -- One opaque provider-defined cursor per source (§3.2): {etag,last_modified},
+            -- One opaque provider-defined cursor per source: {etag,last_modified},
             -- {since_ts}, {mtime_signatures}, … The engine never interprets it — it hands
             -- the stored blob back to poll() and persists whatever comes out, atomically
             -- with the seen-set delta. One row per source, so id is the PK.
@@ -1373,7 +1370,7 @@ class KnowledgeStore:
                 updated_at TEXT NOT NULL
             );
 
-            -- The seen-set / novelty gate (§3.3): the storm guard. The composite PK is the
+            -- The seen-set / novelty gate: the storm guard. The composite PK is the
             -- UNIQUE(source_id, guid) constraint — an INSERT OR IGNORE that changes no row
             -- is a repeat sighting. ON DELETE CASCADE so deleting a source reclaims its set.
             CREATE TABLE IF NOT EXISTS source_seen (
@@ -1393,7 +1390,7 @@ class KnowledgeStore:
                 ON items(source_id, guid)
                 WHERE source_id IS NOT NULL AND guid IS NOT NULL;
 
-            -- The cross-source merge lookup (§3.3). NOT unique: two different sources
+            -- The cross-source merge lookup. NOT unique: two different sources
             -- legitimately hold the same canonical URL for a moment (the merge collapses
             -- them), and native/imported bookmarks may share a URL with a source item.
             -- Partial, so the index only carries rows a source wrote.
@@ -1428,7 +1425,7 @@ class KnowledgeStore:
         enabled: bool = True,
         created_by: str = "user",
     ) -> str:
-        """Persist a WatchedSource row and return its ``src-<8hex>`` id (§1.2), or, for a source
+        """Persist a WatchedSource row and return its ``src-<8hex>`` id, or, for a source
         the system makes, its provider's id (:func:`system_source_id`).
 
         ``item_type`` is the kind of item each of the source's sightings becomes, for a source
@@ -1554,11 +1551,11 @@ class KnowledgeStore:
         Called AFTER the poll's new items (each written by :meth:`create_typed_item` with
         its seen-row, in that item's own committed txn). The seen-set is already durable,
         so a crash the instant before this call re-yields the same items next poll and the
-        UNIQUE gate drops them — exactly-once persist on top of at-least-once poll (§3.2).
+        UNIQUE gate drops them — exactly-once persist on top of at-least-once poll.
         The cursor upsert + rollup update share one txn so the engine's view of a source
         never shows a fresh cursor against stale rollups.
 
-        ``escalations`` are the tiers this poll had to climb (§2.3), OVERWRITTEN per poll
+        ``escalations`` are the tiers this poll had to climb, OVERWRITTEN per poll
         rather than appended: they describe the last poll's cost, and an ever-growing list on
         a row the UI reads would be a log in a rollup column. Recorded on the success path too
         — an escalation that only surfaced on failure would make the expensive-but-working
@@ -1594,7 +1591,7 @@ class KnowledgeStore:
         self._prune_seen(source_id)
 
     def _prune_seen(self, source_id: str) -> None:
-        """FIFO-cap the seen-set at ``_MAX_SEEN_PER_SOURCE`` (§3.3). Keeps the newest by
+        """FIFO-cap the seen-set at ``_MAX_SEEN_PER_SOURCE``. Keeps the newest by
         first_seen_at; a re-appearing very-old guid may re-fire once, which is the correct
         trade against an unbounded table on a busy feed."""
         self.db.execute(
@@ -1641,7 +1638,7 @@ class KnowledgeStore:
         an embedding-pipeline detail). ``extra`` may set any other first-class column
         (mime_type, file_path, …).
 
-        WATCHED-SOURCES §3.3 — when ``source_id`` AND ``guid`` are both supplied (a
+        When ``source_id`` AND ``guid`` are both supplied (a
         :class:`~personalclaw.knowledge.source_engine.SourceEngine` writing a polled
         feed item), the ``source_seen`` novelty gate is folded into the SAME
         transaction as the item insert: a first sighting inserts the seen row + the
@@ -1758,7 +1755,7 @@ class KnowledgeStore:
         return item_id
 
     def find_source_item(self, source_id: str, guid: str) -> dict | None:
-        """The item a source already wrote for this ``guid``, or None (§3.3, WS-5).
+        """The item a source already wrote for this ``guid``, or None.
 
         The read side of the ``(source_id, guid)`` identity that ``create_typed_item``
         writes: a MUTABLE source (a watched directory) needs to reach the EXISTING row
@@ -1809,7 +1806,7 @@ class KnowledgeStore:
         return row is not None
 
     def mark_source_seen(self, source_id: str, guid: str) -> bool:
-        """Record that *source_id* has now seen *guid*, writing NO item (§3.3).
+        """Record that *source_id* has now seen *guid*, writing NO item.
 
         The other half of the cross-source merge: when a second feed carries a story the
         library already holds, no item is written — but that source must still remember the
@@ -1828,7 +1825,7 @@ class KnowledgeStore:
         return cur.rowcount > 0
 
     def find_item_by_merge_key(self, merge_key: str, *, exclude_source_id: str = "") -> dict | None:
-        """The existing SOURCE item whose canonical URL is *merge_key* (§3.3 cross-feed dedupe).
+        """The existing SOURCE item whose canonical URL is *merge_key* (cross-feed dedupe).
 
         Scoped to rows a source wrote (``source_id IS NOT NULL``) — a hand-saved bookmark
         that happens to share a URL is the user's own item and must not silently acquire
@@ -1852,7 +1849,7 @@ class KnowledgeStore:
         return self._serialize_item(row) if row else None
 
     def record_also_seen_in(self, item_id: str, *labels: str) -> bool:
-        """Add cross-source attributions to an existing item's metadata (§3.3, SC#3).
+        """Add cross-source attributions to an existing item's metadata.
 
         ``file_metadata['also_seen_in']`` is a list of strings, the same shape as the
         provider-facing :attr:`~personalclaw.knowledge_providers.base.SourceItem.also_seen_in`
@@ -1861,9 +1858,9 @@ class KnowledgeStore:
 
         The write is ADDITIVE and idempotent: a story seen in three feeds names all three,
         and re-merging the same source is a no-op. Replacing the list instead of appending
-        is the failure mode SC#3 is written against — an item that names only the feed it
+        is the failure mode this is written against — an item that names only the feed it
         arrived in FIRST is indistinguishable from one whose second sighting was silently
-        dropped, which is precisely the duplicate-vs-merge distinction the criterion tests.
+        dropped, which is precisely the duplicate-vs-merge distinction the list exists to show.
         Returns True when the item's attributions changed.
         """
         item = self.get_item(item_id)
@@ -1885,7 +1882,7 @@ class KnowledgeStore:
         return True
 
     def archive_source_item(self, item_id: str, *, deleted_at: str = "") -> bool:
-        """Archive a source item whose upstream copy is gone, stamping when (SC#5).
+        """Archive a source item whose upstream copy is gone, stamping when.
 
         This is deliberately the ONLY thing the engine can do about an upstream delete,
         and it is an UPDATE — never a DELETE. Once the file is gone from the watched
@@ -1915,7 +1912,7 @@ class KnowledgeStore:
         The counterpart to :meth:`archive_source_item`, for the opposite kind of upstream.
         A watched directory is not ours: its file may be back tomorrow, so the library row
         is archived and the sighting remembered. An in-app MIRROR (the ``artifact://``
-        source, PRODUCT-EXPERIENCE-PARITY §6) is derived state whose upstream we DO own —
+        source) is derived state whose upstream we DO own —
         once the artifact is deleted through the app nothing can revive it, so an archived
         row would be a permanently unrevivable orphan sitting in the store.
 
@@ -2007,7 +2004,7 @@ class KnowledgeStore:
         return self._serialize_item(row) if row else None
 
     def find_fuzzy_dup_candidates(self, item_id: str, *, limit: int = 25) -> list[dict]:
-        """P12 TIER-2 prefilter: active, non-archived items of the SAME type as ``item_id``
+        """Tier-two dedup prefilter: active, non-archived items of the SAME type as ``item_id``
         that carry an embedding, EXCLUDING the item itself — the small candidate set the pure
         ``dedup.resolve_duplicate`` then scores by filename+cosine+date-gate. Returns lean
         dicts carrying the fields the resolver reads (id/title/file_path/summary/item_type/
@@ -2046,7 +2043,7 @@ class KnowledgeStore:
         return out
 
     def find_duplicates(self, item_id: str, *, limit: int = 25) -> list[dict]:
-        """Near-duplicates of *item_id*, STRONGEST MATCH FIRST — the surfacing half of T3.2.
+        """Near-duplicates of *item_id*, STRONGEST MATCH FIRST — the surfacing half of dedup.
 
         Uses the same `dedup.resolve_duplicate` scorer as the ingest-time pipeline rather than
         inventing a second notion of "duplicate": the resolver already encodes the real rule
@@ -2227,7 +2224,7 @@ class KnowledgeStore:
         Refuses to merge an item into itself — a self-merge would run the cascade delete on
         the survivor and destroy the very item it was asked to keep.
 
-        KL-19 extends the inheritance to the two inbound references it previously dropped —
+        The inheritance also covers the two inbound references it previously dropped —
         typed item relations and per-marker citations — because they are what make this a
         STORE concern rather than a row swap. *relink_citations* is the "offer to relink"
         half of the warn-before-apply contract: with it, attributions that named the merged
@@ -2392,7 +2389,7 @@ class KnowledgeStore:
         from personalclaw.knowledge import maintenance
 
         maintenance.mark_dirty(reason="merge items")
-        # KL-20, as in `delete_item`: a merge re-points a third item's attribution and moves
+        # As in `delete_item`: a merge re-points a third item's attribution and moves
         # edges onto the survivor, so every neighbour of either side has a page to re-render.
         self.rearm_vault_projection(keep_id, *neighbours)
         logger.info("merged knowledge item %s into %s: %s", merge_id, keep_id, moved)
@@ -2605,7 +2602,7 @@ class KnowledgeStore:
         `existing` records which ids were real when the snapshot was taken, so a restore can
         tell "put this row back" from "this row is something the verb created and must go".
         Chunks and the ANN index are deliberately NOT captured: the restore re-derives them
-        through KL-14's maintenance host exactly as the forward verb does, and a restored
+        through the maintenance host exactly as the forward verb does, and a restored
         vector computed against text that has since changed is the same silent staleness the
         forward path exists to avoid.
         """
@@ -2790,7 +2787,7 @@ class KnowledgeStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    # ── Extracted-content pool (node-graph engine, #30) ──
+    # ── Extracted-content pool (node-graph engine) ──
 
     def add_extracted_content(
         self,
@@ -2845,7 +2842,7 @@ class KnowledgeStore:
         is written pre-serialized on the Chunk (``.embedding`` bytes) or NULL. Caller owns
         no commit — this commits its own single statement batch. Returns rows written.
 
-        Each row is stamped with the embedding selection active NOW (RET-4), read through
+        Each row is stamped with the embedding selection active NOW, read through
         the one accessor the query path compares against, so a same-dimension model swap is
         detectable instead of silently scoring incomparable vectors. When nothing is bound
         the stamp is NULL — which is honest, and which the reader treats as "no staleness
@@ -3014,7 +3011,7 @@ class KnowledgeStore:
 
         Two conditions, both load-bearing. A NULL embedding is excluded because there is no
         vector to carry. And the row's fingerprint must equal the selection active NOW
-        (RET-4's own `FRESH_PREDICATE`, so this cannot drift from what the query path calls
+        (the `FRESH_PREDICATE` itself, so this cannot drift from what the query path calls
         comparable): carrying a vector from another model into a row that `replace_chunks`
         will stamp with the current model is precisely the mixed-model corruption the
         fingerprint exists to prevent. Nothing bound renders as ``('', '')`` through the same
@@ -3319,7 +3316,7 @@ class KnowledgeStore:
         "embedding",
         "status",
         "updated_at",
-        # typed-item fields (P6b)
+        # typed-item fields
         "gist_language",
         "url",
         "url_title",
@@ -3336,7 +3333,7 @@ class KnowledgeStore:
         "ai_title",
         "title_source",
         "provider",
-        # ingestion node-graph lifecycle (#30)
+        # ingestion node-graph lifecycle
         "processing_status",
         "processing_error",
         # library curation
@@ -3480,7 +3477,7 @@ class KnowledgeStore:
         # accumulate for the life of the library.
         self.db.execute("DELETE FROM mention_sweeps WHERE item_id = ?", (item_id,))
         self.db.execute("DELETE FROM entity_relations WHERE source_item_id = ?", (item_id,))
-        # 🔴 KL-19 — typed ITEM-level edges, on BOTH legs. This was the one inbound reference
+        # 🔴 Typed ITEM-level edges, on BOTH legs. This was the one inbound reference
         # nothing cleaned: `item_relations` declares `REFERENCES items(id)` with no
         # `ON DELETE`, `foreign_keys=ON` is set at open, and no `DELETE FROM item_relations`
         # existed anywhere in the package. Measured consequence: any item a synthesis had
@@ -3665,7 +3662,7 @@ class KnowledgeStore:
     )
 
     def count_items_missing_chunks(self) -> int:
-        """How many items still need chunking (KL-12/H1.5).
+        """How many items still need chunking.
 
         Zero means the library is fully chunked, so a boot hook costs one COUNT. An item
         leaves this backlog the instant its chunk rows commit, which is what makes an
@@ -3744,7 +3741,7 @@ class KnowledgeStore:
     )
 
     def count_items_missing_mention_sweep(self) -> int:
-        """How many items the entity linker has never swept (KL-14 clause 7).
+        """How many items the entity linker has never swept.
 
         Zero means every active text-bearing item has been through the deterministic
         alias linker at least once, so a maintenance tick costs one COUNT.
@@ -3827,7 +3824,7 @@ class KnowledgeStore:
     )
 
     def count_items_missing_similarity_sweep(self) -> int:
-        """How many items the similarity pass has never looked at (KL-13).
+        """How many items the similarity pass has never looked at.
 
         Zero means every active, embedded-chunk-bearing item has been through the kNN pass
         at least once, so a maintenance tick costs one COUNT.
@@ -4406,14 +4403,14 @@ class KnowledgeStore:
         ``embed_for_item(title, summary)``, matching the ingestion pipeline).
 
         *only_missing* narrows the scope to items with NO vector, and *limit* bounds one
-        invocation. Together they make this the bounded, RESUMABLE drainer KL-19's derived
+        invocation. Together they make this the bounded, RESUMABLE drainer the derived
         refresh needs: a restructure NULLs the affected items' vectors (a split's halves must
         not keep the parent's), and the maintenance pass then drains that backlog a batch at a
         time. Deliberately the same method rather than a second embedder — one WHERE clause,
         so the vectors a refresh writes are identical to the ones a full re-index writes, and
         there is no chance of two loops drifting on grouping, retry or text composition.
 
-        Embeds in GROUPS through ``knowledge.embed_batch.embed_texts`` (KL-15) — one provider
+        Embeds in GROUPS through ``knowledge.embed_batch.embed_texts`` — one provider
         call per group instead of one per item, with bounded retry and adaptive bisection. On
         a whole-library re-index that is the difference between a rate-limit blip costing a
         retry and it costing an item its vector for good. The item text is composed here with
@@ -4513,7 +4510,7 @@ class KnowledgeStore:
         return count_stale_chunks(self.db, fp)
 
     def stale_vector_item_rows(self, *, include_archived: bool = False) -> list:
-        """RET-2-shaped attention rows for the items holding a stale vector — a passage's, or the
+        """Attention rows for the items holding a stale vector — a passage's, or the
         whole-item one — which search skips. ``[]`` with no model bound, where nothing is
         compared at all."""
         fp = active_fingerprint()
@@ -4537,7 +4534,7 @@ class KnowledgeStore:
         ``stale_remaining`` READ BACK FROM THE ROWS after the pass rather than inferred from
         "we processed everything" — a provider that failed on three chunks leaves three rows
         on the old model, and a re-index that reported done on that state would be exactly
-        the write-that-reported-success-and-did-not-land failure RET-4 exists to remove.
+        the write-that-reported-success-and-did-not-land failure the fingerprint exists to remove.
 
         Chunk ids are preserved (an UPDATE, not a delete+insert), so citations and any other
         reference to a chunk id survive a re-index. Each item is written as soon as every one
@@ -4984,7 +4981,7 @@ class KnowledgeStore:
 
         Every consumer of this count means the user's own library — the Knowledge header's
         "N items" chip beside the list, Discover's "has this person engaged with Knowledge?"
-        signal, and the status readout. A mirrored artifact (PEP-7) is none of those: it is
+        signal, and the status readout. A mirrored artifact is none of those: it is
         indexed for search and deliberately never listed, so counting it made the header read
         "3 items" above an empty list on a home whose only content was three artifacts
         (measured on a running gateway) and would have marked Knowledge "engaged" for someone
@@ -5318,7 +5315,7 @@ class KnowledgeStore:
             )
         self.db.commit()
 
-    # ── Collections (contract C2) ────────────────────────────────────────────
+    # ── Collections ──────────────────────────────────────────────────────────
 
     VALID_READ_STATES = ("unread", "reading", "read")
     VALID_COLLECTION_KINDS = ("manual", "smart")
@@ -5507,7 +5504,7 @@ class KnowledgeStore:
         )
         self.db.commit()
         if cur.rowcount > 0:
-            self.rearm_vault_projection(item_id)  # KL-20, as in `add_to_collection`
+            self.rearm_vault_projection(item_id)  # as in `add_to_collection`
         return cur.rowcount > 0
 
     def collections_for_item(self, item_id: str) -> list[dict]:

@@ -7,11 +7,11 @@ TCP ports belong to processes working inside this run's workspace?**
 Three deliberate properties, each of which is the answer to a way this feature is usually
 built wrong:
 
-* **Computed on read, never persisted.** §6.2 says "registered as ``preview_urls`` on the run
-  record"; a stored port list is exactly the stale-link defect — a dev server dies, the record
-  keeps the port, and the cockpit offers an "Open Preview" that loads nothing (or, worse,
+* **Computed on read, never persisted.** The obvious design registers ``preview_urls`` on the
+  run record, but a stored port list is exactly the stale-link defect — a dev server dies, the
+  record keeps the port, and the cockpit offers an "Open Preview" that loads nothing (or, worse,
   loads whatever process took the port next). The scan is cheap and the truth is on the host,
-  so the record does not cache it. The "removed on teardown" then costs no code: a torn-down
+  so the record does not cache it. Removal on teardown then costs no code: a torn-down
   workspace has no processes under it, so it reports no ports.
 * **A port is only offered if ``localhost`` can actually reach it.** A listener bound to a LAN
   address is a real listener and a dead ``localhost`` link, so only wildcard/loopback binds are

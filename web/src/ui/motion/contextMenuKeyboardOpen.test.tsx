@@ -84,7 +84,7 @@ describe('the row context menu opens from the keyboard', () => {
   })
 
   it('focus moves into the menu, onto the first row', () => {
-    // The same contract the pointer path has (cycle 136's "the cursor IS focus"), through the new route.
+    // The same contract the pointer path has ("the cursor IS focus"), through the new route.
     const { body } = mount()
     act(() => { fireEvent.keyDown(body, { key: 'F10', shiftKey: true }) })
     expect(document.activeElement).toBe(rows()[0])
@@ -126,7 +126,7 @@ describe('the population this reaches', () => {
 
   it('the primitive still binds a keyboard opener', () => {
     // If a refactor drops `onKeyDown` from the bind object, every one of those surfaces silently loses
-    // its keyboard route again — the state this cycle found.
+    // its keyboard route again — the state this change found.
     const code = readSource(join(SRC, 'ui/motion/ContextMenu.tsx'))
       .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
     expect(code).toMatch(/onKeyDown: \(e: React\.KeyboardEvent\)/)

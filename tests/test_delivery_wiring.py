@@ -1,18 +1,17 @@
-"""Criterion 10: a completed fire notifies with a deep link, and a retry does not double-ping
-(S140).
+"""A completed fire notifies with a deep link, and a retry does not double-ping.
 
-Criterion 10: *"A completed-run notification deep-links (`statusUrl`) to the exact run journal
+The rule: *"A completed-run notification deep-links (`statusUrl`) to the exact run journal
 row; a
 retried delivery does not double-ping."*
 
 🔴 THE DEFECT — two dead layers, the same shape as the autopause chain. `triggers/delivery.py`
-implements the criterion in full: `statusUrl` deep links, stable event ids for retry dedup,
+implements the rule in full: `statusUrl` deep links, stable event ids for retry dedup,
 `is_duplicate`, destination formatting. But `build_delivery`'s only caller was
 `executor.delivery_for`, **which itself had no caller at all**. Driven before writing: a
 completed fire
 produced no notification and no `statusUrl` anywhere under the home.
 
-**Routes through `state.notify`**, which is `deliver`'s own contract. R18: *"the substrate does not
+**Routes through `state.notify`**, which is `deliver`'s own contract: *"the substrate does not
 build a second notification path"* — so the existing `notification_allowed` gate and the
 per-(source,
 kind) rule still apply, and a muted channel stays muted.
@@ -102,7 +101,7 @@ def test_a_COMPLETED_fire_notifies(tmp_path, monkeypatch):
 
 
 def test_the_notification_carries_a_STATUS_URL(tmp_path, monkeypatch):
-    """Criterion 10's deep link — the whole point. A notification the user cannot click through to
+    """The deep link — the whole point. A notification the user cannot click through to
     tells them something happened and not where."""
     note = _fire(tmp_path, monkeypatch, _Ok()).sent[0]
     assert note["meta"]["statusUrl"] == "#/triggers?open=clock:n"
@@ -131,7 +130,7 @@ def test_the_notification_NAMES_the_trigger(tmp_path, monkeypatch):
 
 
 def test_a_RETRY_of_the_same_run_does_NOT_double_ping():
-    """🔴 Criterion 10's second clause. `event_id` is stable across retries by construction, so a
+    """🔴 The rule's second clause. `event_id` is stable across retries by construction, so a
     redelivery is suppressed on identity rather than on a timestamp guess."""
     first = build_delivery(trigger_id="clock:n", trigger_name="n", ok=True, run_id="run-1")
     retry = build_delivery(trigger_id="clock:n", trigger_name="n", ok=True, run_id="run-1")
@@ -166,7 +165,7 @@ def test_is_duplicate_tolerates_NO_seen_set():
 
 
 def test_it_routes_through_STATE_NOTIFY():
-    """R18: "the substrate does not build a second notification path". Going around `notify` would
+    """The substrate does not build a second notification path. Going around `notify` would
     bypass `notification_allowed` and the per-(source, kind) rule — a muted channel would start
     talking."""
     import inspect
@@ -236,7 +235,7 @@ def test_a_NOTIFY_FAILURE_does_not_fail_the_fire(tmp_path, monkeypatch):
 
 
 def test_the_FIRE_PATH_delivers():
-    """A delivery contract nothing calls is the state this session found — twice over, since
+    """A delivery contract nothing calls is the defect this file found — twice over, since
     `executor.delivery_for` was itself uncalled."""
     import inspect
 
@@ -291,7 +290,7 @@ def test_a_HEALTHY_automation_notifies_on_EVERY_fire(tmp_path, monkeypatch):
     trigger produced the SAME id and `is_duplicate` dropped everything after the first.
 
     A healthy daily digest with `delivery: "inbox"` notified the user **once,
-    ever**; fires 2-5 were silently discarded as "already sent". Criterion 10's dedup is for
+    ever**; fires 2-5 were silently discarded as "already sent". The rule's dedup is for
     the same event REDELIVERED (a transport retry); applied to distinct fires it became a mute.
     """
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
@@ -453,7 +452,7 @@ def test_a_NON_clock_triggers_outcome_is_NOT_a_scheduled_job(tmp_path, monkeypat
     assert [n["kind"] for n in gw.dashboard_state.sent] == [nk.INFO, nk.ERROR]
 
 
-# ── ONE notification per fire: a notify action's note IS the report (B8, 2026-09-25) ──
+# ── ONE notification per fire: a notify action's note IS the report (2026-09-25) ──
 
 
 def _notify_trigger(tmp_path, *, config, tid="clock:standup-nudge"):

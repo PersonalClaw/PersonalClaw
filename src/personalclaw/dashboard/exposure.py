@@ -1,9 +1,9 @@
 """Is this instance internet-exposed?
 
-**One signal, two surfaces.** The plan's own coordination note with EXTERNAL-ACCESS says there
-is one "this instance is internet-exposed" signal serving two surfaces (the human dashboard and
-the inbound API). This module is that one signal, so `Secure`-cookie, CSP and forwarded-header
-decisions cannot drift apart from each other or from the inbound surface's own boundary.
+**One signal, two surfaces.** There is one "this instance is internet-exposed" signal serving
+two surfaces (the human dashboard and the inbound API). This module is that one signal, so
+`Secure`-cookie, CSP and forwarded-header decisions cannot drift apart from each other or from
+the inbound surface's own boundary.
 
 **Why not reuse `dashboard.url`.** It already exists, but it means "a URL to put in links we
 send to Slack", and people legitimately set it to a LAN address or an `http://` host. Deriving
@@ -46,9 +46,9 @@ def _cfg() -> Any:
 def public_url(cfg: Any | None = None) -> str:
     """The configured public URL, or "" when this instance is not declared exposed.
 
-    Prefers `dashboard.public_url` (this plan's field, describing the human dashboard) and falls
+    Prefers `dashboard.public_url` (the dashboard's field, describing the human dashboard) and falls
     back to `external_access.public_url` (the inbound seam's field — `inbound.public_url` before
-    EA-1 renamed the section). The fallback is deliberate: an operator who already declared their
+    the section was renamed). The fallback is deliberate: an operator who already declared their
     public URL for the inbound surface has already told us the box is exposed, and making them say
     it twice would mean the dashboard stayed unhardened on an instance already known to be
     reachable.

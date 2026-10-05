@@ -1,4 +1,4 @@
-"""RFC 6238 TOTP, on the standard library (REMOTE-USER-AUTH T4.2 primitives).
+"""RFC 6238 TOTP, on the standard library.
 
 No `pyotp`. TOTP is an HMAC-SHA1 over a counter and a truncation — about fifteen lines of
 `hmac` and `base64` — so a dependency here would buy nothing and add a supply-chain edge to

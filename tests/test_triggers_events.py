@@ -58,15 +58,14 @@ def test_dormant_and_live_partition_the_catalog():
 
 
 def test_no_lifecycle_event_is_dormant_any_more():
-    """Criterion 5's second clause, closed.
+    """No lifecycle event is left dormant.
 
-    This test previously pinned `len(dormant_events()) == 7` and said in its own docstring: "if a
-    later session wires another event, this fails and the deviation gets recorded again instead of
-    the number quietly drifting." That is exactly what happened — S82 wired the remaining seven, so
-    the assertion inverts rather than the number being edited.
+    This test previously pinned `len(dormant_events()) == 7`, so that wiring another event would
+    fail it instead of the number quietly drifting. That is exactly what happened — the remaining
+    seven were wired, so the assertion inverts rather than the number being edited.
 
     Every declared event is now LIVE: `TaskComplete`, the eight that were already firing, and
-    the seven S82 wired through `triggers/lifecycle_fire.py`.
+    the seven wired through `triggers/lifecycle_fire.py`.
     """
     assert dormant_events() == []
     assert DORMANT_EVENTS == frozenset()
@@ -87,7 +86,7 @@ def test_the_dormancy_machinery_survives_an_empty_set():
 
 
 def test_task_complete_is_live_because_a_real_call_site_fires_it():
-    """Guards the measurement that corrected the plan.
+    """Guards the measurement that corrected the dormancy list.
 
     `tasks/native._fire_task_complete` fires it via `pool.lifecycle_payload`, whose event name is
     `TaskComplete`. Asserted against the payload rather than by grepping, because the fire carries
@@ -172,7 +171,7 @@ def test_exemption_reasons_are_stated():
 
 
 def test_unsupported_response_is_400_with_a_reason_never_404():
-    """The distinction the whole session turns on.
+    """The distinction the kind-parity contract turns on.
 
     404 says "that trigger does not exist" — which, for a trigger the user is looking at, reads as
     data loss. 400 with a reason says "you cannot do that to this kind". The shipped bug returned
@@ -192,8 +191,8 @@ def test_catalog_rows_cover_every_declared_event():
     """`LIFECYCLE_EVENT_CATALOG` is what the variables endpoint serves; it must not drift.
 
     The dormancy badge rides that endpoint, so an event declared in `HOOK_EVENTS` but absent from
-    the catalog would be configurable with no badge and no vars — invisible in exactly the way this
-    session exists to fix.
+    the catalog would be configurable with no badge and no vars — invisible in exactly the way the
+    dormancy badge exists to fix.
     """
     catalog = [row["event"] for row in LIFECYCLE_EVENT_CATALOG]
     assert set(catalog) == set(HOOK_EVENTS)

@@ -449,7 +449,7 @@ class TestPatchRail:
         self, loop_home, cfg_file, attention
     ) -> None:
         """The seam between the write path and the reader. Verifying them separately leaves
-        exactly the shape WF2LOO-17 measured: a live reader of a key nothing can set."""
+        exactly the shape once measured: a live reader of a key nothing can set."""
         async with TestClient(TestServer(self._app())) as c:
             resp = await c.patch(
                 "/api/config/personalclaw", json={"path": "loops.stagnation_window", "value": 2}

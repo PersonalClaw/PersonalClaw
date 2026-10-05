@@ -1,4 +1,4 @@
-"""The triage digest over HTTP — PA-5.
+"""The triage digest over HTTP.
 
 Three endpoints, and the split between them is the "strictly read-only on view; acting is
 explicit" made structural:
@@ -12,7 +12,7 @@ explicit" made structural:
 digest reached (`proactive.channel_reply`). The path checks who is answering, reads the current
 digest, parses the reply and runs each Yes through
 :func:`personalclaw.proactive.autoexec.auto_execute` as answered work: the action denylist,
-``enforce_action``'s SEL row and the NEW-1 budget floor hold it as they hold the digest acting on
+``enforce_action``'s SEL row and the budget floor hold it as they hold the digest acting on
 its own, and the incident kill switch and the auto-execute grant, which hold only what nobody
 answered, do not. This route adds what is HTTP's: the session mode, the body, and the wire shape of
 each outcome. A reply naming a run that is no longer the current digest is refused with
@@ -53,7 +53,7 @@ def _sel():
 
 
 async def api_proactive_digest(request: web.Request) -> web.Response:
-    """GET /api/proactive/digest — §5.1's card, assembled from the last digest run.
+    """GET /api/proactive/digest — the digest card, assembled from the last digest run.
 
     Off the event loop: this reads the run store, one node's persisted output and a ledger file,
     which is real file work. A read that RAISES becomes ``state: "error"`` with the message, not
@@ -171,13 +171,13 @@ def _digest_notice(*, title: str, body: str) -> dict[str, Any]:
 
 
 async def api_proactive_install(request: web.Request) -> web.Response:
-    """POST /api/proactive/install — §5.4's pack card. Idempotent; also the reconcile.
+    """POST /api/proactive/install — the pack card. Idempotent; also the reconcile.
 
     Creates the schedule when it is absent, and on every call brings its ``enabled`` flag into
-    line with ``proactive.triage_enabled`` — which is criterion 10's retirement (disable ⇒ the
-    schedule stops firing) and its losslessness (re-enable ⇒ the same row, same cron, fires
+    line with ``proactive.triage_enabled`` — which is both retirement (disable ⇒ the
+    schedule stops firing) and losslessness (re-enable ⇒ the same row, same cron, fires
     again) in one path. The row is never DELETED on disable: deleting it would lose the cron the
-    user edited, and "dormant but kept" is exactly what the criterion asks for.
+    user edited, and "dormant but kept" is exactly what retirement means here.
 
     An explicit ``cron`` in the body edits the schedule (that is what "installs an editable
     trigger" means).
@@ -253,7 +253,7 @@ async def api_proactive_install(request: web.Request) -> web.Response:
         # from config rather than from the body keeps one switch, not two that can disagree. A
         # restore's hold outlasts it (`restore_hold`).
         switch_from_config(trigger, enabled)
-        # The digest spends and delivers unattended, so the fence needs decision 7's frozen grant.
+        # The digest spends and delivers unattended, so the fence needs the frozen grant.
         # A system-created trigger's opt-in is the code path that created it.
         trigger.capabilities = _screen.capabilities_for_action(trigger)
         if trigger.enabled:

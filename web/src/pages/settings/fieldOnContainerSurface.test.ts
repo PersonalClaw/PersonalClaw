@@ -37,8 +37,8 @@ import { join } from 'node:path'
 // and consistent with their siblings — it does NOT reach WCAG 1.4.11's 3:1 for component boundaries.
 // The same sweep found 47 of 47 borderless fields below 3:1 in dark (42 of them between 1.1 and
 // 1.5:1), because no field in the app has an at-rest boundary. Closing that needs a border on
-// `INPUT_BASE`, i.e. a change to every field in the product — an owner decision, recorded in the
-// cycle ledger, deliberately not made here.
+// `INPUT_BASE`, i.e. a change to every field in the product — a product-wide decision,
+// deliberately not made here.
 //
 // ⚠️ WHY THIS RAIL PINS SITES INSTEAD OF MATCHING THE TREE. Deciding this correctly needs the RENDERED
 // backdrop: whether a field's ancestor paints `bg-surface-container` depends on JSX nesting a regex
@@ -91,7 +91,7 @@ describe('a settings field on a container backdrop lifts its surface', () => {
   })
 
   it('CompanionPanel instance-name field passes surface="high"', () => {
-    // The third measured site. It arrived in CA-4 after this stack was cut, so it was fixed once the
+    // The third measured site. It arrived after this stack was cut, so it was fixed once the
     // stack was reparented onto a main that carried it — the family is complete rather than 2 of 3.
     const src = read('pages/settings/CompanionPanel.tsx')
     const tag = src.match(/<TextInput[\s\S]{0,200}?placeholder="e\.g\. Living room Mac"/)?.[0] ?? ''

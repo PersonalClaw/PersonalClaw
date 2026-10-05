@@ -135,7 +135,8 @@ async def test_none_exec_without_ceilings_is_unwrapped_but_runs():
 
 
 def test_sandbox_type_is_in_provider_types_with_a_handler():
-    """The #47 rule: the ``sandbox`` type is both in PROVIDER_TYPES and has a live handler."""
+    """A manifest type and its runtime handler land together: the ``sandbox`` type is both in
+    PROVIDER_TYPES and has a live handler."""
     import re
     from pathlib import Path
 

@@ -95,17 +95,17 @@ async def admit_step_identities(ctl: RunController) -> bool:
 
 
 async def provision_workspace(ctl: RunController) -> bool:
-    """Stand up the run's declared workspace before the first node (WORK-CONTAINERS §4.1).
+    """Stand up the run's declared workspace before the first node.
 
     Returns False when the run was refused. This is the first production caller of
     `workspace.plan_provisioning` / `worktrees.pending_setup`: before it, a spec's
     `workspace:` block was parsed nowhere, so every run ran in place no matter what its
-    template declared — the whole §4.1 mechanism was a decision layer with no call site.
+    template declared — the whole workspace mechanism was a decision layer with no call site.
 
     **A FATAL declaration REFUSES the run.** `parse_workspace` marks an unknown mode and a
     greedy preserve pattern fatal precisely because they cannot be honored, and honoring
     neither means running in a mode nobody chose. An ignored fatal issue is the inert-control
-    shape this program keeps finding, so it terminates the run through `_finish` (the single
+    shape this codebase keeps finding, so it terminates the run through `_finish` (the single
     terminal writer) instead of degrading quietly.
 
     **The lock is taken and RELEASED here, not held for the run.** Holding a flock across a
@@ -175,7 +175,7 @@ async def provision_workspace(ctl: RunController) -> bool:
             from_snapshot=str(
                 (getattr(ctl.run, "forked_from", None) or {}).get("workspace_snapshot", "") or ""
             ),
-            # EI-6 §5.1 SPAWN half: the run's durable worker name — the SAME derivation the
+            # Durability's SPAWN half: the run's durable worker name — the SAME derivation the
             # boot sweep recomputes (`watchdog._durable_substrate`), so a session opened
             # under it is exactly the session a restarted gateway reattaches to. Passed
             # unconditionally (a cheap string); whether it is USED is `run_step`'s
@@ -220,8 +220,8 @@ def _project_workspace(ctl: RunController) -> str:
 
 def bind_project_context_cwd(ctl: RunController) -> None:
     """Default a project-owned run's cwd to the project's context folder: the folder its steps
-    work in (§1.2 calls it "the default cwd fallback for stage nodes", and the hierarchy store
-    "the working area when no external workspace is bound"), which the spawn allowlist admits for
+    work in (the default cwd for stage nodes, and the working area when no external workspace is
+    bound), which the spawn allowlist admits for
     them (`provisioning.run_workdir`).
 
     The folder a step works in is not the memory it reads: a project's run reads its project's
@@ -267,7 +267,7 @@ async def carry_over_document(ctl: RunController) -> None:
 
 
 def enforce_inherited_mode(ctl: RunController) -> None:
-    """Apply a restricted origin's memory posture at run start (WORK-CONTAINERS §5.1).
+    """Apply a restricted origin's memory posture at run start.
 
     The run already carries the inherited mode in `extra` (stamped by `start_run`); this is the
     moment it becomes ENFORCED in the process-global `session_restrictions` registry — the fast
@@ -292,8 +292,7 @@ def enforce_inherited_mode(ctl: RunController) -> None:
     replays — after which `_prepare` runs again and re-marks the registry from it, and the
     engine's node-skip + the run-end gate keep reading it. Materializing an owned-session JSONL
     line would create a file no reader consumes (the reindex path forgets restricted sessions on
-    sight), so the durable write is deliberately the `extra` head. DEVIATION from the literal
-    "JSONL write" phrasing, recorded in the plan's Execution log.
+    sight), so the durable write is deliberately the `extra` head, not a JSONL write.
 
     Idempotent and best-effort: `_prepare` runs once per live controller and again on resume,
     and re-marking a key already in the LRU is a no-op. A NORMAL run does nothing — an

@@ -1,4 +1,4 @@
-"""The onboarding import at the scale its users have: a months-long history (ledger row 240).
+"""The onboarding import at the scale its users have: a months-long history.
 
 **Measured on origin/main**, on a synthetic history shaped like a real power user's (12,005
 conversation files in 5.3 GB — a third of the 15 GB + 2.5 GB one that prompted this — built from

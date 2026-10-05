@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 
 def _enabled() -> bool:
-    """The `evals.enabled` kill-switch (§10).
+    """The `evals.enabled` kill-switch.
 
     Fails CLOSED on an unreadable config: this surface publishes measurement artifacts
     from a home directory, so "we could not read the switch" must not resolve to "serve
@@ -124,7 +124,7 @@ async def api_evals_judge_bench(request: web.Request) -> web.Response:
 
 
 async def api_evals_studies(request: web.Request) -> web.Response:
-    """GET /api/evals/studies — one compact row per pre-registered study (§2.4 / ES-5).
+    """GET /api/evals/studies — one compact row per pre-registered study.
 
     Read-only for the same reason the bench table is: a k=5 paired study is ten template
     runs plus six judge calls per pair, so starting one from a click would spend real money
@@ -152,9 +152,9 @@ async def api_evals_study(request: web.Request) -> web.Response:
     """GET /api/evals/studies/{study_id} — one study's verdict, agreement and per-run rows.
 
     🔴 The payload comes from `studies.study_view`, which deliberately omits the rubric TEXT
-    and the ``locked/`` checks. That omission is a §2.2 control, not a size optimization: a
+    and the ``locked/`` checks. That omission is an integrity control, not a size optimization: a
     dashboard is one `curl` away from an agent's context, so a route that served the hidden
-    checks would defeat the clause the whole study is built around. The rubric's HASH is
+    checks would defeat the rule the whole study is built around. The rubric's HASH is
     published instead — enough to prove the pin, not enough to satisfy it.
     """
     if not _enabled():
@@ -204,14 +204,14 @@ def _audit(request: web.Request, operation: str, outcome: str, resources: str) -
 
 
 async def api_evals_ablation(request: web.Request) -> web.Response:
-    """GET /api/evals/ablation — the newest keep/remove/lighten report (ES-7 §3.1).
+    """GET /api/evals/ablation — the newest keep/remove/lighten report.
 
     Read-only for the same reason judge-bench is: a POST that started an ablation would hold
     a request open for a multi-cell matrix and spend real money on a click. The RUN is
     ``personalclaw ablation`` (with its own preflight) or the monthly cadence; this publishes
     what those produced.
 
-    A ``remove`` verdict ALSO reaches the user as a LEARN-R9 retirement proposal in the
+    A ``remove`` verdict ALSO reaches the user as a retirement proposal in the
     inbox — that is the actionable surface. This route is the evidence behind it, and the only
     surface a ``keep``/``lighten`` verdict has at all.
     """
@@ -237,15 +237,15 @@ async def api_evals_ablation(request: web.Request) -> web.Response:
 
 
 async def api_evals_learning_benchmark(request: web.Request) -> web.Response:
-    """GET /api/evals/learning-benchmark — the newest skill-impact benchmark report (LV-7).
+    """GET /api/evals/learning-benchmark — the newest skill-impact benchmark report.
 
-    Read-only for a sharper reason than the other routes here: §3 pairs ``k = 5`` trials per
+    Read-only for a sharper reason than the other routes here: it pairs ``k = 5`` trials per
     arm over ten tasks — 100 real model calls — so a POST that started one would spend serious
     money on a click. The RUN is ``python scripts/learning_benchmark.py --run``, which has
     ``--preflight`` and ``--dry-run`` modes that call nothing, and this route publishes what it
     produced.
 
-    **The verdict is READ, never computed here.** The §5 thresholds live in
+    **The verdict is READ, never computed here.** The thresholds live in
     ``harness/fanout_measure.py``, a dev package outside the wheel; the runner computes the
     verdict and writes it into the report. So this route cannot synthesise a verdict or a score
     it was not given, and a task the runner did not measure arrives with ``verdict: null`` for
@@ -288,15 +288,15 @@ async def api_evals_learning_benchmark(request: web.Request) -> web.Response:
 
 
 async def api_evals_retrieval(request: web.Request) -> web.Response:
-    """GET /api/evals/retrieval — the newest per-arm P@k/R@k table for BOTH stores (§5).
+    """GET /api/evals/retrieval — the newest per-arm P@k/R@k table for BOTH stores.
 
     Read-only, like every other route here, but for a different reason than judge-bench's:
-    retrieval costs no model calls, yet §5.1's constraint is that the harness never writes
+    retrieval costs no model calls, yet the constraint is that the harness never writes
     to knowledge.db or memory.db, and the cheapest way to keep that promise on a web
     surface is to have no run trigger on it at all. The RUN is
     ``personalclaw retrieval-eval``.
 
-    Both stores are always present in the payload, each with its own table — §5.1 runs them
+    Both stores are always present in the payload, each with its own table — the benchmark runs them
     SEPARATELY and never shares a corpus, so a merged table would be the one shape the
     boundary forbids.
     """
@@ -322,7 +322,7 @@ async def api_evals_retrieval(request: web.Request) -> web.Response:
 
 
 async def api_evals_retrieval_card(request: web.Request) -> web.Response:
-    """GET /api/evals/retrieval/card?store=knowledge|memory — §5.2's hand-labeling card.
+    """GET /api/evals/retrieval/card?store=knowledge|memory — the hand-labeling card.
 
     The card is the human half of the qrels set: mined weak labels answer the tail, and the
     head queries need someone to say which results actually answer them. Read-only against
@@ -425,7 +425,7 @@ async def api_evals_retrieval_labels(request: web.Request) -> web.Response:
 
 
 async def api_evals_field_metrics(request: web.Request) -> web.Response:
-    """GET /api/evals/field-metrics — Loop-3 field metrics beside lab results (E3 / ES-9).
+    """GET /api/evals/field-metrics — Loop-3 field metrics beside lab results.
 
     One row per subject: lab score (Loop 1, pinned) | gate status (Loop 2) | field trend
     (Loop 3), plus the ``lab_field_divergence`` verdict, all computed on request and

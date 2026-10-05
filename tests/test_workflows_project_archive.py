@@ -1,4 +1,4 @@
-"""Project archive I/O — the round trip that proves the export planner exports something (C9).
+"""Project archive I/O — the round trip that proves the export planner exports something.
 
 `project_export` was a complete planning layer with ZERO importers: the exclusion policy, the
 digests and the path-safety predicate were all written and unused. So the tests that mattered here
@@ -95,7 +95,7 @@ def project(tmp_path: Path) -> Path:
     return root
 
 
-# ── clause 1: the ZIP writer exists and the planner has an importer ──
+# ── the ZIP writer exists and the planner has an importer ──
 
 
 def test_the_export_PLANNER_now_has_an_importer():
@@ -130,7 +130,7 @@ def test_the_archive_contents_and_the_manifest_AGREE(project: Path):
     assert members == {e["path"] for e in manifest["entries"]}
 
 
-# ── clause 4: the round trip on a CLEAN home ──
+# ── the round trip on a CLEAN home ──
 
 
 def test_ROUND_TRIP_on_a_clean_home_keeps_every_entity_sha256_verified(
@@ -261,7 +261,7 @@ def test_the_real_home_is_UNTOUCHED_by_a_round_trip(
     assert (home_b / "projects" / "x" / "context" / "overview.md").is_file()
 
 
-# ── clause 1: extraction-time path safety, unique tmp, janitor cleanup ──
+# ── extraction-time path safety, unique tmp, janitor cleanup ──
 
 
 def test_a_TRAVERSAL_member_is_refused_at_EXTRACTION_time(tmp_path: Path):
@@ -384,7 +384,7 @@ def test_a_NAME_COLLISION_gets_a_slot_never_an_overwrite(tmp_path: Path, project
     assert plan.project_name == "Round Trip (imported-1)"
 
 
-# ── clause 2: optional AES-GCM ──
+# ── optional AES-GCM ──
 
 
 def test_ENCRYPTION_is_available_on_this_install():
@@ -455,7 +455,7 @@ def test_two_encryptions_of_ONE_archive_differ(project: Path):
     assert a != b
 
 
-# ── clause 3: the `projects` component ──
+# ── the `projects` component ──
 
 
 def test_PROJECTS_is_a_registered_snapshot_component():

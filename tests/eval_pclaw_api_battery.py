@@ -6,7 +6,7 @@ backend route, bind a model to a use case, author+install a skill — each score
 whether an agent names the RIGHT tool/route with the EXACT parameters and includes
 the mandatory verify-after-mutate step (the "silent miss" guard).
 
-This module is the checked-in regression harness the plan requires. It carries:
+This module is the checked-in regression harness. It carries:
 
 * :data:`TASKS` — the prompts an eval subject answers (with and without the
   `pclaw-api` skill + offline reference in context).
@@ -18,8 +18,8 @@ This module is the checked-in regression harness the plan requires. It carries:
   battery's standing value after the one-time eval: it can't silently rot.
 
 The eval RUN itself (spawning fresh context-free subagents for each arm and
-checking ≥4/5 first-try + 0 silent misses) is an operator action recorded in the
-plan's execution log; this file is the scored contract it runs against.
+checking ≥4/5 first-try + 0 silent misses) is an operator action; this file is
+the scored contract it runs against.
 """
 
 from __future__ import annotations

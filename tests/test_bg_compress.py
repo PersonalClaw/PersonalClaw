@@ -1,4 +1,4 @@
-"""Background compression service (Context Economy §4).
+"""Background compression service.
 
 At-rest, idle, persistent chats get topic-compressed on the maintenance cadence — for the
 MODEL: the oldest tier becomes one summary, the middle tier capped turns, the recent tier

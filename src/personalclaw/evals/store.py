@@ -6,9 +6,9 @@ Everything lives under ``~/.personalclaw/evals/``. Whole-file JSON artifacts
 ``open(..., "a")`` with the parent ensured, matching how the guardrails audit
 appends its jsonl.
 
-ES-1a physically supports the ``matrices/`` subtree and the ``results.tsv`` ledger;
-ES-2 adds the ``scenarios/`` subtree (the versioned Loop-1 library — see
-:mod:`personalclaw.evals.scenarios`). ES-4 added ``benchmarks/`` and ES-5 adds
+The store physically supports the ``matrices/`` subtree and the ``results.tsv`` ledger,
+the ``scenarios/`` subtree (the versioned Loop-1 library — see
+:mod:`personalclaw.evals.scenarios`), ``benchmarks/`` and
 ``studies/`` (the pre-registered A/B studies — registration, hidden ``locked/``
 checks, verdict, per-run artifacts). ``trust/`` is still unowned and still NOT
 created here, because a dir with no writer is dead scaffolding. The single
@@ -20,7 +20,7 @@ recording the hash of its pre-registration. It sits at the evals ROOT rather tha
 the study's own directory on purpose: a hash kept beside the file it pins is pinned by
 nothing (see :func:`study_seals_path`).
 
-ES-2 also makes the ledger PINNED: :func:`append_result` takes a required ``pin``
+The ledger is also PINNED: :func:`append_result` takes a required ``pin``
 and refuses a row whose pin is absent or incomplete. That refusal is the one
 chokepoint every future writer (matrix, study, gate) passes through, so "a run
 without a pin cannot be written to results.tsv" holds for writers that do not exist
@@ -97,7 +97,7 @@ class PinRequiredError(ValueError):
 class StudySealedError(RuntimeError):
     """Raised when a caller tries to re-write an already-registered study's registration.
 
-    §2.1's "immutable once arm-1 starts" is enforced as "immutable, full stop": a study
+    "Immutable once arm-1 starts" is enforced as "immutable, full stop": a study
     whose pre-registration can be rewritten is not a pre-registration, and the window
     between registration and arm-1 buys nothing a second `register_study` call could not
     abuse. Re-registering means picking a new ``study_id``.
@@ -136,9 +136,9 @@ def scenarios_dir() -> Path:
 
 
 def benchmarks_dir() -> Path:
-    """``evals/benchmarks/`` — the fixture-set tree (§1.1).
+    """``evals/benchmarks/`` — the fixture-set tree.
 
-    Created on reference now that ES-4 is a writer of it. The judge benchmark reads its
+    Created on reference now that it has a writer. The judge benchmark reads its
     shipped fixture sets out of the PACKAGE and only looks here for the user's own or
     locally edited sets (the ``prompt_pack`` resolution rule: the home wins when it has a
     file of that name), so this dir stays empty until the user puts something in it.
@@ -149,14 +149,14 @@ def benchmarks_dir() -> Path:
 
 
 def judge_benchmarks_dir() -> Path:
-    """``evals/benchmarks/judge/`` — judge fixture sets (§6)."""
+    """``evals/benchmarks/judge/`` — judge fixture sets."""
     d = benchmarks_dir() / "judge"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def bakeoff_dir() -> Path:
-    """``evals/benchmarks/bakeoff/`` — the model bake-off's captured real inputs (§7, ES-10).
+    """``evals/benchmarks/bakeoff/`` — the model bake-off's captured real inputs.
 
     Created at mode 0700 because it holds redacted excerpts of the user's OWN traffic:
     unlike the shipped fixture sets under ``benchmarks/``, these are sampled production
@@ -172,7 +172,7 @@ def bakeoff_dir() -> Path:
 
 
 def studies_dir() -> Path:
-    """``evals/studies/`` — one directory per pre-registered study (§2, ES-5)."""
+    """``evals/studies/`` — one directory per pre-registered study."""
     d = evals_root() / "studies"
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -186,9 +186,9 @@ def study_dir(study_id: str) -> Path:
 
 
 def study_locked_dir(study_id: str) -> Path:
-    """``evals/studies/<study_id>/locked/`` — the hidden validation checks (§2.2).
+    """``evals/studies/<study_id>/locked/`` — the hidden validation checks.
 
-    Created ``0700`` and its files ``0600``: §2.2 says the checks are "never rendered
+    Created ``0700`` and its files ``0600``: the checks are "never rendered
     into any worker session's prompt, bindings, or workspace", and a mode is the one
     part of that promise the filesystem can keep on its own. The structural guarantee
     is :func:`personalclaw.evals.studies.assert_no_locked_leakage`; this is the floor
@@ -233,7 +233,7 @@ def append_result(row: dict, *, pin: "RunPin") -> None:
     stable, ordered :data:`RESULTS_COLUMNS`, and unknown keys in ``row`` are ignored
     so a caller cannot silently widen the ledger.
 
-    ``pin`` is REQUIRED (ES-2). A missing or incomplete
+    ``pin`` is REQUIRED. A missing or incomplete
     :class:`~personalclaw.evals.pinning.RunPin` raises :class:`PinRequiredError`
     BEFORE the file is touched — an unattributable score never lands in the ledger,
     and the pin's own columns are written from the pin, not from ``row``, so a caller
@@ -262,7 +262,7 @@ SEAL_COLUMNS: tuple[str, ...] = ("study_id", "registration_sha256", "sealed_ts")
 
 
 def study_seals_path() -> Path:
-    """``evals/study_seals.tsv`` — the append-only registration-seal journal (§2.1).
+    """``evals/study_seals.tsv`` — the append-only registration-seal journal.
 
     Deliberately OUTSIDE ``studies/<id>/``. A hash kept beside the file it pins is pinned
     by nothing: the study directory's own ``rubric_sha256`` lives in ``registration.json``,
@@ -340,7 +340,7 @@ def read_results() -> list[dict]:
     return rows
 
 
-# ── per-matrix JSON artifacts (retention sinks ES-1b fills) ──────────────────
+# ── per-matrix JSON artifacts (retention sinks every run fills) ──────────────
 
 
 def write_matrix_experiment(matrix_id: str, spec_dict: dict) -> Path:
@@ -377,7 +377,7 @@ def write_matrix_trials(matrix_id: str, cells: list) -> Path:
     """Persist a matrix's per-cell ``trials.json`` via ``atomic_write``.
 
     Each entry is one cell's coords/outcome/score/artifact_ref — the drill-down
-    behind the ``aggregates.json`` summary (§1.2's "a surprising aggregate is always
+    behind the ``aggregates.json`` summary ("a surprising aggregate is always
     drillable to the run that produced it"). ``cells`` are :class:`CellResult`-shaped
     objects; they are serialized through their ``to_dict`` so this store stays
     dataclass-agnostic (no import of the matrix TYPES, no cycle).
@@ -396,7 +396,7 @@ def read_matrix_trials(matrix_id: str) -> list | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-# ── per-study artifacts (§2.1 registration → §2.4 verdict) ───────────────────
+# ── per-study artifacts (registration → verdict) ─────────────────────────────
 
 
 def _write_immutable(path: Path, text: str) -> Path:
@@ -462,7 +462,7 @@ def read_study_rubric(study_id: str) -> str | None:
 
 
 def write_locked_check(study_id: str, name: str, data: dict) -> Path:
-    """Write one ``locked/<name>.json`` check at ``0600`` (§2.2)."""
+    """Write one ``locked/<name>.json`` check at ``0600``."""
     path = study_locked_dir(study_id) / f"{name}.json"
     atomic_write(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
     try:
@@ -494,7 +494,7 @@ def read_locked_checks(study_id: str) -> list[dict]:
 
 
 def write_study_verdict(study_id: str, data: dict) -> Path:
-    """Persist a study's ``verdict.json`` (§2.4 — written for EVERY outcome)."""
+    """Persist a study's ``verdict.json`` (written for EVERY outcome)."""
     path = study_dir(study_id) / "verdict.json"
     atomic_write(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
     return path
@@ -509,7 +509,7 @@ def read_study_verdict(study_id: str) -> dict | None:
 
 
 def write_study_runs(study_id: str, rows: list) -> Path:
-    """Persist a study's per-run artifacts (``runs.json``) — the §2.4 drill-down."""
+    """Persist a study's per-run artifacts (``runs.json``) — the verdict's drill-down."""
     path = study_dir(study_id) / "runs.json"
     payload = [r.to_dict() if hasattr(r, "to_dict") else dict(r) for r in rows]
     atomic_write(path, json.dumps(payload, indent=2, sort_keys=True))
@@ -525,7 +525,7 @@ def read_study_runs(study_id: str) -> list | None:
 
 
 def write_study_evidence(study_id: str, data: dict) -> Path:
-    """Persist the evidence unit a PASSING study emits (§2.4 → §4's trust ladder)."""
+    """Persist the evidence unit a PASSING study emits for the trust ladder."""
     path = study_dir(study_id) / "evidence.json"
     atomic_write(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
     return path
@@ -540,10 +540,10 @@ def read_study_evidence(study_id: str) -> dict | None:
 
 
 def judge_calibration_dir() -> Path:
-    """``evals/benchmarks/judge/calibration/`` — work the studies file for §6's harness.
+    """``evals/benchmarks/judge/calibration/`` — work the studies file for the judge harness.
 
     A study whose position-swap agreement fell below the floor files an item here instead
-    of a template verdict (§2.3). It lives under the JUDGE benchmark tree rather than under
+    of a template verdict. It lives under the JUDGE benchmark tree rather than under
     the study, because the item is a request to `personalclaw judge-bench`: the thing that
     needs fixing is the judge, and a queue kept inside the study that noticed it would be a
     queue nobody drains.

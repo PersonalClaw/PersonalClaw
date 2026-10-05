@@ -14,8 +14,8 @@ vi.mock('../../app/appSdk', () => ({ notify: vi.fn() }))
 //      a card you can only accept is not a proposal.
 //   2. CONFIDENCE MEANS SOMETHING. The score renders WITH its derivation (how many of the
 //      declared globs/signals matched, against what ceiling). A bare percentage is a number
-//      the user has to trust; the change's brief calls an unexplained score worse than none.
-//   3. THE §3.1 INSPECT REPORT IS ON THE CARD. "Here's what it would install" is the whole
+//      the user has to trust; an unexplained score is worse than none.
+//   3. THE INSPECT REPORT IS ON THE CARD. "Here's what it would install" is the whole
 //      difference between a proposal and an ad, and it must survive being absent (project-
 //      create omits it to keep creation latency independent of pack count).
 
@@ -90,7 +90,7 @@ describe('confidence carries its derivation', () => {
   })
 
   it('shows how much of the rule matched, and the declared ceiling', () => {
-    // Without this line the 68% is unexplained — the exact failure the change's brief calls out.
+    // Without this line the 68% is unexplained — exactly the failure this card exists to avoid.
     const t = renderCard().container.textContent ?? ''
     expect(t).toContain('1 of 2 file patterns')
     expect(t).toContain('2 of 2 content signals')

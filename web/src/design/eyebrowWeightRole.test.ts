@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { countUppercaseTrackedEyebrows } from './consistencyAudit.report'
 
-// ── Eyebrow weight-role ratchet (design-system consistency, CD-02) ──────────
+// ── Eyebrow weight-role ratchet (design-system consistency) ─────────────────
 // The Weight-First rule (web/DESIGN.md §3/§6) makes emphasis a variable-weight
 // STEP, never uppercase-with-tracking. Section eyebrows and chip labels had
 // drifted to the uppercase, letter-spaced treatment app-wide (150+ hits) with no

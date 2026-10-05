@@ -3,9 +3,9 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { notificationLink } from './notificationMeta'
 import type { NotificationItem } from '../../lib/api'
 
-// ── A trigger's notification leads back to the trigger (B8, c1b-075) ─────────────────────────────
+// ── A trigger's notification leads back to the trigger ───────────────────────────────────────────
 //
-// Every fire's notification record has carried `statusUrl: "#/triggers?open=<id>"` since R18, and
+// Every fire's notification record has carried `statusUrl: "#/triggers?open=<id>"` for a long time, and
 // nothing in `web/src` read it: the detail panel offered Mark read and Delete, so a notification about
 // an automation was a dead end with no way back to the automation that sent it.
 //

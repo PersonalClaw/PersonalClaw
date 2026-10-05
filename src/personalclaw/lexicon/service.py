@@ -1,6 +1,6 @@
-"""LexiconService (core LEX) — the vocabulary engine over the LexiconStore.
+"""LexiconService — the vocabulary engine over the LexiconStore.
 
-Owns the four behaviors the design locks:
+Owns four behaviors:
   * ``rebuild_from_graph`` — sync terms from knowledge-graph entities (name + aliases +
     entity_type), computing Double Metaphone keys. Incremental-friendly (upsert by id).
     ``sync_from_graph`` runs it by itself whenever the knowledge graph has changed since the
@@ -8,13 +8,13 @@ Owns the four behaviors the design locks:
     from the graph, as the Vocabulary section says. It used to fill only when someone pressed
     Rebuild in Settings: a library whose notes named the owner's colleagues had an empty
     Lexicon, and voice memos spelled those names however the recogniser heard them.
-  * ``select_bias_terms``  — a ranked, budget-capped term list for PRE-decode biasing
-    (LEX.3): context entities first (a meeting's own notes prime its audio), then global
+  * ``select_bias_terms``  — a ranked, budget-capped term list for PRE-decode biasing:
+    context entities first (a meeting's own notes prime its audio), then global
     top-weighted top-ups.
-  * ``correct``            — POST-decode correction of a TranscriptResult (LEX.4): a learned
+  * ``correct``            — POST-decode correction of a TranscriptResult: a learned
     correction (one the user taught) is applied; a low-confidence word that SOUNDS like a
     Lexicon word AND is spelled much like it is proposed, never applied on that evidence.
-  * ``learn_correction``   — the feedback loop (LEX.5): upsert heard→meant, raise the
+  * ``learn_correction``   — the feedback loop: upsert heard→meant, raise the
     term's weight, flip auto_apply past threshold.
 
 A module-level ``select_bias_terms`` async wrapper is the seam the TranscriptionNode calls
@@ -142,7 +142,8 @@ _STOP_WORDS = frozenset(
     "has had do does did will would can could should may might must to of in on at for with "
     "as by from up out so no not yes it its he she they we you i me my your our their".split()
 )
-# Only correct words at/below this per-word confidence (L0 synergy — leave confident words).
+# Only correct words at/below this per-word confidence: the recogniser's own word confidence
+# says which words it was unsure of, and a confident word is left alone.
 _LOW_PROB = 0.6
 #: How alike a word must be SPELLED to the Lexicon word it sounds like (difflib's ratio) before
 #: it is proposed as that word. Double Metaphone keys are coarse — "Okay", "echo" and "Aku"
@@ -180,7 +181,7 @@ class LexiconService:
     def __init__(self, store: LexiconStore | None = None):
         self.store = store or LexiconStore()
 
-    # ── LEX.1 sources: rebuild from graph entities ──────────────────────────────
+    # ── Sources: rebuild from graph entities ────────────────────────────────────
     def rebuild_from_graph(self, entities: list[dict]) -> int:
         """Sync the Lexicon's graph-sourced terms from a list of entity dicts
         (``{id, name, entity_type, aliases, mentions}``). Returns the number of terms upserted.
@@ -253,7 +254,7 @@ class LexiconService:
         )
         return term_id
 
-    # ── LEX.3 pre-decode biasing ────────────────────────────────────────────────
+    # ── Pre-decode biasing ──────────────────────────────────────────────────────
     def select_bias_terms(
         self, *, context_terms: list[str] | None = None, budget: int = _BIAS_BUDGET
     ) -> list[str]:
@@ -276,7 +277,7 @@ class LexiconService:
                     break
         return out
 
-    # ── LEX.4 post-decode phonetic correction ───────────────────────────────────
+    # ── Post-decode phonetic correction ─────────────────────────────────────────
     def correct(self, result) -> CorrectionOutcome:
         """Correct mis-heard terms in a TranscriptResult in place + collect proposals.
         ``result`` is an stt.provider.TranscriptResult.
@@ -370,7 +371,7 @@ class LexiconService:
                 consider(self.store.terms_for_phonetic_prefix(key), _prefix_match, 0.1)
         return best
 
-    # ── LEX.5 learned-corrections loop ───────────────────────────────────────────
+    # ── Learned-corrections loop ─────────────────────────────────────────────────
     def learn_correction(
         self, heard: str, meant: str, *, always: bool = False, threshold: int = 2
     ) -> None:
@@ -405,7 +406,7 @@ class LexiconService:
 async def select_bias_terms(
     *, context_item_id: str | None = None, budget: int = _BIAS_BUDGET
 ) -> list[str]:
-    """The node-facing entry point (LEX.3). Resolves context entities for the item's
+    """The node-facing entry point for pre-decode biasing. Resolves context entities for the item's
     siblings when available, else falls back to globally top-weighted terms. Returns []
     when the Lexicon is empty/unavailable so transcription just runs unbiased."""
     try:

@@ -1,7 +1,7 @@
 """PersonalClaw reads and writes inside its home, and anywhere else only where the owner allowed.
 
-Vision tenet 3: all data lives under one PersonalClaw home. Measured on ``main`` before this change
-(final-validation F-13 and F-54), with ``HOME`` pointed at a scratch folder:
+Vision tenet 3: all data lives under one PersonalClaw home. Measured on ``main`` before this change,
+with ``HOME`` pointed at a scratch folder:
 
 * ``~/.agents/skills`` was a skill root on every read AND the default install target, and deleting
   a skill ``rmtree``'d the first folder of that name it found, which could be the owner's own

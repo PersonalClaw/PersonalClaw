@@ -4,9 +4,9 @@ import type { ReviewFinding, WorkflowReviewPayload, WorkflowRunDetailData, Workf
 import { ReviewTriagePanel, anchorExplanation } from './ReviewTriagePanel'
 import { WorkflowRunDetail } from './WorkflowRunDetail'
 
-// ── The reviewer-comment triage panel (criterion 9) ──────────────────────────────────────────
+// ── The reviewer-comment triage panel ──────────────────────────────────────────
 //
-// What these pin, in the order the criterion states them:
+// What these pin, in order:
 //   1. five findings render with their severity and their RESOLVED anchor (the diff's own
 //      path:line), not the reviewer's claimed location;
 //   2. an UNANCHORED finding is not offered an Accept at all, and says why in plain words — the
@@ -53,7 +53,7 @@ function finding(over: Partial<ReviewFinding> = {}): ReviewFinding {
   }
 }
 
-/** Three anchored, two not — the criterion's five, in the shape the backend returns. */
+/** Three anchored, two not — five findings, in the shape the backend returns. */
 function payload(over: Partial<WorkflowReviewPayload> = {}): WorkflowReviewPayload {
   const findings = [
     finding({ key: 'k1', severity: 'Critical', problem: 'token check swallows the log', resolved_line: 11 }),

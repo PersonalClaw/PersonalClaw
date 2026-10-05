@@ -1,13 +1,13 @@
-"""The `automation_*` chat-tool namespace (§4 / criterion 2).
+"""The `automation_*` chat-tool namespace.
 
-Criterion 2 is the bar: *"When a file in ~/notes changes, summarize it into my knowledge base" is
-creatable in chat in ONE message.* S83 shipped the `file` kind's watch runtime and recorded the
-honest blocker — "Criterion 2 needs `automation_create`, which needs somewhere to PUT a `file`
-trigger. There is no unified trigger store." **S87 shipped that store**, so the blocker
-is gone and this closes the criterion.
+The bar: *"When a file in ~/notes changes, summarize it into my knowledge base" is
+creatable in chat in ONE message.* The `file` kind's watch runtime shipped with an
+honest blocker — creating one needs `automation_create`, which needs somewhere to PUT a `file`
+trigger, and there was no unified trigger store. **That store now exists**, so the blocker
+is gone and this closes the gap.
 
 Every test drives the REAL `TriggerStore` against a `tmp_path`. The only injected pieces are the
-cadence converter (an LLM call) and the run turn — the same two seams `ScheduleService` and S90's
+cadence converter (an LLM call) and the run turn — the same two seams `ScheduleService` and the
 executor already inject, which is what lets the whole namespace be driven without a model.
 """
 
@@ -30,11 +30,11 @@ def _cron(expr="0 9 * * 1-5"):
     return lambda _cadence: Schedule(expr=expr)
 
 
-# ── 🔴 criterion 2, in one message ──
+# ── 🔴 a file automation, in one message ──
 
 
-def test_criterion_2_is_creatable_in_one_message(store):
-    """🔴 THE BAR, verbatim from the plan's Success Criteria. One call, no follow-up question, and
+def test_a_file_automation_is_creatable_in_one_message(store):
+    """🔴 THE BAR. One call, no follow-up question, and
     the result is a real persisted `file` trigger — not a schedule, and not an error."""
     result = T.create(
         store,
@@ -53,7 +53,7 @@ def test_criterion_2_is_creatable_in_one_message(store):
 
 def test_the_created_file_trigger_is_what_the_watch_runtime_expects(store):
     """🔴 A trigger the store accepts but `file_watch` cannot use would be present-and-inert — the
-    defect class this program keeps finding. Driven through the real expander."""
+    defect class this codebase keeps finding. Driven through the real expander."""
     from personalclaw.triggers.file_watch import expand_globs
 
     T.create(store, name="Notes", when="when a file in ~/notes changes", message="go")
@@ -154,7 +154,7 @@ def test_an_explicit_kind_and_spec_bypass_routing(store):
     assert store.get("file:exact").trigger.spec["paths"] == ["/tmp/x/**"]
 
 
-# ── 🔴 decision 5d: announced and capped ──
+# ── 🔴 agent-created triggers: announced and capped ──
 
 
 def test_an_agent_created_trigger_is_announced_in_the_result(store):
@@ -177,7 +177,7 @@ def test_an_agent_created_trigger_is_tagged(store):
 
 
 def test_the_agent_cap_is_enforced_with_a_count_and_a_remedy(store):
-    """🔴 Decision 5d's cap (default 20 active). "Limit reached" without a number leaves the user
+    """🔴 The agent cap (default 20 active). "Limit reached" without a number leaves the user
     unable to tell what to pause."""
     for i in range(T.max_agent_triggers()):
         assert T.create(store, name=f"A{i}", when="when a file in ~/notes changes", message="go").ok
@@ -198,7 +198,7 @@ def test_a_paused_agent_trigger_does_not_count_against_the_cap(store):
 
 def test_a_user_created_trigger_is_not_capped(store):
     """The cap exists because AGENTS create silently. The user asking for their 21st automation is
-    not the risk decision 5d addresses."""
+    not the risk the cap addresses."""
     for i in range(T.max_agent_triggers()):
         T.create(store, name=f"A{i}", when="when a file in ~/notes changes", message="go")
     assert T.create(
@@ -214,7 +214,7 @@ def test_a_user_created_trigger_is_not_capped(store):
 
 
 def test_the_id_uses_the_kind_slug_namespace(store):
-    """§7 step 2 calls the `kind:<raw>` namespace "the migration map"; an opaque uuid would break
+    """The `kind:<raw>` namespace is the migration map; an opaque uuid would break
     that mapping and give the user an id they cannot recognize in their own store."""
     T.create(store, name="My Daily Digest!", when="when a file in ~/notes changes", message="go")
     assert store.get("file:my-daily-digest") is not None
@@ -300,7 +300,7 @@ def test_update_REPORTS_a_rejected_field_rather_than_dropping_it(store):
 
 
 def test_a_patch_of_only_rejected_fields_fails(store):
-    """🔴 §3.7 autopauses on the health numbers, so letting an automation rewrite its own health
+    """🔴 Autopause reads the health numbers, so letting an automation rewrite its own health
     record would let it evade its own failure policy."""
     T.create(store, name="Notes", when="when a file in ~/notes changes", message="go")
     result = T.update(
@@ -339,7 +339,7 @@ def test_pause_then_resume_round_trips(store):
 
 def test_resuming_a_BROKEN_row_reports_the_refusal(store):
     """🔴 `store.set_enabled` refuses to enable a row that failed to parse. Swallowing that
-    would leave a "resumed" automation silently disabled — the class of lie this program hunts."""
+    would leave a "resumed" automation silently disabled — the class of lie this suite hunts."""
     import json
 
     store.path.write_text(
@@ -385,10 +385,10 @@ def test_deleting_an_unknown_id_is_an_error(store):
 
 
 def test_a_manual_run_NEVER_bypasses_the_trust_boundary(store):
-    """🔴 §4 allows a manual fire to bypass "min-interval + max_runs_per_hour, never rate floors".
-    `screen` is the prompt-injection boundary (criterion 6) and `capability` is the frozen action
+    """🔴 A manual fire may bypass "min-interval + max_runs_per_hour, never rate floors".
+    `screen` is the prompt-injection boundary and `capability` is the frozen action
     set — a "the user asked for it" bypass on either would make the trust boundary optional, which
-    is the escalation route criterion 6 is written against."""
+    is exactly the escalation route the boundary exists to close."""
     plan = T.manual_gate_plan()
     assert "screen" in plan["enforced"]
     assert "capability" in plan["enforced"]
@@ -554,7 +554,7 @@ def test_history_reports_no_runs_honestly(store):
 
 
 def test_history_projects_through_the_shipped_unified_feed(store):
-    """🔴 Criterion 4: a hook, an event trigger and a cron show the same record shape. Using S84's
+    """🔴 A hook, an event trigger and a cron show the same record shape. Using the shipped
     projection rather than a second one is what keeps this tool's output identical to the Runs
     inbox.
 
@@ -613,10 +613,10 @@ def test_every_declared_tool_name_has_a_handler():
     assert all(callable(h) for h in handlers.values())
 
 
-def test_the_namespace_covers_section_4s_table():
-    """§4 declares eight tools, plus the `delete_all` (the scoped bulk delete carried over from
-    the retired `schedule_remove_all`) and the dry run, which is a read of its own rather than
-    an argument of the run. A missing one is scope quietly dropped."""
+def test_the_namespace_covers_every_declared_tool():
+    """The namespace declares eight tools, plus the `delete_all` (the scoped bulk delete carried
+    over from the retired `schedule_remove_all`) and the dry run, which is a read of its own rather
+    than an argument of the run. A missing one is scope quietly dropped."""
     assert len(T.TOOL_NAMES) == 10
     for name in T.TOOL_NAMES:
         assert name.startswith("automation_")

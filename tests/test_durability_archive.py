@@ -1,6 +1,6 @@
 """The archive browser's two data sources: a snapshot's own manifest, and the last drill.
 
-§6 asks the archive list to show per-domain row counts "from the manifest" and the
+The archive list shows per-domain row counts "from the manifest" and the
 validate status "from the last drill". Both were unavailable — the snapshot
 manifest carried a hand-written `contents` blob with no domains, and only the drill's
 TIMESTAMP was persisted, so a passed drill and a failed one rendered identically.
@@ -118,7 +118,7 @@ def test_retention_removes_the_sidecar_with_its_archive(tmp_path):
 
 def test_snapshot_manifest_records_real_per_domain_row_counts(home, tmp_path):
     """Rows, not files: a `rows` count that just counted files would be a lie for a
-    database, and rows are what §6 asks the browser to show."""
+    database, and rows are what the browser shows."""
     import argparse
 
     from personalclaw.snapshot import snapshot_main

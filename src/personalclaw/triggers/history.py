@@ -1,7 +1,7 @@
-"""One run-history feed across the trigger kinds (AUTO §7 criterion 4).
+"""One run-history feed across the trigger kinds.
 
-Criterion 4: "A hook, an event trigger, and a cron all show run history in the same feed with the
-same record shape and typed outcomes."
+The goal: a hook, an event trigger, and a cron all show run history in the same feed with the
+same record shape and typed outcomes.
 
 **Measured before writing — incompatible shapes and one unused vocabulary.**
 
@@ -15,10 +15,10 @@ same record shape and typed outcomes."
 (A data-event trigger used to live in a store of its own that kept only a fire COUNTER, projected
 here as one synthetic summary row. It is a store row now, so its fires are ordinary run rows.)
 
-And `FireRecord` — the typed row S62 designed for exactly this, with `FIRE_OUTCOMES` — is
+And `FireRecord` — the typed row designed for exactly this, with `FIRE_OUTCOMES` — is
 **exported and
 never constructed**: `grep "FireRecord("` outside its own module returns nothing. So the shared
-shape the criterion asks for already existed on paper and nothing produced it.
+shape the feed needs already existed on paper and nothing produced it.
 
 **This module projects, it does not migrate.** The projections map what each store HAS onto the
 common row, and `unified_feed` merges them newest-first.
@@ -29,9 +29,9 @@ common row, and `unified_feed` merges them newest-first.
    marked `incomplete=True` when earlier runs are gone, never N fabricated rows with invented
    timestamps. `FireRecord.incomplete` exists for this: "a count that was cut short … a reader is
    never misled by a number that stopped early".
-2. **`launched` is not `ran`.** The schedule store's honest T7 status — the action started a
+2. **`launched` is not `ran`.** The schedule store's honest status — the action started a
    background turn, outcome unknown — maps to `deferred`, not `ran`. Calling it `ran` would report
-   success for work nobody has seen, which is the distinction T7 exists to keep.
+   success for work nobody has seen, which is the distinction that status exists to keep.
 3. **A status these tables lack is not a run**. Both projections used to fall back to
    "it ran" — `hook_to_record` literally returned `RAN if last_run` — so every status written after
    the tables were authored read as work that happened. NINE values across FOUR writers.
@@ -125,7 +125,7 @@ SCHEDULE_STATUS_TO_OUTCOME: dict[str, str] = {
     # summary is the question, and the Inbox holds the answerable card (`triggers.parks`).
     "waiting": Outcome.DEFERRED.value,
     # 🔴 A SUPPRESSED fire. `service._record_suppression_row` persists the typed outcome in
-    # BOTH `trigger` and `status` so criterion 8's "zero silent drops" is real — and every one of
+    # BOTH `trigger` and `status` so "zero silent drops" is real — and every one of
     # them missed this table and projected as `failed`. A quiet-hours skip rendered as a red failure
     # in the runs feed, which is the exact confusion `isInertOutcome` was written to prevent one
     # layer later, and it also kept the row OUT of `partition_inert`'s suppressed half, so it buried
@@ -140,7 +140,7 @@ SCHEDULE_STATUS_TO_OUTCOME: dict[str, str] = {
 #: Outcomes whose row is bookkeeping, not an openable run — `LEDGER` weight (`FULL` means "earned a
 #: run directory and a journal"). A `DEFERRED` fire has not produced one YET, and a suppressed or
 #: screened fire never will: neither reached a runner. Kept as one set because both projections
-#: below owe the same answer, and they disagreed before WV-15 (the hook projection hardcoded
+#: below owe the same answer, and they once disagreed (the hook projection hardcoded
 #: `FULL`, so a hook the incident switch stopped claimed an exit code it never had).
 LEDGER_WEIGHT_OUTCOMES: frozenset[str] = frozenset(
     {Outcome.DEFERRED.value, Outcome.BLOCKED_INJECTION.value} | set(INERT_OUTCOMES)
@@ -202,13 +202,13 @@ HOOK_STATUS_TO_OUTCOME: dict[str, str] = {
 
 
 def _redact(text: str) -> str:
-    """Strip credentials from a reason string. Criterion 11's rule, applied at THIS boundary too.
+    """Strip credentials from a reason string. The redaction rule, applied at THIS boundary too.
 
-    🔴 Found by driving criterion 11 against every surface: `reason` carries a schedule run's raw
-    `error`/`summary`, and a run that failed while printing a token would put that token in the
-    feed. The live endpoint happens to pre-redact via `_redact_run`, so the shipped path was
-    safe — but these projections are public functions, and a second caller passing raw store
-    rows would leak. Defending at the boundary rather than trusting the caller is the same rule
+    🔴 Found by driving the redaction rule against every surface: `reason` carries a schedule run's
+    raw `error`/`summary`, and a run that failed while printing a token would put that token in the
+    feed. The live endpoint happens to pre-redact via `_redact_run`, so the shipped path was safe —
+    but these projections are public functions, and a second caller passing raw store rows would
+    leak. Defending at the boundary rather than trusting the caller is the same rule
     `journal.redact` follows.
 
     Delegates to the platform redactors; a private pattern copy would drift exactly when it
@@ -245,7 +245,7 @@ def schedule_run_to_record(run: dict[str, Any], *, trigger_id: str = "") -> Fire
 
     An unknown status becomes `failed`, matching `FireRecord.from_dict`'s own rule — a row this
     build cannot classify must not be counted as a success, because a success is what the health
-    rollup treats as nothing to look at. It also LOGS (WV-15): four statuses reached this fallback
+    rollup treats as nothing to look at. It also LOGS: four statuses reached this fallback
     for months and a silent fallback is why nobody noticed. A warning naming the status is how the
     next one gets found before a user reads it as a failure.
     """
@@ -285,7 +285,7 @@ def schedule_run_to_record(run: dict[str, Any], *, trigger_id: str = "") -> Fire
         reason = reason or "payload blocked by the injection screen; never retried"
     elif outcome in INERT_OUTCOMES:
         # The suppression reason IS the row's `error` (that is where `_record_suppression_row` puts
-        # it). A blank one still must not render as an unexplained skip — §7 criterion 8's whole
+        # it). A blank one still must not render as an unexplained skip — the whole
         # point is that a user can ask "why did my automation not run" and get an answer.
         reason = reason or f"suppressed: {status.replace('_', ' ')}"
     job_id = str(run.get("job_id", "") or "")
@@ -302,7 +302,7 @@ def schedule_run_to_record(run: dict[str, Any], *, trigger_id: str = "") -> Fire
         # `FULL` — a schedule run has a real run record behind it (trace, error, duration), which
         # is what `FULL` means: "earned a run directory and a journal". A `DEFERRED` (launched)
         # fire has not produced that yet, so it stays `LEDGER` until its background turn reports —
-        # as do the suppressed and screened rows WV-15 mapped, which never reached a runner at all.
+        # as do the suppressed and screened rows, which never reached a runner at all.
         weight=(
             RunWeight.LEDGER.value if outcome in LEDGER_WEIGHT_OUTCOMES else RunWeight.FULL.value
         ),
@@ -321,7 +321,7 @@ def _hook_reason(status: str, outcome: str) -> str:
     carries no reason, because "it ran" is the whole story and a decorative reason costs a line of a
     user's attention for nothing.
 
-    🔴 `advisory` is the ONE `RAN` row that gets a reason (G89), and it is checked before the
+    🔴 `advisory` is the ONE `RAN` row that gets a reason, and it is checked before the
     early return above for exactly that: "it ran" is not the whole story when the script asked to
     block and nothing stopped. Without this sentence the honest status degrades into a silent
     success — the same shape of miss as reporting it `blocked`, in the opposite direction.
@@ -357,7 +357,7 @@ def hook_to_record(hook: Any) -> FireRecord | None:
     `counters` carries `run_count` so the feed can show "this has run 12 times, here is the most
     recent" without inventing eleven rows it does not have.
 
-    🔴 THE FALLBACK IS THE DEFECT (WV-15). This read `RAN if last_run` for any status the table
+    🔴 THE FALLBACK IS THE DEFECT. This read `RAN if last_run` for any status the table
     lacked, and two of the eight `hooks.py` writes were exactly that: `skipped_incident` (the
     incident switch — the provider was never called) and `launched` (a background turn nobody has
     seen) both landed on "it ran and did something durable". Three cases, and each needs its own
@@ -457,7 +457,7 @@ def unified_feed(
 def feed_response(records: list[FireRecord], *, total: int | None = None) -> dict[str, Any]:
     """The wire shape for the unified feed.
 
-    `supported` is gone from this response ON PURPOSE. The per-kind `supported: false` (S67) was the
+    `supported` is gone from this response ON PURPOSE. The per-kind `supported: false` was the
     honest answer while only schedules had rows; now every kind projects, so a flag saying
     otherwise would be stale. What replaces it is per-row honesty: `incomplete` and `weight` say
     which rows are summaries rather than openable runs.
@@ -471,8 +471,8 @@ def feed_response(records: list[FireRecord], *, total: int | None = None) -> dic
         # Named so a caller can render "3 of these are summaries" rather than implying 3 more runs.
         "summaries": sum(1 for r in records if r.incomplete),
         # The archive split. `runs` still carries EVERY row — a surface that lost the
-        # suppressed ones could not answer "why did my automation not run", and §7 criterion 8 bans
-        # silent drops. These two ids lists let a default view show work and fold the rest away.
+        # suppressed ones could not answer "why did my automation not run", and silent drops
+        # are banned. These two ids lists let a default view show work and fold the rest away.
         "did_ids": [r.id for r in did],
         "suppressed_ids": [r.id for r in suppressed],
         "suppressed": len(suppressed),
@@ -480,22 +480,22 @@ def feed_response(records: list[FireRecord], *, total: int | None = None) -> dic
 
 
 def is_inert(record: FireRecord) -> bool:
-    """Whether this row is a suppression rather than work the machine DID (§1.3 — S132).
+    """Whether this row is a suppression rather than work the machine DID.
 
-    🔴 `INERT_OUTCOMES` was declared in `models.py` and read by NOTHING. §1.3 says inert outcomes
-    "collapse to ledger rows and archive out of the default inbox view — the runs inbox is for what
-    the machine DID", and measured: the unified feed returned every row undifferentiated, so a
+    🔴 `INERT_OUTCOMES` was declared in `models.py` and read by NOTHING. Inert outcomes should
+    collapse to ledger rows and archive out of the default inbox view — the runs inbox is for what
+    the machine DID — and, measured: the unified feed returned every row undifferentiated, so a
     minutely trigger suppressed by quiet hours buried the one fire that mattered under 1439 skips.
     """
     return record.outcome in INERT_OUTCOMES
 
 
 def partition_inert(records: list[FireRecord]) -> tuple[list[FireRecord], list[FireRecord]]:
-    """`(did_something, suppressed)` — §1.3's archive split.
+    """`(did_something, suppressed)` — the archive split.
 
     A PARTITION rather than a filter, deliberately: the suppressed rows are the answer to "why did
-    my automation not run", so dropping them would replace one bad default with a worse one. §7
-    criterion 8 bans silent drops, and a row filtered out of the only surface that shows it is a
+    my automation not run", so dropping them would replace one bad default with a worse one.
+    Silent drops are banned, and a row filtered out of the only surface that shows it is a
     silent drop with extra steps. The caller renders them behind an "archived" affordance.
     """
     did: list[FireRecord] = []

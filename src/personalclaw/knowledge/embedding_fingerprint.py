@@ -33,7 +33,7 @@ with a model bound, stale.
 **Nothing bound is not staleness.** :func:`active_fingerprint` returns ``None`` when no
 embedding model is selected, and every caller then treats staleness as inapplicable — the
 vector arm is not running at all in that state, and "no embedding provider" is already
-The named reason (:mod:`personalclaw.knowledge.searchability`). Reporting a stale
+the named reason (:mod:`personalclaw.knowledge.searchability`). Reporting a stale
 index when the real fact is an unbound provider would be a second reason for one state,
 which is the drift the single-vocabulary rule exists to prevent.
 """
@@ -223,11 +223,11 @@ def stale_vector_items(
 
 
 def stale_rows(records: Iterable[tuple[str, str, str, str]]) -> list:
-    """Attention rows for :func:`stale_vector_items` output, in RET-2's row shape.
+    """Attention rows for :func:`stale_vector_items` output, in ``searchability``'s row shape.
 
     Lives here rather than in ``searchability`` so the reason token and the query that
     finds its subjects sit together; the ROW TYPE, the shelf rule and the grouping stay
-    RET-2's.
+    ``searchability``'s.
     """
     from personalclaw.knowledge.searchability import STALE_INDEX, UnsearchableItem, shelf_of
 

@@ -1,10 +1,10 @@
 """ProviderSettings config path — must agree with the Apps config UI's path.
 
-Regression for bug #31: the provider-build read path (ProviderSettings.config_path)
+Regression: the provider-build read path (ProviderSettings.config_path)
 resolved to ``app_dir/config.json`` while the Apps config UI (apps.app_config) wrote
 to ``app_dir/data/config.json``. So a provider key set in the UI never reached the
 provider when it was built at boot (brave/tavily/etc. showed unavailable despite a
-configured key). The two MUST resolve to the same file, inside ``data/`` (A2-preserved).
+configured key). The two MUST resolve to the same file, inside ``data/`` (kept across updates).
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ def test_provider_settings_agrees_with_app_config_path():
 
     assert ProviderSettings.config_path("brave-search") == ui_write_path("brave-search"), (
         "ProviderSettings (provider build reads) and app_config (UI writes) must "
-        "resolve to the identical file — bug #31 was that they diverged."
+        "resolve to the identical file — the bug was that they diverged."
     )
 
 

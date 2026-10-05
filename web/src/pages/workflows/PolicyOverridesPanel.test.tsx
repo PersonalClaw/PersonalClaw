@@ -53,7 +53,7 @@ beforeEach(() => {
 })
 
 describe('the editor covers the whole overridable vocabulary', () => {
-  it('renders exactly the five ruled knobs (OVERRIDABLE_POLICY_KEYS)', () => {
+  it('renders exactly the five overridable knobs (OVERRIDABLE_POLICY_KEYS)', () => {
     // Pinned literally: the FE has no import of the backend frozenset, so this list is the
     // contract the two sides share. A sixth knob (or a dropped one) must fail HERE, not in
     // production as a 400 the user cannot act on.

@@ -1,7 +1,7 @@
-"""Shared goal-scoping seam — the grill pipeline (#32).
+"""Shared goal-scoping seam — the grill pipeline.
 
 A vendor-neutral scoping pipeline reused by goal loops (flat sub-goals), Projects
-(question tree — #33 Phase B), and the chat ``grill`` skill. It replaces the blind
+(question tree), and the chat ``grill`` skill. It replaces the blind
 one-shot "suggest sub-goals" with a **memory-checked** decomposition:
 
     assess_goal → check_memory → decompose(shape) → save_decisions

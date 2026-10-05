@@ -25,7 +25,7 @@ exercising the mechanism in isolation:
 
 The bundler is stubbed with a tiny ``sh`` script for every test here, because the real
 esbuild lives in ``node_modules`` (absent in a fresh clone, and never a test dependency).
-The real toolchain path is exercised by hand and recorded in the plan's execution log.
+The real toolchain path is exercised by hand.
 """
 
 from __future__ import annotations

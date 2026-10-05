@@ -1,12 +1,12 @@
 # The default chat model — licence sign-off record, source pin and size ceiling.
 #
-# OU-14 (ONBOARDING-UX). PersonalClaw's zero-config promise is that a fresh install reaches a
+# PersonalClaw's zero-config promise is that a fresh install reaches a
 # working chat turn with NO provider bound, NO API key and NO Ollama reachable. Keeping that
 # promise means this project puts a model weight on the user's machine under its own name, and
 # that is a licence act whether the bytes travel in the wheel or arrive over the wire.
 #
-# THE WEIGHT IS NOT IN THE WHEEL. Owner decision 2026-09-24: "the intention was always to ship
-# the wheel without the weight and fetch it on first run." The weight is 138 MiB — over PyPI's
+# THE WEIGHT IS NOT IN THE WHEEL, on purpose: the wheel ships without it and the model is
+# fetched on first run. The weight is 138 MiB — over PyPI's
 # 100 MiB per-file limit, and a ~147 MiB wheel for every install is a cost most users would pay
 # for a model they replace on day one. So it is downloaded ONCE, at the user's explicit
 # go-ahead, into `$PERSONALCLAW_HOME/models/bundled-chat/`, and verified against the digest
@@ -44,7 +44,7 @@
 #
 # `tests/test_bundled_model_gate.py` holds every rail's teeth, including the known-false
 # licence controls (Gemma Terms, Llama community, LFM, CC-BY-NC, OpenRAIL, research-only) that
-# MUST be refused, and `scripts/ou14_zero_config_drive.py` drives the end-to-end promise —
+# MUST be refused, and `scripts/zero_config_first_turn_drive.py` drives the end-to-end promise —
 # fetch, resolve AND complete a real turn — on a throwaway home.
 #
 # ── THE KEYS ─────────────────────────────────────────────────────────────────────────────────
@@ -54,7 +54,7 @@
 #
 #   model_id           the exact upstream model id, as published (`<org>/<name>`).
 #   licence            the SPDX identifier, exactly. `Apache-2.0` and `MIT` are the only
-#                      permitted values, by owner sign-off. There is NO fuzzy matching: prose such
+#                      permitted values, by sign-off. There is NO fuzzy matching: prose such
 #                      as "Apache License 2.0" is refused, because a matcher loose enough to
 #                      accept prose is loose enough to accept "Gemma Terms (Apache-2.0-style)".
 #   licence_url        a link to the licence text for THIS model, as published.
@@ -148,8 +148,8 @@ source_url: https://huggingface.co/unsloth/SmolLM2-135M-Instruct-GGUF/resolve/9e
 #   * Container image (`ghcr.io/personalclaw/personalclaw-gateway`) — also carries no weight.
 #     EMBEDDING IT HERE WAS CONSIDERED AND DECLINED: an image has no per-file limit and an
 #     offline-capable container is a genuinely better story, but it would make the answer to
-#     "where does the model come from" different per install channel, which is the split the
-#     owner called harder to explain. Anyone who needs an offline image pre-seeds the path
+#     "where does the model come from" different per install channel, which is the split that is
+#     harder to explain. Anyone who needs an offline image pre-seeds the path
 #     below with one `COPY` — see `docs/architecture/provider-boundary.md` — which is a
 #     documented line rather than a second artifact pipeline this project has to build, test
 #     and keep in step.

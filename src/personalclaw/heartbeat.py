@@ -2,7 +2,7 @@
 
 The service runs on a configurable interval (default 60s): idle-session consolidation, the
 chores no model answered (``owed_chores``), background compression, session reindex, auto-archive
-and due-commitment delivery — the user-facing behaviors §4.4 explicitly KEEPS here.
+and due-commitment delivery — the user-facing behaviors that deliberately stay here.
 
 **The HEARTBEAT.md task queue is not run here.** It ran every 60 s with no UI — no schedule, no
 last run, no way to turn it off — an automation nobody could see. It is the
@@ -81,7 +81,7 @@ _DEFAULT_INTERVAL = 60
 # registers (`memory.rebuild-fts`, `memory.prune-history`, `sel.prune`, `skills.age`). Those
 # passes are deficit-driven now, not tick-modulo — a job runs when its measured backlog moves
 # the health score, which is why there is no number here to keep in sync with the engine's.
-# Background compression pass (Context Economy §4) — hourly, budgeted. It only ever
+# Background compression pass — hourly, budgeted. It only ever
 # touches sessions idle for days, so an hourly cadence is plenty; the per-pass cap
 # bounds LLM spend regardless.
 _BG_COMPRESS_TICKS = 60
@@ -346,7 +346,7 @@ class HeartbeatService:
     ) -> None:
         self._interval = interval
         self._consolidator = consolidator
-        # M5e — proactive commitment delivery: a coroutine the gateway wires to
+        # Proactive commitment delivery: a coroutine the gateway wires to
         # scan due commitments and deliver/dismiss them. None when the gateway
         # didn't wire it (e.g. no dashboard). Invoked once per tick, guarded.
         self._on_due_commitments = on_due_commitments
@@ -401,7 +401,7 @@ class HeartbeatService:
         except Exception:
             logger.warning("Owed chores pass failed to start", exc_info=True)
 
-        # Background compression pass (Context Economy §4) — hourly, budgeted, off the
+        # Background compression pass — hourly, budgeted, off the
         # request path. Summarizes old idle at-rest chats for the model, beside the
         # transcript; config-gated, and it never writes the chat file itself.
         if self._consolidator and self._tick % _BG_COMPRESS_TICKS == 0:
@@ -419,7 +419,7 @@ class HeartbeatService:
             except Exception:
                 logger.debug("session auto-archive pass failed", exc_info=True)
 
-        # Proactive commitment delivery (M5e — O-A4): deliver any due check-ins
+        # Proactive commitment delivery: deliver any due check-ins
         # the agent inferred, at most once per window (the callback dismisses on
         # delivery so it never re-fires). Off unless the user opted in + the
         # gateway wired delivery. Guarded so a delivery error can't kill the tick.

@@ -288,7 +288,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
   useVisiblePoll(() => load(), project === null && loadErr ? 4000 : null)
   // A brownfield project whose bound workspace was moved/deleted on disk after binding surfaces
   // a proactive "re-pick the folder" banner instead of only erroring when the user clicks Start
-  // against a vanished dir (C244 follow-on). Only for a not-running brownfield with a path set —
+  // against a vanished dir. Only for a not-running brownfield with a path set —
   // a running worker already proves the dir exists — and only on a 404, which the shared hook
   // keys on the STATUS: it used to match the error text "no such directory".
   const probed = project && project !== 'missing' ? project : null
@@ -311,7 +311,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
   // the latest one, so the user sees WHY a stage isn't advancing instead of silent
   // re-cycling. Cleared when the project advances a stage / completes.
   // gate-failure + stall banners are TRANSIENT run flags folded from lifecycle events
-  // by the shared pure `foldReducer` (P16 — one fold for every run surface; Code Cockpit
+  // by the shared pure `foldReducer` (one fold for every run surface; Code Cockpit
   // no longer hand-maintains its own inline gate/stall switch). The stall banner surfaces
   // when a stage keeps producing findings but its gate won't pass. `runFold.test.ts` locks
   // the parity fixes (gate-clears-on-pass, stall-kept-on-blocked, judge degraded).
@@ -350,7 +350,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
     onSnapshot: (p) => setProject(loopToCodeProject(p)),
     onLifecycle: (event, data) => {
       // The transient gate/stall/judge banners fold through the ONE shared pure reducer
-      // (P16) — gate_check clear-on-pass, stall-kept-on-blocked, judge degraded, etc. all
+      // — gate_check clear-on-pass, stall-kept-on-blocked, judge degraded, etc. all
       // live in runFold.ts (parity-locked by runFold.test.ts), not a second inline switch.
       setRunFlags((f) => foldReducer(f, event, data))
       // The project was deleted elsewhere (another tab / the list) → flip to the
@@ -495,8 +495,8 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
     if (refreshKinds(m).includes('incident')) { load(); return }
     const sess = String(m.data?.session ?? '')
     // Accept the main worker, this project's task-workers, AND a coexistence run-scoped
-    // key (`run:<id>` / `workflow:run:<id>`) once a code loop runs as a template — the
-    // R10c fix. `belongsToLoop` matches all three; a raw `===`/prefix test dropped the
+    // key (`run:<id>` / `workflow:run:<id>`) once a code loop runs as a template.
+    // `belongsToLoop` matches all three; a raw `===`/prefix test dropped the
     // colon keys silently (stream connects, panel stays dead), which is the regression it
     // closes. Kept `sess` for the per-worker activity buckets below.
     if (!belongsToLoop(sess, id)) return
@@ -584,7 +584,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
   async function act(action: 'start' | 'pause' | 'resume' | 'stop') {
     if (acting) return  // ignore a double-click while a prior action is in flight
     // A brownfield draft saved without a workspace can't start until one is set —
-    // surface the picker instead of a silent 422 (resumes the C22 draft flow).
+    // surface the picker instead of a silent 422 (resumes the draft flow).
     if (action === 'start' && p.project_kind === 'brownfield' && !ws) { setPickWs(true); return }
     // Surface a failed action (e.g. start re-validation 422 — workspace/agent went
     // away, spec invalid) instead of silently reverting via load(). The backend's
@@ -641,7 +641,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
     } finally { setActing(false) }
   }
   async function del() {
-    // Through the shared delete ritual (AUD-A11): confirmDelete composes the identical
+    // Through the shared delete ritual: confirmDelete composes the identical
     // title/danger/label, so hand-rolling confirm() here was drift, not a design choice.
     //
     // 🔴 THE BODY WAS DUPLICATED FROM `CodeSection`, AND THE DUPLICATION IS WHY THE DEFECT SURVIVED.
@@ -709,7 +709,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
             </button>
           )}
           {/* StageTrail (phase-execution status) moved OUT of the title row into the
-              dedicated status bar below the header (CockpitMeta) — item 14. */}
+              dedicated status bar below the header (CockpitMeta). */}
           {/* FEED liveness — the last of the four `useRunStream` consumers to get it, after the
               workflow run view, the loop cockpit and the design cockpit. A running code loop whose
               stream dropped keeps showing its last stage while nothing arrives, indistinguishable from
@@ -763,7 +763,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
 
       <CockpitMeta project={p} onOpenProject={onOpenProject} onRuntimeChange={runtimeEditable ? moveRuntime : undefined} />
 
-      {/* Expandable prompt bar (item 14 / Gap 2) — first line collapsed, full on expand. */}
+      {/* Expandable prompt bar — first line collapsed, full on expand. */}
       <CockpitPromptBar prompt={p.task || ''} />
 
       {missingCommands.length > 0 && (
@@ -1028,7 +1028,7 @@ export function CockpitMeta({ project: p, onOpenProject, onRuntimeChange }: {
           <span className="font-mono">{elapsedText}</span>
         </span>
       )}
-      {/* Phase-execution status — moved here from beside the title (item 14) so the
+      {/* Phase-execution status — moved here from beside the title so the
           status bar is the single place to read where the run is. */}
       <StageTrail project={p} />
       {/* Runs on · workspace · project · cycles all float to the far RIGHT edge (ml-auto pushes
@@ -1208,7 +1208,7 @@ function FileFinder({ ws }: { ws: string }) {
   const [hi, setHi] = useState(0)
   // 🔴 THIS WAS A KEYBOARD WIDGET THAT ANNOUNCED NOTHING. Arrow keys moved a purely VISUAL highlight
   // over the results: no listbox, no options, no `aria-activedescendant`, and nothing said the popover
-  // had opened — the same defect `CommandPalette` carried before cycle 181, in the same shape. The
+  // had opened — the same defect `CommandPalette` used to carry, in the same shape. The
   // pattern is the app's own (APG combobox): focus stays in the field and a virtual cursor moves, so
   // the ids below are what assistive tech follows instead of focus.
   const qoId = useId()
@@ -1754,7 +1754,7 @@ function StageGroup({ stage: s, status: st, tasks, preview, doneIds, queuedSet, 
       {hasDetail ? (
         // Morph the objective/exit-criteria open in place (height+opacity), rather than
         // popping the block in/out — the SAME stage row grows to reveal its detail
-        // (§Goal "morph, don't mount"). Reduced-motion degrades to an instant swap.
+        // ("morph, don't mount"). Reduced-motion degrades to an instant swap.
         <Expandable open={open} header={
           <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-label={a11yLabel}
             data-type="caption" className="flex w-full items-center gap-1.5 px-2 py-1.5 hover:bg-surface-high/40" style={{ color }}>
@@ -1907,7 +1907,7 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
   // Synchronous guard for queue/steer: disabled={busy} + the `busy` state check are
   // async, so a rapid double Enter/click both pass before the re-render → a double
   // nudge/queue (double guidance write + SSE). The ref short-circuits the 2nd call
-  // immediately (the C409/C415 acting-guard pattern).
+  // immediately (the acting-guard pattern).
   const actingRef = useRef(false)
   // Auto-grow the task-scoped steer box to fit multi-line input (mirrors the
   // project-level steer box).
@@ -2295,7 +2295,7 @@ function WorkspaceTree({ ws, running, isProjectDir }: { ws: string; running: boo
   // In-flight guard: the create input fires submitCreate on BOTH Enter and onBlur, so
   // Enter (which can blur) — or any click-away during the async create — would fire a
   // second fileCreate that hits the just-created name as a 409 "already exists". Ignore
-  // re-entry while a create is in flight (mirrors the C327/C386 acting-guard pattern).
+  // re-entry while a create is in flight (mirrors the acting-guard pattern).
   const creatingInFlight = useRef(false)
   // Surface rename/delete failures (permission denied, file vanished mid-op, ws
   // unmounted) instead of swallowing them as a silent no-op — matches the create
@@ -2498,8 +2498,8 @@ function ChangesPanel({ ws, running, isProjectDir = false, merges = [] }: { ws: 
     return () => { alive = false }
   }, [ws, state, repoRoot, isProjectDir])
 
-  // The per-stage commit history (the supervisor checkpoints each passed stage,
-  // C58) — a reviewable timeline of what each stage produced.
+  // The per-stage commit history (the supervisor checkpoints each passed stage)
+  // — a reviewable timeline of what each stage produced.
   const [commits, setCommits] = useState<{ hash: string; subject: string; relative: string }[]>([])
   useEffect(() => {
     if (!gitWs) { setCommits([]); return }
@@ -3381,7 +3381,7 @@ export function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   // Synchronous double-send guard (sending state is async — rapid double Enter/click
-  // both pass before the re-render → a double nudge). Mirrors the task steer + C415.
+  // both pass before the re-render → a double nudge). Mirrors the task steer's guard.
   const sendingRef = useRef(false)
   // The steer textarea — focused when the user clicks "Respond" on the needs-input
   // toast, so answering is one click away wherever they were.

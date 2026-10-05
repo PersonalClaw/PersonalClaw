@@ -3,7 +3,7 @@ import { motion } from 'framer-motion'
 
 import { listItemEnter, regionStagger } from '../../design/motion'
 
-// ── Orchestrated surface entrance (plan FLUID-MOTION §S3 T3.2) ──────────────────
+// ── Orchestrated surface entrance ──────────────────
 // A page's top-level bands cascade in on arrival instead of all landing together.
 // One group per surface, one region per band; the choreography itself is
 // `design/motion.regionStagger()`, so retuning the whole app's cascade is one

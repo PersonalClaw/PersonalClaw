@@ -1,11 +1,11 @@
 """The task-projection events on both channels.
 
-The FE stream unions were recorded as BLOCKED: the engine emitted none of
+The FE stream unions were blocked: the engine emitted none of
 `task_materialized`, `confirmation_pending`, `confirmation_resolved`, `task_verified`
 and `cascade_blocked`,
 and registering a union member for an event nothing sends would be the same present-and-
-inert control this program keeps finding. This session unblocks them by emitting on both
-channels at once.
+inert control this codebase keeps finding. Emitting on both
+channels at once unblocks them.
 
 Two channels, one vocabulary. The LIVE stream (`RunController._publish`, what the FE folds)
 and the REPLAYABLE ledger (`journal`, what a refiner and a diagnosis read) carry the same
@@ -108,7 +108,7 @@ def test_materialization_records_the_task_and_its_fingerprint():
 
 
 def test_a_REFRESH_is_distinguishable_from_a_first_materialization():
-    """§1 makes idempotent recompute the NORMAL path, so a reader counting materializations
+    """Idempotent recompute is the NORMAL path, so a reader counting materializations
     over-counts the run's output on every rewind without this flag."""
     j = Journal("r-1")
     j.task_materialized("root.children[0]", "a", task_id="t-1")
@@ -163,8 +163,8 @@ def test_verification_records_the_CRITERION_that_was_checked():
 
 
 def test_a_cascade_is_ONE_event_carrying_every_blocked_id():
-    """N events for one upstream failure would make the run look like it failed N times, and §1
-    already debounces the notification — two collapse points would disagree."""
+    """N events for one upstream failure would make the run look like it failed N times, and the
+    notification is already debounced — two collapse points would disagree."""
     Journal("r-1").cascade_blocked(
         "root.children[0]", "a", blocked_task_ids=["t-2", "t-3"], cause="a failed: boom"
     )

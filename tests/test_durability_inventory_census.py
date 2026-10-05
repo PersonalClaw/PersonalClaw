@@ -18,8 +18,8 @@ snapshot for a release while its test passed.
 
 **Why a census of the source, and why it reads the AST.** Hand-written lists of paths only ever
 catch the stores someone remembered. The first version of this census was four regexes over the
-source text, and a validator's week of normal use found five real stores it could not see
-(settings B17, day 8's "Durability degraded"), each through a spelling the regexes did not know:
+source text, and a week of normal use found five real stores it could not see (the Doctor
+reported "Durability degraded"), each through a spelling the regexes did not know:
 
 1. `Path(config_dir()) / "capture"` — the call is wrapped, so `config_dir() /` never matched
    (`inbound/capture_store.py`); thirteen sites are spelled this way.
@@ -634,7 +634,7 @@ def test_a_name_not_bound_to_the_home_is_not_followed():
 
 
 def test_the_five_stores_a_week_of_use_found_are_visible_to_the_real_census():
-    """Settings B17 and day 8: after normal use `audit_home()` named these as in NO snapshot. Each
+    """After normal use `audit_home()` named these as in NO snapshot. Each
     is here so a census that loses the spelling behind it fails by name, not by silence."""
     found = {_shown(loc) for loc in _real().found}
     for location in (

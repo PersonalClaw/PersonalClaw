@@ -1,15 +1,15 @@
-"""The lease WRITE path and the confirmation resolve endpoint (TASKS-SOPS §5 R10 / §4 R6).
+"""The lease WRITE path and the confirmation resolve endpoint.
 
-S60 built the lease DECISION rules as pure functions and S57 built the confirmation verbs. Neither
-had durability or a caller. This session adds both, and the interesting properties were measured
-rather than assumed:
+The lease DECISION rules were built as pure functions, and the confirmation verbs separately.
+Neither had durability or a caller. This write path and endpoint add both, and the interesting
+properties were measured rather than assumed:
 
 **The lease survives real process contention.** Eight separate PROCESSES racing one task through
 `claim_task`, 12 trials: 0 multi-winner. That is the property the whole mechanism exists
-for — S57 measured the read-then-`unlink` version of a related primitive letting multiple
+for — the read-then-`unlink` version of a related primitive was measured letting multiple
 callers through in 36 of 40 races, and a lease that loses a race is worse than no lease at
 all, because both holders believe they own the work. The in-process test below pins the same
-rule; the cross-process run is recorded in the plan's execution log.
+rule; the cross-process run was a one-off measurement.
 
 **A confirmation resolve must not pass the VERB as the gate's answer.** The engine's gate resolution
 reads an approval boolean, so handing it `"reject"` would make a rejection truthy — the single worst
@@ -32,7 +32,7 @@ def _isolated_home(tmp_path, monkeypatch):
     """Every test writes lease files. They go under a tmp home, never the real one.
 
     Patches `config_dir` where `pool.leases_dir` imports it AND `store.config_dir`, because the
-    workflow store binds `config_dir` at module level — measured in an earlier session: patching
+    workflow store binds `config_dir` at module level — measured once: patching
     only `config.loader.config_dir` left `store.save()` writing to the REAL
     `~/.personalclaw/workflows/runs.db`.
     """
@@ -139,7 +139,7 @@ def test_the_default_ttl_is_applied_when_unspecified():
 
 def test_only_ONE_holder_wins_a_sequential_race():
     """The in-process pin of the rule. Cross-process: 8 processes × 12 trials measured 0
-    multi-winner (recorded in the plan's execution log)."""
+    multi-winner (a one-off measurement, not part of this suite)."""
     winners = []
     for i in range(8):
         lease, error = pool.claim_task("t-race", holder=f"s-{i}", now=NOW)
@@ -178,8 +178,8 @@ def test_the_sweep_on_a_MISSING_directory_is_empty():
 
 
 def test_the_lease_dir_is_under_the_CONFIG_dir(tmp_path):
-    """A module-level absolute path would write into the real home from a test — the failure an
-    earlier session already paid for."""
+    """A module-level absolute path would write into the real home from a test — a failure
+    already paid for once."""
     assert str(pool.leases_dir()).startswith(str(tmp_path))
 
 
@@ -202,7 +202,7 @@ def _a_run() -> str:
     """A real run in the store, because EVERY confirm verb now requires one.
 
     These tests used a bare `"r-1"` that was never stored, which worked only while skip/quit
-    answered without consulting the run — see the ruling in
+    answered without consulting the run — see the reversal recorded in
     `test_EVERY_verb_requires_the_run_to_EXIST` below.
     """
     from personalclaw.workflows import store as wstore

@@ -13,7 +13,7 @@ import { EvalsOff } from './EvalsOff'
  *
  *  One component is toggled off — or down to a declared cheaper form — and the benchmark is
  *  replayed on each arm. The delta says whether the component earns its keep. A `remove`
- *  verdict ALSO reaches the user as a LEARN-R9 retirement proposal in the inbox; this panel is
+ *  verdict ALSO reaches the user as a retirement proposal in the inbox; this panel is
  *  the evidence behind it, and the ONLY surface a `keep` or `lighten` verdict has at all.
  *
  *  **Nothing is re-decided here.** The verdict, both deltas and the `epsilon` they were

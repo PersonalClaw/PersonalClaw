@@ -24,7 +24,7 @@ import { bindableProfileName, ensureBindableAgentName, useRuntimeGroups } from '
 import { providerMeta } from '../agents/agentMeta'
 import { notReadyWhy } from '../loop/loopRuntime'
 
-/** Per-member status, and the roster controls (`AGENT-ROOMS` C9 / `AR-8`).
+/** Per-member status, and the roster controls.
  *
  *  Follows the activity panel's Subagents-tab pattern — a list of rows, one per participant,
  *  each reporting what that participant is and what it is doing — rather than minting a second

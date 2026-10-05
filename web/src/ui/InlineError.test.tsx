@@ -2,13 +2,13 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, fireEvent } from '@testing-library/react'
 import { InlineError } from './InlineError'
 
-// ── Inline error band contract (design-system consistency S2 + cy9 fold-in) ──
+// ── Inline error band contract ──
 // This banner was rendered byte-identically inline by the Projects list + hub and
 // the Code section's failed-action callout. The primitive is the single source;
 // this test locks the traits that make it *the* danger strip — role=alert, the
 // rounded danger-tinted band, a flex-1 message, a corner Dismiss "×" — plus the
 // optional leading icon and the per-site margin passthrough, so an edit that drops
-// any of them reddens here. cy9 folded three more banners onto this band (ChatPage
+// any of them reddens here. A later pass folded three more banners onto this band (ChatPage
 // turn errors, the FilesSection file-op strip, the Tasks board's rejected-drag
 // banner), adding the orthogonal `multiline`/`animated`/non-dismissible modes —
 // locked below so the convergence can't silently regress.

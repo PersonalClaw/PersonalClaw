@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-// ── The chat list's narrowed-to-nothing state names its narrower (AUD-NZ10) ───────────
+// ── The chat list's narrowed-to-nothing state names its narrower ───────────
 //
 // Source pins, the tasks list's idiom (noMatchBlame.test.ts): ChatPage's shell is too heavy
 // to render for four strings. The state is reachable through three controls (search, tag

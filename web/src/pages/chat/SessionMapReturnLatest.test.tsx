@@ -7,11 +7,11 @@ import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── Return-to-latest control (refactor existing pill) ─────────────────────────────────────────
 //
-// acceptance criteria: the existing Jump-to-latest pill (`ChatPage.tsx:3057-3068`) becomes the map's
+// The contract: the existing Jump-to-latest pill (`ChatPage.tsx:3057-3068`) becomes the map's
 // canonical return-to-newest, still `aria-label='Jump to latest message'`, shown only when
 // `scrolledUp`; grep/test proves exactly ONE implementation with no duplicate control.
 //
-// 🔑 THREE OF THE FOUR SUB-CLAUSES WERE ALREADY TRUE BEFORE THIS CHANGE, which is what makes the
+// 🔑 THREE OF THE FOUR REQUIREMENTS WERE ALREADY TRUE BEFORE THIS CHANGE, which is what makes the
 // fourth the whole job and this file's vacuity floor the point. Measured on `origin/main`
 // 4803c515a before any change: the pill was at `ChatPage.tsx:3057-3068`, carried
 // `aria-label="Jump to latest message"`, was gated on `scrolledUp`, and
@@ -55,7 +55,7 @@ import { filesUnder, readSource } from '../../test/sourceTree'
 // 🪤 THE BLIND SPOT, STATED RATHER THAN IMPLIED: a duplicate that invents BOTH a new accessible
 // name AND a new scroll mechanism passes both derivations. Nothing text-shaped can close that —
 // at that point it is a genuinely different affordance, and the honest guard is review of
-// SSM-10/SSM-11, not a regex. What IS closed is every cheap copy: the same name, the same
+// later changes, not a regex. What IS closed is every cheap copy: the same name, the same
 // gesture, or the pill moving back inline into `ChatPage`.
 
 const SRC = join(process.cwd(), 'src')
@@ -102,7 +102,7 @@ function scrollsToLatest(src: string): boolean {
 const filesWithLabel = SOURCES.filter((rel) => CODE.get(rel)!.includes(RETURN_TO_LATEST_LABEL))
 const filesWithGesture = SOURCES.filter((rel) => scrollsToLatest(CODE.get(rel)!))
 
-describe('SSM-9 · the Session Map\'s return-to-newest control', () => {
+describe('the Session Map\'s return-to-newest control', () => {
   it('is absent when the transcript is at the bottom, and present when it is not', async () => {
     const { rerender } = render(<SessionMapReturnLatest scrolledUp={false} onReturnToLatest={() => {}} />)
     // Asserted ABSENT first: "shown only when scrolledUp" is satisfiable by an always-mounted
@@ -124,8 +124,8 @@ describe('SSM-9 · the Session Map\'s return-to-newest control', () => {
     expect(RETURN_TO_LATEST_LABEL).toBe('Jump to latest message')
     const control = screen.getByRole('button', { name: 'Jump to latest message' })
     expect(control).toHaveAttribute('aria-label', 'Jump to latest message')
-    // 🔑 THE OWNER'S REFERENCE MAKES IT A CIRCULAR DOWN-ARROW, superseding the text
-    // pill. What §A.7 was protecting survives: the NAME is unchanged, and the words the control no
+    // 🔑 THE REFERENCE APP MAKES IT A CIRCULAR DOWN-ARROW, superseding the text
+    // pill. What the text pill was protecting survives: the NAME is unchanged, and the words the control no
     // longer shows become its tooltip, so a pointer user can still read what it does before pressing
     // it (the reference's own friction list faults unexplained icon-only controls).
     expect(control).toHaveAttribute('title', 'Jump to latest message')
@@ -154,7 +154,7 @@ describe('SSM-9 · the Session Map\'s return-to-newest control', () => {
   })
 })
 
-describe('SSM-9 · exactly one implementation, derived over src', () => {
+describe('exactly one implementation, derived over src', () => {
   it('read a real corpus (vacuity floor: an empty walk proves nothing)', () => {
     expect(
       SOURCES.length,
@@ -183,7 +183,7 @@ describe('SSM-9 · exactly one implementation, derived over src', () => {
       filesWithLabel,
       `"${RETURN_TO_LATEST_LABEL}" must be declared in exactly one non-test source. Found ` +
         `${filesWithLabel.length}: ${filesWithLabel.join(', ')}. A second one is a duplicate ` +
-        `return-to-newest control — SSM-9 exists to keep there being one.`,
+        `return-to-newest control — this file exists to keep there being one.`,
     ).toEqual([OWNER])
     // "The MAP's canonical return-to-newest": the one implementation lives in the map's own
     // module set, beside the rail and the card, not in a page that happens to render it.

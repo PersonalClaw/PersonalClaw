@@ -1,10 +1,10 @@
 """The store-trigger dispatch seam wraps a RAISING provider in the AgentError envelope.
 
-PLATFORM-LEGIBILITY §2 says an uncaught provider exception is wrapped in the shared
-WHAT/WHY/FIX envelope at every action-dispatch seam, "so an app-contributed provider
-inherits it without knowing it exists". Two of the three seams do it — `hooks.py` and
+An uncaught provider exception is wrapped in the shared
+WHAT/WHY/FIX envelope at every action-dispatch seam, so an app-contributed provider
+inherits it without knowing it exists. Two of the three seams do it — `hooks.py` and
 `event_triggers.py`. The third, `gateway._fire_store_trigger` (the successor
-`_run_action_job` became when `ScheduleService` retired — S112, the busiest UNATTENDED
+`_run_action_job` became when `ScheduleService` retired — the busiest UNATTENDED
 clock/file/webhook/chained path), regressed: its handler emitted a bare
 ``f"{type(exc).__name__}: {exc}"`` into both the delivered notification and the persisted
 run record.
@@ -105,7 +105,7 @@ def test_the_RECORDED_error_carries_the_envelope_in_both_persisted_sinks(tmp_pat
     # sink to it byte-for-byte proves the WHOLE envelope survives — in particular the FIX
     # line, which renders LAST (~char 250) and was silently cut mid-word by the old 200-char
     # slice (its `FIX: ` label sat under 200, so a substring check would have missed the cut).
-    # Equality also pins the S162 "error, not the lifecycle reason" contract: no "failed runs"
+    # Equality also pins the "error, not the lifecycle reason" contract: no "failed runs"
     # restatement (the pause's words) leaks in. Lower `run_record.ERROR_MAX` back below the
     # envelope and both equalities fail.
     from personalclaw.action_providers import provider_failure

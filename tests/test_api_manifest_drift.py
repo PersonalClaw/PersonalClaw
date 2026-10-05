@@ -10,7 +10,7 @@ undocumented surface an agent has to reverse-engineer:
   seam ``list_all_tools`` minus the per-install ``mcp`` fan-in, unioned with
   ``mcp_core``) MUST have a ``TOOL_META`` entry with a non-empty description, at
   least one example, and every example arg a REAL parameter of that tool — the
-  plan's central failure mode is an example that invents a parameter. A stale
+  central failure mode is an example that invents a parameter. A stale
   ``TOOL_META`` key (no matching live tool) also fails.
 * **Routes half (AST, house precedent —** ``test_server_route_handlers_exist`` **).**
   Every literal HTTP route path registered under ``dashboard/`` that is NOT an
@@ -19,8 +19,8 @@ undocumented surface an agent has to reverse-engineer:
   live table has heavy security-critical startup side effects (extension load,
   binding migration), so routes are audited statically like the house route-handler
   guard — the live table is still what the running ``/api/manifest`` walks.
-* **Error-codes.** Any ``error_codes`` a tool declares must exist in the §2
-  AgentError registry (vacuously true until §2 lands and populates it).
+* **Error-codes.** Any ``error_codes`` a tool declares must exist in the
+  AgentError registry (vacuously true until that registry lands and is populated).
 """
 
 from __future__ import annotations
@@ -57,7 +57,7 @@ def registered_tools():
     Providers only register at gateway startup, not on import, so a bare process
     sees zero tools. Registering the native manifests directly from ``BUNDLED_DIR``
     reproduces the exact in-process tool surface deterministically and offline —
-    the same seam the S3 build-time reference uses. Both process-global registries
+    the same seam the build-time reference uses. Both process-global registries
     are reset around the test so it can't leak into (or inherit from) siblings.
     """
     from personalclaw.providers import registry as prov_reg
@@ -231,16 +231,16 @@ def test_canonical_route_strips_regex():
 
 
 def test_declared_error_codes_exist():
-    """Any error_code a tool declares exists in the §2 AgentError registry.
+    """Any error_code a tool declares exists in the AgentError registry.
 
-    Vacuous until PLATFORM-LEGIBILITY §2 lands the registry (all error_codes are
-    empty now); this asserts the wiring so §2 can populate codes tool-by-tool and
+    Vacuous until the registry lands (all error_codes are
+    empty now); this asserts the wiring so the registry can populate codes tool-by-tool and
     this guard immediately starts enforcing them.
     """
     try:
         from personalclaw.errors import ERROR_CODES  # type: ignore
     except Exception:
-        ERROR_CODES = None  # §2 not landed yet
+        ERROR_CODES = None  # registry not landed yet
     for name, meta in TOOL_META.items():
         for code in meta.get("error_codes", []):
             if ERROR_CODES is not None:

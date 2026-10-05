@@ -158,7 +158,7 @@ def test_a_prompt_that_fills_the_window_exactly_does_not_fit():
 
     The component is sized to the WHOLE window, which is inside the window and outside the
     input room. Drop the reserve from the bound and this test goes green while a real turn
-    gets a provider error — which is exactly the failure CE2-8 exists to remove.
+    gets a provider error — which is exactly the failure this contract exists to remove.
     """
     win = _tiny_window(window=8_000, reserve=4_096)
     exact = Component(name="session context", text="tok " * win.tokens, compressible=False)
@@ -440,7 +440,7 @@ def test_the_assembly_hands_back_named_components_covering_the_whole_prompt(buil
         builder,
         "what did we decide about the retry budget?",
         is_new_session=True,
-        session_key="dashboard:ce28",
+        session_key="dashboard:headroom",
         active_recall=False,
     )
 
@@ -495,7 +495,7 @@ async def test_a_driven_assembly_past_a_small_declared_window_refuses_legibly(
         builder,
         "summarize the attached report",
         is_new_session=True,
-        session_key="dashboard:ce28",
+        session_key="dashboard:headroom",
         active_recall=False,
         action_context="D" * 200_000,
     )
@@ -537,7 +537,7 @@ async def test_a_driven_assembly_compresses_and_says_so(builder, clean_registry)
         builder,
         "summarize the attached report",
         is_new_session=True,
-        session_key="dashboard:ce28",
+        session_key="dashboard:headroom",
         active_recall=False,
     )
     verdict = check_headroom(assembled, window=await resolve_window("FakeLocal:tiny-chat"))
@@ -631,7 +631,7 @@ def test_the_session_context_char_cap_reports_its_drop(builder, monkeypatch):
     builder.build_message(
         "hello",
         True,
-        session_key="dashboard:ce28",
+        session_key="dashboard:headroom",
         notices_out=notices,
     )
 

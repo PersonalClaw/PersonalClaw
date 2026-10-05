@@ -17,8 +17,8 @@ per-turn telemetry that survives a reload.
   already uses, which ``chat_persistence`` writes and both restore paths read back — so
   no new file, no new channel, and no new persisted shape beyond one additive key.
 * :data:`TURN_SUMMARY_KEY` / :func:`build_turn_summary` / :func:`summarize_session_turn`
-  / :func:`stamp_turn_summary` — the per-turn SUMMARY LABEL. §B.3 asks
-  for a label that makes a mark "convey *meaning* rather than the opening words"; an
+  / :func:`stamp_turn_summary` — the per-turn SUMMARY LABEL, which makes
+  a mark convey *meaning* rather than the opening words; an
   assistant mark's preview is otherwise the reply's first 140 characters, which on a
   rail is usually a preamble. The label rides the same ``meta`` seam as the telemetry,
   and :func:`session_map_marks` prefers it over :func:`preview_text` when present.
@@ -37,7 +37,7 @@ and ``activity`` segments are live-only for the same reason. ``approval`` surviv
 restart once it is decided: ``chat_persistence``'s ``_persistable`` writes a resolved
 ``permission`` row and holds back one still waiting for an answer, so a pending approval
 is marked only while it is in the live buffer. This is stated rather than papered over:
-a consumer that needs the live kinds reads SSM-1 over the hydrated turns; one that needs
+a consumer that needs the live kinds reads ``sessionMap.ts`` over the hydrated turns; one that needs
 durability reads this endpoint.
 """
 
@@ -274,7 +274,7 @@ def _hydrate_turns(messages: list[dict[str, Any]]) -> list[_Turn]:
             turn.visible_index = visible
             # Unlike the frontend — where `assistantTurn()` carries no timestamp at all,
             # so every assistant mark reads `ts: ''` — the durable side HAS the message's
-            # persisted ts. §A.3 wants a real timestamp in the hover card, so it is
+            # persisted ts. The hover card wants a real timestamp, so it is
             # served here rather than dropped for symmetry with a frontend gap.
             turn.ts = str(m.get("ts", "") or "") or turn.ts
             turn.texts.append(content)
@@ -301,7 +301,7 @@ def _hydrate_turns(messages: list[dict[str, Any]]) -> list[_Turn]:
                     str(meta.get("input") or ""),
                 ),
             }
-            # `ok` is carried ONLY when the call failed (§A.2 paints a failed tool mark
+            # `ok` is carried ONLY when the call failed (a failed tool mark is painted
             # `--color-danger`), matching the optional `ok?: false`.
             if ok is False:
                 sub["ok"] = False
@@ -435,7 +435,7 @@ def build_turn_telemetry(
       ``cost_usd: 0.0`` with ``priced: false`` means "no price row for this model",
       never "this turn was free".
     * ``context_pct`` is ``None`` when the provider measured nothing. Folding that into
-      ``0.0`` is the exact defect ``G8``/``test_context_pct_honesty.py`` was written to
+      ``0.0`` is the exact defect ``test_context_pct_honesty.py`` was written to
       stop, and persisting it would make the lie durable.
 
     ``None`` (no record at all) when the turn reported no events, no tool calls and no
@@ -507,7 +507,7 @@ def turn_answer(session: Any) -> str:
 
 
 def stamp_turn_telemetry(session: Any, telemetry: dict[str, Any] | None) -> bool:
-    """Stamp *telemetry* onto the session's last assistant message ``meta`` (``SSM-2``)."""
+    """Stamp *telemetry* onto the session's last assistant message ``meta``."""
     return _stamp_on_last_assistant(session, TURN_TELEMETRY_KEY, telemetry)
 
 
@@ -559,7 +559,7 @@ def stamp_learned(session: Any, learned: list[dict[str, Any]]) -> bool:
 
 
 def stamp_turn_summary(session: Any, summary: str | None) -> bool:
-    """Stamp the turn *summary* label onto the session's last assistant message (``SSM-3``).
+    """Stamp the turn *summary* label onto the session's last assistant message.
 
     The same message the telemetry rides, for the same reason, under the same
     before-the-save constraint.
@@ -571,7 +571,7 @@ def stamp_turn_summary(session: Any, summary: str | None) -> bool:
 #
 # This is an EXTRACTIVE label, not a generated one: it reads the turn that just
 # finished and states what the turn was about and what it did. No model is called.
-# That is a deliberate scope choice, recorded in the plan's execution log — a summary
+# That is a deliberate scope choice — a summary
 # produced by a model call would add a per-turn cost and a provider dependency to every
 # completed turn (a user-facing behaviour change), and it could not be observed at all
 # on a workspace with no provider bound. The information that makes this label worth

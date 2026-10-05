@@ -395,14 +395,14 @@ def test_provider_kind_acp_does_not_build_native():
         )
     assert prov is not None
     assert called.get("native") is None
-    # AAP-7 tightened this from "not native" to "the NAMED runtime". Before, the ACP kind
+    # This was tightened from "not native" to "the NAMED runtime". Before, the ACP kind
     # merely skipped the native builder and then resolved a MODEL through the config
     # registry — not native, and not the CLI either.
     assert called.get("acp") == "acp:claude-code"
 
 
 def test_colon_qualified_override_routes_to_named_provider():
-    """Regression (bug #14 — composer per-message model pick): a colon-qualified
+    """Regression (composer per-message model pick): a colon-qualified
     override "Provider:model" must route to the NAMED provider, not the first
     active chat ref. The chat model picker offers models from EVERY active chat
     provider, so picking "PickB:model-b" while the FIRST active ref is
@@ -433,7 +433,7 @@ def test_colon_qualified_override_routes_to_named_provider():
 
 
 def test_strip_provider_prefix_uses_known_provider_names(monkeypatch):
-    """Regression (bug #14 second facet): _strip_provider_prefix must strip a
+    """Regression (composer model pick, second facet): _strip_provider_prefix must strip a
     CONFIG-provider prefix even when the live ModelProvider registry hasn't loaded
     that entry in this call path (its register_type() is lazy). It falls back to the
     authoritative config-provider name set. Without this the bare id "OpenAI:gpt-5.4"

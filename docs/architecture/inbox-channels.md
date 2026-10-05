@@ -591,7 +591,7 @@ and says why, and a `verify` stored against one reads as off. Until this, `syste
 was verifiable: with `verify: true`, every approval's registration waited on a model call made
 on the gateway's loop, and a REFUTED filed the row as `filtered` and withheld its notification.
 
-**A proposal's second opinion holds nothing up.** INU-6 still checks a proposal whose rule sets
+**A proposal's second opinion holds nothing up.** The model still checks a proposal whose rule sets
 `verify`, after its row is listed. `emit_attention_item` publishes the row with
 `refs.verify: checking`, holds its one notification in `refs.verify_withheld`, and returns;
 `notification_verify.verify_in_background` asks the model on a worker thread with its own event

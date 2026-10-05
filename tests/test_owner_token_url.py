@@ -1,4 +1,4 @@
-"""The owner-token link keeps the deep link and leaves the address bar (day-56b `s26`).
+"""The owner-token link keeps the deep link and leaves the address bar.
 
 Measured on a fresh instance: opening ``#/chat/<key>`` without a session showed the Connect
 gate; pasting the token navigated to ``/?token=<tok>`` — the route gone, because the gate built

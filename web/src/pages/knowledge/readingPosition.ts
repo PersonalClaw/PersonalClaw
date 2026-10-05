@@ -1,6 +1,6 @@
 /** Where the reader left off in an article, per item.
  *
- *  `KL-7` shipped a scroll-progress ring that REPORTS how far through the article the reader
+ *  The reading view's scroll-progress ring REPORTS how far through the article the reader
  *  is; nothing persisted it, so "continue reading" had a shelf to fill and no position to
  *  resume to. This module is that missing writer: `ReadingView` records the fraction on scroll
  *  and restores it on mount, and `LibraryHome` reads it to order the shelf by what you touched

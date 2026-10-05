@@ -14,8 +14,8 @@ import { spring, physics } from '../design/motion'
  *
  *   • **15×24 measured** — the button WAS the glyph, so it failed SC 2.5.8 on width. It sits in a
  *     `gap-m` flex row, so the spacing exception cannot rescue it either. `size-6` with `-mx-1` gives a
- *     24px hit box and hands the extra width back, keeping the glyph where it was (the invariant from
- *     cycle 116: grow the hit box, leave the paint alone).
+ *     24px hit box and hands the extra width back, keeping the glyph where it was (the invariant:
+ *     grow the hit box, leave the paint alone).
  *   • **`title="Reset"` ×20** — a non-null name can still be ambiguous. Every row's reset announced the
  *     same word, so a screen-reader user heard "Reset" twenty times with no way to tell which token they
  *     were about to revert. The row already knows: `Reset <token label>`.

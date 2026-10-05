@@ -3,7 +3,7 @@ import { currentMarkRange } from './sessionMapRegion'
 import { sessionMapEntries } from './sessionMap'
 import type { ChatTurn, Segment } from './chatTypes'
 
-// ── SSM-5 (the arithmetic half) — the current region as a contiguous entry range ─────────────
+// ── The arithmetic half — the current region as a contiguous entry range ─────────────────────
 //
 // `currentMarkRange` is the pure half of "viewport → on-screen colour": given the turn coordinates
 // that are on screen, which ENTRIES (user messages) light coral. An entry owns every turn from its

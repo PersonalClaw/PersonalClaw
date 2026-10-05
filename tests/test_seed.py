@@ -76,7 +76,7 @@ def test_seed_unknown_fixture_raises(tmp_path: Path, monkeypatch: pytest.MonkeyP
         ".",
         "",
         "./",
-        # SEC-1: NUL byte + control chars must be caught at the empty-or-root
+        # NUL byte + control chars must be caught at the empty-or-root
         # gate before ``(root / name).resolve()`` raises ``ValueError`` and
         # escapes ``seed_cmd``'s ``except SeedError`` (bypassing both the
         # ``seed: error:`` ASCII prefix AND the SEL audit emit).
@@ -117,7 +117,7 @@ def test_seed_path_traversal_rejected(
     # the second. ``"./empty"`` is interesting: it has ``/`` so it hits
     # the separator gate, not the empty-or-root gate. NUL-byte / control-
     # char names (``"foo\x00bar"``, ``"foo\nbar"``) also hit gate 1 via
-    # the ``ord(c) < 0x20`` check (SEC-1 regression guard).
+    # the ``ord(c) < 0x20`` check (regression guard).
     if name in ("", ".", "./") or any(ord(c) < 0x20 for c in name):
         assert "empty or refers to the root" in str(
             excinfo.value
@@ -154,7 +154,7 @@ def test_seed_cmd_exit_code_on_unset(
 def test_seed_cli_flag_registered(tmp_path: Path) -> None:
     """``personalclaw gateway --help`` mentions ``--seed FIXTURE``.
 
-    Tracer-bullet acceptance from the  ticket: prove the CLI
+    Tracer-bullet check: prove the CLI
     wiring end-to-end. The seed primitive is invoked as
     ``personalclaw gateway --seed <fixture>`` (it seeds ``$PERSONALCLAW_HOME``
     and THEN continues into the gateway event loop) — we can't let the

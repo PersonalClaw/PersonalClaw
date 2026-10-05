@@ -1,4 +1,4 @@
-"""Tests for the Files path-completion endpoint (Files P4)."""
+"""Tests for the Files path-completion endpoint."""
 
 from __future__ import annotations
 

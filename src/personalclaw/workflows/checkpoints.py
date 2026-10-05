@@ -11,7 +11,7 @@ child that copies the parent's journal prefix gets cache HITS on everything up t
 point and re-runs only what diverges. That is why the prefix is copied rather than
 recomputed.
 
-**What a fork does NOT isolate has to be said out loud (WF2-R2 am.).** Isolated: run state,
+**What a fork does NOT isolate has to be said out loud.** Isolated: run state,
 spec, journal, outputs, effect ledger. *Not* isolated: the filesystem workspace, external
 resources the parent created, and anything keyed off wall-clock or randomness. So a fork
 records `fork_axis` — a per-fork disambiguator threaded into the child's inputs — and
@@ -365,8 +365,8 @@ def _copy_outputs(parent_id: str, child_id: str, instances: dict[str, NodeInstan
     """Copy the outputs the checkpoint's done nodes produced.
 
     Without these the child's cache would HIT (keys match) and then read a missing output
-    file, resolving a binding to None — a silent wrong answer, which is the failure mode the
-    whole slice exists to prevent.
+    file, resolving a binding to None — a silent wrong answer, which is the failure mode this
+    whole module exists to prevent.
     """
     for path, inst in instances.items():
         if inst.state not in SUCCESS_STATES:
@@ -383,7 +383,7 @@ def prune_fork(child_id: str) -> bool:
     """Delete a fork's run directory. Used when a fork is abandoned.
 
     Refuses any path escaping the runs root — a stored run id is not a trust boundary
-    (WF2-R13 deletion-sweep contract).
+    (the deletion-sweep contract).
     """
     target = store.run_dir(child_id).resolve()
     root = store.runs_root().resolve()

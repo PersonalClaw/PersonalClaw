@@ -14,7 +14,7 @@ Three clauses, and the failure mode of each is what shapes the test:
 3. **Never unattended.** Refused at REGISTRATION (`triggers.tools.create`/`update`, with the
    store left empty as the proof nothing saved) and again at the provider's call site, where it
    outranks a connected connector. Each has an attended/gateway vacuity leg, and a rail on the
-   rung ladder stops a later session promoting `browse` to an unattended rung underneath it.
+   rung ladder stops a later change promoting `browse` to an unattended rung underneath it.
 
 No browser is launched here: every leg stubs the CDP transport, so what is proven is the
 provider's DECISION about which endpoint to drive, never a real page. The behavioural CDP legs
@@ -125,7 +125,7 @@ def browser_opens_tabs(monkeypatch):
 def auto_grant(monkeypatch):
     """Answer the per-task grant as an instantly-approving human.
 
-    The permitted-path legs reach `request_grant` (BA-9 inserted it ahead of `_open`), and
+    The permitted-path legs reach `request_grant` (it runs ahead of `_open`), and
     nothing in this file renders an approval surface — unanswered, the gate's fail-closed
     timeout (300s) outlives pytest-timeout (120s) and the leg reads as a hang. Patching the
     GATE and not `request_grant` keeps the real grant bookkeeping — pending add/remove, the
@@ -187,7 +187,7 @@ class TestTheDefaultTargetIsGateway:
         ],
     )
     def test_the_gateway_endpoint_is_the_same_string_the_provider_read_before(self, raw):
-        """The pre-BA-7 provider computed `str(action_config.get("cdp_url") or "").strip()`
+        """The provider used to compute `str(action_config.get("cdp_url") or "").strip()`
         inline in `_open`. `resolve_cdp_url` is now the only reader, so the two must agree on
         every shape that expression tolerated — including the falsy non-strings a config file
         can legally hold."""
@@ -355,9 +355,9 @@ class TestTheUserBrowserTargetCanNeverRunUnattended:
         assert bt.permits_unattended("some_future_target") is False
 
     def test_the_rung_ladder_can_never_promote_browse_to_an_unattended_rung(self):
-        """Consumes AUTONOMY-GUARDRAILS' ladder rather than inventing a second floor: if a later
-        session raises `action.browse`'s ceiling to `auto_with_undo` or `autonomous`, this reds —
-        which is the only way this floor could be undermined from the outside."""
+        """Consumes the autonomy guardrails' ladder rather than inventing a second floor: if a
+        later change raises `action.browse`'s ceiling to `auto_with_undo` or `autonomous`, this
+        reds — which is the only way this floor could be undermined from the outside."""
         from personalclaw.guardrails.autonomy import (
             RUNG_ONE_TAP,
             action_type_for_provider,

@@ -1,6 +1,6 @@
 """The morning-digest handoff and the injection fence.
 
-Covers the change's last two acceptance clauses:
+Covers two properties:
 
 * "*the morning-digest template produces ONE knowledge item + one notification through
   ``notification_allowed()``*" — driven with a REAL ``DashboardState``, so the gate in
@@ -216,10 +216,10 @@ async def test_digest_makes_ONE_item_and_ONE_notification(store, tmp_path, _isol
 
 @pytest.mark.asyncio
 async def test_mute_all_suppresses_the_digest_notification(store, tmp_path, _isolated_home):
-    """🔴 VACUITY GUARD for the clause above. Same run, `mute_all` set: ZERO delivered.
+    """🔴 VACUITY GUARD for the property above. Same run, `mute_all` set: ZERO delivered.
 
     Only possible if `notification_allowed()` is genuinely in the path — a digest that pushed
-    its own notification would deliver here and the clause would be satisfied by a bypass."""
+    its own notification would deliver here and the property would be satisfied by a bypass."""
     from personalclaw import notification_kinds
     from personalclaw.providers import entity_routes
 
@@ -295,7 +295,7 @@ async def test_the_cursor_makes_a_second_run_a_no_op(store, tmp_path):
 
 @pytest.mark.asyncio
 async def test_the_rule_grammar_filter_narrows_the_window(store, tmp_path):
-    """§6.2's "rule-grammar filter" — the SAME grammar a saved query uses, zero tokens."""
+    """The rule-grammar filter — the SAME grammar a saved query uses, zero tokens."""
     spool = SourceEventSpool(tmp_path / "events.jsonl")
     await _ingest(
         store,
@@ -343,7 +343,7 @@ async def test_matching_reads_the_store_row_not_the_fenced_payload(store, tmp_pa
 
 @pytest.mark.asyncio
 async def test_an_injection_in_scraped_content_is_fenced_at_the_llm_boundary(store, tmp_path):
-    """🔴 SC#8. A real injection payload in a scraped page's CONTENT, at the LLM boundary."""
+    """🔴 A real injection payload in a scraped page's CONTENT, at the LLM boundary."""
     spool = SourceEventSpool(tmp_path / "events.jsonl")
     await _ingest(
         store,

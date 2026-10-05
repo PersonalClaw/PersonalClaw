@@ -1,4 +1,4 @@
-"""MCP import-suggestions discovery (#43).
+"""MCP import-suggestions discovery.
 
 PersonalClaw no longer silently reads ``~/.claude.json`` as an MCP discovery
 source — a Claude-Code-only server isn't reachable by the native loop. Instead

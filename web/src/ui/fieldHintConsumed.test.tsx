@@ -29,8 +29,8 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // the TEXT.
 //
 // 🪤 AND WHY SOFT-OFF IS THE INTERESTING CASE. `aria-describedby` outranks `title` in accname, and a
-// soft-off control carries its unavailability reason in `title` (the kit's convention, ruled cycle 37
-// and re-confirmed on `Button`, which measured an sr-only describedby target getting concatenated into
+// soft-off control carries its unavailability reason in `title` (the kit's convention, confirmed
+// on `Button`, which measured an sr-only describedby target getting concatenated into
 // the accessible NAME). So a Toggle that claimed the hint unconditionally would have *deleted* the
 // reason from what a screen reader announces — a silent regression that looks like a fix. 5 of the 58
 // are soft-off; on 3 the hint is a paraphrase of the reason, on 2 it adds real information. The reason

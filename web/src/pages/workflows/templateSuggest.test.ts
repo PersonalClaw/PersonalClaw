@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { availableSuggestions, intentKind, suggestTemplate } from './templateSuggest'
 
-// ── "Start from template" intent suggestion (LOOPS-EVOLUTION criterion 11) ──
+// ── "Start from template" intent suggestion ──
 //
 // The gap this closes: the templates tab lists bundled workflows by NAME, so a user who
 // knows what they want to do ("fix this bug", "research a topic") has to already know that
@@ -54,8 +54,8 @@ describe('intentKind', () => {
 })
 
 describe('suggestTemplate', () => {
-  it('suggests code-project for a coding intent (criterion 11)', () => {
-    // The plan names `code-project` and that is now the shipped code template, so the
+  it('suggests code-project for a coding intent', () => {
+    // `code-project` is the shipped code template, so the
     // suggestion and the alias agree — the menu entry resolves to a template that starts.
     expect(suggestTemplate('fix the failing test', SHIPPED)).toBe('code-project')
   })

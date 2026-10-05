@@ -81,7 +81,7 @@ def _stub_synthesis(monkeypatch, sentences):
     )
 
 
-# ── §4.3 clean_for_speech on the synthesis path ──
+# ── clean_for_speech on the synthesis path ──
 
 
 class TestSynthesisCleaning:
@@ -145,7 +145,7 @@ class TestSynthesisCleaning:
         assert state.last_spoken("s0") == "second"  # blank never overwrites
 
 
-# ── §4.2 echo consult on the transcribe path ──
+# ── echo consult on the transcribe path ──
 
 
 class TestTranscribeEchoConsult:
@@ -233,7 +233,7 @@ class TestTranscribeEchoConsult:
         assert "disclaimer" not in body
 
 
-# ── §4.4 disclaimer + input_origin into the session JSONL ──
+# ── disclaimer + input_origin into the session JSONL ──
 
 
 class TestVoiceOriginTurn:
@@ -318,7 +318,7 @@ class TestVoiceOriginTurn:
         assert turn["meta"]["input_origin"] == "voice"
 
 
-# ── §4.5 VoiceConfig through the four wiring points ──
+# ── VoiceConfig through the four wiring points ──
 
 
 class TestVoiceConfigRoundTrip:

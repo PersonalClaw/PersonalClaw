@@ -1,6 +1,6 @@
-"""`DCU-2` third clause: every computer-use attempt, allowed OR refused, produces a SEL record.
+"""Every computer-use attempt, allowed OR refused, produces a SEL record.
 
-The clause names both halves, so both are proved here — a suite that only exercises the
+The rule names both halves, so both are proved here — a suite that only exercises the
 allowed path leaves the refusal half (the one real code forgets, because the happy path is the
 one people remember) unproven.
 
@@ -179,7 +179,7 @@ def test_a_failing_sel_write_does_not_raise(raising_sel):
 def test_a_swallowed_sel_failure_logs_a_warning(raising_sel, caplog):
     """...but the swallow is LOUD. Otherwise "fails open" == "never ran".
 
-    A totally silent swallow makes the change's clause unfalsifiable in production: a
+    A totally silent swallow makes the rule unfalsifiable in production: a
     systematically broken audit would look exactly like a working one. The warning names the
     tool and outcome that did NOT reach the log, so the drop is attributable. Asserting the
     WARNING level (not merely "a log line") is the point — ``logger.debug`` would be invisible

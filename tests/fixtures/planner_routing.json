@@ -1,6 +1,6 @@
 {
   "_comment": [
-    "Routing fixtures for the intent classifier (UNIVERSAL-PLANNING UP-R13.1).",
+    "Routing fixtures for the intent classifier.",
     "",
     "The deployment bar is >=85% accuracy on THIS file, and the file is the point: a heuristic",
     "classifier tuned against the same examples that measure it reports its own training set back.",

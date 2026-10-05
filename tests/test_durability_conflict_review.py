@@ -53,7 +53,7 @@ def _seed_conflict(
 ) -> conflicts_mod.ConflictRecord:
     """Produce ONE real both-sides-edited conflict on `tasks/{tid}.json` and queue it.
 
-    Ancestor, local and remote all differ — the only shape §4.2 calls a conflict — and the
+    Ancestor, local and remote all differ — the only shape that counts as a conflict — and the
     record is produced by the detector rather than constructed, so a detector regression
     breaks every test that depends on this helper instead of silently passing.
     """
@@ -166,7 +166,7 @@ class TestResolvePrimitive:
         assert json.loads((home / "tasks" / "t1.json").read_text())["title"] == "theirs"
 
 
-# ── §4.2 item 3 routing, as it actually stands ───────────────────────────────
+# ── memory/knowledge conflict routing, as it actually stands ─────────────────
 
 
 def test_which_memory_or_knowledge_entries_can_conflict_is_exactly_one():
@@ -283,7 +283,7 @@ async def test_the_list_returns_a_seeded_conflict_with_a_non_zero_count(home):
 
 @pytest.mark.asyncio
 async def test_the_surface_filter_selects_without_hiding_the_others_count(home):
-    """Criterion 9's separate-surfaces clause as the API expresses it: a filtered read still
+    """The separate-surfaces rule as the API expresses it: a filtered read still
     reports what waits on the surfaces it did not return."""
     rec = _seed_conflict(home)
     memory_rec = conflicts_mod.ConflictRecord(

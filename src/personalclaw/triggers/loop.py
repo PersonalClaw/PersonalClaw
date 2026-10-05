@@ -1,9 +1,9 @@
 """The one clock loop: tick → dispatch → execute.
 
-**🔴 THE CUTOVER, and what measuring made unavoidable.** Until this session
+**🔴 THE CUTOVER, and what measuring made unavoidable.** Before this loop,
 `ScheduleService._arm_timer`
-was the ONLY thing that fired a clock trigger. S88 shipped `service.tick()`, S96 taught it to arm,
-S97 made `overlap` enforce, S98 imported the crons and S99 re-pointed the API's read — but no loop
+was the ONLY thing that fired a clock trigger. `service.tick()` existed and could arm, `overlap`
+was enforced, the crons were imported and the API's read was re-pointed — but no loop
 ever CALLED the tick. Measured directly:
 
     boot starts ScheduleService: True
@@ -22,10 +22,10 @@ addition: the tick becomes the sole clock engine and the legacy timer is **not a
 **What the legacy service keeps doing.** `_arm_timer` is only its firing loop; the rest of the class
 is still the CRUD surface and the run-history store the API reads (verified: `_load()` + `list_runs`
 work with no timer armed, `_timer_task is None`). So `ScheduleService` is still constructed and
-loaded, and only its timer is retired here. Its CRUD retires when the writes re-point (the next
-session), and the class itself when nothing reads it.
+loaded, and only its timer is retired here. Its CRUD retires when the writes re-point, and the
+class itself when nothing reads it.
 
-**The loop owns no policy.** It sleeps on `TickResult.next_sleep`, hands each fire to S89's
+**The loop owns no policy.** It sleeps on `TickResult.next_sleep`, hands each fire to the
 dispatcher and the executor, and releases claims through them. Every decision — due-ness,
 gates, arming, retirement — already belongs to `service.tick`, so this file is a driver: what was
 missing,
@@ -46,8 +46,8 @@ logger = logging.getLogger(__name__)
 #: writes); this is a belt-and-braces bound so a malformed result cannot park the loop for hours.
 MAX_ITERATION_SLEEP_SECS = 60.0
 
-#: Cap on resumes held across ticks for a session that never becomes ready (crit 7).
-#: §3.2 says a resume is never dropped, and this is the bounded exception to that: a session that
+#: Cap on resumes held across ticks for a session that never becomes ready.
+#: A resume is never dropped, and this is the bounded exception to that: a session that
 #: stays unready forever would otherwise grow the queue without limit, and an OOM takes down every
 #: automation rather than one. Two hundred is far past any real parked-approval population, so
 #: reaching it means something is wrong — which is why crossing it logs rather than trimming
@@ -71,11 +71,11 @@ async def run_forever(
     Cancellation-safe: `asyncio.CancelledError` propagates so `_shutdown` can stop the loop, while
     every other exception is logged and the loop continues. A clock loop that died on one bad tick
     would silently retire every automation on the machine — the failure mode this whole
-    program keeps
-    finding, and the one a scheduler can least afford.
+    codebase keeps
+    turning up, and the one a scheduler can least afford.
 
     `runner` is injected (the LLM turn / action dispatch), matching the seam `ScheduleService` uses
-    for `_on_job` and S90's executor uses for its runner. That is what lets the entire chain
+    for `_on_job` and the executor uses for its runner. That is what lets the entire chain
     be driven
     end to end in a test without a model.
 
@@ -89,8 +89,8 @@ async def run_forever(
     """
     # Resumes whose session was not ready last tick. Owned HERE, by the only thing that outlives a
     # tick: `tick_once` is deliberately stateless so a test can drive one iteration, and a retry
-    # queue held inside it would be discarded on every return — which is the same silent drop
-    # §3.2 refuses. Bounded, and the bound drops the OLDEST: see `MAX_PENDING_RESUMES`.
+    # queue held inside it would be discarded on every return — which is the silent drop a resume
+    # must never suffer. Bounded, and the bound drops the OLDEST: see `MAX_PENDING_RESUMES`.
     pending: list[Any] = []
     # The staggered catch-ups not yet fired, and the slot each stands in for — held here for the
     # same reason as `pending`: it has to outlive the tick that planned it.
@@ -135,8 +135,8 @@ async def tick_once(
     Separate from `run_forever` so a test (and `automation doctor`) can drive exactly one iteration
     rather than racing a background task — the same reason `tick()` itself is a pure decision.
 
-    §3.2's order is preserved: the scheduler never executes directly. `tick` decides, S89's
-    dispatcher enqueues onto the target session's inbox, and S90's executor drains it — so a
+    The order is preserved: the scheduler never executes directly. `tick` decides, the
+    dispatcher enqueues onto the target session's inbox, and the executor drains it — so a
     crash between decision and execution leaves the payload in the inbox, not lost.
 
     `pending_resumes` and `catching_up` are the caller's cross-tick state, mutated in place. Owned
@@ -160,16 +160,16 @@ async def tick_once(
         except Exception:  # noqa: BLE001 - an announcement must never fail the tick
             logger.warning("could not announce the slots a wake found missed", exc_info=True)
 
-    # 🔴 THE TWO SEPARATE WAKE SOURCES, both BEFORE the early return (§3.2 / crit 7).
+    # 🔴 THE TWO SEPARATE WAKE SOURCES, both BEFORE the early return.
     #
-    # The spool: §3 says "sync-context fires spool to `trigger-spool.jsonl`, drained on next tick",
+    # The spool: sync-context fires spool to `trigger-spool.jsonl`, to be drained on the next tick,
     # and `service.drain_spooled_fires`'s own docstring says the spool is a SEPARATE wake source —
     # "a tick with no due clock trigger must still drain it, and burying the drain inside the
     # due-set walk would skip it exactly when the machine was otherwise idle". It had no caller, so
     # a fire parked by a sync CLI memory write sat on disk forever.
     #
-    # The resume retries: a resume carries a gate answer for a parked run, and §3.2 refuses to let
-    # anyone drop one. Both sit above `if not result.fires` for the same reason — an idle due-set is
+    # The resume retries: a resume carries a gate answer for a parked run, and nothing may ever
+    # drop one. Both sit above `if not result.fires` for the same reason — an idle due-set is
     # exactly when a spooled fire and a stranded approval are waiting, and returning early there
     # would skip them precisely then.
     spooled = _drain_spool(now=now)
@@ -205,8 +205,8 @@ async def tick_once(
     summary = wk.summary(deliveries)
     # 🔴 `summary()` has NO "dropped" key — measured, it returns
     # `{total, delivered, by_disposition, retry}` — so this warning could never fire and a
-    # `no_session` delivery (a fire that reached nobody) was logged nowhere. Third key-mismatch in
-    # this criterion, same shape as the missed-review one: a live check reading a name its producer
+    # `no_session` delivery (a fire that reached nobody) was logged nowhere. Third key-mismatch on
+    # this path, same shape as the missed-review one: a live check reading a name its producer
     # does not emit is worse than no check, because the silence reads as "nothing wrong".
     #
     # 🔴 AND IT IS NO LONGER A WARNING, because it no longer describes a problem. When the check was
@@ -363,9 +363,9 @@ async def _apply_resume(wakeup: Any, *, now: float = 0.0, base_dir: Any = None) 
     🔴 **THE GAP THIS CLOSES.** `wakeup.resume_for`, `WakeKind.RESUME`, `Disposition.REQUEUED` and
     `dispatch.droppable` were all written, documented and unit tested, and `resume_for` had **zero
     production callers** — only `wakeup_for` was reachable, from `dispatch_fires`, and it always
-    built a wake. So §3's documented "resolve def / **resume target**" step had no producer and no
-    consumer: no trigger could target an existing run, and `WF2LOO-9`'s `goal-pursuit-monitor`
-    clause was blocked on exactly that.
+    built a wake. So the documented "resolve def / **resume target**" step had no producer and no
+    consumer: no trigger could target an existing run, and the bundled `goal-pursuit-monitor`
+    workflow was blocked on exactly that.
 
     **FAIL-CLOSED on a bad target, and loudly.** This fires unattended, so the two directions are
     not symmetric. Fail-open would mean "the target is gone, so start a new run instead" — which
@@ -472,7 +472,7 @@ async def _apply_resume(wakeup: Any, *, now: float = 0.0, base_dir: Any = None) 
                 # 🔴 THE SUPERVISOR IS MANDATORY, and omitting it would have made this whole path
                 # inert. `service._live(run_id, None)` returns None unconditionally, so a
                 # supervisor-less `resume_run` can only ever answer `WF_RUN_NOT_LIVE` — a resume
-                # that never resumes anything, which is the exact defect class this session closes.
+                # that never resumes anything, which is the exact defect class this function closes.
                 #
                 # Resolved PER FIRE rather than threaded through `run_forever`, for the reason
                 # `mcp_workflows._supervisor` gives: "a cached None taken at import time would make
@@ -541,7 +541,7 @@ async def _poll_idle(
     Never raises: an idle poll that threw would take the whole tick with it, and one bad idle
     trigger must not stop the clock for every automation on the machine.
 
-    The skipped rows are LOGGED rather than dropped (§7 crit 8) — "the session was mid-turn" is
+    The skipped rows are LOGGED rather than dropped — "the session was mid-turn" is
     exactly the decision a user needs to find when they ask why a nudge went quiet.
     """
     from personalclaw.triggers import idle_poll
@@ -563,10 +563,10 @@ async def _poll_idle(
 def _reenter_spooled(envelope: Any, *, now: float) -> tuple[str, str]:
     """Re-enter one spooled envelope through `emit_event`. Returns `(handling, detail)`.
 
-    🔴 **THE SIDE-EFFECT BOUNDARY, drawn explicitly because HOLD makes it load-bearing**
-    (WF2AUT-13). A held envelope is retried on a later tick. That is right for a failure that
+    🔴 **THE SIDE-EFFECT BOUNDARY, drawn explicitly because HOLD makes it load-bearing.**
+    A held envelope is retried on a later tick. That is right for a failure that
     happened before anything observable, and it is data corruption for one that happened after —
-    the double-fire §3.2/criterion 7 bans. So the boundary is the `emit_event(...)` call itself,
+    a double-fire. So the boundary is the `emit_event(...)` call itself,
     and the split is enforced structurally by two separate `try` blocks rather than by a comment:
 
     * **Above the line** the function only reads the envelope, builds keyword arguments and checks
@@ -585,7 +585,7 @@ def _reenter_spooled(envelope: Any, *, now: float) -> tuple[str, str]:
 
     Re-entry stays through `emit_event`, the SAME seam a live source write uses, not a second
     dispatch path: that is what stops a spooled fire skipping a gate a live one walks, which is
-    exactly how the `web_watch` screen gap (S134) opened.
+    exactly how the `web_watch` screen gap opened.
     """
     from personalclaw.triggers.dispatch import Handling, classify_handler_outcome
 
@@ -636,13 +636,13 @@ def _reenter_spooled(envelope: Any, *, now: float) -> tuple[str, str]:
 
 
 def _drain_spool(*, now: float = 0.0) -> int:
-    """Consume the sync-context spool under §3.3's cursor rule. Returns how many lines were ACKED.
+    """Consume the sync-context spool under its cursor rule. Returns how many lines were ACKED.
 
     Peek-then-deliver-then-ack, which is why `drain_spool` and `clear_spool` are two calls: the
     spool is only truncated after the envelopes have been handed on, so a crash mid-drain re-drains
     rather than losing them. `clear_spool(handled=...)` keeps whatever arrived during the drain.
 
-    🔴 **§3.3's cursor rule had a complete decision layer and no caller** (WF2AUT-13). `Handling`,
+    🔴 **The cursor rule had a complete decision layer and no caller**. `Handling`,
     `DrainAction`, `drain_decision` and `classify_handler_outcome` were written, documented and unit
     tested; `grep` found zero production references to any of them. Meanwhile this loop did
     `handled += 1` unconditionally and this very comment block said the alternative would be "the
@@ -677,7 +677,7 @@ def _drain_spool(*, now: float = 0.0) -> int:
         logger.warning("spool drain failed; leaving the spool for the next tick", exc_info=True)
         return 0
     if bad:
-        # Loud, not silent: a damaged line is a fire nobody will ever run, which criterion 8 counts
+        # Loud, not silent: a damaged line is a fire nobody will ever run, which counts
         # as a drop. It is skipped rather than retried forever (an unparseable line cannot become
         # parseable), so the log is the only record there will be.
         logger.warning("spool drain skipped %d unparseable line(s)", bad)
@@ -717,7 +717,7 @@ def _drain_spool(*, now: float = 0.0) -> int:
         if action == DrainAction.CONSUME.value:
             if why or detail:
                 # A consume WITH a reason is a permanent failure or a post-boundary raise, i.e. a
-                # fire that will never run. Criterion 8 counts a silent one as a drop.
+                # fire that will never run. A silent one would count as a drop.
                 logger.warning("spooled fire %s consumed undelivered: %s %s", event_id, why, detail)
             seen[envelope.payload_hash] = emitted
             handled += 1
@@ -770,8 +770,8 @@ def _drain_spool(*, now: float = 0.0) -> int:
             clear_spool(handled=handled)
         except Exception:  # noqa: BLE001
             # NOT re-raised, and the ack is what failed: the fires already ran, so the next tick
-            # will re-run them. Logged loudly because a double-fire is the one outcome criterion 7
-            # bans, and an unwritable spool file is the only way to reach it.
+            # will re-run them. Logged loudly because a double-fire is the one banned outcome,
+            # and an unwritable spool file is the only way to reach it.
             logger.warning(
                 "spool ack failed; %d fire(s) may re-run next tick", handled, exc_info=True
             )
@@ -782,7 +782,7 @@ def _hold_resumes(wk: Any, deliveries: list[Any], pending: list[Any] | None) -> 
     """Park the resumes that could not be delivered, for the next tick to retry.
 
     `wakeup.retry_queue` is the shipped predicate for "which of these must come back" and had no
-    caller, so criterion 7's "pending approvals re-arm" was implemented and unreachable: a resume
+    caller, so "pending approvals re-arm" was implemented and unreachable: a resume
     whose session was not ready was built, classified REQUEUED, and thrown away.
 
     Retried on the NEXT tick rather than spun on here — a session becoming ready is not something
@@ -802,7 +802,7 @@ def _hold_resumes(wk: Any, deliveries: list[Any], pending: list[Any] | None) -> 
         dropped = len(pending) - MAX_PENDING_RESUMES
         # Drops the OLDEST. A stranded resume answers a question a parked run asked, and the run
         # that asked longest ago is likeliest to be gone entirely; the newest answer is the one a
-        # user is still waiting on. Loud, because §3.2 bans dropping a resume and this is the
+        # user is still waiting on. Loud, because nothing else may drop a resume and this is the
         # bounded exception — an unbounded queue on a permanently unready session is its own outage.
         logger.warning(
             "resume retry queue full (%d); dropping the %d oldest",

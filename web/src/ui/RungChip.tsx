@@ -18,7 +18,7 @@ export function RungChip({ type, ladder = null }: { type: AutonomyType; ladder?:
   const meta = rungMeta(type.resolved_rung, ladder)
   // `toneChipSkin`, not a tint of the tone itself: `--color-primary` as ink over a 14% tint of ITSELF
   // measured **3.97:1** in light against a 4.5 floor — live on `#/triggers`, 7 chips desktop / 6 at
-  // 390px, and exactly the 14% row of cycle 146's table. Only the `autonomous` rung is coral
+  // 390px. Only the `autonomous` rung is coral
   // (`lib/rungs.ts`); the other three tones measure 4.99-7.46 and keep the tint, so the helper remaps
   // one tone rather than sweeping the registry. It is shared with the notification kind chip, which is
   // why the rule lives in `design/accent` instead of being re-decided here — see

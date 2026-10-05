@@ -23,7 +23,7 @@ import { VoiceProfilesSection } from './VoiceProfilesSection'
 
 /** Speech & Transcription — provider/model-AGNOSTIC behavior for STT (transcription)
  *  + TTS (spoken replies), plus the Vocabulary & corrections section (the user-visible
- *  Lexicon, core LEX.6) that biases EVERY transcription — mic input AND knowledge
+ *  Lexicon) that biases EVERY transcription — mic input AND knowledge
  *  audio/video ingestion. The MODEL for each use case is bound in Settings → Models
  *  (the single source of truth for every use-case→model binding); single-select use
  *  cases like stt/tts allow exactly one model there. This page owns only behavior:
@@ -49,7 +49,7 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
       // 🔴 These two ARE the panel. `.catch(() => ({}))` made a failed read resolve as an empty settings
       // object, so every control rendered at its fallback — indistinguishable from "this is what you
       // saved" — and each one PUTs on change. Measured on `#/settings/voice` with the use-case GETs at
-      // 500: **2 switches and 1 input rendered, no error anywhere**. Same defect cycle 124 fixed in three
+      // 500: **2 switches and 1 input rendered, no error anywhere**. Same defect already fixed in three
       // sibling panels; this is the fourth.
       api.useCaseSettings('stt'),
       api.useCaseSettings('tts'),
@@ -502,7 +502,7 @@ function ManageLink({ kind, go }: { kind: string; go?: (id: string) => void }) {
   //
   // 🪤 This comment lives ABOVE the `return`, not inside it: a `{/* … */}` as the first child of a
   // `return (` is a SECOND child where one expression is allowed, and the parse error it throws is
-  // reported against an unrelated line. Third time this session.
+  // reported against an unrelated line — a recurring trap.
   return (
     <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-3">
       <TextLink onClick={() => go('models')} icon={ArrowRight} iconPosition="trailing" size="xs" ink="emphasis">
@@ -528,7 +528,7 @@ const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
   learned: { label: 'learned', cls: 'bg-ok/15' },
 }
 
-/** Vocabulary & corrections (core LEX.6) — the user-visible + editable Lexicon:
+/** Vocabulary & corrections — the user-visible + editable Lexicon:
  *  terms (graph / manual / learned, source-badged), add/prune/delete a manual term,
  *  rebuild from the knowledge graph, and the learned-corrections list with a per-row
  *  "always fix" toggle. Reads /api/lexicon/* — the same store that biases EVERY

@@ -2,9 +2,9 @@
 
 Every test here drives the REAL endpoint over the REAL handler
 (``doctor.api_doctor_simulate_automation``) against a real ``TriggerStore`` row, because the
-thing §3.3 asks for is a rendering a user can read on the trust surface — a formatter that
-returns the right dict while nothing calls it is the "present but inert" shape this program
-keeps finding. So the assertions are on the HTTP body, and each of the five facts has a named
+thing that matters is a rendering a user can read on the trust surface — a formatter that
+returns the right dict while nothing calls it is the "present but inert" shape that
+keeps turning up. So the assertions are on the HTTP body, and each of the five facts has a named
 test plus a vacuity case proving that test can fail.
 
 The store lives under a redirected ``config_dir`` (both bindings) and the redirect is asserted,
@@ -83,7 +83,7 @@ def _clock(
     )
 
 
-# ── the response is TOTAL over the five facts §3.3 names ──────────────────────
+# ── the response is TOTAL over the five facts ─────────────────────────────────
 
 
 def test_response_carries_every_one_of_the_five_facts(home):
@@ -270,7 +270,7 @@ def test_capability_grants_refuse_a_write_capable_action_with_no_frozen_set(home
 
 
 def test_capability_grants_pass_a_read_only_action_with_no_frozen_set(home):
-    """VACUITY for the test above, and decision 7's read-only default: `notify` is granted
+    """VACUITY for the test above, and the trigger fence's read-only default: `notify` is granted
     with no `capabilities` block at all. Rendering it as "nothing permitted" would be the
     false alarm that teaches users to widen fences."""
     _put(home, _clock(provider="notify", config={"title": "hi"}, capabilities={}))
@@ -293,7 +293,7 @@ def test_capability_grants_pass_a_write_capable_action_the_frozen_set_lists(home
     assert fact["needs_fence"] == {"providers": ["bash"]}
 
 
-# ── fact 5: observe-mode result (the dry fire + T9 honesty) ─
+# ── fact 5: observe-mode result (the dry fire + preview honesty) ──
 
 
 def test_observe_mode_reports_a_true_observe_run_for_run_prompt(home):
@@ -314,7 +314,7 @@ def test_observe_mode_reports_a_true_observe_run_for_run_prompt(home):
 
 
 def test_observe_mode_is_only_a_preview_for_a_deterministic_provider(home):
-    """VACUITY, and the T9 honesty rule: `bash` has no observe mode, so this is a PREVIEW of
+    """VACUITY, and the honesty rule: `bash` has no observe mode, so this is a PREVIEW of
     what would run and says so. Labelling it "observe-mode result" would promise a safety
     property the provider does not have."""
     _put(home, _clock(provider="bash"))
@@ -381,11 +381,11 @@ def test_no_action_executes_and_no_model_is_called(home, monkeypatch):
         assert status == 200
 
 
-# ── AUTO-R15's typed issue records reach the surface ──────────────────────────
+# ── the typed issue records reach the surface ─────────────────────────────────
 
 
 def test_a_near_miss_row_surfaces_its_closest_match_suggestion(home):
-    """AUTO-R15: an agent that wrote `debounce_seconds` is told which key it meant. The
+    """An agent that wrote `debounce_seconds` is told which key it meant. The
     would-execute description carries the typed issue records verbatim, `closest` included —
     that suggestion IS the contract, and a preview that dropped it would leave the user with
     "invalid" and no next step."""

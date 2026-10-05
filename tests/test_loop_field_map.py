@@ -1,11 +1,11 @@
 """The `Loop` → `WorkflowRun` + `SupervisorPolicy` field map is exhaustive and RESOLVES.
 
-`workflows/loop_run_map.py` is a declaration with no runtime consumer — the honesty marker this
-program established in `WF2LOO-12` and reused. A declaration nobody executes rots
+`workflows/loop_run_map.py` is a declaration with no runtime consumer — an honesty marker
+used elsewhere in the tree too. A declaration nobody executes rots
 silently, so this rail is what makes it a measured map rather than a claim:
 
-* **Both drift directions.** A new `Loop` field with no row reds it (that field is the "feature
-  about to be dropped silently" the plan warns about); a row naming a field that no longer exists
+* **Both drift directions.** A new `Loop` field with no row reds it (that field is a "feature
+  about to be dropped silently"); a row naming a field that no longer exists
   reds it too.
 * **Every path resolves.** A `RUN`/`POLICY`/`DEF`/`INTENT` destination is resolved attribute-by-
   attribute against the real dataclass, so renaming `WorkflowRun.elapsed_seconds` — or deleting
@@ -16,7 +16,7 @@ silently, so this rail is what makes it a measured map rather than a claim:
   not per-template: `task` is declared by four of the six loop-kind templates and two of them name
   it differently, which is the finding the `task` row records.)
 * **The homeless list is a ratchet.** `_EXPECTED_HOMELESS` is pinned exactly: a NEW field with no
-  home is a deliberate owner decision, and the set must SHRINK as PP-16 lands, never grow quietly.
+  home is a deliberate decision, and the set must SHRINK as loops move to runs, never grow quietly.
 * **The status delta is computed, not trusted.** `STATUS_VOCABULARY_DELTA` is checked against the
   two enums, so it cannot drift into a comfortable fiction.
 
@@ -56,7 +56,7 @@ from personalclaw.workflows.supervisor_policy import SupervisorPolicy
 
 _BUNDLED = Path(__file__).resolve().parent.parent / "src" / "personalclaw" / "workflows" / "bundled"
 
-#: The fields PP-16 must decide about before `loop/store.py` can be retired. Pinned EXACTLY: this
+#: The fields to decide about before `loop/store.py` can be retired. Pinned EXACTLY: this
 #: set shrinks as the change lands. Growing it is a deliberate act that has to be argued for here.
 _EXPECTED_HOMELESS = {
     # `name` LEFT this set when the loop door started stamping it as `WorkflowRun.title`.
@@ -65,7 +65,7 @@ _EXPECTED_HOMELESS = {
     "strategy_config",
     "auto_teardown_on_complete",
     "tasks_project_id",
-    # `AG-14` ceilings/classification: v2 has no run-wide time budget and no closed run-level
+    # Loop ceilings/classification: v2 has no run-wide time budget and no closed run-level
     # stop reason (see the two NONE rows' consequence notes). Argued in the change itself.
     "deadline_secs",
     "stop_reason",
@@ -202,8 +202,8 @@ def test_the_homeless_fields_are_pinned_and_explained():
     homeless = {r.field for r in LOOP_FIELD_MAP if r.dest_kind == NONE}
     assert homeless == _EXPECTED_HOMELESS, (
         f"the set of Loop fields with NO home changed: {sorted(homeless)} vs the pinned "
-        f"{sorted(_EXPECTED_HOMELESS)}. It must SHRINK as PP-16 lands; a new homeless field is an "
-        "owner decision, not a detail."
+        f"{sorted(_EXPECTED_HOMELESS)}. It must SHRINK as loops move to runs; a new homeless field "
+        "is a deliberate decision, not a detail."
     )
     for row in LOOP_FIELD_MAP:
         if row.dest_kind == NONE:

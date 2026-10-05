@@ -105,7 +105,7 @@ def _hold_claim(report_id: str) -> bool:
     """Take the single-flight lease for this report's run. False when someone else holds it.
 
     The manual-run route refuses with a 409 while this claim is held, which is the whole of
-    the atom's "a manual run is idempotent against an in-flight scheduled fire" clause — and
+    the "a manual run is idempotent against an in-flight scheduled fire" guarantee — and
     that refusal is inert unless a run WRITES the claim. It was: the route read a key nothing
     ever set. `Claim.max_duration_secs` is the self-expiry, so a process killed mid-run cannot
     wedge the report forever.
@@ -165,8 +165,8 @@ class KnowledgeReportActionProvider(ActionProvider):
     ) -> ActionResult:
         """Run one report under the single-flight lease.
 
-        The lease is the atom's "a manual run is idempotent against an in-flight scheduled
-        fire" clause. The refusal lives in the manual-run route, which reads
+        The lease is the "a manual run is idempotent against an in-flight scheduled
+        fire" guarantee. The refusal lives in the manual-run route, which reads
         ``research-report:<id>`` — and a route that reads a key nothing ever writes is a 409
         that can never fire, so the WRITE belongs here, around every exit path.
         """

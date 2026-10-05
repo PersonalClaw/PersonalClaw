@@ -2,11 +2,11 @@
  *
  *  Both directions matter and for different reasons. Absent when it should be absent, or the
  *  banner accuses a properly-bound home of running a toy model on every single chat. Present
- *  when it should be present, or the whole honesty half of OU-14 is a comment in a Python file:
+ *  when it should be present, or the whole honesty half is a comment in a Python file:
  *  a newcomer's first ever reply comes from a 135M model with nothing on screen to explain it,
  *  and the conclusion they draw is about PersonalClaw rather than about the model.
  *
- *  The offer half was added when the owner ruled the wheel ships WITHOUT the weight, which put a
+ *  The offer half was added when the wheel began shipping WITHOUT the weight, which put a
  *  138 MiB download in front of the first chat. What is asserted about it is deliberately not
  *  "a spinner appears": it is the SIZE before the click, byte counts and an ETA during, a cancel
  *  that is reachable, and a per-failure sentence — because a first run that silently stalls on a
@@ -271,7 +271,7 @@ describe('BundledFloorNotice', () => {
 
   it('renders nothing when an older backend omits the field', async () => {
     // Absent is not "maybe": a missing flag must read as false, or every home talking to a
-    // backend that predates OU-14 gets a warning about a model it does not have.
+    // backend that predates the field gets a warning about a model it does not have.
     onboarding.mockResolvedValue(BOUND)
     render(<BundledFloorNotice />)
     await waitFor(() => expect(onboarding).toHaveBeenCalled())

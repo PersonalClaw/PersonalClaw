@@ -1,4 +1,4 @@
-"""Knowledge ingestion queue (#30, Q4).
+"""Knowledge ingestion queue.
 
 A single in-process async worker that drains items enqueued for node-graph ingestion
 and runs each through ``pipeline.runner.ingest_item``. Both the native provider (on

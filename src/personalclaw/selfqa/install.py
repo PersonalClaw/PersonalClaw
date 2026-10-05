@@ -1,17 +1,16 @@
 """Converging the Self-QA commit watch onto the vcs trigger.
 
-The Wave-2 companion shipped an interim seam — a cron script materialized into
+An earlier companion shipped an interim seam — a cron script materialized into
 ``~/.personalclaw/crons/`` on an interval trigger — because no vcs trigger existed yet and a
 script job may only load from that fenced directory. The ``vcs`` preset
-now exists (:func:`personalclaw.triggers.file_watch.vcs_patterns`), so this module does what
-the plan's §3.1 promised from the start: *"When AUTO-R12's vcs preset lands, the cron script
+now exists (:func:`personalclaw.triggers.file_watch.vcs_patterns`), so the cron script
 retires and the same template binds to the real trigger — the template is the durable half,
-the trigger is a swap."*
+the trigger is a swap.
 
 :func:`reconcile` therefore converges a ``file``-kind trigger (the vcs preset over
 ``agent.self_qa.watched_repo``) whose action is the ``selfqa-commit-watch`` provider — the
 retired script's delta logic, moved in-process (:mod:`personalclaw.selfqa.watch`). It also
-REMOVES any interim artifacts a Wave-2 home still carries (the installed script, its config,
+REMOVES any interim artifacts an older home still carries (the installed script, its config,
 its state file beside them): pre-1.0 clean break, per CONTRIBUTING's breaking-changes
 posture, and leaving a dead script in the crons dir would invite a user to schedule it.
 """
@@ -42,7 +41,7 @@ _RETIRED_CRON_FILES = (
 def remove_retired_script(crons_dir: Path | None = None) -> list[str]:
     """Delete the interim commit-watch script artifacts, returning what was removed.
 
-    Best-effort and idempotent: a fresh home removes nothing, an upgraded Wave-2 home
+    Best-effort and idempotent: a fresh home removes nothing, an upgraded older home
     removes up to three files. The state is NOT migrated — the new watcher's first fire
     records HEAD and stays quiet (first-sight rule), which is the same behaviour a fresh
     enable has always had.
@@ -127,7 +126,7 @@ def reconcile(store: Any, *, crons_dir: Path | None = None) -> None:
         # The companion's setting is the switch, and a restore's hold outlasts it
         # (`restore_hold`).
         switch_from_config(trigger, active)
-        # An upgraded Wave-2 row arrives as `clock`; the swap happens HERE, on the same id,
+        # An upgraded interim row arrives as `clock`; the swap happens HERE, on the same id,
         # so the user's trigger list shows one watcher whose kind changed — not two.
         trigger.kind = "file"
         # Content dedup: a ref rewritten to the same bytes (a no-op force-push) is not a
@@ -142,7 +141,7 @@ def reconcile(store: Any, *, crons_dir: Path | None = None) -> None:
             }
         }
         # The provider starts a workflow run, so it is write-capable and the fence needs the
-        # frozen grant (decision 7). A system-created trigger's opt-in is the code path that
+        # frozen grant. A system-created trigger's opt-in is the code path that
         # created it.
         trigger.capabilities = _screen.capabilities_for_action(trigger)
         store.upsert(trigger)

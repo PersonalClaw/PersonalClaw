@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { join } from 'node:path'
 import { filesUnder, readSource } from '../test/sourceTree'
 
-// ── TextLink adoption rail (audit CN-1) ─────────────────────────────────────
+// ── TextLink adoption rail ─────────────────────────────────────
 // The inline text-link idiom is ui/TextLink.tsx: one ink vocabulary (the
 // AA-audited primary/emphasis pair), one hover treatment, and the SC 2.5.8
 // hit-area padding no hand-rolled site carried. Twelve pages hand-rolled

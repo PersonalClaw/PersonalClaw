@@ -962,10 +962,9 @@ def _bundled_hooks(bundled: dict) -> dict:
     The shipped ``postToolUse`` command appends a bash-audit line to
     ``audit.log``, and it used to name that file with a literal ``~/.personalclaw/``
     tilde. That path ignores ``PERSONALCLAW_HOME``, so the moment a CLI honours the
-    generated ``personalclaw.json`` (which is what ACP-AGENT-PARITY §2.1 prong B
-    makes happen for kiro) every isolated-home session appends to the operator's
+    generated ``personalclaw.json``, every isolated-home session appends to the operator's
     REAL home instead of its own — a home-isolation break in a security control,
-    measured as `G31`. The token is expanded against :func:`config_dir` at generation
+    and a measured one. The token is expanded against :func:`config_dir` at generation
     time rather than left to the CLI's shell, because an unset ``PERSONALCLAW_HOME``
     would expand ``$PERSONALCLAW_HOME/audit.log`` to ``/audit.log``.
 

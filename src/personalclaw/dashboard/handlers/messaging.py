@@ -315,7 +315,7 @@ async def api_spawn_clear(request: web.Request) -> web.Response:
 
 async def api_spawn_cancel_fanout(request: web.Request) -> web.Response:
     """POST /api/spawn/cancel-fanout — kill EVERY child of one parent/run in one
-    click (WF2WOR-8 C1.4). Body: ``{parent_session?: str, parent_run?: str}`` — one
+    click. Body: ``{parent_session?: str, parent_run?: str}`` — one
     of them keys the fan-out. Unlike DELETE /api/spawn (clears COMPLETED entries
     without killing running ones), this stops the whole in-flight fan-out.
     """

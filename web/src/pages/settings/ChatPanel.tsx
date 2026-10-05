@@ -162,7 +162,7 @@ const MID_TURN_POLICIES = [
 ] as const
 
 // ── Mid-turn messages (personalclaw config: resilience.mid_turn_policy) ──────
-// The field shipped with PLATFORM-RESILIENCE S3 but had no frontend control, so
+// The field shipped with no frontend control, so
 // the config round-trip contract's fifth point was unmet — file-editable only.
 function MidTurnSection({ resilience, setResilience }: {
   resilience: Record<string, unknown>; setResilience: (r: Record<string, unknown>) => void
@@ -620,7 +620,7 @@ function BackgroundCompressionSection({ tools, setTools }: {
 
 /** The auto-archive threshold, plus what it would actually do right now.
  *
- *  The rule has been running on the heartbeat since S2 with no way to see or change
+ *  The rule ran on the heartbeat with no way to see or change
  *  it: chats silently left the list after 30 days and the only evidence was a shorter
  *  list. A retention rule the user can't inspect is indistinguishable from data loss,
  *  so the count is fetched from the existing dry-run preview — the same call the sweep

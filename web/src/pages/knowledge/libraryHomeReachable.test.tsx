@@ -48,8 +48,8 @@ describe('the Home lens is on the page, not just in the file tree', () => {
     // First, because it is the orienting lens. The strip is `role=tablist`/`role=tab`, not
     // buttons — asserting the wrong role here was how this test first passed vacuously.
     expect(screen.getAllByRole('radio').map((t) => t.textContent))
-      // `Decisions` is the seventh lens — a filtered view of the same library, per
-      // PROACTIVE-ASSISTANT §5.3 ("not a new nav section — decisions ARE knowledge items").
+      // `Decisions` is the seventh lens — a filtered view of the same library, not a new nav
+      // section, because decisions ARE knowledge items.
       // Appended, so Home keeps the first slot this test is really about.
       .toEqual(['Home', 'Library', 'Graph', 'Intents', 'Tags', 'Conflicts', 'Decisions'])
   })

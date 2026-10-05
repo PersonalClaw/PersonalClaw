@@ -80,7 +80,7 @@ def test_uploads_resolves_under_active_home_and_the_home_itself_is_no_root(
     _isolated_home, tmp_path
 ):
     """Uploads -> <active_home>/uploads. The config/data tree itself (config.json, mcp.json,
-    the automations) is not a root at all (final-validation F-54): only work folders in it are."""
+    the automations) is not a root at all: only work folders in it are."""
     from personalclaw.dashboard.handlers.files import _dashboard_roots
 
     active_home = os.path.realpath(str(tmp_path))

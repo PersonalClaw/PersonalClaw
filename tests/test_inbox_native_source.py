@@ -1,4 +1,4 @@
-"""P6a — the native always-on inbox source: post_to_inbox push, source/can_reply
+"""The native always-on inbox source: post_to_inbox push, source/can_reply
 attribution, native reply routing, and per-source /status health."""
 
 from __future__ import annotations

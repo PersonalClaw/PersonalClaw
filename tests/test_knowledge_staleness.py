@@ -1,6 +1,6 @@
 """Staleness of a synthesized item, and the two routes a "sources changed" banner needs.
 
-WF2KNO-11 clause A. What is worth asserting here is not that the flag flips — it is that the
+What is worth asserting here is not that the flag flips — it is that the
 flag flips for a *defensible* reason and stays down for everything else:
 
 1. **A fresh synthesis is not stale.** The material that existed when it was written is not

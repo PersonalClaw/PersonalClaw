@@ -29,7 +29,7 @@
  * key-release event at all — a true "while physically held" global gesture would need
  * a native key-event tap (an accessibility-permission-class API we deliberately do not
  * request). So the global chord is a TOGGLE: press to start, press again to stop. The
- * change's clause is "captures only while held/toggled", and this is the toggled half,
+ * requirement is "captures only while held/toggled", and this is the toggled half,
  * honestly labelled everywhere the user reads about it.
  *
  * A toggle has a failure mode a hold does not: press it, walk away, and the microphone
@@ -38,7 +38,7 @@
  * bounded rather than "until you notice".
  */
 
-/** The shipped default chord. Owner task 4 may change this; it is deliberately a
+/** The shipped default chord. It is deliberately a
  * three-key chord including a modifier, because a global single-key shortcut would
  * swallow that key in every other app on the machine. */
 const DEFAULT_CHORD = "CommandOrControl+Shift+Space";

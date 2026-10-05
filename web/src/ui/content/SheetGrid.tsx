@@ -3,11 +3,11 @@
  *  Mounted by `<ContentSurface>` for an `.xlsx` artifact, in place of Monaco, through the
  *  same non-Monaco renderer slot the document editor uses.
  *
- *  **Structural, not an embedded spreadsheet.** This follows the ratified decision
- *  (owner task 2, option (c)) for the same reason and with the same cost: a spreadsheet
+ *  **Structural, not an embedded spreadsheet.** This follows the same structural decision
+ *  as the document editor, for the same reason and with the same cost: a spreadsheet
  *  widget's whole value is owning its own grid model, so adopting one would mean a second
  *  representation of a workbook plus a lossy mapping to ours — exactly the second fidelity
- *  story the plan refuses. So: controlled `<input>`s in a real `<table>`, no new frontend
+ *  story the design refuses. So: controlled `<input>`s in a real `<table>`, no new frontend
  *  dependency, and no recalculation engine.
  *
  *  **Formulas stay formulas, and are edited as formulas.** Nothing here evaluates
@@ -21,9 +21,9 @@
  *  **The lossy-edit contract is a MECHANISM, not a notice** — same posture as
  *  `DocumentEditor`: while the parse's loss report is non-empty and unacknowledged, every
  *  input is disabled and every control carries a reason. A warning a user can type past
- *  has already failed. (Deliberately its own copy rather than a shared component; see this
- *  change's execution-log entry — `DFE-6` is editing the document editor on an unmerged
- *  branch, and extracting a "shared" contract against code nobody can read is how two
+ *  has already failed. (Deliberately its own copy rather than a shared component: the
+ *  document editor was being edited on an unmerged branch when this was written, and
+ *  extracting a "shared" contract against code nobody can read is how two
  *  branches become a three-way conflict.)
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'

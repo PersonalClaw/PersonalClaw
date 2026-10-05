@@ -102,7 +102,7 @@ _ALLOWED_CONTROL = frozenset({"\n", "\r", "\t"})
 class ValidationError(Exception):
     """Raised when input validation fails.
 
-    Optionally carries a PLATFORM-LEGIBILITY §2 :class:`~personalclaw.errors.AgentError`
+    Optionally carries an :class:`~personalclaw.errors.AgentError`
     so a tool-arg rejection reaches the model as WHAT/WHY/FIX + did-you-mean
     ``suggestions`` (the allowed set) instead of an opaque one-liner. When present,
     the string form of the exception IS the envelope's ``render()`` — one message,
@@ -621,7 +621,7 @@ PROMPT_RENDER_SCHEMA = ToolSchema(
     ],
 )
 
-# ── Project-context review (LEARN E1.4 / WF2LEA-12) ──
+# ── Project-context review ──
 # `items` is checked as a list of objects here; each item's kind/body/rationale shape is validated
 # in `project_context_review` where the typed sink lives (the same container-here, meaning-there
 # split the workflow schemas use). Bounded so one review cannot flood the proposal queue.
@@ -646,7 +646,7 @@ DASHBOARD_TILE_PROPOSE_SCHEMA = ToolSchema(
     ],
 )
 
-# ── Workflows (WORKFLOWS-V2 Slice 6a — the 19-tool chat surface) ──────────
+# ── Workflows (the 19-tool chat surface) ──────────
 #
 # Argument-shape validation only. The SPEC's own validity (acyclicity, resolvable
 # bindings, branch coverage) is `workflows.validator`'s job and returns an issue
@@ -922,10 +922,10 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         "create-task",
         "invoke-agent",
         "run-prompt",
-        # SELF-VERIFICATION §3.2 steps 1 and 5. §5 of that plan states the rule these two
-        # lines follow: a provider added by a later revision MUST appear here or hook
-        # create/update rejects it. Neither is the `qa-run` provider §5 forbids — the QA run
-        # still fires through `run-workflow`. `selfqa-triage` classifies commits at zero
+        # The self-verification loop's triage and finding-filing steps. Both follow the rule
+        # that a provider added by a later revision MUST appear here or hook
+        # create/update rejects it. Neither is a dedicated `qa-run` provider, which stays absent:
+        # the QA run still fires through `run-workflow`. `selfqa-triage` classifies commits at zero
         # tokens and writes its verdicts to the run ledger; `selfqa-file-finding` files one
         # Inbox item + one Task through the existing native sinks, adding no inbox source and
         # no task provider.
@@ -934,15 +934,15 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # The evidence-sealing step: it derives the contact-sheet
         # and GIF, computes the SHA256 manifest, registers the bundle as one Artifact, and runs
         # the required-kinds gate — following the same rule as the two above (a new action
-        # provider MUST appear here or hook create/update rejects it), and still not the `qa-run`
-        # provider §5 forbids.
+        # provider MUST appear here or hook create/update rejects it), and still not a `qa-run`
+        # provider.
         "selfqa-evidence",
         # The vcs trigger's action — commit delta + a start
         # delegated to `run-workflow`. Same rule as its two siblings above; added here
         # in the SAME commit that registers it and lists it write-capable in
         # `triggers/screen.py`.
         "selfqa-commit-watch",
-        # PROACTIVE-ASSISTANT §1.1-§1.5: the triage digest. Added here in the SAME commit
+        # The triage digest. Added here in the SAME commit
         # that registers it in `action_providers.registry` — a provider in one set but not the
         # other is the mismatch that makes a trigger save and then fail to run.
         "triage-digest",
@@ -962,7 +962,7 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # backend route (the ONE app-route action provider; per-app providers can't
         # be enumerated in a static frozenset).
         "call-app-route",
-        # Plan 42 T5.1: drains the queued `digest`-mode notifications into one grouped
+        # Drains the queued `digest`-mode notifications into one grouped
         # inbox item. Registered here because the system cron that runs it goes through
         # the same trigger validation as a user-authored hook — a registered provider
         # missing from this set is one the scheduler would refuse to dispatch.
@@ -985,7 +985,7 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # validation, so a registered provider missing from this set is one the scheduler refuses
         # to dispatch.
         "heartbeat-tasks",
-        # WATCHED-SOURCES §6.2 (the caller): the morning source digest. Registered here for
+        # The morning source digest. Registered here for
         # the same reason as the two directly above — the bundled system trigger that runs it
         # goes through this same validation, so a registered provider missing from this set is
         # one the scheduler refuses to dispatch. A registered-but-refused trigger is exactly the
@@ -997,7 +997,7 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # scheduler refuses to dispatch. The report's delivery function shipped with a POST route
         # as its only caller; this is the set that makes the CRON caller real.
         "identity-report",
-        # WORKFLOWS-V2 Slice 9b: writes resolved content into an artifact with upsert
+        # Writes resolved content into an artifact with upsert
         # semantics — the zero-token refresh a dashboard-style template does instead of spawning
         # a subagent to paste text. Registered in the action-provider registry in the same
         # commit as this line.
@@ -1023,12 +1023,12 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # judging node left with no reachable consumer is precisely the "computed then
         # discarded" shape this provider was added to end.
         "knowledge-relate",
-        # KNOWLEDGE-SYNTHESIS §6.2 (KNOW-R15): renders a declarative spec into a sanitized,
+        # Renders a declarative spec into a sanitized,
         # self-contained artifact export. Registered in the action-provider registry in the same
         # commit as this line, for the reason stated above.
         "render-report",
         # Files a knowledge draft into the
-        # LEARNING-FLYWHEEL proposal queue rather than writing it. Registered in the
+        # learning loop's proposal queue rather than writing it. Registered in the
         # action-provider registry in the same commit as this line, for the reason stated above.
         "knowledge-propose",
         # The read half of output-offloading — pulls a `{{nodes.x.artifact}}`
@@ -1068,7 +1068,7 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # The bundled `optimize-harness` template's scoring step, registered in
         # `action_providers.registry` in the SAME commit as this line, for the rule stated above.
         "optimize-score",
-        # EXTERNAL-ACCESS §5 (outbound half): sends ONE A2A task to an external agent.
+        # The outbound A2A half: sends ONE A2A task to an external agent.
         # Unlike every name above it, the provider behind this one is NOT in core's registry —
         # it is delivered by the `a2a-action` first-party app, exactly as `webhook` is. So the
         # usual "same commit as the registry entry" rule cannot apply and the cross-repo form

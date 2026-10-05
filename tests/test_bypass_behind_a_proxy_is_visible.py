@@ -13,26 +13,26 @@ internet is admitted with no token. The one shape that escapes it is the one who
 * The hazard becomes *visible*: the ``remote.reachability`` probe fails, naming both
   ``BYPASS_LOCAL_NETWORKS`` and ``trusted_proxies``, when the bypass is armed together with a
   declared proxy or public URL — and is unchanged from today when it is not.
-* Admission is *unchanged*. Whether that token-free ``200`` should become a ``403`` is the
-  escalated owner fork this change is explicitly scoped out of, so the four probe shapes are pinned
+* Admission is *unchanged*. Whether that token-free ``200`` should become a ``403`` is a
+  separate admission decision, deliberately out of scope here, so the four probe shapes are pinned
   at the status codes they return today. A diagnostic that quietly re-decided who gets in would be
   the worse bug: an operator relying on the bypass would lose access with a health row as the only
   explanation.
 
-The four-row parametrization also pins the RUA-6 *direction* taken on ``main``. Honoring
-``X-Forwarded-For`` in ``_resolved_client_ip`` — the other way RUA-6 could have been closed —
+The four-row parametrization also pins the *direction* the forwarded-header fix took on ``main``.
+Honoring ``X-Forwarded-For`` in ``_resolved_client_ip`` — the other way it could have gone —
 would flip the forged-public-address rows, because the forged address would then be believed.
-That is a strictly better security outcome *and* an admission change, i.e. exactly the fork.
-Those rows are therefore the tripwire on that boundary: if a later change makes them go red, it
-has crossed into the fork and needs the owner, not a rebase.
+That is a strictly better security outcome *and* an admission change, i.e. exactly the open
+decision. Those rows are therefore the tripwire on that boundary: if a later change makes them go
+red, it has crossed into that decision and needs a deliberate call, not a rebase.
 
-**On the clause's probe command.** The acceptance criterion reads the row as
+**On the probe command.** The check was first written as
 ``personalclaw doctor --json | jq -r '.checks[] | select(.name=="remote") | .status'`` == ``fail``.
 That command is not runnable as written and never was: ``personalclaw doctor`` has no ``--json``
 flag (verified — argparse rejects it), the report (``GET /api/doctor`` → :func:`run_doctor`) has no
 ``checks[]`` array (probe rows live under ``capabilities.<cap>.probes[]``), the row's identifier
 key is ``id`` not ``name``, and its pass/fail key is the boolean ``ok``, not a ``status`` string.
-The clause's *intent* is unambiguous, so it is asserted against the real surface: ``ok is False``
+Its *intent* is unambiguous, so it is asserted against the real surface: ``ok is False``
 on the ``remote`` capability's row, reached BOTH through the probe body and through the assembled
 report, so neither the row's identity nor its wiring into the report is taken on faith.
 """
@@ -85,7 +85,7 @@ async def _probe() -> doctor.ProbeResult:
 
 @pytest.mark.asyncio
 async def test_bypass_plus_declared_trusted_proxies_fails_the_remote_row(_isolated, monkeypatch):
-    """The headline combination. `detail` must carry BOTH literals the clause names: an operator
+    """The headline combination. `detail` must carry BOTH literals: an operator
     reading the row has to be able to connect the variable they exported to the config they
     wrote."""
     _write_config(_isolated, trusted_proxies=["127.0.0.1"])
@@ -124,10 +124,10 @@ async def test_bypass_plus_a_declared_public_url_also_fails_the_row(_isolated, m
 async def test_the_failing_row_is_the_remote_row_of_the_single_capability_report(
     _isolated, monkeypatch
 ):
-    """The clause reads a ROW out of a doctor report, not a ProbeResult. This is the
+    """The check reads a ROW out of a doctor report, not a ProbeResult. This is the
     `GET /api/doctor/remote` path — what a user hits when they open the Remote card — so "the
     probe returns not-ok" cannot pass while the surface they read shows something else. It also
-    pins the real key names (`id`, `ok`, `capability`, `probes[]`) that the clause's
+    pins the real key names (`id`, `ok`, `capability`, `probes[]`) that the original
     `.checks[] | select(.name==…) | .status` path gets wrong."""
     _write_config(_isolated, trusted_proxies=["127.0.0.1"])
     monkeypatch.setenv(BYPASS, "1")
@@ -224,7 +224,7 @@ async def test_declared_proxies_alone_change_the_row_not_at_all(_isolated):
 async def test_the_bypass_alone_changes_the_row_not_at_all(_isolated, monkeypatch):
     """Direction two: the bypass armed without a declared proxy. That is the documented
     dev-convenience use on a trusted LAN, and it is not this hazard. Asserted field-for-field
-    against the row as it reads with the variable unset — the clause's "unchanged from today" is a
+    against the row as it reads with the variable unset — "unchanged from today" is a
     statement about the whole row, not just its ok flag."""
     _write_config(_isolated)
     baseline = await _probe()
@@ -261,16 +261,16 @@ async def test_the_probe_is_still_a_capability_probe():
 
 
 def test_the_probe_mirrors_the_middleware_instead_of_respelling_the_env_var():
-    """The clause says to mirror the middleware, per `cli_doctor.py:344-349`'s own note (#2860). A
+    """The probe must mirror the middleware, per `cli_doctor.py:344-349`'s own note (#2860). A
     row that re-spells `PERSONALCLAW_BYPASS_LOCAL_NETWORKS` in `os.environ.get` is another copy of
     the rule that can drift from it, so the probe must reach the fact through `origin`'s mirror.
     The variable may still appear in the human-facing `detail` string — that is the operator's own
-    variable name and the clause requires it there."""
+    variable name and it belongs there."""
     import inspect
 
     src = inspect.getsource(doctor._probe_remote_reachability)
     assert "local_network_bypass_enabled()" in src, (
-        "the RUA-5 row must consult origin.local_network_bypass_enabled(), the mirror of the "
+        "the remote row must consult origin.local_network_bypass_enabled(), the mirror of the "
         "middleware's bypass short-circuit"
     )
     assert 'os.environ.get("PERSONALCLAW_BYPASS' not in src, (
@@ -319,8 +319,8 @@ async def test_api_config_status_is_unchanged_under_bypass(
     _isolated, monkeypatch, label: str, headers: dict[str, str], expected: int
 ):
     """Pinned at TODAY's behaviour, on purpose, including the three rows that are a fail-open.
-    Closing those is the escalated owner fork; this change only makes them legible, and this test is
-    what proves it did not quietly do more than that."""
+    Closing those is a separate admission decision; this change only makes them legible, and this
+    test is what proves it did not quietly do more than that."""
     _write_config(_isolated, trusted_proxies=["127.0.0.1"], public_url="https://pc.example.com")
     monkeypatch.setenv(BYPASS, "1")
     mw = token_auth.token_auth_middleware(port=PORT)

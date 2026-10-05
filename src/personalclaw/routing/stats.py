@@ -3,21 +3,21 @@
 A router must not scan ``model_calls.jsonl`` per call, so this maintains an incremental fold keyed
 ``(use_case → query_class → "provider:model_id" ref)``, updated by the same code path that appends
 each attempt audit line. The aggregates are conservative online estimates (exponential moving
-averages with a small alpha, per the plan) so one bad night never flips a policy; ``n`` counts
+averages with a small alpha) so one bad night never flips a policy; ``n`` counts
 total samples for the downstream confidence floor.
 
 Per (use_case, query_class, ref) the fold keeps: ``n``, ``success_rate`` (EMA of ``passed``),
-``feedback`` + ``feedback_n`` (EMA of a [0,1] signal — 0 with feedback_n=0 until the Session-3
-feedback extraction lands; the score then collapses onto success_rate, renormalized), ``avg_ms``
+``feedback`` + ``feedback_n`` (EMA of a [0,1] signal — 0 with feedback_n=0 while no feedback
+reaches the fold; the score then collapses onto success_rate, renormalized), ``avg_ms``
 (EMA latency), ``avg_cost_usd`` + ``priced_n`` (EMA of what a call the ref served cost, over the
 ``priced_n`` calls something priced — with none, the ref has no price yet, which is not free),
-``score`` (§4.2: 0.60·success + 0.40·feedback, renormalized to success when no feedback yet), and
+``score`` (0.60·success + 0.40·feedback, renormalized to success when no feedback yet), and
 ``updated_at``.
 
-**Deviation from the §1.3 JSON example (documented):** the example shows ``p50_ms``/``p95_ms``
-in the fold, but true percentiles can't be maintained incrementally from an EMA. Per §1.5 the
-telemetry route derives per-model rows "from routing_stats.json + a bounded tail of
-``model_calls.jsonl``", so p50/p95 are a READ-TIME derivation there; the fold keeps ``avg_ms``.
+**Why the fold holds no percentiles:** ``p50_ms``/``p95_ms`` would be the obvious fold fields,
+but true percentiles can't be maintained incrementally from an EMA. The telemetry route derives
+per-model rows from ``routing_stats.json`` + a bounded tail of ``model_calls.jsonl``, so
+p50/p95 are a READ-TIME derivation there; the fold keeps ``avg_ms``.
 This keeps the fold a true O(1) online update, not a growing per-ref latency reservoir.
 
 The fold is rebuildable (:func:`rebuild`) from the (capped/rotated) JSONL, so the fold is the
@@ -112,8 +112,8 @@ def fold_record(stats: dict[str, Any], rec: dict[str, Any], *, now: str = "") ->
     """Fold one attempt row (an ``AttemptRecord.to_json_line`` dict) into ``stats`` in place.
 
     Keyed by ``(use_case, query_class, ref)``. A row missing a ``use_case`` or ``query_class`` (an
-    unclassified call — routing can't attribute it to a class) is SKIPPED. ``feedback`` is not yet
-    on the audit row (Session 3 wires it), so it stays 0/feedback_n=0 and the score collapses onto
+    unclassified call — routing can't attribute it to a class) is SKIPPED. ``feedback`` is not
+    on the audit row, so it stays 0/feedback_n=0 and the score collapses onto
     success_rate. Returns ``stats`` for chaining.
     """
     use_case = str(rec.get("use_case", "") or "")
@@ -189,7 +189,7 @@ def record_routing_stats(rec: dict[str, Any], *, home: Path, now: str = "") -> N
 
 
 def _check_for_gap(stats: dict[str, Any], rec: dict[str, Any], *, home: Path) -> None:
-    """New evidence just landed — ask whether it has outgrown what routing does (MRT-5 §6.3).
+    """New evidence just landed — ask whether it has outgrown what routing does.
 
     This is the fold write's one non-observability job, and the trigger point for the whole
     propose-don't-write path: see :mod:`personalclaw.routing.gap` for why the gap is detected here

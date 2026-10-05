@@ -105,7 +105,7 @@ describe('every RUN_LIFECYCLE member has a real emitter', () => {
     // graduation the test above requires — but adding one means editing this expectation, which
     // puts the new name in the diff next to the reason it needs an exemption.
     //
-    // Reviewing an addition: demand the plan that owes the publish site, and that the consuming
+    // Reviewing an addition: demand to see what will ship the publish site, and that the consuming
     // surface already folds the event. If neither exists, the name is not early — it is invented.
     expect([...AWAITING_EMITTER].sort()).toEqual([
       'confirmation', 'demotion', 'plan_streaming', 'revision',
@@ -113,7 +113,7 @@ describe('every RUN_LIFECYCLE member has a real emitter', () => {
   })
 })
 
-// ── WORK-CONTAINERS §6.3 R10c: the coexistence mirror ──
+// ── The coexistence mirror ──
 //
 // A legacy loop can now RUN as a template, and the backend mirrors that run's events onto the
 // equivalent `loop:<id>` hub (`workflows/watchdog._publish_to_equivalent_loop_hub`). So this hub

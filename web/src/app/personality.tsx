@@ -168,8 +168,8 @@ export function PersonalityProvider({ children }: { children: ReactNode }) {
   return <PersonalityCtx.Provider value={value}>{children}</PersonalityCtx.Provider>
 }
 
-/** The App-shell slot for the active personality's decorative shell element
- *  (PERSONALITY-THEMES §S2). Mounted once in `App.tsx`'s main shell.
+/** The App-shell slot for the active personality's decorative shell element.
+ *  Mounted once in `App.tsx`'s main shell.
  *
  *  The default identity — and every standard scheme, which has no `Personality`
  *  entry at all — declares no `shellElement`, so this returns `null` and NOTHING

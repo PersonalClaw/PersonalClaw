@@ -7,7 +7,7 @@ import { ModelsPanel } from './ModelsPanel'
 //
 // Tested at the level a user meets it:
 //  · the token section shows each source's MASKED preview + HuggingFace's whoami verdict — the
-//    raw value never appears (Success Criterion 4);
+//    raw value never appears;
 //  · a gated model with no valid token carries a "needs token" pre-warn BEFORE Download;
 //  · a downloaded local model's Test makes one real call and shows the gateway's sentence.
 

@@ -115,7 +115,7 @@ class PromptTemplate:
     tags: list[str] = field(default_factory=list)
     source: str = "user"  # "user" | "bundled" | "marketplace"
     package: str = ""
-    # Runnable template (#17): when non-empty, this prompt is a "campaign template" —
+    # Runnable template: when non-empty, this prompt is a "campaign template" —
     # its rendered content is a runnable task, and this blob carries the loop launch
     # config (kind, agent/roster, model, intake_rigor, granularity, …). Empty for a
     # plain text-only prompt. Persisted to YAML like the rest of the record.

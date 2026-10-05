@@ -1,11 +1,11 @@
 """A notification addressed to somebody else is VISIBLE here and FIRED nowhere here.
 
-MULTI-TENANCY-ENTITY `TSE2-5`: *"Notification delivery is pluggable and addressable so a
+Notification delivery is pluggable and addressable so a
 shared-store notification can route to the intended owner rather than 'the' dashboard;
 foreign-addressed notifications are visible-but-not-fired locally (same visible-but-inert
-posture as foreign triggers)."*
+posture as foreign triggers).
 
-**What this suite takes the acceptance test to be**, because the clause is short and abstract:
+**What this suite takes that to mean**, because the requirement is short and abstract:
 
 1. A foreign-addressed note is **listed** — it is in ``state._notification_log``, which is
    verbatim what ``GET /api/notifications`` returns (``handlers/messaging.py:271``), and it is
@@ -453,8 +453,8 @@ def test_emit_attention_item_addresses_a_local_item_to_the_local_owner(monkeypat
 
 
 def test_notification_type_handler_round_trips_a_backend_through_the_registry():
-    """The #47 bug class: the type was in `PROVIDER_TYPES` with an `EntitySeamHandler` that
-    ran the factory and discarded the result, so an app's backend could never be reached. A
+    """The declared-but-dead class: the type was in `PROVIDER_TYPES` with an `EntitySeamHandler`
+    that ran the factory and discarded the result, so an app's backend could never be reached. A
     phantom is worse here than for a source — a note recorded `routed_to: <uninstalled app>`
     reads as delivered when nothing was."""
     from personalclaw.providers.registry import NotificationTypeHandler

@@ -1,4 +1,4 @@
-"""`Lease`, `Dwell` and `MetricGate` — the capabilities `PP-12` adds to the admission seam.
+"""`Lease`, `Dwell` and `MetricGate` — the capabilities added to the admission seam.
 
 Three claims are worth more than the rest, so they are asserted three different ways:
 
@@ -7,8 +7,8 @@ Three claims are worth more than the rest, so they are asserted three different 
   `test_workflows_frontier_golden.py`), `compose()` returns identical lane/container verdicts under
   the three-policy and the six-policy list here, and a real run whose spec declares nothing never
   even builds an `AdmissionState` — asserted by making that construction throw.
-* **Not a second lease.** `S57` measured an `unlink`-based single-use claim failing 36 of 40 races,
-  so the step forbids a second implementation. The decision here IS `pool.acquire` (railed by an AST
+* **Not a second lease.** An `unlink`-based single-use claim was measured failing 36 of 40 races,
+  so a second implementation is forbidden. The decision here IS `pool.acquire` (railed by an AST
   scan, because "we reuse it" is a claim a passing test cannot settle) and the write IS
   `pool.claim_task`'s flocked compare-and-swap — driven from 16 threads contending for one resource,
   which is the shape that actually distinguishes a CAS from a check-then-act.
@@ -148,7 +148,7 @@ def test_the_new_policies_abstain_on_the_frontiers_scopes():
 def test_the_lease_policy_decides_with_the_pools_own_acquire():
     """A RAIL, not a docstring promise: `Lease.capacity` must CALL `pool.acquire`.
 
-    The step forbids a second lease implementation because `S57` measured the naive one losing 36 of
+    A second lease implementation is forbidden because the naive one was measured losing 36 of
     40 races. A re-implementation would pass every behavioural test in this file — the semantics are
     easy to copy and the race is not — so the reuse itself is what has to be asserted.
     """
@@ -596,7 +596,7 @@ async def test_a_spec_declaring_no_admission_keys_never_builds_an_admission_stat
     """
 
     def _boom(ctl, ready):  # pragma: no cover - the point is that it is never called
-        raise AssertionError("a spec declaring no PP-12 keys must not gather admission state")
+        raise AssertionError("a spec declaring no admission keys must not gather admission state")
 
     monkeypatch.setattr(run_admission, "_admission_state", _boom)
     spec = {

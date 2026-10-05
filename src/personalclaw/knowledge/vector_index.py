@@ -1,16 +1,16 @@
-"""ANN index over chunk vectors — ``sqlite-vec`` living inside the knowledge DB (H1.4).
+"""ANN index over chunk vectors — ``sqlite-vec`` living inside the knowledge DB.
 
-WHY THIS EXISTS. KL-10 made the vector arm score CHUNK vectors as well as whole-item
-vectors, which is what lets retrieval reach page 12 of a long document. It also made the
+WHY THIS EXISTS. The vector arm scores CHUNK vectors as well as whole-item
+vectors, which is what lets retrieval reach page 12 of a long document. That also made the
 arm's row count grow from N items to roughly N·(1 + content_chars/1500), and that cost was
 At 384 dimensions the pure-Python cosine scan runs ~21 µs/row, so 300 rows cost
 6.4 ms/query, 1,800 rows cost 39.1 ms/query, and a 5,000-item library (~30,000 rows) costs
-roughly 650 ms/query — user-visible latency on every search. The execution log raised
-this task from optimization to required follow-on.
+roughly 650 ms/query — user-visible latency on every search. That makes this index a
+requirement, not an optimization.
 
 WHAT THIS IS. A ``vec0`` virtual table (from the ``sqlite-vec`` extension) over the chunk
-vectors, in the SAME database file as the ``chunks`` rows it indexes — the shape the owner's
-dependency ruling asked for, so a chunk write and its vector write cannot drift into a
+vectors, in the SAME database file as the ``chunks`` rows it indexes — the dependency shape
+chosen on purpose, so a chunk write and its vector write cannot drift into a
 sidecar's split brain. The index is a **candidate generator only**: it narrows the corpus to
 the k nearest chunk vectors, and ``HybridRetriever`` then re-scores those candidates with the
 unchanged Python cosine, the unchanged dimension guard, and the unchanged
@@ -21,7 +21,7 @@ instead of a second scoring implementation that can silently disagree in the las
 HONEST NAMING. ``sqlite-vec`` 0.1.x's ``vec0`` KNN is an exhaustive SIMD scan in C, not a
 graph/IVF index, so the request path is still linear in row count — just with a ~280x smaller
 constant (measured: 1,800 rows 37.7 ms → 0.16 ms; 30,000 rows 633 ms → 2.3 ms). It is called
-an ANN index here because that is the plan's term and the seam is the one an approximate index
+an ANN index here because the seam is the one an approximate index
 would occupy; when ``sqlite-vec`` gains a partitioned/graph index the seam does not move.
 
 STALENESS. Silent staleness is the same silent-recall defect in another costume, so it is
@@ -113,7 +113,7 @@ def _load_extension(conn: "sqlite3.Connection") -> str:
 
     # enable_load_extension is absent when CPython was built --disable-loadable-sqlite-
     # extensions (and raises on some hardened builds), which is exactly the case the
-    # runtime-availability clause exists for.
+    # fail-soft path exists for.
     conn.enable_load_extension(True)
     try:
         sqlite_vec.load(conn)
@@ -373,7 +373,7 @@ class ChunkVectorIndex:
         cosine, and vec0's default L2 ordering only agrees with cosine for unit-length
         vectors. Nothing guarantees the embedder normalizes, so an L2-ordered candidate set
         would hand the reader the wrong candidates for a non-normalized model — a silent
-        recall regression of exactly the kind this task exists to prevent.
+        recall regression of exactly the kind this module exists to prevent.
         """
         table = index_table_name(dim)
         if table in self._tables():

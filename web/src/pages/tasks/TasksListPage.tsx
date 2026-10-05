@@ -728,7 +728,7 @@ function MetaLine({ t, onProject }: { t: TaskItem; onProject?: (p: string) => vo
   // which is why two earlier passes measured this row as clean at desktop and phone. A content
   // separator cannot survive wrapping; only a gap can. This row already separates its identity
   // group by `gap-x-m` with no glyph, so the schedule group now uses the same mechanism — the
-  // ruling #2224 established for `#/prompts`, applied to the sibling it was compared against.
+  // rule #2224 established for `#/prompts`, applied to the sibling it was compared against.
   const lead: React.ReactNode[] = []
   if (pm) lead.push(<span key="pri" style={{ color: pm.tone }}>{pm.label}</span>)
   if (who) {
@@ -829,8 +829,8 @@ function TaskRow({ t, index, onOpen, onProject, onTag, selected, selecting, onTo
       {/* Selection checkbox — visible on hover, or always once a selection is active. */}
       {/* 20x20 painted, 24x24 CLICKED. Measured 30 of these on `#/tasks`, and SC 2.5.8's spacing
           exception cannot rescue them: each sits INSIDE this row's own 1212x47 clickable surface, so
-          the 24px circle is inside another target by construction (cycle 72's trap, from the
-          `sm` Toggle). The button is now a transparent 24px box with the painted 20px control inside
+          the 24px circle is inside another target by construction (the trap the
+          `sm` Toggle hit). The button is now a transparent 24px box with the painted 20px control inside
           it, and `-m-0.5` returns the 4px so no row reflows — the fix is the hit box, not the design. */}
       <button type="button" aria-label={`${selected ? 'Deselect' : 'Select'}: ${t.title}`}
         onClick={(e) => { e.stopPropagation(); onToggleSelect?.() }}
@@ -843,7 +843,7 @@ function TaskRow({ t, index, onOpen, onProject, onTag, selected, selecting, onTo
       <div className="flex-1 min-w-0">
         {/* 🪤 THE TITLE IS THE ROW. Measured at 390px on ten real tasks: 254px of the 434px this one
             needs — 1.7x — with no `title`, so the second half of what the user wrote was unreachable.
-            The row's accessible NAME already carries the whole title (cycle 598 put the status in it
+            The row's accessible NAME already carries the whole title (the status is in it
             too), so assistive tech was the only reader getting all of it. Same shape as tag names,
             intent goals and conflict sources; a task title is simply the one that appears in four
             places, so all three task-owned ones move together. */}

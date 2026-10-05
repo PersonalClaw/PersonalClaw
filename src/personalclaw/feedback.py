@@ -1,4 +1,4 @@
-"""Feedback Signal — the deterministic capture + attribution substrate.
+"""The feedback signal — the deterministic capture + attribution substrate.
 
 A small 👍/👎 on the platform's AI judgment outputs (inbox classifications, drafted
 replies, digest items, loop findings, routing suggestions) feeding three layers:
@@ -9,7 +9,7 @@ replies, digest items, loop findings, routing suggestions) feeding three layers:
   SILENT-POSITIVE: recorded only so accuracy has a denominator —
   it never generates lessons or proposals. Only 👎 (with an optional short "why")
   ever feeds learning, and the interpretive half of that belongs to
-  LEARNING-FLYWHEEL, not here.
+  the learning loop, not here.
 * **Attribution** — per-producer rolling accuracy as a pure GROUP BY over records
   (:func:`producer_stats`), keyed to the PRODUCING ARTIFACT (the bound prompt ref,
   loop-judge kind, workflow id, routing pair, app producer). Nothing is stored —
@@ -37,7 +37,7 @@ from personalclaw import bounded_log, notification_kinds
 
 logger = logging.getLogger(__name__)
 
-# Closed, append-only vocabularies (C1). A new surface must name its kind here
+# Closed, append-only vocabularies. A new surface must name its kind here
 # first — the hard rule is JUDGMENT OUTPUTS only (never chat messages).
 TARGET_KINDS = (
     "inbox_classification",
@@ -319,12 +319,12 @@ def producer_stats(*, window_days: int | None = None) -> dict[tuple[str, str], d
 def producer_verdict_series(
     *, window_days: int | None = None
 ) -> dict[tuple[str, str], list[tuple[float, str]]]:
-    """Time-ordered CURRENT verdicts per producer — Loop 3's field series (ES-9).
+    """Time-ordered CURRENT verdicts per producer — Loop 3's field series.
 
     Same records, same window and same supersede rule as :func:`producer_stats`; kept
     per-record rather than aggregated because a trend needs the ORDER, which a count
     cannot carry. ``{(producer_kind, producer_id): [(created_at, "up"|"down"), ...]}``,
-    oldest first. Query-computed, stored nowhere — the E3 discipline.
+    oldest first. Query-computed, stored nowhere — the field-metrics discipline.
     """
     if window_days is None:
         window_days = _config().window_days
@@ -452,8 +452,8 @@ def check_retire_candidates(state=None) -> list[dict]:
 
     Runs on the existing inbox-service maintenance tick (no new loop). Dedup by
     producer via ``retire_proposed`` in the settings file. Emits ``notify(kind=
-    "feedback_retire")`` pre-plan-42; when INBOX-NOTIFICATIONS-UNIFICATION lands,
-    this emit site swaps to ``emit_attention_item(kind="proposal")`` — one
+    "feedback_retire")`` from this single site, so switching it to
+    ``emit_attention_item(kind="proposal")`` stays one
     function, one swap. Returns the emitted candidates (for tests/logs).
     """
     try:
@@ -511,8 +511,8 @@ def check_retire_candidates(state=None) -> list[dict]:
 
 def pending_retire_candidate_count() -> int:
     """How many producers :func:`check_retire_candidates` would propose on its next pass —
-    the read-only magnitude the remediation engine measures for its inbox-maintenance deficit
-    (PR2-11), computed from the SAME set (``suppressed_producers() | _proposal_only_candidates``
+    the read-only magnitude the remediation engine measures for its inbox-maintenance deficit,
+    computed from the SAME set (``suppressed_producers() | _proposal_only_candidates``
     minus those already in ``retire_proposed``) but WITHOUT the mutation the check performs.
 
     Zero when feedback is disabled, and best-effort (a failed read contributes nothing) — a

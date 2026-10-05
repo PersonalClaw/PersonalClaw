@@ -77,7 +77,7 @@ export function OrganizeChip({ sessionKey, refreshKey, onApplied }: {
   //
   // The chip still clears. A dismissal is a request to get something out of the way, so refusing to
   // hide it would fight the click; the report is what makes a later reappearance explicable. That is
-  // the opposite ruling from a MIRROR of server state (`chat/approvalDecisionReported`), and
+  // the opposite decision from a MIRROR of server state (`chat/approvalDecisionReported`), and
   // deliberately so — this control is not claiming a server fact, it is hiding a suggestion.
   const decline = () => {
     void reportingWrite('decline that suggestion', () => api.organizeDecline(sessionKey, proposal))

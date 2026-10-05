@@ -21,8 +21,7 @@ import { signalPriority } from '../tasks/taskMeta'
 import { isChannelItem } from '../inbox/inboxMeta'
 import { noteMeta } from '../notifications/notificationMeta'
 
-/** `#/companion`'s non-approval sections (MOBILE-COMPANION `MC-6`, the former S2
- *  T2.1/T2.2 breadth deferred by the 2026-07-26 amendment).
+/** `#/companion`'s non-approval sections.
  *
  *  Four sections, one shape each: read a list, keep it current while the page is open
  *  (`useLiveLane`), render the honest state (error before empty — always), and offer the
@@ -33,8 +32,8 @@ import { noteMeta } from '../notifications/notificationMeta'
  *  WHAT THIS DELIBERATELY IS NOT: a second dashboard. Every section is a SHORT list of
  *  what wants a decision now — not a filterable table, not a detail view, not a place
  *  to create anything. Anything past the decision is a tap through to the real surface,
- *  because a phone-sized reimplementation of `#/loops` would be a fork of the UI and
- *  the plan's §Wrapper tier is explicit that there is no forked UI.
+ *  because a phone-sized reimplementation of `#/loops` would be a fork of the UI, and
+ *  the companion wraps the one UI rather than forking it.
  *
  *  Each list is capped at `LIMIT` rows and says so out loud when it truncates. A
  *  silently-truncated attention list is the same lie as an unreconciled optimistic
@@ -296,7 +295,7 @@ export function TasksSection() {
 // ── Inbox ────────────────────────────────────────────────────────────────────
 //
 // Resolve only — the attention lifecycle (PENDING → SEEN → HANDLED | DISMISSED)
-// through the routes plan 42 owns (`PUT /api/inbox/{id}` with a `status`). No second
+// through the inbox's own routes (`PUT /api/inbox/{id}` with a `status`). No second
 // notion of "dealt with" is minted here, and no reply/draft path: composing a reply is
 // a desk job, deciding whether something still needs one is not.
 export function InboxSection() {

@@ -4,8 +4,8 @@
 `Disposition.REQUEUED`, `dispatch.droppable` and `wakeup.retry_queue` were all shipped, documented
 and unit tested — and `resume_for` had **zero production callers**. Only `wakeup_for` was reachable,
 from `dispatch_fires`, and it always built a `wake`. So its own documented fire-path step (`resolve
-def / **resume target**`, in `firepath`'s header) had no producer, and `WF2LOO-9`'s
-`goal-pursuit-monitor` clause was blocked on a resume target that could not be declared.
+def / **resume target**`, in `firepath`'s header) had no producer, and the bundled
+`goal-pursuit-monitor` workflow was blocked on a resume target that could not be declared.
 
 **And the consumer half was worse than absent.** `executor.drain` never dispatches on
 `Wakeup.kind` — `grep -n kind executor.py` returns exactly one hit, inside a prose docstring. So a
@@ -112,7 +112,7 @@ def test_a_trigger_with_NO_resume_target_still_builds_a_droppable_wake():
 
 
 def test_a_declared_resume_target_builds_a_NON_droppable_resume():
-    """§3.2: "overlap guards must never eat gate answers intended for parked runs." The trigger has
+    """Overlap guards must never eat gate answers intended for parked runs. The trigger has
     asked something — it named a parked run — so the fire is no longer droppable."""
     wakeup = W.wakeup_for(_Fire(_resume_trigger("run-7")), seq=1, now=NOW)
     assert wakeup.kind == W.WakeKind.RESUME.value
@@ -301,7 +301,7 @@ def isolated(tmp_path, monkeypatch):
 
     `workflows.store.config_dir` is patched where the STORE imports it, not only on
     `config.loader`: the store binds `config_dir` at module level, and patching only the loader
-    leaves `store.save()` writing into the real `~/.personalclaw` — this program has paid for that
+    leaves `store.save()` writing into the real `~/.personalclaw` — this codebase has paid for that
     already, and `ALLOWED_RESIDUE` is `frozenset()`.
     """
     home = tmp_path / "home"

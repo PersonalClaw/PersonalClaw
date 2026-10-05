@@ -1,4 +1,4 @@
-"""Built-in / pinned agent model: one availability rule + editable (#53).
+"""Built-in / pinned agent model: one availability rule + editable.
 
 Two behaviors:
   * The availability rule — a pin that is no longer in the active chat set is reported as

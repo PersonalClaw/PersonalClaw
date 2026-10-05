@@ -4,9 +4,9 @@ import { useStreamCoalescer } from './useStreamCoalescer'
 import { applyCoalescedFlush, TextRunOwnership } from './coalesceReducers'
 import type { Segment } from './chatTypes'
 
-/** K44 / issue #548 — a finished text run must not be re-emitted into the next turn.
+/** Issue #548 — a finished text run must not be re-emitted into the next turn.
  *
- *  The original K44 fix guarded ONE branch (`chat_chunk`) with a `breakText` ref whose clearing was
+ *  The original fix guarded ONE branch (`chat_chunk`) with a `breakText` ref whose clearing was
  *  DEFERRED to that branch. Six boundaries — `chat_thinking`, `chat_message` (error), `tool_call`,
  *  `approval`, `chat_segment`, `chat_done` — called a drain-only `flushNow()` without consulting it,
  *  and a drain moves the reveal cursor without emptying the buffer. So a turn whose FIRST frame was

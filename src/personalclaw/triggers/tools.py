@@ -1,16 +1,16 @@
 """The `automation_*` chat-tool namespace.
 
-§4 specifies one namespace replacing `schedule_add/…`, and criterion 2 is its bar: *"When a file
+One namespace replacing `schedule_add/…`, and this is its bar: *"When a file
 in ~/notes changes, summarize it into my knowledge base" is creatable in chat in ONE message.*
 
-S83 shipped the `file` kind's watch runtime and then recorded the honest reason it could not close
-criterion 2: "Criterion 2 needs `automation_create`, which needs somewhere to PUT a `file`
-trigger. There is no unified trigger store." **S87 shipped that store.** Re-measured
+The `file` kind's watch runtime shipped first and could not meet that bar on its own:
+`automation_create` needs somewhere to PUT a `file`
+trigger, and there was no unified trigger store. **That store now exists.** Re-measured
 before writing a line here: a `file` trigger round-trips through `TriggerStore` with zero errors,
 and `SPEC_KEYS` accepts all nine kinds. The blocker is gone, so the tool lands.
 
 **🔴 WHAT THE PROBES FOUND — the per-minute-poll trap.** The only NL schedule path is
-`nl_to_cron`, cron-shaped by construction. Fed criterion 2's own sentence it returns an error,
+`nl_to_cron`, cron-shaped by construction. Fed that very sentence it returns an error,
 which is the *good* case; the bad case is a model asked for a cron expression while handed a
 file-watch request answering `* * * * *`, which validates and silently converts "when a file
 changes" into a per-minute LLM turn. So `nl_kind.route()` decides the KIND first, and a
@@ -19,13 +19,13 @@ before any test existed are recorded in `nl_kind` (a URL mis-routing to `file`, 
 that reached the dedup hint but not the routing check).
 
 **What this owns, and the boundary.** Nine tools over `TriggerStore`: create/list/update/pause/
-resume/run/history/delete, plus `delete_all` (S109 — the scoped bulk delete carried over when the
+resume/run/history/delete, plus `delete_all` (the scoped bulk delete carried over when the
 `schedule_*` aliases retired; it is the only capability those aliases had that this namespace did
 not). It does NOT own the fire path, the tick, dispatch, or
 execution — `automation_run` hands off to the shipped executor rather than re-deriving a
 turn. Keeping those injected is what let the whole chain be driven end to end without a model.
 
-Per §4 + decision 5d, an agent-created trigger is tagged `created_by: agent`, **announced** in the
+An agent-created trigger is tagged `created_by: agent`, **announced** in the
 tool's own result text, and **capped** (default 20 active) — "visible, not silent".
 """
 
@@ -43,12 +43,12 @@ from personalclaw.triggers.standing import last_check, standing
 
 logger = logging.getLogger(__name__)
 
-#: Decision 5d: "`created_by: workflow|agent` triggers are announced to the user on creation and
-#: capped (default 20 active) — visible, not silent." The cap counts ACTIVE agent-made rows only:
+#: `created_by: workflow|agent` triggers are announced to the user on creation and
+#: capped (default 20 active) — visible, not silent. The cap counts ACTIVE agent-made rows only:
 #: a paused one is not doing anything, and counting it would make the cap unrecoverable without
 #: deleting history the user may still want.
 #:
-#: WF2LOO-9 made the number configurable. It was a module constant, so the one bound standing
+#: The number is configurable. It was a module constant, so the one bound standing
 #: between a self-scheduling agent and an unbounded fan-out of clocks could not be tightened by an
 #: operator who wanted 5, nor set to 0 to turn self-scheduling off — the only way to change it was
 #: to edit the source. Read per call, not captured at import, so a PATCH takes effect without a
@@ -257,12 +257,13 @@ PATCHABLE: frozenset[str] = frozenset(
         "model_tier",
         "delivery",
         "failure_delivery",
-        # 🔴 `failure_policy` joins the allowlist. `failure_delivery` has been patchable
-        # since S158 while the policy beside it was not, so `dedupe_hash` — the opt-in
+        # 🔴 `failure_policy` joins the allowlist. `failure_delivery` was already patchable
+        # while the policy beside it was not, so `dedupe_hash` — the opt-in
         # `delivery.repeats_last_failure` gates on — was settable by the MIGRATION and by nothing
         # else. A control only a one-time migration can turn on is not a control.
         #
-        # `autopause_after` rides in the same dict and is a threshold §3.7 acts on, which is why the
+        # `autopause_after` rides in the same dict and is the threshold autopause acts on, which is
+        # why the
         # dashboard handler MERGES one key rather than sending the dict: this allowlist protects the
         # health *fields*, not the keys inside a patchable dict, so a caller that sends
         # `{"dedupe_hash": true}` alone would drop a tuned threshold. See `_update_schedule`.
@@ -390,7 +391,8 @@ def unregistered_action_provider_refusal(workflow: Any) -> AutomationToolResult 
     """Refuse an action whose provider the registry cannot dispatch (#779).
 
     An unregistered provider was created-enabled-armed and then rejected on EVERY dispatch by the
-    gateway — the exact green-row-silent-loop BA-7 exists to prevent. Refused against the LIVE
+    gateway — the exact green-row silent-failure loop this refusal exists to prevent. Refused
+    against the LIVE
     registry so the fix is one edit away, and `_ensure_default_providers_registered` runs first
     because the built-ins register lazily on first action execution (a caller that skipped it would
     refuse every automation).
@@ -589,8 +591,8 @@ def spec_error_refusal(kind: str, spec: Any) -> AutomationToolResult | None:
 def slug_for(name: str, kind: str) -> str:
     """A stable, human-recognizable trigger id.
 
-    `kind:slug` matches the `/api/triggers` facade's namespace, which §7 step 2 calls "the
-    migration map" — an opaque uuid here would break that mapping and give the user an id they
+    `kind:slug` matches the `/api/triggers` facade's namespace, which is also the
+    migration map — an opaque uuid here would break that mapping and give the user an id they
     cannot recognize in their own store.
     """
     base = _SLUG_RE.sub("-", (name or "").strip().lower()).strip("-") or "automation"
@@ -635,8 +637,8 @@ def _active_agent_count(store: Any) -> int:
 
 
 def _origin_harness_for(store: Any) -> str:
-    """This home's stable `machine_id` — the origin stamped on a locally-minted trigger
-    (MULTI-TENANCY-ENTITY TSE2-2). Resolved from the STORE's own home (`base_dir`) so it matches the
+    """This home's stable `machine_id` — the origin stamped on a locally-minted trigger.
+    Resolved from the STORE's own home (`base_dir`) so it matches the
     file the row is written to, falling back to the active `config_dir`; REUSES `durability`'s
     per-machine key and never raises — an unreadable home degrades to ``""`` = "this harness's".
     """
@@ -856,7 +858,7 @@ def create(
     changes: list[str] | None = None,
     catch_up: bool = False,
 ) -> AutomationToolResult:
-    """`automation_create` — §4's NL-friendly constructor. Criterion 2's one message.
+    """`automation_create` — the NL-friendly constructor: one message is enough.
 
     `when` is routed by `nl_kind.route()` BEFORE any cadence conversion, which is the whole point:
     a file-watch request must never reach a component whose only output shape is a cron expression.
@@ -995,7 +997,7 @@ def create(
         active = _active_agent_count(store)
         cap = max_agent_triggers()
         if active >= cap:
-            # Decision 5d's cap. Refusing with the count and the remedy, because "limit reached"
+            # The agent-trigger cap. Refusing with the count and the remedy, because "limit reached"
             # without a number leaves the user unable to tell what to pause.
             return AutomationToolResult(
                 False,
@@ -1005,7 +1007,7 @@ def create(
             )
 
     if resume is not None:
-        # The write side of AUTO-R11's resume targets: this trigger WAKES a parked run
+        # The write side of trigger resume targets: this trigger WAKES a parked run
         # instead of starting a new one. The resume dict becomes `workflow.resume` — the key
         # `wakeup.resume_target_of` reads — and it deliberately REPLACES the inline-action shape:
         # `models._resume_target_issues` treats both-declared as an authoring error, so a given
@@ -1087,7 +1089,7 @@ def create(
         # always meant that.
         enabled=bool(enabled),
         created_by=created_by,
-        # Origin (MULTI-TENANCY-ENTITY TSE2-2): a locally-minted trigger's origin IS this home, so
+        # Origin: a locally-minted trigger's origin IS this home, so
         # it is stamped from the store's `machine_id` at create — never caller-set. Empty → "".
         origin_harness=_origin_harness_for(store),
         spec=resolved_spec,
@@ -1107,7 +1109,7 @@ def create(
         # which made "watch this page and tell me when it ships" a watch that told nobody. Words
         # in `say` are their own delivery, and a resume target's run reports on its own trigger.
         trigger.delivery = INBOX_ROUTE
-    # 🔴 FREEZE THE CAPABILITY SET AT SAVE (decision 7 / R3), when the owner said yes to
+    # 🔴 FREEZE THE CAPABILITY SET AT SAVE, when the owner said yes to
     # this action, through the one door her yes takes (`grants.give`): it grants what the action
     # runs and, for an action that runs a workflow, records the version she allowed. A read-only
     # action gets an empty block either way: the fence permits those without one, and a
@@ -1119,7 +1121,7 @@ def create(
             return AutomationToolResult(False, f"Error: nothing was created: {again.why}")
     # 🔴 ARM A CLOCK TRIGGER ON CREATION. `create` persisted `next_fire_at=""`, and
     # `service.due_ids` only surfaces rows that HAVE one — so every cron created through this
-    # function (the chat tools, and the API from this session) would never fire. Arming at
+    # function (the chat tools, and the API) would never fire. Arming at
     # creation rather than waiting for the next boot sweep is the difference between "runs tonight"
     # and "runs after the user restarts the gateway". An unarmable spec (invalid cron, elapsed
     # one-shot) returns "" and is left alone — `arm` refuses rather than guessing a cadence.
@@ -1155,7 +1157,7 @@ def create(
         trigger.next_fire_at = armed
     saved = store.upsert(trigger)
 
-    # §4 + decision 5d: ANNOUNCED, not silent. The routing reason rides along so a wrong route is
+    # ANNOUNCED, not silent. The routing reason rides along so a wrong route is
     # correctable by the user instead of mysterious.
     lines = [f"Created automation '{saved.name}' ({saved.id}), kind {saved.kind}."]
     if because:
@@ -1240,7 +1242,7 @@ def list_automations(store: Any, *, kind: str = "", state: str = "") -> Automati
     two automations that had run that day, and said a third, which ran on its own, still waited
     for approval.
 
-    Broken rows are INCLUDED. `store.load()` keeps a row it could not parse (S87's lenient-parse
+    Broken rows are INCLUDED. `store.load()` keeps a row it could not parse (its lenient-parse
     contract), and hiding it here would make a broken automation invisible in the one place an
     agent looks to debug why nothing fired. Times are in the owner's zone, the one the turn's date
     line is written in (`schedule.get_local_tz`). A store that cannot be read is refused
@@ -1582,9 +1584,9 @@ def update(
 def set_paused(store: Any, *, trigger_id: str, paused: bool) -> AutomationToolResult:
     """`automation_pause` / `automation_resume`.
 
-    Resume goes through `store.set_enabled`, which REFUSES to enable a row that failed to parse
-    (S87). That refusal is surfaced rather than swallowed: silently leaving a "resumed" automation
-    disabled is the class of lie this program keeps hunting.
+    Resume goes through `store.set_enabled`, which REFUSES to enable a row that failed to parse.
+    That refusal is surfaced rather than swallowed: silently leaving a "resumed" automation
+    disabled is the class of lie this codebase keeps hunting.
 
     A resume of a trigger whose `max_fires` budget is SPENT restores the budget. An event trigger
     switches itself off when its last allowance fires ("tell me the NEXT time X"), and resuming it
@@ -1685,7 +1687,7 @@ def _awaiting_review_refusal(trigger: Any) -> AutomationToolResult:
 
 
 def delete(store: Any, *, trigger_id: str, confirm: bool = False) -> AutomationToolResult:
-    """`automation_delete` — §4: `(id, confirm: true)`.
+    """`automation_delete` — `(id, confirm: true)`.
 
     The confirm flag is enforced, not decorative. Deleting an automation the user built and cannot
     recover is exactly the irreversible action a tool call should not be able to take by accident.
@@ -1711,7 +1713,7 @@ def delete(store: Any, *, trigger_id: str, confirm: bool = False) -> AutomationT
 def delete_all(
     store: Any, *, created_by: str = "agent", confirm: bool = False
 ) -> AutomationToolResult:
-    """`automation_delete_all` — bulk delete, SCOPED to one creator (S109).
+    """`automation_delete_all` — bulk delete, SCOPED to one creator.
 
     Carries forward the one capability `schedule_remove_all` had that no `automation_*` tool did.
     That matters because the alias was not just a convenience: it enforced a real access control —
@@ -1772,10 +1774,10 @@ def delete_all(
 MANUAL_BYPASSES: frozenset[str] = frozenset({"spacing", "rate", "quiet", "duty"})
 
 #: 🔴 Gates a manual fire may NEVER skip, spelled out as data so the intent survives a refactor.
-#: `screen` is the prompt-injection boundary (criterion 6) and `capability` is the frozen action
+#: `screen` is the prompt-injection boundary and `capability` is the frozen action
 #: set — a "the user asked for it" bypass on either would make the trust boundary optional, which
-#: is precisely the escalation route criterion 6 is written against. `budget` stays because §4 says
-#: "never rate floors": a manual fire that could spend past the cap would make the cap advisory.
+#: is precisely the escalation route that boundary is written against. `budget` stays because
+#: a manual fire that could spend past the cap would make the cap advisory.
 #:
 #: `incident` is listed for the reason the LEGACY path already recorded, verbatim: "a `/test` that
 #: ignored incident mode would run unattended work during the incident the kill switch was thrown
@@ -1859,7 +1861,7 @@ def run(
     runner: Any = None,
     yours: bool = True,
 ) -> AutomationToolResult:
-    """`automation_run` and `automation_dry_run` — §4's manual fire and observe-mode replay.
+    """`automation_run` and `automation_dry_run` — the manual fire and observe-mode replay.
 
     *yours* says whose run it is (`triggers.run_source`): yours, a run by hand, or an agent's (the
     chat tools, `mcp_automation`), which is the automation firing (:func:`asked_gate_plan`).
@@ -1871,7 +1873,7 @@ def run(
     grant (`triggers.grants`): a trigger its action is not allowed to run is refused, a row a
     legacy import brought over and the owner has not switched on included.
 
-    `runner` is injected — this tool does NOT own the turn (S90 does). A `dry_run` never calls it
+    `runner` is injected — this tool does NOT own the turn. A `dry_run` never calls it
     at all, which is the property that makes observe-mode safe to offer. It answers as the
     gateway's `/run` does, and `ok` is what that answer says (:func:`_run_outcome`): this reported
     `ok` for every answer, a refused or failed run included.
@@ -2004,10 +2006,10 @@ def history(
     schedule_runs: list[dict[str, Any]] | None = None,
     hooks: list[Any] | None = None,
 ) -> AutomationToolResult:
-    """`automation_history` — §4: "run/fire rows incl. typed outcomes (agents self-debug)".
+    """`automation_history` — run/fire rows incl. typed outcomes, so agents can self-debug.
 
-    Projects through S84's `unified_feed` rather than a second projection, so a `file` trigger, a
-    hook and a cron report the SAME record shape here as in the Runs inbox (criterion 4).
+    Projects through `unified_feed` rather than a second projection, so a `file` trigger, a
+    hook and a cron report the SAME record shape here as in the Runs inbox.
 
     **Measured, and it corrected this function's first draft:** `history` exposes no reader — no
     `recent_fires`, no store. `unified_feed` is a pure projection over source rows the CALLER

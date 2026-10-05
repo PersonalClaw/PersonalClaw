@@ -41,7 +41,7 @@ user has seen :func:`preview_rewind` and confirmed.
 
 **Secrecy floor (:data:`NEVER_CAPTURE_GLOBS`).** ``.env`` and its siblings are never copied
 into the store — not filtered on the way out, never written in the first place. This is the
-restrictive reading of a plan that says only "``.env`` files were never captured": the store
+restrictive reading of "``.env`` files are never captured": the store
 lives under the home, is covered by snapshots and exports, and a captured credential would
 outlive the file the user deleted. The consequence is stated rather than hidden: a skipped
 path is recorded in the turn manifest as ``skipped="secret"`` (the *path*, never the bytes)
@@ -191,7 +191,7 @@ def _bounds() -> _Bounds:
     Fail-**open** on a corrupt/missing config, matching the shared convention for a
     convenience surface: a checkpoint store that refuses to record because config would not
     parse would silently remove the safety net a user believes they have. The defaults are
-    the plan's (200MB / 50 turns).
+    200MB / 50 turns.
     """
     try:
         from personalclaw.config.loader import AppConfig
@@ -734,7 +734,7 @@ def _turn_numbers(session_key: str) -> list[int]:
 
 
 def recorded_file_entries(session_key: str, *, max_turns: int = 20) -> list[dict]:
-    """This session's recorded pre-edit file entries, oldest turn first (CE2-10).
+    """This session's recorded pre-edit file entries, oldest turn first.
 
     A read-only projection of the turn manifests, exposed because the resume account needs the one
     fact only this store holds: which files this session's own turns were about to mutate, and

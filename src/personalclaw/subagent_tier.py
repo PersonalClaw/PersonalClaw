@@ -37,7 +37,7 @@ run's calls (which its runtime answers itself) counted nowhere: its live state r
 last tool while it worked, and its budget never held.
 
 **Where it comes from.** :func:`tier_for` builds a subagent's tier from what its spawn was handed:
-its capability class (§4.1), the files it may change and, for an automation's own agent, the
+its capability class, the files it may change and, for an automation's own agent, the
 message it may send its owner. An automation's step is turned into those by
 ``automation_posture.agent_run_policy``, which its Allow is said from too.
 
@@ -531,7 +531,7 @@ def _tier(capability: str, *, owner_notices: bool, may_change: tuple[str, ...]) 
     from personalclaw.guardrails.policy import TOOL_CUSTOM, TOOL_READ, tool_grant_posture
     from personalclaw.subagent import CAPABILITY_RESEARCH
 
-    # The class expressed as a TOOL-GRANT tier (§3 ``tool_grants``), intersected with the operator
+    # The class expressed as a TOOL-GRANT tier (``tool_grants``), intersected with the operator
     # ceiling. `research` → `read`, `mutating` → `read_write`; a ceiling's `tools` scope may narrow
     # either to `read` or to a `custom` allowlist, which is the only thing standing between a
     # composed ceiling value and a control nobody reads.

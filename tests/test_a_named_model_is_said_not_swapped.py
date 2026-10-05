@@ -134,7 +134,7 @@ async def test_a_step_on_a_broken_binding_fails_naming_the_model_it_asked_for(ac
 
 @pytest.mark.asyncio
 async def test_best_of_n_on_a_broken_binding_samples_nothing_and_names_the_model(active):
-    """🔴 Red on main, the case the model-calls lane measured: every sample was answered by the
+    """🔴 Red on main: every sample was answered by the
     first registered provider and the slate picked a winner, so the run read "complete" on a model
     nobody chose. Now no sample runs, and the failure the step shows names the model and the fix."""
     from personalclaw.guardrails.calls import capture_model_calls

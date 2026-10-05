@@ -1,4 +1,4 @@
-"""Knowledge ingestion node-graph engine (#30) — graph + executor + runner."""
+"""Knowledge ingestion node-graph engine — graph + executor + runner."""
 
 from __future__ import annotations
 
@@ -1269,7 +1269,7 @@ def test_graph_for_known_types():
     assert "passthrough" in graph_for("gist").nodes
 
 
-# ── P12 TIER-2 semantic dedup — the WIRED path (store prefilter + runner stage) ──
+# ── semantic dedup — the WIRED path (store prefilter + runner stage) ──
 
 
 class _StubEmbedder:
@@ -1355,7 +1355,7 @@ def test_dedup_respects_the_series_date_gate(store):
 
 
 def test_dedup_noop_without_embedder(store):
-    """No embedder / unavailable → the stage is inert (behaves exactly as pre-P12), and it
+    """No embedder / unavailable → the stage is inert (behaves exactly as without dedup), and it
     says so: ``skipped``, never ``done``. Nothing was compared, so nothing may be claimed."""
     from personalclaw.knowledge.pipeline.runner import _dedup
 

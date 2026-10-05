@@ -1,4 +1,4 @@
-# The scheduled, credential-free rail over anonymous GHCR pull — DIST-14 clause 2.
+# The scheduled, credential-free rail over anonymous GHCR pull.
 #
 # `release.yml` publishes `personalclaw-gateway` and `personalclaw-web`, and its own smoke
 # pull is CREDENTIALED — which is exactly why a fully green board never noticed that both

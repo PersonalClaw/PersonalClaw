@@ -31,7 +31,7 @@ from personalclaw.memory_graph import (
 logger = logging.getLogger(__name__)
 
 # Key prefixes whose records are *about* a subject rather than merely mentioning
-# one (§1.2 `about`). Verified against memory_record._kind_from_key.
+# one (the `about` link type). Verified against memory_record._kind_from_key.
 _ABOUT_PREFIXES = ("user.persona.", "pref.facet.identity.")
 
 # A `project.<slug>.*` key names its project structurally, so a mention of that
@@ -43,7 +43,7 @@ _REFERENCE = re.compile(r"\b(?:https?://|[a-z]+\.[a-z0-9_]+\.[a-z0-9_.]+)", re.I
 
 
 def classify_link(key: str, text: str, mention: Mention, index_names: dict) -> str:
-    """The typed-edge cascade (§1.1 step 3). Returns one `LINK_TYPES` member.
+    """The typed-edge cascade. Returns one `LINK_TYPES` member.
 
     Ordered most-specific-first; the first cue that fits wins.
     """
@@ -299,7 +299,7 @@ def seed_all(graph: MemoryGraph, *, knowledge_db_path=None) -> dict:
     return {"from_facts": facts, "from_knowledge": knowledge}
 
 
-# ── Backfill (§ Session 1) ─────────────────────────────────────────────────────
+# ── Backfill ───────────────────────────────────────────────────────────────────
 
 
 def backfill(graph: MemoryGraph, *, batch_size: int = 200, limit: int | None = None) -> dict:

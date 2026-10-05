@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 def compose_item_text(title: str, summary: str | None, content: str | None = None) -> str:
     """Build the WHOLE-ITEM vector text for a knowledge item: title + summary.
 
-    The 1000-char body top-up that used to anchor a thin/absent summary is gone (KL-9,
+    The 1000-char body top-up that used to anchor a thin/absent summary is gone (a
     clean break): body-level semantic recall now lives in the chunk index (``chunking``
     + the ``chunks`` table), which embeds real structural slices of the document rather
     than an arbitrary title-length prefix. The item vector stays a compact

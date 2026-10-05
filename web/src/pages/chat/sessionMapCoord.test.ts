@@ -9,7 +9,7 @@ import { sessionMapEntries } from './sessionMap'
 // registry key and the entry coordinates are one rule — `markCoordOf` — and this file is the rail
 // that keeps them one.
 //
-// 🔴 WHY THIS IS A REGRESSION TEST AND NOT A TAUTOLOGY. Before SSM-11 the page registered turn
+// 🔴 WHY THIS IS A REGRESSION TEST AND NOT A TAUTOLOGY. Before this fix the page registered turn
 // nodes under the ARRAY POSITION (`turnNodes.current.set(i, el)`) while every mark carried
 // `visibleIndex`. Those two agree only on a transcript `hydrateTurns` did not collapse — which
 // every existing Session Map test fixture happens to be, because each hand-written turn sets
@@ -65,7 +65,7 @@ describe('the Session Map jump coordinate', () => {
   })
 
   // The Activity → Index anchors used to be asserted here too, as a SECOND list that had to carry
-  // the identical coordinates (the clause). SSM-13 deleted that list — the map is the session's
+  // the identical coordinates. That list is gone — the map is the session's
   // only index now — so there is no second coordinate to keep in step and the claim retired with it.
   // The `🔑` case above covers every entry — one per user message, which is what those anchors mirrored.
   // `indexTabRetired.test.tsx` is the rail that fails if a second index surface comes back.

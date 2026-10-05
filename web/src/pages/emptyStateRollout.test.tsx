@@ -11,8 +11,8 @@ import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── ONE empty-state primitive, rolled out to the seven surfaces ─────────────────────────
 //
-// 🔑 THE DECISION THIS FILE PINS. OU-6 is written as "web/src/ui/EmptyState.tsx exists", which
-// reads as a greenfield primitive. It is not one: `EmptyState` has existed since long before
+// 🔑 THE DECISION THIS FILE PINS. Asking for "web/src/ui/EmptyState.tsx exists" reads as asking
+// for a greenfield primitive. It is not one: `EmptyState` has existed since long before
 // this change, exported from the LIST KIT (`ui/ListScaffold.tsx`) beside its two siblings
 // `LoadError` and `ListSkeleton`, and it is already the answer at ~30 call sites. Creating a
 // second component at `ui/EmptyState.tsx` would be a dual path — two components answering one
@@ -23,9 +23,9 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //     "Co-located on purpose: the two are alternative answers to the same condition, and a
 //      surface reaching for one should see the other."
 //
-// So the change's FILENAME clause is satisfied by not honouring it, and its PRODUCT clause —
+// So the new FILENAME is deliberately not created, and the PRODUCT goal —
 // every one of the seven surfaces explains itself and offers one working action — is what this
-// file holds. Recorded as a DEVIATION in the plan's execution log.
+// file holds.
 //
 // The two other empty-shaped components are NOT dual paths; each answers a different condition
 // and says so in its own doc:
@@ -74,9 +74,9 @@ function actionExprs(src: string): string[] {
   return out
 }
 
-/** The seven surfaces OU-6 names, each with the file that owns its empty branch.
+/** The seven surfaces of the rollout, each with the file that owns its empty branch.
  *
- *  Two of the seven are not what the plan's prose implies, and the names are kept honest here
+ *  Two of the seven are not what their names imply, and the names are kept honest here
  *  rather than quietly re-scoped:
  *    · "Loops" has no nav tile — loops launch from within Projects — but `#/loops` is routable
  *      and `LoopsListPage` is the list a user lands on.
@@ -130,7 +130,7 @@ describe('exactly one general empty-state primitive', () => {
   })
 })
 
-describe('the seven OU-6 surfaces route their empty case through the primitive', () => {
+describe('the seven rollout surfaces route their empty case through the primitive', () => {
   for (const { name, file, primitive } of SURFACES) {
     it(`${name} (${file}) renders <${primitive}>`, () => {
       const src = read(file)
@@ -144,7 +144,7 @@ describe('the seven OU-6 surfaces route their empty case through the primitive',
 
     it(`${name} offers a working action on the genuinely-empty case`, () => {
       const src = read(file)
-      // "One seeded working action each" is the change's product clause. For six surfaces that is
+      // "One seeded working action each" is the product goal. For six surfaces that is
       // an `action={{ … onClick … }}` on an EmptyState; for Triggers it is the preset grid,
       // whose cards ARE the actions (each seeds the create flow with a prefill).
       if (primitive === 'PresetEmptyState') {
@@ -174,7 +174,7 @@ describe('the seven OU-6 surfaces route their empty case through the primitive',
 
 // ── The CROSS-SURFACE sweep ─────────────────────────────────────────────────────────────
 //
-// OU-6 (above) rolled ONE primitive out to seven surfaces. PEP-2 asks a different question of
+// The rollout above put ONE primitive on seven surfaces. This sweep asks a different question of
 // every list surface in the app: does a user who lands on it EMPTY find a way in?
 //
 // The census below is the change's deliverable, and it is a census rather than a spot-check on
@@ -197,7 +197,7 @@ describe('the seven OU-6 surfaces route their empty case through the primitive',
 //
 // 🚧 THE TRIGGERS FENCE, NARROWED 2026-08-28 — its original reason has EXPIRED. It read:
 // "`pages/triggers/*` and the Automations surface were being changed concurrently, so this
-// change did not touch them." TSE-4 is ✅ done (the TSE plan (internal, not in this repo)) and no open PR touches
+// change did not touch them." That concurrent work has landed and no open PR touches
 // `pages/triggers/*`, so concurrency is no longer a reason to leave two files unclassified — and an
 // `offLimits` entry whose stated cause is gone is indistinguishable from an unexamined surface.
 //
@@ -216,14 +216,14 @@ describe('the seven OU-6 surfaces route their empty case through the primitive',
 //       code does carry an on-ramp (`PresetEmptyState` + `TRIGGER_PRESETS`), so 'on-ramp' would pass
 //       this file's own assertion while being unreachable in practice. Classifying it either way
 //       would assert something false, and whether those rows are hidden or counted separately is an
-//       owner scope call (tracked as TC-8). **Do not classify it to close the hole.**
-const PEP2_CENSUS: {
+//       open product question. **Do not classify it to close the hole.**
+const EMPTY_STATE_CENSUS: {
   surface: string
   file: string
   verdict: 'on-ramp' | 'produced' | 'derived' | 'degenerate'
   why: string
 }[] = [
-  // ── fixed by PEP-2 ──
+  // ── fixed by this sweep ──
   { surface: 'Workflows › Runs', file: 'pages/workflows/WorkflowsListPage.tsx', verdict: 'on-ramp',
     why: 'Runs is the DEFAULT tab, so this is the newcomer\'s first view of Workflows. Its one CTA went to the definitions LIST — twenty-odd machine names. Now a PresetEmptyState of bundled-template cards that seed the existing start() flow, with browse kept as the footer.' },
   { surface: 'Knowledge › Intents', file: 'pages/knowledge/KnowledgeListPage.tsx', verdict: 'on-ramp',
@@ -232,7 +232,7 @@ const PEP2_CENSUS: {
     why: 'Hint named the Files page ("save a file as an artifact") with no way to get there. Now a Browse-files action into that existing flow; the prop is required so a call site cannot ship the fact without the way in.' },
   // ── already had one ──
   { surface: 'Tasks', file: 'pages/tasks/TasksListPage.tsx', verdict: 'on-ramp',
-    why: 'New task → onCreate. PEP-2\'s scope asked for TEMPLATE cards here; there is no task-template catalog in the backend to source them from (src/personalclaw/tasks/ ships models+handlers, no templates), and authoring card copy would be the drift the scope forbids. Nothing changed.' },
+    why: 'New task → onCreate. TEMPLATE cards were asked for here; there is no task-template catalog in the backend to source them from (src/personalclaw/tasks/ ships models+handlers, no templates), and authoring card copy would be the drift this sweep forbids. Nothing changed.' },
   { surface: 'Loops', file: 'pages/loops/LoopsListPage.tsx', verdict: 'on-ramp', why: '"Start a loop" — the same handler the header CTA uses.' },
   { surface: 'Knowledge › Library', file: 'pages/knowledge/KnowledgeListPage.tsx', verdict: 'on-ramp', why: '"Add knowledge" — onCreate, the shared create route.' },
   { surface: 'Knowledge › Decisions', file: 'pages/knowledge/DecisionJournal.tsx', verdict: 'on-ramp',
@@ -283,19 +283,19 @@ const PEP2_CENSUS: {
   { surface: 'Tools', file: 'pages/tools/ToolsPage.tsx', verdict: 'degenerate',
     why: 'Built-in action tools always exist, so a successful index read cannot be empty — and the failed read already branches to LoadError (the swallow was removed earlier). When importable MCP servers exist, ImportSuggestions is the on-ramp.' },
   { surface: 'Knowledge › Add source', file: 'pages/knowledge/SourceCreatePage.tsx', verdict: 'degenerate', why: '"No source kinds are available" means the backend registered no providers.' },
-  // ── AGENT-ROOMS AR-8 ──
+  // ── agent rooms ──
   { surface: 'Chat › Rooms', file: 'pages/chat/RoomsScope.tsx', verdict: 'on-ramp',
     why: 'Two empty branches, and they are different facts. Zero rooms → "New room", which opens the inline title form on this page and navigates into the room it just made; that is the on-ramp. The OTHER branch is the feature being switched off (the list answers `{"enabled": false}`, a decided 200), and its action goes to Settings › Chat — the only place that can turn it on. Rendering that one as a LoadError would have told a user their rooms are broken when they are merely off.' },
   { surface: 'Chat › Room', file: 'pages/chat/RoomView.tsx', verdict: 'on-ramp',
     why: 'A room with no MEMBERS cannot answer anything, so its empty transcript offers "Open members" — the panel that adds one — rather than inviting a message nobody will hear. A room WITH members and no messages has nothing to create and no action: the composer is already on screen and the hint says to use it, which is the Secrets-panel shape (the create surface IS the page). The two sibling states are the same `rooms_disabled` / `room_not_found` split as the list.' },
   { surface: 'Chat › Room members', file: 'pages/chat/RoomMembersPanel.tsx', verdict: 'on-ramp',
     why: '"Add a member" opens the picker in place — an inline form on the same panel, so the on-ramp is a disclosure rather than a navigation, exactly as Settings › Secrets is a focus rather than a navigation. Suppressed on an ARCHIVED room, where the backend refuses the add: an on-ramp into a refusal is worse than none.' },
-  // ── EI-10 ──
+  // ── the secrets vault ──
   { surface: 'Settings › Secrets', file: 'pages/settings/SecretsPanel.tsx', verdict: 'on-ramp',
     why: '"Add your first secret" focuses the add form\'s name field. This collection\'s create surface IS that form, already on the page, so the on-ramp is a focus rather than a navigation — there is nowhere to navigate to. The hint sentence is the SERVER\'s (`empty_hint`), so the CLI and the dashboard cannot drift on what an empty vault means.' },
 ]
 
-describe('PEP-2 · every list surface\'s genuinely-empty branch is classified', () => {
+describe('on-ramp sweep · every list surface\'s genuinely-empty branch is classified', () => {
   it('classifies every file that renders an empty state (no surface goes unswept)', () => {
     // THE VACUITY FLOOR, and the one that matters most here. A census is only evidence if it
     // covers the population, so this derives the population FROM THE TREE — every file under
@@ -309,19 +309,19 @@ describe('PEP-2 · every list surface\'s genuinely-empty branch is classified', 
     }
     // The population is real, not an empty set that would make the diff below vacuous.
     expect(rendering.size, 'files rendering an empty state').toBeGreaterThanOrEqual(28)
-    const classified = new Set(PEP2_CENSUS.map((r) => r.file))
+    const classified = new Set(EMPTY_STATE_CENSUS.map((r) => r.file))
     // 🚧 The Automations/triggers surfaces are deliberately out of this change's fence (see the
     // header): they are named here so the diff is honest rather than silently short.
-    // Narrowed 2026-08-28: `WeekGridView` is classified above. Only the file with an open owner
-    // question (TC-8 — the preset grid is unreachable because a fresh home is never trigger-empty)
+    // Narrowed 2026-08-28: `WeekGridView` is classified above. Only the file with an open product
+    // question (the preset grid is unreachable because a fresh home is never trigger-empty)
     // is still fenced, and the header says why.
     const offLimits = new Set(['pages/triggers/TriggersListPage.tsx'])
     const unswept = [...rendering].filter((f) => !classified.has(f) && !offLimits.has(f))
-    expect(unswept, 'every empty-state file needs a PEP-2 verdict').toEqual([])
+    expect(unswept, 'every empty-state file needs a census verdict').toEqual([])
   })
 
   it('every "on-ramp" verdict is backed by a real action in the file', () => {
-    for (const row of PEP2_CENSUS.filter((r) => r.verdict === 'on-ramp')) {
+    for (const row of EMPTY_STATE_CENSUS.filter((r) => r.verdict === 'on-ramp')) {
       const src = read(row.file)
       // Either an `action={… onClick …}` (the EmptyState shape, conditional or object-literal —
       // `actionExprs` admits both) or a preset grid whose cards ARE the actions.
@@ -334,21 +334,21 @@ describe('PEP-2 · every list surface\'s genuinely-empty branch is classified', 
   it('records a reason for every non-defect, and no verdict is a bare label', () => {
     // The change's rule that a surface with nothing to create is NOT a defect only holds if the
     // reason is written down — otherwise "produced" is indistinguishable from "unexamined".
-    for (const row of PEP2_CENSUS) {
+    for (const row of EMPTY_STATE_CENSUS) {
       expect(row.why.length, `${row.surface} needs a stated reason`).toBeGreaterThan(15)
       expect(existsSync(join(SRC, row.file)), `${row.file} must exist`).toBe(true)
     }
     // Each verdict class is actually populated — a census where every row says 'on-ramp' would
     // pass the assertions above while having examined nothing.
     for (const v of ['on-ramp', 'produced', 'derived', 'degenerate'] as const) {
-      expect(PEP2_CENSUS.filter((r) => r.verdict === v).length, `no ${v} rows`).toBeGreaterThan(0)
+      expect(EMPTY_STATE_CENSUS.filter((r) => r.verdict === v).length, `no ${v} rows`).toBeGreaterThan(0)
     }
   })
 })
 
-describe('PEP-2 · the three surfaces this change changed', () => {
+describe('on-ramp sweep · the three surfaces this change changed', () => {
   it('Workflows sources its preset cards from the bundled templates, not from new copy', () => {
-    // The scope's constraint: "preset source = the bundled workflow templates surfaced as cards,
+    // The design constraint: "preset source = the bundled workflow templates surfaced as cards,
     // no new copy that drifts from the templates". So the card's summary and description must be
     // READ OFF the definition. A catalog that hardcoded either would satisfy "shows cards" while
     // reintroducing the drift the constraint exists to prevent.
@@ -378,7 +378,7 @@ describe('PEP-2 · the three surfaces this change changed', () => {
   it('Workflows keeps a non-preset branch for the no-templates install', () => {
     const src = read('pages/workflows/WorkflowsListPage.tsx')
     expect(src, 'the preset grid must be gated on there BEING presets').toMatch(/presets\.length > 0/)
-    expect(src, 'and the pre-PEP-2 empty state must survive as the fallback').toMatch(/title="No workflow runs yet"[\s\S]{0,400}?action=\{\{ label: 'Browse definitions'/)
+    expect(src, 'and the original empty state must survive as the fallback').toMatch(/title="No workflow runs yet"[\s\S]{0,400}?action=\{\{ label: 'Browse definitions'/)
   })
 
   it('Knowledge intents share ONE create seed between the header and the empty state', () => {
@@ -429,8 +429,8 @@ describe('PEP-2 · the three surfaces this change changed', () => {
   })
 })
 
-describe('PEP-2 · the expert path is unchanged when the list is not empty', () => {
-  // The clause that is easiest to claim and hardest to prove: a change gated on emptiness must be
+describe('on-ramp sweep · the expert path is unchanged when the list is not empty', () => {
+  // The property that is easiest to claim and hardest to prove: a change gated on emptiness must be
   // INVISIBLE to a user with data. Both directions are asserted from the same render, because a
   // test that only checks the empty case cannot tell a gate from an unconditional render.
   const defs = [

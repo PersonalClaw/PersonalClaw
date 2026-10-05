@@ -280,7 +280,7 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     from personalclaw.dashboard.handlers.model_waits import register_model_waits_routes
 
     register_model_waits_routes(app)
-    # Learning Flywheel §6.1 — the Proposal Inbox + the staging week panel. Its accept route is the
+    # The learning flywheel — the Proposal Inbox + the staging week panel. Its accept route is the
     # HTTP half of the human-installs invariant: the actor is derived from the request, never the
     # body, so an app-scoped token cannot name itself a reviewer.
     from personalclaw.dashboard.handlers.learning import register_learning_routes
@@ -329,12 +329,12 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     app.router.add_get("/api/skills/search", api_skills_search)
     app.router.add_get("/api/skills/marketplace/detail", api_skills_marketplace_detail)
     app.router.add_post("/api/skills/install", api_skills_install)
-    # Ephemeral session-skill drafts (skill-ephemeral-promotion) — literal
+    # Ephemeral session-skill drafts — literal
     # 'ephemeral' segment precedes the catch-all /{name} routes below.
     app.router.add_get("/api/skills/ephemeral/{session}", api_ephemeral_skills_list)
     app.router.add_post("/api/skills/ephemeral/{session}/promote", api_ephemeral_skill_promote)
     app.router.add_delete("/api/skills/ephemeral/{session}/{slug}", api_ephemeral_skill_discard)
-    # Skill-proposals inbox (skill-evolution-proposal-only) — propose-only review.
+    # Skill-proposals inbox — propose-only review.
     app.router.add_get("/api/skills/proposals", api_skill_proposals_list)
     app.router.add_get("/api/skills/proposals/{id}", api_skill_proposal_detail)
     app.router.add_post("/api/skills/proposals/{id}/accept", api_skill_proposal_accept)
@@ -351,7 +351,7 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     app.router.add_post("/api/skills/{name}/verify", api_skill_verify)
     app.router.add_delete("/api/skills/{name}", api_skills_delete)
 
-    # App Platform (A4) — lifecycle REST + backend reverse-proxy.
+    # App Platform — lifecycle REST + backend reverse-proxy.
     from personalclaw.dashboard.handlers.apps import register_app_routes
 
     register_app_routes(app)
@@ -437,7 +437,7 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
 
     register_stt_routes(app)
 
-    # Lexicon / Vocabulary (LEX.6): terms + learned corrections
+    # Lexicon / Vocabulary: terms + learned corrections
     from personalclaw.lexicon.handlers import register_lexicon_routes
 
     register_lexicon_routes(app)
@@ -512,7 +512,7 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     app.router.add_post(
         "/api/memory/slots/{name}/lines/retire", handlers.api_memory_slot_line_retire
     )
-    # C15 — the facet overrides. `{key:.+}` because a facet key is dot-separated
+    # The facet overrides. `{key:.+}` because a facet key is dot-separated
     # (`pref.facet.style.<md5>`) and the default segment match would stop at the first dot.
     app.router.add_get("/api/memory/facets", handlers.api_memory_facets)
     app.router.add_post("/api/memory/facets/{key:.+}/pin", handlers.api_memory_facet_pin)
@@ -542,7 +542,7 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     app.router.add_post("/api/prompts/preview", handlers.api_prompt_preview)
     app.router.add_get("/api/prompts/syntax", handlers.api_prompt_syntax)
     app.router.add_post("/api/prompts/{name:.+}/render", handlers.api_prompt_render)
-    # Runnable "campaign template" launch (#17) — render + create + start a loop. Sits
+    # Runnable "campaign template" launch — render + create + start a loop. Sits
     # with the other {name:.+}/<verb> routes, BEFORE the bare {name:.+} catch-all.
     app.router.add_post("/api/prompts/{name:.+}/launch", handlers.api_campaign_template_launch)
     app.router.add_put("/api/prompts/{name:.+}", handlers.api_prompt_save)
@@ -616,7 +616,7 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     app.router.add_post("/api/autonomy/undo", handlers.api_autonomy_undo)
     app.router.add_get("/api/dashboard/config", handlers.api_dashboard_config)
     app.router.add_put("/api/dashboard/config", handlers.api_dashboard_config)
-    # Dashboard-as-views registry (AMBIENT-SURFACES §1 / A2-1). Literal /views first,
+    # Dashboard-as-views registry. Literal /views first,
     # then the {view_id} routes + tile sub-routes; tiles/resolve is registered before
     # the bare {view_id} tiles POST so the more-specific literal wins. Presets are
     # read-only (PUT/DELETE on a preset → 403).
@@ -714,11 +714,11 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     from personalclaw.dashboard import session_bulk, session_starters
 
     session_bulk.register_routes(app)
-    # Session templates + transcript export (S3). The literal `templates` segment has
+    # Session templates + transcript export. The literal `templates` segment has
     # the same capture hazard as `bulk` above, so it registers here too.
     session_starters.register_routes(app)
-    # The calling session's bound Project, keyed off `X-Session-Key` (ACP-AGENT-PARITY
-    # §2.6 gap 10). An ACP CLI's tools run in a separate `mcp-core` process where the
+    # The calling session's bound Project, keyed off `X-Session-Key`.
+    # An ACP CLI's tools run in a separate `mcp-core` process where the
     # native runtime's per-turn contextvar is empty, so `artifact_save` asks the gateway
     # instead of having a new argument threaded through the protocol. Same literal-segment
     # capture hazard as `bulk`/`templates` above, hence this position — and `bound-project`
@@ -874,7 +874,7 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     app.router.add_delete("/api/chat/tags/{id}", chat.api_chat_tag_delete)
     app.router.add_put("/api/chat/sessions/{session}/tags", chat.api_chat_session_tags)
     app.router.add_post("/api/chat/sessions/{session}/drop", chat.api_chat_session_drop)
-    # Suggested organization (SM T2.1) — the GET is read-only; only /accept mutates.
+    # Suggested organization — the GET is read-only; only /accept mutates.
     from personalclaw.dashboard.handlers import session_organize as _sess_org
 
     app.router.add_get(
@@ -1145,7 +1145,7 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
 
     register_doc_comment_routes(app)
 
-    # Workflows — the v2 run/def API (WORKFLOWS-V2 Slice 7a) over the same
+    # Workflows — the v2 run/def API over the same
     # `workflows.service` the chat tools use, so the two surfaces cannot diverge.
     from personalclaw.workflows.handlers import register_workflow_routes
 
@@ -1153,7 +1153,7 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
 
     # The unified Loop engine — ONE /api/loops route family for every kind
     # (general/goal/code/design). Replaces the legacy /api/loops + /api/code routes
-    # at the cutover (Slice 2e): the legacy loops/ + code/ packages are deleted.
+    # at the cutover: the legacy loops/ + code/ packages are deleted.
     from personalclaw.dashboard.handlers.loop_routes import register_unified_loop_routes
 
     register_unified_loop_routes(app)

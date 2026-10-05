@@ -1,4 +1,4 @@
-"""Tests for the worktree fan-out benchmark + §1.1 measure-first gate.
+"""Tests for the worktree fan-out benchmark + its measure-first gate.
 
 The gate decides whether a whole change gets built, so the tests that matter are the ones
 that keep it from being talked into a verdict: the near-boundary band, the too-small-repo case, and
@@ -89,11 +89,11 @@ class TestLogLineContract:
 
 
 class TestGate:
-    def test_a_unanimously_slow_arm_proceeds_to_hc2(self):
+    def test_a_unanimously_slow_arm_proceeds(self):
         v = wb.evaluate_gate([4238, 6144, 9000, 12030], repo_files=20_000, width=4)
         assert v.verdict == wb.VERDICT_PROCEED
         assert v.conclusive
-        assert any("proceed to HC-2" in n for n in v.notes)
+        assert any("is justified — proceed" in n for n in v.notes)
 
     def test_a_unanimously_fast_arm_skips_and_rescopes(self):
         v = wb.evaluate_gate([276, 303, 250, 288], repo_files=20_000, width=4)

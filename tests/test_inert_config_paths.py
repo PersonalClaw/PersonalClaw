@@ -8,7 +8,7 @@ was the `_meta` help text, which is the settings-copy surface a user actually re
 
 Five of the twelve were wired between the filing and the first cleanup (`require_citations`,
 `consolidate_min_cluster`, `consolidate_min_hours`, `self_model_enabled`, `retention_per_def`).
-This file covers the two later wires and all six ruled deletions:
+This file covers the two later wires and all six deletions:
 
 * **wired** `knowledge.synthesis_window` — `longrun`'s own note said
   "`KnowledgeConfig.synthesis_window` overrides it" while nothing overrode anything, so the one

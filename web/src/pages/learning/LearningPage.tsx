@@ -50,10 +50,9 @@ const ATTENTION_KEY = 'learning:attention'
 
 /** The Learning page — the Proposal Inbox plus the capture week panel.
  *
- *  This closes LEARNING-FLYWHEEL success criterion 1 ("One Proposal Inbox SHOWS all six proposal
- *  kinds with provenance, evidence manifests, and risk-tier metadata; accept installs, reject
- *  dismisses"). Everything behind that sentence shipped in earlier sessions with no surface, so the
- *  criterion was unmet for want of a page.
+ *  The page's job: one Proposal Inbox SHOWS all six proposal kinds with provenance, evidence
+ *  manifests, and risk-tier metadata; accept installs, reject dismisses. Everything behind that
+ *  sentence shipped earlier with no surface, so none of it was usable for want of a page.
  *
  *  The backend owns every judgement here. Ordering (`manual_only` first, unscored above even that),
  *  bulk eligibility, and renderability all arrive decided — this renders them. Re-deriving any of
@@ -84,7 +83,7 @@ export function LearningPage({ navigate }: Pick<RouteProps, 'navigate'>) {
     HEALTH_KEY,
     () => api.learningHealth(7),
   )
-  // §4.4 attention accounting. `error` is read for the health panel's reason: the
+  // Attention accounting. `error` is read for the health panel's reason: the
   // subject is "what does autonomy still cost?", and a swallowed failure would answer
   // "nothing" — the one claim the panel must never make by accident.
   const { data: attention, error: attentionError, refresh: refreshAttention } = useQuery<{ scopes: AttentionScope[] }>(
@@ -357,8 +356,8 @@ export function LearningPage({ navigate }: Pick<RouteProps, 'navigate'>) {
   )
 }
 
-/** One proposal row. Everything a reviewer needs to decide without opening anything else — §6.1 names
- *  the fields, and each absence produces a specific bad review. */
+/** One proposal row. Everything a reviewer needs to decide without opening anything else — each
+ *  field is there because its absence produces a specific bad review. */
 function ProposalRow({ row, busy, onAccept, onReject }: {
   row: LearningRow
   busy: boolean

@@ -21,7 +21,7 @@ const src = readFileSync(APP, 'utf8')
 
 /** `App.tsx` with comment-only lines removed.
  *
- *  🪤 Learned in cycle 194 and hit again here: the fix's own comment QUOTES the copy it replaced
+ *  🪤 Learned once before and hit again here: the fix's own comment QUOTES the copy it replaced
  *  ("coming soon") to explain what changed, so a raw-text search reported the defect as still
  *  present. A rail that reds on an accurate explanation and greens on a rename is worse than none.
  *  Only the copy assertions need this; the structural ones read `src` because a `case` label or a

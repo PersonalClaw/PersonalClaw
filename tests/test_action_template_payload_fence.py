@@ -1,4 +1,4 @@
-"""The payload trust boundary at the shared template renderer (§7/R4).
+"""The payload trust boundary at the shared template renderer.
 
 🔴 THE DEFECT. The fire order names a **"fence payload"** step between the yield check and the
 capability filter, and `firepath`'s own docstring quotes that order — but no such step existed.
@@ -14,10 +14,10 @@ So a third-party page's text arrived — with **forged chat-template role bounda
 an `invoke-agent` `task_template` (an agent task), a `send-message` `text_template` (a chat
 message) and a notification title.
 
-**Why S125 did not already cover this.** S125 hardened `fence_untrusted`, and this path never
+**Why hardening `fence_untrusted` did not already cover this.** This path never
 calls it. The substrate's untrusted text reaches a model through `render_template`, one layer past
 where the fence lives — exactly the "guard built one level away from the thing worth guarding"
-shape S119 recorded for `token_ref`.
+shape already recorded once for `token_ref`.
 
 **Fixed at the ONE renderer** every native provider shares, not at each provider: four places to
 forget it is how this gap opened.
@@ -45,7 +45,7 @@ def _ctx(**payload):
     ["$new_items", "New on $url: $new_items", "Digest: $new_items", "$new_items and more"],
 )
 def test_a_forged_role_boundary_does_NOT_reach_the_sink(template):
-    """🔴 THE DEFECT, pinned. Every one of these failed before this session."""
+    """🔴 THE DEFECT, pinned. Every one of these failed before the fix."""
     out = render_template(template, _ctx(new_items=[HOSTILE], url="https://evil.example/feed"))
     assert "<|im_start|>" not in out
     assert "<|im_end|>" not in out
@@ -104,7 +104,7 @@ def test_the_allowlist_direction_FAILS_SAFE():
 
 def test_structural_keys_do_not_include_CONTENT_fields():
     """A regression guard on the allowlist itself: adding `new_items` or `url` here would silently
-    reopen the hole this session closed."""
+    reopen the hole this fix closed."""
     for content_key in ("new_items", "url", "content", "body", "text", "title", "message"):
         assert content_key not in STRUCTURAL_KEYS
 

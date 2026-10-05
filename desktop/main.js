@@ -460,7 +460,7 @@ const pushToTalk = makePushToTalk({
 });
 
 /**
- * Native OS notifications — plan-42's `native` delivery target, actuated.
+ * Native OS notifications — the `native` delivery target, actuated.
  *
  * The gateway decides (a rule naming `native` + this shell reporting the capability
  * available); the renderer relays, because it holds the WS the main process does not; this
@@ -506,7 +506,7 @@ const systemBrowser = makeSystemBrowser({ shell, log: (msg) => console.warn(msg)
  * hover to discover, and "you have to go looking for it" disqualifies an indicator
  * whose whole job is to be noticed without being sought.
  *
- * Since DC-4 the title has exactly ONE writer (`composeTrayTitle` in
+ * The title has exactly ONE writer (`composeTrayTitle` in
  * `trayPresence.js`), because the approvals badge wants the same pixels. Capture wins
  * there: an approvals count can wait a second, a live-microphone indicator cannot.
  *
@@ -675,8 +675,8 @@ function waitForBackend(targetWin) {
 
 /**
  * Wait for a PAIRED gateway to answer. Deliberately a second function rather than a
- * generalisation of `waitForBackend`: the spawn-local readiness path is an acceptance clause of
- * this change ("the spawn-local path is unchanged"), so it is left byte-identical above.
+ * generalisation of `waitForBackend`: the spawn-local readiness path is promised to stay
+ * unchanged, so it is left byte-identical above.
  *
  * The difference that matters is not the URL, it is the refusals. `waitForBackend` retries
  * anything below a 500 because a gateway it just spawned is only ever slow. A gateway on the
@@ -1127,9 +1127,9 @@ const trayPresence = makeTrayPresence({
   actions: {
     open: () => showMainWindow(),
     deepLink: (hash) => deepLink(hash),
-    // Quick capture routes to the Inbox with a capture intent. The URL is UNCHANGED from
-    // It was the reader that was missing, not the contract. INU-9 supplied both
-    // halves in the owning plan: `POST /api/inbox/notes` writes a `user_note` item, and
+    // Quick capture routes to the Inbox with a capture intent. The URL is UNCHANGED:
+    // it was the reader that was missing, not the contract. Both halves exist now:
+    // `POST /api/inbox/notes` writes a `user_note` item, and
     // `InboxPage` now reads `?capture=1` (`useQueryFlag(query, setQuery, 'capture')`) to
     // open the compose surface. Keeping the existing flag rather than inventing a second
     // one is what leaves no window where the tray and the SPA disagree.

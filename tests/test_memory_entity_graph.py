@@ -990,7 +990,7 @@ class TestSqliteDriverParity:
             store.db.execute("INSERT INTO uniq_probe VALUES ('a')")
 
 
-# ── The graph recall arm (Session 2, §2.1–2.2) ───────────────────────────────
+# ── The graph recall arm ─────────────────────────────────────────────────────
 
 
 class TestGraphRecallArm:

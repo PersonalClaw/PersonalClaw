@@ -1,7 +1,7 @@
 """Entity-settings routes (notifications + inbox) — the PUT must persist only
 KNOWN keys, not blindly merge arbitrary body keys into the store.
 
-Regression for bug #22: a blind ``current.update(body)`` let any key (e.g. a
+Regression: a blind ``current.update(body)`` let any key (e.g. a
 typo'd or garbage field) persist and then leak back through every GET's
 ``{**DEFAULTS, **loaded}`` merge, polluting the config. The defaults dict is the
 authoritative allowlist.
@@ -252,7 +252,7 @@ async def test_notifications_put_persists_known_keys():
 
 @pytest.mark.asyncio
 async def test_notifications_put_drops_unknown_keys():
-    """The core of bug #22 — an unknown key must NOT persist."""
+    """The core of the bug — an unknown key must NOT persist."""
     resp = await er.handle_notifications_settings_put(
         _req({"mute_all": True, "totally_bogus_key_xyz": "junk", "sound_enabled": None})
     )
@@ -876,7 +876,7 @@ async def test_rules_put_stores_conditions_that_escalate(_isolate_rules):
 
 @pytest.mark.asyncio
 async def test_inbox_put_no_longer_accepts_the_retired_alert_fields():
-    """The alert fields moved to notification rules (plan 42 S3).
+    """The alert fields moved to notification rules.
 
     They are absent from INBOX_DEFAULTS, which is the authoritative allowlist, so a PUT
     naming them must NOT persist them — otherwise a client written against the old API

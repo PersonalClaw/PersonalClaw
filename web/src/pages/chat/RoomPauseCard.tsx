@@ -8,7 +8,7 @@ import { fvs } from '../../design/fontWeight'
 import { roundBudgetLabel } from './roomMeta'
 import type { RoomRecord } from '../../lib/api'
 
-/** The card for a room that has STOPPED short of answering (`AGENT-ROOMS` C4/C9) — for
+/** The card for a room that has STOPPED short of answering — for
  *  one of two reasons, with two different ways back.
  *
  *  · **Paused** — the room spent its round budget without a word from its human.

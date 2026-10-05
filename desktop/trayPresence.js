@@ -1,7 +1,7 @@
 /**
  * Menu-bar presence.
  *
- * The pre-DC-4 tray was a static six-item menu (Show / New Tab / Merge All Windows /
+ * The earlier tray was a static six-item menu (Show / New Tab / Merge All Windows /
  * Quit) built inline in `main.js`. This module replaces it with a LIVE one — pending
  * approvals, running loops, quick capture, open dashboard, an opt-in login item, quit
  * — and pulls the logic out of the Electron glue so it can be tested without
@@ -9,7 +9,7 @@
  *
  * Three things this module exists to get right:
  *
- * 1. **ONE writer for the menu-bar title.** DC-3 already drives `tray.setTitle()`
+ * 1. **ONE writer for the menu-bar title.** The shell already drives `tray.setTitle()`
  *    for the "● Listening" push-to-talk indicator. A counts badge that also called
  *    `setTitle` would be a second writer to a single surface, and whichever fired
  *    last would win — so both go through `composeTrayTitle()`, and capture ALWAYS
@@ -133,9 +133,9 @@ function composeTrayTooltip({ capturing = false, approvals = 0, running = [], co
  * @param {{approvals: number, running: Array, connected: boolean}} opts.presence
  * @param {{supported: boolean, enabled: boolean}} opts.loginItem
  * @param {object} opts.actions open/deepLink/quickCapture/toggleLoginItem/quit
- * @param {Array<{label: string, click?: Function}>} [opts.tiles] AMBIENT-SURFACES
- *        menu-bar tiles. Absent until that plan exists — rendered when supplied,
- *        skipped when not, so this change never blocks on it.
+ * @param {Array<{label: string, click?: Function}>} [opts.tiles] ambient
+ *        menu-bar tiles. Optional — rendered when supplied,
+ *        skipped when not, so the menu never depends on them.
  */
 function buildTrayMenuTemplate({ presence = EMPTY_PRESENCE, loginItem = { supported: false, enabled: false }, actions = {}, tiles = [] } = {}) {
   const { approvals, running, connected } = { ...EMPTY_PRESENCE, ...presence };
@@ -183,7 +183,7 @@ function buildTrayMenuTemplate({ presence = EMPTY_PRESENCE, loginItem = { suppor
     { label: "Open Dashboard", click: () => open() }
   );
 
-  // AMBIENT-SURFACES tiles, when that plan is available. Non-blocking by design:
+  // Ambient tiles, when supplied. Non-blocking by design:
   // an empty list adds nothing, not an empty section.
   const validTiles = (Array.isArray(tiles) ? tiles : []).filter((t) => t && typeof t.label === "string");
   if (validTiles.length > 0) {
@@ -330,7 +330,7 @@ function makeTrayPresence({ TrayCtor, MenuCtor, nativeImageMod, iconPath, action
       capturing = Boolean(on);
       render();
     },
-    /** AMBIENT-SURFACES tiles, when that plan lands. */
+    /** Ambient tiles, when supplied. */
     setTiles(next) {
       tiles = Array.isArray(next) ? next : [];
       render();

@@ -5,7 +5,7 @@ import { api, type Loop } from '../../lib/api'
 // after the initial `snapshot`, across ALL kinds (goal/general/research/design =
 // "loop", and code = "sdlc") and all three publish sources. EventSource silently
 // DROPS event types with no registered listener, so any omission is a missed live
-// update — the C326/C367 drift both prior hooks (useLoopStream + useCodeStream)
+// update — the drift both prior hooks (useLoopStream + useCodeStream)
 // warned about. Collapsing to ONE union list is the fix: a cockpit that doesn't
 // handle a given event simply no-ops on it in its onLifecycle switch (harmless),
 // but no cockpit can ever silently miss an event again.
@@ -13,18 +13,18 @@ import { api, type Loop } from '../../lib/api'
 // Sources (keep in sync with their .publish(...) sites):
 //   • sdlc kind on_new_cycle (loop/kinds/sdlc.py): stage_advance, rolled_back,
 //     stage_stalled, gate_check, task_started, task_done, blocked, needs_input
-//     (rolled_back = P6 metric regression → stepped back to the prior stage)
+//     (rolled_back = metric regression → stepped back to the prior stage)
 //   • goal/design kinds: phase_advance (design per-cycle step advance)
 //   • unified watchdog (loop/watchdog.py): new_finding, cycle_verdict, judge_error,
 //     complete, stagnant, needs_input, failed, ratchet_regression, judge_blind, ship_blocked
 //   • loop_routes handler (PATCH/POST actions): autopilot, queued, plan_step, deleted
-// judge_blind/ship_blocked are the P4 prove-the-instrument warnings (judge unreliable /
+// judge_blind/ship_blocked are the prove-the-instrument warnings (judge unreliable /
 // completion unconfirmed → output not graduated).
 //
 // 🪤 `cycle_score` used to be listed above and in the union, attributed to the goal/design kinds
 // beside `phase_advance` (issue 607). It has NEVER existed in `src/` — not a `publish(...)` site,
-// not a ledger kind, not a name in any plan, and no cockpit switched on it. Registering ahead of an
-// emitter IS this module's policy (see the four UNIVERSAL-PLANNING events below), but that policy
+// not a ledger kind, and no cockpit switched on it. Registering ahead of an
+// emitter IS this module's policy (see the four plan-review events below), but that policy
 // is for an emitter someone is coming for; a name with nothing behind it is just a claim. The
 // difference is now machine-checked: `AWAITING_EMITTER` names the exceptions and
 // `runLifecycle.test.ts` proves every other member is backed by real Python.
@@ -40,11 +40,11 @@ export const RUN_LIFECYCLE = [
   // A cycle its worker ran without tools: the loop waits for a model that uses them
   // (`LoopWatchdog.hold_without_tools`).
   'no_tools',
-  // LOOPS-EVOLUTION R4/R14 middleware events. These MUST be listed here: EventSource
+  // Loop middleware events. These MUST be listed here: EventSource
   // silently DROPS event types it has no listener for, so an unregistered event is not a
   // rendering bug you can see — it is an event that never arrives.
   'breaker_trip', 'steering', 'judge_verdict', 'judge_divergence',
-  // UNIVERSAL-PLANNING (WF2UNI) plan-review lifecycle. Registered here for the SAME reason
+  // The plan-review lifecycle. Registered here for the SAME reason
   // as every event above — an unregistered type is silently dropped by EventSource, so the
   // plan-review surface would never see a plan chunk arrive, a step get relabeled, a
   // shared-understanding confirmation open, or an unattended run demote to per-stage
@@ -53,7 +53,7 @@ export const RUN_LIFECYCLE = [
   // the engine emit seam lands; listed ahead of that emitter
   // deliberately, because the drop is invisible and the union is the only place to prevent it.
   'plan_streaming', 'revision', 'confirmation', 'demotion',
-  // WORK-CONTAINERS §6.3 R10c: the coexistence mirror. A legacy loop can now RUN as a
+  // The coexistence mirror. A legacy loop can now RUN as a
   // template, and `workflows/watchdog._publish_to_equivalent_loop_hub` mirrors that run's events
   // onto the equivalent `loop:<id>` hub — the backend half of `keys_equivalent`, which had no
   // caller before. So this hub now carries `workflow_*` events, and they MUST be registered here
@@ -75,7 +75,7 @@ export const RUN_LIFECYCLE = [
 
 export type RunLifecycleEvent = (typeof RUN_LIFECYCLE)[number]
 
-/** Members registered AHEAD of their emitter, each with the plan that owes one (issue 607).
+/** Members registered AHEAD of their emitter, each noting the publish site still owed (issue 607).
  *
  *  This module's policy is that registering early is correct: an unregistered type is dropped by
  *  EventSource with no error anywhere, so the union is the only place the drop can be prevented,
@@ -90,8 +90,8 @@ export type RunLifecycleEvent = (typeof RUN_LIFECYCLE)[number]
  *  This list should SHRINK. An entry graduates the moment its publish site lands — and the rail
  *  reds if one is still listed here once it has, so it cannot rot into a permanent exemption. */
 export const AWAITING_EMITTER: readonly RunLifecycleEvent[] = [
-  // UNIVERSAL-PLANNING (WF2UNI) plan-review lifecycle — WORKFLOWS-V2 §"New SSE events" owes the
-  // planner's publish sites. `LoopPlanReview` already folds them.
+  // The plan-review lifecycle — the planner's publish sites are still owed.
+  // `LoopPlanReview` already folds them.
   'plan_streaming',
   'revision',
   'confirmation',
@@ -101,7 +101,7 @@ export const AWAITING_EMITTER: readonly RunLifecycleEvent[] = [
 /** The coalesced frame the workflow engine batches high-frequency node chatter into
  *  (`coalescer.BATCH_EVENT`). It is NOT a lifecycle event — it is an envelope AROUND them.
  *
- *  Registered on THIS hook because the R10c mirror forwards whatever the engine published,
+ *  Registered on THIS hook because the coexistence mirror forwards whatever the engine published,
  *  batches included. Without an unwrapper here, a mirrored run's node events would arrive inside
  *  an envelope nobody opened — delivered, then discarded, which is indistinguishable from never
  *  arriving. Matches `useWorkflowStream`'s handling so a mirrored cockpit sees the same sequence

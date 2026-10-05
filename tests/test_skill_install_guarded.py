@@ -1,4 +1,4 @@
-"""SkillsRegistry.install_guarded — the supply-chain install chokepoint (S3/S4).
+"""SkillsRegistry.install_guarded — the supply-chain install chokepoint.
 
 fetch → quarantine-stage → whole-dir scan at the marketplace trust tier → decide:
   clean/low → commit; warning → refuse unless force; dangerous → refuse (non-overridable).
@@ -160,7 +160,7 @@ def test_commits_the_scanned_bytes_not_a_refetch(tmp_path):
     A marketplace's ``fetch`` is the single network read; ``install_guarded`` scans that
     payload and writes the same bytes. There is no second fetch that could serve
     different (unscanned) content at commit time — so the on-disk bytes hash-match the
-    ``.pclaw-lock.json`` baseline that S6 integrity verify checks against. Regression
+    ``.pclaw-lock.json`` baseline that the integrity verify checks against. Regression
     for the TOCTOU where commit re-fetched independently of the scan."""
     import hashlib
     import json
@@ -182,7 +182,8 @@ def test_commits_the_scanned_bytes_not_a_refetch(tmp_path):
     assert (skill / "notes.txt").read_text() == "reference material"
 
     # the lock baseline hashes match the on-disk bytes → a fresh guarded install is
-    # intact under S6 (it would NOT be if commit-bytes diverged from scanned-bytes)
+    # intact under the integrity verify (it would NOT be if commit-bytes diverged from
+    # scanned-bytes)
     lock = json.loads((skill / ".pclaw-lock.json").read_text())
     assert lock["sha256"]["SKILL.md"] == hashlib.sha256(body.encode()).hexdigest()
     assert verify_skill_integrity(skill).ok is True
@@ -190,8 +191,8 @@ def test_commits_the_scanned_bytes_not_a_refetch(tmp_path):
 
 def test_binary_asset_is_committed_scanned_and_locked(tmp_path):
     """A binary file in a skill (e.g. an icon) must be committed, hashed into the lock,
-    and NOT trip S6 — regression for fetch dropping non-UTF-8 files, which left the
-    asset off the live tree AND made a fresh install report itself tampered ('added').
+    and NOT trip the integrity verify — regression for fetch dropping non-UTF-8 files, which left
+    the asset off the live tree AND made a fresh install report itself tampered ('added').
 
     ``read_skill_file_entry`` carries binaries as ``data: bytes``; the whole pipeline
     (stage → scan → commit → lock → verify) handles both text and bytes."""
@@ -224,7 +225,7 @@ def test_binary_asset_is_committed_scanned_and_locked(tmp_path):
     assert rep.ok is True and rep.added == []
 
 
-# ── E1.2: a standard-conformant third-party SKILL.md rides the SAME rail ──────
+# ── a standard-conformant third-party SKILL.md rides the SAME rail ────────────
 #
 # A skill written to the Agent Skills standard must
 # import UNMODIFIED through this existing gate — no conversion step, no relaxed

@@ -43,7 +43,7 @@ VALID_COMPONENTS = (
     # this component. Worktrees stay excluded either way — the inventory declares them
     # `derived_within`, being git-owned checkouts re-creatable from the repo.
     "projects",
-    # Criterion 1 names this invocation verbatim (`--components everything`) and the CLI
+    # A full restore asks for this verbatim (`--components everything`) and the CLI
     # REJECTED it: "❌ Unknown component: everything". Covers every inventory entry the seven
     # named components do not, which is what makes a targeted restore expressible at all —
     # without it there is no way to ask for the task board.
@@ -123,9 +123,9 @@ def _audit(event_type: str, resources: str) -> None:
 CORE_FILES: dict[str, tuple[str, ...]] = {
     "memory": ("memory.db", "memory_index.db"),
     # 🔴 `triggers.json` + `event_triggers.json`. This component held `crons.json` ALONE —
-    # the legacy file, which nothing has written since S108 and which the deletion left as a
+    # the legacy file, which nothing writes any more and which the deletion left as a
     # read-only migration source. So `personalclaw snapshot` backed up an empty relic and dropped
-    # every automation the user actually had. `crons.json` still travels because §6 keeps it
+    # every automation the user actually had. `crons.json` still travels because it is kept
     # read-only for `automation verify-migration` to diff.
     "crons": ("crons.json", "triggers.json", "event_triggers.json"),
     # `autonomy_rungs.json` rides here: it holds the rungs the
@@ -139,8 +139,8 @@ CORE_FILES: dict[str, tuple[str, ...]] = {
         "project_dir",
         "workspace_dir",
         "autonomy_rungs.json",
-        # `routing_policy.json` rides here for the same reason as `autonomy_rungs.json`
-        # (MODEL-ROUTING-TELEMETRY §7): it holds DECISIONS — the per-use-case routing mode,
+        # `routing_policy.json` rides here for the same reason as `autonomy_rungs.json`:
+        # it holds DECISIONS — the per-use-case routing mode,
         # the pin, and any manual reorder. Losing it is not catastrophic (routing falls back
         # to off/heuristic) but it is a choice the user made by hand, so it travels.
         "routing_policy.json",
@@ -190,7 +190,7 @@ def _partition_paths(root: Path, *, of: str = "") -> list[str]:
 
 
 def _everything_paths(pc: Path) -> list[str]:
-    """Home-relative paths the ``everything`` component adds (DURABILITY §1).
+    """Home-relative paths the ``everything`` component adds.
 
     Derived from :mod:`personalclaw.durability.inventory` — the single manifest of
     what PersonalClaw's state IS — minus what the named components already stage
@@ -438,7 +438,7 @@ def _extra_restore_paths_for_test_paths() -> list[str]:
 
 
 def _extra_restore_paths(snap: Path) -> list[str]:
-    """Inventory entries a RESTORE must return, beyond the seven named components (S177).
+    """Inventory entries a RESTORE must return, beyond the seven named components.
 
     🔴 WHY THIS EXISTS. Capture is inventory-derived (:func:`_everything_paths`, which closed
     the "a full backup silently dropped the user's whole task board" gap); **both restore modes
@@ -532,7 +532,7 @@ def _fsize(p: Path) -> int:
 def _want(components: list[str] | None, name: str) -> bool:
     """Is `name` selected? `everything` selects EVERY component, not just the un-named ones.
 
-    🔴 Found by driving criterion 1's own drill (snapshot → wipe the home → restore) rather than
+    🔴 Found by driving the full drill (snapshot → wipe the home → restore) rather than
     trusting the component I had just added. `--components everything` restored the task board and
     dropped `config.json`, `memory.db`, `notifications.jsonl`, `workspace/` and `skills/` — because
     "everything" had been just another member of a list, so naming it DESELECTED the seven named
@@ -707,7 +707,7 @@ def snapshot_main(
                 copy_function=_copy,
             )
 
-        # THE GAP CLOSURE (DURABILITY §1): every remaining inventory entry. Before
+        # THE GAP CLOSURE: every remaining inventory entry. Before
         # this, tasks/, projects/, loop/, artifacts/, prompts/, workflows/,
         # agents/, apps/ and entity_settings/ were in NEITHER the snapshot nor the
         # export — a "full backup" that silently dropped a user's whole task board.
@@ -827,7 +827,7 @@ def snapshot_main(
 def _domain_counts(stage: Path) -> dict[str, dict[str, int]]:
     """Per-domain ``{files, bytes, rows}`` over a staged snapshot tree (MANIFEST v3).
 
-    ``rows`` is the count §6 asks the archive browser to show, and it is a real row
+    ``rows`` is the count for the archive browser, and it is a real row
     count, not a file count: SQLite entries are summed across their tables and JSONL
     streams by line. A tree entry has no rows, so it contributes ``files``/``bytes``
     only — reporting 0 rows for a directory of documents would read as "empty".
@@ -1102,9 +1102,9 @@ def _merge_crons(src_path: Path, dst_path: Path) -> None:
 def _merge_triggers(src_path: Path, dst_path: Path) -> None:
     """Merge an imported `triggers.json` into the live one, skipping duplicates by NAME.
 
-    🔴 THE DEFECT THIS CLOSES (S113). `create_export_zip` carried `crons.json` and `hooks.json` and
-    NOT `triggers.json` — the store that has been the sole source of automations since S101, and
-    the only one since S112 deleted `ScheduleService`. Driven against a home holding two
+    🔴 THE DEFECT THIS CLOSES. `create_export_zip` carried `crons.json` and `hooks.json` and
+    NOT `triggers.json` — the sole source of automations, and the only store left once
+    `ScheduleService` was deleted. Driven against a home holding two
     automations, an event trigger and run history, the snapshot captured **`config.json` alone**.
     So `personalclaw snapshot` silently lost every automation the user had — and the release notes
     advise taking one before a breaking upgrade, the one moment it must not lose anything.
@@ -1172,8 +1172,8 @@ def _merge_triggers(src_path: Path, dst_path: Path) -> None:
 def _merge_event_triggers(src_path: Path, dst_path: Path) -> None:
     """Merge `event_triggers.json`, skipping duplicates by PATTERN.
 
-    Carried for the same reason as the trigger store, and named in the plan's own recon note
-    ("today snapshot covers crons.json/hooks.json but NOT event_triggers.json"). An event trigger
+    Carried for the same reason as the trigger store: snapshot covered crons.json/hooks.json
+    but NOT event_triggers.json. An event trigger
     has no name field, so the pattern is its identity.
     """
     src = json.loads(src_path.read_text())
@@ -1308,14 +1308,14 @@ def _virtual_tables(conn: "sqlite3.Connection", schema: str) -> dict[str, str]:
 def _merge_sqlite_attach(
     src_db: Path, dst_db: Path, label: str, *, left_unchanged: list[str] | None = None
 ) -> int:
-    """Merge a declared sqlite store table-by-table with `INSERT OR IGNORE` (S180).
+    """Merge a declared sqlite store table-by-table with `INSERT OR IGNORE`.
 
     🔴 WHY THIS EXISTS. Seven entries declare `merge=sqlite_attach_ignore` and only `memory.db` had
-    an executor — a hand-written four-table allowlist. S177 made the other six REACHABLE, but
-    reachably copy-if-missing, so a database the live home already had kept its own rows and dropped
-    the snapshot's entirely. Driven across all six (`learning.db`, both `knowledge.db`,
-    `loop/loops.db`, `workflows/runs.db`, `lexicon.db`): a snapshot row and a live row went in, only
-    the live row came out — six stores silently half-restored.
+    an executor — a hand-written four-table allowlist. `_extra_restore_paths` made the other six
+    REACHABLE, but reachably copy-if-missing, so a database the live home already had kept its own
+    rows and dropped the snapshot's entirely. Driven across all six (`learning.db`, both
+    `knowledge.db`, `loop/loops.db`, `workflows/runs.db`, `lexicon.db`): a snapshot row and a live
+    row went in, only the live row came out — six stores silently half-restored.
 
     Generic rather than six allowlists, because the schemas said so: every real table in all six
     carries a primary key or unique index, so `INSERT OR IGNORE` deduplicates correctly and a
@@ -1480,12 +1480,12 @@ def _merge_keyed_jsonl(
     at: str,
     left_unchanged: list[str] | None = None,
 ) -> int:
-    """Bring in the rows of `src` that `dst` lacks, deduping on `key_field` (S179), and write the
+    """Bring in the rows of `src` that `dst` lacks, deduping on `key_field`, and write the
     log in time order by each row's `at` field (``bounded_log.merge_jsonl``).
 
     Extracted after a THIRD near-identical copy was needed (`model_calls.jsonl`, whose declared
-    `append_dedup` the S178 ratchet demanded an executor for). Three hand-written loops differing
-    only in a key name is how two of them start disagreeing — the duplication S175 deleted from the
+    `append_dedup` a ratchet demanded an executor for). Three hand-written loops differing
+    only in a key name is how two of them start disagreeing — the duplication deleted from the
     run store after finding one copy had silently reverted another.
 
     In time order, never after the home's own rows: an archive's rows are older, and every reader
@@ -1511,7 +1511,7 @@ def _merge_keyed_jsonl(
 
 
 def _merge_feedback(src: Path, dst: Path, *, left_unchanged: list[str] | None = None) -> None:
-    """Merge `feedback.jsonl`, deduping on the record's own `id` (S178).
+    """Merge `feedback.jsonl`, deduping on the record's own `id`.
 
     The third `append_dedup` entry with no executor. Unlike the SEL log this carries no HMAC, so
     plain dedup is safe — and unlike the run history it is a single flat file, so there are no
@@ -1519,7 +1519,7 @@ def _merge_feedback(src: Path, dst: Path, *, left_unchanged: list[str] | None = 
     `_merge_run_history` is: the same record round-trips through a serializer on both sides.
 
     Deliberately does NOT trim to `feedback._CAP`. That module owns its own retention ("atomic trim
-    at 2x cap") and re-implementing the bound here is the duplication S175 deleted from the run
+    at 2x cap") and re-implementing the bound here is the duplication deleted from the run
     store after finding one copy had silently reverted the other.
     """
     _merge_keyed_jsonl(src, dst, "id", "Feedback", at="created_at", left_unchanged=left_unchanged)
@@ -1528,7 +1528,7 @@ def _merge_feedback(src: Path, dst: Path, *, left_unchanged: list[str] | None = 
 def _merge_security_events(
     snap: Path, pc: Path, *, left_unchanged: list[str] | None = None
 ) -> None:
-    """Merge the SEL audit log — but ONLY when the HMAC key that will verify it is the same (S178).
+    """Merge the SEL audit log — but ONLY when the HMAC key that will verify it is the same.
 
     🔴 WHY THE GUARD. `inventory.py` declares `security_events.jsonl` with `merge=append_dedup`, and
     a generic executor would have appended the snapshot's rows unconditionally. Driven: two homes
@@ -1592,13 +1592,13 @@ def _merge_security_events(
 def _merge_run_history(
     src_dir: Path, dst_dir: Path, *, left_unchanged: list[str] | None = None
 ) -> None:
-    """Merge `cron-history/` shard-by-shard, deduping on `run_id` (S176).
+    """Merge `cron-history/` shard-by-shard, deduping on `run_id`.
 
     🔴 WHY THIS EXISTS. `inventory.py` declares `cron_history` with `merge=append_dedup`, and
     `_do_merge` had no branch for it — so a merge restore printed "✅ Merge complete" while
     recovering **no run history at all**. Driven: a snapshot holding `FROM-SNAPSHOT` merged into a
     home holding `LIVE-run` left only `LIVE-run`. The declared strategy had no executor, which is
-    this program's signature defect in the durability layer.
+    the durability layer's signature defect.
 
     Deduped on `run_id` rather than a whole-line compare: the same run round-trips through
     `to_dict()`, so key ordering or a re-serialised float could make an identical run look new and
@@ -1611,8 +1611,8 @@ def _merge_run_history(
     it; a shard behind a link is left as it is and named on *left_unchanged*.
 
     Deliberately does NOT rotate afterwards. `ScheduleRunStore.rotate_all()` runs at gateway boot
-    (S175) and owns that policy; trimming here would apply retention twice with a second copy of the
-    rule — the duplication S175 just removed.
+    and owns that policy; trimming here would apply retention twice with a second copy of the
+    rule — the duplication removed from the run store's boot path.
     """
     if not src_dir.is_dir():
         return
@@ -1845,7 +1845,7 @@ def _hold_what_was_in_flight(pc: Path, restored: list[str]) -> dict[str, list[st
 
 
 def home_is_populated(pc: Path) -> list[str]:
-    """Declared entries this home already holds — the non-emptiness test (S184).
+    """Declared entries this home already holds — the non-emptiness test.
 
     🔴 WHY. Restore mode auto-detected on `memory.db` alone: `"merge" if (pc / "memory.db").is_file()
     else "replace"`. A home that has never embedded anything has no `memory.db`, so a home full of
@@ -1854,9 +1854,9 @@ def home_is_populated(pc: Path) -> list[str]:
     `tasks/mine.json` and the user's automation were moved into `pre-restore-<ts>/` and the
     copies took their place.
 
-    That is recoverable, which is why it is a wrong DEFAULT rather than data loss: the plan's own
-    framing is that "the restore people actually perform is onto a machine that already has state …
-    and replace-mode restores there destroy the newer half".
+    That is recoverable, which is why it is a wrong DEFAULT rather than data loss: the restore
+    people actually perform is onto a machine that already has state, and replace-mode restores
+    there destroy the newer half.
 
     Asks the inventory instead, so any declared store counts. `config.json` alone does not — it is
     written at first boot, so treating it as state would make every fresh install look populated and
@@ -1884,15 +1884,13 @@ def home_is_populated(pc: Path) -> list[str]:
 
 
 def merge_plan(snap: Path, pc: Path, components: list[str] | None) -> list[dict]:
-    """What a merge WOULD do, per declared entry — the plan `--dry-run` prints (S183).
+    """What a merge WOULD do, per declared entry — the plan `--dry-run` prints.
 
     🔴 WHY. `--dry-run` printed a raw list of files in the archive: no counts, no per-entry
     strategy, no indication of what is protected. Driven side by side, the dry run listed three
     filenames while the merge imported one notification and one store and left `config.json`
     untouched — so the preview answered a different question from the one a user about to merge
-    into their own home is asking. This is gap (2) the plan names against itself: *"`--dry-run`
-    prints a raw file list, not a merge plan (no counts, no per-entry strategy, no conflict
-    preview)"*.
+    into their own home is asking.
 
     Computed from the SAME projections `_do_merge` uses (`_attach_merge_paths`,
     `_extra_restore_paths`, the component gates) rather than by threading a `dry_run` flag through
@@ -1940,7 +1938,7 @@ def merge_plan(snap: Path, pc: Path, components: list[str] | None) -> list[dict]
         for name in CORE_FILES["config"]:
             if name == "hooks.json":
                 continue
-            # The contract gap (3) names: an existing config.json is NEVER overwritten. Saying so in
+            # The contract: an existing config.json is NEVER overwritten. Saying so in
             # the plan is the point — it was true but unstated, so a user could not know it.
             _add(name, inv.MERGE_REPLACE_ONLY, "copy-if-missing; never overwritten")
         _add("hooks.json", inv.MERGE_UNION_BY_ID, "by id; hooks arrive switched off", by_rule=True)
@@ -2002,7 +2000,7 @@ def merge_plan(snap: Path, pc: Path, components: list[str] | None) -> list[dict]
 
 
 def _attach_merge_paths(snap: Path) -> list[str]:
-    """Declared sqlite stores routed to the generic ATTACH merge (S180's call-site list), and each
+    """Declared sqlite stores routed to the generic ATTACH merge, and each
     partition of one that the snapshot *snap* holds (`StateEntry.partitions`): a memory
     partition's `learning.db` is merged as `learning.db` is.
 
@@ -2156,7 +2154,7 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
             if feedback is not None:
                 _merge_feedback(snap / "feedback.jsonl", feedback, left_unchanged=left)
         # `model_calls.jsonl`, the fourth declared `append_dedup` — demanded by its own ratchet
-        # the moment S179 declared the entry. Keyed on `AttemptRecord.audit_id`.
+        # the moment the entry was declared. Keyed on `AttemptRecord.audit_id`.
         if (snap / "model_calls.jsonl").is_file():
             calls = home_paths.landing(pc, "model_calls.jsonl", left)
             if calls is not None:
@@ -2317,7 +2315,7 @@ def _running_gateway() -> "LiveGateway | None":
     import-time ``PERSONALCLAW_PORT``-or-10000 guess, and probing it was wrong in BOTH
     directions (#2539): on a gateway started with ``--port 10188`` it probed a socket
     nobody was listening on and reported "not running" while this very process served the
-    request (`DAS-10`, see ``dashboard/handlers/durability.py``); and on a multi-instance
+    request (see ``dashboard/handlers/durability.py``); and on a multi-instance
     host it could equally report "running" because a DIFFERENT instance answered on 10000,
     refusing a legitimate restore.
 
@@ -2338,7 +2336,7 @@ def _running_gateway() -> "LiveGateway | None":
 
 
 def restore_plan(archive: Path, components: list[str] | None) -> dict:
-    """The merge plan for `archive`, as data — the API's read-only half (S184).
+    """The merge plan for `archive`, as data — the API's read-only half.
 
     Shares `merge_plan()` with the CLI's `--dry-run`, so the endpoint cannot describe a different
     restore from the one the terminal describes. Writes nothing.

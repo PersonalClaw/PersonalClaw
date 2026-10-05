@@ -1,4 +1,4 @@
-"""The browse kill switch (BROWSE-AUTOMATION §(b) — the mirror's one-click stop).
+"""The browse kill switch — the mirror's one-click stop.
 
 One flag — ``~/.personalclaw/browse_kill.json`` (``{active, reason, started_at}``) — stops all
 UNATTENDED browsing: a running browse loop parks within one step, and a new browse run refuses to
@@ -21,7 +21,7 @@ there is one way to reason about a kill switch in this codebase, not two:
   failure mode for a control whose whole job is to be deliberate.
 * **In-process mirror refreshed from the file's mtime**, so a flag flipped by another process (a
   CLI, another gateway worker) is picked up without a restart.
-* **Engage/release are SEL-audited**, so the evidentiary record the amendment requires — that a
+* **Engage/release are SEL-audited**, so the evidentiary record — that a
   human directed the stop — exists.
 """
 

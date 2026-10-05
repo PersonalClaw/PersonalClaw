@@ -301,8 +301,8 @@ class TestPlaintextRejectedBothDirections:
         assert "plaintext" in skipped.reasons[0]
 
     def test_a_plaintext_object_makes_the_seq_payload_bad_not_held(self, tmp_path, monkeypatch):
-        """A permanent skip must ADVANCE the cursor. Holding would be the error loop §4.4
-        forbids: the object can never become decryptable, so re-pulling it is the bug."""
+        """A permanent skip must ADVANCE the cursor. Holding would be an error loop, which is
+        forbidden: the object can never become decryptable, so re-pulling it is the bug."""
         from personalclaw.durability import pull_engine
 
         remote = tmp_path / "remote"
@@ -583,7 +583,7 @@ class TestPerTransportDefaults:
 
     def test_an_unknown_transport_defaults_off_but_says_so_out_loud(self, caplog):
         """The uncomfortable default (see the constant's note): ON would turn installing any
-        third-party transport into a hard sync stop, breaking criterion 10. What makes OFF
+        third-party transport into a hard sync stop, breaking third-party sync. What makes OFF
         honest is that it is announced, not assumed."""
         sc._LOGGED_AUTO.discard("someones-webdav-app")
         with caplog.at_level(logging.WARNING):
@@ -698,7 +698,7 @@ class TestConfigRoundTrip:
         assert svc._resolved_encryption(DurabilityConfig(sync_encrypt="on")) is False
 
 
-# ── criterion 8, over a REAL on-disk transport ───────────────────────────────
+# ── encryption at rest, over a REAL on-disk transport ────────────────────────
 
 
 def _seed_task(home: Path, tid: str, title: str) -> None:
@@ -707,7 +707,7 @@ def _seed_task(home: Path, tid: str, title: str) -> None:
     (d / f"{tid}.json").write_text(json.dumps({"id": tid, "title": title}))
 
 
-class TestCriterion8EndToEnd:
+class TestEncryptedStoreEndToEnd:
     """ "An encrypted S3 sync store is useless without the passphrase, yet list_remote /
     registry operations work without the key; a plaintext object appearing in an encrypted
     store is skipped permanently and logged, never looped on."
@@ -745,7 +745,7 @@ class TestCriterion8EndToEnd:
         assert shard_objects, "nothing was published — the proof would be vacuous"
         for key, data in shard_objects:
             assert sc.is_ciphertext(data), f"{key} landed on the remote as plaintext"
-        # Criterion 7 + 8: no plaintext row anywhere in the store's bytes.
+        # No plaintext row anywhere in the store's bytes.
         every_byte = b"".join(d for _k, d in shard_objects + routing)
         assert CANARY_ROW not in every_byte
         assert b"task-a" not in every_byte, "a task id leaked in plaintext"
@@ -808,8 +808,8 @@ class TestCriterion8EndToEnd:
         assert r1.ok, r1.error
         # The cursor ADVANCED past it — the permanent-skip contract.
         assert Cursor(home_b / "sync").seen().get("A") == 1, (
-            "the cursor did not advance past a permanently-skipped seq — this is the loop "
-            "§4.4 forbids"
+            "the cursor did not advance past a permanently-skipped seq — this is the "
+            "forbidden error loop"
         )
         assert any(
             "encrypt" in m.lower() or "skip" in m.lower()
@@ -832,10 +832,10 @@ class TestCriterion8EndToEnd:
         assert pushed == [], f"bytes reached the remote after a fail-closed refusal: {pushed}"
 
 
-# ── criterion 7: secrets never reach a transport, encrypted or not ───────────
+# ── secrets never reach a transport, encrypted or not ────────────────────────
 
 
-class TestCriterion7SecretsNeverTransported:
+class TestSecretsNeverTransported:
     @pytest.mark.parametrize("encrypt", ["on", "off"])
     def test_no_secret_file_content_is_ever_pushed(self, tmp_path, monkeypatch, encrypt):
         """`secret=True` entries are excluded BEFORE any transport sees bytes, independent

@@ -1,4 +1,4 @@
-"""The structured `rigor: deep` interrogation protocol (UP-R5).
+"""The structured `rigor: deep` interrogation protocol.
 
 The existing :mod:`personalclaw.grill` pipeline stays exactly as it is — it is the vendor-neutral
 `assess → recall → decompose → save` machinery, and this module is the planner's protocol ON TOP of
@@ -15,8 +15,7 @@ than tedious:
   channel or it is asked, never both.
 * **The channels are never conflated.** Memory recall and knowledge search are two subsystems with
   two different lifecycles, and a merged "context fetch" would make it impossible to say which one
-  answered. They are separate callables with separate result provenance, per the plan's boundary
-  note.
+  answered. They are separate callables with separate result provenance.
 * **Prohibitions are frozen.** A Stop/never-do answer that could be re-litigated by a later stage
   is not a boundary, it is a suggestion. Once captured it is injected verbatim into every stage's
   worker context.
@@ -36,8 +35,8 @@ from typing import Any
 from personalclaw.workflows.human_input import Ask, AskField, AskKind
 from personalclaw.workflows.intent import Intent, Rigor
 
-#: A batched round is capped so a single submit is answerable in one sitting. Measured against the
-#: plan's own number: ≤8 typed question objects.
+#: A batched round is capped so a single submit is answerable in one sitting: ≤8 typed
+#: question objects.
 MAX_BATCH = 8
 
 #: Options per choice question. Two is a coin flip presented as a decision; more than five is a

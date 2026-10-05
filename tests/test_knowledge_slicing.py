@@ -147,7 +147,7 @@ def paper_pdf(tmp_path, paper_pdf_bytes):
     return path
 
 
-# ── §5 source sniffing ────────────────────────────────────────────────────────
+# ── source sniffing ───────────────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize(
@@ -191,7 +191,7 @@ def test_a_non_reference_sniffs_to_none_rather_than_raising(raw):
     assert sl.sniff_source(raw) is None
 
 
-# ── §5 cascaded section detection ─────────────────────────────────────────────
+# ── cascaded section detection ────────────────────────────────────────────────
 
 
 def test_the_font_tier_detects_a_generated_papers_sections(paper_pdf):
@@ -217,7 +217,7 @@ KEEP_SPAN = sl.KEEP_FIRST_PAGES + sl.KEEP_LAST_PAGES
 
 
 def test_detection_is_deterministic_across_runs(paper_pdf):
-    """The claim §5 rests on. Two runs over identical bytes must be identical — including
+    """The claim the slicing rests on. Two runs over identical bytes must be identical — including
     section ORDER, which a set-backed candidate collection would scramble."""
     first = sl.slice_document(file_path=str(paper_pdf))
     second = sl.slice_document(file_path=str(paper_pdf))
@@ -406,7 +406,7 @@ def test_a_long_large_font_run_is_not_a_heading(monkeypatch):
     assert sl.detect_sections(structure) == ()
 
 
-# ── §5 purpose-cut slices ─────────────────────────────────────────────────────
+# ── purpose-cut slices ────────────────────────────────────────────────────────
 
 
 def test_brief_body_and_meta_are_cut_to_their_roles(paper_pdf):
@@ -477,7 +477,7 @@ def test_the_kept_pages_floor_never_reaches_into_the_bibliography(paper_pdf):
 
 
 def test_the_full_slice_is_retrievable_but_never_a_persisted_row(paper_pdf):
-    """§5 names four roles; `full` is the item's own content, so it is reachable without
+    """There are four roles; `full` is the item's own content, so it is reachable without
     doubling every paper's storage with a byte-identical row."""
     result = sl.slice_document(file_path=str(paper_pdf))
     full = result.slice_for(sl.SLICE_FULL)
@@ -497,7 +497,7 @@ def test_slices_never_emit_a_byte_of_the_document_twice(paper_pdf):
     assert body.text.count("results0 ") == 1
 
 
-# ── §5 deterministic reference extraction ─────────────────────────────────────
+# ── deterministic reference extraction ────────────────────────────────────────
 
 
 def test_the_reference_cascade_keys_each_entry_by_its_strongest_tier(paper_pdf):
@@ -550,7 +550,7 @@ def test_an_unidentifiable_entry_is_counted_not_given_an_invented_key():
 
 
 def test_references_are_extracted_but_never_linked(paper_pdf):
-    """§5 stops at extraction — cross-item linking is the step, so a
+    """Slicing stops at extraction — cross-item linking is the step, so a
     reference record must carry no item id and no resolved target."""
     metadata = sl.reference_metadata(sl.slice_document(file_path=str(paper_pdf)))
     assert metadata["references"]
@@ -564,7 +564,7 @@ def test_a_document_with_no_bibliography_extracts_nothing_and_strips_nothing():
     assert result.bibliography_start == len(result.full_text)
 
 
-# ── §5 sha256 source cache (the zero-network clause) ──────────────────────────
+# ── sha256 source cache (zero network on re-ingest) ───────────────────────────
 
 
 class _Fetcher:
@@ -592,12 +592,12 @@ def test_a_fetched_source_is_cached_under_the_knowledge_files_dir(paper_pdf_byte
     fetched = _run(sl.fetch_source(ref, fetch_fn=_Fetcher(paper_pdf_bytes)))
     assert fetched.from_cache is False
     assert fetched.path.is_file() and fetched.path.suffix == ".pdf"
-    assert fetched.path.is_relative_to(knowledge_files_dir()), "§5: no new cache root"
+    assert fetched.path.is_relative_to(knowledge_files_dir()), "no new cache root"
     assert fetched.path.name == f"sha256-{fetched.sha256}.pdf"
 
 
 def test_a_re_ingest_is_served_from_the_cache_with_zero_network(paper_pdf_bytes):
-    """The clause, asserted the only way it can fail honestly: the second fetch's seam
+    """The claim, asserted the only way it can fail honestly: the second fetch's seam
     RAISES, so a cache that fetched-then-discarded reds instead of passing."""
     ref = sl.sniff_source("arXiv:2103.00020")
     assert ref is not None
@@ -682,11 +682,11 @@ def test_the_default_fetch_seam_is_net_fetch_under_the_source_policy(monkeypatch
     assert seen["policy"].name == "source"
 
 
-# ── SC#9 end to end: an arXiv PDF ingests ────────────────────────────────────
+# ── end to end: an arXiv PDF ingests ─────────────────────────────────────────
 
 
 def test_an_arxiv_pdf_ingests_into_slice_rows_on_the_one_item(store, paper_pdf_bytes):
-    """SC#9, whole. A bookmarked arXiv URL is fetched through the cache, sliced, and its
+    """The whole path. A bookmarked arXiv URL is fetched through the cache, sliced, and its
     references extracted — all on ONE item, with no chunk or child rows anywhere."""
     ensure_nodes_registered()
     fetcher = _Fetcher(paper_pdf_bytes)
@@ -718,7 +718,7 @@ def test_an_arxiv_pdf_ingests_into_slice_rows_on_the_one_item(store, paper_pdf_b
 
 
 def test_saving_the_same_paper_twice_opens_no_socket_the_second_time(store, paper_pdf_bytes):
-    """The re-ingest half of SC#9 through the real pipeline: a SECOND item pointing at the
+    """The re-ingest half of fetch-once through the real pipeline: a SECOND item pointing at the
     same paper reaches the fetch path with an empty content column, so it can only reach
     `done` from the sha256 cache — and the seam it would otherwise use raises.
 
@@ -798,7 +798,7 @@ def test_a_plain_document_yields_no_slices_and_still_completes(store, tmp_path):
 
 def test_a_plain_web_bookmark_still_takes_the_html_scraper(store, monkeypatch):
     """The document branch is a ROUTING decision on the URL — a blog post must be
-    unaffected, or WS-6 would have broken every existing bookmark."""
+    unaffected, or this change would have broken every existing bookmark."""
     ensure_nodes_registered()
     from personalclaw.knowledge.connectors import web_url as web_url_mod
 

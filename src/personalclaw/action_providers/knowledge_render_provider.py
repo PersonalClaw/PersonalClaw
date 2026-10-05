@@ -1,6 +1,6 @@
 """``render-report`` — a declarative report spec into a sanitized, self-contained export.
 
-KNOWLEDGE-SYNTHESIS §6.2 (KNOW-R15), the optional terminal step of a synthesis or monitoring
+It is the optional terminal step of a synthesis or monitoring
 template. Zero tokens: the spec is authored once (by a human or by one earlier `stage`), and every
 later run re-renders it against fresh data. That is the whole reason the spec and the data are
 separate arguments — a periodic synthesizer regenerates the visuals for free, with no model call.
@@ -232,7 +232,7 @@ def _write_spec(store: Any, slug: str, spec: dict[str, Any], cfg: dict[str, Any]
     a `snapshot=True` write on every periodic run minted a version per run — 24 versions a day of
     identical text, against the store's `MAX_VERSIONS = 50` FIFO prune
     (`artifacts/models.py:18`), which would evict the human-authored history inside two days. That
-    is exactly the burial this atom's spec-versus-export split exists to prevent, so the
+    is exactly the burial this provider's spec-versus-export split exists to prevent, so the
     idempotency check lives here rather than being assumed of the store. `canonical_spec_text`
     sorts keys so the comparison is not defeated by dict ordering.
     """

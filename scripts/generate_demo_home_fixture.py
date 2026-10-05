@@ -145,8 +145,8 @@ KNOWLEDGE_ITEMS = [
     },
 ]
 
-# The loop's six cycles, two per plan phase. These are the LEDGER, not decoration: since PP-16
-# seam 4a retired the `loops.total_cycles` column, a loop's cycle count IS its `step_completed`
+# The loop's six cycles, two per plan phase. These are the LEDGER, not decoration: since the
+# `loops.total_cycles` column was retired, a loop's cycle count IS its `step_completed`
 # count, so a fixture that wants to show a six-cycle run has to ship six cycles. The version this
 # replaced stored `total_cycles=6` on the row with an EMPTY ledger — six cycles claimed, zero
 # recorded — which is exactly the cache/projection divergence that retirement removes, and it made
@@ -360,7 +360,7 @@ def _checkpoint(db: Path) -> None:
 
     Both stores open with ``PRAGMA journal_mode=WAL``, so the writes above live in a
     sidecar ``-wal`` until checkpointed. Copying the bare ``.db`` without this ships a
-    fixture that boots EMPTY — the failure this whole atom exists to avoid.
+    fixture that boots EMPTY — the failure this whole script exists to avoid.
     """
     if not db.exists():
         raise FileNotFoundError(db)
@@ -432,8 +432,8 @@ def main() -> int:
         shutil.copy2(knowledge_db, FIXTURE / "workspace" / "knowledge" / "knowledge.db")
         shutil.copy2(loops_db, FIXTURE / "loop" / "loops.db")
         # status.json is written by loop_store.create() and is the worker's interface; the two
-        # jsonl files are the loop's LEDGER, which is where its cycle count now lives (PP-16 seam
-        # 4a — `total_cycles` is no longer a column, so an empty ledger means a zero-cycle loop).
+        # jsonl files are the loop's LEDGER, which is where its cycle count now lives
+        # (`total_cycles` is no longer a column, so an empty ledger means a zero-cycle loop).
         # The dir survives the boot-time orphan reap because the DB row exists.
         dest = FIXTURE / "loop" / LOOP_ID
         for name in ("status.json", "journal.jsonl", "events.jsonl"):

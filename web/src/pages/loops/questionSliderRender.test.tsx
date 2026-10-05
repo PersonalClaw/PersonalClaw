@@ -7,14 +7,14 @@ import type { SliderQuestion } from './sliderState'
 // ── The deep-rigor Round renders as a QuestionSlider stepper ────────────────────────────────────
 //
 // sliderState.test.ts pins the reducer (advance/back/gate/custom/submit) as pure logic; this mounts
-// the COMPONENT and asserts the clause's render contract: typed kinds, one question at a time, the
+// the COMPONENT and asserts its render contract: typed kinds, one question at a time, the
 // mandated custom-answer escape hatch on a `choice`, and a single gated Submit at the end.
 
 const q = (over: Partial<SliderQuestion> = {}): SliderQuestion => ({
   id: 'k', prompt: 'why?', kind: 'text', required: true, ...over,
 })
 
-describe('QuestionSlider stepper (WF2UNI-10 render)', () => {
+describe('QuestionSlider stepper', () => {
   it('shows one question at a time, with its typed control', () => {
     render(<QuestionSlider
       questions={[q({ id: 'c', prompt: 'pick one', kind: 'choice', choices: ['x', 'y'] }), q({ id: 't', prompt: 'second question' })]}

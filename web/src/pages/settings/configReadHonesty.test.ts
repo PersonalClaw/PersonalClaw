@@ -17,7 +17,7 @@ import { join } from 'node:path'
 //   #/settings/guardrails    6                                0 · same
 //   #/settings/legibility    2                                0 · same
 //
-// 🔑 The load-bearing half is not the copy — it is that the FORM IS GONE. Cycle 91's lesson on the
+// 🔑 The load-bearing half is not the copy — it is that the FORM IS GONE. The lesson learned on the
 // incident kill switch applies to every settings form: ask what a swallowed read lets the user DO. Here it
 // let them "change" a setting whose current value was unknown.
 //

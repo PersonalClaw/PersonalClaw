@@ -7,7 +7,7 @@ import { BentoCard, CardSkeleton } from './bento'
 
 // ── 22 shimmering tiles that told assistive tech nothing ────────────────────────────────────
 //
-// Cycle 122 gave the four failure-capable tiles a failure line and logged the remaining half: a tile in
+// The four failure-capable tiles got a failure line first, which left the remaining half: a tile in
 // its LOADING state was silent to assistive tech. `CardSkeleton` is `aria-hidden` (correct — it is
 // decoration), and the only node an AT user reaches on a card is its nav overlay button, so they heard
 // "Open Apps settings" with no indication the card was empty because the data had not arrived.
@@ -48,8 +48,8 @@ describe('a loading tile says it is busy on the node AT can reach', () => {
 
   it('does not touch the accessible NAME while busy', () => {
     // Folding "loading" into the label would rename the action mid-flight, so the control stops being
-    // findable by the name it has when it works — the ruling cycle 56 measured and this session has
-    // re-applied twice (Composer's send, the Toggle preconditions).
+    // findable by the name it has when it works — the rule measured earlier and re-applied
+    // twice since (Composer's send, the Toggle preconditions).
     render(<BentoCard icon={Blocks} title="Apps" onClick={vi.fn()} loading><div>body</div></BentoCard>)
     expect(screen.getByRole('button', { name: 'Open Apps settings' })).toBeTruthy()
   })
@@ -111,7 +111,7 @@ describe('a tile whose read FAILED says so, and offers a way out', () => {
   })
 
   it('describes the failure on the nav button WITHOUT renaming it', () => {
-    // The ruling this component already applies to `loading`: folding the state into the accessible
+    // The decision this component already applies to `loading`: folding the state into the accessible
     // NAME makes the control unfindable by the name it has when it works. A description adds the fact
     // and leaves the name alone — and it is a description rather than a live region because 22 tiles
     // can be in flight at once (see the measurement above).

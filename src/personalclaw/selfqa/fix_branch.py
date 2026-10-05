@@ -1,4 +1,4 @@
-"""Optional fix-branch stage — SV-10 §3.2 step 6, Success Criterion #8.
+"""Optional fix-branch stage of the Self-QA companion.
 
 On a confirmed finding, and only when ``agent.self_qa.fix_branch_enabled`` is on, the companion
 opens a branch named ``pclaw/selfqa-<sha8>`` off the commit under test. A coder can then propose a
@@ -15,7 +15,7 @@ is not a failure mode a reviewer has to check for. The branch name lands in the 
 (:class:`personalclaw.selfqa.findings.ScenarioFinding.fix_branch`); a human pushes or merges it, or
 does neither.
 
-The branch name follows the plan's ``<sha8>`` convention, not the full sha, so it is short enough
+The branch name follows a ``<sha8>`` convention, not the full sha, so it is short enough
 to read in a Task title and matches the branch a reviewer greps for. The git runner mirrors
 :mod:`personalclaw.loop.worktree`'s discipline — a fixed argv, no shell, a hex-validated ref, a
 time bound, and the ``build`` resource ceiling delivered via ``spawn_shim_argv`` — because this is
@@ -32,7 +32,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-#: The plan's branch convention. ``<sha8>`` — the first 8 hex chars of the commit under test.
+#: The branch convention. ``<sha8>`` — the first 8 hex chars of the commit under test.
 BRANCH_PREFIX = "pclaw/selfqa-"
 _SHA8_LEN = 8
 

@@ -13,8 +13,8 @@ import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── ONE display-capture acquisition, two products ───────────────────────────────────
 //
-// MI-4 shipped `useScreenShare`: a display stream held open for a session, one budgeted
-// frame per turn, never written to disk. CC-4 wants the opposite shape — one frame, the
+// `useScreenShare` holds a display stream open for a session, one budgeted frame per
+// turn, never written to disk. A screen snip wants the opposite shape — one frame, the
 // capture stopped immediately, cropped, then uploaded as an ordinary attachment. Two
 // products, but ONE `getDisplayMedia` acquisition, because the part they share is the
 // part with the consent story on it: ask, read a frame, stop every track.

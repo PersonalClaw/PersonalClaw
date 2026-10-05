@@ -1,4 +1,4 @@
-"""A trigger payload KEY may not override a protected env var (§7/R4 rule e).
+"""A trigger payload KEY may not override a protected env var.
 
 🔴 THE DEFECT. `bash_provider` passes the trigger payload as ENV rather than string-templating it
 into the command, and its own docstring says why: *"a payload value like `last_result` can hold
@@ -72,7 +72,7 @@ def test_the_command_still_RUNS_normally(tmp_path):
 
 @pytest.mark.parametrize("name", sorted(PROTECTED_ENV_NAMES))
 def test_EVERY_protected_name_is_filtered(name):
-    """A declared list is not a control until something reads it — this program's most-repeated
+    """A declared list is not a control until something reads it — this codebase's most-repeated
     lesson, so every entry is asserted rather than trusted."""
     assert name not in _payload_env(_ctx(**{name: "attacker-value"}))
 

@@ -213,7 +213,7 @@ def _resolve_loop_finding(entity_id: str, state) -> InvestigateContext | None:
 
 
 def _cadence(trigger) -> str:
-    """A trigger's cadence in words, via the SHARED describer (S111).
+    """A trigger's cadence in words, via the SHARED describer.
 
     Delegates to `schedule_view.describe_cadence` rather than reading a `ScheduleDefinition`'s three
     shapes: that was the legacy job's spelling, and this now receives a store `Trigger`. A second
@@ -447,7 +447,11 @@ async def _resolve_schedule_run(entity_id: str, state) -> InvestigateContext | N
         f"Duration: {run.get('duration_ms', 0)} ms",
     ]
     if job is not None:
-        lines.append(f"Cadence: {_cadence(job)}")
+        # The run keeps none of these: they are read from the automation as it is NOW, which
+        # may have been edited since the run fired. So they sit under a line that says so,
+        # rather than reading as what this run ran on.
+        lines.append("The automation as it is now (it may have changed since this run):")
+        lines.append(f"  Cadence: {_cadence(job)}")
         # The action lives in `workflow`, and its message key differs per provider
         # (`task_template` for invoke-agent, `message` for run-prompt) — the shared projection is
         # what resolves that, which is why it is used here rather than a hand-read.
@@ -457,9 +461,9 @@ async def _resolve_schedule_run(entity_id: str, state) -> InvestigateContext | N
         # `provider` is NESTED under `action` in the wire shape — read it there. Driving this
         # printed "Action: ?" from a top-level lookup that silently returned None.
         _provider = str((_row_view.get("action") or {}).get("provider") or "")
-        lines.append(f"Action: {_provider or '?'}")
+        lines.append(f"  Action: {_provider or '?'}")
         if _row_view.get("message"):
-            lines.append(f"Prompt/message: {_row_view['message']}")
+            lines.append(f"  Prompt/message: {_row_view['message']}")
     if run.get("summary"):
         lines.append(f"\nSummary: {run['summary']}")
     if run.get("error"):
@@ -633,7 +637,7 @@ def _resolve_loop_cycle(entity_id: str, state) -> InvestigateContext | None:
     lines = [
         f"Autonomous run: {loop.name or loop.id} (kind: {loop.kind}, status: {loop.status})",
         f"Task: {loop.task}",
-        # Derived from the projection already read above (PP-16 seam 4a retired the cached column).
+        # Derived from the projection already read above; the cached column it replaced is gone.
         f"Cycle {want} of {len(findings)}",
     ]
     finding = next((f for f in findings if int(f.get("cycle", -1)) == want), None)

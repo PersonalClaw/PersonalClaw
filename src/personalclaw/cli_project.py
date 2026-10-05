@@ -1,4 +1,4 @@
-"""`personalclaw project export|import` — one project as a manifest ZIP (C9).
+"""`personalclaw project export|import` — one project as a manifest ZIP.
 
 Distinct from `snapshot`, which is whole-home. A user handing a colleague one project has no
 business shipping their memory database, and the archive's secret exclusion plus per-entity digests

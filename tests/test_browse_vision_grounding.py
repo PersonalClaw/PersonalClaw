@@ -1,6 +1,6 @@
 """The located vision-grounding fallback for the browse loop.
 
-The change's subject is a page shape the DOM cannot describe: a ``<canvas>`` or image-map whose only
+The subject is a page shape the DOM cannot describe: a ``<canvas>`` or image-map whose only
 interactive control has no addressable element, so ``extract_page`` yields **zero** refs and every
 ref-addressed action the model can emit names nothing. This file drives that fixture through
 ``run_browse_loop`` and asserts the four rails that define correctness.
@@ -8,7 +8,7 @@ ref-addressed action the model can emit names nothing. This file drives that fix
 **The fixture's own premise is asserted first**
 (:func:`test_the_canvas_fixture_exposes_no_addressable_element`), with an ordinary page as the
 positive control. Without that pair every assertion below could be passing on a fixture that simply
-never reached the vision path — the vacuity this step is most exposed to, because "no refs" is also
+never reached the vision path — the vacuity this file is most exposed to, because "no refs" is also
 what a broken extractor returns.
 
 **Rail (a) — no new vendor string, no new model socket.**
@@ -23,9 +23,9 @@ mean something is :func:`test_a_bound_vision_model_grounds_and_clicks_the_canvas
 one binding, and the click happens — so the park is caused by the absent model and not by a path
 that never works.
 
-**Rail (c) — no bundle, no size regression.** Asserted against **the own** licence rail
+**Rail (c) — no bundle, no size regression.** Asserted against **the existing** licence rail
 (``personalclaw.bundled_model``) rather than a second copy of its rules, which is what keeps this
-file from contradicting the lane that owns that budget: BA-10 adds no weight, declares no
+file from contradicting the module that owns that budget: the fallback adds no weight, declares no
 ``size_budget_bytes``, and consumes ``licence_decision`` read-only to prove every model it
 recommends is one the permitted-licence allowlist already accepts.
 
@@ -254,7 +254,7 @@ async def _run(page: _Page, decide, *, vision_grounding: bool):
 
 
 def test_the_canvas_fixture_exposes_no_addressable_element() -> None:
-    """The change's precondition, MEASURED — and the control that proves the measurement works.
+    """The precondition, MEASURED — and the control that proves the measurement works.
 
     "Zero refs" is both the fixture's defining property and what a broken extractor returns for
     every page, so the ordinary page is asserted in the same test. Without it, an extraction
@@ -286,9 +286,9 @@ def test_the_vocabulary_withholds_the_verb_unless_the_run_opted_in() -> None:
 async def test_a_disabled_run_refuses_the_verb_even_when_the_model_emits_it(tmp_path: Path) -> None:
     """Half two: the EXECUTOR refuses, so the withheld prompt line is not the only guard.
 
-    A prompt is a request. This is the single call site of ``click_at``, and it is where BA-4 places
-    its credential refusal for the same reason — a rule stated only in the prompt is one a model
-    talks itself out of, and a rule in the caller is bypassed by the next caller.
+    A prompt is a request. This is the single call site of ``click_at``, and it is also where
+    the credential refusal sits, for the same reason — a rule stated only in the prompt is one
+    a model talks itself out of, and a rule in the caller is bypassed by the next caller.
     """
     page = _Page(CANVAS_PAGE, screenshot=_shot(tmp_path))
     result = await _run(page, _decider("CLICK_VISION the seat in row 4"), vision_grounding=False)
@@ -334,13 +334,13 @@ async def test_the_vision_path_refuses_a_page_that_has_refs(tmp_path: Path) -> N
 async def test_with_no_vision_model_bound_the_canvas_fixture_parks_with_a_typed_reason(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Rail (b). The change's word is "never a silent no-op", so three things are asserted:
+    """Rail (b). The rule is "never a silent no-op", so three things are asserted:
     it parks, the reason is the TYPED constant, and the detail is actionable."""
     _reader(monkeypatch, reads=False)
     page = _Page(CANVAS_PAGE, screenshot=_shot(tmp_path))
     result = await _run(page, _decider("CLICK_VISION the seat in row 4"), vision_grounding=True)
 
-    assert result.parked, "the run did not park — this is the silent no-op the atom forbids"
+    assert result.parked, "the run did not park — this is the silent no-op rail (b) forbids"
     assert result.park_reason == PARK_VISION_UNAVAILABLE, result.park_reason
     assert vision.REASON_NO_VISION_MODEL in result.park_detail, result.park_detail
     assert page.coordinate_clicks == []
@@ -355,7 +355,7 @@ async def test_with_no_vision_model_bound_the_canvas_fixture_parks_with_a_typed_
 async def test_a_bound_vision_model_grounds_and_clicks_the_canvas(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The change's central clause, and the NEGATIVE CONTROL for the park above.
+    """The central claim, and the NEGATIVE CONTROL for the park above.
 
     Same fixture, one binding: the loop grounds on the screenshot and actuates a coordinate. Without
     this arm the park test could be passing against a path that never works at all.
@@ -609,7 +609,7 @@ def test_every_park_reason_renders_as_a_sentence_not_a_reason_code() -> None:
 
     So this iterates the WHOLE vocabulary — discovered from the module's own ``PARK_*`` constants
     rather than listed here, because a hand-written list is what let two reasons slip through the
-    existing login-only test. A lane that adds a park reason and no sentence reds here.
+    existing login-only test. A change that adds a park reason and no sentence reds here.
     """
     from personalclaw.action_providers.browse_provider import BrowseActionProvider
     from personalclaw.browse import loop as loop_module
@@ -737,14 +737,15 @@ def test_the_recommended_refs_are_model_references_not_paths() -> None:
 # ── rail (c): no bundle, no size regression — asserted against the OWN rail ────────────────────
 
 
-def test_every_recommended_model_is_permissively_licensed_by_ou14s_own_rail() -> None:
+def test_every_recommended_model_is_permissively_licensed_by_the_bundled_model_rail() -> None:
     """Rail (c) + the permissive-licence rule, enforced by the rail that OWNS it.
 
     ``licence_decision`` is imported from ``personalclaw.bundled_model`` and used READ-ONLY. That
-    is deliberate and it is what keeps this file from colliding with the lane that owns OU-14's
-    budget: BA-10 adds no ceiling, changes no allowlist, and simply asks the existing gate whether
-    each licence it recommends is one the allowlist already accepts. If OU-14 widens or narrows
-    the allowlist, this test follows it instead of contradicting it.
+    is deliberate and it is what keeps this file from colliding with the module that owns the
+    bundled-model budget: the fallback adds no ceiling, changes no allowlist, and simply asks the
+    existing gate whether each licence it recommends is one the allowlist already accepts. If the
+    bundled-model rail widens or narrows the allowlist, this test follows it instead of
+    contradicting it.
     """
     from personalclaw.bundled_model import PERMITTED_LICENCES, licence_decision
 
@@ -752,14 +753,14 @@ def test_every_recommended_model_is_permissively_licensed_by_ou14s_own_rail() ->
     for model in vision.RECOMMENDED_MODELS:
         decision = licence_decision(model.licence)
         assert decision.permitted, (
-            f"BA-10 recommends {model.model_id!r} under {model.licence!r}, which OU-14's licence "
-            f"rail refuses: {decision.reason}"
+            f"browse/vision.py recommends {model.model_id!r} under {model.licence!r}, which the "
+            f"bundled-model licence rail refuses: {decision.reason}"
         )
         assert decision.identifier in PERMITTED_LICENCES, decision
 
 
 def test_adds_no_model_artifact_to_the_shipped_tree() -> None:
-    """Rail (c) proper: the model is user-PULLED, so BA-10 ships no weight.
+    """Rail (c) proper: the model is user-PULLED, so the fallback ships no weight.
 
     Measured with its own ``weight_shaped_members`` over the packaged source tree, so "what
     counts as a weight" is its definition rather than a second list that could drift. This cannot
@@ -772,19 +773,19 @@ def test_adds_no_model_artifact_to_the_shipped_tree() -> None:
     names = [str(p.relative_to(_REPO_ROOT)) for p in pkg.rglob("*") if p.is_file()]
     assert names, "no packaged files were found — the scan is vacuous"
     assert weight_shaped_members(names) == [], (
-        "a model weight is present in the packaged source tree; BA-10's vision model is "
+        "a model weight is present in the packaged source tree; the vision fallback's model is "
         "user-pulled and must add no artifact to the wheel or image"
     )
 
 
 def test_declares_no_size_budget_of_its_own() -> None:
-    """A second budget would be the contradiction the change warns about (research §4: "no OU-14
-    coupling"). BA-10 owns no ceiling because it ships nothing to measure."""
+    """A second budget would contradict the bundled model's own. The vision fallback owns no
+    ceiling because it ships nothing to measure."""
     source = Path(vision.__file__).read_text(encoding="utf-8")
     for token in ("size_budget", "SIZE_BUDGET", "BundleDeclaration", "gate_wheel"):
         assert token not in source, (
-            f"browse/vision.py names {token!r} — BA-10 must not declare or enforce a packaging "
-            "budget; that is OU-14's and a second one would contradict it"
+            f"browse/vision.py names {token!r} — the vision fallback must not declare or enforce "
+            "a packaging budget; that is the bundled model's, and a second would contradict it"
         )
 
 

@@ -1,4 +1,4 @@
-"""Headless ``personalclaw run`` — EA-9.
+"""Headless ``personalclaw run``.
 
 Every guard here carries a VACUITY assertion: a test that only shows the guard firing
 cannot tell a working guard from one that refuses everything. So each refusal is paired
@@ -710,7 +710,7 @@ def test_inbound_budget_is_the_headless_profile_budget():
 
 @pytest.mark.asyncio
 async def test_a_cli_turn_binds_the_cli_spend_scope(monkeypatch):
-    """The budget clause, asserted at the binding site.
+    """The budget scope, asserted at the binding site.
 
     Nothing on the chat path bound a run scope before this: ``set_current_run_key`` had a
     single production caller (the trigger-fire seam), so every chat turn charged with an

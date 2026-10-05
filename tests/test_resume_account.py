@@ -4,7 +4,7 @@ The defect under test is behavioural, not cosmetic: a resumed turn re-runs a ste
 already shows finished. So the assertions here are about what a resumed turn is TOLD and what it
 is refused, never about "the renderer produced a string".
 
-Three of these tests are the change's load-bearing negatives and are written so that the obvious
+Three of these tests are the load-bearing negatives and are written so that the obvious
 wrong implementation goes red:
 
 * ``test_a_failed_step_is_never_reported_as_done`` — fold ``step_failed`` into ``done`` and it reds.
@@ -97,7 +97,7 @@ def _subjects(account: ra.ResumeAccount, status: str) -> set[str]:
 
 
 def test_a_resumed_interrupted_task_points_at_the_step_that_did_not_finish():
-    """The change's stated validation: resume a real interrupted multi-step task and assert the
+    """The end-to-end validation: resume a real interrupted multi-step task and assert the
     record the next turn reads identifies the correct step to continue at.
 
     Asserted on the record's own structure rather than on prose, because that is what the next
@@ -125,7 +125,7 @@ def test_a_resumed_interrupted_task_points_at_the_step_that_did_not_finish():
 def test_a_failed_step_is_never_reported_as_done():
     """A step recorded attempted-and-failed is carried as FAILED.
 
-    This is the assertion the change calls out: a false completion is strictly worse than a
+    This is the assertion that matters most: a false completion is strictly worse than a
     forgotten one. Mapping ``step_failed`` to ``done`` in ``_facts_from_ledger`` reds every
     branch below.
     """
@@ -245,7 +245,7 @@ def test_a_retry_that_succeeded_reads_as_done_but_still_says_it_was_retried():
 def test_nothing_reaches_the_account_that_is_not_in_a_record():
     """A claim that exists only in PROSE must not appear in the account.
 
-    This is the "never summarized freehand" clause made falsifiable: compose the account from
+    This is the "never summarized freehand" rule made falsifiable: compose the account from
     message content instead of from tool_calls/results and the canary assertions red.
     """
     canary = "ZZCANARY-step-five-is-already-finished"

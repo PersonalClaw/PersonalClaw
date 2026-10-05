@@ -33,7 +33,7 @@ interface ViewerProps {
   // newSessionTarget (a fresh chat session per comment); a host inside an active
   // chat would pass a sameSessionTarget. When omitted, the comment layer is off.
   commentTarget?: CommentTarget
-  // Library detail polish (ARTIFACTS S2): open pinned to a historical version
+  // Library detail: open pinned to a historical version
   // (the ?v=N deep-link) and report version picks so the host can write the URL.
   initialVersion?: number
   onVersionChange?: (v: number | null) => void
@@ -69,7 +69,7 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
   const setSelVersion = (v: number | null) => { setSelVersionRaw(v); onVersionChange?.(v) }
   const [viewContent, setViewContent] = useState('')
   const [metaOpen, setMetaOpen] = useState(defaultDetailsOpen)  // sticky bottom metadata panel
-  // Compare mode (S3 T3.3): replaces the body with a two-version diff. Reset on slug
+  // Compare mode: replaces the body with a two-version diff. Reset on slug
   // change so navigating to another artifact never opens mid-comparison.
   const [comparing, setComparing] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -176,7 +176,7 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
     if (refreshKinds(m).includes('artifacts')) reloadLive()
   }, reloadLive)
 
-  // Pull-on-view (WF2AUT-6 / R10): opening an artifact is the render that drives any `view` trigger
+  // Pull-on-view: opening an artifact is the render that drives any `view` trigger
   // bound to it. The surface id is `artifact.<slug>` — stable per artifact, and what an author binds
   // a `view` trigger to. Fire-and-forget: a background refresh must never block the open or surface
   // an error toast, and within its TTL the backend just serves cache and costs nothing.

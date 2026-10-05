@@ -1,20 +1,20 @@
 """``selfqa-file-finding`` action provider — the Self-QA loop's filing step.
 
-A failing as-a-user scenario must leave **one** Inbox item and **one** Task (SELF-VERIFICATION
-Success Criterion #6). Both sinks already exist and neither is new here: the item goes through
+A failing as-a-user scenario must leave **one** Inbox item and **one** Task.
+Both sinks already exist and neither is new here: the item goes through
 `native_source.post_to_inbox` (the in-core push sink) and the Task through the native
 `TaskProvider` via `tasks.registry.create_task`. What this provider adds is a single dispatchable
 call site for the pair, so the count is enforced by code rather than by a template author
 remembering to write exactly two nodes.
 
-**Why a provider at all**, given the "no new action provider": that sentence forbids inventing a
-*`qa-run`* provider to fire the QA workflow — `run-workflow` covers that, and this provider does
-not touch it. §5 also states the rule for the case it explicitly contemplates ("if a later
-revision did add an action provider, it MUST be added to `ALLOWED_HOOK_PROVIDERS`"), which is
-followed. The alternative was a `stage` node instructing a subagent to call two tools "exactly
-once each" — a count no test can assert and no engine enforces, which is precisely the
-one-is-a-ceiling failure the criterion is about. The other constraint, "no new source/provider"
-for Inbox/Tasks, is honored literally: this adds neither an inbox source nor a task provider.
+**Why a provider at all**, given the "no new action provider" constraint: that constraint forbids
+inventing a *`qa-run`* provider to fire the QA workflow — `run-workflow` covers that, and this
+provider does not touch it. An action provider that IS added must be added to
+`ALLOWED_HOOK_PROVIDERS`, and this one is. The alternative was a `stage` node instructing a
+subagent to call two tools "exactly once each" — a count no test can assert and no engine
+enforces, which is precisely the one-is-a-ceiling failure the one-item-one-task rule is about.
+The other constraint, "no new source/provider" for Inbox/Tasks, is honored literally: this adds
+neither an inbox source nor a task provider.
 
 ``action_config`` shape::
 

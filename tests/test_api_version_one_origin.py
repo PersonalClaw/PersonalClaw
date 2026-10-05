@@ -1,4 +1,4 @@
-"""PL-9 rail — the emitted, declared and negotiated API version share ONE origin.
+"""The emitted, declared and negotiated API version share ONE origin.
 
 Three surfaces name this number: the gateway EMITS it (``/api/manifest``'s
 ``apiVersion`` plus the two generated reference documents), the SPA DECLARES it
@@ -181,7 +181,7 @@ class TestSingleChokepoint:
                         callers.append(str(path.relative_to(REPO)))
         assert callers == [str(GATE_PY.relative_to(REPO))], (
             "the version comparison must happen at ONE chokepoint; a second "
-            f"comparison site is the defect this atom removed. Callers: {callers}"
+            f"comparison site is the defect this rail keeps out. Callers: {callers}"
         )
 
     def test_the_gate_is_installed_in_the_gateway_middleware_chain(self):

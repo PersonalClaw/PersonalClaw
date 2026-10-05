@@ -1,4 +1,4 @@
-"""The skill-impact benchmark: register, preflight, reports and V4 reproduction.
+"""The skill-impact benchmark: register, preflight, reports and reproduction.
 
 Isolation: every test that touches state sets ``PERSONALCLAW_HOME`` to a ``tmp_path``.
 ``PERSONALCLAW_HOME`` is the safe lever because it is read per call and cached nowhere, and
@@ -103,7 +103,7 @@ def test_task_for_is_a_closed_register():
 def test_preflight_reports_every_task_runnable_in_a_fresh_home(home):
     """The closure, asserted at the call site: suppression is VERIFIED for all ten skills.
 
-    This is the check LV-6 recorded as blocking — `max_triggered` clamps to 1, a fresh home
+    This is the check once recorded as blocking — `max_triggered` clamps to 1, a fresh home
     force-syncs the bundled skills, and `suppressed_producers` is accuracy-derived — and it is
     the one that `arm_mask` + `skills/suppression.py` closed."""
     rows = learning_bench.preflight()
@@ -164,7 +164,7 @@ def test_latest_report_walks_past_an_unreadable_newest(home):
     assert learning_bench.latest_report()["run_id"] == "a"
 
 
-# ── V4 reproduction ──────────────────────────────────────────────────────────
+# ── reproduction ─────────────────────────────────────────────────────────────
 
 
 def _report(run_id: str, *, sha: str = "ab" * 32, verdict: str | None = "inconclusive") -> dict:
@@ -487,13 +487,13 @@ def test_run_in_an_unbound_home_writes_an_UNMEASURED_report_not_a_zero(tmp_path)
 # ══ #2562 — the report STATES its schema; no consumer infers it from key presence ══
 
 
-def test_a_pre_ES17_report_and_a_null_binding_report_are_separable_by_the_stated_schema(home):
+def test_an_unrecorded_and_a_null_binding_report_are_separable_by_the_stated_schema(home):
     """MEASURED on `main`: both said `report_schema: 1` and both answered `None` to
     `.get("provider_binding")`, so the only thing that told them apart was `'provider_binding' in
     report` — the workaround the panel carried, which in the issue's own words "leaves every other
     future consumer to rediscover the same trick".
 
-    `report_schema` shipped with LV-7 (f0c7788a8) and ES-17 (a5a6d5696) added the field without
+    `report_schema` shipped in f0c7788a8, and a5a6d5696 added the field without
     moving it. Adding a field is a schema change.
     """
     common = {
@@ -530,7 +530,7 @@ def test_a_pre_ES17_report_and_a_null_binding_report_are_separable_by_the_stated
 
 
 def test_the_shipped_schema_is_at_or_above_the_one_that_records_provenance():
-    """ES-17 added the field and left the version at 1, which is the whole defect. A report may
+    """The field was added and the version left at 1, which is the whole defect. A report may
     never state a schema below its own contents."""
     assert learning_bench.REPORT_SCHEMA >= learning_bench.PROVENANCE_SCHEMA
     assert learning_bench.PROVENANCE_SCHEMA == 2

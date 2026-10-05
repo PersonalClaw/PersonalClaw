@@ -4,14 +4,14 @@
   **sandbox provider** so it inherits the isolation class of the run it is helping, or, when the
   handoff names none, the one the runner's own runtime is set up with (``_runtime_sandbox``), so a
   second opinion never runs an agent on the host that every other start of it runs sandboxed.
-  This is the "different cataloged runner" the success criterion names.
+  This is the "different cataloged runner" the second-opinion handoff selects.
 * :class:`SubagentProposerBackend` — a fresh PClaw subagent as the second brain. Zero external
   dependencies; the degradation path when only one runner is installed (or when the eligible
   runner's dialect has no declared non-interactive form).
 
 Both funnel their verdict through :func:`normalise` so there is exactly ONE place that turns "the
 proposer said something" into ``ProposerResult.diff_verified`` — a second place would be a second
-acceptance rule, and the whole point of §4.1 is that acceptance has one definition.
+acceptance rule, and the whole point is that acceptance has one definition.
 """
 
 from __future__ import annotations

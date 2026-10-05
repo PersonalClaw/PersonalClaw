@@ -79,7 +79,7 @@ class LedgerWriter(OutcomeLedger):
 
     Carries the outcome pair (`open_outcome`/`resolve_outcome`) from
     :class:`personalclaw.ledger.outcomes.OutcomeLedger`, so every producer that can carry a ledger
-    can open a question about what LANDED — not only the one feature that first needed it (PP-9).
+    can open a question about what LANDED — not only the one feature that first needed it.
     """
 
     run_id: str
@@ -180,7 +180,7 @@ class LedgerWriter(OutcomeLedger):
           binding, and (if it reached a model) burn context on noise. Path-agnostic because
           a node's output is not a filename.
 
-        WV-11: an inline output is written to `outputs/`, byte-identical to before. An OFFLOADED
+        An inline output is written to `outputs/`, byte-identical to before. An OFFLOADED
         one is written to `runs/<id>/artifacts/` instead, so its `output_ref` does NOT start
         with `outputs/` — the signal every reader uses to treat it as a fetch-on-demand pointer
         (`{{nodes.x.artifact}}`, the `artifact_inspect` provider). The oversize stub keeps a

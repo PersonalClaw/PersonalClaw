@@ -1,7 +1,7 @@
-"""Resumable batched chunk backfill for pre-chunking knowledge items (H1.5).
+"""Resumable batched chunk backfill for pre-chunking knowledge items.
 
 Chunking, the chunk-level vector arm and its ANN index all only
-reach items that HAVE chunks. Every item ingested before KL-9 has none, so on a real
+reach items that HAVE chunks. Every item ingested before chunking existed has none, so on a real
 library those three changes do nothing until this backfill runs. It walks the un-chunked
 items in bounded batches, runs each through the ingest path's own chunk-write unit, and
 reports progress — the payload is that an existing library becomes searchable by content.
@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 #: Items pulled from the backlog per batch. Bounds peak memory: a backfill holds at most
 #: this many items' full content at once, so a library of any size costs the same. Small
-#: because item content is unbounded (a 30+ page PDF is ~100 KB of text), and since KL-15 an
+#: because item content is unbounded (a 30+ page PDF is ~100 KB of text), and an
 #: item's chunks are embedded in ONE batched call inside ``embed_item_chunks`` — the provider
 #: round trips already amortize within each item, so raising this bound would buy memory
 #: pressure rather than throughput. Batching ACROSS items is deliberately not done: each

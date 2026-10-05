@@ -13,7 +13,7 @@ fixtures below ingested to ``processing_status='done'`` with ``processing_error=
 
 That is AnythingLLM #6143 ("the embedding step silently writes nothing… RAG retrieval
 returns no sources, while the app reports success") reproduced in PersonalClaw, and
-PersonalClaw's own OU-3 finding that model-dependent write paths fail OPEN and silently.
+PersonalClaw's own earlier finding that model-dependent write paths fail OPEN and silently.
 
 **What this rail asserts, per fixture, all three required together:**
 
@@ -254,7 +254,7 @@ def test_each_fixture_surfaces_exactly_one_attention_row(
 
 def test_searching_the_scans_visible_token_returns_a_typed_reason(tmp_path):
     """The worst case: the word is ON the page, the item is in the library, and search can
-    reach neither. Before RET-2 this returned ``(no matching knowledge items)`` — a claim
+    reach neither. Before the typed reason this returned ``(no matching knowledge items)`` — a claim
     about the library's CONTENT that was simply false."""
     store = _store_for(tmp_path)
     item_id = _ingest_file(
@@ -411,7 +411,7 @@ class TestTheRailIsNotVacuous:
 
         The degraded-mode backlog that re-enriches items once a model comes back matched
         ``processing_status = 'partial'``. On a no-provider first-run home — no insights
-        model AND no embedding model — RET-2 files the item ``unsearchable`` instead, so a
+        model AND no embedding model — the ingest files the item ``unsearchable`` instead, so a
         status-only match would have silently emptied that backlog on exactly the homes it
         exists for: the drain would report zero and binding a model would re-enrich nothing.
         The existing degraded test hand-stamps ``partial`` and therefore cannot see this, so

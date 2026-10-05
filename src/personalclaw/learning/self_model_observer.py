@@ -1,4 +1,4 @@
-"""The self-model observer — the call site S72 deliberately left unbuilt (LEARN-R21 / §2.6 — LEA-8).
+"""The self-model observer — the call site `self_model.py` deliberately left unbuilt.
 
 `learning/self_model.py` shipped the pure decisions (reinforcement, caps, promotion, the snapshot)
 and recorded that it builds no store: "The observer's writes go through `MemoryService`, and the
@@ -13,7 +13,7 @@ Neither is visible at the end of the turn judged. So each turn's `(route, tools,
 PARKED, and the FOLLOWING turn's correction-signal resolves it to an `ACCEPTED`/`CORRECTED` one. A
 same-turn `NEUTRAL` default would be honest too, but it contributes nothing to confidence — the
 reinforcement engine would never cross a threshold and the whole propose path would be dead code,
-which is the exact inert-surface outcome this change exists to remove.
+which is the exact inert-surface outcome this module exists to remove.
 
 **Propose, never install.** A crossed threshold files a `lesson_batch` PROPOSAL through the shared
 human-gated queue, exactly like a lesson — this module never writes a `principle` entry. The live
@@ -87,7 +87,7 @@ def observed_pattern(route: str, tools: tuple[str, ...]) -> str:
 
     Route plus the SORTED distinct tool set, so "the harness handled this route with edit+read and
     it kept working" accretes evidence across turns instead of scattering into one-shot rows.
-    Deliberately NOT the turn's content — §2.6's self-model is about working patterns, and a
+    Deliberately NOT the turn's content — the self-model is about working patterns, and a
     per-turn key would never recur to cross a threshold.
     """
     tool_sig = ",".join(sorted({t for t in tools if t})) or "no-tools"
@@ -292,8 +292,8 @@ def observe_turn(
 
     The turn just seen is PARKED (its reaction is not yet observable). The previously-parked turn is
     RESOLVED with this turn's reaction, staged as a complete `(route, tools, outcome, reaction)`
-    tuple, folded into its pattern's reinforcement, and — if the habit crosses §2.6's thresholds —
-    filed as a `lesson_batch` PROPOSAL (never installed).
+    tuple, folded into its pattern's reinforcement, and — if the habit crosses the promotion
+    thresholds — filed as a `lesson_batch` PROPOSAL (never installed).
 
     Best-effort: never raises into the turn. Keys ``resolved``/``staged``/``proposed``/``pattern``.
     """
@@ -391,10 +391,10 @@ def _file_proposal(proposal, record: Reinforcement, *, min_evidence: int) -> boo
     `self_model.proposal_fingerprint` — a self-model principle the user already declined then
     collides with its own prior decision in the shared store instead of re-nagging under a new hash.
 
-    `min_evidence` is §2.6's `MIN_SEEN_COUNT`, not the generic ≥3 floor: `plan_promotion` already
-    enforced §2.6's conjunction (seen ≥ 2 AND confidence ≥ 0.72) to even PRODUCE this proposal, so
+    `min_evidence` is `MIN_SEEN_COUNT`, not the generic ≥3 floor: `plan_promotion` already
+    enforced its conjunction (seen ≥ 2 AND confidence ≥ 0.72) to even PRODUCE this proposal, so
     re-gating at 3 here would silently discard a habit the module's own threshold judged promotable
-    — dead code on the propose path, the exact inert outcome this atom removes.
+    — dead code on the propose path, the exact inert outcome this module removes.
     """
     from personalclaw.learning import proposals
 
@@ -446,7 +446,7 @@ def install_accepted_principle(service, proposal_dict: dict) -> bool:
     """Write an ACCEPTED principle into `user.selfmodel.principle.*` — the ONLY live-write path.
 
     Called by `dashboard/handlers/learning.py`'s accept installer AFTER `require_human` passed —
-    this is the human installing, the one path §2.6 permits to write a principle. Enforces the cap
+    this is the human installing, the one path permitted to write a principle. Enforces the cap
     on disk the way `plan_promotion` did on paper: if this entry takes the principle tier over its
     cap, the weakest EXISTING principle is displaced once it is stored, so a hand-edited or stale
     store can never leave the tier over its cap, and a principle memory refuses displaces nothing.

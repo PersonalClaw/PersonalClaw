@@ -79,12 +79,13 @@ async function restingOffset(page: Page, what: string): Promise<number> {
  *  derived from a LOOP INDEX — had come on screen. That coupling holds only if two things the test
  *  cannot see are both true: that the Nth send became the Nth turn, and that the Nth mark of a kind
  *  belongs to that turn. Both failed in run 35949502119, in the two different ways they can:
- *   · SSM-13 — `driveScriptedTurns(…, 6)` produced FIVE user turns (one send was swallowed into a
- *     live run), so `userMarks.nth(1)` was prompt `(3)` and `(2)` did not exist at all. The jump
- *     was correct — the rail's live region read `Jumped to turn 3 of 10` — and the test failed
- *     with "the rail tick did not bring its turn on screen", naming the rail.
- *   · SSM-15 — `End` lands the roving cursor on the LAST mark, which for a 6-turn session is mark
- *     17 of 18: the newest turn's ACTIVITY mark, whose coordinate is the assistant turn's node.
+ *   · the only-index test — `driveScriptedTurns(…, 6)` produced FIVE user turns (one send was
+ *     swallowed into a live run), so `userMarks.nth(1)` was prompt `(3)` and `(2)` did not exist
+ *     at all. The jump was correct — the rail's live region read `Jumped to turn 3 of 10` — and
+ *     the test failed with "the rail tick did not bring its turn on screen", naming the rail.
+ *   · the keyboard test — `End` lands the roving cursor on the LAST mark, which for a 6-turn
+ *     session is mark 17 of 18: the newest turn's ACTIVITY mark, whose coordinate is the
+ *     assistant turn's node.
  *     Space jumped there correctly (scrollTop 0 → 952 of 1271) and the test then demanded a
  *     DIFFERENT element — the newest USER prompt, which sits above that node and is off the top at
  *     the resting offset. Whether it happens to be visible is a function of the last turn's
@@ -111,7 +112,7 @@ async function expectMarkLanded(page: Page, mark: Locator, what: string): Promis
   expect(
     at,
     `${what}: the activated marker carries no "Message N of M" accessible name (aria-label: ` +
-      `${JSON.stringify(name)}). \`sessionMapMarkName\` is the one writer of that name (§A.6) — if its\n` +
+      `${JSON.stringify(name)}). \`sessionMapMarkName\` is the one writer of that name — if its\n` +
       'shape changed, fix this reader; do not drop the assertion, because without the turn coordinate\n' +
       'there is nothing to compare the rail\'s announcement against.',
   ).not.toBeNull()
@@ -163,7 +164,7 @@ test.describe('Session Map — in the transcript', () => {
 
     // ── CLAUSE 1: the rail renders in the session ────────────────────────────────────────────
     const rail = page.locator(RAIL)
-    await expect(rail, 'the Session Map rail never mounted in a started session — SSM-11 is the atom that makes the map reachable at all').toBeVisible()
+    await expect(rail, 'the Session Map rail never mounted in a started session — the rail is what makes the map reachable at all').toBeVisible()
     const markCount = await page.locator(MARK).count()
     expect(markCount, 'the rail mounted with no marks').toBeGreaterThan(1)
 
@@ -272,14 +273,14 @@ test.describe('Session Map — the coarse-pointer form', () => {
 
     // ── the rail is GONE, and the map is NOT ───────────────────────────────────────────────
     // Another agent UI's rail simply vanishes on touch. Since this map is the SOLE in-session
-    // index nav, vanishing is the defect §A.8 exists to prevent — so both halves are
+    // index nav, vanishing is the defect this test exists to prevent — so both halves are
     // asserted together.
     await expect(page.locator(RAIL), 'the pointer rail is still mounted at a phone viewport').toHaveCount(0)
     expect(
       await openHeaderOverflowIfNeeded(page, 'Session map'),
       'IN-SESSION NAV IS UNREACHABLE at 390px: the rail is gone and the "Session map" control is\n' +
         'in neither the header row nor its overflow menu. That is exactly the "mobile loses\n' +
-        'session navigation" outcome SSM-10 exists to prevent.',
+        'session navigation" outcome this test exists to prevent.',
     ).toBe(true)
 
     // Park the transcript at its newest turn, so "the tap navigated" has somewhere to travel FROM.
@@ -306,7 +307,7 @@ test.describe('Session Map — the coarse-pointer form', () => {
     await expect(rows.first()).toBeVisible()
     const rowCount = await rows.count()
     expect(rowCount, 'the drawer opened with no marks').toBeGreaterThan(1)
-    // The owner's rule holds on the phone too: one row per USER message — three sends, three rows —
+    // The design rule holds on the phone too: one row per USER message — three sends, three rows —
     // and none for the replies or the work inside them. Named the way the rail names its markers.
     expect(rowCount, 'the drawer lists something other than the user messages').toBe(3)
     // (The subject is capped at 40 characters, so the prompt's own "(n)" is cut off; the position is
@@ -349,7 +350,7 @@ test.describe('Session Map — the coarse-pointer form', () => {
 
 // ── THE RAIL IS OPERABLE FROM THE KEYBOARD ALONE ──────────────────────────────────────────────
 //
-// 🔑 WHY A BROWSER TIER WHEN `SessionMapRail.keyboard.test.tsx` ALREADY COVERS SSM-7. That file is
+// 🔑 WHY A BROWSER TIER WHEN `SessionMapRail.keyboard.test.tsx` ALREADY COVERS THE KEYBOARD. That file is
 // honest and stays — but everything it can assert is a jsdom fact. It reaches the roving cursor by
 // `fireEvent.keyDown` on the tick it computed to be the tab stop, so it never asks the question a
 // keyboard user asks first: is the rail REACHABLE by Tab at all, in the real focus order, sitting
@@ -407,7 +408,7 @@ test.describe('Session Map — operable from the KEYBOARD alone', () => {
       at,
       `${what}: End did not put the cursor on the rail's last tick — focus is on index ${at} of ${length}\n` +
         'marks. Both numbers are read in one evaluation, so this is not the list having grown; the\n' +
-        "cursor is genuinely somewhere else (§A.6's End goes to `lastIndex`).",
+        "cursor is genuinely somewhere else (End goes to `lastIndex`).",
     ).toBe(length - 1)
     return at
   }
@@ -656,9 +657,9 @@ test.describe('Session Map — it is the session\'s ONLY index', () => {
   // to stay the pointer form (`useIsMobile` is max-width 768).
   test.use({ viewport: { width: 1280, height: 420 } })
 
-  // 🔑 WHY THIS BLOCK REPLACED SSM-12's. SSM-12 drove the rail tick and the Activity → Index anchor
+  // 🔑 WHY THIS BLOCK REPLACED THE PARITY ONE. That drove the rail tick and the Activity → Index anchor
   // for the same turn and asserted they rested it in the same place — the proof that the two
-  // surfaces were one navigation, and therefore that deleting one lost nothing. SSM-13 deleted it,
+  // surfaces were one navigation, and therefore that deleting one lost nothing. The Index tab is gone,
   // so that comparison has only one side left. What survives is the claim the deletion has to make
   // good on: the panel no longer offers an index, AND the rail still lands a mid-session turn. A
   // vitest file cannot make the second half honestly (jsdom computes no layout and `ChatPage` is not
@@ -740,7 +741,7 @@ test.describe('Session Map — it is the session\'s ONLY index', () => {
     // 🪤 POLLING FOR QUIET ALONE READS THE OFFSET THE JUMP HAS NOT LEFT YET, and that mode is
     // invisible: `scrollIntoView({behavior:'smooth'})` animates, so the first two samples after the
     // click can both be the PARKED value, "settle" on it, and report a landing of `from`. Measured
-    // twice while SSM-12 was built — both runs reported a landing exactly at the bottom while the
+    // twice while the parity block was built — both runs reported a landing exactly at the bottom while the
     // following viewport check (which waits) passed, i.e. the scroll was real and the reading was
     // early. So movement is awaited FIRST and quiet second.
     await expect
@@ -761,7 +762,7 @@ test.describe('Session Map — it is the session\'s ONLY index', () => {
   })
 })
 
-// ── THE OWNER'S FORM, MEASURED WHERE LAYOUT EXISTS ───────────────────────────────
+// ── THE MARKER FORM, MEASURED WHERE LAYOUT EXISTS ────────────────────────────────
 //
 // 🔴 WHY EVERY CLAUSE BELOW IS A BROWSER CLAUSE AND NOT A VITEST ONE. The rules are about what a
 // reader SEES — one uniform length at rest, the on-screen messages told apart by colour, the marker
@@ -847,7 +848,7 @@ function contrastOf(a: string, b: string): number {
   return (hi + 0.05) / (lo + 0.05)
 }
 
-test.describe('Session Map — the owner\'s form', () => {
+test.describe('Session Map — the marker form', () => {
   test.describe.configure({ timeout: 180_000 })
   // 1280 keeps `useIsMobile` false, so this is the pointer form and not the drawer.
   test.use({ viewport: { width: 1280, height: 600 } })
@@ -990,7 +991,7 @@ test.describe('Session Map — the owner\'s form', () => {
     await marks.nth(2).hover()
     const card = page.locator(CARD)
     await expect(card, 'hovering a marker must preview it').toBeVisible({ timeout: 10_000 })
-    // The owner's card: the request, then a muted excerpt of the reply's opening, and a timestamp.
+    // The card's design: the request, then a muted excerpt of the reply's opening, and a timestamp.
     await expect(card.locator('[data-session-map-request]')).toContainText(`${PROMPT} (3)`)
     await expect(card.locator('[data-session-map-response]')).toContainText('SCRIPTED-E2E-OK')
     await expect(card.locator('time')).toHaveCount(1)
@@ -1081,7 +1082,7 @@ test.describe('Session Map — the owner\'s form', () => {
   })
 
   test('🔑 reading an answer keeps its question lit — after the question itself has scrolled away', async ({ page }) => {
-    // The owner's rule for the on-screen colour: it follows the user message whose EXCHANGE is in
+    // The rule for the on-screen colour: it follows the user message whose EXCHANGE is in
     // view. While a long answer is being read its question has scrolled off the top, and a rail that
     // lit only the markers whose own message is on screen went dark in exactly that state.
     await gotoRoute(page, 'chat')

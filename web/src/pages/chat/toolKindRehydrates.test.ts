@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { hydrateTurns, type HistMsg, type ToolSegment } from './chatTypes'
 import { iconForTool } from './toolRenderers/native'
 
-// ── AAP-8 §2.5 gap 7, the `tool_kind` half — the READER side ────────────────────
+// ── The `tool_kind` half — the READER side ──────────────────────────────────────
 //
 // The backend now persists the CLI-declared kind on a tool row's `meta.kind`
 // (`chat_runner.py`, beside the `tool_call` WS broadcast that already carried it). This

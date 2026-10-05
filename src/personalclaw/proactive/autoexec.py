@@ -1,20 +1,20 @@
 """Stage 3.5 — trivial-tier auto-execution, quadruple-bounded.
 
-The sharpest edge in the plan: the point where a model's proposal becomes a write nobody
-watched. §1.6 bounds it four ways, and all four are enforced HERE rather than requested in a
+The sharpest edge in the digest: the point where a model's proposal becomes a write nobody
+watched. It is bounded four ways, and all four are enforced HERE rather than requested in a
 prompt, because a bound a prompt asks for is a bound an injected inbox item can ask to skip:
 
 1. **The switch.** ``proactive.auto_execute_enabled`` is off by default. Off means this stage
-   dispatches nothing, reads no budget, and returns every proposal deferred — the plan's
+   dispatches nothing, reads no budget, and returns every proposal deferred — the
    one-click revoke, and the reason it is checked first is that a revoked switch must not even
    spend a store read.
-2. **The frozen capability set** (substrate decision 7). A proposal names an ``action_type``,
+2. **The frozen capability set.** A proposal names an ``action_type``,
    never a provider; :data:`PROVIDER_FOR_ACTION` is the only thing that turns one into a
    dispatch, and the provider it names must ALSO be in the caller's declared capability set.
    Two independent gates, so neither an unmapped action nor an undeclared provider can execute.
 3. **The per-run cap.** ``max_auto_actions_per_run`` (default 5). The rest queue pending
    regardless of tier — a hundred trivial archives is still a hundred unattended writes.
-4. **The NEW-1 budget floor**, consulted before EVERY action rather than once per run: a run
+4. **The budget floor**, consulted before EVERY action rather than once per run: a run
    that starts under its ceiling can cross it mid-flight, and a single check at the top would
    authorise the whole batch on the strength of the cheapest moment in it.
 
@@ -75,7 +75,7 @@ PROVIDER_FOR_ACTION: dict[str, str] = {
 }
 
 #: The providers whose actions may be dispatched UNATTENDED by default. Just `inbox-op`, and
-#: the narrowness is §1.6 bound 2: external-reach actions are not in the trivial-capable set,
+#: the narrowness is bound 2 above: external-reach actions are not in the trivial-capable set,
 #: so even a taught always-approve rule for `reply_draft` reaches a provider that can only
 #: write a draft. A caller that declares a wider set on its own node widens it deliberately.
 AUTO_CAPABLE_PROVIDERS: frozenset[str] = frozenset({"inbox-op"})
@@ -111,8 +111,8 @@ SKIP_BUDGET = "skipped_budget"
 #: The dispatch ran and the provider reported a failure (or raised). The same token as the
 #: `auto_failed` ledger kind, as `skipped_budget` is its kind's: one word for one fact.
 SKIP_FAILED = "auto_failed"
-#: The two PLATFORM gates, above the four. This module is a fifth UNATTENDED dispatch seam
-#: (AUTONOMY-GUARDRAILS §1.2), so it carries the kill switch and the action denylist like the
+#: The two PLATFORM gates, above the four. This module is a fifth UNATTENDED dispatch seam,
+#: so it carries the kill switch and the action denylist like the
 #: other four — a digest that kept archiving through an incident would be the quiet exception
 #: that makes the kill switch useless. The kill switch holds only what nobody answered: your Yes
 #: is attended work, which incident mode leaves running, as it leaves a chat's tool calls.
@@ -125,7 +125,7 @@ SKIP_DENYLIST = "denied_by_denylist"
 SKIP_CEILING = "refused_by_ceiling"
 
 #: The rule name a trivial-tier execution with no taught rule behind it records. The ledger row
-#: must ALWAYS name what authorised the action (§1.6 bound 4), and "the tier floor policy" is a
+#: must ALWAYS name what authorised the action, and "the tier floor policy" is a
 #: real answer — an empty `rule` field would read as a taught rule whose key went missing.
 TIER_POLICY_RULE = "policy:trivial-tier"
 
@@ -175,7 +175,7 @@ class DeferredProposal:
 class AutoExecResult:
     executed: tuple[AutoAction, ...] = ()
     deferred: tuple[DeferredProposal, ...] = ()
-    #: True when the NEW-1 floor refused mid-run. The remaining proposals are in `deferred`
+    #: True when the budget floor refused mid-run. The remaining proposals are in `deferred`
     #: with `SKIP_BUDGET`, so this flag is a summary of them, never a substitute.
     budget_breached: bool = False
     budget_reason: str = ""
@@ -258,7 +258,7 @@ def _make_context(action_config: dict) -> Any:
 
 
 def default_budget_check(run_key: str = "") -> BudgetCheckFn:
-    """The NEW-1 floor, bound to a run. Day scope always; run scope when there is a run.
+    """The budget floor, bound to a run. Day scope always; run scope when there is a run.
 
     Fails CLOSED — see this module's docstring for why that diverges from
     `triggers/screen.py`'s deliberate fail-open. A probe that raises returns
@@ -342,7 +342,7 @@ async def auto_execute(
 ) -> AutoExecResult:
     """Run the eligible proposals, defer the rest, and record BOTH.
 
-    Zero silent drops is the contract (criterion 4): every proposal comes back either in
+    Zero silent drops is the contract: every proposal comes back either in
     ``executed`` (it landed) or in ``deferred`` with a reason (a failed dispatch included), and
     the counts always reconcile with the input. A caller that supplies `ledger` also gets one row
     per outcome.
@@ -579,7 +579,7 @@ async def auto_execute(
 
 
 def render_auto_lines(result: AutoExecResult) -> tuple[str, ...]:
-    """The digest's "what your machine did" lines for the auto-executed half (§1.6 bound 4).
+    """The digest's "what your machine did" lines for the auto-executed half.
 
     One line per action that LANDED, naming the rule that authorised it and whether an undo
     exists. The undo itself is a click on the ledger row; what the digest owes the user is the

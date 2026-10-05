@@ -6,10 +6,10 @@ carrying identity and relations, and reads an owner's edit **back** — which is
 difference between an export and ownership.
 
 **It is the memory vault's projector, pointed at the knowledge store — not a second one.**
-The change says so explicitly, and the reason is the swallowed-write family's worst shape: two
+That is deliberate, and the reason is the swallowed-write family's worst shape: two
 projectors writing the owner's files, each treating the other's bytes as a hand edit,
 overwriting each other forever with nothing in either's summary saying so. So every mechanic
-MGAV-6 already ships is imported from :mod:`personalclaw.memory_vault` rather than
+the memory vault already ships is imported from :mod:`personalclaw.memory_vault` rather than
 reimplemented:
 
 * **mode config** — the same three-valued vocabulary (``MEMORY_VAULT_MODES``:
@@ -23,7 +23,8 @@ reimplemented:
   :func:`~personalclaw.memory_vault.extract_edited_value`, so an Obsidian vault of memory
   and one of knowledge are the same artifact in two directories;
 * **the sync pass** — the same ``absorb → project → collect deletions`` order, for the
-  reason MGAV-6 documents: re-render first and the owner's text is gone before it is read;
+  reason the memory vault documents: re-render first and the owner's text is gone before it
+  is read;
 * **its verification** — the same ``(check, key, detail)`` flag shape, the same
   ``sync_conflict`` front-matter stamp and the same broken-link / orphan-page checks over
   :data:`~personalclaw.memory_vault.WIKILINK_RE`, so a refusal is visible in the file the
@@ -38,7 +39,7 @@ is the proof rather than this paragraph.
 
 What is genuinely NEW here, because memory did not need it:
 
-**A ledger, not a manifest.** MGAV-6 keeps ``.vault-manifest.json`` and re-renders every
+**A ledger, not a manifest.** The memory vault keeps ``.vault-manifest.json`` and re-renders every
 record on every sync — fine for a few hundred facts, wrong for a library. The projection
 backlog is instead keyed in ``vault_projections`` (see the DDL): "which items disagree with
 their ledger row". A keyed backlog returns rows only when there is real work and 0 exactly
@@ -197,7 +198,7 @@ def page_basename(item: dict) -> str:
 
     Title first because the point of the projection is a directory a human can read, and the
     id suffix because two items may legitimately share a title and a wikilink target must be
-    unique. `slug` is MGAV-6's — one sanitizer, so a `[[link]]` written by either vault
+    unique. `slug` is the memory vault's — one sanitizer, so a `[[link]]` written by either vault
     resolves the same way.
     """
     title = " ".join(str(item.get("title") or "").split())[:80]
@@ -213,8 +214,8 @@ def page_basename(item: dict) -> str:
 def _relation_lines(relations: list[dict], names: dict[str, str], item_id: str) -> list[str]:
     """``[[wikilink]]`` lines for the typed edges on either leg of *item_id*.
 
-    Derived from ``item_relations`` rows, never from scraping the body — the invariant MGAV-6
-    states and the reason its broken-link lint means anything. A relation whose other end has
+    Derived from ``item_relations`` rows, never from scraping the body — the invariant the memory
+    vault states and the reason its broken-link lint means anything. A relation whose other end has
     no page is skipped rather than linked: a projection that emits links to pages it does not
     create makes its own verification fire on correct output.
     """
@@ -362,7 +363,7 @@ class KnowledgeVault:
 
     Stateless beyond the ledger it reads and writes; construct freely (or via
     :func:`vault_for`). One :meth:`sync_batch` is one bounded unit of work and returns how
-    much it did, which is exactly what KL-14's sub-batch loop consumes.
+    much it did, which is exactly what the maintenance host's sub-batch loop consumes.
     """
 
     def __init__(self, store: Any, vault_dir: Path, *, mode: str = "mirror") -> None:
@@ -387,8 +388,8 @@ class KnowledgeVault:
     def sync_batch(self, *, max_items: int = DEFAULT_BATCH) -> dict:
         """One bounded sub-batch: absorb, then project, then collect deletions.
 
-        The order is MGAV-6's and it is the whole design — project first and the owner's text
-        is overwritten before anything read it. Returns a summary whose ``units`` is the
+        The order is the memory vault's and it is the whole design — project first and the owner's
+        text is overwritten before anything read it. Returns a summary whose ``units`` is the
         number the maintenance pass reports: it drains to 0 when the vault is settled, which
         is what stops the host claiming another sub-batch.
         """
@@ -500,7 +501,7 @@ class KnowledgeVault:
                 # `updated_at`, so the projection half below re-renders this very page and
                 # `record_vault_projection` records the mtime of the bytes IT wrote. Recording
                 # the pre-render mtime would mean the next pass saw a "changed" file — the
-                # self-retrigger this change names, arriving through the back door.
+                # self-retrigger the module docstring names, arriving through the back door.
                 continue
             if not reason:
                 # A refusal with no reason is a NO-OP, not a conflict: the owner's text is
@@ -529,8 +530,8 @@ class KnowledgeVault:
         The bar for "confidently parseable" is deliberately high, and the two-sided check is
         the substantive one: if the store's ``updated_at`` no longer matches the value this
         page was rendered from, BOTH sides moved since the projection and there is no version
-        of "apply" that is not a silent choice. MGAV-6 makes the human authoritative over a
-        concurrent store write because a memory value is one sentence and its previous value
+        of "apply" that is not a silent choice. The memory vault makes the human authoritative over
+        a concurrent store write because a memory value is one sentence and its previous value
         stays recoverable through ``memory_events``; a knowledge item is a document whose
         overwritten version is gone, so this refuses and surfaces instead.
 
@@ -591,8 +592,8 @@ class KnowledgeVault:
     def _flag_conflict(self, page: Path, block: str, body: str, reason: str) -> None:
         """Stamp ``sync_conflict`` into the front-matter, leaving the body alone.
 
-        MGAV-6's mechanic, unchanged: the body is written back byte-for-byte so the owner's
-        text survives, and because ``source_hash`` covers the body only, stamping the
+        The memory vault's mechanic, unchanged: the body is written back byte-for-byte so the
+        owner's text survives, and because ``source_hash`` covers the body only, stamping the
         front-matter does not make the page look clean again.
         """
         fm = parse_frontmatter(block)
@@ -653,7 +654,7 @@ class KnowledgeVault:
             citations=citations,
         )
         target = self._dir / relpath
-        # Compare against the BYTES ON DISK, not against the ledger digest. MGAV-6 learned
+        # Compare against the BYTES ON DISK, not against the ledger digest. The memory vault learned
         # this one the hard way: the ledger says "the projection has not changed", NOT "the
         # file still holds it", so a page deleted-and-restored or hand-mangled would never be
         # rewritten in mirror mode.
@@ -803,7 +804,7 @@ class KnowledgeVault:
     # ── verification ────────────────────────────────────────────────────────
 
     def lint_flags(self) -> list[tuple[str, str, str]]:
-        """Deterministic checks as ``(check, key, detail)`` triples — MGAV-6's flag shape.
+        """Deterministic checks as ``(check, key, detail)`` triples — the memory vault's flag shape.
 
         Measured against the LEDGER and what is on disk, never against the renderer's own
         intentions: a check that asked the renderer whether it had rendered correctly would be
@@ -902,7 +903,7 @@ def _edit_refusal(value: str) -> str:
 def projection_pass(*, batch_size: int = 0) -> int:
     """One bounded sub-batch of the markdown projection. Returns units of work done.
 
-    Registered ``batched=True`` on KL-14's host: the return value is PROGRESS, and 0 means
+    Registered ``batched=True`` on the maintenance host: the return value is PROGRESS, and 0 means
     "the vault agrees with the library", which is what stops the sub-batch loop. Every
     refusal records a durable ledger state precisely so it contributes 0 next time — a pass
     that kept re-reporting an unresolved conflict would busy-loop ``max_batches`` times per

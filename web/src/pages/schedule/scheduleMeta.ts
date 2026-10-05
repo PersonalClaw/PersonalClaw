@@ -129,13 +129,13 @@ export function statusMeta(s?: string | null): StatusMeta {
   // job.last_status is "ok"/"error"; run.status is "success"/"failure"/"timeout"/"launched".
   if (s === 'ok' || s === 'success') return { label: 'ok', tone: 'var(--color-ok)', icon: CheckCircle2 }
   if (s === 'error' || s === 'failure') return { label: 'error', tone: 'var(--color-danger)', icon: XCircle }
-  // 🔴 THE FIRE-RECORD VOCABULARY. S137 mapped the store's `status` words
+  // 🔴 THE FIRE-RECORD VOCABULARY. The first mapping covered the store's `status` words
   // (`success`/`failure`) and the suppression family, and missed the three `Outcome` members a
   // FireRecord most often carries. `statusMeta('failed')` returned **"never run"** in
   // neutral grey — a genuinely FAILED automation rendered identically to one that had never run,
   // which is the one pair a user must never confuse. `ran`/`ran_late` were equally invisible.
   //
-  // `ran_late` keeps a distinct label rather than folding into `ok`: §1.3 records
+  // `ran_late` keeps a distinct label rather than folding into `ok`: the fire record keeps
   // `scheduled_for` beside `started_at` precisely so lateness is a fact, not an impression, and a
   // run 40 minutes after its slot is a different story from one on time.
   if (s === 'ran') return { label: 'ran', tone: 'var(--color-ok)', icon: CheckCircle2 }
@@ -161,7 +161,7 @@ export function statusMeta(s?: string | null): StatusMeta {
   // not done what it was asked yet, and its question is in the Inbox. `deferred`, as the runs feed
   // maps it; the row's summary says on what it waits.
   if (s === 'waiting') return { ...statusMeta('deferred'), label: 'waiting for you' }
-  // "launched": started a background turn — honest "started ≠ succeeded" (T7).
+  // "launched": started a background turn — honest "started ≠ succeeded".
   // Neutral tone, NOT ok-green: a green tick would imply the work succeeded.
   if (s === 'launched') return { label: 'launched', tone: 'var(--color-info)', icon: Rocket, noFault: true }
   // A launched run whose agent asked you to let it start, and you declined (`triggers/settle.py`).
@@ -231,7 +231,7 @@ export function runSourceMeta(source?: string | null): { label: string; title: s
 
 /** Whether this outcome means "nothing was spent and nothing changed" (the `INERT_OUTCOMES`).
  *
- * 🔴 WHY THIS EXISTS. S171 began PERSISTING a suppressed fire's row so criterion 8's "zero silent
+ * 🔴 WHY THIS EXISTS. A suppressed fire's row is PERSISTED so "zero silent
  * drops" is real — and the reason lands in `ScheduleRun.error`, which `RunTrace` renders in a
  * danger-tinted box. A quiet-hours skip showed a neutral grey "gate" dot beside its reason
  * in **red**, identical to a real `ConnectionError`. The row contradicted itself, and the alarming
@@ -323,7 +323,7 @@ export interface TriggerStatusFacts {
  *
  *   * UNDERSTATED. The list's own `statusDot` handled run outcomes and was passed the health rollup,
  *     so `degraded`/`parked`/`failing` all fell to the neutral "no data" dot — a failing automation
- *     pixel-identical to one that had never run. S164 fixed that for the store kind and #685 for the
+ *     pixel-identical to one that had never run. One fix covered the store kind and #685 the
  *     schedule kind, each by adding a branch at the call site; the EVENT kind was still broken when
  *     this was measured, because `eventToTrigger` dropped `health`/`state`/`last_error` on the floor
  *     while the backend had been sending all three specifically so this mapper could read them.
@@ -452,7 +452,7 @@ export function mdToPlain(s?: string | null): string {
  *  Mirrors `MIN_CLOCK_INTERVAL_SECS` in `triggers/models.py`, which is the OWNER of the rule — the
  *  backend warns, and this only renders the same number at author time so the choice is visible
  *  before the save rather than only after it. A FLOOR, not a limit: the backend deliberately warns
- *  instead of refusing (R1 makes it overridable — a fast local-model poll is a legitimate choice),
+ *  instead of refusing (it is overridable — a fast local-model poll is a legitimate choice),
  *  so this must never gate the form. `ScheduleForm`'s `IntervalField` is the only reader.
  */
 export const MIN_INTERVAL_SECS = 900

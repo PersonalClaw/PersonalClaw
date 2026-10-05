@@ -2,8 +2,8 @@
 
 The journal cache memoizes *outputs* only. Without effect identity, resume/rewind/fork
 double-fire external effects — a Slack message sent twice, a task created twice, a VM
-provisioned twice. That is the biggest correctness hole in a journaled-replay design
-(WF2-R1), and this module is the fix: every tool-bearing dispatch records a
+provisioned twice. That is the biggest correctness hole in a journaled-replay design,
+and this module is the fix: every tool-bearing dispatch records a
 typed effect event in `events.jsonl`, keyed by an idempotency key derived from the
 execution identity, not the wall clock.
 
@@ -12,8 +12,8 @@ Three rules the controller enforces with what lives here:
 * **A committed effect is a boundary.** Re-executing a node whose effect COMMITTED in a
   previous epoch requires an explicit `redo_effects: true` on the node — silently
   re-running it is exactly the double-fire this ledger exists to prevent. (The mutation
-  cascade preview that *surfaces* the boundary before a rewind is the job; the
-  runtime refusal is this slice's.)
+  cascade preview *surfaces* the boundary before a rewind; the
+  runtime refusal lives here.)
 * **Teardown before redo.** A provisioning effect that declared a `teardown` command gets
   it run — with the committed output id — before the region re-executes. The BYOI
   contract requires teardown to be idempotent, so running it against an already-gone
@@ -89,7 +89,7 @@ def effect_key(run_id: str, instance_path: str, epoch: int, records: list[Effect
 
 
 def committed_effect_refusal(node_label: str, committed_epoch: int) -> Failure:
-    """The node is refused: re-running it would fire an effect already committed (WF2-R1)."""
+    """The node is refused: re-running it would fire an effect already committed."""
     return Failure(
         failure_class=FailureClass.USER,
         cause_plain=(
@@ -190,7 +190,7 @@ def committed_effect(records: list[EffectRecord]) -> EffectRecord | None:
 
 
 def redo_blocked(node_config: dict[str, Any], committed: EffectRecord | None, epoch: int) -> bool:
-    """True when re-execution must be refused (WF2-R1).
+    """True when re-execution must be refused.
 
     Only a DIFFERENT epoch triggers the gate: a same-epoch retry reuses the same
     idempotency key, which an idempotent receiver dedupes — that is the retry working as
@@ -363,7 +363,7 @@ async def run_teardown(
 
 @dataclass
 class CallerDedupe:
-    """Short-lived caller-key → run-id cache (WF2-R1).
+    """Short-lived caller-key → run-id cache.
 
     A chat tool call that times out client-side gets retried with the SAME caller key;
     without this cache the retry mints a second run doing the same work. Deliberately
@@ -401,6 +401,6 @@ class CallerDedupe:
             self._entries.pop(k, None)
 
 
-#: The process-wide cache the Slice-6 tool surface consults. One instance, because two
+#: The process-wide cache the workflow chat-tool surface consults. One instance, because two
 #: caches would let a retry land in the one that has not seen the first call.
 START_DEDUPE = CallerDedupe()

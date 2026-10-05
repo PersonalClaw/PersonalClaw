@@ -1,4 +1,4 @@
-"""Content-type-aware tool-output projection (OP1).
+"""Content-type-aware tool-output projection.
 
 Replaces the role of the blunt head/tail char cap (:func:`maybe_truncate`) for
 *large* outputs with a projection that keeps the **meaningful** slice for the
@@ -6,7 +6,7 @@ output's type — the failing lines of a log, the changed hunks of a diff, the
 shape of a JSON blob — instead of cutting the middle out blindly.
 
 Projection ≠ truncation: truncation loses; projection **defers**. The full raw
-output is retained elsewhere (the tool-result store, OP2) and the projected
+output is retained elsewhere (the tool-result store) and the projected
 preview names how to fetch it. This module is the pure, side-effect-free
 *shaping* half; the store + retrieval tool live in :mod:`result_store`.
 
@@ -46,7 +46,7 @@ DEFAULT_TOOL_OUTPUT_CAP = 60_000
 CONTENT_TYPES = ("log", "diff", "json", "test", "csv", "code", "markdown", "generic")
 
 # ---------------------------------------------------------------------------
-# Projection rules — the three-layer overlay (TokenJuice, OP6 + §2.3)
+# Projection rules — the three-layer overlay (TokenJuice)
 # ---------------------------------------------------------------------------
 # The builtin projectors cover the common cases; a RULE teaches the DISPATCH for
 # output whose head matches a content marker (regex) → one of the builtin
@@ -238,7 +238,7 @@ def _match_rule(sample: str) -> _CompiledRule | None:
 
 
 def _apply_ops(text: str, rule: _CompiledRule, cap: int) -> str:
-    """The shared rule-ops interpreter (§2.3 rule ops v2): keep/skip line filters →
+    """The shared rule-ops interpreter (rule ops v2): keep/skip line filters →
     count folder → head/tail window, then the final safety cap. Declarative only —
     every op is data the rule carried; no user code runs."""
     lines = text.splitlines()
@@ -301,7 +301,7 @@ def infer_content_type(text: str) -> str:
         return "generic"
     sample = text[:4096]
     # Taught rules (project > user > builtin) win over the heuristic sniff —
-    # explicit intent beats inference (OP6/§2.3). Fail-soft: no match → sniff.
+    # explicit intent beats inference. Fail-soft: no match → sniff.
     rule = _match_rule(sample)
     if rule is not None:
         return rule.strategy
@@ -344,7 +344,7 @@ _CODE_MARKER_RE = re.compile(
 
 
 def _looks_like_code(sample: str) -> bool:
-    """Conservative code sniff (§2.2): a shebang, or a meaningful DENSITY of
+    """Conservative code sniff: a shebang, or a meaningful DENSITY of
     definition/import markers across the sample's lines — a stray ``import`` in prose
     must not trip it (mis-typing prose as code is worse than the generic fallback)."""
     if sample.startswith("#!"):
@@ -469,7 +469,7 @@ def _fold_array(data: list, cap: int) -> str:
 
 
 def _project_json(text: str, cap: int) -> str:
-    """The JSON crusher (§2.1): per-path schema inference over arrays, first/last item
+    """The JSON crusher: per-path schema inference over arrays, first/last item
     verbatim, repeated-structure folding — not a mid-string cut that yields invalid
     JSON. Falls back to head/tail if it doesn't parse (shouldn't, since inference
     parsed it, but declared-type json might not)."""
@@ -618,7 +618,7 @@ _OUTLINE_RE = re.compile(
 
 def _outline_regex(text: str) -> str:
     """Language-agnostic outliner: definition/import header lines with their line
-    numbers — the honest fallback when Python's ast can't parse (§2.2)."""
+    numbers — the honest fallback when Python's ast can't parse."""
     out: list[str] = []
     for i, ln in enumerate(text.splitlines(), 1):
         if _OUTLINE_RE.match(ln):
@@ -627,7 +627,7 @@ def _outline_regex(text: str) -> str:
 
 
 def _project_code(text: str, cap: int) -> str:
-    """AST-aware code compressor (§2.2): a signatures-and-docstrings outline with a
+    """AST-aware code compressor: a signatures-and-docstrings outline with a
     line-number map, so a large module projects to its API surface — the raw body is
     one ``tool_result_get(line_start=…)`` away. Python via stdlib ``ast``; anything
     else (or unparseable Python) via the regex outliner; an empty outline falls back
@@ -720,10 +720,10 @@ def project_output(
 
 
 def _record_savings(compressor: str, chars_in: int, chars_out: int) -> None:
-    """Record a projection's counterfactual savings (§1.3). Best-effort, never raises.
+    """Record a projection's counterfactual savings. Best-effort, never raises.
 
     Model hint is ``"unknown"`` here — ``project_and_retain`` is a dispatch-time seam with
-    no resolved-model in scope, and the plan explicitly allows ``"unknown"`` rather than
+    no resolved-model in scope, and ``"unknown"`` is explicitly allowed rather than
     threading a model through (accounting must never block/slow dispatch). The savings
     store cross-references the guardrails' real token counts once that lands."""
     if chars_in <= 0 or chars_out >= chars_in:
@@ -759,7 +759,7 @@ def project_and_retain(
 ) -> tuple[str, dict]:
     """Project ``text`` AND retain its raw for on-demand retrieval — the single
     dispatch-time discipline every tool surface shares (native builtins AND the MCP
-    adapter, OP5), so no surface loses the retrievable-raw guarantee.
+    adapter), so no surface loses the retrievable-raw guarantee.
 
     Returns ``(output_text, metadata)`` where metadata carries ``content_type`` and,
     when the result was projected and a ``session_key`` is available, ``raw_ref`` — plus

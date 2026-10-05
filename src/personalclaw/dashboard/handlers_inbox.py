@@ -76,11 +76,11 @@ def _announce_unless_moved(state: "DashboardState", item, status_before: str) ->
         state.broadcast_ws("inbox_item_updated", _redact_item(item.to_dict()))
 
 
-# ── P11 engagement ranking ──
+# ── Engagement ranking ──
 # The inbox is the first consumer of the engagement multiplier: it blends the recency
 # baseline with weight_for(topic) so channels/senders the user engages with rank higher.
 # GATED behind inbox.engagement_ranking_enabled (default off) so the pure-recency baseline
-# the provider-integrity campaign validates is preserved until deliberately enabled.
+# is preserved until deliberately enabled.
 
 # Recency half-life for the blend's recency score: an item this many days older than the
 # newest scores 0.5×. Sets the engagement↔recency trade-off — a topic weight of 2× offsets
@@ -285,7 +285,7 @@ def _filter_by_kind(items: list, raw: str | None) -> list:
 
 
 def _current_owner() -> str:
-    """The local owner's attribution handle, or ``""``. Never raises (TSE2-3).
+    """The local owner's attribution handle, or ``""``. Never raises.
 
     Mirrors ``workflows/handlers.py:_owner_username`` — one shipped primitive
     (``identity.current_username``), read per request rather than cached, so a rename in
@@ -301,7 +301,7 @@ def _current_owner() -> str:
 
 
 def _filter_by_owner(items: list, raw: str | None) -> list:
-    """Items EXACTLY attributed to *raw* — the shared view's per-owner filter (TSE2-3).
+    """Items EXACTLY attributed to *raw* — the shared view's per-owner filter.
 
     Uses :meth:`InboxItem.authored_by`, not ``belongs_to``: an unattributed item reads as
     the local owner's for counting purposes, but it must not appear under a named owner's
@@ -319,7 +319,7 @@ async def api_inbox_list(request: web.Request) -> web.Response:
 
     ``?kind=needs_input,proposal`` narrows to those item kinds.
 
-    **Every owner's items, by default (TSE2-3).** A shared inbox that hid foreign rows
+    **Every owner's items, by default.** A shared inbox that hid foreign rows
     would silently orphan every surface that deep-links to one, so the listing is the
     complete view and only the COUNTERS are owner-scoped. Two narrowing params:
 
@@ -582,7 +582,7 @@ async def api_inbox_update(request: web.Request) -> web.Response:
 
 
 async def api_inbox_restore(request: web.Request) -> web.Response:
-    """POST /api/inbox/{id}/restore — undo a verification filter (INU-6).
+    """POST /api/inbox/{id}/restore — undo a verification filter.
 
     Flips a FILTERED item back to PENDING and fires the ONE notification that verification
     withheld, so a second-opinion false positive is fully recoverable. Fires exactly once:
@@ -1196,7 +1196,7 @@ async def api_inbox_status(request: web.Request) -> web.Response:
             # number would mean a shared inbox either under-reports its contents or
             # over-reports the owner's queue. `owner_view` is the same predicate `?mine=1`
             # filters by, so the badge and the filter can never disagree.
-            # 🔴 `my_open_count`, not `my_pending_count`. TSE2-3 landed this half as a PENDING
+            # 🔴 `my_open_count`, not `my_pending_count`. This half first landed as a PENDING
             # count while the shared half beside it is now OPEN — which would have put the two
             # definitions of "open" back on one screen, in the very label that reads "N of M are
             # yours" (the shared header would have claimed 9 of 37 where the Open filter showed
@@ -1227,7 +1227,7 @@ async def api_inbox_digest(request: web.Request) -> web.Response:
     if not channel_id:
         return web.json_response({"error": "channel_id required"}, status=400)
     # Parse hours defensively — a non-numeric query param must be a clean 400, not
-    # an unhandled ValueError → raw 500 (bug #23). Also reject non-positive values.
+    # an unhandled ValueError → raw 500. Also reject non-positive values.
     try:
         hours = float(request.query.get("hours", "4"))
     except (TypeError, ValueError):
@@ -1288,7 +1288,7 @@ def _app_identity(request: web.Request) -> str:
 def _sel_proposal_emission(app_name: str, kind: str, outcome: str, error: str = "") -> None:
     """One SEL row per app proposal emission — granted or denied.
 
-    Mirrors ``capability_grant`` (APE-10): audited at the point of enforcement, and never
+    Mirrors ``capability_grant``: audited at the point of enforcement, and never
     raises, because a failed audit must not swallow the emission's own outcome.
     """
     try:
@@ -1317,7 +1317,7 @@ _NOTE_MAX_CHARS = 4000
 
 
 async def api_inbox_note_create(request: web.Request) -> web.Response:
-    """POST /api/inbox/notes — the USER writes their own inbox item (INU-9).
+    """POST /api/inbox/notes — the USER writes their own inbox item.
 
     The first inbox source that is a person. Every other row in the store is synthesized:
     a rule fired, a run needs input, a poll found a message, an app contributed a
@@ -1389,7 +1389,7 @@ async def api_inbox_note_create(request: web.Request) -> web.Response:
 
 
 async def api_inbox_proposal_create(request: web.Request) -> web.Response:
-    """POST /api/inbox/proposals — an APP raises a proposal (INU-7 T7.2).
+    """POST /api/inbox/proposals — an APP raises a proposal.
 
     Deny by default, on three checks in this order:
 
@@ -1403,7 +1403,7 @@ async def api_inbox_proposal_create(request: web.Request) -> web.Response:
        laundering a cross-app invocation through the user's click.
 
     App proposals are ``verifiable=True`` by default (the kind is registered that way at
-    enable time), so INU-6's skeptic gate applies to them once a rule opts in.
+    enable time), so the skeptic gate applies to them once a rule opts in.
     """
     from personalclaw import proposals_contract as pc
     from personalclaw.apps import app_manager

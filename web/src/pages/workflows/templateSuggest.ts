@@ -1,7 +1,6 @@
 import { KIND_TO_TEMPLATE, templateForKind } from './containerKey'
 
-/** "Start from template": turning a plain-language intent into a template suggestion
- *  (LOOPS-EVOLUTION criterion 11).
+/** "Start from template": turning a plain-language intent into a template suggestion.
  *
  *  The gap this closes: the templates tab lists a dozen bundled workflows by name, and a
  *  user who knows what they want to DO ("fix this bug", "research a topic") should not have
@@ -13,11 +12,11 @@ import { KIND_TO_TEMPLATE, templateForKind } from './containerKey'
  *  rendered dialog to assert.
  *
  *  Resolution goes intent → legacy loop-kind → template through the SAME alias table the
- *  cockpit uses (`KIND_TO_TEMPLATE`, drift-tested against the backend manifest). The plan
- *  names `code-project` as the coding suggestion, and since WF2LOO-10 that IS the shipped
- *  code template: the product decision was to evolve `code-implementation` into it rather
- *  than ship two overlapping code templates, and `KIND_TO_TEMPLATE` was repointed in the
- *  same change so every legacy `code` reference resolves to it at read time. */
+ *  cockpit uses (`KIND_TO_TEMPLATE`, drift-tested against the backend manifest). The coding
+ *  suggestion is `code-project`, and that IS the shipped code template: the product decision
+ *  was to evolve `code-implementation` into it rather than ship two overlapping code
+ *  templates, and `KIND_TO_TEMPLATE` was repointed in the same change so every legacy `code`
+ *  reference resolves to it at read time. */
 
 /** Keyword cues per legacy loop-kind, matched case-insensitively as whole words.
  *

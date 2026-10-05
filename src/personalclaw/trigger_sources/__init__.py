@@ -1,4 +1,4 @@
-"""Trigger sources — app-contributed origins of `event`-kind trigger fires (AUTO-A4).
+"""Trigger sources — app-contributed origins of `event`-kind trigger fires.
 
 A *trigger source* observes something core knows nothing about (a remote workspace, a device, a
 service) and emits typed events onto the ONE event bus under a namespaced source

@@ -1,7 +1,7 @@
 """Branded/generic provider apps (sdk.provider_helpers) — the shared wiring behind
 the openai-/anthropic-compatible provider apps and every branded preset.
 
-Guards two bugs found during the provider-integrity validation sweep:
+Guards two bugs found while validating the provider registry:
   1. ``api_key`` (+ other routing/credential fields) leaked from an entry's
      ``options`` into ``extra_options`` → the SDK's stream()/create() ("unexpected
      keyword argument 'api_key'"). Only genuine model-call params may pass through.

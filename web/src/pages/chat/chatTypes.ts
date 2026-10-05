@@ -27,13 +27,13 @@ export interface ToolSegment {
   purpose?: string        // '' on native; ACP fills it
   auto?: boolean          // auto-approved
   done: boolean
-  // Typed I/O metadata (tool-io-rendering + projection). All optional; absent →
+  // Typed I/O metadata (tool I/O rendering + projection). All optional; absent →
   // the renderer falls back to raw text exactly as before.
   contentType?: string    // output content type (log/diff/json/test/csv/markdown/generic)
   rawRef?: string         // tool-result-store id for the "show full result" affordance
   truncated?: boolean     // output was projected/capped
   originalLength?: number // raw char length when truncated
-  recoveryHints?: string[] // TC5: concrete next-steps on a failed tool call
+  recoveryHints?: string[] // concrete next-steps on a failed tool call
   agentError?: AgentError  // Coded WHAT/WHY/FIX envelope on a failed call
   ok?: boolean            // tool-call outcome — only present (false) when it FAILED, for color-coding
   /** The call ran without anyone asking her: the agent CLI ran it on its own, with no approval
@@ -197,8 +197,8 @@ export const appendThinking = (segs: Segment[], chunk: string): Segment[] => {
  *  per-record id, in which case the chip degrades to a non-navigable label. */
 export interface MemoryCitation { n: number; id: string | null; preview?: string; kind?: 'lesson' }
 
-/** One skill whose content actually reached this turn's prompt (LEARNING-VISIBILITY
- *  T2.1). Rides the `meta.skills_used` of the message that STARTED the turn — the user's, or
+/** One skill whose content actually reached this turn's prompt.
+ *  Rides the `meta.skills_used` of the message that STARTED the turn — the user's, or
  *  the row a loop's nudge, an automation or a subagent's report started it with; the message
  *  the skill was attached to (`joinedSkillsOf`) — and arrives live as `activity_event {kind:
  *  "skills"}` the moment the turn is put together, so the chip needs no channel of its own.
@@ -272,14 +272,14 @@ export function skillsUsedTitle(skills: SkillUsed[]): string {
  *  `insertActivity` just created, given the arrays before (`prev`) and after (`next`) that call.
  *
  *  Exists so `TextRunOwnership.activity` doesn't have to widen `insertActivity`'s signature (and
- *  re-baseline its K42/K44/K45 suite) just to carry one optional field. It identifies the new
+ *  re-baseline its stream-coalescer suite) just to carry one optional field. It identifies the new
  *  segment by REFERENCE, not by matching text: `insertActivity` returns `prev` untouched on
  *  both its early-outs (a turn with tool cards, an adjacent duplicate line), so the only
  *  activity segment present in `next` and absent from `prev` is the one it spliced in — a
  *  fresh object literal no previous render holds, which is what makes writing to it safe.
  *
- *  Returns `next` either way; a falsy origin is a no-op, which is the pre-T2.2 wire and every
- *  non-`learned` activity kind. */
+ *  Returns `next` either way; a falsy origin is a no-op, which is the wire from before `origin`
+ *  existed and every non-`learned` activity kind. */
 export function stampActivityOrigin(prev: Segment[], next: Segment[], origin?: string, ref?: string): Segment[] {
   if (!origin || next === prev) return next
   const added = next.find((sg) => sg.kind === 'activity' && !prev.includes(sg))
@@ -290,8 +290,8 @@ export function stampActivityOrigin(prev: Segment[], next: Segment[], origin?: s
   return next
 }
 
-/** Where a tap on the learned chip lands, keyed on the emitter's `origin`
- *  (LEARNING-VISIBILITY T2.2). Verified against what each surface actually renders, not
+/** Where a tap on the learned chip lands, keyed on the emitter's `origin`.
+ *  Verified against what each surface actually renders, not
  *  against the artifact's name:
  *
  *  - `proposal` → the skill-ladder writes a template PROPOSAL that `SkillProposals`
@@ -503,7 +503,7 @@ export interface SubagentCard {
 // There is no `index` here. The panel used to derive a user-message outline whose rows jumped to
 // a turn; the Session Map (the `sessionMapMarks`) is that index now — it marks tool calls,
 // approvals, errors and subagents as well as user turns, and it is always on screen rather than
-// behind a panel tab. SSM-13 deleted the outline and this model with it, so the session has ONE
+// behind a panel tab. The outline was deleted and this model with it, so the session has ONE
 // index rather than two that have to be kept saying the same thing.
 export interface FileEntry { path: string; name: string }
 export interface LinkEntry { url: string; label: string }

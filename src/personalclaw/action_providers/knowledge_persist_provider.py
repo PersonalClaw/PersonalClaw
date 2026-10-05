@@ -4,7 +4,7 @@ A synthesis workflow's whole point is to leave something behind. Without this pr
 only way to do that is a `stage` — a subagent session spawned to call a tool that writes a
 row — which costs a model call and a lane slot for work the engine has already resolved.
 
-So this is a **zero-token** node, and it is where session 34's semantics become behaviour:
+So this is a **zero-token** node, and it is where the store's write semantics become behaviour:
 
 **Idempotent by construction.** The logical key and content hash are derived from what is
 being written, so a retried, resumed or rewound persist recomputes the same identity and
@@ -86,7 +86,7 @@ def _default_ttl() -> str:
 class ConflictPass:
     """One persist-time conflict pass: what was proven, and what is left to judge.
 
-    Two fields because §3.2's two tiers consume different halves. `conflicts` is the free
+    Two fields because the two conflict tiers consume different halves. `conflicts` is the free
     deterministic tier's proof. `candidates` is the remainder — stored neighbours near enough to
     be worth a metered opinion but not separable without one. A reader given only `conflicts`
     cannot tell "nothing is nearby" from "nothing was provable", and those warrant opposite
@@ -118,10 +118,10 @@ class KnowledgePersistActionProvider(ActionProvider):
                                              # `citation_sources` is present
             "unsourced": false,              # explicit opt-out of the citation rule
             "source_ref": "…",               # auto-filled from the run when absent
-            "read_when": ["…"],              # optional retrieval triggers (KNOW-R12)
+            "read_when": ["…"],              # optional retrieval triggers
             "ttl": "30d",                    # optional; becomes an absolute expires_at
             "mode": "upsert",                # create|upsert|append_evidence
-            "sharing_policy": "private"      # optional; private|shared (§1.6, default private)
+            "sharing_policy": "private"      # optional; private|shared (default private)
         }
     """
 
@@ -774,7 +774,7 @@ def _detect_conflicts(
     Returns the settled conflicts AND the neighbours the deterministic tier could not settle.
     Both, because they answer different questions and the model tier only has a job because of
     the second one: a caller handed only `conflicts` can tell a reader what was already proven,
-    but it cannot ask anything about the rest, and "the rest" is precisely what §3.2's fast-model
+    but it cannot ask anything about the rest, and "the rest" is precisely what the fast-model
     pass exists to judge.
 
     Best-effort by design: a conflict pass that failed a WRITE would mean losing the knowledge
@@ -876,7 +876,7 @@ def _ingest_neighbour_claims(store, *, exclude: str) -> list:
 
 
 def run_ingest_conflict_pass(store, item_id: str) -> list[dict]:
-    """§3.2's deterministic conflict pass for the INGEST pipeline. Returns what it recorded.
+    """The deterministic conflict pass for the INGEST pipeline. Returns what it recorded.
 
     🔴 **Why this exists.** Contradiction detection was reachable from exactly one place —
     `KnowledgePersistActionProvider`, i.e. only items an AGENT persisted with structured claims.
@@ -951,7 +951,7 @@ def run_ingest_conflict_pass(store, item_id: str) -> list[dict]:
 def _unsettled_candidates(incoming: list, existing: list, *, settled: list) -> list[dict]:
     """The stored neighbours a model tier would have to judge, ranked, minus the settled ones.
 
-    `contradiction.shortlist` is the built-and-tested ranker (§3.2); this is its production
+    `contradiction.shortlist` is the built-and-tested ranker; this is its production
     caller. Already-settled neighbours are removed because the prompt that consumes this tells
     the model not to re-litigate the deterministic tier's findings — leaving them in would
     spend the one metered call re-deciding what a free pass already proved.
@@ -1231,7 +1231,7 @@ def _enqueue_enrichment(item_id: str) -> None:
 def _scope_metadata(
     cfg: dict[str, Any], ctx: ActionContext, *, existing: dict[str, Any]
 ) -> dict[str, str]:
-    """Container scope for this write (WORK-CONTAINERS §1.6), or `{}` outside a run.
+    """Container scope for this write, or `{}` outside a run.
 
     Ownership is FIRST-WRITER-WINS: `project_id` / `run_id` describe who produced the item,
     so a later run in a different project re-persisting the same content records its
@@ -1267,9 +1267,9 @@ def _scope_metadata(
 async def _push_shared(
     *, item_id: str, title: str, content: str, metadata: dict[str, Any]
 ) -> list[str]:
-    """Offer a just-written item to the team store when its policy says ``shared`` (TSE2-4).
+    """Offer a just-written item to the team store when its policy says ``shared``.
 
-    The write has already committed, so this is the OUTBOUND half of §1.6's
+    The write has already committed, so this is the OUTBOUND half of
     ``sharing_policy`` and nothing more: the local item is the record, the push is a
     courtesy. Returns the provider names that accepted — reported in the action's stdout so
     a run can SEE the item left the machine rather than assuming a declared policy did

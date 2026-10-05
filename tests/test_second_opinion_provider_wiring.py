@@ -1,7 +1,7 @@
 """The ``second-opinion`` action provider is wired at all four points it needs.
 
-§4.1 states the failure this guards: "a new action provider that skips this is rejected by hook
-create/update even though the UI offers it". A provider registered in one set and missing from
+The failure this guards: a new action provider that skips this is rejected by hook
+create/update even though the UI offers it. A provider registered in one set and missing from
 another validates, saves, and then fails at fire time — strictly worse than not offering it. So
 the four points are asserted together:
 
@@ -62,7 +62,7 @@ def test_the_provider_is_classified_write_capable() -> None:
 
 
 def test_the_registry_and_the_hook_allowlist_agree_about_this_name() -> None:
-    """The specific drift §4.1 warns about, asserted in both directions for this provider."""
+    """The specific drift this guards against, asserted in both directions for this provider."""
     from personalclaw.validation import ALLOWED_HOOK_PROVIDERS
 
     _ensure_default_providers_registered()

@@ -247,7 +247,7 @@ class TestConsumerAxes:
         assert resolve.call_args.args[0] == "loops"
 
     def test_loop_judges_resolve_the_judge_axis_not_the_worker_axis(self):
-        """WF2LOO-17 inverts what this rail pins.
+        """The judge axis inverts what this rail used to pin.
 
         It used to assert the judges resolved ``"loops"`` — the WORKER's axis — which
         is precisely the defect: a judge grading on the binding that produced the work
@@ -311,7 +311,7 @@ class TestConsumerAxes:
 
 class TestInnerModelAxis:
     """The native runtime's INNER model resolves under the governing sub-category
-    axis (the plan's flagged risk: it previously hardcoded "chat", making every
+    axis (the flagged risk: it previously hardcoded "chat", making every
     sub-category binding cosmetic for native agents)."""
 
     def _capture_inner(self, monkeypatch):
@@ -514,7 +514,7 @@ class TestCallFailureAdvance:
 
 
 # ── The same advance for the DIRECT resolve consumers ────────────────────────
-# The clause is "… in one_shot_completion AND THE DIRECT RESOLVE CONSUMERS".
+# The advance applies in one_shot_completion AND THE DIRECT RESOLVE CONSUMERS.
 # Every arm below is discriminating: it fails outright if the advance is deleted from
 # the site (the site returns its degraded value / raises instead of the next entry's
 # text), and the exclusion arm fails if someone later "unifies" the interactive path
@@ -609,7 +609,7 @@ class TestDirectConsumerAdvance:
     async def test_knowledge_node_single_entry_chain_takes_plain_path(
         self, isolated_store, monkeypatch
     ):
-        """The clause's one-entry rule: today's plain resolve, NO model_override."""
+        """The one-entry rule: today's plain resolve, NO model_override."""
         from unittest.mock import patch
 
         from personalclaw.knowledge.pipeline.nodes import _llm

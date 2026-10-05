@@ -1,6 +1,6 @@
 """The fire path: the ordered composition of every gate a fire passes.
 
-§3 states the order and says "order matters":
+Every fire passes these in this order, and the order matters:
 
     injection screen → gates (debounce/quiet/cooldown/condition) → budget check pre-claim
     (fail-closed) → overlap claim lock → yield/resource-slot check → fence payload →
@@ -11,12 +11,12 @@
 callers of `claim_fire`, `boot_recovery`, `spool_fire`, `drain_spool`, `freeze_capabilities`,
 `evaluate_quiet`, `evaluate_duty`, `needs_attention`, `resolve_missed`, `changed_files` and
 `build_delivery` outside their own modules returns **NONE** for every one. There is no
-`triggers/service.py`. Sessions S62-S85 each built a control and each recorded "NOT DONE (by
-scope): the service" — eight such notes in the plan's execution log — and no queue row ever
+`triggers/service.py`. Control after control was built and recorded "NOT DONE (by
+scope): the service" — eight such notes — and nothing ever
 owned it.
 
-So the controls are individually correct and collectively unreachable. That is the same defect
-class this program keeps finding ("present and inert"), at the scale of a whole subsystem.
+So the controls are individually correct and collectively unreachable. That is a defect
+class that keeps recurring ("present and inert"), at the scale of a whole subsystem.
 
 **What this module is, and is not.**
 
@@ -26,8 +26,8 @@ is real — the module imports the shipped decision functions rather than reimpl
 logic.
 
 It is NOT the loop, the store, or the executor. Those need `triggers.json` (the recorded
-blocker) and the WakeupDispatcher, and building them against a store that does not exist is what
-EXECUTION-PROTOCOL forbids. What a future service session needs is exactly this: a tested
+blocker) and the WakeupDispatcher, and building them against a store that does not exist is
+premature. What a future service needs is exactly this: a tested
 ordering it can call per fire, instead of re-deriving a 13-step sequence from prose under time
 pressure and getting the fail-closed budget check on the wrong side of the claim lock.
 
@@ -38,7 +38,7 @@ pressure and getting the fail-closed budget check on the wrong side of the claim
   lands at 08:00.
 * **Budget BEFORE the claim lock, fail-closed.** Claiming first means a budget-exhausted
   trigger holds a
-  lock it will never use, and single-flight then blocks the NEXT legitimate fire. §3.6 says
+  lock it will never use, and single-flight then blocks the NEXT legitimate fire. It is
   fail-closed: an unreadable budget refuses.
 * **Capability filter BEFORE resolving the def.** Resolving first means the run exists (and may have
   written its first ledger row) before anyone checks whether the action was permitted at all.
@@ -82,10 +82,10 @@ GATE_ORDER: tuple[str, ...] = (
 GATE_OUTCOMES: dict[str, str] = {
     "incident": Outcome.REFUSED.value,
     "screen": Outcome.BLOCKED_INJECTION.value,
-    # §1.3 maps "quiet-hours / debounce / cooldown / condition-false" to ONE outcome, so a
+    # "quiet-hours / debounce / cooldown / condition-false" map to ONE outcome, so a
     # debounced fire is filterable beside a quiet-hours one rather than needing its own chip.
     "spacing": Outcome.SKIPPED_GATE.value,
-    # §3.6 groups the hourly caps with the storm guards, and §1.3 gives a rate refusal the
+    # The hourly caps are grouped with the storm guards, and a rate refusal gets the
     # same `skipped_gate` outcome as the other "should this fire at all" answers.
     "rate": Outcome.SKIPPED_GATE.value,
     "quiet": Outcome.SKIPPED_GATE.value,
@@ -145,8 +145,8 @@ class FireContext:
     #: module only honours it.
     user_active: bool = False
     yield_to_user: bool = False
-    #: Fires this trigger recorded in the last hour, or None when the ledger could not be read
-    #: (S152). Supplied by `service.tick` from `ScheduleRunStore.count_since`. None is NOT zero: an
+    #: Fires this trigger recorded in the last hour, or None when the ledger could not be read.
+    #: Supplied by `service.tick` from `ScheduleRunStore.count_since`. None is NOT zero: an
     #: unreadable ledger must not read as "no fires yet" and hand a runaway trigger a fresh
     #: allowance — the rate gate fails OPEN on None (storm-guard class) but says so in the reason.
     fires_in_window: int | None = None
@@ -208,7 +208,7 @@ def _refuse(gate: str, reason: str, passed: list[str], **extra: Any) -> FireDeci
 
 
 def _rate_refusal(ctx: FireContext) -> str:
-    """The hourly-cap refusal reason, or "" to allow. Never raises (S152).
+    """The hourly-cap refusal reason, or "" to allow. Never raises.
 
     Delegates the DECISION to `missed.within_rate_window` rather than re-deriving it: that function
     already owns the "no cap configured" case, and a second copy of a threshold comparison is how
@@ -218,7 +218,7 @@ def _rate_refusal(ctx: FireContext) -> str:
     three spellings a person may use, and taking the strictest is the only reading that cannot
     surprise: a user who set both 10/hour and 5/hour meant at most 5.
 
-    **FAIL-OPEN when the ledger is unreadable** (`fires_in_window is None`) — §1.4's storm-guard
+    **FAIL-OPEN when the ledger is unreadable** (`fires_in_window is None`) — the storm-guard
     class, and the same call `slot` makes about an unreadable claim store. But None is deliberately
     not folded into 0: zero fires would hand a runaway trigger a fresh allowance every time the
     ledger hiccuped, so the distinction is kept even though both currently allow.
@@ -245,7 +245,7 @@ def _rate_refusal(ctx: FireContext) -> str:
 
 
 def _spacing_refusal(ctx: FireContext) -> str:
-    """The debounce/cooldown refusal reason, or "" to allow. Never raises (S151).
+    """The debounce/cooldown refusal reason, or "" to allow. Never raises.
 
     Both keys mean "do not fire again too soon", and they are DELIBERATELY kept as two rather than
     collapsed into one, because they answer different questions and a user sets them for different
@@ -260,11 +260,10 @@ def _spacing_refusal(ctx: FireContext) -> str:
     the moment either grows its own semantics (a debounce that coalesces rather than drops). The
     reason names WHICH one refused, so the ledger row explains itself.
 
-    **FAIL-OPEN on anything unreadable**, matching §1.4's storm-guard classification: an unparseable
+    **FAIL-OPEN on anything unreadable**, matching the storm-guard classification: an unparseable
     `debounce_secs` must not silence an automation. A trigger that has never fired
     (`since_last_fire is None`) is always allowed — it has nothing to space against, and treating an
-    absent timestamp as "0 seconds ago" would block every trigger's first fire forever, which is the
-    failure an S147-style default would have produced.
+    absent timestamp as "0 seconds ago" would block every trigger's first fire forever.
     """
     since = ctx.since_last_fire
     if since is None:
@@ -282,10 +281,10 @@ def _spacing_refusal(ctx: FireContext) -> str:
 
 
 async def evaluate(ctx: FireContext) -> FireDecision:
-    """Walk §3's gate order. Returns the FIRST refusal, or an allowed decision.
+    """Walk the gate order. Returns the FIRST refusal, or an allowed decision.
 
     ASYNC because the duty gate is. Measured while driving this: `calendar.evaluate_duty` is a
-    coroutine — §1.4 makes it provider-backed and time-boxed (a third-party calendar app answers
+    coroutine — it is provider-backed and time-boxed (a third-party calendar app answers
     it), and a sync fire path silently got a coroutine object whose `.allowed` was always
     truthy. Every duty gate would have passed, including one that meant to refuse. The other six
     gates are pure and stay sync; only the walk is awaited.
@@ -297,7 +296,7 @@ async def evaluate(ctx: FireContext) -> FireDecision:
     """
     passed: list[str] = []
 
-    # ── 0. THE KILL SWITCH (decision 7's "global manual kill switch") ──
+    # ── 0. THE KILL SWITCH (the global manual kill switch) ──
     #
     # 🔴 `personalclaw incident on` did NOT stop a clock trigger. The CLI calls it
     # "Suspend/resume all unattended work" and the legacy `event_triggers` path refuses on it, but
@@ -341,12 +340,12 @@ async def evaluate(ctx: FireContext) -> FireDecision:
 
     # ── 2. spacing: debounce + cooldown (the order is "debounce/quiet/cooldown/condition") ──
     #
-    # 🔴 Both keys were declared in `GATE_KEYS` and read by NOTHING — S150 measured that
-    # and put them in `UNMETERED_CAPS` because the meter they needed did not exist. It does now:
+    # 🔴 Both keys were declared in `GATE_KEYS` and read by NOTHING — that was measured,
+    # and they sat in `UNMETERED_CAPS` because the meter they needed did not exist. It does now:
     # `Trigger.last_fired_at`, written beside `run_count` at the single fire-grant point.
     #
     # BEFORE the quiet/duty/budget gates, deliberately: spacing is the cheapest check on the path (a
-    # float compare, no store read, no provider call), and §7 lists debounce first for that reason.
+    # float compare, no store read, no provider call), and debounce leads the order for that reason.
     # Paying for a duty-gate provider round-trip on a fire a debounce was going to drop anyway is
     # backwards.
     #
@@ -361,10 +360,10 @@ async def evaluate(ctx: FireContext) -> FireDecision:
     # ── 3. the hourly rate caps ──
     #
     # 🔴 `rate_cap`, `max_runs_per_hour` and `max_actions_per_hour` were validated, carried, and
-    # enforced by NOTHING — S133 named them, S150 put them in `UNMETERED_CAPS`, and the reason was
+    # enforced by NOTHING — they sat in `UNMETERED_CAPS`, and the reason was
     # always the same: no windowed history query existed. `ScheduleRunStore.count_since` is
-    # that query, and `missed.within_rate_window` has been the pure decision waiting for the number
-    # since S65.
+    # that query, and `missed.within_rate_window` was the pure decision waiting for the
+    # number.
     #
     # Beside `spacing` because it answers the same question ("has this fired too much lately") over
     # the same cheap inputs, and before the provider-calling gates for the same cost reason.
@@ -391,7 +390,7 @@ async def evaluate(ctx: FireContext) -> FireDecision:
 
     # ── 6. budget, BEFORE the claim, FAIL-CLOSED ──
     if not ctx.budget_readable:
-        # §3.6 is explicit that the budget check is fail-closed. An unreadable budget is not an
+        # The budget check is fail-closed. An unreadable budget is not an
         # unlimited one: treating an error as "allowed" is how a runaway trigger gets its allowance
         # from a transient store failure.
         return _refuse("budget", "budget could not be read; failing closed", passed)
@@ -413,12 +412,12 @@ async def evaluate(ctx: FireContext) -> FireDecision:
         return _refuse("claim", claim_reason or "another fire holds the claim", passed)
     passed.append("claim")
 
-    # ── 5b. named resource slots (§3.5 / AUTO-R9) ──
+    # ── 5b. named resource slots ──
     #
     # 🔴 `Trigger.resource_slots` was declared, persisted and round-tripped, and read by NOTHING —
-    # found by generalising the container audit across all 41 dataclasses in `triggers/`. §3.5
-    # requires the substrate to "serialize conflicting runs per slot and refuse over-capacity starts
-    # with a typed RESOURCE_BUSY + holder identity". So three triggers declaring `["local-llm"]` all
+    # found by generalising the container audit across all 41 dataclasses in `triggers/`. The
+    # substrate must serialize conflicting runs per slot and refuse over-capacity starts
+    # with a typed RESOURCE_BUSY + holder identity. So three triggers declaring `["local-llm"]` all
     # ran a local model at once, which is the contention this exists to prevent on a machine shared
     # with the interactive user.
     #
@@ -438,8 +437,8 @@ async def evaluate(ctx: FireContext) -> FireDecision:
 
     # ── 5c. skip_if_active liveness guard ──
     #
-    # §3.5 asks for an OPTIONAL guard on a mutating trigger "using cheap liveness heuristics (dirty
-    # worktree, lockfiles, recent mtime) at fire time … a busy target defers rather than fires". The
+    # An OPTIONAL guard on a mutating trigger, using cheap liveness heuristics (dirty
+    # worktree, lockfiles, recent mtime) at fire time: a busy target defers rather than fires. The
     # signal is PRE-COMPUTED by the caller (`service.tick` → `liveness.is_target_active`) and only
     # honoured here, exactly as `busy_slot`/`user_active` are — a gate that ran its own `git status`
     # mid-walk would break the purity the module docstring depends on.
@@ -534,8 +533,8 @@ def action_timeout(provider_name: str) -> int:
 def ledger_row(decision: FireDecision, ctx: FireContext) -> dict[str, Any]:
     """The typed ledger row for one fire attempt — allowed or not.
 
-    §7 criterion 8: "every suppressed fire appears as a typed ledger row with a reason — zero
-    silent drops". So this is written for EVERY outcome, which is why it takes the decision
+    Every suppressed fire appears as a typed ledger row with a reason — zero
+    silent drops. So this is written for EVERY outcome, which is why it takes the decision
     rather than only being called on the failure path: a helper that existed only for refusals
     would make "we forgot to log the successes" the next defect.
     """
@@ -563,8 +562,8 @@ def gate_order_is_intact(order: tuple[str, ...] = GATE_ORDER) -> list[str]:
     """Structural check: every declared gate has an outcome, and vice versa. Returns the gaps.
 
     A gate added to the walk without an entry in `GATE_OUTCOMES` would raise `KeyError` mid-fire
-    — at which point the fire is lost rather than refused, which is the silent drop §7 criterion
-    8 bans. This turns that into a checkable fact.
+    — at which point the fire is lost rather than refused, which is a banned silent
+    drop. This turns that into a checkable fact.
     """
     gaps: list[str] = []
     for gate in order:

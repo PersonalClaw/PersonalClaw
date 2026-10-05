@@ -1,13 +1,13 @@
 """Tests for the workflow-run resume-audit — byte-equal frontier reconstruction.
 
-The workflow half of the fresh-session resumability audit (Success Criterion #5):
+The workflow half of the fresh-session resumability audit:
 a persisted workflow run is KILLED and resumed from DISK ALONE, and the frontier the
 resumed engine reconstructs must be byte-equal to the pre-kill snapshot. Independently, the
 run's journal is folded through the event-fold law and checked against the persisted node
 states, so a divergent replay (a corrupted or truncated journal) fails the audit even when
 the state file alone looks intact.
 
-These prove both halves of the "Done when":
+These prove both halves of the check:
 
 1. resume-audit kills + resumes a persisted run from disk and verifies the journal replay
    reconstructs frontier state byte-equal to the pre-kill snapshot (the POSITIVE case,

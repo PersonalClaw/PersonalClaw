@@ -7,14 +7,14 @@ import { useQuery } from '../../lib/data'
 import { api, type WeekProjection } from '../../lib/api'
 import { buildWeekGrid, cellLabel, visibleHours, weekSummary, startOfDay, weekEnd, type CellState, type WeekCell } from './weekGrid'
 
-/** The Week tab — a 7×24 grid of every enabled clock trigger's fires (AUTO-A3).
+/** The Week tab — a 7×24 grid of every enabled clock trigger's fires.
  *
- *  `GET /api/triggers/week` shipped in S70 with ZERO frontend consumers; this is the half AUTO-A3
- *  names alongside it ("+ the Automations Week tab (7×24 grid, shaded quiet bands, click-through)").
+ *  `GET /api/triggers/week` shipped with ZERO frontend consumers; this is its other half: the
+ *  Automations Week tab (7×24 grid, shaded quiet bands, click-through).
  *
  *  Read-only by contract. Every cell is a projection from the recurrence a trigger already carries,
  *  so there is nothing here to save — clicking a cell opens the trigger it belongs to, which is the
- *  "click-through to the trigger row" the criterion asks for.
+ *  click-through to the trigger row.
  *
  *  **Suppressed fires are SHOWN, shaded, never hidden.** The server annotates rather than filters,
  *  and the view keeps that: a grid that omitted suppressed slots would display a schedule the user

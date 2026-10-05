@@ -1,7 +1,6 @@
 // @module-tag tree-scan
 /**
- * PERSONALITY-THEMES §S1/§S2 (contract C5) — structural invariants for the
- * personality registry.
+ * Structural invariants for the personality registry.
  *
  * A personality is an identity a user can switch to, so the guarantees have to be
  * structural rather than promised in prose:
@@ -224,7 +223,7 @@ const VALID: Personality = {
 /** One entry per rail, each breaking exactly that rail. `as never` casts are the
  *  point: every one of these is a compile error in the registry, and the whole
  *  reason these rails exist is the value that arrives from OUTSIDE the compiler — a
- *  persisted override, a hand-edited file, the plan's forward-hooked app-contributed
+ *  persisted override, a hand-edited file, a future app-contributed
  *  manifest. */
 const BROKEN: Record<string, Personality> = {
   baseScheme: { ...VALID, baseScheme: 'no-such-scheme' },

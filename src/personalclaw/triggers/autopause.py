@@ -1,8 +1,8 @@
 """Autopause, parking, and quarantine — generalized.
 
-The plan is explicit that autopause-after-5 **already exists** for the cron action path
-(`GatewayOrchestrator._maybe_autopause`) and that the substrate *generalizes* it rather than
-inventing it. So the first thing this session did was measure what the shipped one counts.
+Autopause-after-5 **already exists** for the cron action path
+(`GatewayOrchestrator._maybe_autopause`), and the substrate *generalizes* it rather than
+inventing it. So the first step was to measure what the shipped one counts.
 
 **The measured defect.** `_maybe_autopause` is called from four sites and increments the same
 counter at every one, with no notion of WHY the fire did not produce work. Driven directly, five
@@ -11,7 +11,8 @@ purpose reads as five failures and silently disables the user's trigger. The oth
 equally undifferentiated — an unknown-provider config error that can never succeed takes five fires
 to stop, exactly as long as a network blip that would have healed on its own.
 
-That is R7's point, and it is why `TRUE_FAILURE_OUTCOMES` is a single-member set. The rules:
+That undifferentiated count is the defect, and it is why `TRUE_FAILURE_OUTCOMES` is a
+single-member set. The rules:
 
 * **Only `FAILED` counts.** A trigger that skipped five times because quiet hours held is working
   as configured; autopausing it punishes the user for saying "not at night".
@@ -47,14 +48,14 @@ from personalclaw.triggers.models import (
 FAILURE_BUDGET = 5
 
 #: How long a parked trigger waits before its next attempt, per episode. Deliberately a flat
-#: cooldown rather than escalating backoff: §1.3 bans a row per attempt, and an escalating schedule
-#: silently turns a 5-minute outage into an hour of not-running (the failure mode that made clawx
-#: delete their 3-state breaker).
+#: cooldown rather than escalating backoff: a row per attempt is not allowed, and an escalating
+#: schedule silently turns a 5-minute outage into an hour of not-running (the failure mode that
+#: made clawx delete their 3-state breaker).
 PARK_COOLDOWN_SECS = 300.0
 
 
 class ExitType(str, Enum):
-    """The typed run-exit taxonomy from §3.7.
+    """The typed run-exit taxonomy.
 
     Separate from `Outcome` on purpose. `Outcome` says what happened to the FIRE; this says what the
     RUN exited as, and the mapping between them is the decision this module makes. Collapsing the
@@ -182,10 +183,11 @@ def classify_exception(exc: BaseException | None) -> str:
 
 
 def budget_for(trigger: Any) -> int:
-    """The failure budget this trigger declares, or the shipped default (R7 — S160).
+    """The failure budget this trigger declares, or the shipped default.
 
-    🔴 WHY THIS EXISTS. §1.1 declares `failure_policy: {autopause_after: 5, dedupe_hash: true}` and
-    `evaluate` has always accepted a `budget=` parameter — and the fire path never passed one, so
+    🔴 WHY THIS EXISTS. A trigger declares
+    `failure_policy: {autopause_after: 5, dedupe_hash: true}` and `evaluate` has always accepted a
+    `budget=` parameter — and the fire path never passed one, so
     `autopause_after` had **zero readers anywhere in the tree**. Measured: a trigger declaring
     `{"autopause_after": 2}` stayed ACTIVE at streaks 1, 2 and 3 and paused at 4 (the shipped
     `FAILURE_BUDGET = 5` minus `evaluate`'s own +1). An author who asked to stop after two failures
@@ -213,7 +215,7 @@ def budget_for(trigger: Any) -> int:
 def counts_toward_autopause(outcome: str) -> bool:
     """Whether this outcome spends a unit of the failure budget.
 
-    Delegates to S62's `TRUE_FAILURE_OUTCOMES` rather than re-listing: a second copy of the set is a
+    Delegates to `TRUE_FAILURE_OUTCOMES` rather than re-listing: a second copy of the set is a
     second thing to forget when an outcome is added, and the failure direction is silent (a new
     outcome quietly stops counting, or quietly starts).
     """
@@ -342,7 +344,7 @@ def evaluate(
 
 
 def consecutive_failures_from(runs: list[dict[str, Any]]) -> int:
-    """Consecutive TRUE failures in a newest-first run list (§3.7 — S139).
+    """Consecutive TRUE failures in a newest-first run list.
 
     🔴 DERIVED, not stored, because `LEGACY_FIELD_MAP` says so outright: the legacy
     `consecutive_failures` column maps to *"failure_policy (autopause counter is derived from fire
@@ -388,8 +390,8 @@ def consecutive_failures_from(runs: list[dict[str, Any]]) -> int:
 
         # 🔴 A PARKING exit does NOT spend the budget, and this is the half a naive
         # `status == "failure"` check gets wrong: an outage is stored as `status: "failure"` too, so
-        # counting by status would pause a trigger for a network blip — exactly what criterion 3's
-        # "auth/transport outages park instead" forbids. Caught by driving six outages followed by
+        # counting by status would pause a trigger for a network blip — and auth/transport
+        # outages must park instead. Caught by driving six outages followed by
         # four real failures and watching it pause early.
         if exit_type in PARKING_EXITS:
             continue

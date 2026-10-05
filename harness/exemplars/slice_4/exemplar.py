@@ -1,6 +1,6 @@
-"""Slice 4 exemplar — mid-flight mutation: the binding cascade + the resume cache (WF2-R2/A1).
+"""Workflow exemplar — mid-flight mutation: the binding cascade + the resume cache.
 
-Slice 4 added mutation, checkpoints and fork. This exemplar exercises the correctness core:
+The engine supports mutation, checkpoints and fork. This exemplar exercises the correctness core:
 editing a node re-runs exactly its BINDING closure — every node transitively downstream
 through `{{nodes.x.output}}` references — and NOTHING else. The subtlety it defends
 is that a later SIBLING that consumes an edited node's output is not a tree descendant; a
@@ -12,8 +12,8 @@ Two mechanisms, one pure and one end-to-end:
    — the sibling consumer is in the closure, the unrelated node is not.
 2. driven through a real controller: run a sequence to completion, edit the middle node's
    prompt, resume — and assert from the LEDGER that exactly the closure re-ran (the resume
-   cache served the untouched prefix at zero model calls). This is the acceptance bar
-   Slice 4 set: answerable from the ledger, not from logs.
+   cache served the untouched prefix at zero model calls). The re-run claim is
+   answerable from the ledger, not from logs.
 
 Runnable standalone on a scratch home (it writes a run, so it refuses the default home):
 `PERSONALCLAW_HOME=<scratch dir> python -m harness.exemplars.slice_4.exemplar`, or `smoke.sh`,

@@ -147,7 +147,7 @@ class OpenAIImageProvider(ImageGenProvider):
     ) -> list[ImageResult]:
         # The model BEFORE the client: a call that names none is a request error independent of
         # SDK availability, so it must raise whether or not the openai SDK is installed (it is
-        # an optional extra — DISTRIBUTION T1.4). Constructing the client first would mask it
+        # an optional extra). Constructing the client first would mask it
         # behind "SDK not installed" in a stripped install.
         model_id = self._named(model)
         client = self._client()

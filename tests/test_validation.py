@@ -224,7 +224,7 @@ class TestValidateToolArgs:
     # These exercise the generic validator; `schedule_add`'s schema was only the vehicle, and it
     # retired with the alias. Re-pointed at `automation_create`, the live equivalent. The
     # interval-floor case moved with the floor itself — it is now a store-level WARNING rather than
-    # a schema rejection (R1 makes it overridable), asserted in
+    # a schema rejection (the floor is overridable), asserted in
     # `test_validation_user_actions.py::test_a_sub_floor_interval_is_flagged`.
     def test_automation_create_valid(self):
         result = validate_tool_args(

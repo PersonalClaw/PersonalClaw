@@ -16,7 +16,7 @@ import { StatusPill } from '../../../ui/StatusPill'
 import { SlotEmptyState, WidgetRow } from './kit'
 
 /** Live browse mirror + pending-grant prompt + one-click kill switch + persistent auth-expired
- *  banner (BROWSE-AUTOMATION §(b)/(c)). The human-facing half of unattended browsing,
+ *  banner. The human-facing half of unattended browsing,
  *  the browser-side sibling of DesktopLiveView — the two share one live-watch idiom so
  *  browser and desktop feel alike.
  *
@@ -384,7 +384,7 @@ export function BrowseMirror() {
                   {s.action || '(no action)'}
                 </span>
                 {s.screenshot && (
-                  // The screenshot enters as a PATH reference, never fetched as bytes — the §1
+                  // The screenshot enters as a PATH reference, never fetched as bytes — the
                   // screenshot-as-path discipline (browse/loop.py's `assert_no_base64`), and it
                   // keeps the panel from ever dialing a run-workspace file.
                   <span

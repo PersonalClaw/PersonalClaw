@@ -126,7 +126,7 @@ export function GuardrailsPanel() {
   )
 }
 
-// ── Earned autonomy: the rung ladder (AUTONOMY-GUARDRAILS §5-§6.1) ──────────
+// ── Earned autonomy: the rung ladder ──────────
 /** The ladder panel: what each automated action may do on its own, what it has earned, and
  *  the two things a user can do about it — promote (a click, never automatic) or hand the
  *  autonomy back. Plus the undo list for actions that already ran at the with-undo rung.

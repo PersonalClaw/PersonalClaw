@@ -318,7 +318,7 @@ class TestCronCli:
         assert config.get("task_template") == "check"
 
     def test_cron_add_is_a_user_creation_not_an_agent_one(self, tmp_path):
-        """`created_by="user"`: the agent cap (decision 5d) bounds what the ASSISTANT creates
+        """`created_by="user"`: the agent cap bounds what the ASSISTANT creates
         unprompted. A human typing the command is the user acting directly, and capping their own
         CLI at the agent limit would aim the rule at the wrong party."""
         _cron(
@@ -1038,8 +1038,8 @@ class TestConfigDirOverride:
         (sent,) = gateway.asked("/api/logout")
         assert sent.headers["x-local-secret"] == "this-homes-own-secret"
 
-    # (removed) test_setup_slack_tokens_writes_to_config_dir — plan 32 moved
-    # _setup_slack_tokens out of core into the slack-channel app's cli_setup.py
+    # (removed) test_setup_slack_tokens_writes_to_config_dir — _setup_slack_tokens moved
+    # out of core into the slack-channel app's cli_setup.py
     # (behind the cli.setup manifest seam). The config-dir/.env write path is now
     # exercised app-side and by tests/test_app_cli.py's setup-runner tests.
 

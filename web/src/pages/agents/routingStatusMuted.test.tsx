@@ -8,7 +8,7 @@ import userEvent from '@testing-library/user-event'
  * A muted agent is otherwise invisible on this page, so `RoutingStatusView` is the one place a
  * user can SEE that the auto-router stopped suggesting an agent and REVERSE it. The backend
  * round-trip (`routingStatus` ↔ `routingUnmute`) is covered by pytest; what had no test was the
- * FE half of the acceptance criteria — "a muted agent shows its muted state … and an Unmute control restores
+ * FE half of the contract — "a muted agent shows its muted state … and an Unmute control restores
  * it; state reflected via routingStatus". This renders the real component against a mocked api and
  * asserts exactly that, plus the refused-write discipline the component was written for (a failed
  * Unmute must surface an error and NOT claim success). A non-muted contrast keeps it non-vacuous.
@@ -32,7 +32,7 @@ beforeEach(() => {
 })
 afterEach(() => cleanup())
 
-describe('AR2-8 routing status: muted state + Unmute (AgentDetail)', () => {
+describe('Routing status: muted state + Unmute (AgentDetail)', () => {
   it('a muted agent shows the muted row + Unmute; clicking it calls routingUnmute and flips to Active', async () => {
     routingStatus.mockResolvedValue({ muted: ['scout'] })
     routingUnmute.mockResolvedValue({ ok: true })

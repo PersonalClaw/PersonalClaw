@@ -50,7 +50,7 @@ export const EVENT_PATTERN_META: EventPatternMeta[] = [
   { pattern: 'MemoryUpdate', source: 'memory', label: 'Any memory write', desc: 'Every memory create, update, or delete.', matcher: null, matcherLabel: '', matcherHint: '', matcherPlaceholder: '', matcherRequired: false },
   { pattern: 'MemoryKeyPattern', source: 'memory', label: 'Memory write to a key', desc: 'A memory write whose key matches a glob.', matcher: 'key_glob', matcherLabel: 'Key glob', matcherHint: 'Glob on the memory key (e.g. project.acme.*). Required — use "Any memory write" to fire on every one.', matcherPlaceholder: 'project.acme.*', matcherRequired: true },
   { pattern: 'ContentMatch', source: 'memory', label: 'Memory write matching content', desc: "A memory write whose value matches a regex (or substring if it isn't valid regex).", matcher: 'content_re', matcherLabel: 'Content matcher', matcherHint: 'Regex matched against the written value (substring fallback). Required.', matcherPlaceholder: 'invoice|payment', matcherRequired: true },
-  // AUTO-A4. `matcherRequired: false` because an empty glob is the deliberate CATCH-ALL here, unlike
+  // `matcherRequired: false` because an empty glob is the deliberate CATCH-ALL here, unlike
   // MemoryKeyPattern's empty glob (which matches nothing) — the backend's `matches()` documents the
   // asymmetry, and this row mirrors it rather than inventing a stricter form-side rule.
   { pattern: 'AppEvent', source: 'app', label: 'App event', desc: 'An event from an installed app that contributes a trigger source (a calendar, a device, a watched service).', matcher: 'event_glob', matcherLabel: 'Event', matcherHint: 'Pick a declared event, or glob the namespaced name (e.g. app:my-source:*). Empty matches every app event.', matcherPlaceholder: 'app:my-source:*', matcherRequired: false },
@@ -90,10 +90,10 @@ export function appEventOptions(catalog: TriggerVariables | null): { value: stri
  *  hidden: pre-wiring a trigger for an event that is about to exist is legitimate, and the
  *  form already warns at the point of choice.
  *
- *  🔑 THE HEADINGS ARE CONDITIONAL, and that is measured rather than defensive. The plan
- *  describes "~15 events, 7 of which warn 'never fires'"; `GET /api/triggers/variables` on a
- *  current build returns **15 events, 0 dormant** — the dormancy was closed after the plan was
- *  written. Labelling all fifteen "Live events" under one heading would be a distinction that
+ *  🔑 THE HEADINGS ARE CONDITIONAL, and that is measured rather than defensive. An earlier
+ *  description had "~15 events, 7 of which warn 'never fires'"; `GET /api/triggers/variables` on a
+ *  current build returns **15 events, 0 dormant** — the dormancy has since been
+ *  closed. Labelling all fifteen "Live events" under one heading would be a distinction that
  *  distinguishes nothing, so `group` is left undefined while nothing is dormant and the two
  *  groups appear the moment something is. */
 export function lifecycleEventOptions(
@@ -282,10 +282,10 @@ export interface Trigger {
   blocking?: boolean
   enforcement?: HookEnforcement
   storeKind?: string         // store only: file | web_watch | idle | …
-  /** Who wrote the row, and whether this machine's owner did not (TEAM-SHARED-ENTITIES §2.2 —
-   *  TSE-4). `readOnly` is the SERVER's verdict, passed through rather than re-derived from
-   *  `author`: the backend computes it with the same predicate that decides what the scheduler
-   *  arms, so a row the page lets you toggle is always a row the service would actually fire. */
+  /** Who wrote the row, and whether this machine's owner did not. `readOnly` is the SERVER's
+   *  verdict, passed through rather than re-derived from `author`: the backend computes it with
+   *  the same predicate that decides what the scheduler arms, so a row the page lets you toggle
+   *  is always a row the service would actually fire. */
   author?: string
   readOnly?: boolean
   /** Brought over from an older version and switched off until the owner switches it on, which
@@ -301,7 +301,7 @@ export interface Trigger {
    *  (`restore_hold`): the server's verdict, passed through. Only a schedule or a store row can
    *  carry one, and never one that is switched on. */
   restoreHold?: RestoreHold
-  broken?: string[]          // parse ERRORS (S87 lenient load) — shown, not hidden
+  broken?: string[]          // parse ERRORS (lenient load) — shown, not hidden
   /** WARNING-severity issues from the same load — advisory, not a fault (issue 531). Kept apart
    *  from `broken` because the row RUNS as authored: a sub-floor interval is a choice the backend
    *  allows, and rendering it as "needs attention" red would tell the user their working
@@ -352,7 +352,7 @@ export function scheduleToTrigger(j: ScheduleJob): Trigger {
     actionProvider: provider ? dispatchedProvider(provider) : undefined,
     lastRunTs: j.last_run_ts ?? null,
     lastRunSource: j.last_run_source ?? null,
-    // Honest last-run status (T7): the newest run record's status — it persists across restarts and
+    // Honest last-run status: the newest run record's status — it persists across restarts and
     // carries launched/failure/timeout. The wire's `last_status` is NOT a second source for this
     // field: it is `health_status` under an alias (`schedule_view.py`), a different vocabulary, and
     // mixing the two here is what manufactured an ok-green CheckCircle beside the word "never" on
@@ -371,7 +371,7 @@ export function scheduleToTrigger(j: ScheduleJob): Trigger {
     hasRun: j.last_run_ts != null || (j.run_count ?? 0) > 0,
     runCount: null, usedBy: [],
     schedule: j,
-    // Parse errors carried, not hidden (S87 lenient load) — same as `storeToTrigger`, so a
+    // Parse errors carried, not hidden (lenient load) — same as `storeToTrigger`, so a
     // schedule that failed to parse flags "needs attention" instead of listing as if healthy.
     broken: j.broken ?? [],
     warnings: j.warnings ?? [],
@@ -411,7 +411,7 @@ export function hookToTrigger(h: HookItem): Trigger {
 
 /** Project a store-backed Trigger (file/web_watch/idle/…) onto the shared view-model. The wire
  *  id is already `store:<kind>:<slug>`; `rawId` keeps the store's own `<kind>:<slug>` so the
- *  toggle/run/delete helpers re-namespace it. A broken row (S87 lenient load) carries its parse
+ *  toggle/run/delete helpers re-namespace it. A broken row (lenient load) carries its parse
  *  errors so the list can flag it rather than hiding an automation the user can't otherwise debug.
  *
  *  A data-event row (`store_kind: 'event'`) is presented by what it listens for — its pattern, from

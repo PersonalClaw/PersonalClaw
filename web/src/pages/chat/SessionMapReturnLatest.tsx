@@ -6,10 +6,10 @@ import { spring } from '../../design/motion'
  *
  *  The map's canonical "back to newest" affordance. It is the control the chat transcript has always
  *  shown when you scroll up — same accessible name, same gate, same gesture — MOVED here, because
- *  The instruction is the whole change: **do not invent a new control.**
+ *  that is the whole change: **do not invent a new control.**
  *
  *  🔑 WHY MOVING A COMPONENT IS THE DELIVERABLE, and not a filing preference. The Session Map is the
- *  transcript's in-session navigation (§B.1: it *replaces* the Activity → Index tab and *subsumes*
+ *  transcript's in-session navigation (it *replaces* the Activity → Index tab and *subsumes*
  *  the ad-hoc jump affordances into one model). A navigation surface that owns "go to turn N" but
  *  not "go to the newest" would leave the second question answered by a control nobody owns — and
  *  the predictable next step is `SessionMapRail` (or the coarse-pointer drawer) growing a
@@ -30,7 +30,7 @@ import { spring } from '../../design/motion'
  *  user gesture: unconditional, and smooth precisely so the jump reads as travel rather than a
  *  teleport. Collapsing the two would make streaming either yank or crawl.
  *
- *  DESIGN LANGUAGE: a CIRCULAR down-arrow — the owner's reference shows exactly this
+ *  DESIGN LANGUAGE: a CIRCULAR down-arrow — the reference app shows exactly this
  *  once the reader leaves the newest message, and the words it used to carry are the accessible
  *  name (and the tooltip) rather than a label competing with the transcript. It is chrome, not
  *  content — `bg-surface/95` + `backdrop-blur-md` over the transcript, `border-outline-variant/50`,
@@ -40,7 +40,7 @@ import { spring } from '../../design/motion'
  *  (`reducedMotionAppWide.test.ts`) instead of a hand-rolled transition here.
  */
 
-/** The one accessible name. §A.7: the control "keeps its text accessible name", so this is also
+/** The one accessible name. The control "keeps its text accessible name", so this is also
  *  what `toggleLabelInName`-style name rails read. Exported because the single-implementation
  *  derivation asserts on the literal, and a second copy of the string is exactly what it hunts. */
 export const RETURN_TO_LATEST_LABEL = 'Jump to latest message'
@@ -57,7 +57,7 @@ export function scrollToLatest(end: Element | null | undefined) {
 
 export interface SessionMapReturnLatestProps {
   /** True while the transcript is scrolled away from its bottom (`ChatPage.tsx:580`, a distance
-   *  threshold on the scroll container). §A.7 pins the gate to exactly this: the control is absent,
+   *  threshold on the scroll container). The gate is exactly this: the control is absent,
    *  not disabled, when there is nothing to return to. */
   scrolledUp: boolean
   /** What "newest" means to the host — in `ChatPage`, `scrollToLatest(endRef.current)`. Injected

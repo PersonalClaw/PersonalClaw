@@ -12,7 +12,7 @@ import { reportActionFailure } from '../../app/reportingWrite'
 import { TextLink } from '../../ui/TextLink'
 
 /** Inbox settings → /api/inbox/settings: auto-cleanup retention for the unified inbox.
- *  Alerting lives in the notification rules matrix now (plan 42 S3). */
+ *  Alerting lives in the notification rules matrix now. */
 export function InboxSettingsPanel() {
   const [s, setS] = useState<InboxSettings | null>(null)
   const [saved, setSaved] = useState(false)
@@ -26,7 +26,7 @@ export function InboxSettingsPanel() {
   const [sourcesOn, setSourcesOn] = useState<boolean | null>(null)
   // `inbox.sort_messages`: whether each new message goes to the background model to be sorted.
   const [sortOn, setSortOn] = useState<boolean | null>(null)
-  // `ProactiveConfig` was wired end to end by PA-1 —
+  // `ProactiveConfig` was wired end to end —
   // dataclass, loader, `to_dict`, the `_EDITABLE_CONFIG` PATCH allowlist — and had NO frontend
   // control, so the round-trip contract's fourth point was open and `triage_enabled` was
   // unreachable from the UI. `null` = not read yet, which is why every toggle below is disabled
@@ -109,7 +109,7 @@ export function InboxSettingsPanel() {
       .catch((e) => { setSourcesOn(!v); notify(`Couldn't change that: ${String((e as Error)?.message || e)}`, 'error') })
   }
 
-  // Two writes, in this order, and the order is criterion 10. The config PATCH is the one source
+  // Two writes, in this order, and the order matters. The config PATCH is the one source
   // of truth for whether the digest fires; `proactiveInstall` then reconciles the schedule row
   // against it — retiring it on off, re-arming it on on. Patching without reconciling would leave
   // a cron firing for a disabled digest; reconciling without patching would leave the switch and
@@ -175,7 +175,7 @@ export function InboxSettingsPanel() {
         </div>
       )}
 
-      {/* Alerting moved to Notifications → Per-kind delivery (plan 42 S3): keyword /
+      {/* Alerting moved to Notifications → Per-kind delivery: keyword /
           name-mention escalation is a `conditions` block on ANY notification rule now, so
           the same rules cover loops and proposals, not just inbox messages. */}
       <Section title="Alerts" hint="Keyword and name-mention alerts are now per-notification-kind.">
@@ -211,7 +211,7 @@ export function InboxSettingsPanel() {
 
       {/* The digest's own switches, then the rules it taught itself.
           Kept together and in this order because the rules are meaningless without the switch:
-          a rules list under a disabled digest reads as dormant-but-kept (criterion 10) only when
+          a rules list under a disabled digest reads as dormant-but-kept only when
           the switch that made it dormant is directly above it. */}
       <Section title="Proactive triage" hint="One scheduled digest of what accumulated, with proposals you answer. Off by default; nothing is collected or spent while it is off.">
         <Row label="Morning triage digest" hint="Collect, filter and propose on a schedule. Turning this off retires the schedule and keeps every rule you taught — turning it back on is lossless.">

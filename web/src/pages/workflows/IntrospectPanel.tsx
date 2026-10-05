@@ -9,8 +9,7 @@ import { elapsedStat, firstOutputStat, fmtElapsed, isTerminal } from './workflow
 import { runCostStat, runCostText, templateCostStat } from '../../lib/runCost'
 import { runTokensStat } from '../../lib/unrecorded'
 
-/** The cockpit's introspection panel: the nine questions §6.4 promotes to Success Criteria
- *  (criteria 6 & 8).
+/** The cockpit's introspection panel: the nine questions of the introspection checklist.
  *
  *  The backend module behind this (`workflows/introspection.py`) was fully written and fully
  *  tested but consumed by NOTHING — no route, no surface — so it answered none of the nine
@@ -23,7 +22,7 @@ import { runTokensStat } from '../../lib/unrecorded'
  *
  *  **A gap is SHOWN, never hidden.** A non-empty `checklist_gaps` is a backend hole this panel
  *  cannot close by rendering harder, so it renders as a warning rather than as blank space.
- *  Silence would make a broken surface look complete, which is the whole thing R6 is against.
+ *  Silence would make a broken surface look complete, which is the whole thing the checklist is against.
  *
  *  **An empty answer is an answer.** "Nothing is blocked" is information; rendering it as an
  *  absence would make a healthy idle run look broken. So each section states its empty case in
@@ -390,7 +389,7 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
             )
           )}
 
-          {/* Criterion 8: the Proof section, sufficient to review an unattended run without
+          {/* The Proof section, sufficient to review an unattended run without
               opening the transcript. Its own caveats render as prominently as its numbers — a
               Proof section with no evidence and no warning is the worst surface, because it
               looks like proof. */}

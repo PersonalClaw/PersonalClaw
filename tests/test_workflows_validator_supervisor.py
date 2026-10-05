@@ -107,8 +107,9 @@ def test_DIRECTION_1_the_wired_policy_still_has_its_production_caller():
     """RED if the last production caller of ``SupervisorPolicy`` disappears while the marker
     claims the policy is wired — the module would have gone inert again without saying so.
 
-    PP-15 INVERTED this direction. It used to assert that NO caller existed while the marker
-    claimed zero; the marker now claims one, so the drift worth catching is the opposite one.
+    Wiring the policy INVERTED this direction. It used to assert that NO caller existed while
+    the marker claimed zero; the marker now claims one, so the drift worth catching is the
+    opposite one.
     A deletion that strands `loop_convergence._supervisor_policy` would otherwise leave a
     `SupervisorPolicy`
     nothing reads, declaring itself wired — the exact lie the convention exists to prevent."""
@@ -119,7 +120,7 @@ def test_DIRECTION_1_the_wired_policy_still_has_its_production_caller():
     )
     assert "loop_convergence.py" in " ".join(
         hits
-    ), f"the wired caller is the run controller's convergence step (PP-15); census found {hits}"
+    ), f"the wired caller is the run controller's convergence step; census found {hits}"
 
 
 def test_DIRECTION_2_the_wired_module_declares_itself_wired():
@@ -128,15 +129,13 @@ def test_DIRECTION_2_the_wired_module_declares_itself_wired():
     src = Path(sp.__file__).read_text()
     assert (
         "zero production callers" not in src
-    ), "the module still claims zero production callers, but PP-15 wired one"
-    assert "PP-15" in src, "the module no longer names its wiring owner"
-    assert sp.WIRING_OWNER == "PP-15"
+    ), "the module still claims zero production callers, but one is wired"
     assert sp.HAS_ZERO_PRODUCTION_CALLERS is False
 
 
 def test_the_marker_and_reality_agree():
     """The coupling invariant both probes derive from: the claim must equal the fact. Unchanged
-    by PP-15 — the two DIRECTION rails flipped which side of it they guard, but the invariant
+    by the wiring — the two DIRECTION rails flipped which side of it they guard, but the invariant
     itself is what makes either lie impossible, so it is stated once and never edited."""
     hits, _scanned = _census()
     assert sp.HAS_ZERO_PRODUCTION_CALLERS == (len(hits) == 0)

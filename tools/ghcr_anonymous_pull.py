@@ -1,10 +1,9 @@
-"""Assert both GHCR container packages are anonymously pullable — DIST-14 clause 2.
+"""Assert both GHCR container packages are anonymously pullable.
 
-`DIST-14`'s `done_when` has two halves. The first is the owner's (flip
-`personalclaw-gateway` and `personalclaw-web` to public). The second is this file:
-
-    AND a scheduled CI job asserts both with no credentials in scope, red if either
-    package stops being anonymously pullable
+Publishing them has two halves. The first is a manual step (flip
+`personalclaw-gateway` and `personalclaw-web` to public). The second is this file: a
+scheduled CI job asserts both with no credentials in scope, red if either package stops
+being anonymously pullable.
 
 **Why this is not a one-line curl.** The endpoint a reader reaches for first is
 `/v2/<repo>/tags/list`, and it is VACUOUS here. With no anonymous token obtainable it
@@ -43,7 +42,7 @@ So the assertion per image is two-step, and neither step alone is sufficient:
   absent repository, step 1's private/absent split silently inverts and every failure
   message afterwards names the wrong cause.
 * **credential-free** — the environment must carry no registry credential. "No
-  credentials in scope" is a literal clause requirement: the default `GITHUB_TOKEN` **can
+  credentials in scope" is a literal requirement: the default `GITHUB_TOKEN` **can
   pull a private package**, which is precisely why the release job's own smoke pull (it is
   credentialed) never caught this. `permissions: {}` in the workflow is the declaration;
   this check is the enforcement, so adding an `env:` line later fails loudly instead of
@@ -378,7 +377,7 @@ def adjudicate(reading: Reading) -> tuple[int, list[str]]:
             _annotation(
                 "GHCR rail had a credential in scope",
                 f"{', '.join(reading.credentials)} is set, and a credential that can pull a "
-                "PRIVATE package makes a green here meaningless. DIST-14 asks for the assertion "
+                "PRIVATE package makes a green here meaningless. The assertion must run "
                 "with no credentials in scope: keep `permissions: {}` on the job and map no "
                 "token into the step env.",
             )

@@ -1,12 +1,12 @@
 """`triggers.json` — the one trigger store.
 
-"One store: `~/.personalclaw/triggers.json` (fcntl + atomic write, absorbing crons.json /
+One store: `~/.personalclaw/triggers.json` (fcntl + atomic write, absorbing crons.json /
 hooks.json / event_triggers.json / autonudge config). Parsed with **never-throw structural
-validation** (AUTO-R15): typed issue records + closest-match resolution rendered as WARNING chips —
-an agent-authored near-miss must never become a silently-dead trigger."
+validation**: typed issue records + closest-match resolution rendered as WARNING chips —
+an agent-authored near-miss must never become a silently-dead trigger.
 
-**Why this is buildable now, when S83/S86 recorded the store as blocked.** Those sessions were right
-that the store and the SERVICE are separate, and wrong to treat them as one unit: the service needs
+**Why this is buildable now, though the store once looked blocked.** The store and the SERVICE
+are separate, and it was wrong to treat them as one unit: the service needs
 the store, not the reverse. Everything the store itself depends on is shipped and was measured
 before
 this file existed —
@@ -15,13 +15,15 @@ this file existed —
   fields
   fail to survive), so persistence needs no new serializer.
 * `parse_trigger` already NEVER raises and already returns closest-match resolution (`'clok'` →
-  `closest='clock'`), which is R15's whole requirement. A store that re-implemented validation would
+  `closest='clock'`), which is the never-throw contract's whole requirement. A store that
+  re-implemented validation would
   have a second opinion about what a valid trigger is.
 * `migrate_crons()` already consumes a raw `crons.json` dict and reports `lossless`/`unaccounted`.
-* `ScheduleService` already ships the exact fcntl-lock + atomic-write + mtime-`_sync` triad §1 asks
-  for, and the "MCP-process gotcha" makes that mtime contract mandatory rather than incidental.
+* `ScheduleService` already ships the exact fcntl-lock + atomic-write + mtime-`_sync` triad the
+  store needs, and MCP tools writing it from a separate process make that mtime contract mandatory
+  rather than incidental.
 
-So this session is the store and nothing else. The service, the loop and the executor stay out —
+So this module is the store and nothing else. The service, the loop and the executor stay out —
 those genuinely need the WakeupDispatcher, and the fire path is what they will call.
 
 **Three properties this file exists to guarantee:**
@@ -29,7 +31,7 @@ those genuinely need the WakeupDispatcher, and the fire path is what they will c
 **A broken row never disappears.** `load()` returns EVERY row it read, including the ones with
 errors,
 each carrying its issues. A store that dropped invalid rows would make an agent-authored typo look
-like a trigger the user never created — R15's "silently-dead trigger" in its worst form, because the
+like a trigger the user never created — the "silently-dead trigger" in its worst form, because the
 user cannot fix what they cannot see. `enabled` is forced False on an error row instead (that is
 `parse_trigger`'s own rule), so a broken trigger is VISIBLE and INERT rather than absent.
 
@@ -38,7 +40,7 @@ user cannot fix what they cannot see. `enabled` is forced False on an error row 
 lost write: the next `load()` would report every surviving trigger as malformed.
 
 **A concurrent writer is not silently overwritten.** MCP tools mutate the store from a separate
-process (the carried-over gotcha), so every mutation re-reads under the lock before writing —
+process, so every mutation re-reads under the lock before writing —
 otherwise a chat-created trigger vanishes when the dashboard saves a stale in-memory copy.
 
 **A store that cannot be read is never written over.** That re-read is strict
@@ -124,7 +126,7 @@ class LoadedTrigger:
 class TriggerStore(TriggerStoreProvider):
     """`triggers.json`, with the shipped cron store's durability discipline.
 
-    The NATIVE implementation of the trigger-store seam (TEAM-SHARED-ENTITIES §3 — TSE-4): it wraps
+    The NATIVE implementation of the trigger-store seam: it wraps
     `triggers.json` with all three preserved conventions (fcntl lock, mtime change-notify, atomic
     write). The base class is the abstraction a `trigger`-type provider app implements to serve rows
     from somewhere else; this class is what serves them from the local file, and it is the only
@@ -135,7 +137,7 @@ class TriggerStore(TriggerStoreProvider):
     the executor and the run store, and inheriting it would drag the whole legacy scheduler
     into a file
     whose job is persistence. The three durability mechanisms are copied because they are the
-    *contract* §1 names, not because the code is reusable.
+    *contract*, not because the code is reusable.
     """
 
     def __init__(self, base_dir: Path | str | None = None) -> None:
@@ -194,8 +196,8 @@ class TriggerStore(TriggerStoreProvider):
     def changed_on_disk(self) -> bool:
         """Whether another process wrote the store since this instance last read it.
 
-        §6's carried-over gotcha: "MCP tools mutate the store from a separate process; mtime `_sync`
-        within the ≤30s poll remains the propagation contract". The service polls this; a mutation
+        MCP tools mutate the store from a separate process; mtime `_sync`
+        within the ≤30s poll remains the propagation contract. The service polls this; a mutation
         re-reads regardless.
         """
         try:
@@ -224,7 +226,7 @@ class TriggerStore(TriggerStoreProvider):
 
         The load-bearing decision. A store that dropped invalid rows would make an
         agent-authored typo
-        indistinguishable from a trigger that was never created — R15's "silently-dead trigger",
+        indistinguishable from a trigger that was never created — the "silently-dead trigger",
         except the user cannot even see it to fix it. `parse_trigger` forces `enabled=False` on an
         error row, so a broken trigger is visible and inert rather than absent and mysterious.
 
@@ -301,8 +303,8 @@ class TriggerStore(TriggerStoreProvider):
         And the read is strict: while the store cannot be read this refuses with
         ``record_files.Unreadable`` and writes nothing, as every write here does.
 
-        🔴 A ROW A REGISTERED `trigger` PROVIDER SERVES IS WRITTEN BACK TO THAT PROVIDER, not here
-        (TSE-5). Writing it here instead would put one trigger id in two stores, and since a local
+        🔴 A ROW A REGISTERED `trigger` PROVIDER SERVES IS WRITTEN BACK TO THAT PROVIDER, not
+        here. Writing it here instead would put one trigger id in two stores, and since a local
         row WINS every later read, the team's row would silently fork into a local copy and the
         shared file would stop describing what actually runs. The check belongs at this one funnel
         rather than at the arm sites because the arm path is not the only writer: the run recorder
@@ -391,8 +393,8 @@ class TriggerStore(TriggerStoreProvider):
 
         🔴 ONCE, and never over a row the store already has. This used to run on every boot and
         take each job's config from the file — "`crons.json` is the source of truth for what the job
-        IS" — which stopped being true when the store became the only writer (S101) and the service
-        that wrote the file was deleted (S112). Measured on a scratch home before the change: an
+        IS" — which stopped being true when the store became the only writer and the service
+        that wrote the file was deleted. Measured on a scratch home before the change: an
         owner's rename and new action on an imported cron were put back from the file on the next
         restart, and a job added to the file later came in switched on, `created_by: user`, with
         `bash` granted by the next pass. So the file is read once and renamed
@@ -448,7 +450,7 @@ class TriggerStore(TriggerStoreProvider):
         # `report.converted` — a list of `Converted`, each with a `.trigger` dict. Measured, not
         # guessed: a first pass read `report.converted_rows`, which does not exist, so `written` was
         # always 0 while `converted` said 1. The migration reported success and persisted nothing —
-        # exactly the silent no-op this program keeps finding, in the one path whose whole job
+        # exactly the silent no-op this codebase keeps finding, in the one path whose whole job
         # is not losing the user's automations.
         written = 0
         waiting = 0
@@ -466,7 +468,8 @@ class TriggerStore(TriggerStoreProvider):
             errors = [i for i in issues if i.severity == "error"]
             if errors:
                 # Recorded, never dropped: a converted row the entity refuses is a contract mismatch
-                # between two shipped modules (that is how S87 found `interval`), and the user needs
+                # between two shipped modules (that is how the missing `interval` clock kind was
+                # found), and the user needs
                 # to see WHICH job did not make it rather than a count that silently disagrees.
                 refused_rows.append({"id": trigger.id, "errors": [i.message for i in errors]})
                 # 🔴 AND IT IS STILL WRITTEN, disabled. A `crons.json` row with an empty or

@@ -135,7 +135,7 @@ def _check_block_refs(res: LintResult, spec: dict[str, Any]) -> None:
 def _check_duplicated_conventions(res: LintResult, spec: dict[str, Any]) -> None:
     """A convention written by hand where a shared block exists.
 
-    This is the rule the plan states as "repeated boilerplate moves to shared", and it is an
+    This is the "repeated boilerplate moves to shared" rule, and it is an
     ERROR rather than a warning because the copies do not stay identical. Three hand-written
     Finding records is how a gate predicate like "no open Critical" quietly stops meaning the
     same thing in two stages.
@@ -242,7 +242,7 @@ def _prompts(spec: dict[str, Any]) -> list[tuple[str, str]]:
     return out
 
 
-# ── The five anti-patterns (LOOPS-EVOLUTION R6b) ──
+# ── The five anti-patterns ──
 #
 # Named rules rather than review advice, because each one is a shape that LOOKS like a
 # working template and is not. A reviewer reading a 200-line spec will not reliably spot
@@ -416,7 +416,7 @@ def _check_anti_patterns(res: LintResult, spec: dict[str, Any]) -> None:
         # of the field — `tick.loop_should_continue` and `resilience.check_breaker` — gate on
         # `isinstance(cap, int)`, and a loop node's own `config` is never run through
         # `resolve_config`: that is called per NODE KIND in `engine.py`, and a loop is a container
-        # the controller advances itself. Measured with a positive control (PP-16, the research
+        # the controller advances itself. Measured with a positive control (the research
         # port): the same node capped at a literal 3 stops at iteration 3, and capped at
         # `"{{inputs.rounds}}"` keeps going at iteration 99. The one template that used the binding
         # form — `deep-research` — was therefore genuinely unbounded, which is exactly what this

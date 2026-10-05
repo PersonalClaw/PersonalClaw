@@ -4,14 +4,14 @@
 ``scripts/generate_docs_lint_baseline.py``) of docs drift across three finding kinds — dead
 relative links, stale ``file.py:NNN`` citations whose file is missing, and plan
 ``**Status:**`` headers that contradict a DONE'd ``## Execution log`` (the "plan headers lie"
-defect). CLAUDE.md and EXECUTION-PROTOCOL §3 demand docs move with the change but nothing
+defect). CLAUDE.md and AGENTS.md demand docs move with the change but nothing
 mechanical enforced it; this census does.
 
 This suite is the ratchet that keeps the census honest. It regenerates in-memory and asserts
 every per-file finding counter **may only shrink** versus the committed baseline:
 
   * A per-file counter that ROSE — a NEW dead link, stale citation, or stale header — reds
-    CI, naming the file and the new finding. This is acceptance criteria: "a dead link or a stale
+    CI, naming the file and the new finding. This is the rule: "a dead link or a stale
     ``file:line`` citation reds CI".
   * A DECREASE is welcome (a doc fix landed). The ratchet does NOT demand exact equality and
     does NOT require the count to go down — only that it never goes up. This is why we
@@ -19,7 +19,7 @@ every per-file finding counter **may only shrink** versus the committed baseline
     red every pre-existing dead link/citation/header at once (an outage). See the generator's
     module docstring.
 
-⚠️  FORBIDDEN-TO-RAISE RULE — "fix the doc, not the baseline" (the acceptance criteria doc line; do
+⚠️  FORBIDDEN-TO-RAISE RULE — "fix the doc, not the baseline" (the forbidden-to-raise doc line; do
     not weaken it): when this test reds because a counter ROSE, the fix is to FIX THE DOC —
     repair the dead link, update or remove the stale citation, or reconcile the plan header
     with its execution log — NEVER to regenerate ``docs-lint-baseline.json`` to bless the
@@ -46,7 +46,7 @@ from scripts.generate_docs_lint_baseline import (
 )
 
 # The forbidden-to-raise phrase, asserted present in both the generator and this test so the
-# acceptance criteria "forbidden-to-raise doc line is present" cannot silently be dropped.
+# requirement that the doc line is present cannot silently be dropped.
 _FORBIDDEN_TO_RAISE = "fix the doc, not the baseline"
 
 
@@ -219,7 +219,7 @@ def test_the_scan_set_is_every_tracked_markdown_file():
 
 
 def test_a_new_finding_reds_the_ratchet():
-    """Acceptance criteria: "a dead link or a stale ``file:line`` citation reds CI".
+    """The rule: "a dead link or a stale ``file:line`` citation reds CI".
 
     We do NOT add real drift to the tree — we exercise the SHARED comparison the ratchet
     relies on against a synthetic ``current`` that carries one extra finding for a real file,
@@ -269,7 +269,7 @@ def test_a_fix_that_shrinks_a_counter_does_not_red_the_ratchet():
     assert regressions(per_file, shrunk) == []
 
 
-# ── plan-hygiene reproduction (acceptance criteria's testable clause) ────────────
+# ── plan-hygiene reproduction ────────────────────────────────────────────────────
 
 
 _SEEDED_STALE_PLAN = """# Some Plan
@@ -305,7 +305,7 @@ Body prose, no execution log yet.
 
 
 def test_plan_hygiene_flags_a_seeded_stale_header():
-    """Criterion: "the plan-hygiene checker reproduces the known stale-header audit findings
+    """The rule: "the plan-hygiene checker reproduces the known stale-header audit findings
     on a seeded stale header". A ``**Status:** DESIGNED`` header on a plan whose
     ``## Execution log`` already carries a DONE entry is the exact 2026-08-04 drift; the
     checker must flag it."""
@@ -324,7 +324,7 @@ def test_plan_hygiene_is_quiet_on_a_correct_header():
 
 
 def test_forbidden_to_raise_doc_line_is_present():
-    """Acceptance criteria: "the forbidden-to-raise doc line is present" — in BOTH the generator and
+    """The rule: "the forbidden-to-raise doc line is present" — in BOTH the generator and
     this test, so neither can drop it unnoticed."""
     from scripts import generate_docs_lint_baseline as gen
 

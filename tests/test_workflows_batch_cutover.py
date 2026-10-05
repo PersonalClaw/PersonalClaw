@@ -1,4 +1,4 @@
-"""The batch-spawn CUTOVER and the seams that make a compiled batch real (WF2WOR-5 C2).
+"""The batch-spawn CUTOVER and the seams that make a compiled batch real.
 
 `batch_compile` was a complete compiler with zero callers: a full compilation layer compiles nothing
 until something routes into it, and N independent fire-and-forget spawns are not a batch — they have
@@ -41,7 +41,7 @@ def leaf(name: str, **kw) -> LeafTask:
     return LeafTask(**base)  # type: ignore[arg-type]
 
 
-# ── clause 1: the cutover ────────────────────────────────────────────────────
+# ── the cutover ──────────────────────────────────────────────────────────────
 
 
 def test_two_tasks_ROUTE_THROUGH_the_compiler_rather_than_two_spawns(monkeypatch):
@@ -198,7 +198,7 @@ def test_a_LIST_ITEM_of_the_wrong_type_is_still_rejected():
         validate_tool_args({"tasks": [123]}, SPAWN_RUN_SCHEMA)
 
 
-# ── clause 1: restart survival, proven FROM DISK ─────────────────────────────
+# ── restart survival, proven FROM DISK ───────────────────────────────────────
 
 
 class _Launches:
@@ -352,11 +352,11 @@ def test_every_branch_is_INDIVIDUALLY_ADDRESSABLE_for_retry():
     assert len(set(ids)) == 2, f"two same-named leaves collided: {ids}"
 
 
-# ── clause 3: the isolated workspace is actually PROVISIONED ─────────────────
+# ── the isolated workspace is actually PROVISIONED ───────────────────────────
 
 
 def test_the_compiled_spec_declares_the_workspace_the_APPLIER_READS():
-    """The key mismatch that made this clause inert.
+    """The key mismatch that made this seam inert.
 
     The applier is RUN-level and fully wired (`run_start.provision_workspace` →
     `provisioning.provision`); its gate is `provisioning.declares_workspace`, which reads a
@@ -442,7 +442,7 @@ def test_scratch_is_an_ISOLATED_mode_so_the_substrate_is_recoverable():
     assert Mode(batch_compile.BATCH_WORKSPACE_MODE) in ISOLATED_MODES
 
 
-# ── clause 3: the lease REFUSES a second execution ───────────────────────────
+# ── the lease REFUSES a second execution ─────────────────────────────────────
 
 
 def test_a_SECOND_worker_is_REFUSED_the_same_node(tmp_path, monkeypatch):
@@ -640,7 +640,7 @@ def test_a_run_attached_stage_with_NO_instance_path_REFUSES_instead_of_spawning(
     assert "instance path" in result.failure.cause_plain
 
 
-# ── clause 2: the tool-handler seam ──────────────────────────────────────────
+# ── the tool-handler seam ────────────────────────────────────────────────────
 
 
 def test_an_ORCHESTRATION_tool_is_denied_to_a_leaf_at_every_depth(monkeypatch):
@@ -825,12 +825,12 @@ def test_compile_result_no_longer_claims_tool_denials_are_UNENFORCED():
 
 
 def test_forbidden_declarations_stays_EMPTY():
-    """The standing persona prohibition (amendment (a)). Checked here too because this module is
+    """The standing persona prohibition. Checked here too because this module is
     where a future author wiring a "role" through the batch seam would most plausibly add one."""
     assert batch_compile.forbidden_declarations() == []
 
 
-# ── clause 4: the agent roster + drift check ─────────────────────────────────
+# ── the agent roster + drift check ───────────────────────────────────────────
 
 
 class _Profile:
@@ -847,7 +847,7 @@ def test_a_batch_naming_an_UNKNOWN_agent_is_refused_at_compile(monkeypatch):
     module in `src/` imported it.
 
     An unknown agent is an ERROR because `subagent._validate_agent` would fail the spawn anyway
-    (C1.3 made it a typed error, never a silent downgrade). Catching it at compile costs nothing;
+    (it is a typed error, never a silent downgrade). Catching it at compile costs nothing;
     catching it at spawn has already minted a run whose branches all fail on one typo."""
     monkeypatch.setattr(roster, "catalog", lambda agents=None: [])
 
@@ -861,7 +861,7 @@ def test_a_batch_naming_an_UNKNOWN_agent_is_refused_at_compile(monkeypatch):
 def test_a_DISPLAY_NAME_reference_lands_in_the_spec_as_the_CONFIG_KEY(monkeypatch):
     """Slug-matching resolves the reference; the CONFIG KEY is what gets persisted.
 
-    This is the distinction the clause turns on, and writing the slug instead would have been a
+    This is the distinction the reference turns on, and writing the slug instead would have been a
     runtime break rather than a hardening: `engine.dispatch_stage` reads `config["agent"]` and hands
     it to `spawn`, whose `_validate_agent` checks membership in `AppConfig.agents` — a dict keyed by
     the config key. `my-researcher` is not a key of `{"My Researcher": ...}`, so a persisted slug

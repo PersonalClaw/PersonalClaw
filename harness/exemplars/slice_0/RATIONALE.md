@@ -3,9 +3,9 @@
 **What the slice added.** The foundation the rest of the engine stands on: the `Node` /
 `WorkflowRun` data model, the SQLite run store, the binding grammar and resolver, and the
 spec-ingestion validator (never-throw structural pass, typed issue accumulation, stable
-error codes, Kahn level grouping). No frontier and no engine yet — those are Slice 1.
+error codes, Kahn level grouping). No frontier and no engine yet — those are `slice_1/`.
 
-**What this exemplar proves.** The three Slice-0 mechanisms, exercised directly (there is no
+**What this exemplar proves.** The three mechanisms of this slice, exercised directly (there is no
 run to drive at this slice):
 
 - **Validator, positive:** a well-formed acyclic spec validates clean and the validator

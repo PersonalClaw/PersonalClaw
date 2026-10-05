@@ -437,7 +437,7 @@ export const SHARING_POLICY_LABEL: Record<SharingPolicy, string> = {
 
 /** Label for a policy value, surviving wire/UI drift without jargon. The closed Record above
  *  makes a new KNOWN value a typecheck failure; a value the wire invents anyway used to render
- *  "unmapped: <raw>" — developer vocabulary on a user surface (AUD-NZ11). Drift stays visible
+ *  "unmapped: <raw>" — developer vocabulary on a user surface. Drift stays visible
  *  where a developer looks (the console); the user reads a humanized word. */
 function sharingPolicyLabel(policy: SharingPolicy): string {
   const known = SHARING_POLICY_LABEL[policy]
@@ -621,8 +621,8 @@ function NewProjectModal({ busy, onClose, onCreate }: {
  *
  *  KEPT, not replaced by `ui/forms`' Field, and the reason is a visible one: this layout puts the hint
  *  ABOVE the control in sentence case, while the shared Field puts it BELOW in uppercase. Swapping
- *  them here moved 27.9% of the modal's pixels — that is a visual-language decision the owner has
- *  already been asked about (the hint-placement taste call), and converging it inside an a11y fix
+ *  them here moved 27.9% of the modal's pixels — that is an open visual-language decision (the
+ *  hint-placement taste call), and converging it inside an a11y fix
  *  would decide it by accident.
  *
  *  What WAS broken is the label CONTRACT, not the layout: this Field rendered a label but published no
@@ -685,7 +685,7 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
     invalidateKeys(`projects:work:${id}`)
     navigate(`workflows/runs/${row.run_id}`)
   }
-  // Legibility §7 — whether context adapters are enabled (Settings › Legibility). The
+  // Whether context adapters are enabled (Settings › Legibility). The
   // "Refresh context files" action only makes sense when this is on AND a workspace is
   // bound, so the button appears only then (server still re-checks + 403s if stale).
   const { data: pcfg } = useQuery('config:personalclaw', () => api.personalclawConfig())
@@ -755,7 +755,7 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
     finally { setStatusBusy(false) }
   }
 
-  // Legibility §7 — (re)render the marker-fenced PClaw context block into the project's
+  // (Re)render the marker-fenced PClaw context block into the project's
   // workspace_dir adapter files (CLAUDE.md / AGENTS.md / .cursorrules), replace-in-place.
   async function regenerateContext() {
     setErr(null)
@@ -933,7 +933,7 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
               onPeek={project.context_dir ? () => setPanel({ kind: 'dir', label: 'Context', path: project.context_dir! }) : undefined}
               onBrowse={project.context_dir ? () => navigate(`files?dir=${encodeURIComponent(project.context_dir!)}`) : undefined}
               emptyText="—" title="System-managed — shared context across this project's loops + chats" />
-            {/* Legibility §7 — refresh the marker-fenced context block into the bound
+            {/* Refresh the marker-fenced context block into the bound
                 workspace's adapter files. Only when adapters are enabled AND a workspace
                 is bound (writing into a user's project dir is consent-gated). */}
             {adaptersEnabled && project.workspace_dir && (

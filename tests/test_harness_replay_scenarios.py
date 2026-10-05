@@ -1,6 +1,6 @@
-"""Tests for the replay scenarios — the journal-format gate (Success Criterion #4).
+"""Tests for the replay scenarios — the journal-format gate.
 
-SV-5 adds two required replay scenarios on top of the Session-3 substrate:
+Two required replay scenarios, on top of the replay harness:
 
 - ``workflow-journal-projection`` — a workflow run's journal folded into its per-run SSE
   projection, green against the current journal format;
@@ -25,7 +25,7 @@ from pathlib import Path
 from harness import baselines, replay
 from personalclaw import trace_recorder
 
-# The two required WF2 scenarios this change lands.
+# The two required workflow scenarios this change lands.
 _WJP = "workflow-journal-projection"
 _RWD = "rewind-during-stream"
 
@@ -206,7 +206,7 @@ def test_missing_required_scenario_fails(tmp_path: Path) -> None:
 
 
 def test_required_set_contains_both_workflow_scenarios() -> None:
-    """The two WF2 scenarios are declared required (the gate is not opt-in)."""
+    """The two workflow scenarios are declared required (the gate is not opt-in)."""
     assert _WJP in baselines.REQUIRED_SCENARIOS
     assert _RWD in baselines.REQUIRED_SCENARIOS
 
@@ -219,7 +219,7 @@ def test_workflow_projection_recordable_via_sse_tap(tmp_path: Path, monkeypatch)
 
     The gateway publishes workflow events through ``SseRegistry.publish`` on a
     ``workflow:<run_id>`` key, which already calls ``trace_recorder.record('sse', key, ...)``.
-    Driving that same seam here produces a scenario the fold reads — proving §2.1's
+    Driving that same seam here produces a scenario the fold reads — proving the
     'no tap needed' claim end to end, and that a recorded projection round-trips through the
     Python fold to the same terminal state the checked-in fixture pins.
     """

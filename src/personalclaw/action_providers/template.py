@@ -12,7 +12,7 @@ renderer with one set of placeholder semantics:
 ``safe_substitute`` is used so a missing key leaves the ``$placeholder`` verbatim
 rather than raising — a hook template can never crash a lifecycle event.
 
-**🔴 THIS IS THE PAYLOAD TRUST BOUNDARY (§7/R4).** The fire order names a
+**🔴 THIS IS THE PAYLOAD TRUST BOUNDARY.** The fire order names a
 "fence payload" step between the yield check and the capability filter, and
 ``firepath``'s own docstring quotes it — but no such step existed, and payload text
 is substituted straight into a template here. Driven end to end with a hostile
@@ -25,7 +25,7 @@ is substituted straight into a template here. Driven end to end with a hostile
 So a third-party page's text arrived, with **forged chat-template role boundaries
 intact**, in an ``invoke-agent`` ``task_template`` (an agent task), a
 ``send-message`` ``text_template`` (a chat message) and a notification title. This
-is the sink §7/R4 rule (b) exists to protect, one layer past where S125 fixed it —
+is the sink the payload-fencing rule exists to protect, one layer past the earlier fix —
 the fence covers text that goes through ``fence_untrusted``, and this path does not.
 
 So payload VALUES are sanitised here, at the single renderer every native provider
@@ -72,7 +72,7 @@ def render_template(tmpl: str, ctx: ActionContext) -> str:
     Safe (no ``KeyError``): unknown placeholders are left untouched.
 
     Payload values outside ``STRUCTURAL_KEYS`` have chat-template role tokens
-    neutralised (§7/R4 rule b) before substitution, because this renderer feeds an
+    neutralised before substitution, because this renderer feeds an
     agent task, a chat message and a notification title. See the module docstring for
     the measurement.
     """

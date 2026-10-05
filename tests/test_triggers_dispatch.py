@@ -1,9 +1,9 @@
 """Dispatch and the event-bus delivery contract.
 
-**The shipped bug this session fixes, reproduced before anything was written.**
+**The shipped bug behind this file, reproduced before anything was written.**
 `event_triggers._schedule_fire` records the fire, then asks for a running loop and `return`s when
 there is none. Driven against a real store in a sync context: `fire_count` becomes 1 and the action
-is **dropped with nothing recording that it did not run**. That is the silent drop §1.3 bans, in
+is **dropped with nothing recording that it did not run**. That is a silent drop, in
 shipped code. That engine is retired — an event trigger is a row in the one store, and a process
 without the gateway's router parks the event in this spool — so the pin below now asserts the fix.
 

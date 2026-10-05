@@ -1,5 +1,5 @@
 /**
- * DSC-6 residual — the schema-driven provider form rides the shared form family.
+ * The schema-driven provider form rides the shared form family.
  *
  * `ProviderConfigForm` was the last holdout of the raw-input drawdown: a local `inputCls`
  * chrome string that four bespoke controls consumed (an enum select, a numeric field, the

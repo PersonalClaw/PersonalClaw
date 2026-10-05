@@ -19,7 +19,7 @@ capability forces the classification instead of silently leaving recall unable t
 describe itself.
 
 The sentence is composed SERVER-side (the ``authority``-field precedent in
-AUTONOMY-GUARDRAILS): a client renders it, never assembles it. Only the closed
+the autonomy guardrails): a client renders it, never assembles it. Only the closed
 ``mode`` vocabulary and the boolean axes cross the wire alongside it, so an agent
 or a chip can branch without parsing prose.
 """

@@ -176,7 +176,7 @@ def cache_hit_pct(
     * ``usage_ledger.py::_fold`` sums the three into three SEPARATE
       aggregate keys, side by side. A subset relation would make that fold
       double-count on every cached turn, so the persisted ledger's own arithmetic
-      only balances if the buckets are disjoint. Cited over PCS-7's own
+      only balances if the buckets are disjoint. Cited over
       ``routing/rates.py::cache_savings_usd``, which adds the same three but is this module's
       counterpart — evidence for a premise must not be the code the premise
       justifies.

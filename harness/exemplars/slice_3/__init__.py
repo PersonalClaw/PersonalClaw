@@ -1,1 +1,1 @@
-"""slice_3 exemplar package (WF2 slice_3)."""
+"""slice_3 exemplar package (workflow secrets and the RedactingSink)."""

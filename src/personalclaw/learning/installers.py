@@ -134,7 +134,7 @@ def install(prop: Any, *, service: Any = None) -> str:
     """Install ONE accepted proposal. Returns the branch that claimed it.
 
     Called by :func:`~personalclaw.learning.proposals.accept` AFTER ``require_human`` — so this is
-    always the human installing, the one actor §2.6 permits to write a self-model principle or a
+    always the human installing, the one actor permitted to write a self-model principle or a
     project-context change live.
 
     Raises :class:`~personalclaw.learning.proposals.NoProposalInstallerError` when no branch owns

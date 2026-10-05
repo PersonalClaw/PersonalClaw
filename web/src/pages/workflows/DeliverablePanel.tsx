@@ -34,7 +34,7 @@ import { api, type WorkflowDeliverableAbsence, type WorkflowDeliverableDoc, type
  *  written yet" would send them to wait for something that is never coming.
  *
  *  **No cost figure, deliberately.** Issue #2566: a loop's ledger carries no money keys, so the
- *  shared totals read `$0.00` for a loop-backed run — and PP-16 is what sends loop-backed runs through
+ *  shared totals read `$0.00` for a loop-backed run — and loop-backed runs go through
  *  this surface. The backend serves no money field here rather than one that would be a lie. */
 
 /** One sentence per named absence. Keyed by the wire vocabulary so a new backend reason surfaces as a
@@ -57,7 +57,7 @@ export function absentCopy(doc: WorkflowDeliverableDoc): string {
 
 /** A document reading surface — an elevated page so long-form output reads as a finished document
  *  rather than raw markdown flush against the container. The same treatment the loop cockpit's
- *  `DocSurface` gives its Deliverable tab, so the two sides of PP-16 read alike. */
+ *  `DocSurface` gives its Deliverable tab, so the loop and run sides read alike. */
 function DocSurface({ children }: { children: string }) {
   return (
     <div className="rounded-xl bg-surface px-2xl py-xl ring-1 ring-outline-variant/30">

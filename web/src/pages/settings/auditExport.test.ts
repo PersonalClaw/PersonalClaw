@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { toJsonl } from './AuditPanel'
 import type { SelEvent } from '../../lib/api'
 
-// ── SH-8 · the audit export is credential-safe and round-trips ────────────────────────────
+// ── The audit export is credential-safe and round-trips ────────────────────────────
 //
-// V4's "export round-trips" is the clause a plausible-looking exporter fails silently: a
+// "Export round-trips" is the property a plausible-looking exporter fails silently: a
 // pretty-printed JSON.stringify(rows, null, 2) still "downloads fine" but is no longer
 // JSONL — one record no longer equals one line — so anything re-reading it gets one blob or
 // a parse error. These tests pin the line discipline and the parse-back.

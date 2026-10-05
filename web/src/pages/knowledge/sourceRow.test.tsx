@@ -12,7 +12,7 @@ import type { WatchedSource } from '../../lib/api'
 //    The negative case is the one that matters: a chip rendered unconditionally satisfies
 //    every "it appears" assertion.
 //
-// 2. The TWO REMEDIATIONS STAY OPPOSITE. WS-3 measures the discrimination between "you
+// 2. The TWO REMEDIATIONS STAY OPPOSITE. The backend measures the discrimination between "you
 //    pointed at the wrong URL" (the page rendered plenty of text) and "this page is a
 //    JavaScript shell" precisely because the fixes are opposite — a different URL vs. one
 //    budget knob. Collapsing them into a single "nothing found" strip would send half the

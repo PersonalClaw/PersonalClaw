@@ -1,4 +1,4 @@
-"""DURABILITY-AND-SYNC §4.1 / DAS-6c-ii-g — sync-only whole-DB copies in the shard format.
+"""Sync-only whole-DB copies in the shard format.
 
 The diffable row shards store embedding/byte columns as size placeholders, so they can't
 rebuild a DB losslessly. A SYNC export (for_sync=True) additionally stages the real

@@ -1,4 +1,4 @@
-"""Conversation-turn rollback — /undo N (power-user-surfaces P7).
+"""Conversation-turn rollback — /undo N.
 
 Truncates the session's message history to a prior turn boundary (in-memory AND the
 persisted transcript), and is honest that side effects are NOT reverted.

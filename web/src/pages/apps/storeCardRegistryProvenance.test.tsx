@@ -7,8 +7,8 @@ import type { AppCatalogEntry, AppCatalog } from '../../lib/api'
 //
 // `storeCardProvenance.test.tsx` next door pins the ORIGIN chip — "git", these bytes came over the
 // network. That is a different fact from the one a community listing raises, which is *who listed
-// this, and has anyone looked at it?* The index has published `maintainer` / `last_validated` /
-// `last_scan_verdict` since ET-3 and the catalog dropped all three, so the answer appeared nowhere:
+// this, and has anyone looked at it?* The index already published `maintainer` / `last_validated` /
+// `last_scan_verdict` and the catalog dropped all three, so the answer appeared nowhere:
 // measured against the live registry before this landed, 4/4 listings publish all three fields and
 // 0/4 reached the frontend.
 //
@@ -96,7 +96,7 @@ describe('a registry-listed card shows who listed it and what the index said', (
   })
 
   it('reads as community-listed, NOT endorsed — and says so FIRST', () => {
-    // The acceptance clause, and the change's declared risk. Order is the control: a card that leads
+    // The requirement, and the risk it guards against. Order is the control: a card that leads
     // with "clean" has trust-washed a third party's month-old check into our own verdict, even
     // though every field renders. So this asserts the tree, not just the strings.
     asListing(listed())
@@ -148,7 +148,7 @@ describe('a registry-listed card shows who listed it and what the index said', (
 
 describe('local and first-party cards are unchanged', () => {
   it('a dir-scanned LOCAL bundle grows no provenance line', () => {
-    // 🔑 An acceptance clause in its own right. This is the test that fails if a scan path starts
+    // 🔑 A requirement in its own right. This is the test that fails if a scan path starts
     // populating the three fields, or if the card grows an `if` that guesses at listing-ness.
     grid(scanned(), { ...EMPTY, localApps: [scanned()] })
     expect(screen.queryByTestId('store-card-listing')).toBeNull()

@@ -14,7 +14,7 @@ parallel vocabulary.
 WIRED — this module now has a production caller.
 ===============================================
 It used to parse and validate while nothing in the engine read a ``SupervisorPolicy``, and it
-said so. PP-15 was named as the wiring owner and is that caller:
+said so. The loop-convergence step is that caller now:
 ``loop_convergence._supervisor_policy`` parses a loop node's ``supervisor:`` block, and
 :func:`tick_config` turns it into the ``TickConfig`` that ``loop.tick.evaluate`` — the ONE
 convergence core, now shared by the workflow ``loop`` node and the loop kinds — reads. The
@@ -73,13 +73,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: The honesty marker. ``False`` since PP-15 wired the policy into
+#: The honesty marker. ``False`` since the policy was wired into
 #: ``RunController``. The rail asserts this claim matches reality in both directions, so the
 #: constant can never quietly disagree with the code.
 HAS_ZERO_PRODUCTION_CALLERS = False
-
-#: Named in the docstring and here so the wiring owner is discoverable from code, not only prose.
-WIRING_OWNER = "PP-15"
 
 
 # ── The closed field set — the contract ──
@@ -99,8 +96,8 @@ POLICY_FIELDS: frozenset[str] = frozenset(
         "write_scope",
         "budget",
         "hitl_posture",
-        # PP-16 (the general-kind bridgehead): the done-ness half became DECLARABLE. It was
-        # deliberately absent here through seam 3 — see :class:`ConvergenceSpec` below for why
+        # The done-ness half is DECLARABLE. It was
+        # deliberately absent here at first — see :class:`ConvergenceSpec` below for why
         # the KIND table remains the loop watchdog's source and what this field adds beside it.
         "convergence",
     }
@@ -231,7 +228,7 @@ class SupervisorPolicy:
     """The full convergence policy a loop node declares — parsed, not yet wired.
 
     Every field reuses a type that already lives in the tree. The declaration's only new
-    idea is putting all ten in ONE place, so PP-15 has a single object to read instead of the
+    idea is putting all ten in ONE place, so the engine has a single object to read instead of the
     per-kind Python that supplies these thresholds twice today.
     """
 
@@ -262,7 +259,7 @@ class SupervisorPolicy:
     # ── The autonomy knobs the loop declaration did not yet hold ──
     #
     # These make ``SupervisorPolicy`` the ONE object that answers "how much freedom does this
-    # run have" — the same object PP-14 declares, now carrying the guardrails half too, so a
+    # run have" — the same convergence object, now carrying the guardrails half too, so a
     # run's supervisor policy and its autonomy ceiling are one declaration, not two.
     #: Knob 14 — the run's ``SafetyProfile`` (approval, tool grants, egress, scan, token/dollar
     #: budget, write-path allow/deny plane). Subsuming the profile is what unifies the two
@@ -285,11 +282,10 @@ class SupervisorPolicy:
     #
     #: HOW this loop's done-ness is produced, read by ``loop.supervisor`` — the ONE evaluator.
     #:
-    #: TWO sources fill it, for two different execution paths, and that split is deliberate
-    #: (the general-kind bridgehead):
+    #: TWO sources fill it, for two different execution paths, and that split is deliberate:
     #:
     #: * the LOOP path — :func:`policy_for_kind` sets it from the declared
-    #:   :data:`KIND_CONVERGENCE` table. Seam 3 chose a table over template JSON because the
+    #:   :data:`KIND_CONVERGENCE` table. A table was chosen over template JSON because the
     #:   loop watchdog resolves a policy on EVERY poll, so a template read makes a missing file
     #:   silently remove a loop's supervisor. A declared table cannot go missing. That reason is
     #:   unchanged and the table stays the loop path's source.
@@ -392,13 +388,13 @@ def _parse_budget(raw: Any) -> int:
 def parse_supervisor_policy(raw: Any) -> SupervisorPolicy:
     """Parse a loop node's ``supervisor`` config into a :class:`SupervisorPolicy`.
 
-    Lenient by design (`WF2-R12` / the ``hints_from_dict`` pattern): missing or blank fields
+    Lenient by design (the ``hints_from_dict`` pattern): missing or blank fields
     become sane defaults and a malformed value NEVER raises — an author's typo should run with
     the strict defaults, not fail to start. UNKNOWN top-level fields are ignored here; the
     closed-set contract is enforced by the authoring-time validator, which can report every
     problem at once instead of one-error-per-turn.
 
-    Deliberately inert: PP-15 is the only intended caller (see the module docstring).
+    Deliberately inert: loop convergence is the only intended caller (see the module docstring).
     """
     if not isinstance(raw, dict):
         return SupervisorPolicy()
@@ -428,7 +424,7 @@ def parse_supervisor_policy(raw: Any) -> SupervisorPolicy:
 
 
 def _parse_convergence(raw: Any) -> ConvergenceSpec:
-    """Parse a ``supervisor.convergence`` block into a :class:`ConvergenceSpec` (PP-16).
+    """Parse a ``supervisor.convergence`` block into a :class:`ConvergenceSpec`.
 
     Tolerant on the same terms as every parser above it — a malformed block never raises, and an
     absent one yields the default spec, whose ``ORCHESTRATED`` signal means "no point-in-time
@@ -564,11 +560,11 @@ def consolidate(
     write_scope: WriteScope | None = None,
     resilience: BreakerLimits | None = None,
 ) -> SupervisorPolicy:
-    """Route the fourteen knobs' current homes into ONE :class:`SupervisorPolicy` (AG-13).
+    """Route the fourteen knobs' current homes into ONE :class:`SupervisorPolicy`.
 
     Still deliberately inert: nothing in the engine calls this, and it constructs no policy
-    a runtime seam reads — PP-15 (loop convergence) and AG-11 (profile/trust enforcement)
-    are the wiring owners named in the module docstring. It exists so the consolidation is
+    a runtime seam reads — loop convergence and profile/trust enforcement
+    are its intended wiring owners. It exists so the consolidation is
     a real, exercised mapping rather than a claim: the behaviour-preservation matrix drives
     it for the shipped population and proves each field equals today's value knob-by-knob.
 
@@ -609,8 +605,8 @@ def compose(ceiling: "Ceiling", policy: SupervisorPolicy) -> SupervisorPolicy:
 def write_scope_allows(policy: SupervisorPolicy, path: str, *, workspace: str = "") -> bool:
     """Whether ``path`` is inside the policy's declared write scope (knob 7).
 
-    Matched by the §5 path matcher (:func:`guardrails.registries.path_glob`) — the matcher
-    that NEVER runs a PATTERN through ``normpath``. This is the rule the atom lifted verbatim:
+    Matched by the shared path matcher (:func:`guardrails.registries.path_glob`) — the matcher
+    that NEVER runs a PATTERN through ``normpath``. This is the rule lifted verbatim:
     ``normpath`` collapses ``/a/**/../b`` to ``/a/b``, silently widening an allow to a path
     the author never granted. An empty scope is unconfined (today's deny-only posture, where a
     node writes anywhere the denylist does not refuse).
@@ -623,10 +619,10 @@ def write_scope_allows(policy: SupervisorPolicy, path: str, *, workspace: str = 
 
 
 def tick_config(policy: SupervisorPolicy, *, steps: tuple[StepConfig, ...] = ()) -> TickConfig:
-    """The convergence config :func:`loop.tick.evaluate` reads, DERIVED from the policy (PP-15).
+    """The convergence config :func:`loop.tick.evaluate` reads, DERIVED from the policy.
 
-    This is the wiring that makes the declaration load-bearing. PP-14 landed
-    ``SupervisorPolicy`` as "parsed, not yet wired" — the thresholds it declares were also
+    This is the wiring that makes the declaration load-bearing. ``SupervisorPolicy`` first
+    landed as "parsed, not yet wired" — the thresholds it declares were also
     hard-coded in the per-kind Python that actually decided. Now they are read from here and
     nowhere else, so changing a template's ladder or its dwell gate changes what the engine
     does.
@@ -664,11 +660,11 @@ def tick_config(policy: SupervisorPolicy, *, steps: tuple[StepConfig, ...] = ())
 # ── The five kinds' declared convergence, as DATA ──
 #
 # `loop_aliases.KIND_TO_TEMPLATE` already resolves every kind to a bundled template — the
-# NOUN-level half of the change's "the five kinds are bundled templates plus policies" clause. This
+# NOUN-level half of making the five kinds bundled templates plus policies. This
 # table is the POLICY half, and it is deliberately here rather than inside each bundled template's
 # `supervisor:` block: measured, `deep-research` and `code-project` ship NO `loop` node at all
 # (their graphs are a `branch`/`sequence` and a `foreach` respectively), so two of the five kinds
-# would have had nowhere to declare and the seam would have shipped three-fifths done. A template
+# would have had nowhere to declare and the change would have shipped three-fifths done. A template
 # JSON is also a per-poll disk read whose absence would silently remove a loop's supervisor; a
 # declared table cannot go missing.
 #
@@ -726,7 +722,7 @@ KIND_CONVERGENCE: dict[str, ConvergenceSpec] = {
     # (so research inherited it), while the watchdog's `_stagnation_disabled` required
     # `loop.kind == "goal"` AND monitor. Two hooks, two different keys, one concept. The table
     # makes the inconsistency visible instead of spreading it over two modules; converging it is a
-    # behaviour change and therefore not this seam's call.
+    # behaviour change and therefore not this table's call.
     "research:monitor": ConvergenceSpec(
         signal=DONE_NEVER, budget_stop_is_genuine=True, stagnation_enabled=True
     ),
@@ -751,7 +747,7 @@ def convergence_key(kind: str, kind_config: Any = None) -> str:
 
 
 def policy_for_kind(kind: str, kind_config: Any = None) -> SupervisorPolicy:
-    """The :class:`SupervisorPolicy` a loop of ``kind`` runs under (PP-16 seam 3).
+    """The :class:`SupervisorPolicy` a loop of ``kind`` runs under.
 
     This is the call that replaced ``kinds.get(loop.kind)`` for every convergence decision the
     loop watchdog makes. A kind with no row — an unregistered kind, which the watchdog used to
@@ -770,7 +766,7 @@ def policy_for_kind(kind: str, kind_config: Any = None) -> SupervisorPolicy:
 # are per-INSTANCE, user-settable knobs (the loop side's `_EDITABLE_SPEC_COLS`, read live at
 # ~12 sites). A template is SHARED across runs, so it structurally cannot hold a per-instance
 # setting: putting `max_cycles` on a template would make one user's edit change every future
-# run of that kind. RULED: the declared table above stays the DEFAULT source, the run persists
+# run of that kind. The rule: the declared table above stays the DEFAULT source, the run persists
 # ONLY its overrides (`WorkflowRun.policy_overrides`), and the policy is computed once, from
 # kind-defaults + run-overrides — "one admission core with N policies" survives the change.
 # The overlay is naturally sparse: a run that overrides nothing persists nothing.
@@ -787,7 +783,7 @@ def _apply_attended(policy: SupervisorPolicy, value: Any) -> SupervisorPolicy:
 
 def _apply_autopilot(policy: SupervisorPolicy, value: Any) -> SupervisorPolicy:
     # System-drives-phases vs user-queues IS an approval posture, which is what the
-    # `SafetyProfile` half of the policy expresses (AG-13 knob 4/14).
+    # `SafetyProfile` half of the policy expresses (knobs 4 and 14).
     posture = "auto" if value else "ask"
     return replace(policy, autonomy=policy.autonomy.with_overrides(approval=posture))
 
@@ -819,7 +815,7 @@ _OVERRIDE_APPLIERS: dict[str, Any] = {
     "success_criteria": _apply_success_criteria,
 }
 
-#: The five ruled per-instance knobs — the ONLY keys a run's overlay may carry. The write
+#: The five per-instance knobs — the ONLY keys a run's overlay may carry. The write
 #: seam (`workflows.store.set_policy_overrides`) refuses anything else loudly; the read side
 #: below ignores anything else quietly. That asymmetry is the design (see both docstrings).
 OVERRIDABLE_POLICY_KEYS: frozenset[str] = frozenset(_OVERRIDE_APPLIERS)
@@ -915,7 +911,7 @@ def apply_policy_overrides(
     An unrecognized key is ignored with a debug log, NEVER a crash: a downgraded core
     reading a run written by a newer one (whose overlay may carry keys this engine has never
     heard of) must not die on it — the same tolerant-reader rule every persisted shape in
-    `models.py` follows (WF2-R12). A malformed VALUE on a recognized key is skipped the same
+    `models.py` follows. A malformed VALUE on a recognized key is skipped the same
     way, because by the time a row is being read there is nobody left to refuse it to; the
     strict half of the contract lives at the write seam (`store.set_policy_overrides`).
 
@@ -994,14 +990,14 @@ def policy_for_run(
 ) -> SupervisorPolicy:
     """The policy ONE run runs under: kind defaults + that run's sparse overrides.
 
-    :func:`policy_for_kind` stays the pure declared-default source (what seam 3 bought);
+    :func:`policy_for_kind` stays the pure declared-default source (what the kind table bought);
     this composes the run's persisted overlay on top, so the policy is still computed once
     and in one place. A run with an empty overlay resolves to EXACTLY the kind's policy.
 
-    Production-caller status, stated per the WF2LOO-12 convention: the kind-keyed loop path
-    still resolves through `policy_for_kind` (`loop/watchdog.py`, untouched by this seam),
+    Production-caller status, stated per the honesty-marker convention: the kind-keyed loop path
+    still resolves through `policy_for_kind` (`loop/watchdog.py`, untouched here),
     so THIS composition has no kind-keyed production caller until the loop-as-run unification
-    (seam 4g) hands runs a kind. The overlay mechanism itself is production-wired today:
+    hands runs a kind. The overlay mechanism itself is production-wired today:
     `loop_convergence._supervisor_policy` applies the same `apply_policy_overrides` to the
     template-declared policy of every workflow run.
     """

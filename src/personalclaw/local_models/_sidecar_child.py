@@ -1,4 +1,4 @@
-"""The sidecar child harness — a newline-JSON stdio worker (LMMV §3.1).
+"""The sidecar child harness — a newline-JSON stdio worker.
 
 This module runs **inside the app's dedicated venv**, where ``personalclaw`` is NOT
 importable: the venv holds the app's own heavy native dependencies (torch,
@@ -148,7 +148,7 @@ class _Dispatcher:
 
 
 def _reason_for(exc: BaseException) -> str:
-    """A typed, machine-readable reason for a worker failure (§1 tenet 3)."""
+    """A typed, machine-readable reason for a worker failure."""
     if isinstance(exc, (ImportError, AttributeError)):
         return "worker_contract"
     if isinstance(exc, MemoryError):

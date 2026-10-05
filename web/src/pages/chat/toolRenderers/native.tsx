@@ -1,4 +1,4 @@
-/** Native per-tool render overrides + icon/label registry (tool-io-rendering, TC3).
+/** Native per-tool render overrides + icon/label registry.
  *
  * Native tools have predictable, well-known schemas, so each high-value one gets
  * a hand-built renderer that displays its I/O the way a human wants to see it:

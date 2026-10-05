@@ -1,6 +1,6 @@
 """The second-opinion handoff's two safety properties.
 
-Success criterion 6 has three clauses that can each be faked, so each is asserted at its CALL
+The handoff makes three promises that can each be faked, so each is asserted at its CALL
 SITE with a vacuity floor:
 
 1. **"a DIFFERENT cataloged runner"** — not "some runner ran". The assertion is that the runner

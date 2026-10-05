@@ -1,6 +1,6 @@
 import phraseTable from '../../../../src/personalclaw/voice/phrases.json'
 
-/** Hands-free (duplex) transcript accumulation — MULTIMODAL-IO §4.1.
+/** Hands-free (duplex) transcript accumulation.
  *
  *  The frontend owns the microphone, so it owns the buffer: in hands-free mode a
  *  dictated transcript accumulates here and only becomes a turn once the operator

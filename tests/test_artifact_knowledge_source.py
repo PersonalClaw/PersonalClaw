@@ -138,7 +138,7 @@ def test_no_source_row_until_something_is_indexed(store, artifacts):
 
 
 def test_saving_a_markdown_artifact_makes_it_searchable(store, artifacts):
-    """The change's first acceptance criteria, asserted as a SEARCH HIT."""
+    """A saved markdown artifact is searchable, asserted as a SEARCH HIT."""
     queue = _FakeQueue()
     idx = _indexer(store, artifacts, queue)
     art = artifacts.create(
@@ -318,7 +318,7 @@ def test_a_rename_refreshes_the_indexed_title(store, artifacts):
 
 
 def test_backfill_runs_once_and_a_reboot_does_not_re_run(store, artifacts):
-    """The change's third criterion. ``start`` is driven TWICE — the second call is the reboot."""
+    """The backfill runs once. ``start`` is driven TWICE — the second call is the reboot."""
     for i in range(3):
         artifacts.create(name=f"Existing {i}", content=f"prior content number {i}", kind="markdown")
     queue = _FakeQueue()
@@ -354,7 +354,7 @@ def _item_count(store) -> int:
 
 
 def test_a_credential_is_redacted_before_indexing(store, artifacts):
-    """The change's fourth criterion. Asserted from BOTH directions: the secret is not findable
+    """Redacted before indexing. Asserted from BOTH directions: the secret is not findable
     by search, and its plaintext is in no stored column — a redaction applied on the way out
     would pass the first check and fail the second."""
     secret = "fake-key-1"  # noqa: S105 - a planted fake
@@ -497,7 +497,7 @@ def test_the_poll_engine_does_not_enrol_the_artifact_source(store):
 
 
 def test_config_round_trips(tmp_path, monkeypatch):
-    """The fifth criterion, through the real save/load pair rather than the dataclass alone."""
+    """The config round-trips, through the real save/load pair rather than the dataclass alone."""
     import json
     from unittest.mock import patch as mock_patch
 

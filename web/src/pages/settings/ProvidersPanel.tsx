@@ -17,7 +17,7 @@ import { RemoteModelProviders } from './ModelBackends'
 import { LocalModelManager } from './LocalModelManager'
 import type { ProviderModels } from '../../lib/api'
 
-// One section per provider ENTITY (VISION §"The entities"). Order is intentional:
+// One section per provider ENTITY. Order is intentional:
 // the entities a user touches most (what backs a chat, what models are available)
 // come first. Each section's `hint` says what plugging into it means.
 const ENTITY_META: Record<string, { label: string; icon: LucideIcon; hint: string }> = {

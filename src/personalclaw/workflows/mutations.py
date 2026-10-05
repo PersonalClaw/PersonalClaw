@@ -10,7 +10,7 @@ descendant. Reset only the subtree and that sibling keeps a stale input: a silen
 inconsistent run, which is worse than a loud failure because nothing looks wrong. So the
 closure is computed over the binding-dependency graph.
 
-**A rejected batch writes NOTHING (WF2-R20e).** Validation runs against a *candidate copy*
+**A rejected batch writes NOTHING.** Validation runs against a *candidate copy*
 of the spec; the live spec is replaced only once the whole batch has applied and
 re-validated. A half-applied batch would leave a spec no one authored — neither what the
 user had nor what they asked for.
@@ -72,7 +72,7 @@ UNFREEZING_OPS = frozenset({OpKind.REWIND, OpKind.RUN_FROM})
 #: Ops that do not target a node at all, so node-level checks do not apply.
 NODELESS_OPS = frozenset({OpKind.SET_INPUT, OpKind.FORK})
 
-#: LLM-friendly aliases normalized to the canonical op name (WF2-R20d). A model that
+#: LLM-friendly aliases normalized to the canonical op name. A model that
 #: writes `edit_node` meant `update_node`; rejecting it teaches nothing and costs a turn.
 _OP_ALIASES = {
     "edit_node": "update_node",
@@ -96,7 +96,7 @@ _OP_ALIASES = {
     "branch": "fork",
 }
 
-#: Field-name aliases inside `update_node.fields` (WF2-R20d).
+#: Field-name aliases inside `update_node.fields`.
 _FIELD_ALIASES = {
     "model": "model_tier",
     "tier": "model_tier",
@@ -203,7 +203,7 @@ class Issue:
 
 @dataclass
 class CascadePreview:
-    """What a batch would re-run (WF2-R2 #2).
+    """What a batch would re-run.
 
     Mandatory before applying: a user who edits one prompt and unknowingly re-runs twelve
     completed stages has been billed for a surprise. `stale` is the other half — nodes
@@ -215,7 +215,7 @@ class CascadePreview:
     stale: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
     #: Nodes in the cascade with a COMMITTED external effect. Surfaced, never silently
-    #: re-fired (§2 effect ledger) — this is what `redo_effects` gates.
+    #: re-fired (the effect ledger) — this is what `redo_effects` gates.
     committed_effects: list[str] = field(default_factory=list)
     #: True when the cascade re-runs already-completed work, which needs confirmation.
     needs_confirmation: bool = False
@@ -256,7 +256,7 @@ def dependents_graph(root: Node) -> dict[str, set[str]]:
     """node id → the ids that CONSUME its output.
 
     Built from bindings, not from the tree. This inversion is the correctness core of
-    WF2-R2: it is what finds the later sibling reading an edited node's output, which a
+    mid-flight editing: it is what finds the later sibling reading an edited node's output, which a
     tree walk cannot see.
 
     One read reaches past the node it names: a branch's output carries what the case it took
@@ -378,7 +378,7 @@ def validate_batch(
     root: Node,
     instances: dict[str, NodeInstance],
 ) -> list[Issue]:
-    """Every structural rule from WF2-R20, checked before anything is written."""
+    """Every structural rule for a mutation batch, checked before anything is written."""
     issues: list[Issue] = []
     ids = {node.id for _p, node in walk(root) if node.id}
     id_to_paths: dict[str, list[str]] = {}
@@ -554,11 +554,11 @@ def apply_batch(
 ) -> tuple[dict[str, Any], list[Issue]]:
     """Apply ops to a DEEP COPY and return `(candidate_spec, issues)`.
 
-    The copy is the atomic-failure contract (WF2-R20e): the caller swaps the live spec in
+    The copy is the atomic-failure contract: the caller swaps the live spec in
     only on success, so a rejected batch leaves the prior spec as the single source of
     truth with no partial application to unwind.
 
-    Coordinate-preserving order (WF2-R20c): structural ops apply in DESCENDING index, so
+    Coordinate-preserving order: structural ops apply in DESCENDING index, so
     an earlier op cannot shift the coordinates a later one names.
     """
     candidate = copy.deepcopy(spec)
@@ -604,7 +604,7 @@ def _apply_one(op: Op, spec: dict[str, Any], instances: dict[str, NodeInstance])
         return
     if op.kind in (OpKind.FORK, OpKind.REWIND, OpKind.RUN_FROM):
         # State-level ops: they change instance state and run identity, not the spec.
-        # Slice 4c owns the state half; the spec is untouched here by design.
+        # `mid_flight` applies the state half; the spec is untouched here by design.
         return
 
     root = spec.get("root")
@@ -686,11 +686,11 @@ def _apply_one(op: Op, spec: dict[str, Any], instances: dict[str, NodeInstance])
         return
 
     if op.kind == OpKind.INLINE_SUBWORKFLOW:
-        # Needs the def registry to resolve the referenced body; Slice 10 owns nested
-        # execution, so this is a typed refusal rather than a silent no-op.
+        # Needs the def registry to resolve the referenced body, so this is a typed refusal
+        # rather than a silent no-op.
         raise _ApplyError(
             "WF_MUT_UNSUPPORTED",
-            "inline_subworkflow is not supported yet (nested runs land in Slice 10)",
+            "inline_subworkflow is not supported yet",
             op.node_id,
         )
 
@@ -806,7 +806,7 @@ def prepare_batch(
 ) -> BatchResult:
     """Parse → validate → apply-to-copy → re-validate the spec. Writes nothing.
 
-    The caller (the controller's mutation queue, Slice 4b) commits `result.spec` only when
+    The caller (the controller's mutation queue) commits `result.spec` only when
     `result.ok`. Re-validating the CANDIDATE is what catches a batch that is individually
     legal but collectively broken — a delete that orphans a binding, or a move that
     introduces a cycle.
@@ -873,15 +873,15 @@ def history_record(
     owner_username: str = "",
     origin_harness: str = "",
 ) -> dict[str, Any]:
-    """One audit-trail entry (WF2-R20 / safety-protocol #6).
+    """One audit-trail entry.
 
     Carries the STRUCTURED ops rather than a textual diff: a later refiner needs to know
     what KIND of correction a human made, which a diff destroys. The spec hash lets a
     reader confirm the recorded ops produced the spec on disk.
 
     `actor` is the mutation KIND (`chat`/`engine`/…) and is untouched. `owner_username`/
-    `origin_harness` are the TSE2-1 attribution axis (who/which-machine, not how): optional and
-    defaulting to "" so a pre-plan reader gets a byte-identical record but for the two empty keys.
+    `origin_harness` are the attribution axis (who/which-machine, not how): optional and
+    defaulting to "" so an older reader gets a byte-identical record but for the two empty keys.
     """
     from personalclaw.workflows.journal import hash_value
 
@@ -900,7 +900,7 @@ def history_record(
 def next_epoch(instances: dict[str, NodeInstance], paths: list[str], *, force: bool) -> int:
     """The epoch a rewound region should carry.
 
-    Bumped ONLY on force (WF2-R2 #4). Without force, the inputs-hash tier in the journal
+    Bumped ONLY on force. Without force, the inputs-hash tier in the journal
     key decides: a rewind that did not change a node's inputs replays its cached output
     rather than paying to recompute the same answer. Bumping unconditionally would discard
     that memoization and re-run the expensive half of the graph for nothing.

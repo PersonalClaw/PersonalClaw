@@ -1,8 +1,8 @@
 """The ceilinged child process the platform driver runs inside.
 
 **Why a subprocess at all**, when the macOS driver is a ctypes FFI that would happily
-import in-process: §3.5 requires the driver to run as a ceilinged spawn so *"a wedged/looping
-driver is bounded by the kernel, not just a userspace timeout"*. An accessibility call into an
+import in-process: the driver runs as a ceilinged spawn so *a wedged/looping
+driver is bounded by the kernel, not just a userspace timeout*. An accessibility call into an
 unresponsive application can block for a long time inside the OS, and a blocked FFI call inside
 the gateway is a blocked gateway. So the driver lives here, behind
 ``sandbox.create_subprocess_limited``, and the dispatch talks to it over one JSON request on
@@ -16,12 +16,12 @@ run inside. Its only job is to turn one operation into one OS call and report ho
 ``tests/test_computer_use_dispatch.py::test_the_driver_child_makes_no_policy_decision`` asserts
 that by AST.
 
-**Every platform in the map now resolves, and each answers for itself.** `DCU-3` landed the macOS
-driver and `DCU-6` the Windows and Linux ones, so :func:`resolve_driver` no longer returns
+**Every platform in the map now resolves, and each answers for itself.** There is a macOS
+driver and Windows and Linux ones, so :func:`resolve_driver` no longer returns
 ``None`` for a mapped platform: macOS runs real accessibility calls, and Windows/Linux answer
-``ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED`` naming the API a real driver there will use. §3 floor 6
-is explicit about the alternative being unacceptable: an unsupported platform reports a typed
-refusal, *"never a silent no-op or a simulated success"*.
+``ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED`` naming the API a real driver there will use. The
+alternative is unacceptable: an unsupported platform reports a typed
+refusal, *never a silent no-op or a simulated success*.
 
 The ``None`` branch below is therefore **not** dead — it is what a platform *outside* the map
 gets (an unrecognised ``platform.system()``), and keeping the two answers apart is deliberate:
@@ -57,7 +57,7 @@ def resolve_driver(system: str = "") -> Any:
     Resolution is by import, not by a capability flag: a flag can say yes about a module that
     is not there. ``None`` is the honest answer and the caller turns it into a refusal — this
     function never invents a stand-in, because a stand-in that accepted an operation and did
-    nothing is the *simulated success* §3 floor 6 forbids.
+    nothing is the *simulated success* an unsupported platform must never report.
     """
     import importlib
 

@@ -72,7 +72,7 @@ MAX_SKIP_ADVANCE = 400
 def _skipped_dates(trigger: Any) -> set[str]:
     """The ISO dates this trigger must not fire on.
 
-    Read from `spec.skip_dates` AND `gates.skip_dates`: §1.1 reserves the key on the gate block and
+    Read from `spec.skip_dates` AND `gates.skip_dates`: the gate block reserves the key and
     the migration writes it to the spec, so a real store holds both spellings. `calendar.py`'s
     projection already accepts either, and disagreeing with it would put a skipped day on the week
     grid while the engine fired on it.
@@ -86,7 +86,7 @@ def _skipped_dates(trigger: Any) -> set[str]:
 def next_fire(trigger: Any, *, now: float = 0.0, last_fire: float = 0.0) -> float:
     """The next fire for a clock trigger as a UTC epoch, or 0.0 when it will never fire again.
 
-    🔴 SKIP DATES ARE HONOURED HERE (S112). Measured before fixing: a trigger with
+    🔴 SKIP DATES ARE HONOURED HERE. Measured before fixing: a trigger with
     `skip_dates: ["2026-08-04"]` armed to **09:00 on exactly that date**. The legacy
     `ScheduleService._is_due` checked skip dates on every fire; the substrate carried, validated,
     migrated and *displayed* the field (`calendar.py` even renders "struck columns" for it) while
@@ -100,7 +100,7 @@ def next_fire(trigger: Any, *, now: float = 0.0, last_fire: float = 0.0) -> floa
     `now` would fire a missed appointment immediately.
 
     `last_fire` anchors an interval so a recompute does not re-phase the schedule; it defaults to
-    the trigger's `created_at` grid, matching `next_after_completion`'s §3.1 anchoring rule.
+    the trigger's `created_at` grid, matching `next_after_completion`'s anchoring rule.
 
     🔴 A TYPO'D `spec.timezone` IS NOT ARMABLE (#2520), and says so. `_trigger_tz` refuses an
     unknown IANA name rather than silently degrading to UTC, so the refusal is converted HERE —
@@ -145,15 +145,15 @@ def apply_jitter(trigger: Any, fire: float) -> float:
     """Offset a computed fire by the trigger's declared `jitter_secs`. Deterministic per id.
 
     🔴 `jitter_secs` AND `strict` WERE DECLARED IN `SPEC_KEYS["clock"]` AND APPLIED BY NOTHING
-    (S149). Measured: an interval trigger armed identically with `jitter_secs: 300`, with
+    Measured: an interval trigger armed identically with `jitter_secs: 300`, with
     `jitter_secs: 300` plus `strict: true`, and with neither — all three produced `now + 3600.0`.
-    So AUTO-A1's acceptance bar ("migrated cron fires in its old jitter slot") was unmet, and the
+    So a migrated cron did not fire in its old jitter slot, and the
     models module's own comment names this exact failure: "the trigger loads, the service ignores
     the key, and the automation behaves in a way its author cannot explain."
 
     Uses `scheduling.jitter_offset` — the SAME BLAKE2b-over-trigger-id algorithm the boot stagger
-    uses and that `ScheduleService._jitter_offset` used, because AUTO-A1 requires the offset be
-    "preserved byte-compatibly from schedule.py": a migrated cron must land in the slot the job it
+    uses and that `ScheduleService._jitter_offset` used, because the offset must be
+    preserved byte-compatibly from schedule.py: a migrated cron must land in the slot the job it
     came from occupied. A fresh random offset would re-phase every schedule on migration day, which
     is the one thing a migration must not do.
 
@@ -193,7 +193,7 @@ def cadence_next_fire(trigger: Any, *, now: float = 0.0, last_fire: float = 0.0)
     """The next fire from the CADENCE alone, ignoring skip dates (see `next_fire`).
 
     Public because the WEEK GRID needs it: `calendar.project_occurrences` strikes a skipped column
-    itself (AUTO-A3), so stepping it with the skip-aware `next_fire` would hide exactly the slots
+    itself, so stepping it with the skip-aware `next_fire` would hide exactly the slots
     the grid exists to explain. Everything that decides when to FIRE uses `next_fire`.
     """
     now = now or time.time()
@@ -576,7 +576,7 @@ def semantic_spec_issues(
             gap = _min_cron_gap_secs(expr)
             if 0 < gap < MIN_CLOCK_INTERVAL_SECS and cadence_floor_governs(workflow, created_by):
                 # WARNING, not error — same overridability contract as the interval
-                # floor above (models.py S109): a fast local-model poll is a legitimate
+                # floor above (models.py): a fast local-model poll is a legitimate
                 # choice, it just should not be an accident.
                 issues.append(
                     Issue(

@@ -7,7 +7,7 @@ one kind's name. Five implementations, three lookup styles, and no single place 
 "what completes this loop?".
 
 This module is that place. It reads a :class:`~personalclaw.workflows.supervisor_policy.\
-SupervisorPolicy` — the object `PP-14` declared and `PP-15` wired — and dispatches its
+SupervisorPolicy` and dispatches its
 ``convergence.signal`` to the ONE implementation of that mechanism. The domain knowledge that
 used to be spread over five modules is now DATA in
 :data:`~personalclaw.workflows.supervisor_policy.KIND_CONVERGENCE`; the code below is
@@ -15,7 +15,7 @@ kind-agnostic and never branches on ``loop.kind``.
 
 **No new vocabulary.** A done-signal names which MECHANISM produces the answer; what a judge
 actually decided still travels in ``judge_contract``'s verdict types, adjudicated by
-``judge_contract.adjudicate``. `WF2LOO-16` reconciled those dialects and this module adds none.
+``judge_contract.adjudicate``. Those dialects are already reconciled and this module adds none.
 
 **The tenet is unchanged: no agent certifies its own work.** Every mechanism here is the
 SUPERVISOR's own read — a command it runs, a judge subagent it commissions — never the worker's
@@ -278,7 +278,7 @@ async def _judge_assessment_signal(
     from personalclaw.loop.granularity import returns_exhausted_calibrated
 
     finding = findings[-1]
-    # P4 canary: once per loop-run, prove the done-ness judge can tell a strong cycle from an empty
+    # Canary: once per loop-run, prove the done-ness judge can tell a strong cycle from an empty
     # one before trusting ANY of its verdicts. A blind judge (mis-bound model / broken rubric) would
     # otherwise complete the loop on plausible garbage. On a confirmed-blind judge we DEFER (return
     # None — never a clean False/True) and record ``judge_calibrated=False``; the watchdog reads
@@ -299,7 +299,7 @@ async def _judge_assessment_signal(
             if trustworthy is False:
                 return None  # blind → defer; watchdog surfaces judge_blind + NEEDS_INPUT
     cycle = int(finding.get("cycle", len(findings)))
-    # Slice C (O-E2): give the judge whatever ground-truth anchor the loop declares — a command it
+    # Give the judge whatever ground-truth anchor the loop declares — a command it
     # can run itself and/or named deliverable files it can read — so a goal that names concrete
     # artifacts is scored on observed ground truth, not the worker's narration. A loop with neither
     # stays transcript-only.
@@ -313,7 +313,7 @@ async def _judge_assessment_signal(
     from personalclaw.loop.loop import effective_dir
 
     # The worker may write the deliverable to the loop's OWN dir when no workspace is bound
-    # (observed live V6: an unbound open-ended loop wrote REPORT.md to the loop dir, so a
+    # (observed live: an unbound open-ended loop wrote REPORT.md to the loop dir, so a
     # workspace-only ground-truth read wrongly reported "no proof it exists"). Give the judge the
     # loop dir as a fallback search location + resolve the policy's canonical deliverable when the
     # loop declared none, so the ground-truth read matches the same file the watchdog graduates.
@@ -360,7 +360,7 @@ async def _judge_assessment_signal(
             },
         )
         return None
-    # P4 adversarial-skeptic: a HIGH-stakes verdict (a claimed completion or a claimed regression)
+    # Adversarial skeptic: a HIGH-stakes verdict (a claimed completion or a claimed regression)
     # must survive a second independent judge told to REFUTE it before the supervisor acts on it. A
     # lone judge that hallucinates "done" would otherwise complete the loop on
     # plausible-but-wrong grounds; the skeptic is the majority-of-two guard. Non-consequential
@@ -400,7 +400,7 @@ async def _judge_assessment_signal(
     loop_files.write_verdict(loop.id, cycle, {"cycle": cycle, **verdict.to_dict()})
     if verdict.done:
         return True
-    # P4 variance-aware exhaustion: the per-cycle bar is max(2σ, dial-threshold), so a noisy
+    # Variance-aware exhaustion: the per-cycle bar is max(2σ, dial-threshold), so a noisy
     # marginal signal must fall further below the line before the loop calls it done — guarding
     # against completing on a variance dip. Falls back to the fixed dial until the trail is long
     # enough to trust its own σ.

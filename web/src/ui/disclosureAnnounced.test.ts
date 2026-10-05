@@ -5,8 +5,8 @@ import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Eight disclosures that hid that they disclose — and a census that was wrong by 4× ────────
 //
-// Cycle 127 found `#/settings/design`'s colour-editor button missing `aria-expanded` and logged it rather
-// than smuggling it into a target-size diff. This is that cycle, and the census WAS the work: **every
+// An earlier pass found `#/settings/design`'s colour-editor button missing `aria-expanded` and logged it rather
+// than smuggling it into a target-size diff. This is that follow-up, and the census WAS the work: **every
 // button whose click flips a boolean** — `setX((v) => !v)` / `setX(!x)` — anywhere in `pages/`.
 //
 // 🪤 MY FIRST CENSUS SAID 12. THE TRUE NUMBER IS 48. It matched `<button …</button>` within 400
@@ -17,7 +17,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // population.** Re-anchored on the TOGGLE itself (which is what defines membership) rather than on tag
 // boundaries: **48 toggles, 34 still silent.**
 //
-// This cycle therefore ships what it actually classified and drove — 14 of the 48 — and records the rest
+// This change therefore ships what it actually classified and drove — 14 of the 48 — and records the rest
 // as a measured backlog rather than pretending to have closed the family:
 //
 //   8   disclosures, fixed here (each verified to gate adjacent content on the same flag)
@@ -35,12 +35,12 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // and pause buttons flip a MODE, not the visibility of adjacent content — nothing is revealed, so
 // `aria-expanded` would be a false promise. (Autoscroll is a separate finding: its `title` names the
 // STATE — "Autoscroll on" — and its only other cue is a coral tint, so it wants `aria-pressed`. Logged for
-// its own cycle; `aria-pressed` and `aria-expanded` answer different questions and one PR should not
+// its own change; `aria-pressed` and `aria-expanded` answer different questions and one PR should not
 // blur them.) **A census's value is the classification, not the count** — a rail asserting "every
 // boolean-toggling button announces expansion" would have been wrong twice.
 //
-// Driven on the two routes whose disclosures need no setup, parent worktree vs this one
-// (`grep -c aria-expanded DesignPanel.tsx` = 0 there, 1 here):
+// Driven on the two routes whose disclosures need no setup, before vs after the change
+// (`grep -c aria-expanded DesignPanel.tsx` = 0 before, 1 after):
 //
 //                        collapsed → expanded → collapsed        DOM nodes with it open
 //   before   #/settings/design   null → null → null      🔴      845
@@ -68,7 +68,7 @@ describe('a button that reveals content says that it does', () => {
     it(`${rel} announces its expanded state`, () => {
       const src = read(rel)
       // 🪤 Scan to the CLOSING `>` of the tag is unsafe — `onClick={() => …}` contains one (four false
-      // negatives in this session). Anchor on the toggle and read a fixed window after it.
+      // negatives in earlier rails). Anchor on the toggle and read a fixed window after it.
       const at = src.indexOf(toggle)
       expect(at, `${rel} must still contain ${toggle}`).toBeGreaterThan(-1)
       const tag = src.slice(at, at + 260)
@@ -187,7 +187,7 @@ describe('the accordions the boolean-flip census could not see', () => {
   it('finds the population (not vacuously green)', () => {
     const found = accordions()
     expect(found.length, 'the accordion scan must find its population').toBeGreaterThanOrEqual(4)
-    // And it must still see the one that was correct before this cycle — the precedent, not an invention.
+    // And it must still see the one that was correct before this change — the precedent, not an invention.
     expect(found.map((a) => a.rel)).toContain('settings/NotificationRulesMatrix.tsx')
   })
 
@@ -299,7 +299,7 @@ describe('the disclosures whose toggle arrives as a PROP', () => {
   it('finds the population (not vacuously green)', () => {
     const found = propToggles()
     expect(found.length, 'the prop-toggle scan must find its population').toBeGreaterThanOrEqual(23)
-    expect(found.map((t) => t.rel), 'including the one this cycle drove').toContain('settings/ArchivePanel.tsx')
+    expect(found.map((t) => t.rel), 'including the one this change drove').toContain('settings/ArchivePanel.tsx')
   })
 
   it('the silent remainder is a measured ceiling, and may only fall', () => {

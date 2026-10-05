@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""DESKTOP-COMPUTER-USE V1: drive a real app by element index, live, and record the result.
+"""Desktop computer use: drive a real app by element index, live, and record the result.
 
-`DCU-4`'s last open clause is the plan's V1 row (``DESKTOP-COMPUTER-USE.md`` line 120):
+The live validation this script performs:
 
     Validation (macOS, enable ON): drive a real app by element index; confirm the pointer stays
     put; confirm a secure-field refusal; confirm SEL records; confirm the enable file being
     absent blocks everything.
 
-Every prior audit recorded V1 as ungrantable-by-code because the macOS Accessibility (TCC)
+Every prior audit recorded it as ungrantable-by-code because the macOS Accessibility (TCC)
 grant is SIP-protected. That is true of *granting* it and false of *using* it: on a machine
 where the operator has already trusted the interpreter, ``AXIsProcessTrusted()`` answers True
 and the whole chain is drivable. So this script probes the grant FIRST and refuses to report a
@@ -15,7 +15,7 @@ pass without it, rather than skipping and reporting green — a skip that reads 
 failure mode this repo keeps rediscovering.
 
 **Every phase drives ``service.computer_dispatch``**, never the driver or the FFI directly.
-Dispatching is the only entry point (``DCU-4``), so a validation that reached around it would
+Dispatching is the only entry point, so a validation that reached around it would
 prove the driver works and say nothing about the chain that is supposed to restrain it.
 
 **The absent-enable phase runs in its own interpreter.** ``enable_state`` reads the keystone
@@ -25,8 +25,8 @@ the test hook instead of the property. ``--phase absent`` therefore re-execs.
 
 Usage::
 
-    PYTHONPATH=src python scripts/dcu4_v1_validate.py            # both phases, JSON to stdout
-    PYTHONPATH=src python scripts/dcu4_v1_validate.py --phase armed --home /tmp/x
+    PYTHONPATH=src python scripts/computer_use_drive_validate.py            # both phases, JSON out
+    PYTHONPATH=src python scripts/computer_use_drive_validate.py --phase armed --home /tmp/x
 
 Exit status 0 only when every clause holds. Anything unproven is reported as ``unproven`` with
 the reason, never silently dropped.
@@ -59,7 +59,7 @@ _ABSENT_PROBES: tuple[tuple[str, dict[str, Any]], ...] = (
     ("computer_perform_action", {"snapshot_id": "x", "element_index": 0, "action": "AXPress"}),
 )
 
-_MARKER = "DCU-4 V1 drove this text area by element index"
+_MARKER = "The live validation drove this text area by element index"
 
 
 class Failure(Exception):
@@ -85,7 +85,9 @@ def _dispatch(tool: str, params: dict[str, Any]) -> tuple[str, Any]:
     _ATTEMPTS.append(tool)
     try:
         result = asyncio.run(
-            service.computer_dispatch(tool, params, source="dcu4_v1_validate", caller_identity="")
+            service.computer_dispatch(
+                tool, params, source="computer_use_drive_validate", caller_identity=""
+            )
         )
     except (
         enable_state.ComputerUseDisabled,
@@ -225,12 +227,12 @@ def phase_armed(home: Path) -> dict[str, Any]:
     """Clauses: real app driven by element index, pointer stays put, secure field refused."""
     from personalclaw.computer_use import macos_ffi
 
-    scratch = Path(tempfile.gettempdir()) / "dcu4-v1-scratch.txt"
+    scratch = Path(tempfile.gettempdir()) / "computer-use-drive-scratch.txt"
     scratch.write_text("scratch\n", encoding="utf-8")
-    secure_page = Path(tempfile.gettempdir()) / "dcu4-v1-secure.html"
+    secure_page = Path(tempfile.gettempdir()) / "computer-use-drive-secure.html"
     secure_page.write_text(
-        '<!doctype html><meta charset="utf-8"><title>DCU-4 V1</title>'
-        "<body><h1>DCU-4 V1 secure-field target</h1>"
+        '<!doctype html><meta charset="utf-8"><title>Secure-field target</title>'
+        "<body><h1>Secure-field target</h1>"
         '<form><label for="p">Password</label>'
         '<input id="p" type="password" aria-label="Password"></form></body>',
         encoding="utf-8",
@@ -434,7 +436,7 @@ def _preflight() -> dict[str, Any]:
     principal is what makes a recorded pass reproducible instead of merely true once.
     """
     if platform.system() != "Darwin":
-        raise Failure("preflight", f"V1 is a macOS validation; this is {platform.system()}")
+        raise Failure("preflight", f"this is a macOS validation; this host is {platform.system()}")
     from personalclaw.computer_use import macos_ffi, macos_tcc
 
     trusted = macos_ffi.is_process_trusted()
@@ -468,7 +470,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.phase == "both":
-        root = Path(tempfile.mkdtemp(prefix="dcu4-v1-"))
+        root = Path(tempfile.mkdtemp(prefix="computer-use-drive-"))
         try:
             out: dict[str, Any] = {"phases": {}}
             for phase in ("absent", "armed"):

@@ -186,7 +186,7 @@ export function Button({
       // name — "Create project" became "Create projectEnter a name first", so the action
       // stopped being findable by its own name. A describedby target outside the button would
       // need a wrapper element at 100+ call sites. `title` is already the kit's convention
-      // (ruled cycle 37) and is both the sighted tooltip and the AT description.
+      // and is both the sighted tooltip and the AT description.
       // aria-disabled when there is a reason to announce (keeps the tab stop), native
       // `disabled` otherwise. Both paths must refuse the click.
       aria-disabled={softOff || undefined}

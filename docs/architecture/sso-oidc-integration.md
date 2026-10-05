@@ -124,7 +124,7 @@ The semantics are already written down and they are not symmetric:
   the record it exists to preserve" (the same docstring).
 - The sign-in username exists **only as a login subject**, and its own module docstring already
   anticipates this note: a username exists "only so the login form has a subject and so it can
-  later graduate into an SSO-provisioned one (TEAM-SHARED-ENTITIES' identity string)"
+  later graduate into an SSO-provisioned one"
   (`src/personalclaw/auth/credentials.py`).
 
 That sentence is the hook. SSO does not need a new identity field; it needs to populate the one
@@ -329,17 +329,17 @@ One caveat, confirmed here: `from_env()` is also called inside a request path �
 a selector that raises on a bad SSO configuration turns a misconfiguration into a failed request
 rather than a clean boot failure. The refuse-at-startup-vs-fall-back question is control **C7**.
 
-The legibility half — a value that is not a mode must not be ignored silently — is shipped by
-SL-8 (`classify_auth_mode_request`, and the warning `AuthConfig.from_env` logs) and is not
+The legibility half — a value that is not a mode must not be ignored silently — is shipped
+(`classify_auth_mode_request`, and the warning `AuthConfig.from_env` logs) and is not
 re-solved here.
 
 ---
 
 ## 4. Security-control surfaces — every one is owner-escalation
 
-Each row is a control this design touches. Per the plan's own framing (and the pattern set by
-WIN-6 / Q9), **an implementation change may not resolve any of these on its own**; each needs an
-owner ruling first. The recommendation column is this note's proposal, not a decision.
+Each row is a control this design touches. **An implementation change may not resolve any of
+these on its own**; each needs the maintainer's sign-off first. The recommendation column is
+this note's proposal, not a decision.
 
 | # | Control | Surface | Recommendation | Status |
 |---|---|---|---|---|
@@ -368,7 +368,7 @@ row in the wire-error registry, `src/personalclaw/http_errors.py::HTTP_ERROR_COD
 shape of the change rather than guess at it, and so that a contributor who wants to argue for
 it has something concrete to argue about. The ordering is dependency-real: each step is
 completable start-to-finish once the ones above it are done, and every one is gated behind at
-least one §4 owner decision, so **none of it is startable until that decision is made.** To
+least one §4 decision, so **none of it is startable until that decision is made.** To
 propose it, open an issue — see [CONTRIBUTING](../../CONTRIBUTING.md#the-model).
 
 | Step | Scope | Gated on |
@@ -385,5 +385,5 @@ propose it, open an issue — see [CONTRIBUTING](../../CONTRIBUTING.md#the-model
 
 **Not in scope for any of these.** A user table, roles, group mapping, signup, or SCIM
 provisioning. The credential module's docstring (`src/personalclaw/auth/credentials.py`) calls
-itself "authentication, not multi-tenancy" and names that its soul guardrail; C5 is where that
+itself "authentication, not multi-tenancy", which is the guardrail; C5 is where that
 guardrail is at risk and the recommendation is to hold it.

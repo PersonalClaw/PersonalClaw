@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The canonical distribution build, and the wheel contract verifier (contract C4).
+"""The canonical distribution build, and the wheel contract verifier.
 
 Proves a built PersonalClaw wheel is a self-contained, installable, servable
 artifact — the guarantee every install channel (pip/uv/pipx/container) rides on.
@@ -1094,7 +1094,7 @@ def _canonical_distribution_build(*, keep: bool, release_version: str = "") -> N
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="Build (--build) or verify (--wheel) a PersonalClaw distribution (C4)."
+        description="Build (--build) or verify (--wheel) a PersonalClaw distribution."
     )
     ap.add_argument("--wheel", help="wheel path or glob (default: newest dist/*.whl)")
     ap.add_argument(

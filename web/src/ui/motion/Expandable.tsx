@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { spring } from '../../design/motion'
 
 /** In-place expand/collapse via Motion `layout` — the SAME element grows to reveal
- *  its detail instead of mounting a detached surface (§Goal 4: "morph, don't
+ *  its detail instead of mounting a detached surface ("morph, don't
  *  mount"). The header is always visible; the body animates open/closed with a
  *  height+opacity morph. Reduced-motion is honored globally via the root
  *  MotionConfig (the layout animation degrades to an instant swap).

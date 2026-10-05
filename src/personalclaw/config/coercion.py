@@ -60,8 +60,8 @@ _GUARD_FALSE = frozenset({"0", "false", "no", "off", "disable", "disabled", "n",
 def _guard_flag(value: object) -> bool:
     """Parse a guard-class flag fail-safe: missing/unknown ⇒ ``True`` (enabled).
 
-    Only an explicit bool ``False``, ``0``, or a known falsy token disables. See the
-    §5 fail-safe tenet — a guard's ambiguity must fail ON.
+    Only an explicit bool ``False``, ``0``, or a known falsy token disables. This is the
+    fail-safe tenet — a guard's ambiguity must fail ON.
     """
     if value is None:
         return True

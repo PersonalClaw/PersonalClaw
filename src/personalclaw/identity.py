@@ -77,7 +77,7 @@ def contributor_label(contributor: object, owner: str) -> str:
 
     The ONE provenance label for foreign-attributed content, shared by every surface that
     shows the owner somebody else's row (semantic memory, the shared inbox). It was born
-    private to ``vector_memory``; TSE2-3 needed the same label on inbox items and a second
+    private to ``vector_memory``; inbox items needed the same label, and a second
     copy would have been a second convention — the exact thing
     ``docs/architecture/shared-store-provider-conformance.md`` exists to prevent.
 

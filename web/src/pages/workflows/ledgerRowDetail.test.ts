@@ -22,7 +22,7 @@ describe('ledgerRowDetail', () => {
   })
 
   it('projects an engine row that carries none of them to empty strings', () => {
-    // The pre-SC#6 shape. It must survive unchanged: the renderer omits an element per empty
+    // The shape from before rows carried these fields. It must survive unchanged: the renderer omits an element per empty
     // string, so a plain `step_completed` renders exactly as it always did.
     expect(ledgerRowDetail({ kind: 'step_completed', state: 'done' })).toEqual({
       kind: 'step_completed', sha: '', impact: '', rationale: '',

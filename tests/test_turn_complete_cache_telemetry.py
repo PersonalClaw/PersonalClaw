@@ -10,7 +10,7 @@ Every honesty rule below is a defect this repo has shipped on a neighbouring chi
 (see ``test_context_pct_honesty.py`` for the ``context_pct`` original), so each gets
 its own case, asserted on the RENDERED line rather than on a field:
 
-* no cache activity → the line is byte-identical to the pre-PCS-7 one;
+* no cache activity → the line is byte-identical to the pre-change one;
 * ``cache_hit_pct=None`` prints no percentage at all, while a measured ``0.0``
   prints ``0% hit`` — an empty cache is a real answer;
 * ``cache_saved_usd=None`` prints ``saved unpriced``, never ``$0.0000``;
@@ -30,7 +30,7 @@ from pathlib import Path
 from personalclaw.dashboard import chat_runner
 from personalclaw.dashboard.chat_runner import _turn_complete_line
 
-# The pre-PCS-7 rendering of a priced turn that touched no cache. Asserted as an
+# The pre-change rendering of a priced turn that touched no cache. Asserted as an
 # exact string (not a substring) so a stray " · " separator or a reordered fragment
 # reddens here instead of quietly shipping.
 _NO_CACHE_LINE = (
@@ -175,7 +175,7 @@ class TestCallSiteRail:
             assert "cache_saved_usd" in kwargs
 
     def test_the_derived_numbers_come_from_the_shared_primitives(self):
-        # No second counter store (the change's "reusing stats.py counters" clause): the
+        # No second counter store: the
         # hit rate and the saving are computed by the shared helpers, at the call site.
         src = Path(chat_runner.__file__).read_text(encoding="utf-8")
         tree = ast.parse(src)

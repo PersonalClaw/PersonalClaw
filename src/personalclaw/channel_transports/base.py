@@ -41,7 +41,7 @@ class OutboundMessage:
 
 @dataclass
 class ChannelMessage:
-    """The symmetric INBOUND shape (#40) — the dual of :class:`OutboundMessage`.
+    """The symmetric INBOUND shape — the dual of :class:`OutboundMessage`.
 
     A transport that owns an inbound source normalizes its native payload to this,
     so the platform sees one canonical inbound message regardless of channel.
@@ -63,7 +63,7 @@ class ChannelMessage:
 
 @dataclass
 class ChannelCapabilities:
-    """What an adapter can do (#40) — machine-readable so the platform can route /
+    """What an adapter can do — machine-readable so the platform can route /
     feature-gate. Defaults are conservative (text-out only, no inbound)."""
 
     inbound: bool = False  # can receive() messages
@@ -143,12 +143,12 @@ class ChannelTransportProvider(ABC):
         return False
 
     def capabilities(self) -> ChannelCapabilities:
-        """What this adapter can do (#40). Default: text-out only, no inbound.
+        """What this adapter can do. Default: text-out only, no inbound.
         Adapters override to declare threads/attachments/reactions/edits/etc."""
         return ChannelCapabilities()
 
     def receive(self) -> AsyncIterator[ChannelMessage]:
-        """Optional inbound seam (#40): yield normalized :class:`ChannelMessage`s.
+        """Optional inbound seam: yield normalized :class:`ChannelMessage`s.
 
         Default raises — most transports keep their existing inbound path (Slack's
         socket receiver, the WebUI chat runner). A new pull-based adapter overrides

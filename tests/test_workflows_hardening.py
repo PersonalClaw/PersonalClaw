@@ -1,11 +1,11 @@
-"""Hardening: the timeout pair, the active-edge pair, and journal replay (Slice 11b).
+"""Hardening: the timeout pair, the active-edge pair, and journal replay.
 
-Four acceptance criteria the plan names explicitly, plus the replay harness. Each exists because the
+Four properties, plus the replay harness. Each exists because the
 mechanism it covers only ever executes under failure, which is exactly when nobody is watching:
 
 **The timeout pair**. Two knobs, and the whole point is that they mean different things: a
 long-but-PROGRESSING node survives, a SILENT one dies. Collapsing them is not a subtle degradation —
-it kills nodes that are visibly working, and the plan's cautionary case is an engine that shipped a
+it kills nodes that are visibly working, and the cautionary case is an engine that shipped a
 timeout nobody noticed was a no-op.
 
 **The active-edge pair**. A join must wait on the legs that will actually run and no
@@ -71,9 +71,9 @@ def _run_for(spec: dict) -> WorkflowRun:
 
 
 class TestTimeoutPair:
-    """The regression pair the plan makes an acceptance criterion (WF2-R5 batch-5).
+    """The timeout regression pair.
 
-    A stall timeout is fed by PROGRESS, not by the wall clock. Before this session nothing called
+    A stall timeout is fed by PROGRESS, not by the wall clock. Before this fix nothing called
     `note_progress`, so the clock only ever saw silence — meaning any node slower than the stall
     window was killed as wedged, and the two knobs were one knob. That is the worst kind of bug in a
     timeout: it only fires under load, and it looks like the provider's fault.
@@ -280,7 +280,7 @@ class TestDispatcherWaitBudget:
 
 
 class TestActiveEdgePair:
-    """The two cases the plan makes acceptance criteria.
+    """The two cases that must both hold.
 
     Both directions are bugs. Waiting on "all predecessors" deadlocks behind an untaken branch;
     firing on "any completed predecessor" fires early on a fan-out whose other legs are waiting. The
@@ -411,7 +411,7 @@ class TestActiveEdgePair:
 class TestJournalReplay:
     """Replay properties over a REAL run's journal.
 
-    The plan asks for recorded JSONL traces gated against a baseline. Recording a trace and
+    The obvious design is recorded JSONL traces gated against a baseline. Recording a trace and
     comparing it to a checked-in copy would pin the FORMAT; what actually matters is the
     properties — and a property test catches a regression a fixture cannot, because a fixture only
     knows about the runs someone thought to record.
@@ -442,7 +442,7 @@ class TestJournalReplay:
 
     async def test_every_completion_has_a_matching_START(self) -> None:
         """The replay contract: a trajectory must be reconstructable from ledger events alone. A
-        completion with no start is a hole in the trajectory — and the plan's cautionary case is a
+        completion with no start is a hole in the trajectory — and the cautionary case is a
         journal cut that produced API-rejected conversations on resume because a `tool_result` had
         lost its `tool_use`."""
         run = await self._completed_run()
@@ -489,7 +489,7 @@ class TestJournalReplay:
         assert len(body) == 3, [e["instance_path"] for e in body]
 
     async def test_a_1000_entry_journal_reads_in_under_a_second(self) -> None:
-        """The plan's performance criterion. The journal is read on every resume, so a slow read
+        """The performance bar. The journal is read on every resume, so a slow read
         makes crash recovery quadratic in run length."""
         run = _run_for(
             {"name": "big", "root": {"kind": "transform", "id": "t", "config": {"expr": 1}}}
@@ -608,7 +608,7 @@ class TestWriteScopeEscapes(object):
 
 
 class TestDocumentationAccuracy:
-    """The architecture doc and template guide, checked against the code (Slice 11b).
+    """The architecture doc and template guide, checked against the code.
 
     A doc that lies is worse than no doc: it costs a reader time AND teaches them something false
     they will act on. These assertions are the cheap, mechanical subset — every module named, every
@@ -673,8 +673,8 @@ class TestDocumentationAccuracy:
 
     def test_the_node_kind_count_is_right(self) -> None:
         """ "Thirteen, and no more" is a load-bearing claim — it is the reason macros exist.
-        (Was twelve until AMBIENT-SURFACES §5.3 added `visualize`, the agency-free
-        data→genui primitive, as a node kind.)"""
+        (Was twelve until `visualize`, the agency-free
+        data→genui primitive, was added as a node kind.)"""
         from personalclaw.workflows.models import NodeKind
 
         assert len(list(NodeKind)) == 13

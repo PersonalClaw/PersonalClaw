@@ -3,7 +3,7 @@ import { motion } from 'framer-motion'
 import { expr, exprHeavy, prefersReducedMotion } from '../../design/motion'
 import { familyFade, familyTween } from './vocabulary'
 
-/** A theme-tinted destructive-delete effect (P18b). Wrap the thing being deleted;
+/** A theme-tinted destructive-delete effect. Wrap the thing being deleted;
  *  flip `active` true to play it, then `onDone` fires when it settles so the caller
  *  can drop the item from state. It is the destructive counterpart to the app's
  *  additive motion — where a create springs in, a delete DISINTEGRATES:

@@ -281,14 +281,14 @@ async def transcribe_audio_detailed(
     bias_terms: list[str] | None = None,
     unattended: bool | None = None,
 ):
-    """Rich transcription via the active STT provider (core L0): a ``TranscriptResult`` (flat
+    """Rich transcription via the active STT provider: a ``TranscriptResult`` (flat
     text + segments + word timestamps), whose text is empty when there was no speech.
 
     Mirrors :func:`transcribe_audio` (same active-STT resolution, sensitive-path guard,
     credential/exfil redaction of the flat text, the same :class:`SttError` when there is no
     transcript) but preserves structure. For large files the segmented path OFFSETS each
     chunk's segment/word times by the chunk's start so the merged timeline is continuous.
-    ``bias_terms`` is the Lexicon pre-decode hint (L2). ``unattended`` says the transcription
+    ``bias_terms`` is the Lexicon pre-decode hint. ``unattended`` says the transcription
     is unattended work whatever session asks for it (a knowledge import), and so is held to the
     dollar caps (``guardrails.media_call``)."""
     provider, model_id, language = _resolve(audio_path)

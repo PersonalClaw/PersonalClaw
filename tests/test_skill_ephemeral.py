@@ -1,4 +1,4 @@
-"""skill-ephemeral-promotion: session-live skill drafts + end-of-session promotion.
+"""Session-live skill drafts + end-of-session promotion.
 
 A draft is captured in-the-moment (skill_remember), lives only for its session
 until the user promotes it to a permanent tier (this-agent / all-agents) or forgets

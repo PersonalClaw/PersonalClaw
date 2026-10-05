@@ -1,4 +1,4 @@
-"""Projecting a waiting run into the attention surfaces (Slice 8c).
+"""Projecting a waiting run into the attention surfaces.
 
 The gap this closes: before it, a run parking on `needs_input` appeared in exactly ONE place —
 an SSE frame. So a gate only reached a human who already had the run view open, and a scheduled
@@ -365,7 +365,7 @@ class TestEmitSeamRegressions:
     through a live gateway and then looking at what the inbox actually showed.
 
     Neither is workflow-specific: they affected every attention kind (loop gates, skill
-    proposals, mirrored approvals). Pinned here because this is the session that found them.
+    proposals, mirrored approvals). Pinned here because this is where they were found.
     """
 
     def test_the_row_writes_to_the_RUNNING_services_store(self) -> None:

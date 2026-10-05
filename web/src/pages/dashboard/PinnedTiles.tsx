@@ -14,7 +14,7 @@ import { safeMode } from '../../ui/surfaces/layers'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { costLabel, isLive, lastRefreshFailed, sourceChips } from './tileFreshness'
 
-// ── The Pinned tiles band (AMBIENT-SURFACES §1 / A2-1) ──────────────────────
+// ── The Pinned tiles band ──────────────────────
 // The ADDITIVE half of the dashboard-as-views registry: the Overview preset's
 // CORE widgets are the fixed DashboardPage layout (rendered by DashboardPage
 // itself); this band renders only the `artifact:<slug>` tiles overlaid on the
@@ -39,7 +39,7 @@ export function artifactTiles(views: DashboardView[] | undefined): DashboardTile
 }
 
 export function PinnedTiles() {
-  // SWR paint through the shared cache (clause 5): the band paints its last-known
+  // SWR paint through the shared cache: the band paints its last-known
   // tiles instantly on revisit, no blank flash, and revalidates in the background.
   const { data: views, refresh } = useQuery<DashboardView[]>(
     VIEWS_CACHE_KEY, () => api.dashboardViews().catch(() => [] as DashboardView[]), { persist: true },
@@ -164,8 +164,7 @@ function FreshnessBar({ tile, row }: { tile: DashboardTile; row: TileRefreshRow 
   )
 }
 
-/** Shape-character amplitude for the tile's composure silhouette (FLUID-MOTION §S2
- *  T2.2 / change FM-4). A PLAIN number on purpose: `LiquidShape` multiplies through
+/** Shape-character amplitude for the tile's composure silhouette. A PLAIN number on purpose: `LiquidShape` multiplies through
  *  `expr()` itself, so passing `expr(1)` here would scale the expressiveness knob
  *  twice. Small, because this is decoration beside a title, not a hero graphic.
  *  Exported so the call-site test can render the primitive standalone at the SAME

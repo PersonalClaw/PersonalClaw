@@ -1,11 +1,11 @@
 """The mode-independence matrix for the baseline command denylist.
 
 The claim under test is a single sentence: **no approval mode, and no trust simulator,
-can let a baseline-denied command run.** SH-6 made the denylist unshrinkable (packaged
+can let a baseline-denied command run.** The denylist is unshrinkable (packaged
 data + integrity re-assert); this file proves the *enforcement* is not conditional on
 who said yes.
 
-Three things live here, one per clause of the change:
+Three things live here:
 
 1. **The matrix** (:class:`TestApprovalModeMatrix`, :class:`TestTrustSimulatorMatrix`).
    Every approval mode the native runtime honours — ``default`` (per-tool gate, and the
@@ -149,7 +149,7 @@ class _SpawnSpy:
 
 
 def _defn() -> AgentRuntimeDefinition:
-    return AgentRuntimeDefinition(name="SH7", provider="native", model="scripted")
+    return AgentRuntimeDefinition(name="mode-probe", provider="native", model="scripted")
 
 
 def _bash_turn(command: str) -> list[list[AgentEvent]]:
@@ -354,7 +354,7 @@ class TestApprovalModeMatrix:
         assert literals, "could not read the permissive-policy tuple out of _requires_approval"
         assert literals <= set(APPROVAL_MODES), (
             f"runtime treats {sorted(literals - set(APPROVAL_MODES))} as permissive but the "
-            f"SH-7 matrix does not cover them"
+            f"mode-independence matrix does not cover them"
         )
 
 

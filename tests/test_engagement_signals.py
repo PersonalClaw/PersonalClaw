@@ -1,4 +1,4 @@
-"""Tests for EngagementStore (P11 engagement-weighted ranking, store + kernel).
+"""Tests for EngagementStore (engagement-weighted ranking, store + kernel).
 
 Pure/read-time decay, additive accumulation, dismiss-floors, warm-up neutral, persistence
 round-trip. Injects an explicit tmp path (no config_dir monkeypatch needed — the store
@@ -127,7 +127,7 @@ def test_rank_dismissed_topic_demoted_but_present(tmp_path):
     # 100 × floor(~0.6) = ~60 vs 60 × 1.0 = 60 → spam demoted to a tie/below despite newer
 
 
-# ── P11 inbox HANDLER wiring (the consumer that layers on the store) ─────────────
+# ── Inbox HANDLER wiring (the consumer that layers on the store) ─────────────────
 # These exercise the handler helpers directly (no HTTP): the gated re-rank + topic-key
 # derivation + signal capture. The flag is read via AppConfig.load() (DashboardState has
 # no .config), so we patch _inbox_config to toggle it without touching config.json.

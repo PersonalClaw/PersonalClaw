@@ -9,7 +9,7 @@ import { join } from 'node:path'
 // visible text of its own (its `label` becomes the accessible name only). The result is two
 // identical-looking switches under one label, where flipping the wrong one is a silent mistake.
 //
-// HC-4 added "Offer 'Check this work'" as a second Toggle inside the "Follow-up suggestions" Row,
+// "Offer 'Check this work'" was added as a second Toggle inside the "Follow-up suggestions" Row,
 // whose hint describes suggested next messages — not verification. Measured on a live gateway:
 //
 //     the row rendered  label "Follow-up suggestions"  +  2 × role=switch  +  0 visible switch text

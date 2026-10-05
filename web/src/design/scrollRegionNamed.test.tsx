@@ -32,7 +32,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //               excerpt INCLUDING its `<untrusted_content        name="Why this was proposed"
 //               source=…>` fence markers
 //
-// This is cycle 141's defect in a new shape: there, 5 artifact tiles were named by 438-695 characters
+// This is an earlier defect in a new shape: there, 5 artifact tiles were named by 438-695 characters
 // of their own body. A `group` with an explicit `aria-label` does not take its name from content,
 // which is the whole reason the canonical form is a trio and not just a tab stop.
 //
@@ -49,7 +49,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // `<summary>Why this was proposed</summary>`.
 //
 // ⚠️ NOT VERIFIED: Firefox and WebKit. Only Chromium is installed here, and installing engines is not
-// this cycle's business. The tab stop is what makes the region operable in browsers that do NOT
+// this change's business. The tab stop is what makes the region operable in browsers that do NOT
 // auto-focus scrollers; that reasoning is stated, not measured.
 
 const SRC = join(process.cwd(), 'src')
@@ -136,7 +136,7 @@ describe('the canonical form has one shape across the family', () => {
 
 // ── 2026-08-19: the same defect in the SHARED markdown blocks, and a derived census ───────────────
 //
-// The census above was hand-listed, so it held the two regions that cycle fixed and nothing else.
+// The census above was hand-listed, so it held the two regions that change fixed and nothing else.
 // `#/settings/updates` at 390px then failed `scrollable-region-focusable` — on a surface the capture
 // inventory had never held (19 of 31 settings sections were missing from `surfaces.json`; adding them
 // is what surfaced this). Measured by TAB TRAVERSAL, not `el.focus()`:
@@ -191,7 +191,7 @@ describe('the scrollable <pre> family is derived, not hand-listed', () => {
 
   /** x-scrolling boxes still unnamed. Each verified as horizontally scrollable and nameless; none
    *  overflows with this dev home's data, so axe does not flag them yet — latent, not clean. They are
-   *  page-level one-offs rather than shared primitives, which is why this cycle stopped here. */
+   *  page-level one-offs rather than shared primitives, which is why this change stopped here. */
   const PENDING = new Set([
     'pages/code/DiffReveal.tsx',
     'pages/code/TypingReveal.tsx',
@@ -204,7 +204,7 @@ describe('the scrollable <pre> family is derived, not hand-listed', () => {
     const { named, xScroll, yCapped } = census()
     expect(named.length + xScroll.length + yCapped.length,
       'the <pre> scan must resolve the scrollable boxes').toBeGreaterThanOrEqual(20)
-    expect(named.length, 'and the named ones this cycle added').toBeGreaterThanOrEqual(6)
+    expect(named.length, 'and the named ones this change added').toBeGreaterThanOrEqual(6)
   })
 
   it('every horizontally-scrolling <pre> is named, or is a listed pending one-off', () => {

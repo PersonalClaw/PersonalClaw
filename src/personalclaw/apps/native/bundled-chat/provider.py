@@ -7,13 +7,13 @@ raised ``ERR_MODEL_UNRESOLVED`` and the dashboard showed the calm ``NoModelSetup
 Apache-2.0 instruct model ships with the wheel and answers that first turn offline, with no
 credential and no network.
 
-**Why the runtime is numpy and not llama.cpp.** The feasibility study
-(``research/bundle-default-model-feasibility.md``) recommended ``llama-cpp-python`` and left
-"which wheel strategy" as an engineering sub-call. Measured on PyPI: ``llama-cpp-python``
+**Why the runtime is numpy and not llama.cpp.** The usual runtime for a small local model is
+``llama-cpp-python``, and the open question was which wheel the install could rely on.
+Measured on PyPI: ``llama-cpp-python``
 0.3.35 publishes an **sdist only** — ``pip install`` compiles llama.cpp with cmake and a C++
 toolchain. Making that a dependency of every install would replace "you have no model" with
 "you have no compiler", which is a worse first run than the one this app exists to fix.
-``gpt4all`` (the named fallback) ships no Linux-aarch64 wheel; ``onnxruntime-genai`` ships
+``gpt4all`` (the usual fallback) ships no Linux-aarch64 wheel; ``onnxruntime-genai`` ships
 wheels everywhere but needs an ORT-GenAI model directory that no permissive sub-1B model
 publishes. So the executor here is **numpy**, which is already a core dependency (declared
 in ``pyproject.toml`` as the substrate for the in-wheel ``native-vector-memory`` app), needs
@@ -784,8 +784,8 @@ def weights_dir() -> Path:
     """Where the downloaded weight lives: ``$PERSONALCLAW_HOME/models/bundled-chat/``.
 
     Under the HOME, not inside the installed package, and that is the whole shape of this app
-    (owner decision 2026-09-24 — the wheel ships no weight and the model is fetched on first
-    run). Three things follow from the location:
+    (the wheel ships no weight and the model is fetched on first run). Three things follow
+    from the location:
 
     * it survives a ``pip install --upgrade``, so the 138 MiB is downloaded once per machine
       rather than once per version;

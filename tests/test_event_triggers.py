@@ -1,4 +1,4 @@
-"""Data-event triggers (#38): the pattern grammar over store rows, the spec helpers, the bus."""
+"""Data-event triggers: the pattern grammar over store rows, the spec helpers, the bus."""
 
 from __future__ import annotations
 

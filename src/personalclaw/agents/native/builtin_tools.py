@@ -171,12 +171,12 @@ def reset_tool_context(tokens) -> None:
 
 def current_project_id() -> str:
     """The Project id bound for this turn's tool dispatch ("" if none) — used by
-    artifact_save to tie a created artifact to the active Project (S5)."""
+    artifact_save to tie a created artifact to the active Project."""
     return _CURRENT_PROJECT_ID.get()
 
 
-# Tool name → conceptual CATEGORY. Each category is surfaced by its own provider
-# (UT1 split): the platform bundle owns filesystem/shell/core (always-on, cwd-
+# Tool name → conceptual CATEGORY. Each category is surfaced by its own provider:
+# the platform bundle owns filesystem/shell/core (always-on, cwd-
 # coupled); the rest are pre-installed-but-uninstallable app providers, one per
 # entity. A provider built with categories={...} surfaces only its slice; the
 # default (categories=None) surfaces everything (tests, direct construction).
@@ -406,10 +406,10 @@ def _ok_capped(
 ) -> ToolResult:
     """Success result whose ``output`` is a type-aware **projection** within ``limit``.
 
-    Routes large output through :func:`project_output` (OP1) — keeping the salient
+    Routes large output through :func:`project_output` — keeping the salient
     slice for its content type (log error lines, diff hunks, json shape, test
     failures, csv head/tail) instead of a blind middle-cut — and, when projected,
-    retains the **full raw** in the per-session tool-result store (OP2) so the
+    retains the **full raw** in the per-session tool-result store so the
     model can pull the dropped part via ``tool_result_get``.
 
     Stays fail-soft + backward-compatible: a small result, or one of an
@@ -797,7 +797,7 @@ class NativeBuiltinToolProvider(ToolProvider):
         ]
 
     def _read_gate_refusal(self, tool_name: str, a: dict[str, Any]) -> ToolResult | None:
-        """The ONE expression of the pre-edit read gate (AG-14); None admits the call.
+        """The ONE expression of the pre-edit read gate; None admits the call.
 
         Lives at the dispatch seam rather than inside each handler so every write path
         inherits it: adding a row to ``_READ_GATED_WRITE_TOOLS`` is the whole wiring, and
@@ -921,7 +921,7 @@ class NativeBuiltinToolProvider(ToolProvider):
             hints = ["Check the arguments against the tool's parameter schema and retry."]
         return ToolResult(success=False, error=error, recovery_hints=hints)
 
-    # ── tool-output retrieval (OP2): pull the full raw of a projected result ──
+    # ── tool-output retrieval: pull the full raw of a projected result ────────
     async def _t_tool_result_get(self, a: dict) -> ToolResult:
         rid = str(a.get("result_id", "")).strip()
         if not rid:
@@ -980,8 +980,8 @@ class NativeBuiltinToolProvider(ToolProvider):
             else "generic"
         )
         # A projected read names tool_result_get as the way to pull the dropped slice, so
-        # a slice pulled that way HAS been observed — credit it to the file's observation
-        # (AG-14). Without this the read gate's refusal for a truncated read would name a
+        # a slice pulled that way HAS been observed — credit it to the file's observation.
+        # Without this the read gate's refusal for a truncated read would name a
         # next action that cannot succeed on a file larger than the output cap.
         read_gate.record_retrieval(self._session_key, rid, observed_text=str(res["content"]))
         return ToolResult(
@@ -1090,7 +1090,7 @@ class NativeBuiltinToolProvider(ToolProvider):
         return res
 
     def _checkpoint_pre_edit(self, path: Path, scope: FileScope) -> None:
-        """Phase 2 of the turn checkpoint (EXECUTION-ISOLATION §6): back up *path*'s current
+        """Phase 2 of the turn checkpoint: back up *path*'s current
         bytes before this turn's first mutation of it.
 
         Here, in the handler, rather than at the chat runner's TOOL_CALL event: this runs
@@ -1600,7 +1600,7 @@ class NativeBuiltinToolProvider(ToolProvider):
                 [owner_only.hint(named.kind)],
             )
 
-        # 3. a SYSTEM-SCHEDULER write — offer the substrate instead (§7 criterion 12).
+        # 3. a SYSTEM-SCHEDULER write — offer the automation engine instead.
         #
         # 🔴 Measured before writing: `is_sensitive_bash_command("crontab -e")` and
         # `denied_command("crontab -e")` both returned None, as did the `| crontab -` idiom,
@@ -1609,9 +1609,9 @@ class NativeBuiltinToolProvider(ToolProvider):
         # surface this program built: no ledger row, no autopause, no quiet window, no capability
         # fence, no kill switch, and it survives uninstall.
         #
-        # Declined-with-an-offer, not silently blocked, because criterion 12 says "prompted and
-        # OFFERED the substrate": the observation names `automation_create` so the model takes the
-        # supported path rather than working around the refusal with `at` or a hand-written plist.
+        # Declined-with-an-offer, not silently blocked, so the user is OFFERED the automation
+        # engine: the observation names `automation_create` so the model takes the supported
+        # path rather than working around the refusal with `at` or a hand-written plist.
         # READS (`crontab -l`) pass, deliberately — that is how you migrate existing jobs IN.
         from personalclaw.triggers import handoff as trigger_handoff
 
@@ -1837,7 +1837,7 @@ class NativeBuiltinToolProvider(ToolProvider):
                     continue
                 snippet = _kn_redact(_kn_snippet(item))
                 tail = f" — {snippet}" if snippet else ""
-                # P12: surface the per-item citation locator so the agent can cite WHERE in
+                # Surface the per-item citation locator so the agent can cite WHERE in
                 # the source the match sits (section / line range), not just name the item.
                 # A note from a watched folder names its file, which read_file opens as written.
                 loc_bits = [_kn_redact(where)] if (where := note_path(store, item)) else []
@@ -2634,7 +2634,7 @@ class NativeBuiltinToolProvider(ToolProvider):
         )
 
 
-# ── Category providers (UT1 split) ──────────────────────────────────────────
+# ── Category providers ──────────────────────────────────────────────────────
 # One provider per conceptual entity. All share the handler bodies above; each
 # surfaces only its category's tools (list_tools filters by self._categories).
 # These are registry singletons — they resolve the per-turn workspace via the

@@ -166,7 +166,7 @@ class InProcessCompaction:
             # into it would display a number the provider never reported.
             if self._last_context_pct is not None and measured_pct is not None:
                 self._last_context_pct = measured_pct * (after / before)
-            # Post-compaction guard (E3.1): re-arm structural detection so a loop
+            # Post-compaction guard: re-arm structural detection so a loop
             # that resumes identically after the history was compacted is caught
             # fresh, instead of its pre-compaction signatures aging out silently.
             self._breaker.reset_structural()

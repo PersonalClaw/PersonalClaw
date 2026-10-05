@@ -122,7 +122,7 @@ async def test_pending_history_is_committed_before_the_restarted_image_starts(tm
 @pytest.mark.asyncio
 async def test_the_restarted_image_is_this_gateway_with_its_auth_mode_pinned():
     """The image is `-m personalclaw` with the same arguments, and the running gateway's auth mode
-    rides into it, so a Restart never changes whether sign-in is required (#46)."""
+    rides into it, so a Restart never changes whether sign-in is required."""
     started: list[tuple[str, list[str], dict[str, str]]] = []
 
     def _execve(path, argv, env):  # noqa: ANN001

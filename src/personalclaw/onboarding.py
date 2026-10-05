@@ -25,19 +25,17 @@ field carrying the wrong type all resolve to the default for that field. The flo
 to "start at the beginning", never to a 500.
 
 **Strict writes are the contract.** :func:`merge_onboarding_state` rejects an unknown or
-mistyped key with :class:`ValueError` rather than dropping it silently. Bug #22 (the
-entity-settings PUT that blind-merged any body key) taught the repo that a lenient write
+mistyped key with :class:`ValueError` rather than dropping it silently. The silent-accept bug
+(the entity-settings PUT that blind-merged any body key) taught the repo that a lenient write
 path leaks garbage back out through every read; for a brand-new endpoint an explicit 400
 also means a frontend typo surfaces immediately instead of becoming a silent no-op.
 
-**Naming deviation from C1, recorded.** C1 spelled the middle step ``provider`` and the
-field ``provider_chosen``. The 2026-07-26 amendment (ruling a) re-scoped that step from
-"pick a provider" to "install the essential apps" and generalized the field to
-``essentials``; this module names the *step* ``essentials`` too, so the step id and the
-field it fills agree. C1 also annotated ``name``/``completed`` as "existing" fields of this
-state — they are not: the name lives in server identity and ``onboarded`` is derived from
-it being non-empty (``web/src/app/identity.tsx``). Storing either here would create a
-second source of truth, so neither is part of this schema.
+**Naming.** The middle step was once "pick a provider", with a ``provider_chosen`` field; it
+now installs the essential apps, and both the field and the *step* are named ``essentials``, so
+the step id and the field it fills agree. ``name``/``completed`` are not fields of this state:
+the name lives in server identity and ``onboarded`` is derived from it being non-empty
+(``web/src/app/identity.tsx``). Storing either here would create a second source of truth, so
+neither is part of this schema.
 
 **The name a run passed its first step with is, as a draft.** ``name_draft`` holds the name and
 handle the run continued past step 1 with, until the run ends. It is not identity: nothing but

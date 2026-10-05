@@ -8,10 +8,10 @@ recording fake, and a fake cannot show that Chrome's own ``Page.frameNavigated``
 implementor — one WebSocket to one already-open page target, nothing more.
 
 **Deliberately NOT here: launching a browser.** No Chrome discovery, no ``--user-data-dir``,
-no process supervision. Two reasons, both from the plan rather than from convenience:
-BROWSE-AUTOMATION §5.1 gives *persistent per-site profiles* to BA-4, and §4.1 leaves open
-whether the gateway shares the interactive chrome-devtools MCP's browser instead of starting
-its own. Choosing either here would pre-empt an owner decision, so the caller supplies a page
+no process supervision. Two reasons, both from the design rather than from convenience:
+*persistent per-site profiles* belong to the login handoff (``browse/handoff.py``), and it is
+open whether the gateway shares the interactive chrome-devtools MCP's browser instead of starting
+its own. Choosing either here would pre-empt that decision, so the caller supplies a page
 target's ``webSocketDebuggerUrl`` and owns the process. Tests launch their own.
 
 THE ONE STRUCTURAL CONSTRAINT, and the reason this is not fifty lines: **the read loop must

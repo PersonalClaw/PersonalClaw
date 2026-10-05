@@ -141,7 +141,7 @@ export function companionUrl(rawGatewayUrl) {
 }
 
 /**
- * Read a scanned pairing QR (`MC-8` renders it; `pair/start` composes it) into somewhere to go.
+ * Read a scanned pairing QR (`PairingQr` renders it; `pair/start` composes it) into somewhere to go.
  *
  * The payload is one URL — `<base>/pair?code=XXXX-XXXX` — and `base` is resolved server-side
  * precisely so the scanning phone gets the LAN address rather than the `127.0.0.1` a browser

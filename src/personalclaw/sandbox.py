@@ -129,8 +129,8 @@ _AGENT_DENIED_ENV_KEYS: list[str] = [
 
 # ── Child environment allowlist ──
 
-#: What an agent-influenced child process inherits, BY NAME — the allowlist shape
-#: EXECUTION-ISOLATION `D1` specifies, swept to the hook/cron/bash spawn sites.
+#: What an agent-influenced child process inherits, BY NAME — an allowlist, swept to the
+#: hook/cron/bash spawn sites.
 #:
 #: 🔴 MEASURED, and the reason this is an allowlist rather than another name-pattern
 #: denylist: a real gateway process carried **121** environment variables, essentially all
@@ -2213,7 +2213,7 @@ async def create_subprocess_limited(
     """``asyncio.create_subprocess_exec`` with the ceiling shim prepended.
 
     This is the async seam every agent-influenced spawn goes through instead of a raw
-    ``create_subprocess_exec``. It NEVER passes ``preexec_fn`` (the whole point of PHF-1):
+    ``create_subprocess_exec``. It NEVER passes ``preexec_fn`` (that is the whole point):
     the ceiling is delivered by the shim after ``exec``, so the parent stays on
     ``posix_spawn`` and the event loop never blocks on a forked child. Extra kwargs
     (``stdout``, ``env``, ``cwd``, ``start_new_session`` …) pass straight through.

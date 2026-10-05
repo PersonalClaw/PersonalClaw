@@ -9,7 +9,7 @@ import { appBundleUrl, type AppContext, type AppPermissions } from '../../app/ap
 interface UIPageDecl { route?: string; label?: string; entryPoint?: string; mountFunction?: string }
 
 /** Resolves `#/app/<name>` to an installed app's contributed UI page and mounts
- *  it (A7). Reads the manifest for the ui.pages[].entryPoint + permission scope,
+ *  it. Reads the manifest for the ui.pages[].entryPoint + permission scope,
  *  serves the bundle from /apps/<name>/ui/..., and hands both to ContributedPage
  *  via the SDK host. */
 export function AppHostPage({ sub, navigate }: Pick<RouteProps, 'sub' | 'navigate'>) {

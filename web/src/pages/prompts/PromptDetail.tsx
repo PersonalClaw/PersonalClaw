@@ -250,7 +250,7 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
 }
 
 /** "Try it" — one typed input per variable → POST /render → substituted output.
- *  For a RUNNABLE template (#17) it doubles as "Fill & launch": the same filled
+ *  For a RUNNABLE template it doubles as "Fill & launch": the same filled
  *  values create + start a Project/Loop run and navigate to its cockpit. */
 function RenderPanel({ name, vars, launchable, launchKind, onNavigate }: { name: string; vars: PromptVariable[]; launchable?: boolean; launchKind?: string; onNavigate: (path: string) => void }) {
   const [values, setValues] = useState<Record<string, unknown>>(() => seedRenderValues(vars))

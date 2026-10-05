@@ -6,7 +6,7 @@ import type { ChatTurn, Segment } from './chatTypes'
 
 // ── The Session Map rail component (the markers) ────────────────────────────────────────
 //
-// acceptance criteria, as the owner ruled it on 2026-09-25: a <nav aria-label="Session map"> renders ONE
+// The contract: a <nav aria-label="Session map"> renders ONE
 // marker per USER message and none for replies or the work inside them; every marker RESTS AT ONE
 // LENGTH; what is on screen is told by COLOUR alone (--color-primary on screen, --color-map-rest
 // off it — no raw hex/px, tokenLint.test.ts; no coloured side-stripe, sideStripeDoctrine.test.ts);
@@ -127,9 +127,9 @@ describe('SessionMapRail — the markers', () => {
     expect(flags).toEqual([null, null, 'true'])
   })
 
-  it('🔑 every marker RESTS AT ONE LENGTH — being on screen is colour, never size (owner rule)', () => {
+  it('🔑 every marker RESTS AT ONE LENGTH — being on screen is colour, never size', () => {
     // The previous form idled a current turn at ~18px, a history turn at ~12px and a sub-event at
-    // 6px. The owner: the on-screen markers "don't need to expand to indicate that". So at rest the
+    // 6px. The design rule: the on-screen markers "don't need to expand to indicate that". So at rest the
     // lengths are identical across a rail that DOES carry both tones (asserted above).
     const { container } = render(<SessionMapRail entries={sessionMapEntries(fixtureTurns)} {...railProps} />)
     const scales = markLines(container).map(scaleOf)

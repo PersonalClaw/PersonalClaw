@@ -1,4 +1,4 @@
-"""M5b: heat scoring + two-stage rerank + category-TTL expiry (O-A1/O-A2)."""
+"""Heat scoring + two-stage rerank + category-TTL expiry."""
 
 from __future__ import annotations
 

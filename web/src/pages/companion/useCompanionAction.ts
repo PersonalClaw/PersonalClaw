@@ -2,16 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { notify } from '../../app/appSdk'
 
 /** One optimistic row mutation, with a REVERT on failure — the companion's whole
- *  interaction contract in one hook (MOBILE-COMPANION S2 T2.2: *"every action
- *  round-trips against a dev gateway; optimistic UI reverts on failure"*).
+ *  interaction contract in one hook: every action round-trips against the gateway, and
+ *  optimistic UI reverts on failure.
  *
  *  🪤 IT EXISTS BECAUSE THE OVERLAY MUST BE RECONCILED AGAINST THE SERVER.
- *  `MC-3` shipped this pattern by hand for approvals and the FIRST version was wrong
+ *  The approvals queue first had this pattern by hand, and that version was wrong
  *  in a way no unit test noticed: the optimistically-hidden ids were never pruned, so
  *  a row the backend was still serving stayed hidden forever and the phone rendered a
- *  live queue as "nothing waiting on you" (see the plan's Execution log — found by
- *  driving a real gateway, not by reading the code). `MC-6` adds four more sections
- *  with the same shape, so the reconciliation lives here ONCE rather than being
+ *  live queue as "nothing waiting on you" (found by
+ *  driving a real gateway, not by reading the code). Four more sections
+ *  share the same shape, so the reconciliation lives here ONCE rather than being
  *  re-derived four times and getting it wrong somewhere.
  *
  *  The rule: a patch survives only while its POST is still in flight. On every fetch,

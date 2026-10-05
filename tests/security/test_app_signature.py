@@ -13,12 +13,12 @@ Four things are asserted here, in order of how badly getting them wrong would hu
 3. **Every failure fails closed.** ``TestFailsClosed`` walks missing halves, truncation,
    base64 garbage, an unknown key, the wrong key, a tampered trusted comment and a
    missing Ed25519 backend. None may return ``signed``.
-4. **Unsigned is not a refusal.** ``TestUnsignedStaysInstallable`` pins C2's graduated
+4. **Unsigned is not a refusal.** ``TestUnsignedStaysInstallable`` pins the graduated
    trust: no signature → community tier → still installs.
 
 **No private key material lives in this repository.** Every test here generates an
 ephemeral Ed25519 keypair into ``tmp_path`` and points ``signing.trusted_keys_dir()`` at
-it, so the shipped trust store (empty until owner task 2) is never a test dependency.
+it, so the shipped trust store (empty until the maintainer adds a key) is never a test dependency.
 """
 
 from __future__ import annotations
@@ -336,7 +336,7 @@ class TestFailsClosed:
     def test_empty_trust_store_refuses_every_signature(
         self, bundle: Path, keys: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The SHIPPED state until owner task 2 lands: no trusted keys → nothing verifies,
+        """The SHIPPED state until the maintainer adds a key: no trusted keys → nothing verifies,
         and unsigned bundles are unaffected."""
         _sign(bundle, keys)
         empty = tmp_path / "empty-store"
@@ -475,7 +475,7 @@ class TestVerifyRunsBeforeInstall:
 
 
 class TestUnsignedStaysInstallable:
-    """C2's graduated trust: unsigned is a *state*, not a verdict. Never a hard wall."""
+    """Graduated trust: unsigned is a *state*, not a verdict. Never a hard wall."""
 
     def test_unsigned_installs_at_community_tier(
         self, bundle: Path, keys: Path, app_home: Path
@@ -514,7 +514,7 @@ class TestUnsignedStaysInstallable:
 
 
 class TestConsentPayload:
-    """C2's wire shape — what the consent UI reads."""
+    """The signature state's wire shape — what the consent UI reads."""
 
     def test_scan_report_serializes_state_signer_and_reason(self, bundle: Path, keys: Path) -> None:
         from personalclaw.supply_chain import ScanReport

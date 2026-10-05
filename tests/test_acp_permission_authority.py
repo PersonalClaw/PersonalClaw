@@ -99,7 +99,7 @@ def _claims_empty_residual(cov: ProviderCoverage) -> bool:
 
 class TestNotGateableRegistry:
     def test_every_provider_is_enumerated_with_its_measurement(self):
-        """A missing entry must never be readable as "gated" — SC #3's honesty clause."""
+        """A missing entry must never be readable as "gated" — the honest half of host authority."""
         assert set(NOT_GATEABLE) == {"kiro-cli", "claude-code", "codex"}
         for cov in NOT_GATEABLE.values():
             assert cov.measurement, f"{cov.provider} has no measurement provenance"
@@ -108,7 +108,7 @@ class TestNotGateableRegistry:
         entry = not_gateable_entry("acp:kiro-cli", "Creating task list: fix the thing")
         assert entry is not None
         assert entry.tool == "todo_list"
-        assert "G27" in entry.observation
+        assert "Seven of thirteen tool calls" in entry.observation
         assert not_gateable_entry("kiro-cli", "Completing #2") is not None
 
     def test_kiro_self_approved_reads_are_declared_too(self):
@@ -158,7 +158,7 @@ class TestNotGateableRegistry:
         """Vacuity floor for the scanner above — the exact shape it must reject."""
         liar = ProviderCoverage(
             provider="liar",
-            measurement="AAP-1 sweep — residual set measured EMPTY",
+            measurement="an earlier sweep — residual set measured EMPTY",
             entries=(NotGateable(tool="Terminal", reason="r", observation="o"),),
         )
         assert liar.entries and _claims_empty_residual(liar)
@@ -286,7 +286,7 @@ class TestPooledSessionProviderClampsToo:
 
 class TestPermissionFrameCarriesKind:
     def test_declared_kind_survives_into_the_event(self):
-        """The half that §2.2 needs: the residue check must be able to NAME the tool."""
+        """The half the residue check needs: it must be able to NAME the tool."""
         msg = JsonRpcMessage(
             id=7,
             method="session/request_permission",

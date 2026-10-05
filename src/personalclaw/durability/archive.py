@@ -1,6 +1,6 @@
 """Reading a snapshot archive's own manifest — the archive browser's row data.
 
-§6 asks the archive browser to show "per-domain row counts (from the manifest)". The
+The archive browser shows per-domain row counts from the manifest. The
 counts are written INTO the archive by `snapshot.py` (MANIFEST v3's ``domains`` block),
 so this module's whole job is getting them back out cheaply.
 

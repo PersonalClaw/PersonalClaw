@@ -299,7 +299,7 @@ describe('the journal renders what the one read path returned', () => {
 })
 
 describe('a decision in the library reads as a Decision', () => {
-  // The execution log flagged this: `knowledgeMeta` had no `decision` entry, so `resolveType`
+  // `knowledgeMeta` had no `decision` entry, so `resolveType`
   // fell through to `note` and every decision in the library and every search hit read "Note".
   it('resolves by the vision type and by the raw item_type', () => {
     expect(typeLabel({ type: 'decision' } as never)).toBe('Decision')

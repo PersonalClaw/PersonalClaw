@@ -5,7 +5,7 @@ import {
 } from './useAgentActivity'
 import type { ChatSessionSummary, Loop, PendingApproval, SpawnedAgent } from './api'
 
-// ── The AgentActivityFeed fold (AMBIENT-SURFACES A2-3) ───────────────────────
+// ── The AgentActivityFeed fold ───────────────────────
 //
 // The fold is the whole contract: three entity kinds and twelve loop statuses
 // collapse onto FIVE world states here and nowhere else, so every world (including

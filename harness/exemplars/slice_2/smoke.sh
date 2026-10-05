@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Slice 2 smoke — run the exemplar through the real engine with a fake model, assert the
+# Smoke test — run the exemplar through the real engine with a fake model, assert the
 # required_artifacts gate fails the run. No network, no real LLM. Target: well under 30s.
 #
 # Isolates PERSONALCLAW_HOME to a throwaway dir so nothing touches the default home.

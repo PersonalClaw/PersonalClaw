@@ -285,7 +285,7 @@ describe('§A2 the three sites with no mountable host route through the shared r
 //
 // A NUMBER HERE IS A DEBT, NOT A DISPENSATION. The only supported edit is DOWNWARD, and there is no
 // regenerate mode: a regenerate on a budget like this is not a convenience, it is a loophole — it
-// would let the next lane bless a new silent write by re-running a script instead of writing down why
+// would let the next change bless a new silent write by re-running a script instead of writing down why
 // the site is correct. Classification of all 67, as shipped: **(a) real defect 32 · (b) deliberate
 // and correct with the reason already in code 35 · (c) unreachable 0.** Five (a) sites were fixed
 // (the app remove / force-uninstall / activate pair and the highlight delete), plus the digest
@@ -624,7 +624,7 @@ describe('§B no write path discards its own failure, tree-wide and by COUNT', (
       stripped("const pat = '/*'\nconst a = api.removeApp(x).catch(() => {})\n"),
       'a `/*` inside a STRING must not open a block comment',
     ).toBe(1)
-    // And the inverse — the trap that has bitten four lanes here: prose QUOTING the defect is prose.
+    // And the inverse — the trap that has bitten four changes here: prose QUOTING the defect is prose.
     expect(
       stripped('// we deleted `api.removeApp(x).catch(() => {})` here, see #3540\nconst a = 1\n'),
       'a swallowed write QUOTED in a line comment is not code',

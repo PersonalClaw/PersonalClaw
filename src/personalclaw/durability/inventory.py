@@ -649,12 +649,12 @@ INVENTORY: tuple[StateEntry, ...] = (
     # event_triggers.json / autonudge config", and it is hand-listed in BOTH `snapshot.py` and
     # `portability.py` — each with a comment about the round trip that lost it. So it travels, but
     # nothing inventory-derived could see it: it was invisible to `home_is_populated`, to the
-    # ratchet, and to every projection S176-S183 built.
+    # ratchet, and to every projection built on the inventory.
     #
     # `audit_home()` WOULD have flagged it — verified, it reports `triggers.json` as unclaimed on a
-    # home that has one. S179 audited both real homes clean because neither migrated to the store
+    # home that has one. Both real homes audited clean because neither migrated to the store
     # yet, so the guard was right and the population was the gap. That is the same
-    # fixture-versus-reality shape S179 itself was about.
+    # fixture-versus-reality shape the real-home audit itself was about.
     StateEntry(
         id="triggers",
         kind=KIND_JSON_FILE,
@@ -704,7 +704,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_UNION_BY_ID,
         help="script-cron files (the scripts + configs triggers.json script jobs execute)",
     ),
-    # The self-QA companion's own data dir. SV-11 moved the commit-watch cursor here when the
+    # The self-QA companion's own data dir. The commit-watch cursor moved here when the
     # watch stopped being a `crons/` script: an in-process module keeps companion state with the
     # companion. Declared rather than ignored because the cursor is what makes a restore quiet --
     # without it the first fire on a restored home sees every commit in the repo as new.
@@ -916,7 +916,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_LWW,
         help="per-entity user settings",
     ),
-    # 🔴 `dashboard_views.json` shipped with AS-1 and was never declared, so `audit_home()`
+    # 🔴 `dashboard_views.json` shipped and was never declared, so `audit_home()`
     # reports it the moment a user pins a tile — the exact drift this manifest exists to catch,
     # found by declaring the store next to it.
     StateEntry(
@@ -994,7 +994,7 @@ INVENTORY: tuple[StateEntry, ...] = (
     # other tree stores (loop, artifacts, skills). Not derived: the evidence is the
     # point of backup, not a rebuildable index.
     #
-    # 🔴 ES-5 wires the exclusion the note deferred. §1.1/§2.2: `studies/*/locked`
+    # 🔴 The exclusion the note deferred is wired here: `studies/*/locked`
     # holds hidden validation answer keys that are "never rendered into any worker session's
     # prompt, bindings, or workspace" — and an export archive handed to an agent is the
     # longest way round to exactly that. Now that `evals/studies/<id>/locked/` has a writer
@@ -1009,7 +1009,7 @@ INVENTORY: tuple[StateEntry, ...] = (
     # lost its checks — is caught loudly rather than silently, because `studies.run_study`
     # REFUSES a study whose registration declares checks it cannot load.
     #
-    # §7/ES-10 adds `benchmarks/bakeoff` for the same reason and by the same mechanism: it
+    # `benchmarks/bakeoff` is excluded for the same reason and by the same mechanism: it
     # holds redacted excerpts of the user's OWN traffic, captured only while an off-by-
     # default flag is on. Those excerpts are scored once and expire, so the export/snapshot
     # cost of dropping them is nil (re-enable capture to refill), while carrying a redacted
@@ -1026,7 +1026,7 @@ INVENTORY: tuple[StateEntry, ...] = (
             "pre-registered studies (their hidden locked/ checks never leave this machine)"
         ),
     ),
-    # 🔴 S179 — the ten paths `audit_home()` reports on a REAL home. The guard was correct and had
+    # 🔴 The ten paths `audit_home()` reports on a REAL home. The guard was correct and had
     # never been pointed at one: every existing test builds an 8-path synthetic fixture, so a store
     # added after the manifest was written could not fail it. `learning.db`,
     # `session_search.db`, `spend.json`, `model_calls.jsonl` and `inbox.json` were absent from a
@@ -1625,7 +1625,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         merged_in=False,
         help="inbound access clients: labels, bindings and token hashes (never tokens)",
     ),
-    # How long each integration token works (ledger 317a), keyed by the token's SHA-256 —
+    # How long each integration token works, keyed by the token's SHA-256 —
     # never the token. EXPORTS beside the client registry it describes, for the same
     # reason: a home restored without it records every configured token as new, and gives
     # each a fresh 90 days. Not `secret=True`: a hash does not authenticate anything. Left as it
@@ -1639,8 +1639,8 @@ INVENTORY: tuple[StateEntry, ...] = (
         merged_in=False,
         help="when each integration token was issued and stops working, by hash (never tokens)",
     ),
-    # 🔴 `derived=True`, so this is DELIBERATELY excluded from exports (§10 lists it
-    # among the excluded stores) while still being CLAIMED — an undeclared file under
+    # 🔴 `derived=True`, so this is DELIBERATELY excluded from exports while still being
+    # CLAIMED — an undeclared file under
     # the home fails `audit_home()`, so leaving it out entirely would report the
     # request trail as unmanaged drift the first time anyone calls an inbound surface.
     # It is a local request trace, trimmed at 2× cap, and its security-relevant lines
@@ -1665,7 +1665,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         path="app_messages",
         domain=DOMAIN_PLATFORM,
         merge=MERGE_UNION_BY_ID,
-        help="app-to-app broker queues, one JSON per target app (APE-9)",
+        help="app-to-app broker queues, one JSON per target app",
     ),
     StateEntry(
         id="chat_plans",
@@ -1673,7 +1673,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         path="chat_plans",
         domain=DOMAIN_WORK,
         merge=MERGE_UNION_BY_ID,
-        help="plan-mode walkthrough sessions, one JSON per chat (CC-8)",
+        help="plan-mode walkthrough sessions, one JSON per chat",
     ),
     # A nested `{"rows": {topic_key: {...}}}` document, NOT a list of id-keyed rows, so
     # `replace_only` rather than `lww_by_updated_at`: the per-row `updated_at` inside
@@ -1806,7 +1806,7 @@ INVENTORY: tuple[StateEntry, ...] = (
             "defaults."
         ),
     ),
-    # The LEGACY MCP store (`settings/mcp.json`). UT3 made `mcp.json` canonical; every
+    # The LEGACY MCP store (`settings/mcp.json`). `mcp.json` became canonical; every
     # release since folded this file in at start and emptied it, so on a home that has run
     # one it is a husk, and nothing reads it now (a server still in it is named by the
     # Doctor, `tools.legacy_mcp_settings`). Declared rather than ignored because a husk costs
@@ -1835,7 +1835,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_UNION_BY_ID,
         help="user-authored surface overlay files",
     ),
-    # ── the stores a week of normal use found in NO snapshot (settings B17, day 8) ──
+    # ── the stores a week of normal use found in NO snapshot ──
     # After a power user's week `audit_home()` named the rotated audit log, `incident.json`,
     # `routing_stats.json`, `trigger-idle/` and `capture/` as unclaimed — and the census that
     # was meant to catch a new store before it shipped could not see four of them: each was
@@ -2123,9 +2123,9 @@ INVENTORY: tuple[StateEntry, ...] = (
 # is how a newly added store gets caught instead of silently dodging backup.
 IGNORED: tuple[str, ...] = (
     "snapshots",  # backup output — never backed up recursively
-    "outbox",  # sync staging (S3)
+    "outbox",  # sync staging
     # The sync root: the pull cursor's per-peer high-water marks, the outbox's delivery
-    # obligations, and the conflict review queue (S3/DAS-7) — all MACHINE-LOCAL. Carrying them
+    # obligations, and the conflict review queue — all MACHINE-LOCAL. Carrying them
     # into a snapshot would make a restored copy claim another machine's cursor position, and a
     # conflict is *this* machine's unresolved decision (both versions durably persist in the
     # shared store, so the queue is bookkeeping, not the only copy of anything).
@@ -2155,7 +2155,7 @@ IGNORED: tuple[str, ...] = (
     "agent_pids.txt",
     "doctor",  # remediation run ledger (regenerated)
     ".git",
-    # 🔴 S179 — MACHINE-LOCAL, and deliberately ignored rather than declared. A snapshot is
+    # 🔴 MACHINE-LOCAL, and deliberately ignored rather than declared. A snapshot is
     # portable: it is restored onto another machine, or the same one after a wipe, and each of these
     # identifies or authenticates THIS install. Carrying them would either re-plant a credential
     # (`session_key`, `sessions.json` hold live auth material) or make two installs claim one
@@ -2174,14 +2174,14 @@ IGNORED: tuple[str, ...] = (
     # overwriting and deleting the other's secrets. A home restored or made from an archive names
     # its own on its first keychain write.
     "keychain_namespace",
-    # 🔴 BA-4 — the per-site browser profiles (`browse/profiles/<site_slug>/`). IGNORED for the
+    # 🔴 The per-site browser profiles (`browse/profiles/<site_slug>/`). IGNORED for the
     # SAME reason as `session_key`/`sessions.json` directly above, and deliberately NOT a
     # `secret=True` entry, because those two postures differ in exactly the way that matters here:
     # a secret entry is EXCLUDED from exports but CAPTURED by snapshots on purpose, so a backup can
     # restore the credential store. A Chrome `user-data-dir` holds the cookies that ARE the
     # authentication, and a snapshot is restored onto another machine — or handed to someone
     # debugging — so capturing one plants a live logged-in session on a host the user never signed
-    # in from. BROWSE-AUTOMATION §5.1 says it outright: "never backed up by snapshot/portability
+    # in from. The rule is explicit: "never backed up by snapshot/portability
     # (credentials), never exported". That is this list, not the secret set. The profiles are also
     # unbounded in size and trivially re-creatable by signing in again, so nothing is lost.
     "browse",
@@ -2226,7 +2226,7 @@ IGNORED: tuple[str, ...] = (
     # input `record_running_version` compares the running version against to derive
     # `updates.last_version`, so a snapshot taken on 0.2.0 and restored onto a 0.1.3 install
     # would make the next startup record `last_version = 0.2.0` and the Updates panel offer
-    # "Roll back to v0.2.0" — an UPGRADE, i.e. the exact mis-offer RUM-9 exists to prevent.
+    # "Roll back to v0.2.0" — an UPGRADE, i.e. the exact mis-offer rollback must avoid.
     # Omitted, `record_running_version` writes nothing on that first run and makes no offer
     # until it observes a real version change, which is the honest answer.
     "update_run.json",
@@ -2623,12 +2623,12 @@ def audit_home(home: Path) -> AuditResult:
         result.unclaimed.append(rel + ("/" if child.is_dir() else ""))
 
     # Every *.db on disk must be declared as a sqlite entry, wherever it lives.
-    # A database nested inside a `tree` entry is the exact hazard this plan
+    # A database nested inside a `tree` entry is the exact hazard this check
     # exists to close: it gets filesystem-copied while open in WAL mode.
     declared = {e.path for e in sqlite_entries()}
     # A store can be a DIRECTORY of databases rather than one file — `codegraph/<workspace-key>.db`,
     # of which a real home held 5478, so an exact-path compare can never match them and the check
-    # drowns in thousands of rows (the same over-reporting failure S178 fixed in the coverage
+    # drowns in thousands of rows (the same over-reporting failure once fixed in the coverage
     # ratchet).
     #
     # 🔴 But my first version exempted every `tree`/`derived` prefix, which BLINDED the check to the

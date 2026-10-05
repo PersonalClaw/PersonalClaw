@@ -238,8 +238,8 @@ def test_three_unread_cycles_are_reported_as_a_proposal(home):
 
 
 def test_the_publish_question_grades_without_a_vector_store(home):
-    """PP-9 opened the publish question against a semantic-memory metric nothing wrote, so it always
-    closed `inconclusive`. The consumption source is read off the artifact, so the bet grades
+    """The publish question used to open against a semantic-memory metric nothing wrote, so it
+    always closed `inconclusive`. The consumption source is read off the artifact, so the bet grades
     for real on a box with no embedder — asserted here because `_grade` passes a null store."""
     run = _cycle("one-shot", "one-shot-a")
     (question,) = _questions(run)
@@ -265,8 +265,8 @@ def test_the_sweep_reads_pp9s_record_and_adds_no_counter(home):
     # The horizon in the body came off the `pending_outcome`, not from a number this module keeps.
     assert f"{_HORIZON / _DAY:.0f} days" in proposal.body
     # The sweep persists NOTHING of its own: the home holds the stores that existed before it, and
-    # no state file, counter or catalog named after it. A second store is the duplication PP-9/PP-10
-    # exist to remove, so its absence is asserted rather than assumed.
+    # no state file, counter or catalog named after it. A second store is the duplication that
+    # reusing the record exists to remove, so its absence is asserted rather than assumed.
     written = {entry.name for entry in home.iterdir()}
     assert not {name for name in written if "liveness" in name or "dormanc" in name}, written
 

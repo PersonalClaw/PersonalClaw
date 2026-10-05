@@ -17,7 +17,7 @@ import { PanelHeader, Section, RowGroup, ToggleRow, NumberRow } from './settings
  *  `feedback.ENFORCED_SUPPRESSION_KINDS`); every other kind below the threshold reads
  *  "retire proposed", because it keeps surfacing and only earns a proposal. Snooze pauses
  *  the check 30 days; Clear un-suppresses after you've edited the source.
- *  Rich "is it learning?" analytics belong to LEARNING-VISIBILITY — this is the
+ *  Rich "is it learning?" analytics belong to the Learning page — this is the
  *  raw table. */
 export function FeedbackPanel() {
   // 🔴 THIS SWALLOWED ITS REJECTION AND THE TABLE SPOKE FOR THE SERVER (#532). A failed

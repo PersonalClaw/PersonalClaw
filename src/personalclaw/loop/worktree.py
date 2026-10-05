@@ -160,9 +160,9 @@ def branch_name(task_id: str) -> str:
     return f"{_BRANCH_PREFIX}{task_id}"
 
 
-# ── creation-cost instrumentation (HARNESS-CRAFT §1.1 "measure first") ──
+# ── creation-cost instrumentation ("measure first") ──
 #
-# §1 is explicitly a MEASURED-bottleneck plan: the hydration tuning in §1.2 (sparse
+# This is explicitly a MEASURED-bottleneck design: the hydration tuning (sparse
 # checkout, pooled creation, a reuse pool) is only allowed to be built if a fan-out
 # actually pays for it. That decision needs a number from the real function, on real
 # repos, over time — so the timing line ships whether or not the gate opens.
@@ -173,7 +173,7 @@ def branch_name(task_id: str) -> str:
 #   worktree add outcome=created task=t-abc ms=812 files=10432 size_class=large
 #
 # * ``outcome`` first, because it decides whether the row is a hydration sample at all.
-#   ``created`` is the cost §1.2 would attack; ``reused`` is add_worktree's idempotent
+#   ``created`` is the cost to attack; ``reused`` is add_worktree's idempotent
 #   early return (near-zero, and the datapoint a reuse pool would be judged against);
 #   ``failed`` carries a duration too — a creation that burned the whole ``_TIMEOUT``
 #   before failing is the most interesting row on the page, and dropping it would make
@@ -191,7 +191,7 @@ OUTCOME_REUSED = "reused"
 OUTCOME_FAILED = "failed"
 
 #: Upper bound (exclusive) of tracked files per class name. Decade buckets, so the
-#: benchmark case §1.1 names — a 10K-file repo — sits exactly on the ``large`` floor
+#: benchmark case — a 10K-file repo — sits exactly on the ``large`` floor
 #: rather than straddling a boundary. Coarse on purpose: the tag exists to say which
 #: measurements may be compared with which, and a finer class would imply the timing
 #: number is repeatable to a precision it does not have.
@@ -300,8 +300,8 @@ def _log_creation(workspace: str, task_id: str, elapsed: float, outcome: str) ->
 # are DIRECTORIES and root-level files stay hydrated, so a scoped worktree still has the
 # repo's build/config files (pyproject, Makefile, package.json) that any real task needs.
 
-#: Ceiling on concurrent ``git worktree add`` calls (§1.2 "bounded by os.cpu_count(),
-#: ceiling 4"). Matches ``sdlc._POOL_CAP`` — a phase never has more than that many
+#: Ceiling on concurrent ``git worktree add`` calls (bounded by os.cpu_count(),
+#: ceiling 4). Matches ``sdlc._POOL_CAP`` — a phase never has more than that many
 #: task-workers in flight, so a wider pool could not be used even if the box were bigger.
 POOL_CEILING = 4
 
@@ -317,7 +317,7 @@ POOL_CEILING = 4
 #: exactly like "edit web/src" would. That is acceptable because the two failure directions
 #: are not symmetric: over-inclusion only costs some of the hydration saving, while
 #: under-inclusion is caught by :func:`widen_for_pending`. Neither can break a task, which
-#: is the whole reason §Risks calls task scope a HINT rather than a contract.
+#: is the whole reason task scope is a HINT rather than a contract.
 _PATH_TOKEN_RE = re.compile(r"(?<![\w/.-])((?:[\w.-]+/)+[\w-][\w.-]*)")
 _MAX_SCOPE_CANDIDATES = 16
 #: Cone entries per worktree. A scope this wide is not a scope; treat it as "no usable
@@ -381,7 +381,7 @@ def resolve_scope(workspace: str, candidates: list[str]) -> list[str]:
     parent becomes the cone entry). Anything else — a hallucinated path, a file at the
     repo root, a path from another project — is dropped. Returns ``[]`` when nothing
     resolves or the result is too wide to be a scope, and ``[]`` means FULL hydration:
-    the fallback §1.2 requires whenever scope is "absent/unreliable"."""
+    the required fallback whenever scope is absent or unreliable."""
     if not candidates:
         return []
     tracked = _tracked_dirs(workspace)
@@ -474,7 +474,7 @@ def widen_for_pending(wt_path: str) -> list[str]:
     """Widen the cone to cover every out-of-cone change present in ``wt_path``;
     return the directories added (``[]`` when nothing needed widening).
 
-    This is the auto-widen of §1.2: an out-of-scope write must SUCCEED, and in git's
+    This is the auto-widen: an out-of-scope write must SUCCEED, and in git's
     sparse world "succeed" can only mean "reaches the commit" — an unstaged file is
     dropped silently (see the block above). Called by :func:`merge_worktree` before it
     stages, so the widening happens on the path where the loss would otherwise occur.
@@ -508,8 +508,8 @@ def pool_size(n_items: int | None = None) -> int:
     """Worker count for batched worktree creation: ``min(cpu_count, POOL_CEILING)``,
     never below 1, and never more than there is work for.
 
-    Bounded on BOTH sides deliberately. The ceiling is §1.2's ("bounded by
-    os.cpu_count(), ceiling 4"): what the pool overlaps is hydration, which is I/O-bound,
+    Bounded on BOTH sides deliberately. The ceiling is ``os.cpu_count()``, at most
+    4: what the pool overlaps is hydration, which is I/O-bound,
     and each worker also serializes briefly on the per-repo registration lock (see
     ``_REGISTER_LOCKS``) — so more threads than 4 buys contention, not throughput. The
     cpu_count leg keeps a 2-core box from being asked for 4."""
@@ -601,12 +601,12 @@ def reset_worktree(workspace: str, task_id: str, project_id: str = "") -> bool:
     """Reset a SURVIVING worktree so the next run of this task starts clean, KEEPING its
     hydration (and its sparse cone). True iff the tree is now genuinely clean.
 
-    §1.2's reuse pool: where hydration dominates, resetting an existing checkout beats
+    The reuse pool: where hydration dominates, resetting an existing checkout beats
     remove + re-add. False means the caller must tear down (remove + add fresh) — a
     half-reset worktree is worse than none, because it silently hands the next run the
     previous one's leftovers.
 
-    **The recipe is three commands, not the plan's two.** §1.2 specifies
+    **The recipe is three commands, not two.** The obvious pair is
     ``checkout -B <branch> <base>`` + ``clean -fd``; measured, that pair leaves BOTH a
     modified tracked file and a staged index in place — ``checkout -B`` carries local
     modifications across on purpose, and ``clean`` only touches untracked files. So a

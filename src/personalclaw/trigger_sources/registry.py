@@ -1,4 +1,4 @@
-"""The flat trigger-source registry + the fenced ingestion path (AUTO-A4).
+"""The flat trigger-source registry + the fenced ingestion path.
 
 Mirrors :mod:`personalclaw.sync_transports.registry` and ``action_providers/registry.py``: the
 ``trigger_source`` provider-type handler (``providers/registry.py::TriggerSourceTypeHandler``)
@@ -40,7 +40,7 @@ _undeclared: dict[str, set[str]] = {}
 def namespace(source_name: str, event: str) -> str:
     """The namespaced bus event name for *event* from the source *source_name*.
 
-    ``app:<source>:<event>`` — the plan's literal shape. Built from the registered name, never
+    ``app:<source>:<event>``, exactly. Built from the registered name, never
     from anything the app supplies at emit time, so an app cannot emit into another's namespace.
     """
     return f"{NAMESPACE_PREFIX}:{source_name}:{event}"
@@ -110,7 +110,7 @@ def emit(source_name: str, event: "SourceEvent", *, now: float = 0.0) -> str:
 
     **The single ingestion point**, so the namespace, the fence and the provenance cannot be
     applied differently by two call sites — the failure mode that made the ``web_watch`` screen
-    gap (S134) invisible for a release.
+    gap invisible for a release.
 
     Order, and why each step is where it is:
 
@@ -121,7 +121,7 @@ def emit(source_name: str, event: "SourceEvent", *, now: float = 0.0) -> str:
        could only ever fire a catch-all — a silent widening of whatever that trigger meant.
     3. **Namespace from the REGISTERED name.** Never from the payload (see :func:`namespace`).
     4. **Fence the text AT ORIGIN**, with provenance naming the class (``app:<name>``), the
-       instance (the event's key) and the transformation. The ``web_watch`` precedent (S127):
+       instance (the event's key) and the transformation. The ``web_watch`` precedent:
        fencing here means the fire's door downstream (``fire_facts.hand_on``) keeps this fence,
        which holds all of the text (``outside_text.is_whole_fence``), and screens it there, so
        the richer attributes survive instead of a coarse re-wrap.
@@ -152,8 +152,8 @@ def emit(source_name: str, event: "SourceEvent", *, now: float = 0.0) -> str:
         from personalclaw.security import fence_untrusted
 
         # Fenced for EVERY event, not only a suspicious one — an app's payload is untrusted text
-        # by definition (the plan: "app-sourced payloads are untrusted text"). Fencing only the
-        # flagged ones would mean the screen's misses arrive as instructions.
+        # by definition. Fencing only the flagged ones would mean the screen's misses arrive as
+        # instructions.
         fenced = fence_untrusted(
             raw_text,
             source=f"trigger:{namespaced}",

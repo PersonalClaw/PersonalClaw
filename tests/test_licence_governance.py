@@ -26,7 +26,7 @@ Three disjuncts, any one of which reds CI:
    structural half of the promise; the paragraph is only its statement.
 3. **A new outbound host.** Owned by ``test_network_egress_hosts.py``, not re-implemented
    here. :func:`test_the_rail_reds_on_a_test_phone_home_host` drives *that* rail red from
-   this file so clause 3 of the change is exercised for all three disjuncts in one place.
+   this file so the negative case is exercised for all three disjuncts in one place.
 
 Disjunct 1 is three claims, not one, because an identifier is the *cheapest* of the three to
 keep honest and the least load-bearing. A licence file says MIT, carries a GRANT, and names a
@@ -281,7 +281,7 @@ def _walk(root: Path):
     enumerates every object in `.git` and every file in `.venv` before discarding them.
 
     The skip check is against the path RELATIVE to *root*, never the absolute one: this
-    repository is routinely checked out into a `.worktrees/<lane>/` sibling, so matching
+    repository is routinely checked out into a `.worktrees/<name>/` sibling, so matching
     absolute parts made the whole sweep return nothing there while looking perfectly clean —
     a rail that silently scans zero files. `test_the_census_is_not_vacuous` is what catches
     that class of mistake, and it caught exactly this one.
@@ -582,7 +582,7 @@ def check_no_licence_holder_is_an_artefact_name(root: Path) -> None:
     )
 
 
-# ── clause 1: the commitment exists, is dated, and is in both files ─────────────────────
+# ── the commitment exists, is dated, and is in both files ───────────────────────────────
 
 
 @pytest.mark.parametrize("doc", ["README.md", "SECURITY.md"])
@@ -617,7 +617,7 @@ def test_the_governance_commitment_is_present_and_dated(doc: str) -> None:
     )
 
 
-# ── clause 2, disjunct 1: the licence identifier ────────────────────────────────────────
+# ── disjunct 1: the licence identifier ──────────────────────────────────────────────────
 
 
 def test_every_licence_declaration_in_the_tree_says_mit() -> None:
@@ -745,7 +745,7 @@ def test_the_census_is_not_vacuous() -> None:
     assert "pyproject.toml" in sites, "the sweep did not find pyproject.toml's licence field"
 
 
-# ── clause 2, disjunct 2: no CLA ────────────────────────────────────────────────────────
+# ── disjunct 2: no CLA ──────────────────────────────────────────────────────────────────
 
 
 def test_no_contributor_licence_agreement_exists() -> None:
@@ -753,7 +753,7 @@ def test_no_contributor_licence_agreement_exists() -> None:
     check_no_cla_file(_ROOT)
 
 
-# ── clause 3: the negative case, for all three disjuncts ────────────────────────────────
+# ── the negative case, for all three disjuncts ──────────────────────────────────────────
 
 
 def _pyproject(identifier: str) -> str:

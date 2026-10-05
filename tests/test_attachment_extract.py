@@ -94,7 +94,7 @@ class TestAttachmentInjectionRoots:
     ``screencapture -i`` writes into ``screenshots/`` and threads the path straight
     into the send. Both must reach the model — as the image itself for a model that takes
     images, as its extracted text otherwise — or the chip claims an attachment the model
-    was never told about (CHAT-CRAFT CC-4 finding).
+    was never told about.
     """
 
     class _Session:

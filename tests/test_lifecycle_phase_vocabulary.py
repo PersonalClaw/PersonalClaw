@@ -1,4 +1,4 @@
-"""`PP-16` "one status vocabulary": terminality is DERIVED from one shared lifecycle phase.
+"""One status vocabulary: terminality is DERIVED from one shared lifecycle phase.
 
 `LoopStatus` and `RunStatus` disagreed about the terminality of the SAME word — `failed` refused
 any further transition on a run while a failed loop is a `resume` source — because "has it
@@ -167,7 +167,7 @@ def test_failed_is_ended_for_both_nouns_but_terminal_for_only_the_run():
     assert RunStatus.FAILED in TERMINAL_RUN_STATUSES, "a failed run must stay terminal"
     assert RESUMABLE_ENDED_STATUSES == frozenset({LoopStatus.FAILED}), (
         "the loop's resumable-ended set is the one place `failed` diverges from the run's; "
-        "changing its membership is an owner decision about resumability, not a tidy-up"
+        "changing its membership is a deliberate decision about resumability, not a tidy-up"
     )
     assert RESUMABLE_ENDED_RUN_STATUSES == frozenset(), "no ended run may be left"
 

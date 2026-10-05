@@ -132,7 +132,7 @@ REGISTRY = EgressPolicy(
 # "only what is listed", and visible as a refusal rather than a silent widening.
 LISTED = EgressPolicy(name="listed", allow_only=True)
 
-# DURABILITY-AND-SYNC §4.3/§4.4 + Plug-in Map: the sync transport's egress posture. A sync
+# The sync transport's egress posture. A sync
 # transport talks to EXACTLY ONE operator-configured object-store endpoint, forever — so the
 # base is `allow_only` with an EMPTY host list, which denies every host until
 # :func:`sync_egress_policy` pins the configured endpoint onto it. That ordering is the point:
@@ -393,7 +393,7 @@ _PROFILES: dict[str, EgressPolicy] = {
 
 
 def egress_policy_for_tier(tier: str) -> "EgressPolicy | None":
-    """Resolve a safety-profile egress TIER to a base :class:`EgressPolicy` (§4.2).
+    """Resolve a safety-profile egress TIER to a base :class:`EgressPolicy`.
 
     * ``off``      → ``None`` (the caller denies all egress — no policy applies).
     * ``listed``   → LISTED: exclusively the operator's ``security.egress.allow_hosts``
@@ -642,7 +642,7 @@ def egress_policy_for(base: EgressPolicy) -> EgressPolicy:
 
 
 def fetch_action_egress_policy() -> EgressPolicy:
-    """The posture ONE ``net-fetch`` action node runs under (AUTOMATION-SUBSTRATE / WF2KNO-9).
+    """The posture ONE ``net-fetch`` action node runs under.
 
     Derived, never hand-written — :data:`FETCH_ACTION` supplies the exclusive stance, the tightened
     caps and the metadata denies, and :func:`egress_policy_for` layers the operator's
@@ -712,7 +712,7 @@ class SyncEndpointRefused(ValueError):
 
 
 def sync_egress_policy(endpoint: str) -> EgressPolicy:
-    """The SYNC policy pinned to one configured object-store ``endpoint`` (§4.3, Plug-in Map).
+    """The SYNC policy pinned to one configured object-store ``endpoint``.
 
     Derived, never hand-written: :data:`SYNC` supplies the raised caps and the exclusive
     stance, :func:`egress_policy_for` layers the operator's ``security.egress`` posture

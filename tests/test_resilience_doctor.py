@@ -7,11 +7,11 @@ executable invariants:
   never ``restart_suggested``;
 * a tier-2 (cheap-RPC) failure short-circuits the tier-3 packs and IS the only
   failure that suggests a restart;
-* a probe that raises becomes an ``ok=False`` row, never a 500 (the AUTO-R15
-  framework invariant);
+* a probe that raises becomes an ``ok=False`` row, never a 500 (the probe
+  framework's invariant);
 * secrets are masked out of ``detail``/``evidence`` before they leave a probe.
 
-Success-criterion #1 (gateway healthy, a capability dead → core OK, that
+The headline case (gateway healthy, a capability dead → core OK, that
 capability failed at tier 3, no restart) is asserted directly.
 """
 
@@ -62,7 +62,7 @@ def _raiser(cap: str, tier: Tier, exc: Exception) -> Probe:
 async def test_capability_failure_never_marks_core_or_suggests_restart():
     """A tier-3 capability failure degrades ONLY that capability's row.
 
-    Success-criterion #1: gateway healthy (core tiers pass) but a capability dead →
+    The headline case: gateway healthy (core tiers pass) but a capability dead →
     core_ok stays True, restart is NOT suggested, only that capability is 'worst'.
     """
     probes = [
@@ -123,7 +123,7 @@ async def test_socket_failure_short_circuits_without_restart_flag():
 
 @pytest.mark.asyncio
 async def test_probe_that_raises_becomes_ok_false_never_propagates():
-    """The AUTO-R15 framework invariant: a probe exception is an ok=False row, not a
+    """The probe framework's invariant: a probe exception is an ok=False row, not a
     raised error — run_doctor must never propagate a probe's bug."""
     probes = [
         _ok("core", Tier.PROCESS),
@@ -465,7 +465,7 @@ async def test_the_inventory_probe_CAPS_its_evidence(tmp_path):
     assert res.evidence["undeclared_db_count"] == 30
 
 
-# ── memory-pipeline: the FLUSH_OK-streak alarm over REAL LEARN-R19 records ──
+# ── memory-pipeline: the FLUSH_OK-streak alarm over REAL staging records ──
 #
 # The probe used to report structural presence and never alarm, on the stated grounds that
 # "the richer FLUSH_OK-streak WARN arrives with the flywheel's records". The records exist
@@ -547,7 +547,7 @@ async def test_memory_pipeline_stays_ok_over_a_short_quiet_window(tmp_path):
 
 @pytest.mark.asyncio
 async def test_memory_pipeline_warns_on_an_unconsumed_staging_backlog(tmp_path):
-    """Capture works, the drain does not: the change's "staging backlog" clause.
+    """Capture works, the drain does not: the staging backlog.
 
     Uses the real `stage` writer, so the count is the store's own unconsumed-entry count
     rather than a number this test invented.
@@ -583,7 +583,7 @@ async def test_memory_pipeline_warns_on_a_flush_error(tmp_path):
 @pytest.mark.asyncio
 async def test_memory_pipeline_reports_the_per_op_cost_split(tmp_path):
     """ "Was it expensive" is one number; "expensive at WHAT" is the question that leads to a
-    change. The change's per-op clause: the cadence split rides along as evidence, dearest
+    change. So the cadence split rides along as evidence, dearest
     first."""
     store = _staging(tmp_path)
     _flush(store, "flush_produced", cadence="per_turn", cost=0.02)

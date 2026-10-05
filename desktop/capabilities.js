@@ -70,7 +70,7 @@ const IPC_CHANNELS = {
   /** renderer → main: register or un-register the login item. */
   loginItemSet: `${IPC_PREFIX}login-item-set`,
   /** renderer → main: raise ONE native OS notification. The gateway already
-   * decided this note names plan-42's `native` target and that this shell can deliver it;
+   * decided this note names the `native` delivery target and that this shell can deliver it;
    * this channel is the use, handled by `registerNativeNotificationIpc` rather than folded
    * into the capability vocabulary (probe/request ask "may we?", this does it). */
   notify: `${IPC_PREFIX}notify`,

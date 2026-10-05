@@ -1,6 +1,6 @@
 """Procedural memory must learn from ACP turns.
 
-The measured gap (``O12``): a six-tool-call ACP turn produced **zero** procedural rows.
+The measured gap: a six-tool-call ACP turn produced **zero** procedural rows.
 Root cause was a two-link break, and both links are pinned here:
 
 1. ``drain_tool_outcomes`` existed on exactly ONE provider (the native runtime). The
@@ -184,13 +184,13 @@ class TestFailureBitCrossesTheAdapter:
         assert "ok" not in acp_event_to_agent_event(results[0]).tool_meta
 
 
-# ── link 1: the hook, and the O12 reproduction ───────────────────────────────
+# ── link 1: the hook, and the zero-rows reproduction ─────────────────────────
 
 
 class TestAcpTurnProducesProceduralRows:
     @pytest.mark.asyncio
     async def test_six_tool_call_turn_yields_six_outcomes(self):
-        """``O12`` verbatim: six tool calls in one ACP turn. Before the fix the drain
+        """The measured gap verbatim: six tool calls in one ACP turn. Before the fix the drain
         hook did not exist on any ACP provider, so this list was empty."""
         calls = [
             ("c1", "Read", "completed"),
@@ -232,8 +232,8 @@ class TestAcpTurnProducesProceduralRows:
         assert "success" in texts and "failed" in texts
 
     @pytest.mark.asyncio
-    async def test_o12_reproduction_through_the_duck_typed_read(self, svc):
-        """``O12`` end to end, read the way ``chat_runner.py`` reads it — the same
+    async def test_the_zero_rows_reproduction_through_the_duck_typed_read(self, svc):
+        """The zero-rows gap end to end, read the way ``chat_runner.py`` reads it — the same
         ``getattr(provider, "drain_tool_outcomes", None)``, not a direct call. This is
         the test that reds on ZERO ROWS if the hook is ever removed from the ACP
         providers again, instead of failing on a missing attribute."""
@@ -250,7 +250,7 @@ class TestAcpTurnProducesProceduralRows:
         atr.record_procedural_outcomes(svc, tool_outcomes, scope_ref=None)
 
         rows = svc.get_records(kinds={MemoryKind.PROCEDURAL.value})
-        assert rows, "O12: zero procedural rows after a six-tool-call ACP turn"
+        assert rows, "zero procedural rows after a six-tool-call ACP turn"
 
     @pytest.mark.asyncio
     async def test_every_emitted_outcome_is_in_the_closed_vocabulary(self):

@@ -1,6 +1,6 @@
 """The knowledge PUSH half — ``sharing_policy: shared`` items flow OUT.
 
-WORK-CONTAINERS §1.6 shipped the vocabulary (:mod:`personalclaw.knowledge.project_scope`:
+Project scoping shipped the vocabulary (:mod:`personalclaw.knowledge.project_scope`:
 ``project_id`` / ``run_id`` / ``sharing_policy``) and the *inbound* provider contract
 (:meth:`~personalclaw.knowledge_providers.base.KnowledgeProvider.ingest`). What was missing
 was the other direction: an item the owner marked ``shared`` had nowhere to go, so "shared"
@@ -17,7 +17,7 @@ This module is the outbound half, and it is the ONLY place the gate lives:
   workings, and the safe direction for anything crossing to a third-party store is "stays
   home" — the same reading of un-declared intent that makes ``private`` the default policy.
 * **``contributor`` is the SHIPPED name**, not a new one: it is the column
-  :mod:`personalclaw.vector_memory` already attributes semantic memory with (TSE §2.3) and
+  :mod:`personalclaw.vector_memory` already attributes semantic memory with, and
   the field :func:`personalclaw.identity.contributor_label` already renders. A second
   vocabulary for "who wrote this" is exactly what the shared-store conformance contract
   exists to prevent.
@@ -148,7 +148,7 @@ async def push_shared_item(item: Any, *, contributor: str | None = None) -> list
     """Offer a ``shared`` knowledge item to every registered provider's outbound half.
 
     *item* is a :class:`~personalclaw.knowledge_providers.base.KnowledgeItem` whose
-    ``metadata`` carries the §1.6 scope. Returns the sorted names of the providers that
+    ``metadata`` carries the project scope. Returns the sorted names of the providers that
     ACCEPTED it (a provider returning its own record from
     :meth:`~personalclaw.knowledge_providers.base.KnowledgeProvider.push`), which is what
     lets the run that wrote the item see the push happened instead of assuming it.

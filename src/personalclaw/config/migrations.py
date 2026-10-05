@@ -156,7 +156,7 @@ def apply_config_migrations(cfg: "AppConfig") -> bool:
         cfg.agents[CODER_AGENT_NAME] = make_coder_profile(AgentProfile)
         needs_migration = True
 
-    # Seed the built-in Code DEEP PLANNER (agentic intake planner, C163) if
+    # Seed the built-in Code DEEP PLANNER (agentic intake planner) if
     # absent. Tool-equipped so it investigates real context before planning;
     # inert until a code project requests a deep plan.
     if CODE_PLANNER_AGENT_NAME not in cfg.agents:

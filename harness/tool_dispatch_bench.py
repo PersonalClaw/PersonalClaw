@@ -1,8 +1,9 @@
 """Concurrent tool-dispatch benchmark + the before/after gate.
 
-HC-6 is a concurrency change, and a concurrency change with no before-number cannot be
-shown to have helped — so it inherits the measure-first discipline rather than inventing
-a second one. The three decisions HC-1 made structurally are made the same way here:
+Concurrent tool dispatch is a concurrency change, and a concurrency change with no
+before-number cannot be shown to have helped — so it inherits the measure-first discipline
+rather than inventing a second one. The three decisions the worktree benchmark
+(:mod:`harness.worktree_bench`) made structurally are made the same way here:
 
 * **The benchmark reads the SHIPPED log line; it does not keep its own stopwatch.**
   Durations come from parsing :data:`~personalclaw.agents.native.dispatch_plan.
@@ -15,7 +16,7 @@ a second one. The three decisions HC-1 made structurally are made the same way h
   gate decides whether a concurrency change is claimed to have worked.
 * **The baseline arm is production code, not a simulation of it.** It is the same runtime
   with ``max_tool_concurrency=1``, which makes every wave one call wide — i.e. exactly the
-  pre-HC-6 dispatch. A separate "serial mode" written for the benchmark would be free to
+  one-at-a-time dispatch. A separate "serial mode" written for the benchmark would be free to
   differ from the real serial path, and the whole comparison would rest on that difference.
 
 The turn being measured, :data:`MULTI_LOOKUP_TURN`, is a representative multi-lookup turn:
@@ -182,7 +183,7 @@ def collect_timing_rows() -> Iterator[list[DispatchRow]]:
 
 @dataclass
 class GateVerdict:
-    """HC-6's before/after decision plus the reasoning that produced it."""
+    """The concurrent-dispatch before/after decision plus the reasoning that produced it."""
 
     verdict: str
     notes: list[str] = field(default_factory=list)

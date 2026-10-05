@@ -11,7 +11,7 @@ import { runLook, nodeLook } from './workflowMeta'
 //   taskMeta terminal `done`  "Completed"
 //   workflowMeta.complete     "Complete"      (RunStatus.COMPLETE = "complete")   ← the outlier
 //
-// PP-16 UPDATE — this rail had a blind spot, and the blind spot shipped the very bug the rail
+// UPDATE — this rail had a blind spot, and the blind spot shipped the very bug the rail
 // exists to stop. There were FOUR registries, not three: `lib/loopStatus.ts` (read by the Code
 // list, the in-chat SDLC card and the Projects linked-work rows) said the bare "Complete", and
 // escaped both checks below because the path list did not name it AND because its flat
@@ -31,7 +31,7 @@ import { runLook, nodeLook } from './workflowMeta'
 //
 //  · The three "Done" FILTER CHIPS (CodeSection, InboxPage, LoopsListPage) sit beside "All" /
 //    "Active" / "Ongoing" and name A CATEGORY OF ROWS you narrow to, not the status of one thing.
-//    Same already-ruled shape as the plural trigger filters ("Schedules" vs "Schedule"). A filter
+//    Same already-settled shape as the plural trigger filters ("Schedules" vs "Schedule"). A filter
 //    chip is a noun phrase for a bucket; a status label describes an entity.
 //  · `NODE_LOOK.done` stays "Done" — a node is a STEP, its wire value is `done` (not `complete`),
 //    and a step reads as done rather than completed. Different vocabulary, different word.
@@ -82,7 +82,7 @@ describe('the deliberate non-conversions', () => {
 
   it('the filter chips keep their bucket wording', () => {
     // "Done" beside "All"/"Active"/"Ongoing" names a category of rows. Converging a filter chip onto
-    // a status label is the mistake the trigger-filter ruling already recorded.
+    // a status label is the mistake the plural trigger filters already avoid.
     const chips: Array<[string, RegExp]> = [
       ['src/pages/code/CodeSection.tsx', /key: 'done', label: 'Done'/],
       ['src/pages/inbox/InboxPage.tsx', /key: 'handled', label: 'Done'/],

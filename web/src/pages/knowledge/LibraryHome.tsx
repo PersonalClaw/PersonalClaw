@@ -27,8 +27,8 @@ import { clearReadingPosition, readingPositions } from './readingPosition'
  *  see its comment. A library with nothing in it at all is answered one level up, by the page's
  *  own "Knowledge base is empty" state, rather than by four empty sentences stacked.)
  *
- *  🪤 COMPOSABLE, STANDALONE TODAY. The change asks for a surface that consumes AMBIENT-SURFACES'
- *  tile registry "if landed, standalone otherwise". No registry exists on `main` (no
+ *  🪤 COMPOSABLE, STANDALONE TODAY. The surface is meant to consume a dashboard tile registry
+ *  when one exists and to stand alone otherwise. No registry exists on `main` (no
  *  `tileRegistry`/`AmbientTile` symbol anywhere in `web/src` or core), so this is the standalone
  *  form — and `Shelf` is the seam: each shelf is a self-contained titled section over one array,
  *  so registering the four as tiles later is a wiring change here, not a rewrite of the rows.

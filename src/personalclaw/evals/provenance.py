@@ -4,7 +4,7 @@ Three sites in one report collapsed *absent* into *zero/none*, and each of them 
 to inventing its own word for the difference:
 
 * a cell's token count (#2540) — a provider that omits its ``usage`` block made
-  ``spend_from_home`` report ``tokens: 0`` while still reporting ``observed: true``, so the §4
+  ``spend_from_home`` report ``tokens: 0`` while still reporting ``observed: true``, so the
   token denominator could not tell a cell that spent and did not say from one that spent nothing;
 * the pin's model (#2561) — ``compute_pin`` records the INVOKING HOME's binding, and nothing
   recorded what the CELLS could reach, so a bound run and an all-cells-failed run carried the
@@ -47,7 +47,7 @@ which place depends on the shape — spelled out here once so no consumer has to
   module — one meaning, so a reader never has to know which field it is looking at;
 * a whole **field group** added in one schema version takes its state from the schema the artifact
   STATES (``learning_bench.provenance_recorded``), never from whether one of its keys is present.
-  ``provider_binding`` is the field this matters most for, and the reason: ES-17 shipped it with
+  ``provider_binding`` is the field this matters most for, and the reason: it shipped with
   ``null`` meaning *recorded, nothing was bound* — the one place ``null`` is a measurement rather
   than an absence. Rather than bend the rule above around it, its state is read from the schema,
   which is #2562's fix and is why :func:`state_of` is never asked about it;
@@ -96,7 +96,7 @@ def state_of(container: Mapping[str, Any] | None, key: str) -> str:
     :data:`RECORDED`: a recorded zero is a measurement, and that assertion is the one this whole
     family turns on.
 
-    Do NOT ask this about ``provider_binding``: ES-17 shipped that field with ``null`` meaning
+    Do NOT ask this about ``provider_binding``: that field shipped with ``null`` meaning
     *recorded, nothing was bound*, which is the single field where ``null`` is a measurement. Its
     state comes from ``learning_bench.provenance_recorded`` — the schema the report states — which
     is #2562's fix.

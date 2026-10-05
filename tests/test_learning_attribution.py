@@ -1,13 +1,13 @@
 """Predict-then-verify, WIRED — the curator grades what a human accepted.
 
 `accountability.py` decides the five-way verdict from before/after failure rates; this suite covers
-the ORCHESTRATION that makes criterion 9 real — the half that reads the Run Ledger, bridges the
+the ORCHESTRATION that makes the verdict real — the half that reads the Run Ledger, bridges the
 accept→observe→grade gap, and files the revert. Everything runs against the REAL proposal store, the
 REAL Run Ledger (`Journal` over `store`), and the REAL config loader, all repointed at a tmp home —
 not hand-built state, so a mismatch between what `proposals.accept` persists and what
 `grade_accepted_changes` reads shows up here rather than in production.
 
-The clauses the acceptance criterion names:
+The properties covered:
 
 * accepting a proposal SNAPSHOTS the bet (target + predicted_fixes + before-rates) the instant
   before `accept` unlinks the proposal file — the only moment it is still knowable;
@@ -307,7 +307,7 @@ def test_verdict_history_feeds_proposer_trust(home):
     assert trust[0]["harm_rate"] == 1.0
 
 
-# ── the module is no longer inert (criterion 9's end-to-end check) ──
+# ── the module is no longer inert (the end-to-end check) ──
 
 
 def test_accountability_now_has_a_production_importer():

@@ -1,8 +1,8 @@
-"""Provenance attributes on the fence tag (§7/R4 rule c).
+"""Provenance attributes on the fence tag.
 
-🔴 THE DEFECT. Rule (c) is explicit: *"the fence tag carries **provenance attributes**
-(`source_type, source_id, transformation_path` — extending the existing `source=` kwarg); trust
-promotion is an explicit recorded operation."* Measured: `fence_untrusted`'s signature was
+🔴 THE DEFECT. The fence tag must carry **provenance attributes** (`source_type, source_id,
+transformation_path` — extending the existing `source=` kwarg), and trust promotion must be an
+explicit recorded operation. Measured: `fence_untrusted`'s signature was
 `(text, *, source="")` and the rendered tag was `<untrusted_content source=webhook>`. None of the
 three attributes existed.
 
@@ -28,7 +28,7 @@ def _tag(text: str) -> str:
 
 
 def test_all_three_provenance_attributes_are_rendered():
-    """🔴 THE DEFECT, pinned. None of these existed before this session."""
+    """🔴 THE DEFECT, pinned. None of these existed before this change."""
     tag = _tag(
         fence_untrusted(
             "body",

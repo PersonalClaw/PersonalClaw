@@ -1,4 +1,4 @@
-"""The pure tick decision core (P6).
+"""The pure tick decision core.
 
 The Goal-Loop supervisor's per-cycle lifecycle decision, extracted as a **pure
 function** over an immutable snapshot: ``evaluate(cfg, state, now) -> Decision``.
@@ -12,7 +12,7 @@ fresh process re-derives the same ``Decision`` with no in-memory liveness cache.
 The metric gate + dwell/bake + zero-wait collapse + auto-rollback all live here as
 pure branches. I/O the decision *implies* (running a verify command, a judge pass)
 happens in the adapter and its RESULT is fed back in as ``state.metric`` next tick —
-the key design line that keeps this function pure (see the plan's Risks §).
+the key design line that keeps this function pure.
 
 **This is now the ONE convergence decision, for both engines.** It used to be
 consulted by exactly one loop kind while the workflows loop node ran a second, stateful
@@ -98,7 +98,7 @@ class Decision:
     Absorbs what ``loop_middleware.MiddlewareVerdict`` used to carry, so a caller reads ONE
     decision object regardless of which tier decided. The convergence fields are neutral on
     the progress branches (no rung, no nudge, ``UNKNOWN`` class), so a loop that never fails
-    produces exactly the ``Decision`` it produced before PP-15.
+    produces exactly the ``Decision`` it produced before the convergence tiers joined it.
     """
 
     action: Action
@@ -322,7 +322,7 @@ def evaluate(cfg: TickConfig, state: TickState, now: float) -> Decision:
      12. metric marginal            → HOLD
      13. otherwise                  → EXECUTE
 
-    Branches 4-7 are the convergence tiers PP-15 folded in from
+    Branches 4-7 are the convergence tiers folded in from
     ``loop_middleware.check_middleware``. They sit ABOVE the progress branches because a
     loop that is failing is not a loop whose metric is marginal, and they are evaluated in
     COST order — the cheapest tier that can decide, decides. All four are vacuous on a
@@ -784,7 +784,7 @@ def _needs_observation(step: StepConfig) -> bool:
 # These bridge the free-form execution_plan phase dicts (loop.py) to the typed
 # StepConfig/TickConfig the engine consumes, without the engine importing store or
 # knowing the phase-dict shape. Pure + defensive: unknown/garbage fields are ignored,
-# so a phase with none of the P6 keys yields today's no-dwell/no-metric StepConfig().
+# so a phase with none of the tick keys yields today's no-dwell/no-metric StepConfig().
 
 
 def _opt_float(v: object) -> float | None:
@@ -795,9 +795,9 @@ def _opt_float(v: object) -> float | None:
 
 
 def step_config_from_phase(phase: dict) -> StepConfig:
-    """Parse one execution_plan phase dict into a StepConfig. Reads the optional P6
+    """Parse one execution_plan phase dict into a StepConfig. Reads the optional tick
     keys (``min_dwell_secs``, ``min_findings``, ``metric_pass``, ``metric_hold``);
-    absent → the neutral defaults (reproduces pre-P6 behavior)."""
+    absent → the neutral defaults (no dwell, no metric)."""
     if not isinstance(phase, dict):
         return StepConfig()
     dwell = _opt_float(phase.get("min_dwell_secs")) or 0.0
@@ -855,7 +855,7 @@ def tick_state_from_snapshot(
 
 
 def validate_step_phase(phase: dict) -> list[str]:
-    """Validate the optional P6 tick keys on one phase dict → list of error strings
+    """Validate the optional tick keys on one phase dict → list of error strings
     (empty = ok). Used by the kinds' validate_config so a malformed dwell/metric is
     caught at intake, not silently ignored at runtime."""
     errs: list[str] = []

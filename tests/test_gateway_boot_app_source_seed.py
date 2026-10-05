@@ -1,6 +1,6 @@
 """First-run seeding of the curated app registry, railed on the REAL boot path.
 
-ET-4 ships ``https://github.com/PersonalClaw/registry.git`` as a *seeded* default git
+PersonalClaw ships ``https://github.com/PersonalClaw/registry.git`` as a *seeded* default git
 source: the gateway writes it into ``apps/app-sources.json`` once, as an ordinary
 REMOVABLE row, alongside a ``"seeded": ["registry"]`` marker whose job is to keep a
 user's removal from being undone by the next start.
@@ -10,7 +10,7 @@ user's removal from being undone by the next start.
 ``app.on_startup.append(_app_sources_seed_startup)`` from ``dashboard/lifecycle_hooks.py`` keeps
 that entire suite green while first-run seeding silently never happens (measured — see
 the module docstring of that file for the seeder's own rails, and this file's history
-for the falsification). A seeder nobody calls is an inert control, and the done-clause
+for the falsification). A seeder nobody calls is an inert control, and the requirement
 is "seeds into app-sources.json on first run", not "a helper exists". So these rails
 boot the real gateway and assert what the user's Store actually reads — over HTTP, from
 the file — never by calling the seeder.

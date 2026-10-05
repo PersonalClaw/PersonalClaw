@@ -416,7 +416,7 @@ def _canonical_stage(label: str, plan: list) -> str | None:
 def record_cycle_findings(loop_id: str) -> int:
     """Ingest any worker finding files not yet on the ledger, as `step_started`/`step_completed`.
 
-    The ONE write of a cycle's finding into the durable store (PP-5): the worker authors the file,
+    The ONE write of a cycle's finding into the durable store: the worker authors the file,
     this turns it into ledger events, and every reader projects from the ledger. Idempotent — keyed
     by the source filename, so the watchdog calling it each poll (and across restarts) never
     double-emits. Returns how many new findings were ledgered.
@@ -464,7 +464,7 @@ def record_cycle_findings(loop_id: str) -> int:
 
 
 def record_breaker_trip(loop_id: str, cycle: int, reason: str) -> None:
-    """A stall → a `breaker_trip` ledger event (PP-5)."""
+    """A stall → a `breaker_trip` ledger event."""
     from personalclaw.loop.journal import LoopJournal
 
     LoopJournal(loop_id).breaker_trip(cycle, reason)
@@ -497,14 +497,14 @@ def get_declined_cycles(loop_id: str) -> list[dict]:
 
 
 def record_watcher_reaped(loop_id: str, *, cycles: int, reason: str) -> None:
-    """A reap → a `watcher_reaped` ledger event (PP-5): a running watcher cut off early."""
+    """A reap → a `watcher_reaped` ledger event: a running watcher cut off early."""
     from personalclaw.loop.journal import LoopJournal
 
     LoopJournal(loop_id).watcher_reaped(cycles=cycles, reason=reason)
 
 
 def get_findings(loop_id: str) -> list[dict]:
-    """A loop's findings, PROJECTED off the ledger (PP-5) — the `step_completed` events'
+    """A loop's findings, PROJECTED off the ledger — the `step_completed` events'
     carried finding payloads, in emit order. The old findings/ file glob is gone as a store; the
     worker's files are an ingest source, not the reader's second store."""
     out: list[dict] = []
@@ -518,9 +518,9 @@ def get_findings(loop_id: str) -> list[dict]:
 
 
 def cycles_completed(loop_id: str) -> int:
-    """How many cycles this loop has completed — the ledger's `step_completed` count (PP-5).
+    """How many cycles this loop has completed — the ledger's `step_completed` count.
 
-    Replaces the retired `loops.total_cycles` column (PP-16 seam 4a): the column was a stored
+    Replaces the retired `loops.total_cycles` column: the column was a stored
     copy of exactly this number, so every reader now asks the projection. Delegates to
     :func:`personalclaw.loop.journal.cycles_completed`, which routes through the ledger's own
     aggregate — the same indirection `record_cycle_findings`/`record_breaker_trip` use, and for
@@ -676,7 +676,7 @@ def write_verdict(loop_id: str, cycle: int, verdict: dict) -> None:
 
 
 def get_verdicts(loop_id: str) -> list[dict]:
-    """Projected off the ledger — the `judge_verdict` events' payloads (PP-5), in emit order."""
+    """Projected off the ledger — the `judge_verdict` events' payloads, in emit order."""
     from personalclaw.loop.journal import strip_meta
 
     return [

@@ -529,7 +529,7 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
   function skipSetup() {
     finish()
   }
-  /** Finish, then walk the app (OU-10 / ruling b). It cannot render the tour itself: the
+  /** Finish, then walk the app. It cannot render the tour itself: the
    *  very act that ends the flow — `finish()` committing identity — is what replaces this
    *  component with the app shell, so the request is left for the shell that is about to
    *  mount. `tourLaunch.ts` explains the seam; it is the same shape as `exitTo`. */

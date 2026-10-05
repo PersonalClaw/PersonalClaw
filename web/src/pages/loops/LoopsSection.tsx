@@ -194,7 +194,7 @@ function CockpitRouter({ id, navigate, query, setQuery }: { id: string } & Pick<
       onBack={() => navigate('loops/history')}
       onDeleted={() => { invalidateKeys('loops'); navigate('loops/history') }}
       onOpenProject={(pid) => navigate(`projects/${pid}`)}
-      // D4 agentic build: open a project-bound chat seeded to build/mix components for
+      // Agentic build: open a project-bound chat seeded to build/mix components for
       // THIS design system on the canvas. The seed hands the agent the loop id (so its
       // react artifacts tag loop:<id> → render on the canvas) + the token contract; the
       // project binding gives it the shared context dir (DESIGN.md, token_overrides).

@@ -412,7 +412,7 @@ def test_malformed_runtime_hints_do_not_break_a_def():
     assert wf.runtime_hints == {}
 
 
-# ── the enforcement rail (WF2LOO-12 measured it unwired; WF2LOO-13 wired it) ──
+# ── the enforcement rail (once measured unwired, now wired) ──
 
 #: The ENFORCEMENT entry points production must reach DIRECTLY. The TYPES are deliberately
 #: absent: `judge_actors` imports `Isolation` and `judge_pretier` imports `FallbackCheck`, and
@@ -432,8 +432,8 @@ _ENFORCEMENT_ENTRY_POINTS = (
 #: fine from every other angle.
 _REACHED_THROUGH_VALIDATION = ("meets_ratchet", "compute_overall", "detect_forbidden_modes")
 
-#: The claim the docstring carried while the list had NO caller. WF2LOO-13 gave every entry point
-#: one, so this phrase reappearing means someone re-stranded the contract — or copied the old
+#: The claim the docstring carried while the list had NO caller. Every entry point has one now,
+#: so this phrase reappearing means someone re-stranded the contract — or copied the old
 #: notice back in. Either way the docstring and the call graph have parted company again.
 _UNWIRED_MARKER = "enforcement is not wired"
 
@@ -466,11 +466,11 @@ def _production_callers() -> dict[str, list[str]]:
 
 
 def test_every_enforcement_entry_point_has_a_production_caller():
-    """The INVERTED WF2LOO-12 rail: it used to prove the contract was stranded, now it holds the
+    """The INVERTED rail: it used to prove the contract was stranded, now it holds the
     wiring in place.
 
-    WF2LOO-12 measured that nothing in `src/` called this module's enforcement and made the
-    docstring say so; WF2LOO-13 wired all six through `engine.dispatch_gate`'s judge branch, the
+    Nothing in `src/` used to call this module's enforcement, and the docstring said so; now
+    all six are wired through `engine.dispatch_gate`'s judge branch, the
     `apply_judge_contract` seam and the controller's `runtime_hints.judge` threading. The rail was
     inverted rather than deleted, because "the contract is authored but nothing runs it" is a state
     this module has already been in once, and it is invisible from inside the module.
@@ -488,7 +488,7 @@ def test_every_enforcement_entry_point_has_a_production_caller():
     stranded = [name for name in _ENFORCEMENT_ENTRY_POINTS if name not in wired]
     assert not stranded, (
         f"{stranded} lost every production caller — the judge contract is authored-and-unrun "
-        "again, which is the exact defect WF2LOO-12 measured and WF2LOO-13 fixed. Re-wire it, or "
+        "again, which is the exact defect that was measured and fixed. Re-wire it, or "
         "if the mechanism is genuinely gone, delete it rather than leaving a rule nothing applies."
     )
 
@@ -554,24 +554,24 @@ def test_the_docstring_describes_the_live_path_rather_than_disclaiming_it():
     assert "EXACTLY ONE word" not in gate, (
         "the judge gate demands one bare word again. A bare word cannot carry the proof a PASS is "
         "required to cite, so the contract becomes inexpressible on the live path — that is the "
-        "regression WF2LOO-13 removed, not a simplification"
+        "regression the wiring removed, not a simplification"
     )
     for named in ("judge_instruction", "parse_judge_json", "validate_verdict"):
         assert named in gate, f"the judge gate no longer calls {named!r}"
 
 
 def test_the_posture_measurement_stays_with_the_code():
-    """Acceptance criteria: "write down the reasoning where the code lives".
+    """The reasoning is written down where the code lives.
 
     Enforcement on a live population is only defensible with the population written down. The
-    numbers are the argument, so they live in the module that enforces — not only in a plan log
+    numbers are the argument, so they live in the module that enforces — not only in a log
     nobody reads from a traceback.
     """
     from personalclaw.workflows import judge_contract
 
     doc = judge_contract.__doc__ or ""
     for marker in ("7 judge GATES", "13 rubric criteria", "not an outage"):
-        assert marker in doc, f"the WF2LOO-13 posture measurement lost {marker!r}"
+        assert marker in doc, f"the docstring's posture measurement lost {marker!r}"
 
 
 # ── the wire shape and the anti-outage rules ──

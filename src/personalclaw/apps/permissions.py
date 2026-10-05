@@ -1,9 +1,9 @@
-"""App permission enforcement (A5) — make declared ``Permissions`` real.
+"""App permission enforcement — make declared ``Permissions`` real.
 
 An app's manifest declares a permission scope (``permissions``: api / events /
 mcpTools / storage / network / memory / cron). Until now that was declarative
 only. This module turns it into an enforced boundary, server-side — the
-defense-in-depth half of the plan (the SDK enforces client-side too in A6, but a
+defense-in-depth half (the SDK enforces client-side too, but a
 client check is bypassable, so the gateway must reject independently).
 
 Identity: a request carrying an app-scoped token has ``request["app"]`` set to
@@ -55,7 +55,7 @@ sandbox). Enforcement status of each method:
   gateway mediates every call), so this is the whole gate. Enforced, and disclosed
   at install consent among the enforced bullets.
 * ``can_use_network`` — **DECLARATION-ONLY (unenforced by design)**, and the consent
-  surface says so rather than implying otherwise (EI-12 D2). There is no per-app
+  surface says so rather than implying otherwise. There is no per-app
   egress chokepoint to enforce at: an app's provider code is imported **in-process**
   by the gateway (``providers/loader.py``), so its own ``httpx``/``requests`` calls
   are the gateway's egress, and an app with a backend owns a separate OS process with
@@ -163,19 +163,19 @@ class PermissionChecker:
     def can_expose_shared_storage(self) -> bool:
         """Whether THIS app (a would-be SHARER) opts INTO exposing its data dir.
 
-        The sharer half of APE-10's double-declaration: an app must set
+        The sharer half of the shared-storage double-declaration: an app must set
         ``storageShared: true`` before any other app that names it in ``storageRead``
         is handed a read-only mount of its data. Deny-by-default (a false flag exposes
         nothing)."""
         return self.permissions.storageShared
 
     def can_run_background_tasks(self) -> bool:
-        """Whether this app may have a long-lived supervised worker (APE-3's host).
+        """Whether this app may have a long-lived supervised worker (``worker_runtime.py``).
 
         ``manifest.py``'s comment on the flag called it "NOT ENFORCED TODAY, and honestly
         so: nothing in core hosts an app worker yet". That is no longer true — this is the
-        accessor the host consults, so the declaration APE-1 disclosed at install consent
-        now denies as well as declares.
+        accessor the host consults, so the declaration disclosed at install consent now
+        denies as well as declares.
 
         Boolean, deny-by-default, and read off the INSTALLED manifest by every caller that
         goes through :func:`checker_for`: the supervisor re-asks at every spawn, so revoking
@@ -191,8 +191,7 @@ class PermissionChecker:
         ``target_app`` in its ``storageRead`` (exact or trailing-``*``, ``_matches_any``)
         AND ``target_app``'s OWN manifest declares ``storageShared: true``. Either half
         missing → no grant, so neither app can create a one-sided share. The read is
-        mounted where storage is granted (``backend_runtime``); writes stay broker-only
-        (APE-9)."""
+        mounted where storage is granted (``backend_runtime``); writes stay broker-only."""
         if not target_app:
             return False
         if not _matches_any(target_app, self.permissions.storageRead):
@@ -2042,7 +2041,7 @@ def app_request_denial(app_name: str, path: str, *, method: str = "", route: str
         return undeclared
     if not checker.can_use_api(path):
         return "api path not in declared permissions"
-    # A memory API path additionally requires the ``memory`` capability (sandbox P3) —
+    # A memory API path additionally requires the ``memory`` capability —
     # declaring the path in permissions.api is necessary but not sufficient.
     if path.startswith(MEMORY_API_PATHS) and not checker.can_use_memory():
         return "memory access not declared (permissions.memory)"

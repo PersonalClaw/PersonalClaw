@@ -1,4 +1,4 @@
-"""The §3.2 PRODUCERS — embeddings, intent inversion, positive-path traces.
+"""The detector PRODUCERS — embeddings, intent inversion, positive-path traces.
 
 `learning.detectors` holds pure verdicts fed from outside, and three of its inputs had no producer
 at all. That is the failure shape this suite prevents recurring: a detector that is
@@ -127,7 +127,7 @@ def _complete(run, node: str) -> None:
     )
 
 
-# ── clause A: the producer exists and returns real triples ──
+# ── embeddings: the producer exists and returns real triples ──
 
 
 def test_the_producer_returns_the_triples_the_verdict_consumes(svc, home):
@@ -203,7 +203,7 @@ def test_unrelated_plans_do_not_clear_the_threshold(svc, home):
     assert verdict.action == Action.SKIP.value
 
 
-# ── clause A: a registry miss is TYPED, never a silent empty list ──
+# ── embeddings: a registry miss is TYPED, never a silent empty list ──
 
 
 @pytest.mark.parametrize(
@@ -279,7 +279,7 @@ def test_a_blind_producer_never_looks_like_a_calibrated_one(svc_no_embedder, hom
     assert blind.blind is True and blind.miss is not None
 
 
-# ── clause B: intent inversion ──
+# ── intent inversion ──
 
 
 def test_inversion_synthesizes_a_user_register_intent_from_execution(home):
@@ -314,7 +314,7 @@ def test_a_run_that_did_what_was_asked_does_not_invert(home):
 
 
 def test_the_synthesized_intent_reaches_the_embedded_spec(home):
-    """Clause B feeds clause A: the plan's design is synthesize → embed → cluster. If the
+    """Intent inversion feeds the embeddings: the design is synthesize → embed → cluster. If the
     synthesized sentence never reaches `spec_text`, the inversion is a value nobody reads."""
     run = _run(name="daily-report", intent="")
     for node in ("fetch_data", "publish_report"):
@@ -323,7 +323,7 @@ def test_the_synthesized_intent_reaches_the_embedded_spec(home):
     assert inv.synthesized in mining.spec_text(run, journal=journal_mod)
 
 
-# ── clause C: positive-path trace mining ──
+# ── positive-path trace mining ──
 
 
 def test_a_recurring_successful_path_is_mined_and_filed(home):
@@ -389,7 +389,7 @@ def test_the_trace_signature_collapses_the_same_step_across_runs():
 
 
 def test_run_end_capture_drives_the_producers(svc, home):
-    """The clause that matters most: `run_end.capture` is the REAL terminal-run path, and it must
+    """The check that matters most: `run_end.capture` is the REAL terminal-run path, and it must
     call these producers. A producer nothing calls is the same defect as a detector nothing feeds.
     """
     calls: dict[str, int] = {"index": 0, "similar": 0, "invert": 0, "traces": 0}

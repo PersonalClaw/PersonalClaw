@@ -2,8 +2,8 @@
 
 Generating a workflow spec is the most failure-prone step in planning, and the measured cause
 is not model capability: it is that an ungrounded planner invents node kinds, provider names and
-argument shapes that look plausible and do not exist. The plan's own measurement puts
-first-try-valid at 0/5 ungrounded and 4/5 grounded, with silent spec misses going 3 → 0.
+argument shapes that look plausible and do not exist. Measured: first-try-valid is 0/5
+ungrounded and 4/5 grounded, with silent spec misses going 3 → 0.
 
 **Regenerated from the registries, never hand-written.** A hand-maintained reference is wrong the
 first time a provider is added and nobody notices, because a stale reference fails the same way a
@@ -244,7 +244,7 @@ def _add_node_taxonomy(bundle: GroundingBundle) -> None:
 def _add_bindings(bundle: GroundingBundle) -> None:
     """The binding roots and pipes, read from the resolver rather than listed by hand.
 
-    Session 31 shipped five templates referencing `{{defaults.*}}`, which is not a root — the
+    Five templates once shipped referencing `{{defaults.*}}`, which is not a root — the
     validator caught it, but only after the specs were written. Reading the real roots is what
     stops a planner making the same mistake at generation time.
     """
@@ -477,7 +477,7 @@ def _add_mcp_tools(bundle: GroundingBundle) -> None:
 def _add_model_capabilities(bundle: GroundingBundle) -> None:
     """Can the bound model be held to a JSON schema?
 
-    Read from the BACKEND capability registries. The plan is explicit that the frontend's
+    Read from the BACKEND capability registries. The frontend's
     `capableModels` must not be the source: it is a settings-UI helper that does not know which
     model the engine actually bound for a use case.
     """

@@ -13,8 +13,8 @@
     core must not import the HTTP surface; core must not import its own published SDK facade).
     Each file's upward-edge count may only shrink.
   * **duplicate-implementation counter** — the families this codebase has repeatedly
-    re-derived: the HTTP error envelope (PL-8 deleted 13 clones; 12 survive), verdict types
-    (WF2LOO-16 reconciled four dialects; 24 verdict-shaped types remain outside the canonical
+    re-derived: the HTTP error envelope (13 clones deleted; 12 survive), verdict types
+    (four dialects reconciled; 24 verdict-shaped types remain outside the canonical
     module), and durable write (the mkstemp+rename bypass; 5 sites).
 
 None of those three defects fails a unit test — the code works. Only a census of the tree's
@@ -29,13 +29,13 @@ every counter **may only shrink**:
     equality and do NOT require the numbers to go down — only that they never go up. This is
     why they shipped at the MEASURED population and NOT at zero: a never-run gate given teeth
     at zero reds every pre-existing giant, upward import and clone at once (an outage). That
-    is its own ruling, and this change exists partly to avoid repeating it.
+    has happened before, and this change exists partly to avoid repeating it.
   * And a ratchet that reds ORDINARY MAINTENANCE is an outage too, in slow motion — it teaches
     everyone to regenerate baselines, which kills every rail in the file. Hence
     ``test_an_ordinary_config_field_addition_to_the_largest_file_stays_green``: a real config
     round-trip edit to the repo's biggest module must stay PASS.
 
-⚠️  FORBIDDEN-TO-RAISE RULE (the acceptance criteria doc line — do not weaken it): when a ratchet
+⚠️  FORBIDDEN-TO-RAISE RULE (do not weaken it): when a ratchet
     reds because a counter ROSE, the fix is to FIX THE CODE — split the file, invert the
     import, reuse the existing implementation — NEVER to regenerate
     ``structural-baseline.json`` to bless the higher number. Raising a committed count to make
@@ -69,7 +69,7 @@ from scripts import gate_report
 from scripts import generate_structural_baseline as gen
 
 # The forbidden-to-raise sentence, asserted present in both the generator and this test so the
-# acceptance criteria "forbidden-to-raise doc line is present" cannot silently be dropped.
+# forbidden-to-raise doc line cannot silently be dropped.
 _FORBIDDEN_TO_RAISE = "never to regenerate"
 
 
@@ -89,7 +89,7 @@ def _committed() -> dict:
 def test_no_structural_counter_rose_vs_committed_baseline(ratchet):
     """The ratchets. Parametrized so each of the three fails INDEPENDENTLY and by NAME — a
     single combined assertion would let the first red hide the other two, which is the exact
-    ergonomic PHF-11 exists to prevent.
+    ergonomic this parametrization exists to prevent.
 
     FIX THE CODE: split the file, invert the import, reuse the canonical implementation. Do
     not raise the committed number to go green.
@@ -135,14 +135,14 @@ def test_the_render_is_deterministic():
     assert gen.build_baseline() == gen.build_baseline()
 
 
-# ── Never at zero (the ruling, restated as a rail) ───────────────────────────
+# ── Never at zero (the rule, restated as a rail) ─────────────────────────────
 
 
 def test_every_threshold_shipped_at_the_measured_population_not_at_zero():
-    """Acceptance criteria: "enforced shrink-only, NEVER at zero, because a never-run gate given
-    teeth at zero reds the whole tree at once".
+    """Enforced shrink-only, NEVER at zero, because a never-run gate given
+    teeth at zero reds the whole tree at once.
 
-    Asserted on the committed numbers themselves, so a future session cannot quietly "clean
+    Asserted on the committed numbers themselves, so a future change cannot quietly "clean
     up" a baseline to zero and hand the next contributor a tree-wide red.
     """
     committed = _committed()
@@ -150,7 +150,7 @@ def test_every_threshold_shipped_at_the_measured_population_not_at_zero():
     assert size["ceiling_lines"] > 0, "the size ceiling is 0 — that reds every file at once"
     assert size["totals"]["watched_files"] > 0, "the watch band is empty — nothing is ratcheted"
     assert committed[gen.RATCHET_IMPORT_DIRECTION]["totals"]["edges"] > 0, (
-        "the import-direction baseline is 0 edges. If that is real, say so in the plan log — "
+        "the import-direction baseline is 0 edges. If that is real, record why — "
         "but check first that the walk did not break, because a broken walk also reports 0."
     )
     assert (
@@ -176,7 +176,7 @@ def test_the_watch_band_is_not_sitting_on_a_cliff():
         f"only {headroom} lines of headroom below the {gen.SIZE_WATCH_BAND_LINES}-line watch "
         "band — a file is about to be dragged in by an unrelated commit. Split that file now, "
         "or (if the band is genuinely mis-placed) move the band to a gap in the distribution and "
-        "record why in the plan log. Do NOT silently widen it."
+        "record why. Do NOT silently widen it."
     )
     size = _committed()[gen.RATCHET_SIZE]
     assert (
@@ -209,8 +209,8 @@ def test_the_ceiling_leaves_the_biggest_file_room_for_ordinary_maintenance():
 
 
 def test_every_threshold_records_its_rationale():
-    """Acceptance criteria: "each threshold records its RATIONALE — what defect it exists to catch —
-    so a future session can tell a load-bearing limit from an arbitrary one".
+    """Each threshold records its RATIONALE — what defect it exists to catch —
+    so a future reader can tell a load-bearing limit from an arbitrary one.
 
     Asserted on the committed JSON, not on the generator's docstring: the rationale has to
     travel WITH the number to wherever the next reader lands (a CI failure sends them to the
@@ -227,8 +227,8 @@ def test_every_threshold_records_its_rationale():
 
 
 def test_the_deliberate_non_ratchets_are_recorded_as_decisions():
-    """Criterion: "the change states what it deliberately does NOT ratchet, so the omissions
-    read as decisions rather than gaps". Pinned so a later reader cannot mistake a choice for
+    """The change states what it deliberately does NOT ratchet, so the omissions
+    read as decisions rather than gaps. Pinned so a later reader cannot mistake a choice for
     an oversight — or delete the reasoning and leave the list."""
     doc = gen.__doc__ or ""
     assert "what this deliberately does NOT ratchet" in doc
@@ -237,8 +237,8 @@ def test_the_deliberate_non_ratchets_are_recorded_as_decisions():
 
 
 def test_forbidden_to_raise_doc_line_is_present():
-    """Acceptance criteria: "every ratchet carries the forbidden-to-raise rule … and that phrase is
-    asserted present by the rail itself so it cannot be quietly dropped" — in BOTH the
+    """Every ratchet carries the forbidden-to-raise rule, and that phrase is
+    asserted present by the rail itself so it cannot be quietly dropped — in BOTH the
     generator and this test, so neither can drop it unnoticed."""
     assert "FORBIDDEN-TO-RAISE" in (gen.__doc__ or "")
     assert _FORBIDDEN_TO_RAISE in (gen.__doc__ or "").lower()
@@ -257,8 +257,8 @@ def test_forbidden_to_raise_doc_line_is_present():
 
 
 def test_three_simultaneous_structural_violations_report_as_three(monkeypatch, tmp_path):
-    """Acceptance criteria: "the ratchets report THROUGH the aggregate … so one red does not hide
-    four" — proven, not asserted, and registration proven in the same breath (a ratchet that
+    """The ratchets report THROUGH the aggregate, so one red does not hide
+    four — proven, not asserted, and registration proven in the same breath (a ratchet that
     exists only as a pytest test is invisible to ``make gates``).
 
     Seed ONE violation per structural ratchet at the same time (a file over the ceiling, a new
@@ -635,7 +635,7 @@ def test_an_ordinary_config_field_addition_to_the_largest_file_stays_green():
     every config field addition in the project reds CI and the gate gets deleted.
 
     The holder is DERIVED, never named. It used to be asserted equal to ``config/loader.py``,
-    and PHF-14 moved it: splitting the config sections out took that file from 5652 to ~4285 and
+    and splitting the config sections out moved it: that file went from 5652 to ~4285 and
     handed the ceiling to ``workflows/controller.py``. A hard-coded holder turns any legitimate
     split into a red whose only cheap "fix" is editing this line — the same defect the band's own
     docstring records for a hard-coded 2,600-line probe that fell below the 2800 band. The

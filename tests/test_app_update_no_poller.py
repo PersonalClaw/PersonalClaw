@@ -1,5 +1,5 @@
-"""APE-7 'zero polling processes added' — the clause the atom's own audit flags as
-the one worth re-checking whenever this area changes: *"an update badge is exactly the
+"""'Zero polling processes added' — the property worth re-checking
+whenever this area changes: *"an update badge is exactly the
 feature that acquires a background poller by accident."*
 
 The behavioral tests in ``test_app_catalog.py`` pin WHAT the update surfacing does (one
@@ -40,7 +40,7 @@ def _external_callers(symbol: str) -> dict[str, str]:
 def test_surface_app_updates_has_exactly_one_production_caller_the_read_path() -> None:
     callers = set(_external_callers("surface_app_updates"))
     assert callers == {"dashboard/handlers/apps.py"}, (
-        "APE-7 'zero polling processes added': surface_app_updates must be reached only "
+        "zero polling processes added: surface_app_updates must be reached only "
         "from the /api/apps read handler. A second caller is how a poller creeps in. "
         f"Found: {sorted(callers)}"
     )
@@ -51,7 +51,7 @@ def test_updates_available_stays_internal_to_catalog() -> None:
     # and so is excluded above) may call it; any EXTERNAL caller could schedule it on a loop.
     callers = set(_external_callers("updates_available"))
     assert callers == set(), (
-        "APE-7: updates_available must stay internal to apps/catalog.py; an external caller "
+        "updates_available must stay internal to apps/catalog.py; an external caller "
         f"is how a background poller creeps in. Found: {sorted(callers)}"
     )
 

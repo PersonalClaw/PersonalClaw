@@ -101,7 +101,7 @@ function downloadJsonl(events: SelEvent[]): void {
  *  unrelated `WindowedList`), so a capped check rendered as "Chain intact — 5000 events verified",
  *  which on a tamper-evidence surface reads as *the chain is intact*, full stop.
  *
- *  Same ruling as the usage panel's unpriced total: "cannot present as complete" is not "do not
+ *  Same decision as the usage panel's unpriced total: "cannot present as complete" is not "do not
  *  present" — state the scope. And state it in BOTH directions: with 43 events in the log the window
  *  never bit, and calling that "the last 43" would understate a complete answer just as badly. That
  *  is why the server now sends `window` (the cap it applied) and not just `windowed` (that a cap

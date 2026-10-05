@@ -1,7 +1,6 @@
 """App-contributed CLI seams — the runners behind ``cli.setup`` / ``cli.doctor``.
 
-Plan 32 (Provider-Boundary Completion) lets an installed app hook into the two
-core CLI commands without living in core:
+An installed app may hook into the two core CLI commands without living in core:
 
 - ``run_app_setup_steps`` — called by ``personalclaw setup`` AFTER the core steps.
   For each installed + enabled app whose manifest declares ``cli.setup``

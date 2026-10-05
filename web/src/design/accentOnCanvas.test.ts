@@ -16,8 +16,8 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //     primary → canvas            FAILS in **7 of 12** schemes (4.37-4.41)
 //     primary-emphasis → canvas   passes in **all 12**          (worst 4.82, coral 6.0)
 //
-// So this is a pairing the design system already ships, not a new colour — the same shape as cycle
-// 146's `accentChip`. That rail now measures the canvas dimension per scheme; this one pins the call
+// So this is a pairing the design system already ships, not a new colour — the same shape as
+// `accentChip`. That rail now measures the canvas dimension per scheme; this one pins the call
 // sites, because a token rail cannot see which ink a component chose (reverting the Studio tab to the
 // failing colour left `schemeContrast` green — measured).
 //
@@ -25,7 +25,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // exactly **two** small accent texts painted on the canvas: the Memory Studio tab (both viewports) and
 // the inbox-settings link (phone only, where the panel goes full-width). The other 43 small-coral-text
 // sites sit on `--color-surface`/`surface-container` (white in light), where the same ink passes at
-// 4.83 — so this change does NOT pre-empt the owner's standing "coral as accent text" decision; it
+// 4.83 — so this change does NOT pre-empt the open "coral as accent text" design decision; it
 // fixes the two places where the measurement fails today.
 //
 // 🪤 AND THE HELPER THAT READS THE TOKEN NEEDED FIXING FIRST. Slicing tokens.css from
@@ -36,7 +36,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 const SRC = join(process.cwd(), 'src')
 const read = (rel: string) => readSource(join(SRC, rel))
 
-// ── Cycle 155: THE THIRD GROUND — a small accent CHIP sits on `--color-surface-high` ─────────────
+// ── THE THIRD GROUND — a small accent CHIP sits on `--color-surface-high` ────────────────────────
 //
 // axe on `#/knowledge` → Intents (a tab that had never been driven): the "proposes skill" chip measured
 // **3.79 dark / 3.22 light** against the 4.5 floor. It was `text-primary/80`, and the alpha is only part
@@ -48,7 +48,7 @@ const read = (rel: string) => readSource(join(SRC, rel))
 //
 // So dropping the alpha would NOT have fixed it. Same answer as the canvas, third ground, and
 // `ui/Markdown`'s inline-code chip had already reached for `text-primary-emphasis` on its own — the
-// precedent was in the tree before this cycle named the rule.
+// precedent was in the tree before this change named the rule.
 //
 // Nine sites where accent ink and `bg-surface-high` are on the SAME element now use the emphasis token.
 // One is axe-measured; the rest are token-decidable at their rendered size (the markdown body is 15px,
@@ -62,7 +62,7 @@ const read = (rel: string) => readSource(join(SRC, rel))
 // 🪤 DELIBERATELY NOT INCLUDED, with reasons, so the next pass does not "finish the job":
 //   ui/Markdown inline code       already `text-primary-emphasis` — the precedent
 //   code/CodeCockpitPage          its accent ink pairs with `bg-primary/15`, the accent-CHIP family
-//                                 (cycle 146), not this ground
+//                                 (`accentChip`), not this ground
 //   knowledge/KnowledgeDetail     an ICON at `text-primary/70`; non-text carries a 3:1 floor, and it
 //                                 measures 3.79 — passing
 //
@@ -117,19 +117,19 @@ describe('the two canvas-painted accent texts use the emphasis shade', () => {
   })
 })
 
-// ── Cycle 158: THE FOURTH GROUND — a dashboard ROW, and the ledger's oldest carried contrast item ──
+// ── THE FOURTH GROUND — a dashboard ROW, and the oldest carried contrast item ──────────────────────
 //
 // `#/dashboard` in LIGHT reported **8 blocking** contrast findings (2 at phone): the Action Centre's
 // `Reply` actions at **4.46:1** against a 4.5 floor, 15px/400. axe agreed [serious]. This is the
-// "dashboard Reply contrast" the ledger has carried since cycle ~139 — bundled under the owner's
-// standing "coral as accent TEXT" question, and **no longer an aesthetic question at all**: cycles 146,
-// 147 and 155 established the token for accent text that must clear AA, and this is its fourth ground.
+// long-carried "dashboard Reply contrast" item — bundled under the open "coral as accent TEXT"
+// question, and **no longer an aesthetic question at all**: the accent-chip, canvas and surface-high
+// fixes established the token for accent text that must clear AA, and this is its fourth ground.
 //
 // 🪤 THE GROUND IS NOT A TOKEN I WOULD HAVE GUESSED. Read off the rendered row: **rgb(244,246,249)** —
 // which is `--color-surface-low` (#f4f6f9), matching neither `surface` (#ffffff), `surface-high`
 // (#eef1f5), `canvas` (#f0f4f8) nor `surface-highest`. Computed against `surface-container` (white) the
-// same ink measures **4.83 and passes**; against the real ground it is 4.46 and fails. Cycle 147's
-// lesson, third time: **read the backdrop off the node, not out of the token you assume.**
+// same ink measures **4.83 and passes**; against the real ground it is 4.46 and fails. The canvas
+// fix's lesson, third time: **read the backdrop off the node, not out of the token you assume.**
 //
 //     primary → surface-low            worst **4.46** light — fails in **6 of 12** schemes
 //     primary-emphasis → surface-low   worst **4.92** light, 8.38 dark — passes all 12
@@ -158,7 +158,7 @@ describe('the two canvas-painted accent texts use the emphasis shade', () => {
 // forking it per mode would invent an idiom the three earlier grounds do not use.
 //
 // 🔑 `MetaPill`'s primary tone was checked and left alone — it already uses `accentChip`
-// (primary-container / on-primary-container), the cycle-146 pairing.
+// (primary-container / on-primary-container), the `accentChip` pairing.
 
 describe('accent chips on surface-high use the emphasis shade', () => {
   const SITES: [string, RegExp][] = [
@@ -232,38 +232,40 @@ describe('a dashboard row action uses the emphasis shade', () => {
   })
 })
 
-// ── Cycle 172: THE FIRST GROUND AGAIN, reached through a TONE REGISTRY instead of a class list ──
+// ── THE FIRST GROUND AGAIN, reached through a TONE REGISTRY instead of a class list ─────────────
 //
-// The canvas ground was settled in cycle 147, and this rail pinned the two sites it had measured —
+// The canvas ground was settled first, and this rail pinned the two sites it had measured —
 // both of which write their ink **literally** (`text-primary-emphasis`, or an inline
 // `color: 'var(--color-primary-emphasis)'`). A third site was invisible to that shape: the Knowledge
 // breadcrumb's type segment picks its ink from `knowledgeMeta`'s `tone` field, so no literal accent
 // token appears at the call site at all. Re-running the ground's measurement over the CURRENT surface
-// inventory found it — 51 surfaces in light, the inventory having grown from the 20 cycle 147 swept.
+// inventory found it — 51 surfaces in light, the inventory having grown from the 20 the canvas fix
+// swept.
 //
 // 🔑 THE WHOLE-INVENTORY CENSUS, so the population is stated rather than implied. Nine contrast
 // failures in light across 51 surfaces, in exactly THREE families, and only one is this ground:
 //
-//   knowledge-detail   "Note" breadcrumb segment   **4.37**  primary on CANVAS          ← this cycle
+//   knowledge-detail   "Note" breadcrumb segment   **4.37**  primary on CANVAS          ← this change
 //   triggers           "runs on its own" chip ×8   3.97      primary on its OWN 14% tint
 //   inbox-proposals    "Proposals 35" tab          3.3       on an absolute sibling pill
 //
 // The other two are DELIBERATELY NOT FIXED HERE. The triggers chip paints `primary/14` behind its own
-// text — that is the accent-CHIP family (cycle 146), the same call cycle 155 made when it left
-// `CodeCockpitPage`'s `bg-primary/15` alone; 3.97 is precisely `primary` over its own 14% tint, so it
-// is one measurement, not a coincidence. The inbox tab's ground is a positioned sibling, a fourth
-// shape again. One family per change.
+// text — that is the accent-CHIP family (`accentChip`), the same call the surface-high fix made when
+// it left `CodeCockpitPage`'s `bg-primary/15` alone; 3.97 is precisely `primary` over its own 14%
+// tint, so it is one measurement, not a coincidence. The inbox tab's ground is a positioned sibling,
+// a fourth shape again. One family per change.
 //
 // 🔑 ONLY `primary` IS BROKEN ON THIS GROUND — recomputed independently here, and it agrees with the
 // three earlier grounds: on `--color-canvas` in light, info 5.74, ok 5.77, warn 5.71, danger 5.83 all
 // pass; `primary` alone lands at 4.37. So the remap is one tone wide, not a sweep of the registry.
 //
-// 🪤 AND THE REGISTRY IS THE WRONG PLACE TO FIX IT — the trap this cycle had to avoid. `knowledgeMeta`'s
+// 🪤 AND THE REGISTRY IS THE WRONG PLACE TO FIX IT — the trap this change had to avoid. `knowledgeMeta`'s
 // `tone` is consumed by EIGHT other call sites (`ArtifactCard` ×4, `ArtifactViewer`, `KnowledgeDetail`
 // ×2, `NotificationBell`), and every one of them inks an ICON, which carries a 3:1 non-text floor and
-// already passes at 4.37. Cycle 155 examined that very icon and left it. Editing the shared registry to
-// fix one text label would have moved coral on five surfaces for no AA reason — so the fix is a
-// ground-named helper at the call site, which is what cycle 158 did with `RowAction`'s tone map.
+// already passes at 4.37. The surface-high fix examined that very icon and left it. Editing the shared
+// registry to fix one text label would have moved coral on five surfaces for no AA reason — so the
+// fix is a ground-named helper at the call site, which is what the dashboard-row fix did with
+// `RowAction`'s tone map.
 //
 // Measured after, on the live surface: **6.0:1** light, 9.33 dark, and knowledge-detail reports 0
 // blocking contrast findings at both themes. The validation home holds 26 knowledge items of which
@@ -299,7 +301,7 @@ describe('a tone-registry ink painted on the canvas uses the emphasis shade', ()
   })
 
   it('the shared registry is untouched, so the icons keep the base accent', () => {
-    // The other eight consumers ink icons at a 3:1 floor. A future cycle that "finishes the job" by
+    // The other eight consumers ink icons at a 3:1 floor. A future change that "finishes the job" by
     // moving the registry would move coral on five surfaces for no accessibility reason.
     expect(read('pages/knowledge/knowledgeMeta.ts'))
       .toMatch(/key: 'note', label: 'Note', icon: StickyNote, tone: 'var\(--color-primary\)'/)
@@ -310,13 +312,13 @@ describe('a tone-registry ink painted on the canvas uses the emphasis shade', ()
   })
 
   it('this ground is already scheme-covered, which is what makes the remap safe in all 12', () => {
-    // No new scheme assertion is needed: the canvas is the ground cycle 147 added to the scheme rail,
+    // No new scheme assertion is needed: the canvas fix added this ground to the scheme rail,
     // and `primary-emphasis` passes there in every scheme (worst 4.82, coral 6.0).
     expect(read('design/schemeContrast.test.ts')).toMatch(/primary-emphasis as accent text on the CANVAS/)
   })
 })
 
-// ── Cycle 614: THE STATE THE CENSUS COULD NOT SEE — the first-run overlay ─────────────────────────
+// ── THE STATE THE CENSUS COULD NOT SEE — the first-run overlay ────────────────────────────────────
 //
 // Every ground above was found by a runtime census over 20 routes at both viewports. That census could
 // not observe the onboarding overlay at all, because it only renders on an **unconfigured home** and
@@ -336,7 +338,7 @@ describe('a tone-registry ink painted on the canvas uses the emphasis shade', ()
 // card paints `--color-surface` behind them; the two that fail are the same element on the canvas,
 // outside the card. Same component, same token, opposite verdicts — so the fix belongs at the call
 // site, not in the primitive's default. Re-inking all ~16 TextLinks would change three compliant links
-// and pre-empt the owner's standing "coral as accent text" decision.
+// and pre-empt the open "coral as accent text" design decision.
 //
 // 🔑 SO THE PRIMITIVE GAINED AN `ink` PROP RATHER THAN A NEW DEFAULT, and it cannot be done through
 // `className`: two colour utilities on one element resolve by **stylesheet order**, not by the order
@@ -365,14 +367,14 @@ describe('the first-run overlay inks its links by their ground', () => {
 
   it('the default stays `primary`, so no compliant link moved', () => {
     // The blast-radius floor. If the default ever flips, ~16 links change colour app-wide and this
-    // cycle's reasoning (the ground decides, not the component) no longer holds.
+    // change's reasoning (the ground decides, not the component) no longer holds.
     expect(LINK).toMatch(/ink = 'primary'/)
   })
 
   it('the skip door is no longer accent text on the canvas at all', () => {
     // It was the canvas-painted link measured at 4.37 above, and took the emphasis ink for it. It
     // is now a Button in the flow's navigation bar (`ui/FormFooter`, painted on the surface) — the
-    // owner asked for the flow's doors in one bar — so it carries the on-surface ink and there is
+    // flow keeps its doors in one bar — so it carries the on-surface ink and there is
     // no accent text left on the canvas to measure. Pinned so the fix is not re-applied to a link
     // that no longer exists, and so a link does not come back to the canvas without its ink.
     const bar = ONB.slice(ONB.indexOf('<FormFooter>'), ONB.indexOf('</FormFooter>'))
@@ -391,7 +393,7 @@ describe('the first-run overlay inks its links by their ground', () => {
 
   it('the links INSIDE the step card keep the base ink — they measured 4.83 and pass', () => {
     // The vacuity floor for "the ground decides". These three are the evidence that the primitive's
-    // default is correct; if they ever gain `ink="emphasis"`, this cycle's finding was mis-scoped and
+    // default is correct; if they ever gain `ink="emphasis"`, this change's finding was mis-scoped and
     // the reasoning above needs rewriting rather than silently passing.
     const essentials = read('app/onboarding/EssentialsStep.tsx')
     const plain = [...essentials.matchAll(/<TextLink(?![^>]*\bink=)/g)]
@@ -404,8 +406,8 @@ describe('the first-run overlay inks its links by their ground', () => {
     expect(ONB).toMatch(/4\.26:1/)
   })
 
-  it('the emphasis shade exists in light for every scheme, on BOTH grounds this cycle touched', () => {
-    // canvas is already scheme-covered (cycle 147). surface-high is the cycle-155 ground, also covered.
+  it('the emphasis shade exists in light for every scheme, on BOTH grounds this change touched', () => {
+    // canvas is already scheme-covered (the canvas fix). surface-high is the third ground, also covered.
     const rail = read('design/schemeContrast.test.ts')
     expect(rail).toMatch(/primary-emphasis as accent text on the CANVAS/)
     const schemes = read('design/schemes.ts')
@@ -414,7 +416,7 @@ describe('the first-run overlay inks its links by their ground', () => {
   })
 })
 
-// ── Cycle 615: THE FAMILY, CLOSED FOR RENDERED LINKS — an exhaustive census ───────────────────────
+// ── THE FAMILY, CLOSED FOR RENDERED LINKS — an exhaustive census ──────────────────────────────────
 //
 // Every ground above was found by a scan for elements where the ink and the background are declared on
 // the SAME element. A link inside a tinted container is invisible to that shape, because the ground is
@@ -428,7 +430,7 @@ describe('the first-run overlay inks its links by their ground', () => {
 //     ground                 links   failing
 //     --color-surface          20        0     4.83 — the base ink is correct here
 //     --color-canvas            4        4     4.37 — all four are `VoicePanel`'s ManageLink
-//     --color-canvas (emph)     1        0     already converged by an earlier cycle
+//     --color-canvas (emph)     1        0     already converged by an earlier change
 //
 // Light only; the same sweep in dark reports 0 of 25, because the dark canvas gives 6.85.
 //
@@ -440,7 +442,7 @@ describe('the first-run overlay inks its links by their ground', () => {
 // 🔑 THIS CLOSES THE FAMILY FOR RENDERED LINKS, and the census is the proof rather than the claim: the
 // 20 passing links are what make "the ground decides, so the default stays `primary`" measured instead
 // of asserted. What it does NOT cover: links that only render in states the sweep cannot reach (the
-// first-run overlay was cycle 614's finding, for exactly this reason) and non-link accent text, which
+// first-run overlay was the previous section's finding, for exactly this reason) and non-link accent text, which
 // the four sections above own.
 
 describe('the voice panel manage-links are inked for the canvas', () => {
@@ -462,7 +464,7 @@ describe('the voice panel manage-links are inked for the canvas', () => {
 
   it("the panel's OTHER link keeps the base ink — it is on a surface and passes", () => {
     // The vacuity floor for "the ground decides". `Reset to default` measured 4.83 on
-    // `--color-surface` in the same census. If it ever gains the emphasis ink, this cycle's scope was
+    // `--color-surface` in the same census. If it ever gains the emphasis ink, this change's scope was
     // wrong and the reasoning above needs rewriting rather than silently passing.
     expect(VOICE).toMatch(/<TextLink size="xs" onClick=\{async \(\) => \{/)
   })

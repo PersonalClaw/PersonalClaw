@@ -1,5 +1,5 @@
-"""P5a — typed task DAG: dependencies, cycle rejection, status reconciliation,
-block-reason derivation, and dependency analysis (seam S3)."""
+"""Typed task DAG: dependencies, cycle rejection, status reconciliation,
+block-reason derivation, and dependency analysis."""
 
 from __future__ import annotations
 

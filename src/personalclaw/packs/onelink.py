@@ -6,7 +6,7 @@ larger ones ride as a ``url`` + ``sha256`` so a big skill bundle does not bloat 
 
 **It is a serialization, not a second format.** :func:`import_onelink` materializes the
 document back into a byte-exact ``.pclaw`` and then calls :func:`packs.import_.import_pack` —
-so a one-link import goes through the identical §3 pipeline (quarantine, integrity recompute,
+so a one-link import goes through the identical import pipeline (quarantine, integrity recompute,
 referential-integrity lint, supply-chain scan, leaves-first journaled commit, rollback,
 connector resolution). There is deliberately no second importer to keep in sync, because a
 second importer is a second set of security decisions to get wrong.
@@ -226,10 +226,10 @@ def import_onelink(
     connector_choices: dict[str, dict[str, Any]] | None = None,
     fetch: Callable[[str], bytes] | None = None,
 ):
-    """Import a one-link document through the SAME §3 pipeline as a ``.pclaw`` file.
+    """Import a one-link document through the SAME import pipeline as a ``.pclaw`` file.
 
     Materializes to a SYSTEM tempdir (never the home) and hands the resulting archive to
-    :func:`packs.import_.import_pack`, so every §3 guarantee — dry-run inspect, integrity
+    :func:`packs.import_.import_pack`, so every import guarantee — dry-run inspect, integrity
     recompute, lint refusal, DANGEROUS/WARNING gating, journaled rollback — applies unchanged.
     Returns the :class:`packs.import_.ImportPlan`.
     """

@@ -1,5 +1,5 @@
 """Tests for the ``backend.sandbox`` manifest field and the permission→confinement mapping
-the app launcher applies (EXECUTION-ISOLATION EI-4 §1.3(4))."""
+the app launcher applies."""
 
 from __future__ import annotations
 

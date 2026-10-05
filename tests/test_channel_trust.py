@@ -375,19 +375,19 @@ def test_group_policy_off_denies_even_tracked():
     assert v.allowed is False
 
 
-# ── reference echo transport V1 walkthrough (the seam wired into inbound) ─────
+# ── reference echo transport walkthrough (the seam wired into inbound) ────────
 
 
 def _run(coro):
     return asyncio.run(coro)
 
 
-def test_v1_echo_walkthrough_unknown_then_pair_then_converse(monkeypatch):
-    """V1: unknown sender → canned reply + owner notification; pair via a code →
+def test_echo_walkthrough_unknown_then_pair_then_converse(monkeypatch):
+    """Unknown sender → canned reply + owner notification; pair via a code →
     converses; tracked group message arrives fenced. The whole trust round-trip driven
     through the reference echo transport with no external system.
 
-    Since EA-7 the transport reaches the gate through the platform's guarded door
+    The transport reaches the gate through the platform's guarded door
     (``services.deliver_channel_inbound``) rather than calling ``guard_inbound`` itself, so
     the services stand-in here exposes that door and the state stand-in
     (:class:`CapturingState`) can absorb the session routing an allowed message triggers.

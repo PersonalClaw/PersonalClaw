@@ -21,8 +21,8 @@ export function chatFindPath(key: string, term: string): string {
 
 /** The honest one-line caption for which path answered a content search — the `source`
  *  the backend reports and the client now keeps. `'index'` = the FTS5 index had the
- *  answer; `'scan'` = it fell back to the bounded transcript scan (SESSION-MANAGEMENT
- *  §C1). Anything else (including undefined, i.e. no search ran) returns `''`, and the
+ *  answer; `'scan'` = it fell back to the bounded transcript scan. Anything else
+ *  (including undefined, i.e. no search ran) returns `''`, and the
  *  caller renders nothing — the indicator only appears once a search has actually
  *  resolved with a known path. */
 export function searchSourceLabel(source: string | null | undefined): string {

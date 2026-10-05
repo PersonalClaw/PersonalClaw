@@ -1,6 +1,6 @@
-"""The keystone out-of-band enable for desktop computer use (§3 floor 1).
+"""The keystone out-of-band enable for desktop computer use.
 
-Five groups, one per clause of the acceptance criteria — plus one group that exists entirely because
+Five groups, one per property the keystone must hold — plus one group that exists entirely because
 of a hazard in the change itself.
 
 1. **Fail closed in every direction** — absent, unreadable, non-JSON, wrong root type,
@@ -12,8 +12,8 @@ of a hazard in the change itself.
 3. **No flip surface** — not in ``_EDITABLE_CONFIG``, no route/CLI/config field names it,
    the agent-reachable path checks refuse it, and the process's own module never writes it.
 4. **The reachability ratchet, and its vacuity** — ⚠️ *the population of computer-use tools
-   is EMPTY today.* `DCU-4` ships the tool surface, the stdio shim and the in-gateway
-   dispatch chain; `DCU-3` ships the macOS driver. So a test that literally iterated "every
+   is EMPTY today.* A later change ships the tool surface, the stdio shim and the in-gateway
+   dispatch chain; another ships the macOS driver. So a test that literally iterated "every
    computer-use tool" would pass over nothing. This group therefore (a) states the
    population size out loud so the emptiness can never be silent, (b) proves the ratchet's
    scanner actually FLAGS an entry point that skips the guard, using a synthetic module, and
@@ -37,8 +37,8 @@ from personalclaw.computer_use import enable_state as ES
 # ── the fixture tool ─────────────────────────────────────────────────────────
 #
 # A stand-in computer-use tool. The ONLY thing it shares with a real one is that it routes
-# through the real guard as its first statement. It exists because DCU-1 lands the guard
-# before DCU-4 lands any tool, and "every computer-use tool refuses" would otherwise be a
+# through the real guard as its first statement. It exists because the guard landed
+# before any tool did, and "every computer-use tool refuses" would otherwise be a
 # claim about the empty set. Its source is also the positive case the ratchet scanner is
 # proven against in group 4.
 
@@ -108,7 +108,7 @@ def test_the_exact_document_arms_the_keystone(home):
         ("true", "not a JSON object"),
         ("[]", "not a JSON object"),
         ('"enabled"', "not a JSON object"),
-        # NOT "apps": `DCU-2` made that an ENFORCED key (it is the operator's target
+        # NOT "apps": the target policy made that an ENFORCED key (it is the operator's target
         # allowlist now), so this case needs a scope key this build genuinely cannot
         # honour or it stops testing the refusal its id names.
         ('{"version": 1, "enabled": true, "windows": ["Inbox"]}', "does not enforce"),
@@ -199,7 +199,7 @@ def test_a_mid_run_delete_cannot_disarm_the_running_process(home):
 
 
 def test_the_fixture_tool_refuses_when_the_keystone_is_absent(home):
-    """Acceptance criteria: with the enable file absent, a computer-use tool refuses with a
+    """With the enable file absent, a computer-use tool refuses with a
     WHAT/WHY/FIX message pointing to the out-of-band enable step."""
     with pytest.raises(ES.ComputerUseDisabled) as exc:
         computer_fixture_press(3)
@@ -263,7 +263,7 @@ def test_the_refusal_code_is_registered_in_the_error_registry():
 
 
 def test_the_keystone_has_no_config_patch_surface():
-    """§3 floor 1 forbids a config field precisely because the agent can PATCH one."""
+    """The keystone forbids a config field precisely because the agent can PATCH one."""
     from personalclaw.config.editable import _EDITABLE_CONFIG
 
     flat = json.dumps(_EDITABLE_CONFIG, default=str)
@@ -338,7 +338,7 @@ def test_the_action_denylist_refuses_to_write_the_keystone():
 def test_the_keystone_path_is_env_overridable_for_a_real_trust_root(tmp_path, monkeypatch):
     """The only switch the agent's own uid genuinely cannot rewrite: a path outside the
     home that an operator can own as another uid and chmod 0444."""
-    external = tmp_path / "operator" / "dcu.enable.json"
+    external = tmp_path / "operator" / "computer_use.enable.json"
     external.parent.mkdir(parents=True)
     external.write_text(_ENABLED_DOC, encoding="utf-8")
     monkeypatch.setenv(ES.ENABLE_PATH_ENV, str(external))
@@ -360,7 +360,7 @@ def test_the_keystone_path_is_not_frozen_at_import_time(home):
 #
 # The scanner. "Dispatchable entry point" = a module-level function under
 # `personalclaw/computer_use/` whose name starts with `computer_` — the tool-surface naming
-# convention DESKTOP-COMPUTER-USE §2 uses for all seven tools (computer_list_apps,
+# convention all seven tools use (computer_list_apps,
 # computer_snapshot, computer_click, computer_type, computer_set_value, computer_scroll,
 # computer_perform_action). Stated limit: this rail catches a tool that follows the
 # convention and forgets the guard; it cannot catch one that abandons the convention. That
@@ -423,8 +423,8 @@ def test_the_computer_use_entry_point_population_is_exactly_the_one_dispatch():
     """THE POPULATION CENSUS — no longer a vacuity marker, because the population is no longer
     empty.
 
-    `DCU-1` shipped this asserting ZERO, out loud, so the ratchet below could not look clean
-    merely by matching nothing. `DCU-4` landed the tool surface, and the honest number turned
+    This shipped asserting ZERO, out loud, so the ratchet below could not look clean
+    merely by matching nothing. The tool surface then landed, and the honest number turned
     out to be **one**: seven tools, but ONE dispatchable entry point. That is the composition
     the change chose, and this census is where it is pinned.
 
@@ -483,7 +483,7 @@ def test_the_ratchet_flags_a_guard_that_is_not_first():
 
 def test_every_computer_use_entry_point_guards_first():
     """The ratchet: any computer-use entry point that dispatches without routing through the
-    keystone guard as its first check reds here. **No longer vacuous** — `DCU-4` landed
+    keystone guard as its first check reds here. **No longer vacuous** — the dispatch landed as
     ``service.computer_dispatch``, so this now binds a real entry point (see
     ``test_the_computer_use_entry_point_population_is_exactly_the_one_dispatch`` for why the
     population is one and not seven). ``test_the_ratchet_flags_an_entry_point_that_skips_the_
@@ -496,7 +496,7 @@ def test_every_computer_use_entry_point_guards_first():
     assert not offenders, (
         f"computer-use entry point(s) that do not call the keystone guard first: {offenders}. "
         "Every dispatchable tool must begin with enable_state.require_enabled(<tool>) — "
-        "DESKTOP-COMPUTER-USE §3 floor 1 puts the keystone first in the dispatch chain."
+        "the keystone comes first in the dispatch chain."
     )
 
 
@@ -539,7 +539,7 @@ def test_the_packages_public_surface_is_pinned():
         # prefix is what the keystone ratchet above binds to `require_enabled()`, and a
         # second keystone reader inside the chain is the drift `require_enabled`'s own
         # docstring was written about.
-        # `DCU-5` adds step 4b here, beside the two: `check_autonomy` is the only screen in
+        # Step 4b sits here, beside the two: `check_autonomy` is the only screen in
         # the package about WHO is calling rather than what they aimed at, and
         # `unattended_not_granted_error` is its WHAT/WHY/FIX constructor — public for the reason
         # its two siblings are, so a surface that renders an envelope instead of raising gets the

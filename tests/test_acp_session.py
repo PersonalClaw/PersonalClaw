@@ -1,4 +1,4 @@
-"""Tests for AcpSession (acp/session.py) — the P9 per-session turn loop over a
+"""Tests for AcpSession (acp/session.py) — the per-session turn loop over a
 FrameRouter queue. Driven by a fake queue + stub send/cancel/liveness — no process."""
 
 from __future__ import annotations
@@ -284,7 +284,7 @@ async def test_stream_events_permission_event_uses_dialect():
 
 @pytest.mark.asyncio
 async def test_rejecting_echoes_the_agents_reject_option_not_cancelled():
-    """`G19` end to end: what actually goes on the wire when a tool is DENIED.
+    """End to end: what actually goes on the wire when a tool is DENIED.
 
     Driven through the real permission frame so the offered options are captured the way a
     turn captures them — a test that seeds ``_offered_options`` by hand cannot catch a
@@ -413,7 +413,7 @@ async def test_per_session_turn_lock_is_not_process_wide():
         assert not sb._turn_lock.locked()
 
 
-# ── AcpConnection: multi-session on one process (the P9 win) ────────────────
+# ── AcpConnection: multi-session on one process ─────────────────────────────
 
 
 class _FakeProc:
@@ -553,7 +553,7 @@ async def test_connection_close_session_unregisters():
     await conn.close()
 
 
-# ── classify_frame: the shared turn-action classifier (cutover step 1) ────────
+# ── classify_frame: the shared turn-action classifier ─────────────────────────
 
 
 def test_classify_frame_actions():
@@ -573,7 +573,7 @@ def test_classify_frame_actions():
     assert classify_frame(M(id=99, result={}), 5) == "skip"
 
 
-# ── extract_text_chunk: shared text/thinking classifier (cutover step 2) ──────
+# ── extract_text_chunk: shared text/thinking classifier ───────────────────────
 
 
 def test_extract_text_chunk_shared():

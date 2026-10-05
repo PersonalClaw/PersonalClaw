@@ -73,7 +73,7 @@ def test_fresh_home_starts_at_the_first_step(_isolate_home):
 def test_merge_persists_to_entity_settings_not_config(_isolate_home):
     ob.merge_onboarding_state({"step": "essentials", "essentials": {"model": "acme-models"}})
 
-    # The bytes are where §2.1 says they belong…
+    # The bytes are where they belong…
     on_disk = json.loads(_store_path(_isolate_home).read_text(encoding="utf-8"))
     assert on_disk["step"] == "essentials"
     assert on_disk["essentials"]["model"] == "acme-models"
@@ -169,7 +169,7 @@ def test_corrupt_json_and_non_object_json_both_load(_isolate_home):
 
 
 def test_unknown_on_disk_keys_are_not_leaked_back_out(_isolate_home):
-    """Bug #22's lesson: garbage must not ride a read back out to every client."""
+    """The blind-merge lesson: garbage must not ride a read back out to every client."""
     _write_raw(_isolate_home, {"step": "done", "totally_bogus_key_xyz": "junk"})
     assert "totally_bogus_key_xyz" not in ob.load_onboarding_state()
 
@@ -385,7 +385,7 @@ async def test_chat_is_bundled_floor_is_true_only_when_a_floor_is_all_there_is(_
             max_context_tokens=0,
         )
 
-    for name in ("ou14-floor-type", "ou14-real-type"):
+    for name in ("zero-config-floor-type", "zero-config-real-type"):
         try:
             registry.register_type(_cap(name), lambda **_kw: object())
         except Exception:  # noqa: BLE001 — already registered by a sibling test
@@ -395,8 +395,8 @@ async def test_chat_is_bundled_floor_is_true_only_when_a_floor_is_all_there_is(_
 
         registry.register_entry(
             ProviderEntry(
-                name="ou14-floor",
-                type="ou14-floor-type",
+                name="zero-config-floor",
+                type="zero-config-floor-type",
                 model="tiny",
                 declared_capabilities=frozenset({Capability.CHAT}),
                 floor=True,
@@ -408,8 +408,8 @@ async def test_chat_is_bundled_floor_is_true_only_when_a_floor_is_all_there_is(_
 
         registry.register_entry(
             ProviderEntry(
-                name="ou14-real",
-                type="ou14-real-type",
+                name="zero-config-real",
+                type="zero-config-real-type",
                 model="big",
                 declared_capabilities=frozenset({Capability.CHAT}),
             )
@@ -420,8 +420,8 @@ async def test_chat_is_bundled_floor_is_true_only_when_a_floor_is_all_there_is(_
             "not be shown"
         )
     finally:
-        registry.unregister_entry("ou14-floor")
-        registry.unregister_entry("ou14-real")
+        registry.unregister_entry("zero-config-floor")
+        registry.unregister_entry("zero-config-real")
 
 
 @pytest.mark.asyncio
@@ -467,7 +467,7 @@ async def test_chat_download_offer_names_the_size_and_retires_once_it_is_downloa
 
         @property
         def display_name(self) -> str:
-            return "OU-14 fake"
+            return "zero-config fake"
 
         async def is_available(self) -> bool:
             return True
@@ -505,7 +505,7 @@ async def test_chat_download_offer_names_the_size_and_retires_once_it_is_downloa
     assert "chat_download_offer" in bare
     assert bare["chat_download_offer"] is None
 
-    for provider_name in ("ou14-fake-local", "ou14-unrelated-fake"):
+    for provider_name in ("zero-config-fake-local", "zero-config-unrelated-fake"):
         fake = _Fake(provider_name)
         lm_registry.register_provider(fake, capabilities=["chat"])
         try:
@@ -534,7 +534,7 @@ def _offer_fixtures(monkeypatch):
     from personalclaw.local_models.provider import LocalModel, LocalModelProvider
 
     class _Fixed(LocalModelProvider):
-        name = "ou14-fixed"  # type: ignore[assignment]
+        name = "zero-config-fixed"  # type: ignore[assignment]
         display_name = "fixed catalog"  # type: ignore[assignment]
 
         async def is_available(self) -> bool:
@@ -567,8 +567,8 @@ def _offer_fixtures(monkeypatch):
 
     monkeypatch.setattr(lm_registry, "_providers", {})
     monkeypatch.setattr(lm_registry, "_capabilities", {})
-    lm_registry.register_provider(_Server(), capabilities=["chat"], name="ou14-server")
-    lm_registry.register_provider(_Fixed(), capabilities=["chat"], name="ou14-fixed")
+    lm_registry.register_provider(_Server(), capabilities=["chat"], name="zero-config-server")
+    lm_registry.register_provider(_Fixed(), capabilities=["chat"], name="zero-config-fixed")
     return _Server
 
 
@@ -590,7 +590,7 @@ async def test_the_download_is_offered_when_a_provider_reads_as_set_up(_isolate_
     try:
         registry.register_type(
             ProviderCapability(
-                type="ou14-configured-type",
+                type="zero-config-configured-type",
                 capabilities=frozenset({Capability.CHAT}),
                 supports_streaming=True,
                 supports_tools=False,
@@ -604,8 +604,8 @@ async def test_the_download_is_offered_when_a_provider_reads_as_set_up(_isolate_
         pass
     registry.register_entry(
         ProviderEntry(
-            name="ou14-configured",
-            type="ou14-configured-type",
+            name="zero-config-configured",
+            type="zero-config-configured-type",
             model="m",
             declared_capabilities=frozenset({Capability.CHAT}),
         )
@@ -615,9 +615,9 @@ async def test_the_download_is_offered_when_a_provider_reads_as_set_up(_isolate_
         assert data["needs_model"] is False, "precondition: a configured provider reads as set up"
         offer = data["chat_download_offer"]
         assert offer is not None, "the small model is not on disk, so it is on offer"
-        assert offer["provider"] == "ou14-fixed"
+        assert offer["provider"] == "zero-config-fixed"
     finally:
-        registry.unregister_entry("ou14-configured")
+        registry.unregister_entry("zero-config-configured")
 
 
 @pytest.mark.asyncio
@@ -628,7 +628,7 @@ async def test_the_offer_reads_no_searchable_catalog(_isolate_home, monkeypatch)
     server = _offer_fixtures(monkeypatch)
     data = await _json(await hs.api_onboarding(_req({})))
     assert data["chat_download_offer"] is not None
-    assert data["chat_download_offer"]["provider"] == "ou14-fixed"
+    assert data["chat_download_offer"]["provider"] == "zero-config-fixed"
     assert server.calls == 0, "the searchable catalog was read"
 
 

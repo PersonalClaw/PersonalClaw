@@ -1,6 +1,6 @@
 """Routes for session templates + conversation export/share.
 
-Three S3 capabilities that share nothing but their place in the session lifecycle, kept in
+Three capabilities that share nothing but their place in the session lifecycle, kept in
 one route module because each is thin HTTP over a pure module beside them
 (``session_templates``, ``session_export``, ``session_share``).
 
@@ -94,7 +94,7 @@ def _read_transcript(
 ) -> tuple[str, str, dict, list[dict], web.Response | None]:
     """``(key, title, meta, messages, error)`` for one session, or an error response.
 
-    Shared by export and share (SM-9) so the two can never disagree about which history
+    Shared by export and share so the two can never disagree about which history
     key a session name resolves to, or about what "conversation not found" means.
     """
     log = state.conversation_log
@@ -252,7 +252,7 @@ async def api_session_share(request: web.Request) -> web.Response:
 
 
 def register_routes(app: web.Application) -> None:
-    """Wire the S3 template + export + share routes.
+    """Wire the template + export + share routes.
 
     The literal `templates` paths must be registered before `/api/chat/sessions/{session}`
     (see the module docstring).

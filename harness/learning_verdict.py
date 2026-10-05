@@ -9,7 +9,7 @@ requires arms literally named `fanout` and `single` and refuses anything else. M
 `harness fanout-measure` on arms named `skills_on`/`skills_off` exits 2.
 
 §5 states the two honest options and rules out the third. Generalising the arm vocabulary
-inside `fanout_measure` is an owner call (the names are deliberately fixed there), and
+inside `fanout_measure` is not a drive-by edit (the names are deliberately fixed there), and
 relabelling `skills_on` as `fanout` to get a green run would be a lie in the output file.
 So this is the sanctioned second option: **a thin sibling that imports the same constants**
 — and, more than that, calls the same `compare()`. Nothing here re-derives a threshold, a
@@ -157,7 +157,7 @@ _RELABEL: dict[str, str] = {
 #: the one state that design has and fan-out does not — see :data:`VERDICT_TOKENS_UNRECORDED`.
 VERDICTS: frozenset[str] = frozenset(_RELABEL.values()) | {VERDICT_TOKENS_UNRECORDED}
 
-#: The verdict classes V4 reproduction compares on (protocol §8). Two runs "land a verdict
+#: The verdict classes a reproduction run compares on (protocol §8). Two runs "land a verdict
 #: of the same class" when their verdicts are equal as STRINGS — the classes are the verdicts.
 #: Named separately so a future coarsening (e.g. collapsing the three withheld verdicts into
 #: one class) is one edit here rather than a second definition of "same class" per caller.

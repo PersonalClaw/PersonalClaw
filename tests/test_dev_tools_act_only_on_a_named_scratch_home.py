@@ -5,10 +5,10 @@ Measured before this change, the tools beside the suite reached the install the 
 run with nothing set. ``scripts/seed_tasks.py`` wiped the tasks of whatever answered
 ``http://127.0.0.1:10000``, the install's own port. ``scripts/memory_validate.py`` wrote and deleted
 a probe row through that port and opened the default home's ``memory.db`` itself, read-write.
-``session_validate.py`` and ``ut7_validate.py`` toggled providers off and on there. The classify
-smoke told its reader to point it at the default home, and ran on it when nothing was set. The
-screenshot capture defaulted to ``localhost:10000`` too, and the workflow exemplars, run standalone
-as their headers said they could be, wrote synthetic runs into the default home.
+``session_validate.py`` and ``tool_surface_validate.py`` toggled providers off and on there. The
+classify smoke told its reader to point it at the default home, and ran on it when nothing was set.
+The screenshot capture defaulted to ``localhost:10000`` too, and the workflow exemplars, run
+standalone as their headers said they could be, wrote synthetic runs into the default home.
 
 Now every one of them asks ``harness/named_home.py`` (the JavaScript ones through
 ``scripts/lib/named_home.mjs``) and either gets the home it was named, or refuses with a
@@ -66,7 +66,7 @@ _PY_TOOLS = (
     "scripts/seed_tasks.py",
     "scripts/memory_validate.py",
     "scripts/session_validate.py",
-    "scripts/ut7_validate.py",
+    "scripts/tool_surface_validate.py",
     "scripts/smoke_unified_loop_classify.py",
 )
 
@@ -500,7 +500,7 @@ def test_the_tool_universe_validator_runs_its_checks_on_the_named_scratch_home(
 ) -> None:
     """What this change owes is that it reaches the named home's gateway and runs its checks; the
     verdict on them is its own (two of its checks predate the current tool surface)."""
-    done = scratch_gateway.tool("scripts/ut7_validate.py")
+    done = scratch_gateway.tool("scripts/tool_surface_validate.py")
     assert done.stdout.startswith(("CLEAN", "FAIL:")), done.stdout + done.stderr
 
 

@@ -2,7 +2,7 @@
 
 ``<home>/packs/installed.json`` records what each imported pack put on this machine: its
 components, the resolution of each connector requirement, and its post-install
-setup skill. It is the READER surface behind two acceptance criteria contracts:
+setup skill. It is the READER surface behind two contracts:
 
 * a **skipped connector** degrades with a machine-readable ``connector_missing:<name>``
   marker recorded here, so a connector-dependent feature (and the pack detail page) can
@@ -80,7 +80,7 @@ class InstalledPack:
     #: the INSTALLED pack claimed to own — a new archive could widen its own ownership and
     #: quietly acquire the right to clobber a file the user has been editing.
     pack_owned: list[str] = field(default_factory=list)
-    #: The per-component drift lock (§1, the ``{source, computedHash}``
+    #: The per-component drift lock (the ``{source, computedHash}``
     #: convention): ``{"skill:cfo-report": {"source", "computedHash", "path"}}``, where
     #: ``path`` is home-relative and ``computedHash`` is
     #: :func:`packs.update.component_digest` over the bytes that landed. An update compares
@@ -208,7 +208,7 @@ class BindingError(Exception):
 
 
 def bind_answer(pack_name: str, key: str, value: str, home: Path | None = None) -> "InstalledPack":
-    """Record one setup-interview answer (§3.4/§4.1). Returns the updated record.
+    """Record one setup-interview answer. Returns the updated record.
 
     This is what makes "the interview binds a folder" a mechanism rather than a prompt: the
     answer is validated against the binding the PACK declared and persisted in the ledger, so

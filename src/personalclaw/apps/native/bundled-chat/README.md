@@ -6,8 +6,7 @@ conversation before any provider is bound — no account, no API key, no Ollama.
 🔴 **The weight is not in the wheel. The FIRST chat on a fresh install needs network.** The app
 ships; the 138 MiB weight is fetched once, on an explicit click, into
 `$PERSONALCLAW_HOME/models/bundled-chat/`. Everything after that download is offline. This is a
-deliberate trade (owner decision, 2026-09-24: *"the intention was always to ship the wheel
-without the weight and fetch it on first run"*) — a ~147 MiB wheel for every `pip install` is a
+deliberate trade — a ~147 MiB wheel for every `pip install` is a
 real cost, and it is over PyPI's 100 MiB per-file limit. If you need a genuinely offline first
 run, pre-seed a home once with `PERSONALCLAW_HOME=/path make bundled-model` and copy it.
 
@@ -71,7 +70,7 @@ actually on disk it *also* registers an in-memory `ProviderEntry` flagged `floor
 - `floor=True` makes the resolver sort this entry **last**, so any provider the user binds
   wins;
 - with no weight downloaded, no entry is registered at all — `chat` stays unresolved and the
-  dashboard shows the calm "set up a model" state (OU-12) rather than failing a turn;
+  dashboard shows the calm "set up a model" state rather than failing a turn;
 - the type also registers a **readiness probe** (`_readiness`), which core asks before it
   chooses or builds any entry of this type. It is the one answer onboarding's `needs_model`,
   its model check, the degraded chip and the chat model list all read, so a `config.json` row

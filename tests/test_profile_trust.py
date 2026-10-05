@@ -1,13 +1,13 @@
-"""Deferred profile/trust enforcement behaviours (AUTONOMY-GUARDRAILS §4.1/§4.3 + cron).
+"""Deferred profile/trust enforcement behaviours (autonomy guardrails + cron).
 
 Three security controls, each tested in the DANGEROUS direction — the thing that must be DENIED is
 actually denied, because getting any wrong widens what unattended code may do:
 
-1. §4.1 read-only research subagent class — an auto-fired research spawn's write/execute tools are
+1. Read-only research subagent class — an auto-fired research spawn's write/execute tools are
    denied at the tool-approval layer (``subagent._run_inner``), not merely declared.
 2. Cron-approval rewire — an unattended result-injection turn resolves its approval through
    ``profile_for_session`` (via ``gateway.injection_approval_policy``), not a blanket AUTO_APPROVE.
-3. §4.3 project Trust/Preview gate — a project folder's first script touch persists a Preview
+3. Project Trust/Preview gate — a project folder's first script touch persists a Preview
    decision and runs read-only (REVIEW_ONLY); only an explicit Trust admits a write grant.
 """
 
@@ -46,7 +46,7 @@ def _manager_with_tool(
     """A SubagentManager whose subagent stream emits ONE permission request for ``tool_title``.
 
     ``provider.approve_tool`` / ``provider.reject_tool`` are AsyncMocks so a test can assert which
-    fired. The hook returns ``hook_action`` (default: auto-approve) so a tool that clears the §4.1
+    fired. The hook returns ``hook_action`` (default: auto-approve) so a tool that clears the
     research gate is admitted — isolating the gate from the surrounding approval plumbing."""
     sessions = MagicMock()
     sessions.get_pid = MagicMock(return_value=None)
@@ -104,7 +104,7 @@ async def _run_spawn(manager, *, capability_class=None, approval_mode="auto"):
     return info
 
 
-# ── §4.1 capability-class resolution ─────────────────────────────────────────
+# ── capability-class resolution ──────────────────────────────────────────────
 
 
 def test_resolve_capability_class_auto_fired_defaults_research():
@@ -135,7 +135,7 @@ def test_capability_constants_stay_coherent_across_seams():
     assert CAPABILITY_MUTATING == Capability.MUTATING.value
 
 
-# ── §4.1 the DANGEROUS direction: a research spawn must be denied write/execute ──────
+# ── the DANGEROUS direction: a research spawn must be denied write/execute ───
 
 
 @pytest.mark.asyncio
@@ -296,7 +296,7 @@ def test_injection_policy_is_derived_not_constant(monkeypatch):
     assert injection_approval_policy("cron:nightly") is ToolApprovalPolicy.AUTO_APPROVE
 
 
-# ── §4.3 project Trust/Preview gate ──────────────────────────────────────────
+# ── project Trust/Preview gate ───────────────────────────────────────────────
 
 
 @pytest.fixture()

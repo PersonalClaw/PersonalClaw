@@ -142,7 +142,7 @@ class _SpecAwareProvider(KnowledgeSourceProvider):
 
 
 class _PlainProvider(KnowledgeSourceProvider):
-    """The pre-AECO-2 shape: the two-argument base contract, declaring no extra.
+    """The original shape: the two-argument base contract, declaring no extra.
 
     Its whole job is the additive claim — it records the keywords it was handed so "called
     exactly as before" is asserted on the CALL, not inferred from the items coming out.
@@ -177,7 +177,7 @@ class _PlainProvider(KnowledgeSourceProvider):
 
 
 class _PolicyOnlyProvider(_PlainProvider):
-    """Declares ``policy`` and not ``spec`` — the WS-3+ fetching shape, unchanged."""
+    """Declares ``policy`` and not ``spec`` — the existing fetching shape, unchanged."""
 
     @property
     def name(self) -> str:
@@ -213,7 +213,7 @@ def _titles(store, sid):
 
 @pytest.mark.asyncio
 async def test_two_sources_of_one_provider_each_poll_its_own_spec(store):
-    """The acceptance criteria's headline: one install, two sources, two different specs.
+    """The headline: one install, two sources, two different specs.
 
     Both rows name the same ``provider``, and one provider INSTANCE (one set of install
     settings) serves both — the per-install shape would emit the same workspace twice.
@@ -245,11 +245,11 @@ async def test_two_sources_of_one_provider_each_poll_its_own_spec(store):
 
 @pytest.mark.asyncio
 async def test_the_per_install_setting_alone_cannot_tell_two_sources_apart(store):
-    """The falsification the acceptance criterion names, asserted rather than asserted-about.
+    """The falsification, asserted rather than asserted-about.
 
     With the spec EMPTY on both rows, the install default is all the provider has — and the
     two sources collide on one guid, so the second poll indexes nothing new. This is the
-    ``git-repo``-at-AECO-1 shape, and it failing here is what makes the test above a real
+    per-install ``git-repo`` shape, and it failing here is what makes the test above a real
     discrimination instead of a tautology.
     """
     provider = _SpecAwareProvider(workspace="only-ws", label="acme")

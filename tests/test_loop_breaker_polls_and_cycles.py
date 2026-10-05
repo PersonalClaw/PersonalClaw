@@ -9,7 +9,7 @@ Two defects in `record_structural`, both about what it CAN and CANNOT see:
 * **Only period-2 cycles existed.** `span = STRUCT_PINGPONG_CYCLES * 2` hardcoded A↔B, so
   read → edit → test, repeat — the most common real agent loop — was invisible.
 
-The stance stays warn-only, which is a deliberate documented ruling: the failure breaker
+The stance stays warn-only, which is a deliberate documented decision: the failure breaker
 hard-blocks error storms; this path only tells a working agent what it looks like from outside.
 """
 

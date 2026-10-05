@@ -1,7 +1,7 @@
 """Connector catalog + requirements resolution + setup-skill + ledger.
 
 Builds a real ``.pclaw`` from a seeded AUTHOR home (the ``build_pack``), grafts the
-kinds AP-1 doesn't export (a ``connectors.json`` declaration, a ``setup/SKILL.md``), and
+kinds ``build_pack`` doesn't export (a ``connectors.json`` declaration, a ``setup/SKILL.md``), and
 imports into a SEPARATE, isolated IMPORTER home — asserting the contract:
 
 * the connector catalog seeds + loads;
@@ -71,7 +71,7 @@ def importer_home(tmp_path, monkeypatch):
     return home
 
 
-# ── pack surgery (connectors.json + setup/SKILL.md aren't AP-1 exports) ───────
+# ── pack surgery (connectors.json + setup/SKILL.md aren't build_pack exports) ──
 
 
 def _read_pack(path: Path) -> tuple[dict, dict[str, bytes]]:
@@ -103,7 +103,7 @@ def _add_setup_skill(path: Path, body: str) -> None:
     _write_pack(path, manifest, members)
 
 
-# ── acceptance criteria 1: the catalog seeds + loads ──────────────────────────
+# ── the catalog seeds + loads ─────────────────────────────────────────────────
 
 
 def test_catalog_seeds_and_loads(importer_home):
@@ -124,7 +124,7 @@ def test_catalog_by_category(importer_home):
     assert fs and all(e.category == "filesystem" for e in fs)
 
 
-# ── acceptance criteria 2a: configure — credential to the store, server to mcp.json ─────
+# ── configure — credential to the store, server to mcp.json ───────────────────
 
 
 def test_configure_saves_credential_and_writes_server(importer_home):
@@ -188,7 +188,7 @@ def test_credential_never_lands_in_config_or_pack(importer_home):
     assert stat.S_IMODE(env.stat().st_mode) == 0o600
 
 
-# ── acceptance criteria 2b: substitute — same-category rewrite ────────────────
+# ── substitute — same-category rewrite ────────────────────────────────────────
 
 
 def test_substitute_same_category_rewrites(importer_home):
@@ -218,7 +218,7 @@ def test_substitute_different_category_refused(importer_home):
         )
 
 
-# ── acceptance criteria 2c/3: skip — connector_missing:<name>, install still succeeds ────
+# ── skip — connector_missing:<name>, install still succeeds ───────────────────
 
 
 def test_skip_records_missing_marker(importer_home):
@@ -272,7 +272,7 @@ def test_import_bad_configure_degrades_to_skip_marker(built_pack, importer_home)
     assert "connector_missing:web-search" in markers
 
 
-# ── acceptance criteria 4: setup/SKILL.md installs guarded + is re-runnable ───
+# ── setup/SKILL.md installs guarded + is re-runnable ──────────────────────────
 
 
 def test_setup_skill_installs_guarded_and_is_rerunnable(built_pack, importer_home):
@@ -285,7 +285,7 @@ def test_setup_skill_installs_guarded_and_is_rerunnable(built_pack, importer_hom
     assert plan.setup_skill  # a fresh id was assigned
     setup_dir = importer_home / "skills" / plan.setup_skill
     assert (setup_dir / "SKILL.md").is_file()
-    # acceptance criteria 4: it committed THROUGH install_guarded → a .pclaw-lock.json baseline.
+    # It committed THROUGH install_guarded → a .pclaw-lock.json baseline.
     assert (setup_dir / ".pclaw-lock.json").is_file()
 
     # Re-runnable: the ledger keeps setup_pending true.

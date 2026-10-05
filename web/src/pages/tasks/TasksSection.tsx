@@ -22,7 +22,7 @@ export function TasksSection({ sub, navigate, query, setQuery, navEpoch }: Route
       tag={query.tag || ''}
       editing={editing} setEditing={setEditing}
       onCreate={() => navigate('tasks/new')}
-      // view-mode + status filter are in-place refinements (canonical §3) → replace,
+      // view-mode + status filter are in-place refinements → replace,
       // so toggling List/Board/filter doesn't stack Back-undoable history entries.
       setView={(v) => setQuery({ view: v }, { replace: true })}
       setFilter={(f) => setQuery({ filter: f === 'all' ? null : f }, { replace: true })}

@@ -4,8 +4,8 @@ The clause is *"an unattended run without the grant refuses and notifies; an int
 prompts"*, and every part of it is a claim about a CALL SITE rather than about a function:
 
 1. **The refusal happens through ``service.computer_dispatch``**, not by this file calling
-   ``policy.check_autonomy`` directly. `DCU-2` shipped three correct screens with zero callers
-   and its own audit had to censure them; a suite that only drives the screen would reproduce
+   ``policy.check_autonomy`` directly. Three correct screens once shipped with zero callers
+   and their own audit had to censure them; a suite that only drives the screen would reproduce
    exactly that. Every refusal here goes in at the dispatch, and the census in
    ``test_computer_use_call_sites.py`` is the flipped half (the screen has ONE caller, and
    removing it reds).
@@ -387,7 +387,7 @@ def test_the_ladder_refusal_writes_exactly_one_denied_sel_row(_isolated, monkeyp
 
 def test_the_granted_leg_writes_an_approved_row_instead(_isolated, monkeypatch, sel_rows):
     """The vacuity half of the row above. Asserted separately because a single "a row exists"
-    test passes when only the refusal writes one — the sharpest recorded finding."""
+    test passes when only the refusal writes one — the sharpest recorded defect."""
     _arm(_isolated, unattended=("computer_snapshot",))
     _fake_driver(monkeypatch)
     error, _ = _dispatch("computer_snapshot", {"app": ARMED_APP}, identity=UNATTENDED)
@@ -404,7 +404,7 @@ def test_the_granted_leg_writes_an_approved_row_instead(_isolated, monkeypatch, 
 
 def test_no_new_rung_name_was_minted():
     """`guardrails.autonomy` owns the rung vocabulary. This change adds a DECLARATION at an
-    existing rung; a fifth rung name would be a second ladder, which is the hazard this program
+    existing rung; a fifth rung name would be a second ladder, which is the hazard this codebase
     has already paid for once.
 
     Asserted two ways: the ladder is still exactly four names, and the computer-use package
@@ -471,7 +471,7 @@ def test_the_code_is_registered_and_distinct():
 
 
 def test_the_parent_side_verdict_is_not_a_code_a_child_may_name():
-    """The inverse of the finding. Their codes had to be ADDED to ``_CHILD_CODES``
+    """The inverse of the child-code fix. Their codes had to be ADDED to ``_CHILD_CODES``
     because only the child can determine them; this one must be kept OUT, because it is decided
     at step 4b before any child exists. A child able to name it could dress a driver crash up as
     a policy verdict the parent never reached."""

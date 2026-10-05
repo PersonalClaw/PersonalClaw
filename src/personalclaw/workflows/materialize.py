@@ -164,12 +164,12 @@ def is_resolved(status: Any) -> bool:
     second dialect that drifts from it.
 
     A cancelled blocker resolves its dependents — the canonical task graph and the cockpit
-    already agree on that, and the loop side's phase gate was written to the same rule (C432).
+    already agree on that, and the loop side's phase gate was written to the same rule.
 
     NOT resolved here: `SKIPPED`. That is the canonical tuple's reading, carried faithfully
     rather than quietly widened — see this module's own `STATE_TO_STATUS`, which MINTS
     `SKIPPED` from two engine states while the board maps `skipped` onto DONE. Reconciling
-    those three is an owner decision that moves `reconcile.py`'s dependency behavior, not
+    those three is a decision that moves `reconcile.py`'s dependency behavior, not
     something this projection may decide on its own.
     """
     return normalize_status(status) in TERMINAL_STATUSES
@@ -250,7 +250,7 @@ _STALE_BODY_MARKERS = ("```", ".py:", ".ts:", "/src/", "line ")
 
 
 def body_issues(body: str) -> list[str]:
-    """Lint a task body against the §1 contract. Advisory, and it says why. Advisory rather than
+    """Lint a task body against the body contract. Advisory, and it says why. Advisory rather than
     refusing: a body with a code snippet is still a body, and dropping the task to enforce a
     formatting rule would lose the work. But it is reported, because the staleness is real and
     the author is the only one who can fix it.
@@ -274,7 +274,7 @@ def body_issues(body: str) -> list[str]:
 
 
 def build_body(what: str, acceptance: list[str], blocked_by: list[str] | None = None) -> str:
-    """Assemble a §1-shaped body. Acceptance criteria render as checkboxes because a checkbox is
+    """Assemble a task body. Acceptance criteria render as checkboxes because a checkbox is
     a thing a person can tick and a sentence is not — the `done_criterion` the engine runs is
     a separate machine check, and the two are deliberately not the same field.
     """
@@ -399,17 +399,17 @@ def plan_materialization(
 
 
 def task_list_ids_for_run(run_id: str, tasks: Iterable[Any] | None) -> dict[str, str]:
-    """The run-side PLURAL tasks projection (PP-16 seam 4e, OWNER RULING 1): which TaskList
+    """The run-side PLURAL tasks projection: which TaskList
     holds each of this run's tasks, keyed by node id — ``{node_id: task_list_id}``.
 
     This is the destination for the loop row's ``task_list_ids`` column, and it is DERIVED,
-    not stored. The ruling's operative sentence is "a run that projects to tasks carries the
-    PLURAL shape, matching the live field": the loop keeps ``{phase_key: task_list_id}``, and
+    not stored. A run that projects to tasks carries the
+    PLURAL shape, matching the live field: the loop keeps ``{phase_key: task_list_id}``, and
     a node id is the run-side phase key (the graph IS the plan — `loop_run_map`'s own
     ``plan``/``phase_status`` rows). Both halves of each entry already persist on the Task
     rows themselves — the binding carries ``(run_id, node_id)`` and ``Task.task_list_id`` is
     the structural parent — so a stored run-side column would be a second copy of the truth,
-    which is exactly the shape seam 4c retired.
+    which is exactly the shape the retired singular `WorkflowRun.task_list_id` slot had.
 
     Pure over the task iterable, like everything in this module: the registry call is the
     caller's. Semantics, each measured rather than guessed:
@@ -426,11 +426,11 @@ def task_list_ids_for_run(run_id: str, tasks: Iterable[Any] | None) -> dict[str,
     * An empty ``run_id`` projects ``{}`` outright, so a malformed binding whose own run id
       is empty cannot be harvested by an equally empty query.
 
-    No production caller yet, and this docstring says so (plan invariant 9): the consumers-
+    No production caller yet, and this docstring says so: the consumers-
     to-be are `Loop.task_list_ids`' readers (`loop.tasks_link.phase_list_id` and friends,
     `dashboard.handlers.loop_routes._loop_task_ids`, the sdlc/goal briefs, the code cockpit),
-    which move here when the loop row retires — that wiring belongs to the store-retirement /
-    cockpit-contract seams, and wiring a forced consumer now would pre-empt them.
+    which move here when the loop row retires — that wiring belongs with the loop store's
+    retirement and the cockpit contract, and wiring a forced consumer now would pre-empt them.
     """
     if not run_id:
         return {}

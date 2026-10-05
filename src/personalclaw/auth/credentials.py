@@ -1,9 +1,8 @@
 """The owner login credential.
 
-One owner, one credential set. This is **authentication, not multi-tenancy** — the plan's soul
-guardrail — so there is deliberately no user table, no roles, and no signup. A username exists
-only so the login form has a subject and so it can later graduate into an SSO-provisioned one
-(TEAM-SHARED-ENTITIES' identity string).
+One owner, one credential set. This is **authentication, not multi-tenancy**, so there is
+deliberately no user table, no roles, and no signup. A username exists only so the login
+form has a subject and so it can later graduate into an SSO-provisioned one.
 
 **argon2id, not a hand-rolled PBKDF2.** Memory-hard and tunable, which is the current
 recommendation for password storage; rolling our own over `hashlib` to avoid one small wheel
@@ -201,7 +200,7 @@ def status() -> dict[str, Any]:
     }
 
 
-# ── TOTP (S4 consumes this; the secret lives in the credential store) ────
+# ── TOTP (the secret lives in the credential store) ────
 
 
 def set_totp_secret(secret: str) -> None:
@@ -265,7 +264,7 @@ def _audit(operation: str, caller: str, outcome: str, error: str = "") -> None:
 
 
 def bootstrap_from_env() -> bool:
-    """Enroll a credential from the environment on first start (T2.4). Returns whether it ran.
+    """Enroll a credential from the environment on first start. Returns whether it ran.
 
     For container/systemd installs, where there is no terminal to type a password at. Reads
     ``PERSONALCLAW_LOGIN_USER`` + ``PERSONALCLAW_LOGIN_PASSWORD`` and enrolls them ONCE.

@@ -16,7 +16,7 @@
  *
  * The personality arrives through the REAL provider (localStorage → context →
  * useErrorTreatment → the surface), so the wiring under test is the shipped wiring.
- * Only `./appearance` is stubbed: it owns colour application, which PT-1 covers and
+ * Only `./appearance` is stubbed: it owns colour application, which is covered elsewhere and
  * which needs a provider stack that has nothing to do with this change.
  */
 
@@ -70,7 +70,7 @@ const EB_BEFORE =
  *  below (which is the property that matters: the action is untouched). */
 const IB_BEFORE = {
   role: 'alert',
-  // ⚠️ UPDATED BY PT-6, and only in the axis this file does NOT guard. The banner's right
+  // ⚠️ UPDATED ONCE, and only in the axis this file does NOT guard. The banner's right
   // padding is now `--shell-corner-r` + a gap, because `ShellCornerRight` is pinned in the
   // same `relative` box and was covering the Resume button at every width measured. That
   // is the banner's OWN chrome, identical under every personality — which is the property
@@ -168,7 +168,7 @@ afterEach(() => {
   document.documentElement.removeAttribute('data-personality')
 })
 
-describe('under a standard scheme both surfaces are identical to before PT-4', () => {
+describe('under a standard scheme both surfaces are identical to before error skins existed', () => {
   it('the ErrorBoundary fallback renders the exact pre-change markup', () => {
     activate(DEFAULT_PERSONALITY)
     const { container } = renderBoundary()

@@ -158,7 +158,7 @@ class TestGetReturnsTheStoredIdWithoutAFileGate:
     suppress the id: it DELETED the entry. Nothing in the tree writes that path (the
     only two references were this gate and ``prune``'s copy of it), so the branch fired
     on every lookup — the map came back empty and ``resume_sid=None`` was unexplainable
-    from the logs (G5/O16). The map was ``{}`` after one
+    from the logs. The map was ``{}`` after one
     restart. Whether an id still loads is the agent's answer; ``AcpClient`` sends
     ``session/load`` and falls back to ``session/new`` when it is refused.
     """

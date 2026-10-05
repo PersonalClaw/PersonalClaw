@@ -1,7 +1,7 @@
 """The macOS accessibility FFI — the one module in this package that touches the OS.
 
-**ctypes, not pyobjc, and that is the plan's own choice** (§3.2 names "macOS accessibility driver
-over ctypes FFI"). It is also the cheaper one: every symbol this module needs lives in a system
+**ctypes, not pyobjc, by design.**
+It is also the cheaper one: every symbol this module needs lives in a system
 framework that is present on every macOS install, so desktop computer use adds **no dependency
 at all** — not even an optional extra. A ``pyobjc-framework-*`` extra would have to be installed
 before the capability worked, would need an absent-import refusal path of its own, and would put
@@ -21,7 +21,7 @@ it by AST rather than by trusting this paragraph.
 the operator's real cursor — :func:`click_global` — and it is the only caller of
 ``CGWarpMouseCursorPosition`` in the codebase. Element activation (:func:`press`,
 :func:`perform_action`), value setting and typing post no mouse event of any kind, which is what
-makes §3 floor 2's "the pointer never moves by accident" a property of the code rather than an
+makes "the pointer never moves by accident" a property of the code rather than an
 intention.
 """
 
@@ -564,7 +564,7 @@ def scroll(pid: int, vertical: int, horizontal: int) -> None:
 def click_located(pid: int, x: float, y: float) -> None:
     """Post a click at *x*,*y* to process *pid* WITHOUT moving the real cursor.
 
-    §2 reserves this for canvas and custom-drawn UI that exposes no addressable element. The
+    This is reserved for canvas and custom-drawn UI that exposes no addressable element. The
     event carries a location, but ``CGEventPostToPid`` delivers it to one process's event queue
     and the window server never moves the physical pointer — which is why this path, unlike
     :func:`click_global`, does not disturb whatever the operator is doing.
@@ -582,8 +582,8 @@ def click_global(x: float, y: float) -> None:
     """Warp the operator's REAL cursor to *x*,*y* and click there.
 
     **The only function in this codebase that moves the physical pointer.** It is reachable only
-    when a model names ``click_method="global"`` — ``auto`` never resolves onto it (§3 floor 2,
-    enforced in ``service._click_method``) — and the dispatch audits it under its own SEL
+    when a model names ``click_method="global"`` — ``auto`` never resolves onto it (enforced
+    in ``service._click_method``) — and the dispatch audits it under its own SEL
     operation so a real-cursor warp is one filter away from every ordinary click.
     ``test_only_one_function_warps_the_real_cursor`` pins that this remains the sole caller.
     """

@@ -4,7 +4,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 
 // ── The flow shell's resume-point writes ──────────────────────────────────────
 //
-// OU-1 shipped `entity_settings/onboarding.json` with a `step` field and nothing that
+// `entity_settings/onboarding.json` first shipped with a `step` field and nothing that
 // wrote it — a stored key with no writer reads exactly like a working resume until
 // someone tries to resume. These tests pin the writer: every transition of the step
 // stack persists its resume point through the ONE existing write path
@@ -274,7 +274,7 @@ describe("the name step does not promise a save it has not made", () => {
   })
 })
 
-describe('finishing marks the install as onboarded under THIS version (OU-5 / C4)', () => {
+describe('finishing marks the install as onboarded under THIS version', () => {
   // Progressive disclosure needs to tell a fresh install from an upgrade, and the marker is the
   // absence of a `nav-disclosure` record — so the write has to happen at the one act only a
   // fresh install performs. Without it a brand-new user lands on the full 19-row rail and the
@@ -282,7 +282,7 @@ describe('finishing marks the install as onboarded under THIS version (OU-5 / C4
   async function finishFlow() {
     await enterNameAndImport()
     fireEvent.click(await screen.findByRole('button', { name: 'stub-continue' }))
-    // OU-3 landed a fourth step (`try`) between essentials and ready while this change was in
+    // A fourth step (`try`) landed between essentials and ready while this change was in
     // flight, so the flow has to pass through it to reach the finish button — the same path
     // every other test in this file already takes.
     fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
@@ -309,7 +309,7 @@ describe('finishing marks the install as onboarded under THIS version (OU-5 / C4
 
 // ── The READER of everything above ───────────────────────────────────────────
 //
-// OU-1 shipped the `step` field, OU-2/OU-3 wrote it, and until now nothing read it back: a
+// The `step` field shipped first, the steps then wrote it, and until now nothing read it back: a
 // mid-flow reload restarted at the essentials step and silently redid work the home had
 // already recorded. These tests pin the resume, and the tell they watch is which step's BODY
 // is on the page — a step stack renders every row, so asserting on a heading would pass for a
@@ -365,7 +365,7 @@ describe('re-entering the flow resumes at the persisted step', () => {
     expect(testModelProvider).not.toHaveBeenCalled()
   })
 
-  it('does not call an implicit real provider the floor (OU-14 control)', async () => {
+  it('does not call an implicit real provider the floor (the control case)', async () => {
     // The same empty chain, with the floor flag OFF: resolution is #3528's implicit
     // "first capable configured provider" rule, and the floor sentence must not leak into it.
     onboarding.mockResolvedValue({

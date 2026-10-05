@@ -11,10 +11,10 @@ The read + re-run surface behind the installed-pack ledger:
   the FE opens — it never runs the skill server-side (the interview runs under normal tool
   approval in a chat), and it is re-runnable (the ledger keeps ``setup_pending`` true).
 
-AP-4 adds the four pack KINDS' entry points, each one thin over a core function:
+The four pack KINDS' entry points, each one thin over a core function:
 
 * ``GET /api/packs/bundled`` / ``POST /api/packs/bundled/{name}/install`` — the two shipped
-  Domain OS packs, built from their authored source tree and imported through §3.
+  Domain OS packs, built from their authored source tree and imported through the import pipeline.
 * ``POST /api/packs/{name}/roster/deploy`` — one-click team deploy. Deploys the
   ``always`` tier ONLY; the response names the dormant tiers so the caller can show what was
   deliberately not hired.
@@ -26,9 +26,9 @@ AP-4 adds the four pack KINDS' entry points, each one thin over a core function:
 * ``POST /api/packs/prompt-card`` — the prompt-card importer. Files a proposal for
   review; writes no entity.
 * ``POST /api/packs/one-link`` — import a one-link JSON document through the same
-  §3 pipeline.
+  import pipeline.
 
-AP-7 adds the discovery + maintenance half:
+The discovery + maintenance half:
 
 * ``GET /api/packs/proposals`` — the propose-only fingerprint cards. An ON-DEMAND scan
   ("Suggest packs"); it writes nothing, and it is one of only two callers of
@@ -90,18 +90,18 @@ async def api_pack_finish_setup(request: web.Request) -> web.Response:
 
 
 async def api_packs_bundled(request: web.Request) -> web.Response:
-    """List the Domain OS packs shipped in this build (§4.1)."""
+    """List the Domain OS packs shipped in this build."""
     from personalclaw.packs.bundled import bundled_packs
 
     return web.json_response({"packs": [p.to_dict() for p in bundled_packs()]})
 
 
 async def api_pack_bundled_install(request: web.Request) -> web.Response:
-    """Build a shipped Domain OS pack and import it through the §3 pipeline.
+    """Build a shipped Domain OS pack and import it through the pack import pipeline.
 
     The archive is built into a SYSTEM tempdir and deleted afterwards: a bundled pack is
     reproducible from the wheel, so keeping the ZIP would be state nothing reads. Trust tier is
-    BUILTIN (§3.5 ``_tier_for_origin`` — this pack came out of the installed package, not a
+    BUILTIN (``_tier_for_origin`` — this pack came out of the installed package, not a
     URL), and `consent` is not a parameter: a BUILTIN pack that scanned DANGEROUS is a release
     defect, and the import refuses it regardless.
     """
@@ -140,7 +140,7 @@ async def api_pack_bundled_install(request: web.Request) -> web.Response:
 
 
 async def api_pack_roster_deploy(request: web.Request) -> web.Response:
-    """One-click team deploy: promote a pack's ``always`` roster tier (§4.2).
+    """One-click team deploy: promote a pack's ``always`` roster tier.
 
     Only the ``always`` tier is deployed — the response's ``dormant`` list names every staged
     member deliberately left un-hired, so a UI can say so rather than implying the whole roster
@@ -162,10 +162,10 @@ async def api_pack_roster_deploy(request: web.Request) -> web.Response:
 
 
 async def api_pack_triggers_deploy(request: web.Request) -> web.Response:
-    """Add a pack's staged triggers to Automations — DISABLED (§3.1/§4, AP-7).
+    """Add a pack's staged triggers to Automations — DISABLED.
 
     The trigger sibling of :func:`api_pack_roster_deploy`. Pack install stages triggers disabled
-    (a pack must never arm automation, §3.1); this makes them visible and manageable in
+    (a pack must never arm automation); this makes them visible and manageable in
     Automations (``#/triggers``) as ordinary DISABLED rows the user arms one at a time. Every
     ``deployed`` id lands ``enabled=False``; ``skipped`` names any staged file too broken to run
     (reported, never raised, and never armed).
@@ -186,7 +186,7 @@ async def api_pack_triggers_deploy(request: web.Request) -> web.Response:
 
 
 async def api_pack_bindings(request: web.Request) -> web.Response:
-    """Record one setup-interview answer (§3.4/§4.1) — the folder the pack will read."""
+    """Record one setup-interview answer — the folder the pack will read."""
     from personalclaw.packs.installed import BindingError, bind_answer
 
     name = request.match_info.get("name", "")
@@ -205,7 +205,7 @@ async def api_pack_bindings(request: web.Request) -> web.Response:
 
 
 async def api_pack_prompt_card(request: web.Request) -> web.Response:
-    """Import a pasted prompt card (§4.3) — files a proposal, writes no entity."""
+    """Import a pasted prompt card — files a proposal, writes no entity."""
     from personalclaw.packs.prompt_cards import PromptCardError, import_prompt_card
 
     body = await json_object_body(request)
@@ -220,7 +220,7 @@ async def api_pack_prompt_card(request: web.Request) -> web.Response:
 
 
 async def api_pack_one_link(request: web.Request) -> web.Response:
-    """Import a one-link JSON document (§2.3/§4.4) through the same §3 pipeline."""
+    """Import a one-link JSON document through the same import pipeline."""
     from personalclaw.packs.import_ import PackImportRefused
     from personalclaw.packs.onelink import OneLinkError, import_onelink
 
@@ -246,10 +246,10 @@ async def api_pack_one_link(request: web.Request) -> web.Response:
 
 
 async def api_pack_proposals(request: web.Request) -> web.Response:
-    """The propose-only fingerprint cards (§7) — an ON-DEMAND scan. Writes nothing.
+    """The propose-only fingerprint cards — an ON-DEMAND scan. Writes nothing.
 
     ``?project_id=`` scans one project; omitted, it scans every project that binds a workspace.
-    Each card carries its confidence, the arithmetic behind it, and the §3.1 inspect report of
+    Each card carries its confidence, the arithmetic behind it, and the inspect report of
     what the pack WOULD install. Already-installed packs and already-rejected (project, pack)
     pairs never appear, so this can be polled by a user without becoming nagware.
 
@@ -294,7 +294,7 @@ async def api_pack_proposals(request: web.Request) -> web.Response:
 
 
 async def api_pack_proposal_reject(request: web.Request) -> web.Response:
-    """Remember that this project's user does not want this pack — the never-re-nag write (§7)."""
+    """Remember that this project's user does not want this pack — the never-re-nag write."""
     from personalclaw.packs.fingerprint import reject_proposal
 
     body = await json_object_body(request)
@@ -308,7 +308,7 @@ async def api_pack_proposal_reject(request: web.Request) -> web.Response:
 
 
 async def api_pack_update(request: web.Request) -> web.Response:
-    """The §1 ``pack_owned`` update flow. DRY-RUN unless ``confirm`` is true.
+    """The ``pack_owned`` update flow. DRY-RUN unless ``confirm`` is true.
 
     A dry run is the default because the interesting output is the SKIP list: which of your
     edited copies this update would leave alone. Applying without seeing that first is the
@@ -371,7 +371,7 @@ async def api_pack_uninstall(request: web.Request) -> web.Response:
 
 
 def _connector_choices(body: dict) -> dict | None:
-    """The ``connector_choices`` map (§3.3), or None when the caller supplied none."""
+    """The ``connector_choices`` map, or None when the caller supplied none."""
     raw = body.get("connector_choices")
     if not isinstance(raw, dict):
         return None
@@ -379,7 +379,7 @@ def _connector_choices(body: dict) -> dict | None:
 
 
 def register_pack_routes(app: web.Application) -> None:
-    """Mount the AP-3 ledger/finish-setup routes + the AP-4 pack-kind entry points."""
+    """Mount the ledger/finish-setup routes + the pack-kind entry points."""
     app.router.add_get("/api/packs/installed", api_packs_installed)
     app.router.add_get("/api/packs/bundled", api_packs_bundled)
     # Literal-segment routes before the ``{name}`` patterns: `proposals` would otherwise be a

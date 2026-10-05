@@ -283,7 +283,7 @@ def test_the_version_is_derived_exactly_once(release_yml: str) -> None:
     assert "version: ${{ steps.ver.outputs.version }}" in release_yml
 
 
-# ── 5. publisher/consumer coherence — RUM-7 pulls what RUM-8 pushes ───────────
+# ── 5. publisher/consumer coherence — the updater pulls what the release pushes ──
 #
 # `select_image` is the PRODUCTION consumer (the Updates panel and
 # `personalclaw update` on a container install both route through it). Every tag

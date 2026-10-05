@@ -162,7 +162,7 @@ async def list_native_models() -> list[EmbeddingModel]:
         # event loop, so this must be awaited — a prior asyncio.run() here raised
         # "cannot be called from a running event loop", was swallowed by the
         # except, and returned [] → the model always looked "not downloaded".
-        return await provider.list_models()  # type: ignore[attr-defined]  # CI-3
+        return await provider.list_models()  # type: ignore[attr-defined]
     except Exception:
         logger.debug("list_native_models failed", exc_info=True)
         return []
@@ -181,7 +181,7 @@ async def delete_native_model(model_name: str) -> bool:
     if provider is None:
         return False
     try:
-        return await provider.delete_model(model_name)  # type: ignore[attr-defined]  # CI-3
+        return await provider.delete_model(model_name)  # type: ignore[attr-defined]
     except Exception:
         logger.debug("delete_native_model failed", exc_info=True)
         return False
@@ -713,7 +713,7 @@ def get_active_embedding_dim() -> int | None:
                 # raises inside a running loop, so the shared bridge runs list_models()
                 # off-loop when one is already active (mirrors get_active_embed_fn).
                 async def _list():
-                    return await provider.list_models()  # type: ignore[attr-defined]  # CI-3
+                    return await provider.list_models()  # type: ignore[attr-defined]
 
                 models = run_embed_sync(_list, timeout=30)
                 for m in models:

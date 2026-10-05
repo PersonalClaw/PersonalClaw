@@ -11,7 +11,7 @@ import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── THE SUPERSEDED ACTIVITY → INDEX TAB IS GONE, AND STAYS GONE ──────────────────────────────
 //
-// The change's clause: "the 'Index' tab and its list body are deleted from `ChatActivityPanel.tsx`;
+// The change's contract: "the 'Index' tab and its list body are deleted from `ChatActivityPanel.tsx`;
 // a test asserts no 'Index' tab is rendered and that `deriveActivity().index` has no remaining
 // consumer other than the model (grep-style assertion), leaving no dual path."
 //
@@ -24,14 +24,14 @@ import { filesUnder, readSource } from '../../test/sourceTree'
 //
 // 🔴 AND THE DELETION IS ONLY SAFE BECAUSE A SURVIVOR EXISTS. The Index tab was the session's
 // in-session index. Removing it would be a REGRESSION rather than a clean break if the Session Map
-// were not there to be it — which is the whole reason this change is gated behind SSM-12 (one jump
+// were not there to be it — which is the whole reason this change came after the shared jump (one jump
 // handler, one coordinate, both surfaces). So the last two blocks assert the survivor positively:
 // the rail still reaches `ChatPage`'s jump handler with a mark's coordinate, and `ChatPage` still
 // hands it that handler. Deleting the tab without those two passing would leave the reader with no
 // way to navigate a long session at all.
 //
 // WHAT THIS FILE DOES NOT OWN. The jump's SCROLL — jsdom computes no layout and `ChatPage` is not
-// mountable there. `e2e/sessionMap.spec.ts`'s SSM-13 block drives the real browser: it asserts the
+// mountable there. `e2e/sessionMap.spec.ts`'s no-Index-tab block drives the real browser: it asserts the
 // panel has no Index tab and that the rail lands a mid-session turn off both clamp ends.
 
 const WEB = process.cwd()
@@ -79,10 +79,10 @@ describe('The Activity panel renders no Index tab', () => {
     // to render — or a renamed role — would report "no Index tab" and look like a pass.
     expect(panel.getByRole('tab', { name: 'Files' })).toBeTruthy()
     expect(panel.getByRole('tab', { name: 'Links' })).toBeTruthy()
-    // THE CLAUSE.
+    // THE CONTRACT.
     expect(
       panel.queryByRole('tab', { name: 'Index' }),
-      'the Activity panel still renders an "Index" tab — SSM-13 is the atom that deletes it',
+      'the Activity panel still renders an "Index" tab — this change deletes it',
     ).toBeNull()
     // The whole tablist, so a tab reachable under some other accessible name is caught too.
     const names = panel.getAllByRole('tab').map((t) => t.getAttribute('aria-label'))
@@ -125,9 +125,10 @@ describe('The panel owns no navigation at all', () => {
     // CONTROL: the right file was read.
     expect(src.length, 'ChatActivityPanel.tsx read empty').toBeGreaterThan(1000)
     expect(src, 'the file read is not the Activity panel').toMatch(/export function ChatActivityPanel/)
-    // SSM-12 could only assert that the tab's jump was the MAP's jump (the prop, reused). With the
-    // tab deleted the stronger claim holds: the panel has no jump surface, so there is no second
-    // navigation left to drift — which is what "leaving no dual path" means for this change.
+    // Before the deletion a test could only assert that the tab's jump was the MAP's jump (the
+    // prop, reused). With the tab deleted the stronger claim holds: the panel has no jump surface,
+    // so there is no second navigation left to drift — which is what "leaving no dual path" means
+    // for this change.
     expect(src, 'ChatActivityPanel still accepts an onJumpTo prop — the deleted tab\'s seam is still open').not.toMatch(/onJumpTo/)
     expect(src, 'ChatActivityPanel grew its own scroll implementation').not.toMatch(/scrollIntoView/)
   })
@@ -242,8 +243,8 @@ describe('Nothing in the tree consumes an activity index', () => {
     }
   })
 
-  it('🔑 SSM-1\'s model is the session\'s only index, and it is still consumed', () => {
-    // The clause is "no consumer OTHER THAN the model" — a one-sided absence would also be
+  it('🔑 the map\'s model is the session\'s only index, and it is still consumed', () => {
+    // The contract is "no consumer OTHER THAN the model" — a one-sided absence would also be
     // satisfied by deleting the map. So the survivor is asserted positively: the map's entries —
     // The model grouped one per user message — have a production consumer, and the rail is
     // mounted in the page.
@@ -257,7 +258,7 @@ describe('Nothing in the tree consumes an activity index', () => {
 
 describe('The survivor still navigates', () => {
   it('🔑 a rail tick reaches the jump handler with the mark\'s coordinate', async () => {
-    // The behavioural half of "the deletion removed nothing the reader needed". Kept from SSM-12's
+    // The behavioural half of "the deletion removed nothing the reader needed". Kept from the earlier
     // proof, which asserted this of BOTH surfaces; only one is left to assert it of.
     const jumpToTurn = vi.fn()
     const rail = render(
@@ -281,7 +282,7 @@ describe('The survivor still navigates', () => {
     const expr = tag.match(/onJumpTo=\{([^}]*)\}/)
     expect(expr, '<SessionMapRail> passes no onJumpTo prop').not.toBeNull()
     // A bare identifier: an inline arrow would be a SECOND function that could re-map the
-    // coordinate on the way in, which is the dual path SSM-12 closed and this change must not reopen.
+    // coordinate on the way in, which is the dual path the shared jump closed and this change must not reopen.
     expect(expr![1].trim(), `<SessionMapRail> passes an expression, not the shared handler: ${expr![1]}`).toMatch(/^[A-Za-z_$][\w$]*$/)
     const name = expr![1].trim()
     const defs = page.match(new RegExp(`(?:function|const)\\s+${name}\\b`, 'g')) ?? []

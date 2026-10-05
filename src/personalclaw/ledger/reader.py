@@ -67,7 +67,7 @@ def journal_only_kinds(kinds: set[str]) -> frozenset[str]:
 def run_totals(store: LedgerStore, run_id: str) -> dict[str, Any]:
     """Aggregate a run's ledger into the counters the run row carries.
 
-    Budgets are PRE-CHARGED from this on resume (WF2-R4 invariant #1): a resumed run
+    Budgets are PRE-CHARGED from this on resume: a resumed run
     must inherit what it already spent, or a crash loop becomes an unbounded spend.
 
     ``priced`` is the money figure's own disclosure, and it exists because this primitive has TWO

@@ -1,4 +1,4 @@
-"""Black-box turn scenarios — the stdout-boundary oracle for the P9 convergence (task #7).
+"""Black-box turn scenarios — the stdout-boundary oracle for the single-reader convergence.
 
 The ~65 existing client turn tests mock ``_prompt_loop`` to yield ``(action, msg)`` tuples —
 white-box tests of the machinery being RETIRED. This module instead scripts RAW JSON-RPC
@@ -68,7 +68,7 @@ def _client_with_frames(
     frames: list[dict], *, req_id: int = 1, session_key: str = "s", closes: bool = True
 ) -> AcpClient:
     """A ready AcpClient wired to a scripted stdout that emits *frames*, driven through
-    the REAL turn path (FrameRouter → AcpSession) — the P9#7 wrapper architecture.
+    the REAL turn path (FrameRouter → AcpSession) — the N=1 wrapper architecture.
 
     We stub only ``ensure_ready`` (no real subprocess) and inject a live
     :class:`AcpConnection` whose FrameRouter reads the scripted stdout via a fake
@@ -343,7 +343,7 @@ async def test_scenario_jsonl_tool_results_surface(tmp_path):
 # ── send_message (the →str public API) ─────────────────────────────────────────
 # stream_events is only one of the two turn surfaces. `send_message` returns the
 # whole turn as a STRING (a preserved public method the cutover reimplements by
-# draining the same frame stream — task #7 step 3, retiring `_read_prompt_response`).
+# draining the same frame stream, retiring `_read_prompt_response`).
 # The oracle must pin its contract at the stdout boundary too, or the cutover has no
 # net under the string API.
 @pytest.mark.asyncio

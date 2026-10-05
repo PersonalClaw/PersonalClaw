@@ -114,8 +114,8 @@ def _load_from_raw_string(content: str) -> AppConfig:
         tmp.with_suffix(".json.bak").unlink(missing_ok=True)
 
 
-#: Every module `AppConfig.load()` can warn THROUGH. More than one because PHF-14 moved the
-#: JSON-Schema validation pass to `config/validation.py`, which owns its own `__name__` logger —
+#: Every module `AppConfig.load()` can warn THROUGH. More than one because the JSON-Schema
+#: validation pass lives in `config/validation.py`, which owns its own `__name__` logger —
 #: so the enum/type/unknown-key warnings now come from `personalclaw.config.validation` while the
 #: credential and agent-resolution warnings still come from `personalclaw.config.loader`.
 #: Capturing only the loader made this helper return `[]` for warnings that WERE emitted, which
@@ -280,7 +280,7 @@ _personalclaw_config_st = st.builds(
 class TestConfigLoaderProperties:
     """Property-based tests for the config loader validation logic."""
 
-    # Feature: config-schema, Property 6: AppConfig load/to_dict round-trip
+    # Property: AppConfig load/to_dict round-trip
     @given(config=_personalclaw_config_st)
     @settings(deadline=None)
     def test_load_to_dict_round_trip(
@@ -289,8 +289,6 @@ class TestConfigLoaderProperties:
     ) -> None:
         """Calling to_dict() then load() from that dict must yield an
         equivalent AppConfig instance.
-
-        **Validates: Requirements 2.4, 2.5, 9.4, 9.6**
         """
         d = config.to_dict()
         loaded = _load_from_dict(d)
@@ -322,7 +320,7 @@ class TestConfigLoaderProperties:
         # Compare top-level fields
         assert loaded.hooks == config.hooks
 
-    # Feature: config-schema, Property 9: Type mismatch falls back to default
+    # Property: Type mismatch falls back to default
     @given(
         field_idx=st.integers(min_value=0, max_value=2),
         wrong_idx=st.integers(min_value=0, max_value=3),
@@ -335,8 +333,6 @@ class TestConfigLoaderProperties:
     ) -> None:
         """When a config value has an incorrect type, load() must fall
         back to the field's default value.
-
-        **Validates: Requirements 6.1, 6.2**
         """
         fields = [
             ("agent", "approval_mode", "string"),
@@ -373,7 +369,7 @@ class TestConfigLoaderProperties:
             default_section, key
         ), f"Expected default for {section}.{key} after type mismatch"
 
-    # Feature: config-schema, Property 10: Enum violation falls back to default
+    # Property: Enum violation falls back to default
     @given(
         field_idx=st.integers(min_value=0, max_value=len(_ENUM_FIELDS) - 1),
         bad_value=st.text(min_size=1, max_size=20),
@@ -386,8 +382,6 @@ class TestConfigLoaderProperties:
     ) -> None:
         """When a config key has an enum constraint and the value is not
         in the allowed set, load() must fall back to the field's default.
-
-        **Validates: Requirements 6.3**
         """
         section, key, allowed, case_insensitive = _ENUM_FIELDS[field_idx]
         # A case-insensitive field normalizes before validation, so a case variant of an allowed
@@ -409,7 +403,7 @@ class TestConfigLoaderProperties:
             f"(value={bad_value!r}, allowed={allowed})"
         )
 
-    # Feature: config-schema, Property 11: Unrecognized keys are detected
+    # Property: Unrecognized keys are detected
     @given(
         extra_keys=st.lists(
             st.text(
@@ -428,8 +422,6 @@ class TestConfigLoaderProperties:
     ) -> None:
         """When config.json contains unrecognized top-level keys,
         load() must detect and warn about them.
-
-        **Validates: Requirements 6.4**
         """
         data: dict = {k: "some_value" for k in extra_keys}
         _, messages = _load_from_dict_with_logs(data)
@@ -466,7 +458,7 @@ class TestConfigLoaderProperties:
             "definitely_bogus_key" in joined
         ), f"a genuinely unknown key must still be flagged: {messages}"
 
-    # Feature: config-schema, Property 12: load() always returns valid AppConfig
+    # Property: load() always returns valid AppConfig
     @given(
         content=st.one_of(
             st.text(min_size=0, max_size=200),
@@ -485,8 +477,6 @@ class TestConfigLoaderProperties:
     ) -> None:
         """For any input content, load() must return a AppConfig
         instance without raising an exception.
-
-        **Validates: Requirements 6.6**
         """
         result = _load_from_raw_string(content)
 
@@ -497,7 +487,7 @@ class TestConfigLoaderProperties:
         assert isinstance(result.dashboard, DashboardConfig)
         assert isinstance(result.hooks, dict)
 
-    # Feature: config-schema, Property 14: Deprecated fields are accepted during loading
+    # Property: Deprecated fields are accepted during loading
     @given(
         command_val=st.text(min_size=1, max_size=20),
     )
@@ -512,8 +502,6 @@ class TestConfigLoaderProperties:
         Since there are currently no deprecated fields in the config,
         this test temporarily marks ``dashboard.url`` as deprecated and
         verifies the value is still loaded.
-
-        **Validates: Requirements 8.2**
         """
         from personalclaw.config import schema as schema_mod
 
@@ -572,8 +560,6 @@ class TestAgentBindingsProperties:
     ) -> None:
         """All fields of AgentProfile and MemoryStoreConfig carry required
         metadata (label, help).
-
-        **Validates: Requirements 1.1, 5.1**
         """
         import dataclasses
 
@@ -601,8 +587,6 @@ class TestAgentBindingsProperties:
     ) -> None:
         """For any valid AppConfig with agents/stores, to_dict() → load()
         produces an equivalent instance.
-
-        **Validates: Requirements 9.4, 11.5**
         """
         d = config.to_dict()
         loaded = _load_from_dict(d)
@@ -646,8 +630,6 @@ class TestAgentBindingsProperties:
     ) -> None:
         """For any config, to_dict() output has agents as dict-of-dicts and
         memory_stores as dict-of-dicts.
-
-        **Validates: Requirements 11.1, 11.3, 11.4**
         """
         d = config.to_dict()
 
@@ -705,8 +687,6 @@ class TestAgentBindingsProperties:
         resolve_memory_store_config produces a merged dict where
         store-level values override and unspecified fields inherit from
         top-level.
-
-        **Validates: Requirements 6.1, 6.2, 6.3, 6.4**
         """
         merged = resolve_memory_store_config(top_level, store_overrides)
 
@@ -765,8 +745,6 @@ class TestAgentBindingsProperties:
     ) -> None:
         """For configs with a valid agent, resolve_agent_bindings returns the
         agent's working dir, memory store name, and provider agent.
-
-        **Validates: Requirements 7.1, 7.2, 7.5**
         """
         config = AppConfig(
             agents={
@@ -814,8 +792,6 @@ class TestAgentBindingsProperties:
     ) -> None:
         """When an agent references a non-existent memory store, the resolver
         falls back to the filesystem store (empty store name).
-
-        **Validates: Requirements 7.3, 7.4, 2.3**
         """
         assume(missing_store != fallback_store_name)
 
@@ -862,8 +838,6 @@ class TestAgentBindingsProperties:
     ) -> None:
         """For any agents dict with optional duplicate provider_agent values,
         load() parses all entries without error.
-
-        **Validates: Requirements 1.3, 1.7**
         """
         raw_config: dict = {"agents": agents_data}
         cfg = _load_from_dict(raw_config)
@@ -909,7 +883,7 @@ class TestEdgeCases:
 
     def test_retired_system_agent_pruned_and_persisted(self, tmp_path: Path) -> None:
         """A retired system agent left in an existing config.json is pruned on load
-        (backend-cleanup §4) AND the prune is persisted — a genuine one-time migration, not
+        AND the prune is persisted — a genuine one-time migration, not
         a load-time-only mask. A user-created agent and the reserved system agents are
         untouched.
 
@@ -1002,10 +976,7 @@ class TestResourceIndependence:
     """MemoryStoreConfig must not carry agent/workspace fields."""
 
     def test_memory_store_config_has_no_agent_or_workspace_fields(self) -> None:
-        """MemoryStoreConfig has no workspace/agent fields.
-
-        **Validates: Requirements 5.6**
-        """
+        """MemoryStoreConfig has no workspace/agent fields."""
         import dataclasses
 
         ms_fields = {f.name for f in dataclasses.fields(MemoryStoreConfig)}

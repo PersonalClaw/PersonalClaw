@@ -2,7 +2,7 @@
 
 **What this suite can and cannot prove, stated up front.** ``tmux`` is not installed on the
 machine this was written on, so a real tmux daemon was never exercised. Rather than skip the
-clause (a skipped surface reads exactly like a passing one) the aliveness question is answered
+check (a skipped surface reads exactly like a passing one) the aliveness question is answered
 by REAL OS PROCESS STATE through a shim binary literally named ``tmux``, placed on ``PATH``,
 which answers ``has-session`` and ``list-panes`` by calling ``os.kill(pid, 0)`` on a process
 this suite actually spawned.
@@ -198,7 +198,7 @@ def _run(**kw) -> WorkflowRun:
     return run
 
 
-# ── SC5 clause 1+2: reattach the living, tombstone only the dead ───────────────────────
+# ── reattach the living, tombstone only the dead ───────────────────────────────────────
 
 
 class TestReattachNotReap:
@@ -394,7 +394,7 @@ class TestRunnerLease:
         assert runner_lifecycle.lease_for("acp:kiro")["holder"] == "chat:carol"
 
     def test_the_sweep_never_touches_a_workflow_claim_sharing_the_directory(self):
-        """Runner leases and WORK-R8 run claims live in one directory. Neither may sweep the
+        """Runner leases and workflow run claims live in one directory. Neither may sweep the
         other — a released workflow claim lets a second worker double-run the run."""
         from personalclaw.workflows import leases
 

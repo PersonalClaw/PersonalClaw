@@ -97,7 +97,7 @@ def test_explicit_marks_last_non_tool_non_volatile_and_is_shallow_copy():
 
 
 def test_explicit_skips_tool_and_volatile_tail():
-    # Volatile PCS-1 note + a trailing tool result must NOT be the boundary.
+    # The volatile note + a trailing tool result must NOT be the boundary.
     msgs = [
         {"role": "user", "content": "head"},
         {"role": "assistant", "content": "mid"},
@@ -381,7 +381,7 @@ def cache_switch(tmp_path, monkeypatch):
 
 
 def test_default_is_on(cache_switch):
-    """Default True: this change alone must not disable what PCS-4 just enabled.
+    """Default True: this change alone must not disable the EXPLICIT marker already on.
     A config with no `prompt_cache_enabled` key reads as ENABLED."""
     cache_switch(None)
     assert AppConfig.load().agent.prompt_cache_enabled is True
@@ -415,7 +415,7 @@ def test_disabled_still_runs_the_marker_call_one_path_not_a_bypass():
 
 @pytest.mark.asyncio
 async def test_runtime_explicit_with_switch_off_hands_back_the_same_object(cache_switch):
-    """The whole point of the change: PCS-4 made the marker unconditional for an EXPLICIT
+    """The whole point of the change: the marker used to be unconditional for an EXPLICIT
     adapter. With the switch off, complete() sees rt's own list — no marker at all."""
     cache_switch(False)
     model = _RecordingModel(prompt_cache=PromptCache.EXPLICIT)
@@ -608,7 +608,7 @@ def test_the_marker_key_is_on_the_app_facing_sdk_facade():
     assert sdk_model.CACHE_HINT_KEY is neutral.CACHE_HINT_KEY
     assert "CACHE_HINT_KEY" in sdk_model.__all__, (
         "CACHE_HINT_KEY must be in personalclaw.sdk.model.__all__ — an app's provider "
-        "reads it to translate the marker into its own wire form (PCS-8)."
+        "reads it to translate the marker into its own wire form."
     )
 
 

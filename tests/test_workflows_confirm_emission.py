@@ -1,6 +1,6 @@
 """The confirmation-gate emission call site.
 
-S57 built the `ConfirmationRequest` record and its verbs; S61e gave the events a channel.
+The `ConfirmationRequest` record and its verbs existed, and the events had a channel.
 Neither was
 emitted by a running gate — a run could park on an approval and the ledger would show
 `workflow_needs_input` and nothing typed, so "how long did this gate wait" and "who answered it" had
@@ -130,7 +130,7 @@ def test_the_pending_row_classifies_an_ORDINARY_approval():
 
 
 def test_a_DESTRUCTIVE_gate_is_a_different_confirmation_TYPE():
-    """§4 gives them different expiry policies (auto-reject vs hold) and only the ordinary one may
+    """They have different expiry policies (auto-reject vs hold) and only the ordinary one may
     be muted — so classifying a deletion as a plain approval would make it auto-APPROVE on timeout,
     the single worst behaviour available."""
 

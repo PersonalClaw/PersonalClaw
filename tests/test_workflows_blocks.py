@@ -1,4 +1,4 @@
-"""Shared prompt blocks and the template lint (Slice 9b).
+"""Shared prompt blocks and the template lint.
 
 Six templates independently defined the Finding record THREE times. That is the problem in one
 sentence: a convention repeated by hand drifts, and drift in a Finding record breaks things far
@@ -59,7 +59,7 @@ def _raw(name: str) -> dict:
 
 class TestBlockLibrary:
     def test_the_conventions_pack_ships(self) -> None:
-        """`bundled/shared/` is the plan's named location for these."""
+        """`bundled/shared/` is the named location for these."""
         assert set(blocks.block_names()) >= {"finding-record", "safety-tiers", "gap-honesty"}
 
     def test_every_block_has_real_content(self) -> None:
@@ -132,7 +132,7 @@ class TestResolution:
 
 class TestLibraryUsesTheBlocks:
     def test_no_template_defines_the_Finding_record_by_hand(self) -> None:
-        """The migration this session did: three hand-written copies (two templates plus the
+        """The migration done here: three hand-written copies (two templates plus the
         judge-panel macro) became three references to one definition."""
         for name in template_names():
             text = json.dumps(_raw(name))

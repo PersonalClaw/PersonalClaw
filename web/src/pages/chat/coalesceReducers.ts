@@ -14,7 +14,7 @@ export type SegmentsUpdate = (segs: Segment[]) => Segment[]
  *
  *  - #3513: the terminal full-text flush read "not live" and pushed the answer a second time.
  *  - The stats line that ends every turn, when it shares a render batch with `chat_done`
- *    (measured 1 ms apart in both doubled runs of day56b s14, 8–19 ms in the clean ones): it
+ *    (measured 1 ms apart in both doubled runs, 8–19 ms in the clean ones): it
  *    read "not live", went BELOW the answer, and the terminal flush — which had decided
  *    "replace the tail" synchronously — found an activity line there and pushed the answer
  *    again.
@@ -54,7 +54,7 @@ export class TextRunOwnership {
 
 /** Pure segment-attribution reducers for the chat stream coalescer.
  *
- *  These encode the hard-won invariants behind K42/K44/K45 — the bugs where a streamed reply
+ *  These encode the hard-won invariants behind the stream-coalescer bugs where a streamed reply
  *  rendered twice, or turn N+1 absorbed turn N's answer. Callers reach them through
  *  `TextRunOwnership`, which supplies the ownership decision each one takes as an argument. */
 
@@ -73,7 +73,7 @@ export function applyCoalescedFlush(segs: Segment[], revealed: string, replace: 
 }
 
 /** Insert a native activity line (e.g. "recalled context") into the segment list.
- *  Discipline (K42): if we're mid-run (`live` + trailing text), insert BEFORE that text run —
+ *  Discipline: if we're mid-run (`live` + trailing text), insert BEFORE that text run —
  *  never after — so the coalescer's active text stays the tail and the next flush replaces
  *  it in place rather than pushing a duplicate. Also the correct reading order (a preamble
  *  belongs above the answer). De-dupes against the adjacent activity line. Returns the same

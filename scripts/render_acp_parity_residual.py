@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Render the ACP not-gateable residual registry INTO the parity doc.
 
-``ACP-AGENT-PARITY.md`` §2.2 requires that the residual not-gateable set be
-enumerated in ONE place — :data:`personalclaw.acp.permission_authority.NOT_GATEABLE`
-— and that the parity doc (``docs/agents/acp-parity.md``) **render** that
+The residual not-gateable set is enumerated in ONE place —
+:data:`personalclaw.acp.permission_authority.NOT_GATEABLE` — and the parity doc
+(``docs/agents/acp-parity.md``) must **render** that
 registry rather than re-derive it in prose. A hand-written table beside the
 registry is exactly the drift the requirement exists to prevent, and it had
 already happened: the doc's third column carried sweep prose
@@ -154,7 +154,7 @@ def render_document(text: str) -> str:
     if begin < 0 or end < 0:
         raise ValueError(
             f"{doc_path().name} is missing the generated-block markers "
-            f"({MARKER_BEGIN!r} / {MARKER_END!r}); the §2.2 render contract cannot hold"
+            f"({MARKER_BEGIN!r} / {MARKER_END!r}); the render contract cannot hold"
         )
     if end < begin:
         raise ValueError(f"{doc_path().name} has the generated-block markers out of order")

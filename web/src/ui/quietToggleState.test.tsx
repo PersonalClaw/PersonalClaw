@@ -9,7 +9,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The last two state-bearing primitives that kept their state to themselves ─────────────────
 //
-// Cycle 129 taught `HeaderControl`, `FilterChip` and `IconButton` that `active` means `aria-pressed`.
+// `HeaderControl`, `FilterChip` and `IconButton` already know that `active` means `aria-pressed`.
 // Finishing the family:
 //
 //   `SquareIconButton`  `on` (selected/toggled) → drove the coral tint only.  **2 callers pass it**
@@ -19,8 +19,8 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // question. Its six disclosure sites each swap their own label ("View"/"Hide", "Compare versions"/"Close
 // compare"), which tells a user what the NEXT click does but not whether the panel is open right now.
 //
-// 🪤 A CALL-SITE CENSUS CANNOT SEE A FIX MADE IN A PRIMITIVE — the inverse of cycle 128's window bug. After
-// cycle 129 the census still reported 34 silent toggles, six of which were already announced through
+// 🪤 A CALL-SITE CENSUS CANNOT SEE A FIX MADE IN A PRIMITIVE — the inverse of an earlier window bug. After
+// the primitive fix the census still reported 34 silent toggles, six of which were already announced through
 // `HeaderControl`/`FilterChip`. **Resolve the element before counting it silent**, or a primitive fix looks
 // like no fix at all.
 //
@@ -71,7 +71,7 @@ describe('SquareIconButton announces the tint it was already showing', () => {
     expect(screen.getByRole('button', { name: 'Delete' }).hasAttribute('aria-pressed')).toBe(false)
   })
 
-  it('keeps the disabled contract cycle 119 gave it', () => {
+  it('keeps its disabled contract', () => {
     render(<SquareIconButton icon={Pencil} label="Edit" disabled disabledReason="Test the connection first" onClick={vi.fn()} />)
     const el = screen.getByRole('button', { name: 'Edit' })
     expect(el.getAttribute('aria-disabled')).toBe('true')
@@ -98,10 +98,10 @@ describe('the call sites, classified per site', () => {
     })
   }
 
-  // 🔁 SUPERSEDED 2026-08-19 (ux-717), deliberately and with the argument on the record — this
+  // 🔁 SUPERSEDED 2026-08-19, deliberately and with the argument on the record — this
   // assertion used to read "the two `on` Edit buttons keep passing it".
   //
-  // It pinned the MECHANISM (`on=`), not a ruling that those buttons reveal nothing. They do reveal:
+  // It pinned the MECHANISM (`on=`), not a claim that those buttons reveal nothing. They do reveal:
   // `ModelBackends` renders `{editing && <EditInstanceForm/>}` and `MultiInstanceCard` renders
   // `{editing && props.length > 0 && (…)}`. By this file's own criterion — `aria-expanded` is a promise
   // that something is revealed, which is why `DiagnosticsPanel`'s mode toggles were REFUSED it — an Edit
@@ -122,7 +122,7 @@ describe('the call sites, classified per site', () => {
   })
 
   it('a show/hide-secret button stays silent, because its NAME carries the state', () => {
-    // The same ruling as `DiagnosticsPanel`'s pause in cycle 128: when the accessible name flips
+    // The same rule as `DiagnosticsPanel`'s pause: when the accessible name flips
     // ("Show" ⇄ "Hide"), the state is already announced and a second channel adds nothing.
     // `ModelBackends.tsx` held a second copy of this toggle inside its own text-only field renderer,
     // which is gone: Add instance now renders through `ProviderConfigForm`'s typed `SchemaField`, so
@@ -136,10 +136,10 @@ describe('the call sites, classified per site', () => {
   })
 })
 
-// ── 2026-08-19 (ux-717): `on` was the only question this primitive could ask, and 6 of 10 callers ──
+// ── 2026-08-19: `on` was the only question this primitive could ask, and 6 of 10 callers ──
 // ── were asking a different one ────────────────────────────────────────────────────────────────────
 //
-// The cycle above gave `SquareIconButton` `on` → `aria-pressed` and measured `#/settings/providers`
+// The section above gave `SquareIconButton` `on` → `aria-pressed` and measured `#/settings/providers`
 // gaining 18 `aria-pressed` nodes. It classified `QuietButton`'s callers (six disclosures) but not this
 // primitive's — and a census of all ten `on=` call sites says six of them REVEAL ADJACENT CONTENT:
 //

@@ -1,4 +1,4 @@
-"""The single-container `docker run` one-liner must exist in README.md and be testable — DIST-15.
+"""The single-container `docker run` one-liner must exist in README.md and be testable.
 
 The clause is "ONE command copied verbatim from README.md reaches a USABLE
 dashboard". Two halves of that are checkable without a Docker daemon, and they are exactly
@@ -12,7 +12,7 @@ the two halves that were measured missing:
 * **the SPA is bundled into the image.** ``Dockerfile.backend`` must build ``web/dist`` and
   place it where ``setup.py``'s ``BuildWithWeb._find_web_dist`` looks, BEFORE the
   ``pip install`` that grafts it. Without that the image answers ``/api/healthz`` 200 and
-  serves no dashboard — the failure the acceptance criterion calls out by name.
+  serves no dashboard — the failure this test exists to catch.
 
 What is deliberately NOT here: the live drive (boot the container, fetch ``/``, fetch the
 first bundle). That needs a daemon and belongs to the workflow. Asserting the argv-rewriting
@@ -409,8 +409,11 @@ def test_workflow_runs_the_smoke_tool_against_the_image_it_built() -> None:
     text = _WORKFLOW.read_text(encoding="utf-8")
     assert "docker build" in text
     assert "--file deploy/docker/Dockerfile.backend" in text
-    assert "tools/docker_single_container_smoke.py --image personalclaw-gateway:dist15-ci" in text
-    assert "--tag personalclaw-gateway:dist15-ci" in text
+    assert (
+        "tools/docker_single_container_smoke.py --image personalclaw-gateway:single-container-ci"
+        in text
+    )
+    assert "--tag personalclaw-gateway:single-container-ci" in text
 
 
 # ---------------------------------------------------------------------------
@@ -612,7 +615,7 @@ def test_the_asset_assertion_accepts_a_real_bundle_with_the_control_firing(
         monkeypatch,
         {
             "/assets/index-abc123.js": (200, "text/javascript", "export const a=1"),
-            "/assets/dist15-control-": (404, "application/octet-stream", "not found"),
+            "/assets/single-container-control-": (404, "application/octet-stream", "not found"),
         },
     )
     smoke._assert_asset("http://127.0.0.1:1", "/assets/index-abc123.js")

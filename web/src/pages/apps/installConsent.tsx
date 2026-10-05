@@ -605,7 +605,7 @@ export function consentHostUi(
   return { page: Boolean(a.hasUI), components: Boolean(a.uiComponents) }
 }
 
-/** A monospace command row with a copy button — for the P21 client-install one-liner. */
+/** A monospace command row with a copy button — for the client-install one-liner. */
 function ClientInstallCommand({ label, cmd }: { label: string; cmd: string }) {
   const [copied, setCopied] = useState(false)
   const copy = async () => { if (await copyText(cmd, 'the command')) { setCopied(true); setTimeout(() => setCopied(false), 1500) } }
@@ -635,7 +635,7 @@ function describeMessagingTarget(pattern: string): string {
   return pattern
 }
 
-// EI-12 D2. The bullets are the permissions the gateway ENFORCES server-side, and
+// The bullets are the permissions the gateway ENFORCES server-side, and
 // `network` is deliberately not among them: an app's provider code is imported
 // in-process by the gateway, so there is no per-app egress chokepoint to enforce at
 // (docs/security/limitations.md §2). Listing it beside storage/cron/agent — which are
@@ -649,7 +649,7 @@ function describeMessagingTarget(pattern: string): string {
 // `AppPermissionsWire` never declared the field — so install consent never said which
 // other apps an app may talk to. Declaring nothing is disclosed too (the caption
 // below the bullets): deny-by-default is the real behaviour, and silence would repeat
-// the mistake D2 found for `network`.
+// the mistake found for `network`.
 //
 // THREE network states, not two. The row read `not declared` for a manifest carrying an
 // explicit `"network": false`, collapsing a STATEMENT by the author into silence — and it
@@ -672,7 +672,7 @@ function networkClaim(network: boolean | undefined): string {
 //
 // That makes the consent screen's silence the actual defect (#492): it showed declared
 // permissions, and the thing it showed was not the thing that bounds the UI. Same fix as
-// EI-12 D2 made for `network` — its own advisory row, stated either way, because absence
+// the one made for `network` — its own advisory row, stated either way, because absence
 // would otherwise read as "the platform confines it". Rendered ONLY when the caller
 // supplies the fact: an omitted `hostUi` leaves the row out rather than asserting "no
 // browser code" about an app nobody has read. `consentHostUiRendered.test.ts` is the rail
@@ -711,7 +711,7 @@ function specList(specs: string[]) {
 // The install runs `pip install` into `<home>/app-python`, which the GATEWAY loads into its own
 // process (`apps/app_python.py`). This row is that disclosure, and it belongs with `network`
 // and the host-page row rather than in the
-// bullets above them — the same argument EI-12 D2 made for `network` and #492 made for
+// bullets above them — the same argument made for `network` and in #492 for
 // dashboard code. The bullets are grants the gateway ENFORCES; a module that is importable
 // in-process has no chokepoint to enforce at, so rendering it as a bullet would read as a
 // capability the platform polices, which is the one thing that is false about it.
@@ -830,21 +830,21 @@ export function permissionRows(perms: AppSummary['permissions']): string[] {
       `Can ask you to approve: ${proposalKinds.map((p) => p.label || p.kind_suffix).join(', ')}`,
     )
   }
-  // `eventSubscriptions` is an ENFORCED grant as of APE-2 and belongs in the
+  // `eventSubscriptions` is an ENFORCED grant and belongs in the
   // bullets: `apps/app_events.emit` is the only path a platform event reaches an app by,
   // and it consults `can_receive_platform_event` per app per event (deny by default, exact
   // name). It was in the pending block, when no registry existed; leaving it
-  // there now would understate a real capability — the D2 defect inverted, and just as
+  // there now would understate a real capability — the `network` defect inverted, and just as
   // wrong, because the user would weigh a live grant as disclosure-only.
   const declaredEvents = perms.eventSubscriptions ?? []
   if (declaredEvents.length) {
     rows.push(`Receive platform events: ${declaredEvents.join(', ')}`)
   }
-  // APE-3 shipped the host, so this JOINS the enforced bullets — the move APE-2 already made
+  // The worker host has shipped, so this JOINS the enforced bullets — the move already made
   // for `eventSubscriptions`. `apps/permissions.can_run_background_tasks()` is now consulted
   // by `apps/worker_runtime`, which refuses to spawn or revive a worker without the grant, so
   // the declaration denies as well as declares. Leaving it in a "declared, not yet in effect"
-  // box would now UNDERSTATE what the gateway does — the mirror image of the D2 defect that
+  // box would now UNDERSTATE what the gateway does — the mirror image of the `network` defect that
   // kept it out of the bullets while no host existed.
   if (perms.backgroundTasks) rows.push('Run a long-lived background worker')
   // The settings `/api/config` reaches for this app — only these, named exactly
@@ -905,7 +905,7 @@ export function PermissionList({ perms, hostUi, pythonDeps }: {
   )
 }
 
-// P29: the recurring jobs an app declares, shown pre-install. Each is an agent run on
+// The recurring jobs an app declares, shown pre-install. Each is an agent run on
 // a schedule — we surface the cadence + which agent + the prompt so the user sees what
 // will run unattended before granting the `cron` permission.
 //
@@ -1009,7 +1009,7 @@ export function CronConsentList({ crons, action = 'install' }: { crons: AppCronS
   )
 }
 
-/** APE-8 "Fix with AI": shown when a failed install carried a build/hook log. Opens a chat
+/** "Fix with AI": shown when a failed install carried a build/hook log. Opens a chat
  *  pre-filled with the install log — already wrapped in the backend's untrusted-content
  *  fence (`fix_prompt` is built server-side; the FE only passes it through) — so the user or
  *  agent can debug the failure. Seeds the composer, never auto-sends. Renders nothing when
@@ -1213,7 +1213,7 @@ function AppInstallDialog({ target, phase, onConfirm, onClose }: {
   }
 
   const r = phase.review
-  // P21: the app installs on the user's own machine, not this server — the one-liner, never a
+  // The app installs on the user's own machine, not this server — the one-liner, never a
   // consent button, and the scan beside it because the command runs outside the scanner.
   if (r.needs_client_install) {
     return (

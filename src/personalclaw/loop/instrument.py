@@ -1,4 +1,4 @@
-"""Loop self-instrumentation — the P4 "prove-the-instrument" gates.
+"""Loop self-instrumentation — the "prove-the-instrument" gates.
 
 Before an open-ended loop trusts a verdict about its own work, two guards run:
 

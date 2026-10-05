@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 
 /** SESSION MAP — THE CURRENT REGION.
  *
- *  SSM-4 shipped the accent PAINT and derived the accented set from the marks alone: the newest
+ *  The rail first shipped the accent PAINT and derived the accented set from the marks alone: the newest
  *  `visibleIndex` won, always. That is exactly right on load and wrong the moment anyone scrolls —
  *  the rail then says "you are at the bottom" while the reader is halfway up the transcript. This
  *  module is the viewport DRIVER that makes the accent mean "what is on screen".
@@ -76,7 +76,7 @@ export function currentMarkRange(entries: ReadonlyArray<Starts>, visibleTurns: n
  *  `useRef` Map mutated in place, so its identity never changes and cannot say "a new turn
  *  mounted". The entries array changes on EVERY streamed token (a reply's `response` grows), so
  *  keying on the entries would tear down and rebuild the observer once per token — which is
- *  precisely the re-measure storm the acceptance criterion forbids. The coordinate LIST is the
+ *  precisely the re-measure storm the contract forbids. The coordinate LIST is the
  *  discriminator that separates the two events: streaming text cannot change it, and a new turn
  *  always does.
  */

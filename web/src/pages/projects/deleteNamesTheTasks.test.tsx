@@ -71,7 +71,7 @@ describe('the plain delete dialog names the task loss', () => {
   it('🪤 it interpolates NO count', () => {
     // This page cannot obtain an honest one: `api.tasks()` defaults to `limit=50` across the whole
     // account and the server's `total` saturates at 500, so a number here would understate the loss
-    // on exactly the large projects where it is worst. Same ruling as `repeatableResetConfirms`.
+    // on exactly the large projects where it is worst. Same decision as `repeatableResetConfirms`.
     const dialogArgs = code.match(/title: `Delete project[\s\S]*?danger: true/)?.[0] ?? ''
     expect(dialogArgs, 'found the dialog options').not.toBe('')
     expect(dialogArgs, 'no count is interpolated').not.toMatch(/\.length/)

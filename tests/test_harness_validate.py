@@ -65,7 +65,7 @@ def test_shipped_specs_validate_shape() -> None:
 def test_shipped_specs_test_references_resolve() -> None:
     """Every requiredTests node-id in the shipped specs resolves (collects OR is defined).
 
-    This is the spec-rot guard from Success Criterion #1: if a test is renamed and a spec
+    This is the spec-rot guard: if a test is renamed and a spec
     still points at the old node-id, this fails.
     """
     specs = load_specs()
@@ -176,7 +176,7 @@ def test_cli_scan_whole_tree_returns_zero() -> None:
 
 
 def test_cli_validate_has_no_scanner_warnings_now() -> None:
-    # Session 2 made the scanner check-ids resolvable, so validate should have zero
+    # The scanner check-ids are resolvable, so validate should have zero
     # warnings on the shipped set (every rule's scanner: ref resolves).
     import io
     from contextlib import redirect_stdout

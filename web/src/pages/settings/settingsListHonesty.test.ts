@@ -152,7 +152,7 @@ describe('a settings list distinguishes a failed load from an empty one', () => 
     // `ModelBackends` keeps its models-decoration fallback (above), and `MemoryPanel`'s other THREE
     // readers (stats, settings, volunteer) still substitute. Those feed config forms and counters
     // rather than a list body, which is a different family with a different right answer per site.
-    // 🔻 MGAV-9 converted the four that DID feed a list body (semantic, episodic, lessons, graph)
+    // 🔻 A later change converted the four that DID feed a list body (semantic, episodic, lessons, graph)
     // plus entities/slots/proposals, which is why the count of MemoryPanel's swallowers dropped
     // from seven to three. A ceiling, not a target: it may only come down.
     expect(swallowers.length, 'if this moves, say which way and why in the PR').toBeLessThanOrEqual(17)

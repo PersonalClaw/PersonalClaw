@@ -4,13 +4,13 @@ Today memory is several ad-hoc shapes: semantic key/value rows, episodic rows,
 lessons (semantic rows with a ``lesson.*`` key), preference facets, and the
 markdown prefs/projects/history files. This module introduces **one**
 ``MemoryRecord`` with a ``kind`` discriminator so the provider stores rows and
-the service reasons over them uniformly (memory-architecture.md §3.1).
+the service reasons over them uniformly.
 
-M0 scope: this is a typed view + (de)serialization helpers ONLY. The SQLite
+Scope: this is a typed view + (de)serialization helpers ONLY. The SQLite
 schema does not change here — ``MemoryRecord`` maps onto the existing
 ``semantic_memory`` and ``episodic_memories`` rows. The new durability/reach
 axes (tier/scope/category/…) are carried on the dataclass with safe defaults so
-M5+ can populate them once the backing columns exist; until then they round-trip
+the write path can populate them once the backing columns exist; until then they round-trip
 through defaults and never alter behavior.
 """
 
@@ -41,10 +41,10 @@ def _now_iso() -> str:
 
 
 class MemoryKind(str, Enum):
-    """What KIND of thing a record is (memory-architecture.md §3.1/§3.7).
+    """What KIND of thing a record is.
 
     The first four are the user/world-facing classes that exist today; the last
-    three (``procedural``/``commitment``/``self_persona``) are the M5+ classes
+    three (``procedural``/``commitment``/``self_persona``) are the newer classes
     that turn memory from "facts about the user" into "memory that acts".
     """
 
@@ -53,12 +53,12 @@ class MemoryKind(str, Enum):
     LESSON = "lesson"  # corrective rule (a semantic row, key=lesson.*)
     PREFERENCE = "preference"  # user/agent preference
     NOTE = "note"  # free note (subsumes prefs.md/projects.md text)
-    # NEW (M5+):
+    # NEW:
     PROCEDURAL = "procedural"  # how-to-work prior (tool/source outcomes)
     COMMITMENT = "commitment"  # inferred future check-in obligation
     SELF_PERSONA = "self_persona"  # the agent's positive self-model
-    #: A user-taught approve/deny/suppress rule the triage digest consults
-    #: (PROACTIVE-ASSISTANT §1.4). Policy, not a fact about the user — hence its
+    #: A user-taught approve/deny/suppress rule the triage digest consults.
+    #: Policy, not a fact about the user — hence its
     #: `user.approval.` prefix is excluded from `_NON_FACT_KEY_CLAUSE`, and lookup
     #: is an exact prefix query, never vector search.
     APPROVAL = "approval"
@@ -69,7 +69,7 @@ class MemoryKind(str, Enum):
     SLOT = "slot"
 
 
-#: MemoryKind → the decay kernel's profile name (LEARN-R6f).
+#: MemoryKind → the decay kernel's profile name.
 #:
 #: Exhaustive on purpose, with no fallback. `decay.KIND_MULTIPLIERS.get(kind, 1.0)`
 #: would silently give an unmapped kind the reference rate, and a new memory class
@@ -108,7 +108,7 @@ def decay_profile(kind: "MemoryKind") -> str:
 
 
 class MemoryTier(str, Enum):
-    """DURABILITY axis — deepens via SEALING (§3.5). Independent of SCOPE."""
+    """DURABILITY axis — deepens via SEALING. Independent of SCOPE."""
 
     WORKING = "working"  # rolling session summary, always-injected
     EPISODIC = "episodic"  # discrete facts
@@ -117,7 +117,7 @@ class MemoryTier(str, Enum):
 
 
 class MemoryScope(str, Enum):
-    """REACH axis — widens via heat-gated PROMOTION (§3.5). Independent of TIER."""
+    """REACH axis — widens via heat-gated PROMOTION. Independent of TIER."""
 
     SESSION = "session"
     WORKSPACE = "workspace"
@@ -125,9 +125,9 @@ class MemoryScope(str, Enum):
     GLOBAL = "global"
 
 
-# Default (tier, scope) per kind for records minted before the M5+ axes are
-# populated — chosen so M0–M4 behavior is byte-identical to today (everything
-# global, durable). M5+ overrides these at the write path.
+# Default (tier, scope) per kind for records minted before the axes are
+# populated — chosen so behavior without them is byte-identical to today (everything
+# global, durable). The write path overrides these.
 _DEFAULT_TIER: dict[str, MemoryTier] = {
     MemoryKind.SEMANTIC: MemoryTier.SEMANTIC,
     MemoryKind.LESSON: MemoryTier.SEMANTIC,
@@ -188,7 +188,7 @@ class MemoryRecord:
 
     Subsumes the legacy semantic_memory + episodic_memories shapes. Fields with
     NEW-axis semantics (tier/scope/category/visit_count/…) carry safe defaults
-    until the M5+ migration adds their backing columns; they round-trip through
+    until a migration adds their backing columns; they round-trip through
     ``extra`` so a forward-written record never loses data on an older store.
     """
 
@@ -207,7 +207,7 @@ class MemoryRecord:
     recall_count: int = 0
     visit_count: int = 0  # NEW
     last_accessed_at: str | None = None
-    # axes (NEW — §3.5; defaults preserve today's "global/durable" behavior)
+    # axes (NEW; defaults preserve today's "global/durable" behavior)
     tier: MemoryTier | None = None
     scope: MemoryScope = MemoryScope.GLOBAL
     scope_ref: str | None = None
@@ -220,7 +220,7 @@ class MemoryRecord:
     is_deleted: bool = False
     created_at: str = ""
     updated_at: str = ""
-    # action-safety / commitment envelopes (NEW — §3.7; M5+)
+    # action-safety / commitment envelopes (NEW)
     safe_to_act: dict | None = None
     due_window: str | None = None
     channel: str | None = None
@@ -333,14 +333,14 @@ class MemoryRecord:
 
     def heat(self, *, now: datetime | None = None) -> float:
         """Operational heat — how 'hot' this record is for promotion + boost
-        (memory-architecture.md §3.6: heat = α·visit + β·interaction + γ·recency).
+        (heat = α·visit + β·interaction + γ·recency).
 
         A bounded [0, ~1.5] signal combining how often the record has been
         recalled/visited and how recently it was touched. Drives the two-stage
-        retrieval boost (M5b) and the heat-gated global promotion (M5c). Pure
+        retrieval boost and the heat-gated global promotion. Pure
         function of the record's own fields — no DB access.
 
-        **The recency term is the one decay kernel** (LEARN-R6f), not a private
+        **The recency term is the one decay kernel**, not a private
         `e^(−days/30)`. That private curve was a third answer to "is this still
         relevant?": it had no per-kind rate (an episodic fragment aged exactly like a
         distilled fact) and no importance axis, so the same record could be hot here
@@ -430,13 +430,13 @@ def _row_get(row: Any, key: str, default: Any = None) -> Any:
     return default
 
 
-# ── Capability declaration (the L2 contract flags — used from M2) ─────────────
+# ── Capability declaration (the L2 contract flags) ────────────────────────────
 
 
 @dataclass(frozen=True)
 class MemoryCapabilities:
     """What a memory provider can do, so the service degrades per-capability
-    instead of all-or-nothing (memory-architecture.md §3.2/§3.4).
+    instead of all-or-nothing.
 
     Mirrors the Tool result-contract + Knowledge "degrade to FTS" discipline.
     """

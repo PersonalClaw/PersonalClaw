@@ -1,4 +1,4 @@
-/** Shared primitives for the tool render registry (tool-io-rendering).
+/** Shared primitives for the tool render registry.
  *
  * RawBlock — the always-correct monospace fallback (today's look).
  * KeyValueFields — schema-driven input: each arg as a labeled field, type-aware.

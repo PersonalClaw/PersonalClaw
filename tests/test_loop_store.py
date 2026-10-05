@@ -232,9 +232,7 @@ class TestRedactedView:
         (loop_files.loop_dir(g.id) / "findings" / "cycle_001.json").write_text(
             json.dumps({"cycle": 1, "summary": "found it"})
         )
-        loop_files.record_cycle_findings(
-            g.id
-        )  # PP-5: ingest into the ledger the list view projects
+        loop_files.record_cycle_findings(g.id)  # ingest into the ledger the list view projects
         _goal(project_id="p-2")
         rows = store.list_redacted()
         row = next(r for r in rows if r["id"] == g.id)

@@ -524,7 +524,7 @@ class TestArtifactGate:
         assert r.failure.failure_class == FailureClass.INTERNAL
 
 
-#: A contract-shaped judge answer. Since WF2LOO-13 the gate asks for this object rather than one
+#: A contract-shaped judge answer. The gate asks for this object rather than one
 #: bare word, so a test that hands back `"PASS"` is testing the protocol the engine no longer
 #: speaks — it now reads as "the judge could not answer", which is a PROTOCOL failure.
 def _answer(verdict: str, **extra) -> str:
@@ -627,7 +627,7 @@ class TestJudgeGate:
         """The one-word answer used to BE the protocol; it now carries no proof by construction.
 
         Asserted rather than merely deleted: a bare `PASS` silently reading as a pass again is
-        the exact regression WF2LOO-13 removes, and it would look like a harmless tolerance.
+        the exact regression the contract removed, and it would look like a harmless tolerance.
         """
 
         async def judge(prompt, *, use_case="reasoning", output_type=None):

@@ -1,4 +1,4 @@
-"""The native in-process agent loop — ``NativeAgentRuntime`` (E2-P4).
+"""The native in-process agent loop — ``NativeAgentRuntime``.
 
 A ReAct-style tool-use loop that runs entirely inside the PersonalClaw process:
 
@@ -10,7 +10,7 @@ It emits the neutral :class:`~personalclaw.llm.events.AgentEvent` stream the cha
 runner already consumes from ACP (text/thinking chunks, tool-call + tool-result
 cards, a terminal ``EVENT_COMPLETE`` carrying *aggregated* usage), so the runner
 needs no per-backend branching. History is owned **here** (``self._messages``) —
-``ModelProvider.complete`` is stateless (E2-P2).
+``ModelProvider.complete`` is stateless.
 
 Decoupling: this module depends only on the ``ModelProvider`` /
 ``ToolProvider`` / ``AgentEvent`` contracts plus low-level ``security``. Hook
@@ -152,7 +152,7 @@ def _inference_failure_mode(exc: BaseException) -> FailureMode:
 # (`pre_tool_hooks.on_tool`, which the bridge binds to the agent the runtime runs as).
 HookFire = Callable[[str, Any], Awaitable[HooksSaid]]
 
-# Cap mid-turn steer injections (#37) so a message flood can't extend one turn
+# Cap mid-turn steer injections so a message flood can't extend one turn
 # forever — past this, further steers wait for the next turn.
 _MAX_STEERS_PER_TURN = 4
 
@@ -181,7 +181,7 @@ _DROPPED: Any = object()
 
 @dataclass(frozen=True, slots=True)
 class _PreparedCall:
-    """A requested tool call resolved far enough to be PLANNED but not yet run (HC-6).
+    """A requested tool call resolved far enough to be PLANNED but not yet run.
 
     Exists because the concurrency decision needs every call's resource set before any
     of them executes, and the name/argument resolution that produces it must therefore
@@ -204,7 +204,7 @@ class _PreparedCall:
 
 
 # Graduated failure/loop thresholds + the standard notices live in the
-# runtime-agnostic observer imported above (ACP-AGENT-PARITY §2.3 gap 5): the ACP
+# runtime-agnostic observer imported above: the ACP
 # host consumes the SAME counting over its neutral event stream, so a threshold or
 # a notice's wording is defined once and cannot drift between the two runtimes.
 
@@ -243,7 +243,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
 
         self._leaf_lineage = _leaf_lineage(leaf_lineage)
         # The Project this session's work scopes under ("" = none). Bound per-turn via
-        # bind_tool_context so artifact_save can stamp its project_id (S5 — tie work
+        # bind_tool_context so artifact_save can stamp its project_id (to tie work
         # created during a project's session/loop back to that Project).
         self._project_id = project_id or ""
         # Per-turn reasoning effort ("" | low | medium | high | max) forwarded to
@@ -254,7 +254,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         self._tool_surface = tool_surface  # read again when the tools change (`catalog_refresh`)
         self._cwd = Path(cwd) if cwd else None
         self._session_key = session_key
-        # Per-turn procedural-outcome accumulator (M5d): bounded list of
+        # Per-turn procedural-outcome accumulator: bounded list of
         # (tool, outcome) the after-turn review drains into procedural memory, where
         # `outcome` is one of `memory_service.PROCEDURAL_OUTCOMES`. Capped so a long
         # run can't grow it unbounded.
@@ -270,7 +270,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # start() and the approval gate fails fast (recoverable denial, no 300s
         # park) so the turn can't wedge waiting for input it will never get.
         self._unattended = bool(unattended)
-        # Dry-run replay (T9): observe-mode. Write-capable tools (any non-SAFE
+        # Dry-run replay: observe-mode. Write-capable tools (any non-SAFE
         # risk level) are NOT executed — they return a synthetic "would have …"
         # observation so the run previews what WOULD happen with the current
         # prompt/workflow without side effects. Read-only SAFE tools still run so
@@ -351,7 +351,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # the tool block is then byte-identical to having no groups at all).
         self._active_groups: set[str] | None = None
         # Newly-activated groups whose instructions the NEXT turn should carry
-        # (group changes take effect at the turn boundary, §3 prefix corollary).
+        # (group changes take effect at the turn boundary).
         self._pending_group_note = ""
         # tool name → group name, and the group-filtered defs (both built in
         # start()/_assemble_schema; the filtered set IS _tool_defs when ungrouped).
@@ -362,7 +362,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # Groups whose declared capability doesn't resolve: not activatable,
         # not stub-listed. Recomputed on every schema assembly.
         self._unofferable: set[str] = set()
-        # Ceiling on one wave's concurrent dispatch. 1 = the pre-HC-6 behaviour,
+        # Ceiling on one wave's concurrent dispatch. 1 = serial dispatch,
         # every call in its own wave; it is what the dispatch benchmark's baseline arm uses.
         self._max_tool_concurrency = max(1, int(max_tool_concurrency or 1))
         self._approval = ApprovalGate()
@@ -404,7 +404,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         self._stop_note = ""
         # Compaction save fractions (anti-thrashing across the session).
         self._compaction_saves: list[float] = []
-        # Queue-steering (#37): a callback the loop drains at each model boundary
+        # Queue-steering: a callback the loop drains at each model boundary
         # for mid-turn user messages. None = no steering (the default until wired).
         self._pull_steer: "Callable[[], list[str]] | None" = None
         self._steers_injected = 0
@@ -439,7 +439,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
     async def _build_catalog(self, *, carry: bool) -> None:
         """Build the catalog; a *carry* rebuild keeps the session's choices (`catalog_refresh`)."""
         self._stamp_surface()
-        # User-disabled tools/providers (PT3 + UT4): a harder gate than retrieval —
+        # User-disabled tools/providers: a harder gate than retrieval —
         # a disabled tool (individually OR via its whole provider being off) is
         # removed from BOTH the schema/catalog AND the dispatch index, so the model
         # can't see or call it. Core-locked tools + the locked platform provider are
@@ -510,7 +510,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         if dropped:
             logger.info("native: %d user-disabled tool(s) excluded: %s", len(dropped), dropped)
         # Unattended runs strip option-prompt-shaped tools so a background turn
-        # can't wedge waiting for a human (T5). A property of the run MODE, applied
+        # can't wedge waiting for a human. A property of the run MODE, applied
         # here where the toolset is assembled — not per-tool, not per-loop.
         if self._unattended:
             from personalclaw.tool_providers.base import is_interactive_tool
@@ -547,14 +547,14 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # SCHEMA ASSEMBLY (group filter → serialization) — factored out so a group
         # change can re-run it without re-discovering providers.
         self._assemble_schema()
-        # Risk-level map: dry-run observe-mode intercepts non-SAFE tools (T9), and
+        # Risk-level map: dry-run observe-mode intercepts non-SAFE tools, and
         # the permission-request event carries a tool's declared risk to the gate.
         # Built once here so the hot path is a dict lookup.
         self._tool_risk = {t.name: getattr(t, "risk_level", RiskLevel.CAUTION) for t in defs}
         self._tool_builds = frozenset(t.name for t in defs if getattr(t, "builds", False))
         self._tool_proposes = frozenset(t.name for t in defs if getattr(t, "proposes", False))
         self._tool_tells_owner = {t.name: tuple(getattr(t, "tells_owner", ()) or ()) for t in defs}
-        # Per-turn tool retrieval (TR2): a selector over the full catalog. K
+        # Per-turn tool retrieval: a selector over the full catalog. K
         # defaults above the builtin count → behavioral no-op until MCP catalogs
         # grow; selection only changes the schema the model SEES (dispatch via
         # _tool_index is untouched). Fails open (returns the full set on any issue).
@@ -682,7 +682,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
 
         Provider discovery is untouched — only which of the already-discovered
         tools carry their schema. Called by ``reset_tools``; the new block reaches
-        the model at the next turn boundary (§3 prefix corollary).
+        the model at the next turn boundary.
         """
         self._assemble_schema()
 
@@ -707,7 +707,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         return lines
 
     def _reset_tools(self, args: dict, *, meta_sink: dict | None = None) -> str:
-        """Apply ``reset_tools`` — FINAL-STATE group activation (§5.2).
+        """Apply ``reset_tools`` — FINAL-STATE group activation.
 
         One boolean per group; every non-``always_on`` group the caller omits (or
         sets to anything but a yes) deactivates. Final-state rather than delta semantics because
@@ -835,7 +835,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
             logger.debug("native: inference attempt audit failed", exc_info=True)
 
     def last_stop_report(self) -> dict:
-        """What the last stop actually reached — the shape PR2-13 consumes.
+        """What the last stop actually reached — the shape the dashboard stop handler consumes.
 
         Keys: ``reason``, ``model_request_aborted``, ``children_reaped``,
         ``children_escaped``, ``tool_calls_dropped``, ``subagents_stopped``.
@@ -857,7 +857,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         self._approval.cancel_all()
 
     def _prompt_cache_enabled(self) -> bool:
-        """Read the user's prompt-cache switch, ``agent.prompt_cache_enabled`` (§C6).
+        """Read the user's prompt-cache switch, ``agent.prompt_cache_enabled``.
 
         Deferred import so this package keeps the config-free import surface its module
         docstring promises (the same deferral ``sdlc_tools`` and the ACP concurrency gate
@@ -1326,13 +1326,13 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 #    The QUEUED-BUT-UNSTARTED drop lives one level down, in
                 #    `_execute_wave` at the per-call dispatch decision — see that
                 #    method. It cannot live here: a check around this call would only
-                #    fire between BATCHES, which is exactly the hole PR2-12 closed.
+                #    fire between BATCHES, which is exactly the hole the per-call check closes.
                 async for ev in self._execute_tool_batch(tool_calls):
                     agg_events += 1
                     yield ev
 
-                # 3b) STEER — drain any messages the user sent mid-turn (queue-steering
-                #     #37). They land HERE, at the model boundary AFTER the tool batch
+                # 3b) STEER — drain any messages the user sent mid-turn (queue-steering).
+                #     They land HERE, at the model boundary AFTER the tool batch
                 #     (so tool-result pairing is intact), as fresh user input the next
                 #     inference sees. Capped per turn so a flood can't extend one turn
                 #     forever. Steer mode only; followup/collect/interrupt are handled
@@ -1406,9 +1406,9 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
 
         Two composable reductions, in order:
 
-        * **GROUPS** (§5) — inactive groups' schemas are out of ``_active_defs``
+        * **GROUPS** — inactive groups' schemas are out of ``_active_defs``
           already (assembly-time); each contributes ONE stub line instead.
-        * **RETRIEVAL** (TR2) — within the active set, surface the relevant
+        * **RETRIEVAL** — within the active set, surface the relevant
           projection this turn and defer the long tail's parameter schemas to a
           name+description catalog. Ranked against what the user asked
           (``context.user_request``) rather than the whole assembled prompt, and bounded by
@@ -1435,7 +1435,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # where the rewritten tool block actually reaches the model.
         pending, self._pending_group_note = self._pending_group_note, ""
 
-        # Per-turn tool retrieval (TR2): core ∪ top-K ∪ structural ∪ sticky, scoped
+        # Per-turn tool retrieval: core ∪ top-K ∪ structural ∪ sticky, scoped
         # to the ACTIVE groups — retrieval composes with grouping rather than
         # competing, so the K budget is spent only on tools whose schemas can ride
         # this turn. No-op until the pool exceeds K; fails open to the full pool.
@@ -1588,10 +1588,10 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         Partitions into ordered waves (:mod:`dispatch_plan`) and runs wave *k* only
         after wave *k-1*, so the relative order of every non-disjoint pair is the order
         the model asked for. A wave of one is dispatched through the ordinary serial
-        path, byte-for-byte the pre-HC-6 behaviour — which is what makes
+        path, byte-for-byte the old serial behaviour — which is what makes
         ``max_tool_concurrency=1`` an exact baseline rather than an approximation of one.
 
-        Failure semantics the atom names: a call that RAISES does not cancel its
+        Failure semantics: a call that RAISES does not cancel its
         concurrent siblings (they are disjoint from it by construction, so their results
         are still valid and still reported), but it POISONS its own resource set — any
         later call that conflicts with it is not run, because "the file I was about to
@@ -1638,13 +1638,13 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         the UI's statement of intent, and a wave of six lookups appearing at once is
         both truthful and the visible difference from six calls trickling out serially.
 
-        **The stop check lives here, at every dispatch decision** (PR2-12). This method is
+        **The stop check lives here, at every dispatch decision**. This method is
         entered once per wave and decides, per call, whether that call is handed to an
         invocation at all — so a stop that lands anywhere in the batch drops every call it
         has not yet dispatched, in THIS wave and in every wave after it. Checking one level
         up (around ``_execute_tool_batch``, or around the wave loop inside it) would only
         fire between batches, and checking before the wave loop would leave the remaining
-        waves to run; both are the hole the atom was written against. A dropped call is
+        waves to run; both are the hole this check exists to close. A dropped call is
         answered by :meth:`_drop_queued_call` rather than by ``_run_tool``, because it must
         NOT feed the failure breaker, the structural-loop detector or the procedural-memory
         outcome list: a cancellation is not evidence about the tool.
@@ -1885,7 +1885,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # WHAT/WHY/FIX envelope counted as a success, a successful `cat error.log` as a failure,
         # and every refusal the runtime wrote went to the card with no bit at all, a green check.
         failed = meta.get("ok") is False
-        # Procedural-memory signal (M5d): accumulate this turn's tool outcomes for
+        # Procedural-memory signal: accumulate this turn's tool outcomes for
         # the after-turn review to mine into how-to-work priors. Bounded.
         #
         # A DENIED call is not a FAILED one. Every denial path in this
@@ -1907,7 +1907,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         if failed and streak >= WARN_THRESHOLD:
             result_str += warn_note(tool_name, streak)
         elif not failed:
-            # Structural loop detection (E3.1): a *successful* call going nowhere — the same
+            # Structural loop detection: a *successful* call going nowhere — the same
             # answer to the same call again and again, or an A↔B ping-pong — never trips the
             # failure path (nothing failed). The note tells the model what it looks like from
             # outside; a read repeated past it is refused before it runs, and a turn that keeps
@@ -1960,7 +1960,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         if tool_name not in self.META_TOOLS and not self._definition.tools.allows(tool_name):
             return self._definition.tools.refuse(tool_name, meta)
 
-        # Dry-run observe-mode (T9): a tool that does not declare it only reads is NOT
+        # Dry-run observe-mode: a tool that does not declare it only reads is NOT
         # executed — return a synthetic observation so the replay previews what
         # WOULD happen with no side effects. Declared-SAFE tools fall through and
         # run for real, so the agent reasons over actual state.
@@ -2118,7 +2118,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 return "No tools matched. Try broader terms; all tools remain callable by name."
             # tool_search deliberately ranks the FULL catalog — including tools in
             # INACTIVE groups — and names the activation step for those, so search
-            # is the discovery path INTO a group (§5.3 fail-open triad).
+            # is the discovery path INTO a group.
             lines = []
             for h in hits:
                 suffix = ""
@@ -2174,7 +2174,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
             return self._unknown_tool(tool_name, meta_sink)
         if (gone := self._no_longer_offered(tool_name, meta_sink)) is not None:
             return gone
-        # Sticky set (TR2): a tool the agent actually called stays surfaced for the
+        # Sticky set: a tool the agent actually called stays surfaced for the
         # rest of the session, so a multi-step task can't lose a tool mid-task when
         # the query phrasing drifts. Cheap insurance against the cardinal failure.
         if self._tool_retriever is not None:
@@ -2203,7 +2203,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # The leaf this session is (none for a chat), for the in-process tools' leaf readers —
         # the depth limit, the posture and `resume_run_id: "self"` (`mcp_shared.leaf_value`).
         lineage_token = mcp_shared.bind_leaf_lineage(self._leaf_lineage)
-        # Bind this turn's workspace for the native category providers (UT1): the
+        # Bind this turn's workspace for the native category providers: the
         # session-coupled app providers (knowledge/tasks/loops/inbox) are registry
         # singletons now, so cwd/agent flow via contextvars rather than a per-session
         # constructor. (The platform filesystem/shell provider is still built
@@ -2388,7 +2388,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         )
 
     async def cancel(self, *, wait_ack_timeout: float = 0.0) -> str:
-        """Stop the WORK, not just the stream (PR2-12).
+        """Stop the WORK, not just the stream.
 
         The one seam a user's stop arrives on. It used to set a flag and return
         "acked" — which was true of the flag and false of everything the turn was
@@ -2435,7 +2435,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         return True
 
     def stage_image_part(self, data_url: str) -> bool:
-        """Put *data_url* on the NEXT turn as a neutral image part (MI-4). See the ABC.
+        """Put *data_url* on the NEXT turn as a neutral image part. See the ABC.
 
         The loop owns the turn, so it owns the image too: the part is laid onto the turn's
         user message in EVERY inference request of that turn (`_request_messages`), including
@@ -2506,7 +2506,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
 
         ``outcome`` is one of :data:`personalclaw.memory_service.PROCEDURAL_OUTCOMES`
         — ``success``, ``failed`` or ``denied``. The after-turn review drains this
-        into procedural memory (M5d). Draining (not just reading) keeps the
+        into procedural memory. Draining (not just reading) keeps the
         accumulator bounded across turns."""
         out = list(self._tool_outcomes)
         self._tool_outcomes.clear()
@@ -2519,12 +2519,12 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         self._session_key = session_key
 
     def set_steer_source(self, pull: "Callable[[], list[str]] | None") -> bool:
-        """Wire the queue-steering source (#37): a callable the loop drains at each
+        """Wire the queue-steering source: a callable the loop drains at each
         model boundary for mid-turn user messages. None disables steering.
 
         Returns whether a drain is now armed, so the dispatcher reads one answer from
         every runtime instead of inferring native's from the absence of a refusal
-        (PR2-10 — the ACP seam CAN refuse, this one never does)."""
+        (the ACP seam CAN refuse, this one never does)."""
         self._pull_steer = pull
         return pull is not None
 

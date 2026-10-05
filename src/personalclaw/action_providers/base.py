@@ -125,7 +125,7 @@ class ActionResult:
     #               spawn: run-prompt / run-workflow / invoke-agent). The turn's
     #               real outcome is NOT known yet, so the run record says
     #               "launched", not "succeeded" — honest "started ≠ succeeded"
-    #               status (T7). The spawned turn records its own outcome.
+    #               status. The spawned turn records its own outcome.
     #   "queued"  — the action persisted a durable intent and started NOTHING
     #               (run-workflow under `on_overlap: queue`, held behind a run
     #               already in flight). Distinct from both neighbours on purpose:
@@ -136,7 +136,7 @@ class ActionResult:
     #               (`triggers.executor.classify`), so adding a
     #               member here means adding it to those maps in the same change.
     #   "needs_input" — the action stopped on something only a person can lift
-    #               (BROWSE-AUTOMATION §5.2/§7.2: a sign-in page, max_steps, the
+    #               (a sign-in page, max_steps, the
     #               model budget) and PRESERVED what it produced. Distinct from all
     #               three neighbours: "skip" would discard a real partial result,
     #               "launched"/"queued" both claim work that continues elsewhere,
@@ -200,7 +200,7 @@ class ActionResult:
 
 def provider_failure(provider_name: str, exc: BaseException) -> AgentError:
     """The generic WHAT/WHY/FIX envelope a dispatch seam wraps an uncaught provider
-    exception into (PLATFORM-LEGIBILITY §2).
+    exception into.
 
     A well-behaved provider returns ``ActionResult(success=False, error=…)``; a
     misbehaving (often app-contributed) one *raises*. The three dispatch seams
@@ -307,7 +307,7 @@ class ActionProvider(ABC):
         directly and have no observe mode: a dry-run dispatch would run the REAL
         side effects while the UI promises none. The dispatcher refuses to execute
         a dry run against a provider that returns False here and records a preview
-        of what WOULD run instead (T9 honesty)."""
+        of what WOULD run instead."""
         return False
 
     def effect(self, action_config: dict[str, Any]) -> "RiskLevel":
@@ -357,7 +357,7 @@ class ActionProvider(ABC):
     async def reverse(self, handle: str) -> ActionResult:
         """Undo what an earlier execution created, identified by its own handle.
 
-        The other half of ``ActionResult.reversal`` (AUTONOMY-GUARDRAILS §6.1). Called ONLY
+        The other half of ``ActionResult.reversal``. Called ONLY
         with a handle this provider itself produced, whose kind it claimed in
         :attr:`reversal_kinds`, and only from a persisted reversal record — never with a
         client-supplied string.

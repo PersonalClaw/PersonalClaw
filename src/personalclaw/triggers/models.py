@@ -6,17 +6,17 @@ autonudge configs carry — measured field by field before this was written, and
 by the tests rather than by inspection. A migration that silently dropped `skip_dates` would keep
 firing on a holiday and the user would never learn why.
 
-Two properties the plan calls out that shape everything here:
+Two properties shape everything here:
 
-* **Never-throw structural validation (R15).** A trigger authored by an agent with a near-miss field
+* **Never-throw structural validation.** A trigger authored by an agent with a near-miss field
   name must become a WARNING chip, not a silently-dead row. `parse_trigger` therefore returns
   `(trigger, issues)` and never raises — the trigger still loads, disabled if it must be, and the
   issue says which key it did not recognize and what the closest known one is.
-* **Silent drops are banned (R2).** Every suppressed or degenerate fire is a ledger row with a typed
+* **Silent drops are banned.** Every suppressed or degenerate fire is a ledger row with a typed
   outcome and a one-line reason. `Outcome` is that vocabulary, and it is closed: a fire that ends in
   none of these is a fire nobody can account for.
 
-Pure records and decisions. No scheduling, no I/O, no firing — those are sessions 63/64.
+Pure records and decisions. No scheduling, no I/O, no firing.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from personalclaw.safety_flags import strict_bool
 
 # ── the closed vocabularies ──
 
-#: Trigger kinds. `pulse`/`observe` are the plan's Phase 2 and are NOT accepted yet: a kind the
+#: Trigger kinds. `pulse`/`observe` are NOT accepted yet: a kind the
 #: service cannot dispatch would let a user author a trigger that never fires, which is the failure
 #: the never-throw validation exists to make impossible.
 KINDS: tuple[str, ...] = (
@@ -84,7 +84,7 @@ class RestoreHold(str, Enum):
 class TriggerHealth(str, Enum):
     """The rollup a list renders without scanning run history.
 
-    Persisted on the row deliberately (R7): computing it per render means reading every run of every
+    Persisted on the row deliberately: computing it per render means reading every run of every
     trigger to draw one page of status dots.
     """
 
@@ -110,8 +110,8 @@ class Outcome(str, Enum):
     """Typed fire outcomes. The vocabulary that makes "silent drops are banned" checkable.
 
     Every member is a REASON a fire did not produce work, or the one way it did. A surface switches
-    on these; prose would make the runs inbox unfilterable, and S54 already paid for prose-matched
-    reasons (a message containing "secret" was matched as if it were one).
+    on these; prose would make the runs inbox unfilterable, and prose-matched reasons have already
+    bitten once (a message containing "secret" was matched as if it were one).
     """
 
     #: It ran and did something durable.
@@ -159,7 +159,7 @@ class Outcome(str, Enum):
 
 FIRE_OUTCOMES: tuple[str, ...] = tuple(o.value for o in Outcome)
 
-#: Outcomes that count toward the autopause-after-5 rule (R7). Deliberately just `FAILED`: a trigger
+#: Outcomes that count toward the autopause-after-5 rule. Deliberately just `FAILED`: a trigger
 #: that skipped five times because its quiet-hours gate held is working exactly as configured, and
 #: autopausing it would punish the user for saying "not at night".
 TRUE_FAILURE_OUTCOMES: frozenset[str] = frozenset({Outcome.FAILED.value})
@@ -259,7 +259,7 @@ SPEC_KEYS: dict[str, frozenset[str]] = {
     ),
     # A data event (`event_triggers`): the pattern, its derived source, and the ONE matcher key
     # that pattern reads (`event_triggers.PATTERN_MATCHER`). `blocking` and `agent_scope` are the
-    # lifecycle-hook absorption's (§1.4 decision 2); no data event reads either, which the doctor
+    # lifecycle-hook absorption's; no data event reads either, which the doctor
     # names for `agent_scope` (`unenforced_agent_scope`).
     "event": frozenset(
         {
@@ -309,7 +309,7 @@ SPEC_KEYS: dict[str, frozenset[str]] = {
 
 #: The `clock` spec's tagged-union discriminator values.
 #:
-#: **DEVIATION from the literal three-member union: `interval` is the fourth.** Found by
+#: **Beyond the original three-member union: `interval` is the fourth.** Found by
 #: driving the migration into the store: `migrate.convert_job` emits `{kind: "interval",
 #: interval_secs}` for a legacy `every` cron — deliberately, and its docstring explains why at
 #: length ("`{kind: cron}` is WRONG and `{kind: at}` is worse … would turn every recurring interval
@@ -318,11 +318,11 @@ SPEC_KEYS: dict[str, frozenset[str]] = {
 #: interval cron parsed with `unknown clock kind 'interval'`, landed `enabled=False`, and would have
 #: been silently retired by the migration that was supposed to preserve it.
 #:
-#: Measured against the OWNER's real store: 4 jobs, of which 1 uses `every`. The plan's §1.2 union
-#: and its lossless-migration promise cannot both hold with three kinds, and the promise is the
+#: Measured against the OWNER's real store: 4 jobs, of which 1 uses `every`. A three-kind union
+#: and the lossless-migration promise cannot both hold, and the promise is the
 #: one with data behind it. So the union widens rather than the migration lying.
-#: **`adaptive` is the fifth.** PLATFORM-RESILIENCE §4.3 asks for the remediation engine to
-#: run as ONE trigger with an "adaptive clock kind" — healthy → a long sleep, degraded → a short
+#: **`adaptive` is the fifth.** The remediation engine
+#: runs as ONE trigger on an adaptive clock kind — healthy → a long sleep, degraded → a short
 #: tick — replacing the heartbeat job that carried that cadence in `_remediation_next_ts`. It's a
 #: CLOCK kind rather than a new top-level trigger kind because it answers the clock's question
 #: ("when does this fire next?") and nothing else: the dispatch, the capability fence, the ledger
@@ -330,8 +330,8 @@ SPEC_KEYS: dict[str, frozenset[str]] = {
 #: the substrate instead of keeping a private scheduler.
 CLOCK_KINDS: frozenset[str] = frozenset({"cron", "at", "sequence", "interval", "adaptive"})
 
-#: Minimum interval for an LLM-invoking clock trigger, in seconds (R1). A floor rather than a hard
-#: rule: the plan makes it overridable, because a 5-minute local-model poll is a legitimate choice —
+#: Minimum interval for an LLM-invoking clock trigger, in seconds. A floor rather than a hard
+#: rule: it is overridable, because a 5-minute local-model poll is a legitimate choice —
 #: it just should not be the accident you get from typing `* * * * *`.
 MIN_CLOCK_INTERVAL_SECS = 900
 
@@ -432,7 +432,7 @@ def missed_fire_superseded(workflow: Any) -> bool:
 
 
 def _agent_scope_issues(spec: dict[str, Any] | None) -> list[Issue]:
-    """Structural issues in an `event` trigger's `agent_scope` (§1.4 decision 2 — S131).
+    """Structural issues in an `event` trigger's `agent_scope`.
 
     🔴 MEASURED: `agent_scope` was declared in `SPEC_KEYS["event"]`, persisted, round-tripped —
     and validated by nothing. Every one of these stored with `ok: True` and zero issues:
@@ -442,8 +442,8 @@ def _agent_scope_issues(spec: dict[str, Any] | None) -> list[Issue]:
         agent_scope=[123]               # non-string entries
         agent_scope=["nonexistent"]     # an agent that does not exist
 
-    Decision 2's recon note is explicit that the substrate "PRESERVES agent scoping as an optional
-    `spec.agent_scope` and does not silently introduce a global chat firing path". A field that
+    The contract is that the substrate PRESERVES agent scoping as an optional
+    `spec.agent_scope` and does not silently introduce a global chat firing path. A field that
     accepts any shape and is read by nothing does not preserve scoping — it *promises* it. That is
     worse than its absence, because an author who sets it believes their trigger is scoped.
 
@@ -679,15 +679,15 @@ def validate_spec(
                         )
                     )
         if clock_kind == "interval":
-            # 🔴 THE R1 FLOOR, finally enforced. `MIN_CLOCK_INTERVAL_SECS` was declared and
+            # 🔴 THE CADENCE FLOOR, finally enforced. `MIN_CLOCK_INTERVAL_SECS` was declared and
             # read by NOTHING — measured: `create(spec={"kind":"interval","interval_secs":5})`
             # persisted a 5-second LLM poll with `ok: True` and zero issues. The only live floor was
             # the retired `schedule_add` schema's `min_val=60`, so retiring the alias would have
             # removed the last check standing between a typo and an every-5-seconds model call.
             #
-            # A WARNING, not an error, because R1 makes the floor overridable ("a 5-minute
+            # A WARNING, not an error, because the floor is overridable (a 5-minute
             # local-model poll is a legitimate choice — it just should not be the accident you get
-            # from typing `* * * * *`"). An error would refuse a trigger the plan says to allow; a
+            # from typing `* * * * *`). An error would refuse a trigger meant to be allowed; a
             # silent pass is what let this go unnoticed. So: it fires, and it is visibly flagged.
             #
             # Only for an action that can call a model — the floor's own premise. A 60s `notify`
@@ -735,14 +735,14 @@ GATE_KEYS: frozenset[str] = frozenset(
         "threshold",
         "condition",
         "max_runs_per_hour",
-        # AUTO-A2: the pluggable is-the-user-on-duty predicate. Shaped
+        # The pluggable is-the-user-on-duty predicate. Shaped
         # `{provider, config}` like an action, and classified FAIL-OPEN below —
         # a broken calendar app must not silence every automation.
         "duty_gate",
     }
 )
 
-#: Gates that FAIL OPEN when their check cannot complete, per R3's amendment.
+#: Gates that FAIL OPEN when their check cannot complete.
 #: Budget and storm guards
 #: time-box and fail open — a budget probe that hangs must not silently stop every automation on the
 #: machine. Security fences are absent from this set on purpose: capabilities, the injection screen
@@ -756,7 +756,7 @@ GATE_KEYS: frozenset[str] = frozenset(
 #: `budget`, `claim`, `yield`, `capability`, `incident`). So every gate the engine actually runs
 #: read "closed",
 #: including
-#: `duty` — which §1.4 and `calendar.evaluate_duty` both require to fail OPEN, and which correctly
+#: `duty` — which `calendar.evaluate_duty` requires to fail OPEN, and which correctly
 #: DOES fail open in practice. The classifier disagreed with the code it was written to
 #: describe, and
 #: nothing outside tests read it, so nothing caught the drift.
@@ -772,8 +772,8 @@ FAIL_OPEN_GATES: frozenset[str] = frozenset(
         "max_runs_per_hour",
         "rate_cap",
         "condition",
-        # AUTO-A2: the duty gate calls OUT to a provider (a calendar app), so §1.4 classifies
-        # it fail-open explicitly — uninstalling the app that supplied it must not silently stop
+        # The duty gate calls OUT to a provider (a calendar app), so it is classified
+        # fail-open explicitly — uninstalling the app that supplied it must not silently stop
         # every automation that referenced it. `evaluate_duty` is time-boxed for the same reason.
         "duty_gate",
         # ── fire-path gate names (`firepath.GATE_ORDER` vocabulary — what the engine walks) ──
@@ -815,8 +815,9 @@ FAIL_OPEN_GATES: frozenset[str] = frozenset(
 )
 
 #: Gates whose direction is asserted, not assumed. `budget` is deliberately CLOSED here even though
-#: the prose groups "budget/storm-guard" as fail-open, because §3.6 is more specific and the code
-#: follows it: "the budget check is fail-closed — an unreadable budget is not an unlimited one".
+#: the note above groups "budget/storm-guard" as fail-open, because the more specific rule wins and
+#: the code follows it: the budget check is fail-closed, as an unreadable budget is not an unlimited
+#: one.
 #: The per-trigger CAP keys above stay open; the fire path's pre-claim budget READ is closed. Those
 #: are different questions about the same word, which is exactly why this is written down.
 FAIL_CLOSED_GATES: frozenset[str] = frozenset(
@@ -829,7 +830,7 @@ def gate_failure_mode(gate: str) -> str:
 
     Accepts EITHER vocabulary — a per-trigger cap key (`duty_gate`, `rate_cap`) or a fire-path gate
     name (`duty`, `budget`) — because callers legitimately hold one or the other and a classifier
-    that silently answered "closed" for the other namespace is what S130 found.
+    that silently answered "closed" for the other namespace is the drift `FAIL_OPEN_GATES` records.
 
     Named as a function rather than left implicit so a caller cannot get it wrong by omission: the
     default for an unknown gate is CLOSED. A new gate that nobody classified should refuse the fire,
@@ -864,13 +865,13 @@ class Trigger:
     Field notes worth keeping (the rest are self-describing):
 
     * `id` is DETERMINISTIC where a feature mints it (`system:heartbeat:fts`), so re-registration on
-      every boot is idempotent rather than accumulating a row per restart (R1).
-    * `capabilities` is frozen AT SAVE (R3). Resolving it at fire time would let a trigger authored
+      every boot is idempotent rather than accumulating a row per restart.
+    * `capabilities` is frozen AT SAVE. Resolving it at fire time would let a trigger authored
       when a provider was harmless inherit whatever that provider can do later.
-    * `next_fire_at` is persisted BEFORE execution (R1) — a crash mid-run must
+    * `next_fire_at` is persisted BEFORE execution — a crash mid-run must
     not lose the schedule.
     * The runtime rollups (`last_success_at`, `health_status`, …) live on the row so a list renders
-      status dots without reading every run (R7).
+      status dots without reading every run.
     """
 
     id: str
@@ -886,7 +887,7 @@ class Trigger:
     #: written before this field existed has it, and stopping every existing automation would be an
     #: absurd cost for a field nobody asked for.
     author: str = ""
-    #: WHICH HARNESS minted this row (MULTI-TENANCY-ENTITY TSE2-2), as an origin-attribution
+    #: WHICH HARNESS minted this row, as an origin-attribution
     #: handle — this home's `durability` `machine_id`, REUSED not minted. Orthogonal to `author`
     #: (WHO) and to `created_by` (WHAT): a shared trigger store needs all three — "the agent on
     #: Alice's machine" is one row. Stamped at CREATE (`tools.create`); a row written before this
@@ -902,7 +903,7 @@ class Trigger:
     session: str = "fresh"
     model_tier: str = "background"
     delivery: str = "none"
-    #: A SEPARATE route for failures (R12). Failures reach the inbox even when `delivery` is none:
+    #: A SEPARATE route for failures. Failures reach the inbox even when `delivery` is none:
     #: an automation the user asked to stay quiet still has to be able to say it broke.
     failure_delivery: str = "inbox"
     failure_policy: dict[str, Any] = field(default_factory=dict)
@@ -941,7 +942,7 @@ class Trigger:
     #: SUPPRESSED (quiet hours, budget, overlap) is neither — so debouncing off either one would
     #: count a blocked fire as a fire and let a debounced trigger straight through. The retired
     #: `event_triggers.EventTrigger` carried exactly this field, which is why debounce worked there
-    #: and not here (S150 measured that gap and named it). Event triggers are rows of this entity
+    #: and not here. Event triggers are rows of this entity
     #: now, and their `debounce_secs` spaces off this field like every other kind's.
     #:
     #: ISO, like every other timestamp on this entity. Absent on every row written,
@@ -1075,7 +1076,7 @@ def _known_fields() -> frozenset[str]:
 
 
 def _inline_credential_issues(workflow: Any) -> list[Issue]:
-    """WARN when a trigger's action carries a credential LITERALLY (§7 item 6 / R14 — S115).
+    """WARN when a trigger's action carries a credential LITERALLY.
 
     🔴 Measured: the workflow lint flags `curl -H 'Authorization: Bearer sk-ant-api03-…'` as an
     inline secret, and a TRIGGER stored the same string with `ok: True` and zero issues. The two
@@ -1196,7 +1197,7 @@ def _resume_target_issues(workflow: Any) -> list[Issue]:
 def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
     """Parse one authored trigger. Returns `(trigger, issues)` and NEVER raises.
 
-    The never-throw contract (R15) is the whole point: an agent-authored near-miss must become a
+    The never-throw contract is the whole point: an agent-authored near-miss must become a
     WARNING chip on a loaded row, not an exception that drops the trigger out of the store. So a bad
     kind still yields a Trigger — with `enabled=False`, because a trigger the
     service cannot dispatch
@@ -1317,7 +1318,7 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
         # three authors of the same row (`identity.slugify_username` already guarantees the owner
         # side is canonical, so only the incoming side needs normalizing).
         author=str(data.get("author", "") or "").strip().lower(),
-        # Origin (MULTI-TENANCY-ENTITY TSE2-2): an OPAQUE machine id, so it is read verbatim — never
+        # Origin: an OPAQUE machine id, so it is read verbatim — never
         # lowercased/stripped the way `author` (a username) is. Absent → "" = "this harness's". A
         # provider-served row keeps whatever origin the minting harness stamped.
         origin_harness=str(data.get("origin_harness", "") or ""),
@@ -1407,7 +1408,7 @@ class FireRecord:
     started on time and took 40 minutes.
 
     `incomplete` marks a count that was cut short ("at least N"), so a reader is never misled by a
-    number that stopped early. `acted_on`/`dismissed` are pre-allocated for LEARNING-FLYWHEEL's
+    number that stopped early. `acted_on`/`dismissed` are pre-allocated for the learning loop's
     outcome feedback — reserved now because adding them later would mean a migration over history.
     """
 
@@ -1501,7 +1502,7 @@ class FireRecord:
 
         Derived from `mutated`, not from the outcome alone: a run can end `ran` and still
         have touched
-        nothing, and §1.3's materiality predicate is explicit that the classification criterion is
+        nothing, and the materiality predicate is explicit that the classification criterion is
         "did it mutate durable state". A view built on the outcome would show a page of runs that
         changed nothing.
         """
@@ -1509,7 +1510,7 @@ class FireRecord:
 
     @property
     def counts_toward_autopause(self) -> bool:
-        """Whether this row moves the trigger toward autopause (R7).
+        """Whether this row moves the trigger toward autopause.
 
         Only a TRUE failure. Five skipped fires because quiet hours held is the
         configuration working;
@@ -1526,7 +1527,7 @@ def _float(value: Any, default: float) -> float:
 
 
 def classify_weight(*, node_count: int, has_llm: bool, resumable: bool) -> str:
-    """Which record weight a fire earns (§1.3).
+    """Which record weight a fire earns.
 
     FULL for anything with ≥2 nodes, any LLM stage, or anything resumable — those need a
     directory and a journal to be diagnosable. Everything else is a ledger row, which is what keeps
@@ -1540,7 +1541,7 @@ def classify_weight(*, node_count: int, has_llm: bool, resumable: bool) -> str:
 def require_reason(outcome: str) -> bool:
     """Whether this outcome must carry a human-readable reason.
 
-    Everything except a clean run. `refused` is called out in the plan as mandatory-reason, and the
+    Everything except a clean run. `refused` is the plainest mandatory-reason case, and the
     same logic applies to every suppression: the user is being told their automation did not happen,
     and "skipped_gate" alone does not say which gate.
     """
@@ -1578,10 +1579,10 @@ def fire_issues(record: FireRecord) -> list[Issue]:
     return issues
 
 
-# ── the migration map (what session 66 needs to be lossless) ──
+# ── the migration map (what the migration needs to be lossless) ──
 
-#: Where every legacy field lands in the unified shape. Written HERE, in session 62, rather than
-#: left to the migration session. `ScheduleJob` has 33 fields, `EventTrigger` 11, and 31
+#: Where every legacy field lands in the unified shape. Written HERE, beside the entity, rather than
+#: left to the migration. `ScheduleJob` has 33 fields, `EventTrigger` 11, and 31
 #: of
 #: them have no same-named home on `Trigger`. A migration written against the dataclass alone would
 #: silently drop `skip_dates` (the trigger keeps firing on a holiday),
@@ -1630,7 +1631,7 @@ LEGACY_FIELD_MAP: dict[str, dict[str, str | None]] = {
         "last_posted_hash": "gates.idempotency",
         "last_posted_at": None,  # duplicate-suppression state belongs with the delivery layer
         "consecutive_dupes": None,  # ditto — a delivery concern, not a trigger field
-        "acked_items": None,  # inbox acknowledgement state; the inbox owns it (Inbox-Unification)
+        "acked_items": None,  # inbox acknowledgement state; the inbox owns it
     },
     # A legacy `event_triggers.json` row, as `boot_migrate.absorb_event_triggers` writes it. The
     # matcher keys land flat in `spec`, beside the pattern and its source — the shape
@@ -1645,9 +1646,9 @@ LEGACY_FIELD_MAP: dict[str, dict[str, str | None]] = {
         "content_re": "spec.content_re",
         "sender_glob": "spec.sender_glob",  # Inbox sender matcher
         "address_glob": "spec.address_glob",  # Inbox address matcher
-        # AUTO-A4: the app-source matcher — a glob on the namespaced `app:<app>:<event>` name.
+        # The app-source matcher — a glob on the namespaced `app:<app>:<event>` name.
         "event_glob": "spec.event_glob",
-        # AUTO-A4: the lifecycle state, which `Trigger` already carries as a first-class field. Maps
+        # The lifecycle state, which `Trigger` already carries as a first-class field. Maps
         # by NAME rather than into `spec`, because it is the same vocabulary (`TriggerState`) — an
         # app-source park must survive the migration as a park, not as prose in a spec dict.
         "state": "state",
@@ -1668,7 +1669,7 @@ LEGACY_FIELD_MAP: dict[str, dict[str, str | None]] = {
 def unmapped_legacy_fields(legacy: str, field_names: list[str]) -> list[str]:
     """Legacy fields with no entry in the map at all — the ones a migration would drop silently.
 
-    Distinguishes "mapped to None on purpose" from "nobody thought about it". Session 66 runs this
+    Distinguishes "mapped to None on purpose" from "nobody thought about it". A test runs this
     against the real dataclasses so a field added to `ScheduleJob` after this map was written cannot
     slip through the migration unnoticed.
     """

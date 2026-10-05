@@ -55,7 +55,7 @@ def _get_probe_timeout() -> int:
 # outside the home, read for the suggestions only when the owner presses Look in it or turned it
 # on in Settings (``outside_home.readable``).
 #
-# UT3: ONE canonical MCP store. The former legacy ``settings/mcp.json`` source was dropped, so
+# ONE canonical MCP store. The former legacy ``settings/mcp.json`` source was dropped, so
 # there is a single read+write path the dashboard, the provider instances, agent.py, and the
 # native runtime all share. The "global" scope that file used to be is gone with it: a second
 # scope NAME left pointing at the one file is how Import added a server and removed it again in

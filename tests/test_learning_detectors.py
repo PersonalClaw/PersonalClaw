@@ -1,13 +1,13 @@
 """Ad-hoc work → templates and failed stages → typed lessons.
 
 Two spokes, one discipline: a DETERMINISTIC chain decides and a model is consulted only at the score
-boundary. §3.2 replaced "pure LLM-prompt branches" for a reason — a model asked "is this
+boundary. The chain replaced "pure LLM-prompt branches" for a reason — a model asked "is this
 template-worthy" costs a call per candidate and answers differently daily.
 
 **Measured before writing.** `is_environment_failure_claim` — the deny-filter, the guardrail
 keeping a flaky network from becoming a durable lesson — caught **1 of 4** real environment
-failures: "connection refused", `ECONNRESET`, and rate-limit noise all passed through, and §3.3
-routes EVERY `step_failed` through it. Widened here to 12/12 with 0 false positives on real lessons;
+failures: "connection refused", `ECONNRESET`, and rate-limit noise all passed through, and every
+`step_failed` is routed through it. Widened here to 12/12 with 0 false positives on real lessons;
 `test_the_widened_env_filter_catches_real_transport_failures` and
 `test_the_env_filter_does_not_eat_real_lessons` are the two halves of that regression.
 """
@@ -73,7 +73,7 @@ _STRONG = [
 def test_the_widened_env_filter_catches_real_transport_failures(text):
     """THE regression. The shipped list caught 1 of 4 of these.
 
-    §3.3 routes every `step_failed` through this filter, so each miss was a flaky network becoming a
+    Every `step_failed` is routed through this filter, so each miss was a flaky network becoming a
     DURABLE lesson — which teaches the agent to refuse a valid action later.
     """
     assert is_environment_failure_claim(text), f"env failure would become a lesson: {text!r}"
@@ -185,7 +185,7 @@ def test_dependencies_come_from_back_references():
 
 
 def test_the_score_is_reproducible():
-    """The whole reason §3.2 replaced LLM-prompt branches."""
+    """The whole reason the chain replaced LLM-prompt branches."""
     candidate = Candidate(run_id="r", steps=_STRONG)
     assert structural_score(candidate).total == structural_score(candidate).total
 
@@ -238,7 +238,7 @@ def test_only_the_ambiguous_middle_costs_anything():
 
 
 def test_every_negative_decision_names_a_typed_reason():
-    """§3.2: "the flywheel's negative space is how thresholds get tuned".
+    """The flywheel's negative space is how thresholds get tuned.
 
     A detector that silently declines is one nobody can calibrate — and prose reasons are
     unfilterable, so the counts per reason are what say which gate earns its place.
@@ -411,7 +411,7 @@ def test_a_real_failure_is_lesson_worthy():
 
 
 def test_lessons_are_keyed_by_template_and_mode_for_re_injection():
-    """§3.3 calls a lesson "a persistent mutation hint" — a hint nobody can look up by template is a
+    """A lesson is "a persistent mutation hint" — a hint nobody can look up by template is a
     note in a drawer."""
     key = LessonKey(template="nightly-digest", mode=FailureMode.SCHEMA_VIOLATION.value)
     assert key.key == "lesson.nightly-digest:schema_violation"

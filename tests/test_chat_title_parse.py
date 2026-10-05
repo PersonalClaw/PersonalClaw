@@ -1,6 +1,6 @@
 """A generated chat title is the TITLE, never the label or the scaffolding around it.
 
-Measured by the day-56b validator on a real Ollama model: 30 of 45 auto-generated titles were
+Measured on a real Ollama model: 30 of 45 auto-generated titles were
 stored as ``Title: Example Site Docs`` (15 times) and ``Title: France Capital``, and one chat was
 titled ``TAGS: Planned, Review`` — the tag line the same call is asked to append. On the small
 bundled default model the out-of-box validator saw ``Chat title:`` and ```` ```python ````. The

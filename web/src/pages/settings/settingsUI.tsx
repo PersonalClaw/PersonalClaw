@@ -25,7 +25,7 @@ import { FieldHintProvider, FieldLabelProvider, NumberField, Select, TextInput, 
  *  in one file, which is the tightest available proof this was drift rather than intent.
  *
  *  🪤 WHY THE PADDING MOVES TO TOKENS. `px-4 py-1` are Tailwind's own defaults, so they are FROZEN
- *  against the user's density and space-scale sliders (`system.md` trap 3). Measured on
+ *  against the user's density and space-scale sliders (`web/DESIGN.md` §6). Measured on
  *  `#/settings/agent`: those groups stayed 16px/4px at comfortable AND dense AND cli AND at
  *  `--space-scale: 1.4`, while the token-spelled sibling in the same subtree moved 24 → 19.2 →
  *  16.32 → 33.6px. `--spacing-l` is `16px * --space-scale` and `--spacing-xs` is `4px * --space-scale`,
@@ -171,7 +171,7 @@ export function Section({ title, hint, icon: Icon, iconTone = 'primary', right, 
 export function Row({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
   const hintId = useId()
   // 🪤 A `Row` deliberately does NOT publish a label id — its control names itself (95 hinted rows, and
-  // ux-690 recorded the divided-row layout as a distinction, not drift). The hint is independent of
+  // the divided-row layout is a deliberate distinction, not drift). The hint is independent of
   // that: a control with its own `aria-label` still needs the sentence beside it to be its description,
   // so this provides the hint id without claiming to name anything.
   return (

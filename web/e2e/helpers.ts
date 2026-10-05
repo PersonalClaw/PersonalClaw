@@ -142,7 +142,7 @@ export async function gotoRoute(
 /** 🪤 WHY THE TWO CONDITIONS ARE ONE BARRIER AND NOT TWO STAGES — MEASURED, because the
  *  obvious shape ("wait for the skeletons to clear, THEN wait for quiet") is wrong in a way
  *  that only shows up under load. Sampling every 250ms with 2s of injected latency on every
- *  `/api/**` response (Darwin, 18 cores, 1-min load 10–28), each condition is satisfied
+ *  `/api/**` response (a loaded macOS dev host), each condition is satisfied
  *  MID-LOAD on its own:
  *
  *  · Zero loading affordances is reached TRANSIENTLY, long before the route has finished
@@ -490,7 +490,7 @@ export async function settleEntranceAnimations(page: Page, timeout = 2_000): Pro
 
 /** Assert an interaction actually grew the DOM, i.e. the surface really opened.
  *
- *  Cycle 46 deleted the served bundle mid-run and the gateway fell back to its
+ *  Once the served bundle was deleted mid-run and the gateway fell back to its
  *  "dashboard isn't built yet" page — 34 elements, 0 buttons. The axe probe reported
  *  **0 defects on every surface**, which is byte-identical to a clean tree. An absolute
  *  floor plus a growth check is what separates "measured clean" from "measured nothing". */
@@ -534,7 +534,7 @@ async function clickRowBody(page: Page): Promise<OpenResult> {
   return true
 }
 
-/** The recipes, all proven by hand in cycles 45/49 before being wired in here. */
+/** The recipes, all proven by hand in audits before being wired in here. */
 export const OPENERS: Opener[] = [
   {
     label: 'command palette',
@@ -826,8 +826,8 @@ async function driveTurns(
 /** The Session Map's one named control — reachable directly or from the header's
  *  overflow `…` menu, which is the only two places `ui/HeaderActions` can put a control.
  *
- *  Resolved through a helper rather than a bare `getByRole` because "reachable" is the clause
- *  SSM-10 asserts at a mobile viewport, and at 390px the header cluster sheds controls into the
+ *  Resolved through a helper rather than a bare `getByRole` because "reachable" is what the
+ *  specs assert at a mobile viewport, and at 390px the header cluster sheds controls into the
  *  menu. A test that only looked in the row would report "mobile lost its session nav" for a
  *  control that is one tap away — and one that only looked in the menu would miss it on desktop.
  *  Returns the located control, or `null` when it is genuinely in neither place. */

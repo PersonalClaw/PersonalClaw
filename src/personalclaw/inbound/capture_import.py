@@ -1,7 +1,7 @@
 """Telemetry import for agents that cannot be proxied.
 
-Some agents on this machine will never point their API base URL at the §7.1
-capture proxy — they are closed, or they only ever wrote a log file. §8 says such
+Some agents on this machine will never point their API base URL at the
+capture proxy — they are closed, or they only ever wrote a log file. Such
 an agent is still mineable: export its log, normalise it into the session
 record shape with a *small per-format adapter*, and then run the identical
 redact → fence → stage pipeline the proxy runs. This module is the adapter set
@@ -12,11 +12,11 @@ Three deliberate boundaries:
 * **Hygiene belongs to the store.** ``capture_store.stage_records`` owns
   ``redact()`` and ``fence_untrusted()``. Re-implementing either here would mint
   a second hygiene path that can drift out of step with the proxy's — the exact
-  failure §7.2 designs against. The store is resolved lazily (and injectable) so
+  failure the one shared store exists to prevent. The store is resolved lazily (and injectable) so
   the adapters are testable without it.
 * **Malformed input is data, not an exception.** A hand-exported agent log is
   usually part rubbish: a truncated last line, an interleaved stderr banner, a
-  well-formed record of a kind that carries no turn. §8 requires those be
+  well-formed record of a kind that carries no turn. Those must be
   *skipped and counted*, so every adapter returns a :class:`ParseResult` and no
   adapter raises on content. Only a caller error (unreadable path) short-circuits,
   and it short-circuits into the same report shape.
@@ -51,7 +51,7 @@ from personalclaw.config import config_dir
 
 logger = logging.getLogger(__name__)
 
-#: The formats §8 names. Kept as a tuple so the CLI's ``choices`` and the
+#: The supported formats. Kept as a tuple so the CLI's ``choices`` and the
 #: library's dispatch cannot drift apart.
 FORMATS: tuple[str, ...] = ("jsonl", "json", "sse")
 
@@ -99,7 +99,7 @@ class ParseResult:
         self.reasons.append(reason)
 
 
-# ── §7.2 record construction ──
+# ── session record construction ──
 
 
 def _clip(text: str, limit: int) -> str:
@@ -172,7 +172,7 @@ def _paths_from_args(name: str, args: Any) -> tuple[list[str], list[str]]:
 
 
 def _tool_call(name: str, args: Any, *, ok: bool | None = None) -> dict[str, Any]:
-    """One §7.2 ``tool_calls`` entry.
+    """One session-record ``tool_calls`` entry.
 
     ``ok`` is tri-state on purpose. ``None`` means the export contained no
     matching result, which is not the same claim as ``False``; an importer that
@@ -201,7 +201,7 @@ def _record(
     tokens: dict[str, int] | None = None,
     latency_ms: Any = None,
 ) -> dict[str, Any]:
-    """Build a §7.2 record with every key present.
+    """Build a session record with every key present.
 
     Absent facts are explicit ``None``/``[]`` rather than missing keys, so a
     consumer reads one shape whatever the source format was — a record whose
@@ -226,13 +226,13 @@ def _record(
 
 
 def adapt_jsonl(text: str) -> ParseResult:
-    """Claude Code session JSONL → §7.2 records, one per assistant turn.
+    """Claude Code session JSONL → session records, one per assistant turn.
 
     Fields read: ``type``, ``timestamp``, ``message.model``,
     ``message.content`` (``text`` / ``tool_use`` / ``tool_result`` blocks) and
     ``message.usage``. A ``user`` line is *not* a record — it is folded into the
     ``prompt_digest`` of the assistant line that answers it, which is what makes
-    a §7.2 record a turn rather than a message.
+    a session record a turn rather than a message.
 
     ``latency_ms`` is structurally unfillable here: a session transcript records
     what was said, not how long the round trip took. It stays ``None``.
@@ -355,7 +355,7 @@ def _entries_from_json(doc: Any) -> tuple[list[Any], str | None]:
 
 
 def adapt_json(text: str) -> ParseResult:
-    """OpenAI-format request logs → §7.2 records, one per logged exchange.
+    """OpenAI-format request logs → session records, one per logged exchange.
 
     Fields read: ``request.model``/``model``, ``request.messages``,
     ``response.choices[0].message`` (content and ``tool_calls``),
@@ -569,7 +569,7 @@ def _merge_usage(usage: Any) -> dict[str, Any]:
 
 
 def adapt_sse(text: str) -> ParseResult:
-    """Raw SSE event dumps → §7.2 records, one per response stream.
+    """Raw SSE event dumps → session records, one per response stream.
 
     Reads ``event:``/``data:`` field lines in both dialects: OpenAI's
     ``choices[].delta`` chunks terminated by ``data: [DONE]``, and Anthropic's
@@ -577,7 +577,7 @@ def adapt_sse(text: str) -> ParseResult:
     Deltas are concatenated into ``response_digest``; tool-call name and argument
     fragments are re-assembled by index.
 
-    Two §7.2 fields are unfillable from this format and stay ``None``:
+    Two record fields are unfillable from this format and stay ``None``:
     ``prompt_digest`` (a response stream contains no request) and ``latency_ms``
     (the wire dump has no clock). A truncated dump — no terminator — still yields
     its partial record rather than being discarded, which is the whole point of
@@ -649,13 +649,13 @@ def file_content_hash(path: Path) -> str:
     """SHA-256 of the file's bytes — the import idempotence key.
 
     Deliberately *not* ``learning.staging.input_hash`` (staging.py:90), even
-    though §8 names R19's input-hash idempotence as the mechanism to reuse. That
+    though its input-hash idempotence looks like the mechanism to reuse. That
     helper composes ``learning.hygiene.fingerprint`` (hygiene.py:249), which
     lower-cases and collapses whitespace, and sorts its inputs. Both properties
     are right for recognising a reflowed *proposal* and wrong for identifying a
     *file*: two genuinely different exports differing only in case, or in the
     order of their turns, would collide and the second would be silently
-    discarded as "already imported". What is reused is R19's shape — claim by
+    discarded as "already imported". What is reused is the staging store's shape — claim by
     hash, first writer wins, a repeat claim returns false
     (``StagingStore.claim_batch``, staging.py:381).
 
@@ -731,7 +731,7 @@ def resolve_import_file(name: str, home: Path | str | None = None) -> tuple[Path
     agent, which is far less privileged than the shell user — so a caller-chosen path
     would turn the gateway into a file-read oracle that stages any readable file
     (``~/.ssh/id_rsa``, another project's secrets) into the learning tier. Confinement
-    is the same ruling ``handlers/onboarding_import`` already made for the same shape:
+    is the same choice ``handlers/onboarding_import`` already made for the same shape:
     "read from the root under the request, never taken from the caller".
 
     Three refusals, in the order that leaks least:
@@ -796,7 +796,7 @@ def import_capture_file(
     home: Path | str | None = None,
     stage: Callable[..., dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Normalise an exported agent log and stage it (EXTERNAL-ACCESS §8).
+    """Normalise an exported agent log and stage it.
 
     Returns ``{imported, skipped, reasons, duplicate, content_hash, format,
     source}``. Never raises on the *content* of the file: an unreadable path, an
@@ -900,7 +900,7 @@ def capture_cmd(
     """``personalclaw capture import <file> --format … --source …``.
 
     Exits non-zero only when nothing was staged and the file was not a duplicate:
-    a partial import is a success with visible losses (§8's skipped-and-counted),
+    a partial import is a success with visible losses (skipped-and-counted),
     while "imported 0 from a file you named" is a result a script should be able
     to gate on. A duplicate exits 0 — a no-op re-import is the requested outcome.
     """

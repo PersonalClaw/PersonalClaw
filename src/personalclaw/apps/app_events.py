@@ -1,6 +1,6 @@
 """Platform event registry — typed core facts, delivered only to apps that declared them.
 
-APE-1 shipped the DECLARATION half: ``permissions.eventSubscriptions``, a list of exact
+The DECLARATION half shipped first: ``permissions.eventSubscriptions``, a list of exact
 platform-event names an app asks to receive, disclosed at install consent. It deliberately
 added no accessor and no delivery, on the reasoning that an enforcement point with no call
 site enforces nothing. This module is the runtime that honours the declaration.
@@ -17,7 +17,7 @@ existing ones — the emit points are the places the fact already becomes true):
   edge-triggered completion boundary (``pool.should_fire_completion``) the ``TaskComplete``
   user hook fires on. One edge, two observers.
 
-**Two axes, kept apart (the contract APE-1 pinned).** ``eventSubscriptions`` is NOT
+**Two axes, kept apart.** ``eventSubscriptions`` is NOT
 ``permissions.events``. ``events`` is the gateway's WebSocket event-type allowlist, gated by
 ``can_use_event`` and enforced in ``state.broadcast_ws``; a platform subscription must not
 grant the WS type of the same name, or the registry would inherit a second, wider path to

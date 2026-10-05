@@ -6,12 +6,12 @@ from **measured** deficits, build a dependency-ordered plan, execute step-by-ste
 re-checking the score after each step, and stop at whichever comes first —
 ``target_score`` reached, ``max_cost_usd`` spent, or plan exhausted.
 
-Design tenets (from the plan's risk table): this is a **plan-executor over declared
+Design tenets: this is a **plan-executor over declared
 jobs, not a policy brain**. Deficit inputs are measured counts, ordering is declared
 ``after:`` edges, stopping is three plain caps, and per-job cooldowns are the "dumb
 cooldown".
 
-**SOLE ownership of periodic maintenance (PR2-11 then PR2-8).** This engine owns the
+**SOLE ownership of periodic maintenance.** This engine owns the
 maintenance it absorbed — memory FTS reconciliation, the daily history and SEL prunes,
 skill-library aging, and (the remainder) the inbox's retention cleanup, dismissed-set
 pruning and feedback retire-candidate check — and it is the only implementation of each: the
@@ -22,8 +22,8 @@ its store is held in memory by the running service, so ``inbox.maintenance`` dri
 instance (via ``inbox_service.run_live_inbox_maintenance``, bounced onto the loop that owns it)
 rather than a fresh store. ``resilience.remediation.enabled=false`` therefore means
 what "disabled" means for every other automation: the pass does not run, and every job stays
-callable on demand through ``POST /api/doctor/remediation/run``. That is criterion #6 ("the
-old heartbeat maintenance no longer runs independently") at its literal strength.
+callable on demand through ``POST /api/doctor/remediation/run``. The old heartbeat
+maintenance does not run independently in any form.
 
 **How it is driven.** As ONE adaptive-clock trigger, ``system:self-remediation``,
 ``created_by: system``, visible and editable on the Triggers page like any other automation —
@@ -158,8 +158,8 @@ def measure_deficits() -> list[Deficit]:
     """Measure every deficit source that has a REAL count today. Read-only and
     exception-safe — a source that can't be read contributes nothing (never a guess).
 
-    Sources with no count function yet (failed-run backlog, LEARN-R19 staging) are
-    deliberately absent — the plan forbids guessing. Last come the failed Doctor capability
+    Sources with no count function yet (failed-run backlog, learning staging) are
+    deliberately absent — a count is never guessed. Last come the failed Doctor capability
     checks (:func:`_failed_check_deficits`), so the score reads every failure the Doctor shows.
     """
     out: list[Deficit] = []
@@ -256,7 +256,7 @@ def measure_deficits() -> list[Deficit]:
     except Exception:
         logger.debug("deficit: memory FTS desync measure failed", exc_info=True)
 
-    # Memory: embedded rows the faiss index recall reads does not hold — settings B16's "faiss
+    # Memory: embedded rows the faiss index recall reads does not hold — the Doctor's "faiss
     # index desync: 0 indexed vs 2 embedded rows". A row missing from the index is a memory
     # semantic recall can never return, so ONE crosses the gate, like the FTS desync above. The
     # count is the `memory.store` Doctor check's own measurement (`memory_index_gaps`), so the
@@ -319,7 +319,7 @@ def measure_deficits() -> list[Deficit]:
     except Exception:
         logger.debug("deficit: SEL prune measure failed", exc_info=True)
 
-    # Inbox maintenance absorbed from the InboxService's own 6h loop (PR2-11 remainder).
+    # Inbox maintenance absorbed from the InboxService's own 6h loop.
     # Retention cleanup, dismissed-set pruning and the feedback retire-candidate check used to
     # ride a private `_MAINTENANCE_EVERY_SECS` timer inside `InboxService._loop`; that loop is
     # now poll-only and this is the sole cadence. Measured off the LIVE store (0 when no gateway
@@ -402,7 +402,7 @@ def deficit_rows(deficits: list[Deficit]) -> list[dict]:
 def _failed_check_deficits(measured: dict[str, int]) -> list[Deficit]:
     """One deficit per FAILED Doctor capability check — the "one authority" half of the score.
 
-    🔴 THE SCORE USED TO READ NONE OF THEM. Settings B16: the Doctor showed "faiss index desync:
+    🔴 THE SCORE USED TO READ NONE OF THEM. On Settings, the Doctor showed "faiss index desync:
     0 indexed vs 2 embedded rows" and "4 unclaimed paths … in NO snapshot" as failed checks, and
     Maintenance directly below read "Health score 100 / target 90 — no deficits measured", with
     Run now answering "target_score already met". Two surfaces of one page disagreeing about the

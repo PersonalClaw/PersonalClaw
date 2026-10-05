@@ -125,7 +125,7 @@ class TestAllStatusSnapshotCallersPassUpdateAvailable:
         assert "_push_status" not in source
 
     # NOTE: the global SSE handler (api_stream) was removed in the transport
-    # de-duplication (SSE M3), and the WS 5s status push was removed too (no
+    # de-duplication, and the WS 5s status push was removed too (no
     # FE consumer) — /api/status (handlers_system) is the ONE status surface.
 
     def test_system_api_passes_update_available(self) -> None:
@@ -141,7 +141,7 @@ class TestTriggerCounts:
     """`DashboardState.trigger_counts()` — the one source both status surfaces share.
 
     🔴 The two legacy fold-in tests retired. `counts(store, legacy=svc)` was proven to return
-    results IDENTICAL to `counts(store)`, because since S110 the boot migration imports every legacy
+    results IDENTICAL to `counts(store)`, because the boot migration now imports every legacy
     row — including the ones the conversion refuses, written disabled. So the `legacy=` parameter,
     the `crons` attribute it read, and these two tests all went together.
     """
@@ -184,7 +184,7 @@ class TestTriggerCounts:
         `{"running": false, "jobs": 0, "enabled": 0}` on a healthy machine — counts from a service
         the cutover emptied, and `running` False BY DESIGN because `load_without_timer` never set
         it.
-        S107 deleted the method; S112 deleted the class it lived on."""
-        # S112 deleted the whole class — a stronger statement than "those two methods are gone".
+        The method was deleted, and then the class it lived on."""
+        # The whole class is deleted — a stronger statement than "those two methods are gone".
         with pytest.raises(ImportError):
             from personalclaw.schedule import ScheduleService  # noqa: F401

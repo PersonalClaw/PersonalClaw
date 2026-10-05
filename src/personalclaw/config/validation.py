@@ -170,8 +170,8 @@ _DIRECT_READ_TOP_KEYS = frozenset({"providers", "meta", "slack"})
 def _fold_legacy_update_flags(data: dict) -> None:
     """Fold the two retired update flags into the ``updates`` block that replaced them.
 
-    ``auto_update`` (top level) and ``dashboard.update_dev_mode`` were the pre-RUM-1
-    unattended-update and track-main opt-ins. RUM-5 retired both in favour of
+    ``auto_update`` (top level) and ``dashboard.update_dev_mode`` were the old
+    unattended-update and track-main opt-ins. Both were retired in favour of
     ``updates.auto`` / ``updates.channel``, and the backfill that honours an old home's
     intent lived in ``AppConfig.load_with_migration_state`` — reading the raw keys there
     while the validator, one call earlier, had never heard of them. So a home carrying
@@ -188,10 +188,10 @@ def _fold_legacy_update_flags(data: dict) -> None:
     Settings → Updates control), so a second field for the same setting would be exactly the
     dual path the tenets forbid.
 
-    **An explicit ``updates`` field always wins** (the RUM-1 rule): a legacy flag only maps
+    **An explicit ``updates`` field always wins**: a legacy flag only maps
     in when the block does not declare the field itself. A home that never wrote either flag
-    is untouched and lands on the dataclass default — ``auto="off"``, notify-only, which is
-    C7's "least accident risk".
+    is untouched and lands on the dataclass default — ``auto="off"``, notify-only, which carries
+    the least accident risk.
 
     One deliberate edge: when ``updates`` exists but is not an object there is no field to
     fold into, so the legacy keys are consumed without being honoured and the block is left

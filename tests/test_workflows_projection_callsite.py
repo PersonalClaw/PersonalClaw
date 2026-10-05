@@ -1,10 +1,10 @@
 """The engine CALL SITE for task projection.
 
-S55 built `materialize` as pure decision functions and S61e gave the events somewhere to go. Nothing
+`materialize` was built as pure decision functions and its events got somewhere to go. Nothing
 invoked either during a real run — `grep` for `materialize.` outside its own module found zero hits,
 so every rule in it was reachable only from a test.
 
-This session wires it into `RunController` where a node settles, and these tests drive REAL runs to
+It is wired into `RunController` where a node settles, and these tests drive REAL runs to
 completion rather than calling the hook directly: a call site that is never reached is exactly the
 defect being fixed, and only an executed run proves it fires.
 
@@ -58,7 +58,7 @@ def _isolated(tmp_path, monkeypatch):
 def _run(spec: dict, run_id: str = "r-1") -> tuple[object, list]:
     """Execute a spec to completion and AWAIT the projection writes, returning `(run, published)`.
 
-    Awaiting the writes is required, not tidiness: S61g moved the event emission to the write's
+    Awaiting the writes is required, not tidiness: the event is emitted at the write's
     completion so `task_id` is the real id, which means the write is scheduled on the loop and a
     test that returned at `run_to_completion` would race it. The controller tracks the handles for
     exactly this — a sleep-based version of this helper would be a flake generator.
@@ -91,7 +91,7 @@ def _materialized(run_id: str = "r-1") -> list[dict]:
 
 
 def test_a_completed_leaf_node_PROJECTS():
-    """The whole point of the session. Before this, `materialize` had no caller at all — every rule
+    """The whole point of the call site. Before it, `materialize` had no caller at all — every rule
     in it was reachable only from a unit test."""
     run, _published = _run(_spec([_action("impl")]))
     assert run.status.value == "complete"
@@ -162,7 +162,7 @@ def test_a_FAILED_node_does_not_project():
 
 def test_projecting_the_SAME_node_twice_in_one_run_is_a_REFRESH():
     """`plan_materialization` dedups on `(run_id, node_id)` AND fingerprint. The second call must
-    report a refresh rather than a second create — §1 makes idempotent recompute the normal path, so
+    report a refresh rather than a second create — idempotent recompute is the normal path, so
     this is not a rare case."""
     from personalclaw.workflows import store as wstore
     from personalclaw.workflows.controller import EngineServices, RunController
@@ -254,7 +254,7 @@ def test_the_hook_reads_TaskSpec_attributes_not_dict_keys():
     """`plan.create` holds `TaskSpec` objects. `entry.get(...)` would raise inside the
     hook's own `except`, so the projection would fail invisibly on every node.
 
-    Read across the projection path rather than one method: S61g split the emission into
+    Read across the projection path rather than one method: the emission is split out into
     `task_projection._schedule_task_write`, and pinning a single function name would make this test
     a rename detector instead of a contract check.
     """
@@ -286,7 +286,7 @@ def test_the_projection_hook_runs_on_the_SUCCESS_branch_only():
 
 
 def test_materialize_now_HAS_a_caller():
-    """The inverse of the grep that motivated the session: `materialize` is imported by the
+    """The inverse of the grep that motivated the call site: `materialize` is imported by the
     controller's task projection. A module with no caller is a module whose rules are decoration."""
     source = pathlib.Path("src/personalclaw/workflows/task_projection.py").read_text(
         encoding="utf-8"

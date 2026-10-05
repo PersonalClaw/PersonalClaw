@@ -1,7 +1,7 @@
 import { Ban, CircleDashed, Clock, Eye, Layers, Sparkles, TriangleAlert, type LucideIcon } from 'lucide-react'
 import type { WorkflowSurfacingFinding, WorkflowSurfacingRow } from '../../lib/api'
 
-/** Presentation for the surfacing state of a template (TASKS-SOPS §7 R15/R8/R18/R19).
+/** Presentation for the surfacing state of a template.
  *
  *  Centralized for the same reason `workflowMeta` is: the templates list, a composer chip and a
  *  def detail view must render the SAME tone and label for a given state. Three components each

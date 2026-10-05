@@ -15,7 +15,7 @@ with the correct machinery one module away. A decision layer that only
 one frontend can import will drift from the other one; this module is the seam
 both call.
 
-**Resolution order** (first hit wins, contract C1)::
+**Resolution order** (first hit wins)::
 
     env PERSONALCLAW_INSTALL_KIND in {"container","desktop"}  -> that
         (baked into the Dockerfiles; set by the Electron shell)
@@ -101,7 +101,7 @@ _HTTP_TIMEOUT_S = 10.0
 # input `record_running_version` compares against to derive `updates.last_version`.
 _RUN_STATE_FILENAME = "update_run.json"
 
-# apply_method per kind (C2 wire shape).
+# apply_method per kind (the update-check wire shape).
 _APPLY_METHOD: dict[str, str] = {
     "git": "pipeline",
     "pip": "pip_upgrade",
@@ -126,7 +126,7 @@ def applies_updates_unattended(kind: str) -> bool:
 #: The repository's real default branch, used only as the last fallback of
 #: :func:`resolve_default_branch` when every probe fails. It must stay in sync
 #: with the repo: a literal naming a branch this project does not have fetches a
-#: ref that cannot resolve, which is exactly the bug DIST-13 closed.
+#: ref that cannot resolve, which is exactly the bug an earlier literal here had.
 DEFAULT_BRANCH_FALLBACK = "main"
 
 
@@ -229,7 +229,7 @@ def cli_argv() -> list[str]:
 
 
 def detect_install_kind() -> InstallKind:
-    """Classify the running install as git / pip / container / desktop (C1)."""
+    """Classify the running install as git / pip / container / desktop."""
     env_kind = (os.environ.get("PERSONALCLAW_INSTALL_KIND") or "").strip().lower()
     if env_kind in _ENV_KINDS:
         return env_kind  # type: ignore[return-value]
@@ -258,7 +258,7 @@ def package_root(proj: str) -> str:
     return proj
 
 
-# ── Tag-driven update check (contract C2) ───────────────────────────────────
+# ── Tag-driven update check ─────────────────────────────────────────────────
 
 
 def normalize_version(v: str) -> str:
@@ -333,7 +333,7 @@ def stopped_upgrade_sentence(lead: str, changed: str, current: str) -> tuple[str
 #
 # A rollback needs exactly one fact the product did not previously keep: *which
 # version was I on before this one?* `updates.last_version` is the field that holds
-# it, and until RUM-9 NOTHING wrote it — so its own `_meta` ("Maintained by the
+# it, and at first NOTHING wrote it — so its own `_meta` ("Maintained by the
 # updater") was false and any "Roll back to v<last_version>" control would have read
 # an always-empty string.
 #
@@ -538,7 +538,7 @@ def may_check_for_updates(*, asked: bool) -> bool:
 
 
 async def build_update_status(current: str, *, fetch: bool) -> dict[str, object]:
-    """Assemble the C2 update-check payload for the running install.
+    """Assemble the update-check payload for the running install.
 
     ``current`` is ``importlib.metadata.version("personalclaw")`` (the caller
     passes ``personalclaw.__version__``). ``latest`` names the release this
@@ -743,7 +743,7 @@ def select_target(releases: list[dict[str, object]], channel: str, pin: str = ""
     * ``stable`` — the newest **non-prerelease** release.
     * ``beta`` — the newest release **including** prereleases.
     * ``nightly`` — ``""``: nightly tracks the checked-out branch, not a release
-      tag (the git kind follows the branch — RUM-4), so there is no tag to name.
+      tag (the git kind follows the branch), so there is no tag to name.
 
     Versions are compared as :mod:`personalclaw.versions` reads them. A pin finds its release
     by version, so either spelling of a candidate (``0.3.0-rc.1``, ``0.3.0rc1``) finds the tag
@@ -1045,8 +1045,8 @@ def resolve_default_branch(proj: str) -> str:
        needs the network, so it is last among the probes.
     4. :data:`DEFAULT_BRANCH_FALLBACK` — the repository's real default branch.
 
-    A literal fallback is only defensible if it names a branch that exists. Before
-    DIST-13 this was hardcoded to a branch name this repository has never carried,
+    A literal fallback is only defensible if it names a branch that exists. This
+    was once hardcoded to a branch name this repository has never carried,
     so a detached-HEAD update fetched an unresolvable ref and failed confusingly.
     """
     branch = current_branch(proj)
@@ -1101,7 +1101,7 @@ def git_checkout(proj: str, ref: str) -> subprocess.CompletedProcess[str]:
     modifications and leaves the tree untouched with a non-zero exit, so this can
     never silently discard a user's work the way ``reset --hard`` did. Checking out
     a tag detaches HEAD onto that exact release — which is precisely "ride release
-    tags", the state RUM-4 leaves the git kind in.
+    tags", the state a release update leaves the git kind in.
     """
     return _run_git(["checkout", ref], cwd=proj, timeout=30)
 
@@ -1114,7 +1114,7 @@ def git_fast_forward(proj: str, branch: str) -> subprocess.CompletedProcess[str]
     upstream commits but can NEVER rewrite or discard local history — a diverged
     branch makes it fail with a non-zero exit and an untouched tree, which is the
     safe answer. There is deliberately no ``reset --hard`` fallback; that silent
-    tracked-change destruction is exactly what RUM-4 retired.
+    tracked-change destruction is exactly what was retired.
     """
     return _run_git(["merge", "--ff-only", f"origin/{branch}"], cwd=proj, timeout=30)
 
@@ -1128,7 +1128,7 @@ def git_is_up_to_date(proj: str, branch: str) -> bool:
 def git_tracked_changes(proj: str) -> list[str]:
     """Porcelain status lines for TRACKED paths only — what an advance could clobber.
 
-    Untracked entries (``??``) are safe across both an advance mechanism RUM-4
+    Untracked entries (``??``) are safe across both advance mechanisms the updater
     uses (``git checkout`` refuses to touch them; a fast-forward leaves them), so
     they are excluded: warning about files that are not at risk trains the reader
     to click through the warning that matters. The auto/CLI paths use this to

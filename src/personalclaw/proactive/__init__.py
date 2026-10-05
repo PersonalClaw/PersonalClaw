@@ -1,6 +1,6 @@
 """Proactive triage — the scheduled digest and its approval memory.
 
-PA-1 ships the pure, engine-independent half: the approval-rule model, the
+The approval half is pure and engine-independent: the approval-rule model, the
 deterministic matcher the triage stage consults, the reply grammar the digest
 thread parses, and the escalating suppression cooldowns. Nothing here touches
 the network, the clock (every function takes ``now``), or an LLM.

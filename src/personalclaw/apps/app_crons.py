@@ -29,7 +29,7 @@ disable, uninstall, permission changes and manifest edits without per-lifecycle 
 Trigger id convention: ``app:<app-name>:<cron-name>`` (:func:`job_id`); the job is named by its
 app (:func:`job_label`).
 
-**🔴 S108 — this wrote to `crons.json`, so app crons DID NOT FIRE.** The clock engine
+**🔴 This used to write to `crons.json`, so app crons DID NOT FIRE.** The clock engine
 (`triggers.service.tick`) reads the unified store and nothing else, and the boot migration that
 imports `crons.json` runs BEFORE reconciliation. A job written here landed in `crons.json`
 with `triggers.json` empty, so an app's declared cron stayed inert until the NEXT gateway boot
@@ -358,7 +358,7 @@ def reconcile_app_crons(store: Any) -> None:
                 workflow=dict(params["workflow"]),
                 delivery=params["delivery"],
             )
-            # 🔴 FREEZE THE CAPABILITY SET (decision 7). An app cron runs `invoke-agent`,
+            # 🔴 FREEZE THE CAPABILITY SET. An app cron runs `invoke-agent`,
             # which is write-capable, and the now-wired fence denies on an empty block — so without
             # this every app-declared cron would refuse on its next fire. The app's own manifest
             # permissions (`cron` and its agent tier) are the opt-in; this records what they cover.

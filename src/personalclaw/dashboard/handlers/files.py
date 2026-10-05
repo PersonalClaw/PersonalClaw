@@ -792,7 +792,7 @@ async def api_upload(request: web.Request) -> web.Response:
 
 
 def _upload_dir() -> Path:
-    """Where an upload lands, resolved AT CALL TIME (CRE-8).
+    """Where an upload lands, resolved AT CALL TIME.
 
     Same shape as :func:`_screenshot_dir` and fixed with it rather than after it: the two
     constants sat on adjacent lines, so leaving one frozen would have left the same bug
@@ -1332,7 +1332,7 @@ async def api_file_watch(request: web.Request) -> web.StreamResponse:
 
 
 async def api_config_fs_watch(request: web.Request) -> web.StreamResponse:
-    """GET /api/config-fs/stream — SSE feed of out-of-band config-tree changes (#44).
+    """GET /api/config-fs/stream — SSE feed of out-of-band config-tree changes.
 
     The config trees (config.json, agents/, skills/, workflows/) are filesystem-as-truth:
     edited on disk, by another tool, or by an agent. This per-resource feed (key
@@ -2973,7 +2973,7 @@ async def _iter_multipart(reader):
 
 
 def _apply_centrality(results: list, root: str, max_results: int) -> list:
-    """Re-rank file matches by codebase centrality (CONTEXT-ECONOMY §5.5).
+    """Re-rank file matches by codebase centrality.
 
     Among files that match the query about equally well, the one the rest of the
     codebase actually references is far more likely to be the one meant. The boost

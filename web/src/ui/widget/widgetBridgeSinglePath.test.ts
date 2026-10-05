@@ -14,7 +14,7 @@ import { filesUnder, readSource } from '../../test/sourceTree'
 const SRC = join(process.cwd(), 'src')
 const BRIDGE = join('ui', 'widget', 'useWidgetActionBridge.ts')
 /** The LEAF that owns the `[UI]` turn dialect (prefix, byte cap, event name, publisher).
- *  Split out of the bridge in AS-6 because the bridge imports `appSdk` for `launchChat` and
+ *  Split out of the bridge because the bridge imports `appSdk` for `launchChat` and
  *  `appSdk` imports the genui renderer, which needs the dialect — a five-module import cycle
  *  that cost one module its exports. The "exactly one owner" claim below is UNCHANGED; only
  *  which file that owner is moved, and the bridge re-exports it so consumers keep one path. */

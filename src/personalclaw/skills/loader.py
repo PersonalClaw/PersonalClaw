@@ -245,7 +245,7 @@ def hold_library() -> Iterator[None]:
 
 
 def _suppressed_producers() -> set[tuple[str, str]]:
-    """Feedback-Signal's withholding set (FS-6), fetched fail-open.
+    """The feedback signal's withholding set, fetched fail-open.
 
     ``feedback.suppressed_producers`` already fail-opens internally (config off →
     empty, any error → empty); this wrapper adds a second belt so an import/attr
@@ -280,13 +280,13 @@ def _agent_slug(agent: str) -> str:
 def agent_skills_dir(agent: str) -> Path:
     """The agent-local skills tier: ``~/.personalclaw/agents/<slug>/skills/``.
 
-    Highest-precedence tier (skill-agent-local-tier) — a skill here overrides a
+    Highest-precedence tier — a skill here overrides a
     same-named bundled/global one, but only for this agent. Sits under the same
     per-agent dir root as agent-scoped hooks/config."""
     return config_dir() / "agents" / _agent_slug(agent) / SKILLS_DIR_NAME
 
 
-# ── Resource tier (WF2LEA-10 / amendment E1.1) ───────────────────────────────
+# ── Resource tier ───────────────────────────────
 #
 # A skill directory may carry files beside SKILL.md (``scripts/``, ``reference/``).
 # The optional ``resources:`` frontmatter block makes them ADDRESSABLE without a
@@ -322,7 +322,7 @@ def agent_skills_dir(agent: str) -> Path:
 RESOURCE_MAX_BYTES = 32_768
 
 #: Declared descriptions are clamped so the L0 catalog stays one line per resource
-#: (the amendment's mitigation for resource sprawl).
+#: (a mitigation for resource sprawl).
 RESOURCE_DESC_MAX_CHARS = 160
 
 
@@ -448,7 +448,7 @@ def parse_frontmatter(content: str) -> dict[str, str]:
     """The flat ``key: value`` frontmatter of already-read SKILL.md *content*.
 
     A module-level public reader beside :func:`parse_resources`, for callers that hold
-    the text and need one declared field (CE2-9 reads ``context_tier`` and
+    the text and need one declared field (the skill allocator reads ``context_tier`` and
     ``description``). It delegates to :meth:`SkillsLoader._parse_frontmatter_text` rather
     than re-implementing the line parser: a second parser would disagree about BOMs,
     block scalars and block lists exactly where the first one was carefully fixed.
@@ -554,7 +554,7 @@ class SkillsLoader:
         # loader (skills_path=None) aggregates every discovery root.
         self._scoped = skills_path is not None
         self._dir = skills_path or skills_dir()
-        # Agent-local tier (skill-agent-local-tier): when an agent context is
+        # Agent-local tier: when an agent context is
         # given, that agent's own skills dir takes precedence over bundled/global
         # for that agent only — an agent can override or add skills nobody else
         # sees. Only meaningful on the default (non-scoped) loader; a scoped
@@ -616,16 +616,16 @@ class SkillsLoader:
         """Return list of skill metadata dicts with key, name, description, path, dir, always.
 
         When *with_usage* is set, each dict also carries ``use_count`` and
-        ``last_used_at`` from the sidecar usage counter (skill-use-counter) —
-        the live use signal consumed by surfacing-ranking (#26) and the
-        library curator (#27). Lazy-imported to avoid an import cycle.
+        ``last_used_at`` from the sidecar usage counter —
+        the live use signal consumed by surfacing-ranking and the
+        library curator. Lazy-imported to avoid an import cycle.
 
         When *with_provenance* is set, each dict also carries ``created_at`` and
         ``refined_at`` from :class:`AutoSkillProvenance`'s frontmatter (empty for a
         skill that never carried provenance — a marketplace install, say). Opt-in for
         the same reason ``with_usage`` is: ``/api/skills`` has a pinned payload shape,
         and widening it for every caller to serve one panel would be a needless
-        contract change. The learning-summary block (LV-3) is the consumer.
+        contract change. The learning-summary block is the consumer.
         """
         usage: dict = {}
         if with_usage:
@@ -640,7 +640,7 @@ class SkillsLoader:
         for name, skill_file in self._iter():
             meta = self._cached_frontmatter(skill_file)
             # An agent-local skill lives under this loader's agent dir — tag it so
-            # the UI can badge the tier (skill-agent-local-tier).
+            # the UI can badge the tier.
             is_agent_local = agent_root is not None and str(skill_file).startswith(agent_root)
             row: dict = {
                 "key": name,
@@ -726,7 +726,7 @@ class SkillsLoader:
     def load_skill(self, name: str) -> str | None:
         """Load a single skill's content by name, searching this loader's dirs.
 
-        ES-7 §3.3: the ablation/bench suppression set is consulted HERE, the one place a
+        The ablation/bench suppression set is consulted HERE, the one place a
         body is read, so a suppressed skill's body cannot reach a prompt through the
         forced, surfaced, or ``skill_invoke`` path. ``None`` (not ``""``) so a suppressed
         skill is indistinguishable from an absent one to every caller — every one of them
@@ -1242,11 +1242,11 @@ class SkillsLoader:
         return [name for name, _ in scored[: cfg.skills.max_triggered]]
 
     def get_surfaced_skills(self, text: str) -> list[str]:
-        """Return skills for this turn via semantic ∪ keyword surfacing (#26).
+        """Return skills for this turn via semantic ∪ keyword surfacing.
 
         Embedding-preferred (reusing the active memory embedder), with the
         keyword trigger path as a cheap union member / no-embedder fallback;
-        ranked by relevance then proven use_count (#25). Falls back to the pure
+        ranked by relevance then proven use_count. Falls back to the pure
         keyword path :meth:`get_triggered_skills` on any error so a surfacing
         failure can never break a turn.
         """
@@ -1289,8 +1289,8 @@ class SkillsLoader:
         Always-loaded skills: full content included.
         Other skills: summary with instruction to load via bash when needed.
 
-        When ``agent`` is given AND that agent has an agent-local skills dir
-        (skill-agent-local-tier), resolve through an agent-scoped view so the
+        When ``agent`` is given AND that agent has an agent-local skills dir,
+        resolve through an agent-scoped view so the
         agent's own skills override same-named global/bundled ones for its turn.
         The agent-scoped loader is only built when the dir actually exists, so the
         common (no agent-local skills) path pays nothing."""
@@ -1316,9 +1316,9 @@ class SkillsLoader:
                 stripped = self.strip_frontmatter(content)
                 parts.append(f"### Skill: {name}\n\n{stripped}")
 
-        # Index (progressive disclosure, #29) for on-demand skills. Archived skills
-        # (curator #27) are kept off the index. Phase 2 = the agent pulls a full
-        # body via skill_invoke{name}, which also records the use (#25).
+        # Index (progressive disclosure) for on-demand skills. Skills the curator
+        # archived are kept off the index. Phase 2 = the agent pulls a full
+        # body via skill_invoke{name}, which also records the use.
         on_demand = [
             s for s in all_skills if s["name"] not in always and s.get("status") != "archived"
         ]

@@ -1,7 +1,7 @@
 """Agent identity resolution — the canonical "which agent is this turn?" rule.
 
-These cases were in `test_workflows_composition.py`, which WORKFLOWS-V2 Phase 1
-deletes wholesale. The rule itself is not workflow-specific (chat_runner stamps every
+These cases were in `test_workflows_composition.py`, which was
+deleted wholesale. The rule itself is not workflow-specific (chat_runner stamps every
 turn's `resolved_agent_id` with it), so it keeps its coverage here rather than
 disappearing with the feature that happened to need it first.
 """

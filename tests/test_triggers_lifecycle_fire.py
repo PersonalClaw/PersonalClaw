@@ -1,7 +1,7 @@
-"""Firing the dormant lifecycle events (AUTO §7 criterion 5).
+"""Firing the dormant lifecycle events.
 
-Criterion 5's second clause: "the 8 dormant lifecycle events actually fire". S67 closed the first
-clause (event-kind API parity) and left this one measured but open —
+The 8 dormant lifecycle events must actually fire. Event-kind API parity landed first and left
+this one measured but open —
 `triggers.events.configurable_but_dead()` returned seven names, and a grep for each outside its own
 declaration found exactly ONE hit: the `validation.py` allowlist. Selectable in the hook UI,
 saveable, and fired by nothing.
@@ -134,7 +134,7 @@ def test_the_reply_text_is_not_in_the_post_response_payload():
 
 
 def test_the_lesson_body_is_not_in_the_memory_write_payload():
-    """A memory body is user content. The fencing work in S69/S79 exists so untrusted text does not
+    """A memory body is user content. The fencing work exists so untrusted text does not
     travel into places that execute."""
     ctx = L.memory_write_payload(kind="lesson", key="workflow", scope="user_explicit")["context"]
     assert "kind=lesson" in ctx and "key=workflow" in ctx

@@ -1,5 +1,5 @@
 /**
- * FLUID-MOTION §S3 T3.2 — the orchestrated surface entrance, MOTION ALLOWED.
+ * The orchestrated surface entrance, MOTION ALLOWED.
  *
  * The reduced-motion half is `Entrance.reducedMotion.test.tsx` and has to be its own file:
  * framer-motion caches its `prefers-reduced-motion` probe in a module singleton, so a stub
@@ -62,7 +62,7 @@ describe('an entrance never gates content', () => {
   it('every region is in the document on the FIRST commit, before anything animates', () => {
     render(<Surface />)
     // No waitFor, no timer advance: synchronous after the initial commit, exactly as
-    // FM-5 requires of a route transition one level up — the page changes whether the
+    // a route transition one level up must be — the page changes whether the
     // animation runs, fails, or is not supported.
     expect(screen.getByText('first region')).toBeInTheDocument()
     expect(screen.getByText('third region')).toBeInTheDocument()

@@ -329,7 +329,7 @@ def _start_workers(manifest: AppManifest) -> None:
 def _stop_workers(name: str) -> None:
     """Hold *name*'s workers down, stop them, then reap anything a prior gateway orphaned.
 
-    APE-3's V1 clause is "uninstall leaves no orphan worker", and the sweep alone cannot deliver
+    The promise is "uninstall leaves no orphan worker", and the sweep alone cannot deliver
     it: the sweep stops workers whose app went away, but a process re-parented to init by an
     ungraceful gateway exit is in no supervisor's table, so nothing would ever look for it once
     the app directory is gone. So this runs while the entry path is still resolvable.
@@ -374,7 +374,7 @@ def _deregister_mcp(name: str, *, forget: bool) -> None:
 
 
 def _register_proposal_kinds(manifest: AppManifest) -> None:
-    """Register the app's declared ``permissions.proposals`` kinds (INU-7).
+    """Register the app's declared ``permissions.proposals`` kinds.
 
     At load, so a declared kind is REGISTERED before the app can post one — the
     ``POST /api/inbox/proposals`` 403 reads the manifest, and delivery policy reads the

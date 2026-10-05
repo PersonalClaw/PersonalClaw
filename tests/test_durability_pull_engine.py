@@ -1,4 +1,4 @@
-"""DURABILITY-AND-SYNC §4.1 / DAS-6c-ii-e — the transport-driven pull half of the cycle.
+"""The transport-driven pull half of the cycle.
 
 Drives the pure pieces against a fake in-memory transport: take each peer's newest seq past
 the cursor — a whole copy of its records — import + reconcile it into the live store, and

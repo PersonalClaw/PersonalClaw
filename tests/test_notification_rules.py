@@ -221,14 +221,14 @@ def test_conditions_reproduce_the_retired_inbox_alert_semantics():
 
     `evaluate_alert` now DELEGATES to `Conditions.matches`, so comparing the two would be
     comparing the engine to itself. Instead this pins the semantics against a verbatim copy
-    of the retired implementation (the pre-S3 body of `inbox.evaluate_alert`, kept here as
+    of the retired implementation (the original body of `inbox.evaluate_alert`, kept here as
     the oracle) — so a user whose keywords were backfilled cannot silently start getting
     different alerts.
     """
     import re
 
     def legacy(text: str, keywords: list[str], name_mention: bool, user_name: str) -> str:
-        """The pre-S3 `inbox.evaluate_alert` body, verbatim."""
+        """The original `inbox.evaluate_alert` body, verbatim."""
         low = (text or "").lower()
         if not low:
             return ""
@@ -483,7 +483,7 @@ def test_queue_survives_non_ascii(home):
 
 # ── The inbox-alert backfill ────────────────────────────────────────────
 #
-# This replaces what the plan wrote as a `lifecycle/migrations/m_*.py`. It is an idempotent
+# Not a `lifecycle/migrations/m_*.py`: it is an idempotent
 # backfill keyed on DATA INSPECTION (rules file absent + legacy fields present), because
 # there is no schema version for entity settings and inventing one is the machinery the
 # doctrine rejects. The risk it guards: a user who configured "alert me when someone says
@@ -824,8 +824,8 @@ def test_a_converged_schedule_is_re_armed(home, monkeypatch):
 
 
 def test_converging_preserves_the_quietly_losable_spec_keys(home):
-    """`timezone`/`skip_dates`/`strict` must survive a schedule change — the same contract §1.3 and
-    S101 record for a cadence edit. Replacing the spec wholesale would drop a user's holidays."""
+    """`timezone`/`skip_dates`/`strict` must survive a schedule change — the same contract a
+    cadence edit keeps. Replacing the spec wholesale would drop a user's holidays."""
     from personalclaw.action_providers.digest_provider import (
         DIGEST_JOB_NAME,
         reconcile_digest_cron,
@@ -932,7 +932,7 @@ def test_digest_cron_does_not_reconverge_on_every_startup(home):
     asserts the OUTCOME (nothing changes) rather than the field name, so it stays honest either way.
 
     (The `_FakeCrons`/`_FakeJob` doubles this used, plus the guard test that pinned their shape
-    against `ScheduleJob`, retire with the legacy read — S108.)
+    against `ScheduleJob`, retire with the legacy read.)
     """
     from personalclaw.action_providers.digest_provider import (
         DIGEST_JOB_NAME,
@@ -950,7 +950,7 @@ def test_digest_cron_does_not_reconverge_on_every_startup(home):
 
 # ── the `native` target ──────────────────────────────────────────────────
 #
-# `native` sat in TARGETS from T1.3 as an accepted-and-persisted string with no dispatch
+# `native` sat in TARGETS as an accepted-and-persisted string with no dispatch
 # behind it: the only consumer of `rule.targets` anywhere in `src/` was `state.py`'s
 # `note["targets"] = list(rule.targets)` annotation, and `desktop/main.js` imported
 # Electron's `Notification` solely to call `isSupported()` in a capability probe. So the

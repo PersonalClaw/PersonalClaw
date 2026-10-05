@@ -1,7 +1,7 @@
-"""Intercept a SYSTEM scheduler write and offer the substrate instead (§7 criterion 12).
+"""Intercept a SYSTEM scheduler write and offer the substrate instead.
 
-Criterion 12: *"An agent attempting `crontab -e` is prompted and offered the substrate;
-`automation doctor` flags an orphaned workflow ref and a broad file-watch glob."* The second clause
+The requirement: an agent attempting `crontab -e` is prompted and offered the substrate, and
+`automation doctor` flags an orphaned workflow ref and a broad file-watch glob. The second half
 shipped (`calendar.diagnose` + `GET /api/triggers/doctor`). The first was **unmet — measured,
 not inferred**::
 
@@ -15,13 +15,13 @@ So an agent could install a cron in the user's real crontab and nothing said a w
 files at INSTALL time — a different surface, and one an agent's own bash call never touches.
 
 **Why this matters beyond tidiness.** A cron in the system crontab is invisible to every surface
-this program spent 65 sessions building: no ledger row, no autopause, no quiet window, no capability
+the automation engine provides: no ledger row, no autopause, no quiet window, no capability
 fence, no kill switch, no run history. It survives uninstall. It is the one way for unattended work
 to escape the substrate entirely — so an agent reaching for it is exactly when to say "there is a
 supported way to do this".
 
-**PROMPTED, not blocked — and this is the whole design decision.** Criterion 12 says *prompted and
-offered*, and the distinction is load-bearing in both directions:
+**PROMPTED, not blocked — and this is the whole design decision.** The requirement says *prompted
+and offered*, and the distinction is load-bearing in both directions:
 
 * Blocking would be wrong. Reading a crontab is diagnostic (`crontab -l` is how you find out what is
   already scheduled), and a legitimate one-off — reproducing a user's bug, migrating their existing

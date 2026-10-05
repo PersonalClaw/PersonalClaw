@@ -5,7 +5,7 @@ seam every non-interactive model call passes through, so the platform can meter,
 fail fast on provider outages, and record a tamper-evident attempt trail without
 touching the interactive chat stream a human is watching.
 
-Session 1 (this slice) ships the chokepoint core:
+The chokepoint core:
 
 * :mod:`personalclaw.guardrails.failure` — the failure-mode taxonomy + typed errors.
 * :mod:`personalclaw.guardrails.breaker` — a per-provider three-state circuit breaker.
@@ -14,15 +14,14 @@ Session 1 (this slice) ships the chokepoint core:
   adapter that wires breaker + hard timeout + audit around a resolved
   ``ModelProvider``.
 
-Later sessions added the budget meter, path/action denylist, incident kill switch,
+Around it sit the budget meter, path/action denylist, incident kill switch,
 DISABLE_LIVE_WRITES and named safety profiles, plus:
 
 * :mod:`personalclaw.guardrails.autonomy` — the earned-autonomy rung ladder:
   per-action-type rungs, a DERIVED track record, user-clicked promotion and automatic
   demotion. It sits ON TOP of the floor above and never relaxes it.
 
-The ``sdk.guardrails`` facade is still to come (see
-`the plan (internal, not in this repo)`).
+The ``sdk.guardrails`` facade is still to come.
 """
 
 from personalclaw.guardrails.autonomy import (

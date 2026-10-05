@@ -172,7 +172,7 @@ class SearchResult:
 class FetchResult:
     """Single-URL content extraction result (for providers that ``supports_fetch``).
 
-    The native fetch pipeline (§4) returns this same shape, so a provider ``fetch``
+    The native fetch pipeline returns this same shape, so a provider ``fetch``
     and the native pipeline are interchangeable to callers. ``next_index`` is set
     when the content was truncated to ``max_tokens`` — call again with
     ``start_index=next_index`` to page through (the verified MCP-fetch pattern).

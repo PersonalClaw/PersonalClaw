@@ -1,4 +1,4 @@
-"""Version single-sourcing consistency (contract C3).
+"""Version single-sourcing consistency.
 
 pyproject.toml ``[project].version`` is the single source of truth for the package
 version. This test asserts every surface a release exposes agrees with it:

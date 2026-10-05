@@ -4,16 +4,16 @@ Channel 1 (semantic match) is the old mechanism and stays where it is. This modu
 channels a per-turn embedding match structurally CANNOT express, plus the three contracts that
 decide whether a match is allowed to become a suggestion:
 
-* **Channel 2 — cadence (R8).** "It has been 40 days since the backup checklist ran" is not a
+* **Channel 2 — cadence.** "It has been 40 days since the backup checklist ran" is not a
   similarity question, so no threshold can answer it. Last-completed comes from real run history
   (`store.list_runs(status=COMPLETE)`) — history the old SOP feature never had.
-* **Channel 3 — workspace fingerprint (R19).** Weighted file-glob packs, scored on directory
+* **Channel 3 — workspace fingerprint.** Weighted file-glob packs, scored on directory
   attach only. Pure pattern matching, zero LLM cost, and **propose-don't-enable**: the scan
   produces ONE grouped dismissible suggestion, never an enablement.
-* **R18 — layered scope resolution.** Narrower shadows wider, and a shadowed def stays VISIBLE
+* **Layered scope resolution.** Narrower shadows wider, and a shadowed def stays VISIBLE
   with a state. A silently hidden def is the failure that makes a user rewrite a procedure they
   already had.
-* **R11 — requirements preflight.** A suggestion whose requirements are unmet fails AT SUGGESTION
+* **Requirements preflight.** A suggestion whose requirements are unmet fails AT SUGGESTION
   TIME naming the missing item, rather than dying mid-run.
 * **The reachability doctor.** The mirror failure of over-firing: a def nothing can reach. gbrain's
   audit found 63 silently unreachable skills on its first run.
@@ -34,7 +34,7 @@ from typing import Any, Callable, Iterable, Sequence
 
 SECONDS_PER_DAY = 86400.0
 
-# ── Channel 2: cadence / recency (R8) ──
+# ── Channel 2: cadence / recency ──
 
 #: Escalation mode per def. MANUAL surfaces only; AUTO also materializes a standalone task.
 #: Two modes rather than a global setting because "remind me" and "put it on my board" are
@@ -93,8 +93,8 @@ class CadenceState:
     def tracked(self) -> bool:
         """Whether this def participates in the channel at all.
 
-        `cadence_days <= 0` means "no cadence" — the same reading as `ttl: 0` in S57, and for the
-        same reason: an author who left the field alone has not asked to be nagged.
+        `cadence_days <= 0` means "no cadence" — the same reading as a confirmation's `ttl: 0`,
+        and for the same reason: an author who left the field alone has not asked to be nagged.
         """
         return self.cadence_days > 0
 
@@ -263,7 +263,7 @@ def escalation_action(state: CadenceState, now: float) -> dict[str, Any]:
     `ALLOWED_HOOK_PROVIDERS`) rather than calling the task registry directly — one materialization
     path means one audit trail and one set of provider rules.
 
-    Measured (S59): the provider renders `title_template`/`body_template` and passes through only
+    Measured: the provider renders `title_template`/`body_template` and passes through only
     `priority`/`project`/`assignee`/`due`/`labels`. Anything else in the config is silently
     dropped while the hook reports success, so this emits ONLY keys the provider actually reads,
     and the link lives in the ledger.
@@ -298,7 +298,7 @@ def resume_boost(state: CadenceState, *, base: float) -> float:
 RESUME_BOOST = 0.05
 
 
-# ── Channel 3: workspace fingerprint / packs (R19) ──
+# ── Channel 3: workspace fingerprint / packs ──
 
 
 @dataclass
@@ -335,9 +335,9 @@ class Predicate:
 class Pack:
     """A named group of defs gated behind a fingerprint.
 
-    Packs are also R7's cold-start answer: bundled seed SOPs arrive gated behind a fingerprint
-    instead of polluting every project's candidate set with procedures for languages the user
-    does not write.
+    Packs are also the seed library's cold-start answer: bundled seed SOPs arrive gated behind a
+    fingerprint instead of polluting every project's candidate set with procedures for languages
+    the user does not write.
     """
 
     name: str
@@ -503,7 +503,7 @@ def dismissals_path(project_id: str) -> Path:
     """Where per-project pack dismissals live.
 
     Under `store.config_dir()` so an isolated dev home stays isolated — a module-level absolute
-    path would write into the real home from a test, which is the failure S49 already paid for.
+    path would write into the real home from a test, which is a failure already paid for once.
     """
     from personalclaw.workflows import store as _store
 
@@ -540,7 +540,7 @@ def dismiss_pack(project_id: str, *pack_names: str) -> set[str]:
     return current
 
 
-# ── R18: layered scope resolution & shadowing ──
+# ── layered scope resolution & shadowing ──
 
 #: Resolution order, narrowest first. Reuses the `template_pipeline.SCOPE_LADDER` words plus the
 #: bundled tier, so a def's promotion ladder and its shadowing order are the SAME vocabulary — two
@@ -650,7 +650,7 @@ def adopt_target(entry: ScopedDef) -> tuple[str, str]:
 
 @dataclass
 class Overlay:
-    """A per-stage patch against a wider-scope def (R18).
+    """A per-stage patch against a wider-scope def.
 
     This is what keeps a personal SOP library DRY: a project swaps ONE stage of the global
     deploy procedure and keeps inheriting upstream improvements to the rest. A fork would inherit
@@ -713,11 +713,11 @@ def apply_overlay(
     return out, diff
 
 
-# ── R11: parameter pre-fill + requirements preflight ──
+# ── parameter pre-fill + requirements preflight ──
 
 
 class Availability(str, Enum):
-    """The Leon-style three-state model the plan names.
+    """The Leon-style three-state model.
 
     Three states because they need three different remedies: INSTALLED-but-not-enabled is a toggle,
     ENABLED-but-not-available is a settings page, and NOT-INSTALLED is an install. Collapsing them
@@ -751,7 +751,7 @@ class Requirement:
 class Finding:
     """One unmet requirement, in the shape a `blocked(kind=capability)` task needs.
 
-    Shares the field names §1's projection uses so a preflight finding and a mid-run capability
+    Shares the field names the task projection uses so a preflight finding and a mid-run capability
     failure read identically — the user should not have to learn two vocabularies for "the deploy
     binary is missing".
     """
@@ -814,7 +814,7 @@ def preflight(
 ) -> tuple[bool, list[Finding]]:
     """Whether a def may be suggested, plus a finding per unmet requirement.
 
-    Returns ALL findings rather than the first, for the same reason S58's veto list does: a def
+    Returns ALL findings rather than the first, for the same reason `veto_reasons` does: a def
     needing two missing binaries has a user who should install two.
     """
     findings: list[Finding] = []
@@ -864,8 +864,8 @@ class DoctorFinding:
         return {"name": self.name, "code": self.code, "detail": self.detail}
 
 
-#: Typed codes rather than prose. S54 paid for prose-matched reasons: a message containing the word
-#: "secret" was matched as if it were a secret. A code is what a surface should switch on.
+#: Typed codes rather than prose. Prose-matched reasons have failed before: a message containing
+#: the word "secret" was matched as if it were a secret. A code is what a surface should switch on.
 UNREACHABLE_NO_TRIGGER = "no_trigger"
 UNREACHABLE_SHADOWED = "shadowed"
 UNREACHABLE_REQUIREMENTS = "requirements_unmet"
@@ -984,10 +984,10 @@ def check_fixtures(fixtures: Sequence[TriggerFixture], matcher: Callable[[str], 
 
 
 def meta_from_def(metadata: Any) -> Any:
-    """Build S58's `SurfacingMeta` from a def's `DefMetadata`.
+    """Build the `SurfacingMeta` from a def's `DefMetadata`.
 
     ONE conversion point. Two readers of the same fields drift, and the drift shows as a def that
-    surfaces through one path and not the other for identical metadata — the exact failure S58's
+    surfaces through one path and not the other for identical metadata — the exact failure the
     `drift()` check exists to catch for renders, applied here to the fields themselves.
 
     `surface_mode` is coerced by `DefMetadata.from_dict` already, so an unknown value has become
@@ -1039,7 +1039,7 @@ def cadence_from_def(
 
 
 def handoffs_from_def(metadata: Any) -> list[Any]:
-    """Build S60's `HandOff` edges from a def's declared `hands_off_to`.
+    """Build the `HandOff` edges from a def's declared `hands_off_to`.
 
     Skips entries with no `target_def`: an edge pointing nowhere would render as a suggestion the
     user cannot accept, and a dead affordance teaches them to ignore the live ones.
@@ -1093,9 +1093,9 @@ def doctor_entry(
 def route_from_def(metadata: Any, root: Any) -> Any:
     """Pick the surfacing route for a def, reading the REAL node tree.
 
-    Uses `models.walk` and `models.LLM_KINDS` rather than a hand-rolled traversal: S45 measured a
-    hand-rolled walk finding 4 of 13 nodes because branch children live under `cases`/
-    `default_case`, and S45's `stage`-only LLM check called a five-`infer` template deterministic.
+    Uses `models.walk` and `models.LLM_KINDS` rather than a hand-rolled traversal: a hand-rolled
+    walk was measured finding 4 of 13 nodes because branch children live under `cases`/
+    `default_case`, and a `stage`-only LLM check called a five-`infer` template deterministic.
     Both mistakes here would route a substantial def to a blueprint, which has no engine to run it.
     """
     from personalclaw.workflows import models as _models

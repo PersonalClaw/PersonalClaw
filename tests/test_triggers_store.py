@@ -1,19 +1,18 @@
 """`triggers.json` — the one trigger store.
 
 "One store: `~/.personalclaw/triggers.json` (fcntl + atomic write …). Parsed with **never-throw
-structural validation** (AUTO-R15): typed issue records + closest-match resolution … an
+structural validation**: typed issue records + closest-match resolution … an
 agent-authored near-miss must never become a silently-dead trigger."
 
-**Why this was buildable when S83/S86 recorded the store as blocked.** Those sessions were
-right that
-the store and the SERVICE are separate concerns, and wrong to treat them as one unit — the service
+**Why this was buildable although the store had looked blocked.** The store and the SERVICE are
+separate concerns, and treating them as one unit was the mistake — the service
 needs the store, not the reverse. Everything the store depends on was measured as shipped first:
 `Trigger.to_dict()`/`parse_trigger()` round-trip losslessly, `parse_trigger` already never
 raises and
 already offers closest-match resolution, `migrate_crons()` already consumes a raw `crons.json`, and
-`ScheduleService` already ships the fcntl+atomic+mtime triad §1 asks for.
+`ScheduleService` already ships the fcntl+atomic+mtime triad the store needs.
 
-The load-bearing tests are the three §1 properties: a broken row never disappears, a write never
+The load-bearing tests are the three store properties: a broken row never disappears, a write never
 truncates, and a concurrent writer is never silently overwritten. Plus the migration one, driven
 against a store shaped like the owner's real file.
 """
@@ -85,12 +84,12 @@ def test_a_bare_list_payload_is_accepted(store):
     assert len(store.load()) == 1
 
 
-# ── §1 property 1: a broken row never disappears ──
+# ── property 1: a broken row never disappears ──
 
 
 def test_a_broken_row_is_KEPT_visible_and_inert(store):
     """🔴 The load-bearing decision. A store that dropped invalid rows would make an agent-authored
-    typo indistinguishable from a trigger the user never created — R15's "silently-dead
+    typo indistinguishable from a trigger the user never created — a "silently-dead
     trigger", and
     worse, because the user cannot fix what they cannot see."""
     store.save_all([_trigger("good")])
@@ -108,7 +107,7 @@ def test_a_broken_row_is_KEPT_visible_and_inert(store):
 
 
 def test_a_broken_row_carries_the_closest_match_hint(store):
-    """R15 requires closest-match resolution rendered as a chip. The store surfaces what
+    """Closest-match resolution renders as a chip. The store surfaces what
     `parse_trigger` already computes rather than re-deriving it."""
     store.path.parent.mkdir(parents=True, exist_ok=True)
     store.path.write_text(
@@ -158,7 +157,7 @@ def test_list_triggers_filters_by_kind(store):
     assert [t.id for t in store.list_triggers(kind="clock")] == ["a"]
 
 
-# ── §1 property 2: a write never truncates ──
+# ── property 2: a write never truncates ──
 
 
 def test_a_save_writes_a_versioned_envelope(store):
@@ -190,7 +189,7 @@ def test_saving_an_empty_list_empties_the_store_without_deleting_it(store):
     assert store.load() == []
 
 
-# ── §1 property 3: a concurrent writer is never silently overwritten ──
+# ── property 3: a concurrent writer is never silently overwritten ──
 
 
 def test_upsert_re_reads_so_another_process_is_not_clobbered(tmp_path):
@@ -234,7 +233,7 @@ def test_delete_reports_whether_it_removed_anything(store):
 
 
 def test_the_mtime_contract_detects_another_writer(tmp_path):
-    """§6: "mtime `_sync` within the ≤30s poll remains the propagation contract"."""
+    """The mtime `_sync` within the ≤30s poll remains the propagation contract."""
     mine = TriggerStore(base_dir=tmp_path)
     theirs = TriggerStore(base_dir=tmp_path)
     mine.save_all([_trigger("a")])
@@ -328,7 +327,7 @@ def test_the_migration_imports_and_RENAMES_the_old_file(store):
 
 
 def test_an_INTERVAL_cron_survives_the_migration(store):
-    """🔴 THE defect this session found. `migrate.convert_job` emits `{kind: "interval",
+    """🔴 THE defect found here. `migrate.convert_job` emits `{kind: "interval",
     interval_secs}` for a legacy `every` cron — deliberately, since `at` would turn a recurring job
     into a one-shot ("the single most destructive possible mistranslation", per its own docstring).
     But `CLOCK_KINDS` never gained the member, so every migrated interval cron parsed with
@@ -413,7 +412,7 @@ def test_an_unreadable_crons_file_reports_rather_than_raising(store):
 
 
 def test_a_converted_row_the_entity_refuses_is_RECORDED_not_dropped(store, monkeypatch):
-    """🔴 How this session found the `interval` bug: `written` was 0 while `converted` said 1, and
+    """🔴 How the `interval` bug was found: `written` was 0 while `converted` said 1, and
     nothing said why. A count that silently disagrees with reality is the worst outcome in the one
     path whose job is not losing the user's automations."""
     from personalclaw.triggers import store as store_mod

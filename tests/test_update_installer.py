@@ -186,8 +186,8 @@ async def test_failure_detail_reaches_the_ui(monkeypatch, spawn, tools):
 # Adversarial to a "blind latest" apply: the newest release is a PRERELEASE, so
 # stable and beta resolve to DIFFERENT tags and the pin points at an older one. A
 # `-U personalclaw==<releases/latest>` apply would install 0.2.1 for all three and
-# fail beta + pin — the exact bug RUM-6 removes.
-_RUM6_RELEASES = [
+# fail beta + pin — the exact bug the channel-aware apply removes.
+_CHANNEL_RELEASES = [
     {"tag": "v0.3.0-rc.1", "prerelease": True},
     {"tag": "v0.2.1", "prerelease": False},
     {"tag": "v0.2.0", "prerelease": False},
@@ -206,7 +206,7 @@ _RUM6_RELEASES = [
 async def test_pip_apply_installs_the_channel_pin_resolved_spec(
     monkeypatch, spawn, tools, channel, pin, expected
 ):
-    """RUM-6 core (dashboard): POST /api/update upgrades to the channel/pin tag.
+    """The channel-aware apply (dashboard): POST /api/update upgrades to the channel/pin tag.
 
     Non-vacuous — beta (0.3.0-rc.1) and the pin (0.2.0) resolve to versions other
     than stable's latest (0.2.1) over the same list, so a `releases/latest` apply
@@ -216,7 +216,7 @@ async def test_pip_apply_installs_the_channel_pin_resolved_spec(
     seen = spawn(_Proc(0))
     state = _StateStub()
 
-    await _run_apply(state, monkeypatch, channel=channel, pin=pin, releases=_RUM6_RELEASES)
+    await _run_apply(state, monkeypatch, channel=channel, pin=pin, releases=_CHANNEL_RELEASES)
 
     assert seen, f"no upgrade subprocess was spawned: {state.progress}"
     assert expected in seen[0], f"expected {expected}; argv={seen[0]}"
@@ -229,7 +229,7 @@ async def test_pip_apply_pin_miss_refuses_and_never_installs_latest(monkeypatch,
     seen = spawn(_Proc(0))
     state = _StateStub()
 
-    await _run_apply(state, monkeypatch, channel="stable", pin="0.9.9", releases=_RUM6_RELEASES)
+    await _run_apply(state, monkeypatch, channel="stable", pin="0.9.9", releases=_CHANNEL_RELEASES)
 
     assert not seen, f"installed despite an unmatched pin: {seen}"
     errors = [d for s, d in state.progress if s == "error"]
@@ -265,7 +265,7 @@ async def test_pip_apply_installs_nothing_that_is_not_a_move(
     state = _StateStub()
 
     await _run_apply(
-        state, monkeypatch, channel=channel, pin=pin, releases=_RUM6_RELEASES, running=running
+        state, monkeypatch, channel=channel, pin=pin, releases=_CHANNEL_RELEASES, running=running
     )
 
     assert not seen, f"installed a release that is not a move: {seen}"

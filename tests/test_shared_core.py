@@ -1,8 +1,8 @@
-"""HC-5 shared-core parity (Success Criterion 8).
+"""Shared-core parity.
 
 The `best-of-n` and `check-work` bundled templates are the ENGINE-NATIVE halves of the
-same-named bundled skills. The plan's risk table names the failure this module exists to
-prevent — "skill/template drift (two behaviors for one name)" — and its mitigation: both
+same-named bundled skills. The failure this module exists to prevent is skill/template
+drift (two behaviors for one name), and the mitigation is that both
 halves call the same core, templates are thin spec wrappers, and *a shared
 test exercises both entry points*. This is that test.
 
@@ -24,7 +24,7 @@ DEFAULT factory resolves when no factory is injected — the path both real entr
 One stub serves both entry points in each test, so a difference in the answers could
 only come from the entry points themselves.
 
-DEVIATION recorded (the note §2.3 owes): the plan sketches "fan-out node → judge node →
+A deliberate deviation: the sketched shape is "fan-out node → judge node →
 select node", but the shipped core does not decompose — its pieces are private and the
 concurrency proof, fail-open tiers, tie-break and outcome record span the whole call.
 The template therefore calls ``best_of_n`` WHOLE from one action node (the engine sees
@@ -164,7 +164,7 @@ class TestBestOfNParity:
 
     def test_skill_tool_and_template_produce_one_answer(self, monkeypatch):
         """Same inputs through the skill's tool and through the template's own action
-        node ⇒ same winner, same slate, same judgments — the SC 8 sentence, executed.
+        node ⇒ same winner, same slate, same judgments — one behavior for one name, executed.
 
         FALSIFIED BY: making the provider call anything but the core (e.g. its own
         max() over judgments with ties broken high) — the tie in SCORES flips the
@@ -320,7 +320,7 @@ class TestCheckWorkParity:
 
 
 def test_the_template_providers_call_the_cores_not_copies():
-    """The whole HC-5 contract is "CALLING the cores (no reimplementation)".
+    """The whole contract is CALLING the cores (no reimplementation).
     Pin it at the source level: each provider imports its core's entry point, and
     neither imports the pieces a reimplementation would need."""
     from personalclaw.action_providers import best_of_n_provider, check_work_provider

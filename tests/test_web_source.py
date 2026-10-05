@@ -1,6 +1,6 @@
 """Web-source detectors, selector configs, escalating fetch, preview.
 
-Every clause of the change's acceptance criterion is asserted as a COUNT or a structural fact, never
+Every property below is asserted as a COUNT or a structural fact, never
 as "the poll succeeded":
 
 * **auto-detection on a real listing page** — a changelog yields exactly three items AND the
@@ -16,7 +16,7 @@ as "the poll succeeded":
 * **allow_render: false degrades visibly** — zero items, the ``needs render tier`` health
   status, and ``render_fn`` patched to RAISE, which is what proves the tier is never reached
   rather than merely unproductive;
-* **each of the five detectors has its own case**, plus an adversarial case per §2.2 hygiene
+* **each of the five detectors has its own case**, plus an adversarial case per output-hygiene
   default (an off-domain link dropped, a two-word title rejected, HTML sanitized);
 * **zero tokens in the detection path** — every model seam is patched to RAISE across a
   preview AND a poll, with a vacuity counterpart proving the patches are live.
@@ -355,7 +355,7 @@ async def test_a_changelog_yields_three_items_via_semantic_html(store):
     assert all(r["url"].startswith("https://app.example.com/changelog/v") for r in rows)
     assert len(queue.enqueued) == 3
     assert store.get_source(sid)["health_status"] == HEALTH_OK
-    # WHICH detector won is part of the clause: three items is also what a lucky frequency
+    # WHICH detector won is part of the property: three items is also what a lucky frequency
     # match looks like, and the user tunes a NAMED detector.
     provider = WebSourceProvider(store, fetch_fn=_Fetcher(_Resp(_changelog())))
     preview = await provider.preview({"url": PAGE_URL})
@@ -449,7 +449,7 @@ async def test_json_state_detector_reads_an_spa_state_blob(store):
     # The slug was resolved against the page, so the item has a usable link + identity.
     assert preview.items[0].url == "https://app.example.com/blog/state-1"
     # A state blob that yields items must NOT trigger a render escalation even though the
-    # page is markup-empty: the outcome was items, and outcome is what §2.3 escalates on.
+    # page is markup-empty: the outcome was items, and outcome is what escalation keys on.
     assert preview.escalations == []
     assert preview.requests_used == 1
 
@@ -884,7 +884,7 @@ async def test_the_render_escalation_is_refused_when_the_poll_budget_is_spent(st
 
 @pytest.mark.asyncio
 async def test_a_wordpress_sub_request_draws_on_the_same_poll_budget(store):
-    """§2.3's "all attempts in one poll draw on a single max_requests", made falsifiable: with
+    """All attempts in one poll draw on a single max_requests — made falsifiable: with
     a budget of 1 the REST call cannot happen, so the stack falls through to semantic_html."""
     fetcher = _Fetcher(routes={"wp-json": _Resp(_WP_POSTS), "changelog": _Resp(_wordpress_page())})
     prov = WebSourceProvider(store, fetch_fn=fetcher)
@@ -936,7 +936,7 @@ async def test_escalations_are_overwritten_per_poll_not_appended(store):
     assert len(store.get_source(sid)["last_escalations"]) == 1
 
 
-# ── §(d) tier 3: the gateway browse escalation ──────────────────────────────────────
+# ── tier 3: the gateway browse escalation ───────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -1017,7 +1017,7 @@ async def test_browse_tier_soft_fails_when_no_gateway_is_configured(store):
     ]
 
 
-# ── §(d) tier 3 SC#7: the post-navigate settle ──────────────────────────────────────
+# ── tier 3: the post-navigate settle ────────────────────────────────────────────────
 #
 # `session.navigate` only SENDS `Page.navigate`; it does not await the load event. So the tick's
 # `page.html()` can run before a client-rendered page has built its DOM, and the runner then
@@ -1217,7 +1217,7 @@ async def test_the_production_browse_tick_is_built_with_a_settle(store, monkeypa
     assert callable(seen[0]["settle"]), "the production browse tick must pass a settle wait"
 
 
-# ── §2.2 output hygiene: one adversarial case per default ───────────────────────────
+# ── output hygiene: one adversarial case per default ────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -1446,7 +1446,7 @@ async def test_polling_the_same_page_twice_produces_no_duplicate_items(store):
     assert len(queue.enqueued) == 3
 
 
-# ── the schema IS the validator (§2.2 single source of truth) ────────────────────────
+# ── the schema IS the validator (single source of truth) ─────────────────────────────
 
 
 def _schema_types(node, acc):

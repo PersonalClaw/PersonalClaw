@@ -1,4 +1,4 @@
-"""Skill-library curator — auto/ lifecycle aging (#27)."""
+"""Skill-library curator — auto/ lifecycle aging."""
 
 from __future__ import annotations
 

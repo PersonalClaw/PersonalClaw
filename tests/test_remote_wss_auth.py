@@ -1,6 +1,6 @@
 """A native client's device session over `wss://`.
 
-**What was measured before any of this was written**, because the task row's verb is *verify*
+**What was measured before any of this was written**, because the job was to *verify* it,
 and the verification failed:
 
 * A native client — a desktop or mobile shell that opens the socket itself instead of loading
@@ -119,7 +119,7 @@ async def _upgrade(app: web.Application, token: str, *, origin: str | None) -> i
 
 @pytest.mark.asyncio
 async def test_a_native_client_with_a_device_session_completes_the_upgrade() -> None:
-    """The change's headline: no Origin, remote peer, paired device session → the socket opens."""
+    """The headline case: no Origin, remote peer, paired device session → the socket opens."""
     assert await _upgrade(_app(), _paired_token(), origin=None) == 101
 
 
@@ -140,7 +140,7 @@ async def test_a_disallowed_origin_is_refused_even_with_a_device_session() -> No
 
 @pytest.mark.asyncio
 async def test_the_public_origin_is_refused_with_a_device_session_too() -> None:
-    """The WebView gap is deliberately NOT closed here — see the plan's execution log.
+    """The WebView gap is deliberately NOT closed here.
 
     `dashboard.public_url` puts `wss://host` in the CSP but nothing puts `https://host` in the
     allowlist, so a WebView loading the SPA over the tunnel is still refused. Pinning it keeps
@@ -246,12 +246,12 @@ def test_token_nonce_fails_closed_on_anything_unreadable(bad: str) -> None:
     assert token_auth.token_nonce(bad) == ""
 
 
-# ── "no new origin exemption" (the change's own clause) ──────────────────────────────────────
+# ── "no new origin exemption" ────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize("home", ["unset", "a home of its own"])
 def test_the_allowed_origin_set_is_byte_identical(monkeypatch, tmp_path, home) -> None:
-    """The clause is structural, so assert it structurally: nothing was added to the allowlist.
+    """The rule is structural, so assert it structurally: nothing was added to the allowlist.
 
     Pinned as a LITERAL set — not derived from the function's own output, which would pin
     nothing — so that ANY future widening, whatever host it names, has to come here and say so.

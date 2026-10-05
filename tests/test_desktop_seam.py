@@ -1,4 +1,4 @@
-"""Desktop capability seam (C2/C3).
+"""Desktop capability seam.
 
 Covers the gateway half of the bridge: the registry's fail-closed behavior, the
 loopback + credential rails on the three shell-side writes, what a plain browser tab
@@ -416,7 +416,7 @@ async def test_capability_route_404s_when_the_shell_is_absent(tmp_path, monkeypa
         assert (await res.json())["error"] == "desktop shell not connected"
 
 
-# ── C3: the app-manifest ``desktop`` permission ────────────────────────
+# ── The app-manifest ``desktop`` permission ────────────────────────────
 
 
 def _install(tmp_path: Path, name: str, *, desktop: list[str] | None = None):

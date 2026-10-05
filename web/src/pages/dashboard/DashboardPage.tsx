@@ -74,8 +74,7 @@ export function DashboardPage(route: RouteProps) {
               set from the shell corner — the same --content-width every other
               centered page column tracks.
 
-              This column is also the dashboard's ENTRANCE GROUP (FLUID-MOTION §S3
-              T3.2): its bands cascade in on arrival rather than all landing at once,
+              This column is also the dashboard's ENTRANCE GROUP: its bands cascade in on arrival rather than all landing at once,
               which is what makes the home page read as composed rather than as eight
               widgets appearing simultaneously. The group replaces the plain `div` in
               place, so the entrance costs no extra DOM and no layout change. It sits
@@ -144,7 +143,7 @@ export function DashboardPage(route: RouteProps) {
                 of truncating. The grid rows above don't need it — a grid track already
                 establishes the constraint. */}
 
-            {/* Agent world (AMBIENT-SURFACES A2-3) — the ambient companion to Active
+            {/* Agent world — the ambient companion to Active
                 Work above: the same live picture as a scene you glance at rather than a
                 list you read. Sits BELOW the prime-signal bands on purpose (a world is
                 not a control surface) and takes its data from `useAgentActivity()` only,
@@ -194,7 +193,7 @@ export function DashboardPage(route: RouteProps) {
               </Section>
             </EntranceRegion>
 
-            {/* Browse live view (BROWSE-AUTOMATION §(b)/(c)) — the browser-side sibling of
+            {/* Browse live view — the browser-side sibling of
                 the desktop band above: watch an unattended browse step by step, stop it in one
                 click, and see a persistent banner when a saved session expires. Observation +
                 the one stop; the panel drives nothing else. */}
@@ -213,7 +212,7 @@ export function DashboardPage(route: RouteProps) {
             {/* System rail (narrow only) — the mobile home for the rail that docks
                 at the bottom edge from `lg` up. Below `lg` the dock is suppressed
                 (its `shrink-0` height would steal the viewport and clip the first
-                card, audit WT-06), so the rail flows here as the last band, scrolling
+                card), so the rail flows here as the last band, scrolling
                 with the content it used to overlap. Hidden from `lg` up, where the
                 docked island below takes over. */}
             <EntranceRegion className="min-w-0 lg:hidden">
@@ -236,8 +235,8 @@ export function DashboardPage(route: RouteProps) {
             EntranceRegion at the end of the group above). At ~390px SystemHealth's
             labelled metrics wrap to ~6 rows, and a `shrink-0` sibling refuses to
             yield that height — so the pinned rail took ~40% of the phone viewport and
-            clipped the first actionable card ("Needs you" → Reply) at its top edge
-            (audit WT-06). Undocking at narrow widths hands the whole viewport back to
+            clipped the first actionable card ("Needs you" → Reply) at its top edge.
+            Undocking at narrow widths hands the whole viewport back to
             the scroll area, so every card and its actions are reachable; the rail
             still ships, now at the natural end of the mobile scroll. This mirrors the
             HeroPulse header⇄body swap in this same file: a control that is chrome on
@@ -256,7 +255,7 @@ export function DashboardPage(route: RouteProps) {
  *  HeroPulse header⇄body swap): docked at the bottom edge from `lg` up, and as the
  *  final in-scroll band below `lg` — so a control that is chrome on a wide screen
  *  becomes a content band on a narrow one, instead of a pinned `shrink-0` footer
- *  stealing the phone viewport (audit WT-06). `@container` makes the island the
+ *  stealing the phone viewport. `@container` makes the island the
  *  query context for the rail, so its width tracks --content-width (NOT the
  *  viewport) and SystemHealth's `@…` variants adapt to the space actually
  *  available. Reads live from the shared DashboardLive feed. */

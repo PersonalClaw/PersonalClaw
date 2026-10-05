@@ -1,4 +1,4 @@
-"""Push subscription routes — MOBILE-COMPANION `MC-5` (S3 T3.2) + `MC-9`.
+"""Push subscription routes for the phone companion.
 
 Five routes, all owner-authenticated by the ordinary middleware (nothing here is added to
 ``_BYPASS_PREFIXES`` — a subscription endpoint reachable without a session would let anyone

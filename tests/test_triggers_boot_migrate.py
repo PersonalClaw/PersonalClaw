@@ -6,7 +6,7 @@ EMPTY — every cron lives only in `crons.json`. Two consequences that block the
 
 * Re-pointing `/api/triggers`' schedule backend at the store would show the user **zero schedules**
   while their crons kept firing from the legacy service.
-* The tick has nothing to fire: S96 armed the clock and S97 made `overlap` enforce, but both act on
+* The tick has nothing to fire: the clock is armed and `overlap` enforces, but both act on
   rows that were never imported.
 
 **🔴 AND THE MIGRATION WAS NOT ACTUALLY IDEMPOTENT.** Driven against a copy of the owner's real
@@ -298,7 +298,7 @@ def test_a_silent_job_projects_silent(tmp_path):
 
 def test_the_deliberate_drops_are_None_not_fabricated(tmp_path):
     """🔴 `created_ts`, `last_result` and `acked_items` map to None in `LEGACY_FIELD_MAP` — decisions
-    the plan already made. Inventing a creation date would be a lie the UI renders as fact, and a
+    made on purpose. Inventing a creation date would be a lie the UI renders as fact, and a
     copy of a run's output on the trigger was a second truth that could disagree with the run
     record. `acked_items` was verified DEAD before dropping: the ack route has zero callers and the
     owner's real store carries zero acked entries."""
@@ -358,7 +358,7 @@ def test_the_chat_created_flat_workflow_shape_also_projects(tmp_path):
 
 
 def test_the_gateway_boots_the_migration(tmp_path):
-    """🔴 A migration nothing calls is the defect this session opened with. Assert the boot path
+    """🔴 A migration nothing calls is the defect this file opens with. Assert the boot path
     calls it — the source, since the alternative is a function nobody invokes."""
     import inspect
 

@@ -5,7 +5,7 @@ const doc: UiDoc = {
   name: 'SnipOverlay',
   keywords: ['snip', 'crop', 'screenshot', 'screen capture', 'region', 'overlay', 'dialog', 'attach'],
   description:
-    "Modal crop step for a captured screen frame (CHAT-CRAFT S4a). The frame arrives already frozen — the capture is stopped before this mounts — so it is a still image, not a live preview. The selection starts as the whole frame so Enter is immediately a complete action; arrows move it, Alt+arrows resize it, dragging authors a rectangle, Escape cancels and attaches nothing. Returns the crop in SOURCE pixels; the caller encodes the PNG and hands it to the ordinary upload pipeline.",
+    "Modal crop step for a captured screen frame. The frame arrives already frozen — the capture is stopped before this mounts — so it is a still image, not a live preview. The selection starts as the whole frame so Enter is immediately a complete action; arrows move it, Alt+arrows resize it, dragging authors a rectangle, Escape cancels and attaches nothing. Returns the crop in SOURCE pixels; the caller encodes the PNG and hands it to the ordinary upload pipeline.",
   props: [
     { name: 'frame', description: 'The captured frame as a data URL. Already a still — this component never holds a live capture.' },
     { name: 'width', description: "Natural width of the frame in source pixels; the crop rect this returns is in those coordinates." },

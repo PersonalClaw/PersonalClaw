@@ -1,4 +1,4 @@
-"""The transport-driven pull half of the sync cycle (DAS-6c-ii-e).
+"""The transport-driven pull half of the sync cycle.
 
 This is where the pure pieces meet a real remote. Given a transport, the local
 :class:`registry.Registry` just pulled, and the durable :class:`cursor.Cursor`, it takes each
@@ -26,7 +26,7 @@ rebuilt from row shards (the exporter stores embedding/blob columns as size plac
 it goes to an optional ``db_merger`` callback (a `tree` is not in the shards at all). Without
 one, a seq that contains a DB entry is **held** — the cursor is not advanced, so the peer's
 newest is pulled again once there is one, rather than silently skipping unmerged database data
-(§4.1: advance only on consumed rows).
+(advance only on consumed rows).
 
 Aggregate verdict for a seq: any held entry (prerequisite-absent, or a DB entry with no
 merger) holds the whole seq; otherwise ``payload-bad`` if any entry was poison (advance past
@@ -233,10 +233,10 @@ def _pull_one_seq(
     if codec is not None:
         objs, refused = codec.decrypt_after_pull(objs)
         if refused.keys:
-            # §4.4 receive-side rejection of PLAINTEXT in an encrypted store: a permanent skip.
+            # Receive-side rejection of PLAINTEXT in an encrypted store: a permanent skip.
             # Verdict payload-bad — which the cursor ADVANCES past — rather than the
             # prerequisite-absent hold an empty pull would otherwise produce, because a hold
-            # here is precisely the error loop §4.4 forbids: the object will never become
+            # here is precisely an error loop: the object will never become
             # decryptable, so re-pulling it forever is the bug.
             out.verdict = PAYLOAD_BAD
             out.detail = "encrypted-store violation: " + "; ".join(refused.reasons[:5])
@@ -376,7 +376,7 @@ def pull_from_peers(
 
     Advances the cursor only on a consumed (or payload-bad) seq; a held seq (a not-yet-servable
     prefix, an unknown entry, or a DB entry with no ``db_merger``) leaves the cursor where it
-    is, so the peer's newest is pulled again next cycle. ``codec`` is the optional DAS-8 sync
+    is, so the peer's newest is pulled again next cycle. ``codec`` is the optional sync
     codec: when present every pulled object is decrypted before it is materialized, and a
     plaintext one is a permanent skip. ``ancestors`` is what this home last agreed on with each
     peer: each seq is merged against its peer's, and what the merge agrees on is written back

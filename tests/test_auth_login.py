@@ -92,8 +92,8 @@ async def test_login_mints_a_working_session_cookie(_isolated) -> None:
         assert cookie is not None, "no session cookie was set"
         token = cookie.value
         # THE contract: the login-minted token validates through the SAME path as a
-        # link-minted one. If this ever needs its own validator, the plan's "one token
-        # model" criterion has been broken.
+        # link-minted one. If this ever needs its own validator, the one-token model has
+        # been broken.
         valid, user, _reason = token_auth.validate_token(token, use_session_exp=True)
         assert valid is True and user == "jordan"
 
@@ -642,7 +642,7 @@ def test_login_enabled_without_a_credential_keeps_the_gate(_isolated) -> None:
 
 
 def test_a_corrupt_credential_file_keeps_the_gate(_isolated) -> None:
-    """Success Criterion 3: with login on and credentials corrupt, the owner can still get in."""
+    """With login on and credentials corrupt, the owner can still get in."""
     creds.set_password("jordan", GOOD_PASSWORD)
     creds.credentials_path().write_text("{ corrupt", encoding="utf-8")
     _enable_login(_isolated)

@@ -30,8 +30,8 @@ import { ProjectPicker } from '../ProjectPicker'
 // "Agent" with a Bot icon, and the composer renders the agent pill ALSO labelled "Agent" with a
 // Bot icon, 380px apart, controlling different things (which tools may run vs. which agent
 // answers). The accessible names were the only thing distinguishing them — and only one of the
-// two had a useful one. The remaining VISIBLE collision is a copy decision, recorded for the
-// owner rather than guessed at here: see the cycle-66 note in POLISH-SESSION.md.
+// two had a useful one. The remaining VISIBLE collision is a copy decision, left open
+// rather than guessed at here.
 
 describe('every composer pill announces its dimension', () => {
   it('the agent pill says Agent (not "Agent: Agent") when nothing is bound', () => {
@@ -72,15 +72,14 @@ describe('every composer pill announces its dimension', () => {
 
 // ── A runtime that declares no reasoning axis ─────────────────────────────────────────
 //
-// `GET /api/agent-providers/acp:kiro-cli/agents` returns 27 agents
-// each with `supported_efforts: []`, and codex the same for its one agent, while claude-code
-// declares five. §2.6 asked for the pill to "grey out"; the shipped behaviour HIDES it, and
-// the owner ruling (recorded as a DEVIATION on the change) is that hiding is correct: a greyed
-// control still asserts the axis exists for this runtime, while a hidden one plus an API that
-// refuses the value (tests/test_acp_effort_declaration.py) tells the truth twice. The
-// machine-readable truth is already in the payload — `supported_efforts: []`.
+// `GET /api/agent-providers/acp:kiro-cli/agents` returns every one of its agents with
+// `supported_efforts: []`, and codex the same for its one agent, while claude-code
+// declares five. The shipped behaviour HIDES the pill rather than greying it out, and hiding
+// is correct: a greyed control still asserts the axis exists for this runtime, while a hidden
+// one plus an API that refuses the value (tests/test_acp_effort_declaration.py) tells the
+// truth twice. The machine-readable truth is already in the payload — `supported_efforts: []`.
 //
-// Railed because the ruling is only as durable as the test under it: without this, a later
+// Railed because the decision is only as durable as the test under it: without this, a later
 // change could render a dead pill for kiro and nothing would object.
 describe('a runtime declaring no efforts offers no pill', () => {
   it('renders nothing rather than a dead control', () => {

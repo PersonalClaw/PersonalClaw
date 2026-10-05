@@ -1,6 +1,6 @@
-"""Skill-library curator — lifecycle GC of the ``auto/`` namespace (#27).
+"""Skill-library curator — lifecycle GC of the ``auto/`` namespace.
 
-The **grooming** counterpart to skill *creation* (learn-after-turn-review, #22).
+The **grooming** counterpart to skill *creation* (the after-turn review).
 PClaw auto-creates skills under ``auto/`` but never grooms them, so the namespace
 accrues narrow, stale, overlapping skills that bloat the index and dilute surfacing.
 
@@ -8,12 +8,12 @@ This curator runs two passes (only the first ships here):
 
 1. **Aging (pure, no LLM)** — each ``auto/`` skill transitions
    ``active → stale (≥30d unused) → archived (≥90d unused)`` by its
-   ``last_used_at`` from the #25 usage counter, reactivating to ``active`` the
+   ``last_used_at`` from the skill usage counter, reactivating to ``active`` the
    moment it's used again. Archived skills are **filtered from surfacing** but
    **kept on disk** (a ``status: archived`` frontmatter flag) — archive is the
    maximum destructive action, always reversible via :func:`restore`.
 
-2. **LLM umbrella-consolidation** *(deferred follow-up, like #22's skill ladder)* —
+2. **LLM umbrella-consolidation** *(deferred follow-up)* —
    cluster overlapping ``auto/`` skills and merge them into broader "umbrella"
    skills, demoting detail to support files, rewriting references. Noted, not silently
    dropped. The aging pass — the high-value, fully-reversible half — lands now.
@@ -126,7 +126,7 @@ def run_aging(
 ) -> CuratorReport:
     """Pure time-based lifecycle pass over the ``auto/`` namespace.
 
-    Reads each auto skill's ``last_used_at`` (#25 usage store) + ``created_at``
+    Reads each auto skill's ``last_used_at`` (skill usage store) + ``created_at``
     (frontmatter), computes the target state, and rewrites only the ``status``
     frontmatter line of skills whose state changed. Pinned skills are skipped.
     Idempotent, reversible, no LLM.

@@ -1,15 +1,15 @@
-"""Tests for the grounding bundle, the shape registry, and grounded generation (UP-R1).
+"""Tests for the grounding bundle, the shape registry, and grounded generation.
 
 The bundle's whole value is being TRUE about this system, so most of these tests compare it
 against the live registries rather than against a fixture. A fixture would let the bundle drift
 into being confidently wrong — which is the failure mode it exists to prevent, since a stale
 reference and a hallucination produce the same rejected spec.
 
-The A/B harness at the bottom is the plan's declared acceptance test (UP-R13.2), scored on
+The A/B harness at the bottom is the acceptance test, scored on
 first-try-valid rate. It runs WITHOUT a model: the prompts are compared for whether they contain
 the facts a planner needs, and the self-check is run over specs representing what each condition
-produces. That measures the mechanism, which is what this session builds — an end-to-end
-model-scored A/B belongs with the eval substrate that owns scoring.
+produces. That measures the mechanism, which is what this code builds — an end-to-end
+model-scored A/B belongs with evaluation, which owns scoring.
 """
 
 import json
@@ -337,7 +337,7 @@ def test_a_spec_of_only_containers_is_caught():
 
 
 def test_a_missing_stopping_condition_is_caught():
-    """The plan calls goal / verification / stopping-condition the minimal triple. A sequence of
+    """Goal / verification / stopping-condition is the minimal triple. A sequence of
     stages reports success whether or not it achieved anything — "the last node returned" is a
     different claim from "the goal was met"."""
     spec = {"root": {"kind": "sequence", "id": "r", "children": [stage("a"), stage("b")]}}
@@ -376,7 +376,7 @@ def test_a_watcher_alone_does_not_satisfy_the_stopping_rule():
 
 
 def test_an_invalid_binding_root_is_caught():
-    """Session 31 shipped five templates referencing `{{defaults.*}}`. The validator caught it, but
+    """Five templates once shipped referencing `{{defaults.*}}`. The validator caught it, but
     only after the specs were written."""
     spec = {"root": {"kind": "stage", "id": "s", "config": {"prompt": "{{defaults.model}}"}}}
     issue = next(i for i in self_check(spec).issues if "defaults" in i)
@@ -470,7 +470,7 @@ def test_the_prompt_states_the_decline_option():
 
 
 def test_the_prompt_carries_the_live_provider_list():
-    """Not a hand-written reference. This is the difference the plan measured."""
+    """Not a hand-written reference. This is the difference that was measured."""
     bundle = build_bundle(include_mcp=False)
     text = planning_prompt("do a thing", bundle=bundle)
     assert "knowledge-persist" in text
@@ -514,9 +514,9 @@ def test_a_model_without_structured_output_is_told_to_return_bare_json():
     assert "no markdown fence" in text
 
 
-# ── the A/B harness (UP-R13.2) ──
+# ── the A/B harness ──
 
-#: Five representative planning intents, one per shape family the plan names. The metric is
+#: Five representative planning intents, one per shape family. The metric is
 #: first-try-valid: does the spec a planner would produce under this condition survive the
 #: self-check without repair?
 AB_INTENTS = [
@@ -531,8 +531,8 @@ AB_INTENTS = [
 def _ungrounded_spec(intent: str) -> dict:
     """What an ungrounded planner produces: plausible shape, invented specifics.
 
-    Every defect here is one measured in this program — an invented node kind (`llm_call` reads
-    like a node kind and is not), a flat action argument, a `{{defaults.*}}` root from session 31,
+    Every defect here is a measured one — an invented node kind (`llm_call` reads
+    like a node kind and is not), a flat action argument, a `{{defaults.*}}` root,
     and no stopping condition.
     """
     return {
@@ -570,21 +570,21 @@ import re  # noqa: E402  — used by the A/B helper above
 
 
 def test_grounding_ab_first_try_valid_rate():
-    """The plan's acceptance test. Ungrounded specs must fail the self-check and grounded ones
+    """The acceptance test. Ungrounded specs must fail the self-check and grounded ones
     must pass, or the grounding is decoration.
 
-    Scored as a RATE rather than per-case because that is the number the plan states (0/5 → 4/5),
+    Scored as a RATE rather than per-case because that is the measured number (0/5 → 4/5),
     and a single tolerated failure in either direction would erode it silently.
     """
     ungrounded_valid = sum(1 for i in AB_INTENTS if self_check(_ungrounded_spec(i)).ok)
     grounded_valid = sum(1 for i in AB_INTENTS if self_check(_grounded_spec(i)).ok)
 
     assert ungrounded_valid == 0, "an ungrounded spec should never pass the self-check"
-    assert grounded_valid >= 4, f"grounded first-try-valid was {grounded_valid}/5, plan wants >=4"
+    assert grounded_valid >= 4, f"grounded first-try-valid was {grounded_valid}/5, want >=4"
 
 
 def test_the_ab_harness_measures_distinct_failure_modes():
-    """Validation failures and silent misses are SEPARATE metrics in the plan, because collapsing
+    """Validation failures and silent misses are SEPARATE metrics, because collapsing
     them makes the eval unactionable: a spec rejected by the validator is a different problem from
     one that runs and quietly does the wrong thing."""
     issues = self_check(_ungrounded_spec(AB_INTENTS[0])).issues

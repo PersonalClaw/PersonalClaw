@@ -1,4 +1,4 @@
-"""TOTP (REMOTE-USER-AUTH T4.2 primitives).
+"""TOTP primitives.
 
 The headline tests are the **RFC 6238 Appendix B vectors**. A hand-rolled TOTP is only
 defensible if it is pinned to the published vectors, because the failure mode otherwise is

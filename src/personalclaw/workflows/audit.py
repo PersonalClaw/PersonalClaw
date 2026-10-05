@@ -260,7 +260,7 @@ def _mark_protocol_violation(inst: Any) -> None:
 
     `blocked{protocol_violation}` rather than FAILED: "the worker disappeared without
     telling us how it went" is a different fact from "the work failed", and it routes to
-    the needs-input surface instead of looking like a defect (WF2-R10).
+    the needs-input surface instead of looking like a defect.
     """
     from personalclaw.workflows.models import Failure, FailureClass
 

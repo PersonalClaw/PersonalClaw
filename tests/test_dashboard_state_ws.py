@@ -97,7 +97,7 @@ class TestSubagentSubscribers:
 
 
 class TestAppScopedWs:
-    """Untrusted-app sandbox P1: a WS registered with an app identity receives
+    """Untrusted-app sandbox: a WS registered with an app identity receives
     ONLY the events the app's manifest declares (permissions.events); an owner
     connection (no app) still receives everything."""
 

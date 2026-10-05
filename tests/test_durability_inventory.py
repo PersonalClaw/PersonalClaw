@@ -1,4 +1,4 @@
-"""DURABILITY §1 — the state inventory and the gap it closes.
+"""The state inventory and the gap it closes.
 
 The inventory exists because two hand-maintained allowlists (`snapshot.CORE_FILES`
 and `portability.EXPORT_EXCLUDE`) had drifted from reality: nine real store
@@ -318,7 +318,7 @@ class TestTheGuardMeetsARealHome:
 
         `codegraph/` holds one database per workspace (5478 in a real home), so an exact-path
         compare
-        can never match them and the audit drowns — the same over-reporting failure S178 fixed in
+        can never match them and the audit drowns — the same over-reporting failure already fixed in
         the
         coverage ratchet. My first exemption keyed off `kind`/`derived` and therefore skipped every
         tree prefix, including `loop/` and `workspace/` — silencing the exact hazard the check

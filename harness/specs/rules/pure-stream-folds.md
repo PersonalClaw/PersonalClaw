@@ -13,9 +13,11 @@ requiredProfiles:
   - replay
 requiredTests: []
 source: >
-  The K42/K44/K45 stream-coalescer bug class. Keeping stream state in pure folds makes
-  those regressions replayable (feed a recorded trace, assert terminal state) instead of
-  only reproducible by hand. If side effects creep into the fold, replay can't drive it.
+  The stream-coalescer bug class: an answer rendered twice, an activity line absorbing the
+  answer, a turn's answer pushed into the next one's bubble. Keeping stream state in pure
+  folds makes those regressions replayable (feed a recorded trace, assert terminal state)
+  instead of only reproducible by hand. If side effects creep into the fold, replay can't
+  drive it.
 expiry_condition: never while the chat/loops streams drive UI state through these folds.
 ---
 
@@ -32,9 +34,9 @@ fold functions**:
   from a persisted snapshot; `foldRun` merges them.
 
 Because these are pure `(state, event) -> state` functions with no React/fetch/mutation,
-the Session-3 replay substrate can feed a **recorded NDJSON trace** of real events through
-them and assert the terminal state matches the recording — turning the K42/K44/K45
-coalescer bug class into a *replayable* regression (`replay` profile), not just a
+the replay substrate can feed a **recorded NDJSON trace** of real events through
+them and assert the terminal state matches the recording — turning the stream-coalescer
+bug class into a *replayable* regression (`replay` profile), not just a
 hand-written unit test.
 
 ## What compliance looks like

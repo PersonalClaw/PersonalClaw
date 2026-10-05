@@ -745,9 +745,9 @@ class TestTheCallSites:
         """`DashboardState.notify` is the singular gate — not a second delivery path.
 
         And it goes through the substrate's `Delivery` contract, so the digest carries a
-        `statusUrl` into THIS run's journal (criterion 1) and an event id DERIVED from
+        `statusUrl` into THIS run's journal and an event id DERIVED from
         `(trigger_id, run_id)` rather than random, which is what lets a re-delivery dedupe
-        instead of arriving twice (criterion 9).
+        instead of arriving twice.
         """
         from personalclaw.proactive.pipeline import make_notify_deliver
         from personalclaw.proactive.rank import Digest
@@ -1064,19 +1064,19 @@ def test_the_prompts_the_pipeline_asks_for_actually_ship() -> None:
 
 
 class TestTheProviderDrivesTheRealPipelineEndToEnd:
-    """PA-2 "the run" — the ONE seam neither the pipeline tests nor the call-site tests observe.
+    """The run — the ONE seam neither the pipeline tests nor the call-site tests observe.
 
     `TestTheCallSites.test_the_provider_calls_the_pipeline` fakes `run_triage` away, and every
     pipeline test calls `run_triage` directly — so nothing drives the ENGINE-dispatched action
-    provider THROUGH the real collect→gate→strict-JSON→tier-clamp→rank→deliver path. The cycle-26
-    audit recorded PA-2 `partial` for exactly this reason: it drove the browser but never fired a
-    model, so "the tiering and the ranking are unobserved rather than doubted".
+    provider THROUGH the real collect→gate→strict-JSON→tier-clamp→rank→deliver path. An earlier
+    audit marked it partial for exactly this reason: it drove the browser but never fired a
+    model, so the tiering and the ranking were unobserved rather than doubted.
 
-    This fires the provider as the engine would and injects the ONE live dependency the criterion
+    This fires the provider as the engine would and injects the ONE live dependency this test
     does not judge — `_default_completion` (proposal *content*, not the mechanism) — plus a
     capturing `notify`. Everything else is real: the manifest, the gate parse, the ordinal/tier/cap
-    contract, the digest render, and the delivery. It asserts the delivered WorkflowRun digest
-    honors every clause the acceptance criterion names.
+    contract, the digest render, and the delivery. It asserts every property of the delivered
+    WorkflowRun digest.
     """
 
     async def test_the_provider_fires_collect_gate_propose_rank_and_delivers_as_one_run(
@@ -1145,7 +1145,7 @@ class TestTheProviderDrivesTheRealPipelineEndToEnd:
         assert summary["lanes"] == {"inbox": 2, "channel": 0, "run": 1}
 
         # It delivered once, as one normal WorkflowRun: the digest rode the singular notify gate,
-        # is `info` severity, and its statusUrl deep-links THIS run's journal (criterion 1 / §1.5).
+        # is `info` severity, and its statusUrl deep-links THIS run's journal.
         assert summary["delivered"] is True
         assert len(seen) == 1
         note = seen[0]

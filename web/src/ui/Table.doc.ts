@@ -2,14 +2,14 @@ import type { UiDoc } from './uiDoc'
 
 // Doc objects for the Table family — the canonical data table. Encodes the
 // accessibility floor (sr-only caption, scope="col" headers) that eleven
-// hand-rolled tables kept dropping (audit AB-3), so an app-building agent
+// hand-rolled tables kept dropping, so an app-building agent
 // reaches for the family instead of raw <table> markup.
 const docs: UiDoc[] = [
   {
     name: 'Table',
     keywords: ['table', 'data table', 'grid', 'rows', 'columns', 'caption', 'tabular'],
     description:
-      'The one canonical data-table shell: an overflow-x-auto wrapper around a full-width caption-tier <table> whose sr-only caption is REQUIRED — a screen reader announces what the table holds before its grid. It carries the accessible shape learning/AblationPanel.tsx already had right, so pages stop hand-rolling <table> markup that drops the caption (audit AB-3). Layout decisions (column alignment, row inks, zebra) stay with each consumer.',
+      'The one canonical data-table shell: an overflow-x-auto wrapper around a full-width caption-tier <table> whose sr-only caption is REQUIRED — a screen reader announces what the table holds before its grid. It carries the accessible shape learning/AblationPanel.tsx already had right, so pages stop hand-rolling <table> markup that drops the caption. Layout decisions (column alignment, row inks, zebra) stay with each consumer.',
     props: [
       { name: 'sized', description: 'Emit the seed type size (text-[0.75rem]). Default true; set false when the table genuinely reads at another size and bring your own text utility — two text-size utilities would race.' },
       { name: 'caption', description: "One sentence naming what the table holds — rendered sr-only so a screen reader announces the table's purpose. Required: an anonymous grid is the drift this family retires." },

@@ -3,7 +3,7 @@
 The pure core the sync cycle orchestrates: given local rows and the
 rows imported from a remote's shards (:func:`shards.import_shards`), reconcile them
 by the entry's declared ``merge`` strategy — never losing a row, never silently
-picking a loser. No CRDTs: per-id union + last-write-wins + tombstones (§Anti-goals).
+picking a loser. No CRDTs: per-id union + last-write-wins + tombstones.
 
 Every function here is PURE (no I/O, no clock) and DETERMINISTIC — same inputs →
 byte-identical output — so a merge is reviewable and a re-merge of unchanged state

@@ -1,8 +1,8 @@
 """The one clock loop, and the double-fire the cutover had to prevent.
 
-**🔴 MEASURED BEFORE WRITING — a store-only trigger had NO firing path.** S88 shipped
-`service.tick()`, S96 taught it to arm, S97 made `overlap` enforce, S98 imported the crons and S99
-re-pointed the API's read. But nothing CALLED the tick:
+**🔴 MEASURED BEFORE WRITING — a store-only trigger had NO firing path.** `service.tick()`
+existed, armed triggers and enforced `overlap`; the crons were imported and the API's read was
+re-pointed. But nothing CALLED the tick:
 
     boot starts ScheduleService: True
     boot starts a TICK loop    : False
@@ -10,7 +10,7 @@ re-pointed the API's read. But nothing CALLED the tick:
 So a trigger created the new way (store only, as `tools.create` writes it) was invisible to
 the legacy
 service and unreachable by the engine that could fire it. Re-pointing the API's WRITES first — the
-order the queue implied — would have produced silently dead automations.
+obvious order — would have produced silently dead automations.
 
 **🔴 AND RUNNING BOTH LOOPS WOULD DOUBLE-FIRE.** Measured on the owner's real store after the boot
 migration: the legacy timer would fire `['j-at','j-cron','j-every','j-seq']` and the tick would fire
@@ -241,10 +241,10 @@ def test_boot_rotates_run_history_without_a_legacy_service():
 
 
 def test_boot_has_no_legacy_timer_left_to_arm(tmp_path):
-    """🔴 The double-fire guard, now unconditional. Measured on the owner's real store at the S100
+    """🔴 The double-fire guard, now unconditional. Measured on the owner's real store at the
     cutover: both engines held `j-at` and `j-cron` after the migration, so arming both would
-    fire each twice. S100 stopped arming the legacy timer; S112 deleted the class that owned
-    it, so there is no second engine left to arm by accident."""
+    fire each twice. The cutover stopped arming the legacy timer, and the class that owned
+    it is deleted, so there is no second engine left to arm by accident."""
     import inspect
 
     from personalclaw.gateway import GatewayOrchestrator
@@ -258,7 +258,7 @@ def test_boot_has_no_legacy_timer_left_to_arm(tmp_path):
 
 
 def test_boot_starts_the_clock_loop(tmp_path):
-    """A loop nobody launches is the defect this session opened with."""
+    """A loop nobody launches is the defect this file opens with."""
     import inspect
 
     from personalclaw.gateway import GatewayOrchestrator
@@ -396,14 +396,14 @@ def test_the_legacy_refresh_callback_is_gone():
 
     from personalclaw.gateway import GatewayOrchestrator
 
-    # S112 deleted the whole class, which is a stronger statement than "the method is gone".
+    # The whole class is deleted, which is a stronger statement than "the method is gone".
     with pytest.raises(ImportError):
         from personalclaw.schedule import ScheduleService  # noqa: F401
     src = inspect.getsource(GatewayOrchestrator)
     assert "set_refresh_callback" not in src
 
 
-# ── Criterion 7's two SEPARATE wake sources, both of which had no caller ──
+# ── The two SEPARATE wake sources, both of which had no caller ──
 
 
 def _attach_router(monkeypatch) -> None:
@@ -458,7 +458,7 @@ def test_an_IDLE_tick_still_drains_the_spool(tmp_path, monkeypatch):
 
 
 def test_the_spool_drains_EXACTLY_ONCE(tmp_path, monkeypatch):
-    """Criterion 7's "no double-fire". `clear_spool` acks only what was handled, so a second tick
+    """No double-fire. `clear_spool` acks only what was handled, so a second tick
     finds nothing — and a fire that arrives DURING a drain survives it."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     from personalclaw.config import loader
@@ -597,7 +597,7 @@ def test_a_TRANSIENT_pre_delivery_failure_is_HELD_not_acked(tmp_path, monkeypatc
 
 def test_a_failure_AFTER_the_side_effect_boundary_is_NEVER_retried(tmp_path, monkeypatch):
     """🔴 THE SAFETY PIN. HOLD means an envelope can run twice, and a double-fire is the one
-    outcome criterion 7 bans. So the boundary is `emit_event` itself: once entered, the drain
+    outcome that must never happen. So the boundary is `emit_event` itself: once entered, the drain
     cannot know how far it got, and "I don't know" must resolve to DELIVERED.
 
     Driven by making `emit_event` raise — which production's `emit_event` never does (it swallows
@@ -869,9 +869,9 @@ def _resume(tid="t-0"):
 
 
 def test_an_undeliverable_RESUME_is_held_and_re_armed():
-    """🔴 `wakeup.retry_queue` had NO caller, so criterion 7's "pending approvals re-arm" was
+    """🔴 `wakeup.retry_queue` had NO caller, so "pending approvals re-arm" was
     implemented and unreachable: a resume whose session was not ready was built, classified
-    REQUEUED, and thrown away. §3.2 refuses to let anyone drop one — it carries a gate answer, and
+    REQUEUED, and thrown away. A resume must never be dropped — it carries a gate answer, and
     eating it strands the parked run forever waiting for a reply the user already gave."""
     sessions = _Unready()
     delivery = WK.deliver(sessions, _resume())
@@ -901,7 +901,7 @@ def test_a_droppable_WAKE_is_never_held():
 
 
 def test_the_resume_queue_is_BOUNDED_and_drops_the_OLDEST():
-    """§3.2 says a resume is never dropped; this is the bounded exception. A session that stays
+    """A resume is never dropped; this is the bounded exception. A session that stays
     unready forever would grow the queue without limit, and an OOM takes down every automation
     rather than one. The OLDEST goes: the run that asked longest ago is likeliest to be gone, and
     the newest answer is the one a user is still waiting on."""
@@ -920,7 +920,7 @@ def test_the_resume_queue_is_BOUNDED_and_drops_the_OLDEST():
 
 def test_the_retry_queue_SURVIVES_a_tick(tmp_path):
     """The queue is owned by `run_forever`, not by `tick_once`: a list held inside one iteration
-    would be discarded on every return, which is the same silent drop §3.2 refuses."""
+    would be discarded on every return, which is the same silent drop."""
     store = TriggerStore(base_dir=tmp_path)
     store.upsert(_clock())
     pending: list = [_resume()]
@@ -1067,7 +1067,7 @@ def test_a_conversation_bound_fire_drains_the_key_it_was_DELIVERED_to(tmp_path):
 
 def test_a_queued_fire_still_drains_through_the_session(tmp_path):
     """Vacuity floor. A 'fix' that always ran directly would pass every test above while
-    bypassing the inbox — losing the property §3.2 exists for, that a crash between decision and
+    bypassing the inbox — losing the property it exists for, that a crash between decision and
     execution leaves the payload in the inbox rather than lost."""
     store = TriggerStore(base_dir=tmp_path)
     store.upsert(_clock())

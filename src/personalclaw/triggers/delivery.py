@@ -1,17 +1,17 @@
-"""The outbound delivery contract: statusUrl, stable event ids, destination formatting (R18).
+"""The outbound delivery contract: statusUrl, stable event ids, destination formatting.
 
-Criterion 10: "A completed-run notification deep-links (statusUrl) to the exact run journal row; a
-retried delivery does not double-ping."
+The goal: a completed-run notification deep-links (statusUrl) to the exact run journal row, and a
+retried delivery does not double-ping.
 
 **Measured before writing.** A grep for `statusUrl` or `status_url` across `src/personalclaw`
-returns **nothing** — the deep link the criterion names does not exist anywhere in the package.
+returns **nothing** — the deep link does not exist anywhere in the package.
 (Stated as prose rather than as the literal grep pattern: a backslash-pipe alternation inside a
 non-raw docstring is an invalid escape sequence, and Python warns on import. Caught by running
 the module, not by reading it.) A completed-run notification carries a title and a body, so a
-user reading "Nightly digest finished" has no route to the run that produced it. R18 calls that
-"the notification→journal dead end".
+user reading "Nightly digest finished" has no route to the run that produced it: the
+notification→journal dead end.
 
-Three things this owns, all from R18's own list:
+Three things this owns:
 
 * **`statusUrl`** — `#/workflows/runs/<run_id>` for a workflow run, `#/triggers?open=<id>` for
   a fire
@@ -20,15 +20,15 @@ Three things this owns, all from R18's own list:
 * **A stable event id preserved across retries** — the idempotency key a channel consumer
   dedupes on.
   Derived, not random: a `uuid4()` would be a *different* id on the retry, which is precisely the
-  double-ping the criterion forbids.
+  double-ping to avoid.
 * **Destination-aware formatting** — a rich block for inbox/notify, flattened text for
   `channel:slack`. Slack renders a dict as `[object Object]`; the flattening is not cosmetic.
 
-**This does NOT build a second notification path.** R18 is explicit that delivery routes through
+**This does NOT build a second notification path.** Delivery routes through
 `DashboardState.notify` → `notification_allowed()`. Everything here produces the ARGUMENTS for
 that call — `kind`, `title`, `body`, `meta` — and `meta` is the dict `notify` already merges
-into the note, so `statusUrl` reaches every surface without widening a schema. The redaction R18
-requires happens on the way in, because a run summary can contain a URL or a token from whatever
+into the note, so `statusUrl` reaches every surface without widening a schema. The redaction
+happens on the way in, because a run summary can contain a URL or a token from whatever
 the run touched.
 """
 
@@ -46,7 +46,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-#: R18's event types. Two, not one with a boolean: a channel consumer routes on the event name, and
+#: The event types. Two, not one with a boolean: a channel consumer routes on the event name, and
 #: `automation.run` + `{"ok": false}` would make "only tell me about failures" a body inspection.
 EVENT_SUCCEEDED = "automation.run.succeeded"
 EVENT_FAILED = "automation.run.failed"
@@ -99,8 +99,8 @@ def excerpt(text: str, cap: int, *, rest: str) -> str:
 def status_url(*, run_id: str = "", trigger_id: str = "") -> str:
     """The deep link into the exact run journal row, or the trigger that fired.
 
-    A RUN id wins when both are present: R18 says "the exact runs-inbox row / run journal", and
-    the run is the specific thing that just happened. Falling back to the trigger matters for
+    A RUN id wins when both are present: the link targets the exact runs-inbox row / run journal,
+    and the run is the specific thing that just happened. Falling back to the trigger matters for
     the `LEDGER`-weight fires that never produce a run directory (a suppressed or noop fire) — a
     notification about one of those still needs somewhere to go, and pointing at the trigger is
     honest where pointing at a nonexistent run would 404.
@@ -123,11 +123,10 @@ def status_url(*, run_id: str = "", trigger_id: str = "") -> str:
 def event_id(*, trigger_id: str, run_id: str = "", attempt_key: str = "") -> str:
     """The stable id a retried delivery reuses. DERIVED, never random.
 
-    R18: "a stable event-id preserved across retries (the idempotency key — channel consumers dedupe
-    re-delivered notifications)". So the id is a hash of what identifies the EVENT, not of when
+    A stable event id is preserved across retries (the idempotency key — channel consumers dedupe
+    re-delivered notifications). So the id is a hash of what identifies the EVENT, not of when
     the delivery happened: a `uuid4()` or a timestamp would produce a new id on the retry and
-    the consumer would show the notification twice, which is the exact failure the criterion
-    names.
+    the consumer would show the notification twice, which is the exact failure to avoid.
 
     `attempt_key` is for the case where a re-run genuinely IS a new event — a manual re-fire of
     the same trigger should ping again. Callers pass the run's epoch or attempt number; leaving it
@@ -138,7 +137,7 @@ def event_id(*, trigger_id: str, run_id: str = "", attempt_key: str = "") -> str
 
 
 def _redact(text: str) -> str:
-    """R18's redaction, applied before ANY surface — as heartbeat delivery does today.
+    """The delivery redaction, applied before ANY surface — as heartbeat delivery does today.
 
     A run summary is whatever the run produced: it can contain a URL the run fetched or a token a
     tool printed. Redacting at the delivery boundary rather than at each emitter is what makes the
@@ -154,8 +153,8 @@ def _redact(text: str) -> str:
 class Delivery:
     """One outbound run-completion notification, ready for `DashboardState.notify`.
 
-    Carries the notify ARGUMENTS rather than sending anything: R18 forbids a second notification
-    path, and a dataclass that delivered itself would be one. `to_notify_kwargs` is the whole
+    Carries the notify ARGUMENTS rather than sending anything: a second notification path is
+    forbidden, and a dataclass that delivered itself would be one. `to_notify_kwargs` is the whole
     interface.
     """
 
@@ -186,11 +185,12 @@ class Delivery:
 
         Everything routable lives in `meta`, which `notify` merges into the persisted note — so a
         surface reads `statusUrl` off the notification without `InboxItem` or the note schema
-        gaining a field. The same reason S51's structured card rides `refs`.
+        gaining a field. The same reason the structured card rides `refs`.
         """
         meta: dict[str, Any] = {
             "event": self.event,
-            # camelCase because R18 names it `statusUrl` and a channel consumer reads the wire key.
+            # camelCase because the contract names it `statusUrl` and a channel consumer reads the
+            # wire key.
             "statusUrl": self.status_url,
             "eventId": self.event_id,
             **self.meta,
@@ -365,12 +365,12 @@ def notifies_on_its_own(trigger: Any) -> bool:
 
 
 def route_for(trigger: Any, *, ok: bool) -> str:
-    """The destination this OUTCOME routes to (decision 13 / R12 — S158).
+    """The destination this OUTCOME routes to.
 
     🔴 WHY THIS EXISTS. `Trigger.failure_delivery` is declared, persisted, round-tripped by
     `to_dict`/`from_dict`, defaulted by the migration and accepted by `automation_update` — and read
     by NOTHING. Its own comment states the contract it was meant to enforce: *"A SEPARATE route for
-    failures (R12). Failures reach the inbox even when `delivery` is none: an automation the user
+    failures. Failures reach the inbox even when `delivery` is none: an automation the user
     asked to stay quiet still has to be able to say it broke."*
 
     Measured before writing: the fire's report passed `destination=trigger.delivery`
@@ -437,7 +437,7 @@ def failure_hash(text: str) -> str:
 
     Truncated to 64 bits: sufficient for a 1:1 comparison against a single previous hash.
 
-    MOVED here from `gateway._result_hash` (S161), which had been left with **zero callers**
+    MOVED here from `gateway._result_hash`, which had been left with **zero callers**
     when the legacy failure-dedup control was lost in the migration — along with four other
     orphaned constants. It lives beside its only reader now rather than in the orchestrator,
     so a `triggers` module does not have to import the gateway.
@@ -456,7 +456,7 @@ def failure_hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
-#: How long an IDENTICAL failure stays deduped before it re-alerts (R7's `dedupe_hash`).
+#: How long an IDENTICAL failure stays deduped before it re-alerts (`dedupe_hash`).
 #:
 #: 3600s, carried over verbatim from the legacy scheduler's `_FAILURE_REMINDER_SECS` — a
 #: constant that survived the migration in `gateway.py` and had **no reader left**, because the
@@ -468,7 +468,7 @@ FAILURE_REMINDER_SECS = 3600.0
 def suppress_repeat_failure(
     *, error: str, last_hash: str, last_at: float, now: float
 ) -> tuple[bool, str]:
-    """Whether this failure repeats the last one inside the reminder window (R7 — S161).
+    """Whether this failure repeats the last one inside the reminder window.
 
     Returns `(suppress, hash_of_this_error)`. The caller persists the hash either way, so a
     NEW error resets the window rather than inheriting the old one's.
@@ -504,14 +504,14 @@ def suppress_repeat_failure(
 
 
 def is_muted(destination: str) -> bool:
-    """Whether this destination means "do not notify" (decision 13's `none`).
+    """Whether this destination means "do not notify" (the `none` destination).
 
     🔴 THE SECOND HALF. `Delivery` carried `destination` and `to_notify_kwargs` **dropped it**, so
     `delivery: "none"` silenced nothing: measured, a `none` trigger notified exactly like an `inbox`
     one. The field existed, round-tripped, and was inert at the only point that could honour it.
 
-    Checked HERE rather than by teaching `state.notify` about triggers. R18 says *"the
-    substrate does not build a second notification path"*, and `notify` owns GLOBAL policy
+    Checked HERE rather than by teaching `state.notify` about triggers. The
+    substrate does not build a second notification path, and `notify` owns GLOBAL policy
     (mute-all, severity, quiet hours) plus per-(source, kind) rules. Per-TRIGGER routing is
     this substrate's own concern, so it is decided before the shared chokepoint is called,
     never inside it.
@@ -534,7 +534,7 @@ ROUTE_VALUES: frozenset[str] = frozenset({"", INBOX_ROUTE, "none"})
 
 
 def is_valid_route(destination: Any) -> bool:
-    """Whether *destination* is a route this substrate can honour (WF2AUT-15).
+    """Whether *destination* is a route this substrate can honour.
 
     ONE vocabulary in ONE place. `failure_delivery` reached the entity through the
     `automation_update` allowlist with no validation at all, so an agent (and now a form) could
@@ -789,8 +789,8 @@ def deliver(state: Any, delivery: Delivery, *, delivered_ids: Any = None) -> boo
     """Send one delivery through `state.notify`. Returns True if it went out.
 
     Routes through the EXISTING gate by construction — this calls `notify`, which applies
-    `notification_allowed` and then the per-(source, kind) rule. R18: "the substrate does not
-    build a second notification path."
+    `notification_allowed` and then the per-(source, kind) rule. The substrate does not
+    build a second notification path.
 
     Adds the event id to `delivered_ids` when the caller supplies a mutable set, so a retry
     through the same set is suppressed without the caller having to remember to record it. Never
@@ -873,7 +873,7 @@ def says_nothing_now(result: Any) -> bool:
 
 
 def next_attempt_key() -> str:
-    """A monotonically increasing per-report key for `event_id` (S161).
+    """A monotonically increasing per-report key for `event_id`.
 
     Each run is a distinct event, so its delivery needs a distinct id — otherwise `is_duplicate`
     reads the second run of a healthy automation as a redelivery of the first and drops it. A
@@ -885,14 +885,14 @@ def next_attempt_key() -> str:
 
 
 def repeats_last_failure(trigger: Any, *, error: str) -> bool:
-    """True when this failure repeats the last alerted one inside the reminder window (S161).
+    """True when this failure repeats the last alerted one inside the reminder window.
 
     Persists the hash + timestamp on the trigger either way, so a NEW error resets the window
     rather than inheriting the previous one's remaining time.
 
-    Gated on `failure_policy.dedupe_hash` because that is what §1.1 declares. Coalescing alerts
-    for a user who did not ask for it would be the opposite failure — a broken automation going
-    quieter than they expect.
+    Gated on `failure_policy.dedupe_hash` because that is what the trigger declares. Coalescing
+    alerts for a user who did not ask for it would be the opposite failure — a broken automation
+    going quieter than they expect.
 
     **The autopause counter is untouched.** The legacy control advanced `consecutive_failures`
     while suppressing the notification, and that separation is the point: dedup is about how
@@ -955,7 +955,7 @@ def report_run(
     run_id: str = "",
     title: str = "",
 ) -> bool:
-    """Tell the trigger's route how a run went, with a deep link (§R18 / crit 10 — S140).
+    """Tell the trigger's route how a run went, with a deep link.
 
     ``summary`` is what the work produced (a command's output, an agent task's reply, a workflow
     run's summary), and ``run_id`` the workflow run the note links to; a failure's ``error`` is its
@@ -970,8 +970,8 @@ def report_run(
     sends it only when this is false, so neither a collapsed repeat nor an outcome its route keeps
     quiet about reaches the bell another way.
 
-    Routes through `state.notify` (:func:`deliver`): R18 says "the substrate does not build a
-    second notification path", so the existing `notification_allowed` gate and the per-(source,
+    Routes through `state.notify` (:func:`deliver`): the substrate does not build a
+    second notification path, so the existing `notification_allowed` gate and the per-(source,
     kind) rule both still apply. A muted channel stays muted.
 
     Never raises. A notification failure must not fail the run that already completed.
@@ -987,7 +987,7 @@ def report_run(
         # A failure still reports: in that case the action's own note never went out.
         if ok and notifies_on_its_own(trigger):
             return True
-        # 🔴 SUPPRESS A REPEATED IDENTICAL FAILURE (R7's `dedupe_hash`). `event_id` dedupes the
+        # 🔴 SUPPRESS A REPEATED IDENTICAL FAILURE (`dedupe_hash`). `event_id` dedupes the
         # same event REDELIVERED (same run_id), not different runs carrying an identical error:
         # the same error on 6 consecutive fires produced 6 notifications. Opt-in via
         # `failure_policy.dedupe_hash`, and capped by a 1h window, so a still-broken automation
@@ -1002,13 +1002,13 @@ def report_run(
             # reached its chat channel as its first 512 characters.
             summary=summary if ok else error,
             run_id=run_id,
-            # 🔴 EACH RUN IS A NEW EVENT (R18 / crit 10). Without an attempt key `event_id` — derived
+            # 🔴 EACH RUN IS A NEW EVENT. Without an attempt key `event_id` — derived
             # from the trigger, the run and this key — was the SAME for every fire of a trigger,
             # and `is_duplicate` dropped every notification after the first: a healthy daily
-            # digest notified the user ONCE, EVER. Criterion 10's dedup is for the same event
+            # digest notified the user ONCE, EVER. The retry dedup is for the same event
             # REDELIVERED (a transport retry), and applying it to distinct runs made it a mute.
             attempt_key=next_attempt_key(),
-            # 🔴 The OUTCOME picks the route (R12 / decision 13), so `failure_delivery` is
+            # 🔴 The OUTCOME picks the route, so `failure_delivery` is
             # consulted for a failure: "failures reach the inbox even when `delivery` is none".
             destination=route_for(trigger, ok=ok),
             # A failure whose route is the Inbox is filed there, as the Triggers page's "If it

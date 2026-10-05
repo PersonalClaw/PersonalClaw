@@ -1,5 +1,5 @@
 /**
- * FLUID-MOTION §S2 (changes FM-3 / FM-4) — the WHOLE morph family under reduced motion.
+ * The WHOLE morph family under reduced motion.
  *
  * `Morph.reducedMotion.test.tsx`, `LiquidShape.reducedMotion.test.tsx` and
  * `Entrance.reducedMotion.test.tsx` each cover one primitive in depth. This file covers the

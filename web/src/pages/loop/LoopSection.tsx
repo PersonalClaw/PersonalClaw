@@ -14,8 +14,8 @@ import { runtimeOf } from './loopRuntime'
  *
  *  Deep links: #/loop = the composer. A created loop deep-links under its kind's
  *  section (#/loops/<id> for goal/general/design, #/code/<id> for code) so the
- *  existing cockpits + planning views are reused with no duplication. Slice-3 B2 will
- *  alias those under one address; this sub-step is the composer itself. */
+ *  existing cockpits + planning views are reused with no duplication; this section is
+ *  the composer itself. */
 export function LoopSection({ navigate, query }: RouteProps) {
   const routeCreated = async (created: LoopCreateResult, kind: LoopKind, planning: boolean) => {
     // Invalidate the cached lists so the new loop appears immediately on its list.

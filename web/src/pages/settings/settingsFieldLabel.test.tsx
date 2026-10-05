@@ -184,8 +184,8 @@ describe('a Field publishes its hint as the control DESCRIPTION', () => {
   })
 
   it('a Row describes a control that names ITSELF', () => {
-    // A `Row` publishes no label id on purpose (its control carries its own `aria-label`, and ux-690
-    // recorded the divided-row layout as a distinction). The description is independent of that.
+    // A `Row` publishes no label id on purpose (its control carries its own `aria-label`, and the
+    // divided-row layout is a deliberate distinction). The description is independent of that.
     const { container } = render(
       <SettingsRow label="Idle timeout" hint="Auto-close an idle session after this long.">
         <TextInput value="" onChange={() => {}} ariaLabel="Idle timeout" />

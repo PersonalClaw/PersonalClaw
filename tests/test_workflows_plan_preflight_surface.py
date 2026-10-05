@@ -3,10 +3,10 @@
 Measured before this change: `workflows/preflight.py` had exactly two production importers
 (`workflows/service.py` at authoring dry-run and at run start) and neither was the planner, so the
 template-path response carried no `preflight` key and none of the report's own keys. The
-consequence is the whole `plan-approved-run-dies-at-step-1` class UP-R3 exists to kill: preflight
-at run start only tells a user their *approved* plan cannot run.
+consequence is the whole `plan-approved-run-dies-at-step-1` class this change exists to kill:
+preflight at run start only tells a user their *approved* plan cannot run.
 
-The plan's execution log named the real obstacle — the preflight step wanted requirements
+The real obstacle was that the preflight step wanted requirements
 aggregated one hop past a referenced provider, and that data does not exist: `ActionProvider`
 declares no `requirements`. So the honest shape is the one asserted here — emit everything that IS
 resolvable, and report the un-aggregatable class as a DISCRIMINATED warning. The anti-inertness

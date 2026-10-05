@@ -1,4 +1,4 @@
-"""Abstract base for diarization providers (core L1).
+"""Abstract base for diarization providers.
 
 Diarization takes audio → speaker TURNS (time ranges tagged SPEAKER_00/01/…). It is
 unsupervised (finds *distinct* speakers, not identities) and produces NO words — so it

@@ -83,7 +83,7 @@ async def api_usage_rollup(request: web.Request) -> web.Response:
     form (``chat_runner.run_chat`` writes via ``_history_key_for``), so it is
     canonicalized here through the writer's own rule, ``dashboard_history_key``, as every
     reader of those rows is — a bare-key query would otherwise match nothing and silently
-    report a confident 0 (CATO-7)."""
+    report a confident 0."""
     group_by = request.query.get("group_by", "model")
     if group_by not in _GROUP_KEYS:
         return json_error(
@@ -117,7 +117,7 @@ async def api_usage_totals(request: web.Request) -> web.Response:
 
     ``session`` (when given) restricts to one session key — the session-total surface
     (``ChatPage``'s cost chip). Canonicalized the same way as ``api_usage_rollup``
-    above — see that docstring (CATO-7)."""
+    above — see that docstring."""
     bounds = _bounds(request)
     if isinstance(bounds, web.Response):
         return bounds

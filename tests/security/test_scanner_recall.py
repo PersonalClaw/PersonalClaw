@@ -30,9 +30,9 @@ each is written into ``tmp_path`` as inert bytes and handed to the static gate.
 
 The file's original scope note said it deliberately asserted nothing about destruction
 spelled in the HOST LANGUAGE (``shutil.rmtree``, ``Path.unlink``, ``os.remove``, truncating
-``open(..., "w")``), because the tier for that class was an open owner decision and encoding
-a verdict would have settled by test what had not been settled by judgement. **The owner has
-now ruled: native destruction gets the same TERMINAL severity as shell destruction.** So the
+``open(..., "w")``), because the tier for that class was an open decision and encoding
+a verdict would have settled by test what had not been settled by judgement. **It is
+now settled: native destruction gets the same TERMINAL severity as shell destruction.** So the
 gap is closed rather than tracked, and :class:`TestNativeDestructionIsTerminal` and the
 classes after it are the rail for it — measured from the same six-payload table #2607 reports,
 in both directions (recall AND the precision floor that keeps the terminal band off ordinary
@@ -91,7 +91,7 @@ _EXTRA_BARE: tuple[tuple[str, str], ...] = (
 )
 
 
-# ── the native-destruction payloads (#2607 direction 2, owner-ruled TERMINAL) ─────────────
+# ── the native-destruction payloads (#2607 direction 2, TERMINAL) ─────────────────────────
 # The four rows of #2607's table that scored CLEAN with zero findings on `main`. Each is the
 # minimal spelling: no obfuscation, no aliasing, no indirection — the shape an author would
 # actually write, which is what made "clean" the wrong answer.
@@ -599,7 +599,7 @@ class TestTheRedirectFixDidNotWidenWhatCountsAsADiskWipe:
 class TestNativeDestructionIsTerminal:
     """#2607 defect 2, closed. Destruction spelled in the host language was not merely
     un-refused — it was **clean, with zero findings**, because every rule in the terminal band
-    was a shell string. The owner's ruling is that it earns the SAME terminal severity, so
+    was a shell string. It earns the SAME terminal severity, so
     each payload here is asserted terminal by rule, not merely non-clean."""
 
     @pytest.mark.parametrize("rule", sorted(_NATIVE_PAYLOADS))

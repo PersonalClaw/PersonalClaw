@@ -122,7 +122,7 @@ export function InboxSettingsPanel() {
           disabled={engagementOn === null} />
       </Row>
 
-      {/* Alerting moved to Settings → Notifications → Per-kind delivery (plan 42 S3):
+      {/* Alerting moved to Settings → Notifications → Per-kind delivery:
           keyword / name-mention escalation is now a `conditions` block on ANY notification
           rule, not two inbox-only fields. Pointing there beats leaving controls that write
           to a store nothing reads. */}

@@ -88,7 +88,7 @@ describe('the other empty reasons keep their own sentences', () => {
 
 describe('a live gate is untouched', () => {
   it('still hands its continuation to the ask renderer', async () => {
-    // The whole feature: WF2-R7 answers gates in the inbox. A filter that hid a live gate would
+    // The whole feature: gates are answered in the inbox. A filter that hid a live gate would
     // break the surface it exists to serve.
     //
     // `WorkflowAsk` is stubbed on purpose — it is the shared typed-ask renderer with its own

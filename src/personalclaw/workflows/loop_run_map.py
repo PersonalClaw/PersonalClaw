@@ -1,21 +1,20 @@
-"""Every `Loop` field's home on a `WorkflowRun` + `SupervisorPolicy` (step 1).
+"""Every `Loop` field's home on a `WorkflowRun` + `SupervisorPolicy`.
 
 `loop_aliases` answers the NOUN question at the type level — a loop *kind* resolves to a bundled
 template. This module answers it at the FIELD level, which is the half that decides whether the
-noun change is a migration or a silent feature deletion. The plan's own first implementation step
-says it plainly: *"Map every field of the `Loop` row onto `WorkflowRun` + `SupervisorPolicy`, and
-name the ones with no home BEFORE writing code — an unmapped field is a feature about to be dropped
-silently."* This is that map, in the same idiom `supervisor_policy.POLICY_KNOB_MAP` established for
-The fourteen knobs: one row per field, the destination as a resolvable path, and a test that
+noun change is a migration or a silent feature deletion. The rule is plain: map every field of
+the `Loop` row onto `WorkflowRun` + `SupervisorPolicy`, and name the ones with no home BEFORE
+writing code — an unmapped field is a feature about to be dropped silently. This is that map,
+in the same idiom `supervisor_policy.POLICY_KNOB_MAP` established for
+the fourteen knobs: one row per field, the destination as a resolvable path, and a test that
 resolves every one so a rename on either side reds rather than rots.
 
 **Deliberately inert, and it says so.** Nothing reads this at runtime, and it constructs no run.
-It is a DECLARATION, railed in both drift directions (`tests/test_loop_field_map.py`) — the
-honesty marker this program established in `WF2LOO-12` and reused. The wiring owner is
-The later sessions; this exists so those sessions inherit a measured map instead of re-deriving
-it per field, and so the fields with NO home are an owner decision taken in daylight rather
+It is a DECLARATION, railed in both drift directions (`tests/test_loop_field_map.py`). It exists
+so the wiring that follows inherits a measured map instead of re-deriving
+it per field, and so the fields with NO home are a decision taken in daylight rather
 than a discovery made after `loop/store.py` is gone. That set is counted by its pinned rail, not
-by this prose — it has already grown once (`AG-14` added two homeless fields after this docstring
+by this prose — it has already grown once (two homeless fields were added after this docstring
 was written), so a number here would only drift.
 
 **What the map is measured against, not guessed from.** Each `RUN_INPUT` row names a parameter a
@@ -36,9 +35,9 @@ that established it has no home.
    "One status vocabulary" therefore costs a decision per orphan, not a rename.
 3. **`WorkflowRun.task_list_id` was declared and inert — RETIRED.** It had no
    writer and no reader outside `models.py`, and it was singular where a loop keeps one TaskList
-   PER PHASE (`Loop.task_list_ids: {phase_key: task_list_id}`). The owner ruling re-homed the
-   loop field to `PROJECTION` (per-phase TaskLists derive from run state, the direction
-   `materialize.py` already proves) and deleted the singular slot, so a later migration cannot
+   PER PHASE (`Loop.task_list_ids: {phase_key: task_list_id}`). The loop field is re-homed to
+   `PROJECTION` (per-phase TaskLists derive from run state, the direction
+   `materialize.py` already proves) and the singular slot is deleted, so a later migration cannot
    fill it with the wrong shape.
 """
 
@@ -88,7 +87,7 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
         RUN,
         "WorkflowRun.id",
         "Same shape (a hex id), and the ledger already keys on it either way — `loop.journal` and "
-        "`workflows.journal` are both `personalclaw.ledger` writers (PP-5).",
+        "`workflows.journal` are both `personalclaw.ledger` writers.",
     ),
     FieldHome(
         "name",
@@ -155,7 +154,7 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
         PROJECTION,
         "",
         "The graph IS the plan: `WorkflowDef.root`'s nodes replace the phase list. Nothing to "
-        "carry — this is the field whose disappearance is the point of the atom.",
+        "carry — this is the field whose disappearance is the point of the migration.",
     ),
     FieldHome(
         "phase_status",
@@ -266,8 +265,8 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
         POLICY,
         "SupervisorPolicy.hitl_posture",
         "Already mapped by `supervisor_policy.POLICY_KNOB_MAP` (knob 11) — one of the three knobs "
-        "that collapse onto this field. Persisted per run since seam 4d: "
-        "`WorkflowRun.policy_overrides[attended]` (OWNER RULING 2, sparse overlay), written at "
+        "that collapse onto this field. Persisted per run: "
+        "`WorkflowRun.policy_overrides[attended]` (the sparse overlay), written at "
         "create by the loop door. An explicit `false` is the unattended grant a run's stages "
         "spawn on (`supervisor_policy.unattended_grant`).",
     ),
@@ -276,15 +275,15 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
         POLICY,
         "SupervisorPolicy.autonomy.approval",
         "system-drives-phases vs user-queues is an approval posture, which is what the "
-        "`SafetyProfile` half of the policy (AG-13 knob 4/14) already expresses. Persisted per "
-        "run since seam 4d: `WorkflowRun.policy_overrides[autopilot]`.",
+        "`SafetyProfile` half of the policy (knobs 4 and 14) already expresses. Persisted per "
+        "run: `WorkflowRun.policy_overrides[autopilot]`.",
     ),
     FieldHome(
         "max_cycles",
         POLICY,
         "SupervisorPolicy.budget_max_cycles",
         "Already mapped by `POLICY_KNOB_MAP` (knob 12). deep-research additionally exposes it as "
-        "its `rounds` input. Persisted per run since seam 4d: "
+        "its `rounds` input. Persisted per run: "
         "`WorkflowRun.policy_overrides[max_cycles]`, written at create by the loop door, and it "
         "bounds the loop node's iterations (`supervisor_policy.loop_iteration_cap`); `0` keeps the "
         "template's own cap, because a run loop is always bounded.",
@@ -294,7 +293,7 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
         POLICY,
         "SupervisorPolicy.idle_secs",
         "Already mapped by `POLICY_KNOB_MAP` (knob 13) — the idle-stall cutoff for one cycle. "
-        "Persisted per run since seam 4d: `WorkflowRun.policy_overrides[idle_secs]`.",
+        "Persisted per run: `WorkflowRun.policy_overrides[idle_secs]`.",
     ),
     FieldHome(
         "success_criteria",
@@ -302,7 +301,7 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
         "SupervisorPolicy.rubric",
         "The machine-checkable form of the same statement; goal-pursuit-open-ended also declares "
         "`success_criteria` as a template input, which is the human-authored half. Persisted "
-        "per run since seam 4d: `WorkflowRun.policy_overrides[success_criteria]`.",
+        "per run: `WorkflowRun.policy_overrides[success_criteria]`.",
     ),
     FieldHome(
         "kind_config",
@@ -349,8 +348,8 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
         "the one timing field that needs no conversion.",
     ),
     # NO `total_cycles` row: the field no longer exists on `Loop`. Its home was declared
-    # PROJECTION here ("the count is the ledger's `step_completed` events"), and PP-16 seam 4a
-    # LANDED that projection ahead of the noun change — the column, its two writers and the
+    # PROJECTION here ("the count is the ledger's `step_completed` events"), and that projection
+    # LANDED ahead of the noun change — the column, its two writers and the
     # dataclass field are gone, and `loop.files.cycles_completed()` is the count. The map is
     # exhaustive
     # against `Loop.__dataclass_fields__` in both directions, so a retired field must lose its row
@@ -366,7 +365,7 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
         "max_cost_usd",
         RUN,
         "WorkflowRun.budget.max_cost",
-        "Same 0-=-uncapped money ceiling (`AG-14`), written at create by the loop door "
+        "Same 0-=-uncapped money ceiling, written at create by the loop door "
         "(`loop_routes`): a run-backed loop's dollar limit is its run's dollar budget. The breach "
         "PAUSES the run resumably (`controller._step`) where a loop completed non-genuine with "
         "stop_reason=cost_budget, so its owner raises the limit and goes on.",
@@ -375,7 +374,7 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
         "deadline_secs",
         NONE,
         "",
-        "NO HOME. `AG-14`'s active-runtime ceiling (banked elapsed + current stretch). RunBudget "
+        "NO HOME. The loop's active-runtime ceiling (banked elapsed + current stretch). RunBudget "
         "caps tokens and cost and RunDefaults bounds only per-node timeouts — no run-wide "
         "wall/active-time budget exists, so the loop door refuses a time limit for a run-backed "
         "kind (`loop.validation`) rather than drop it silently.",
@@ -384,9 +383,9 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
         "stop_reason",
         NONE,
         "",
-        "NO HOME. `AG-14`'s closed WHY-it-ended classification, stamped in lockstep with "
+        "NO HOME. The loop's closed WHY-it-ended classification, stamped in lockstep with "
         "completed_at. A run carries prose error_message and per-node FailureClass but no "
-        "run-level closed stop reason — dropping it re-opens the free-text-only gap AG-14 closed.",
+        "run-level closed stop reason — dropping it re-opens the free-text-only gap it closed.",
     ),
     # ── integration links ──
     FieldHome(
@@ -397,20 +396,20 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
         "Tasks Project — and a run has only one `project_id`. Either they unify (a decision about "
         "whether a run's project and its task project are the same thing) or a field is needed.",
     ),
-    # Re-homed to PROJECTION (option b of the 2026-08-22 entry):
+    # Re-homed to PROJECTION:
     # a per-phase TaskList map is a projection of run state — `materialize.py` already projects
     # tasks per phase — and the inert singular `WorkflowRun.task_list_id` slot is retired in the
     # same change, so a later migration cannot fill it with the wrong shape (singular where the
-    # loop keeps `{phase_key: id}`). Seam 4e shipped the constructive half: the projection
+    # loop keeps `{phase_key: id}`). The constructive half has shipped: the projection
     # function below is the row's destination.
     FieldHome(
         "task_list_ids",
         PROJECTION,
         "",
-        "SHIPPED (PP-16 seam 4e): `materialize.task_list_ids_for_run` derives the PLURAL "
+        "SHIPPED: `materialize.task_list_ids_for_run` derives the PLURAL "
         "`{node_id: task_list_id}` map from the persisted bindings — a node id is the "
         "run-side phase_key (the graph IS the plan, per this map's own `plan` row). The "
-        "singular run slot was retired in seam 4c, so the derived read is the ONLY "
+        "singular run slot is retired, so the derived read is the ONLY "
         "destination; nothing is stored.",
     ),
     FieldHome(
@@ -430,7 +429,7 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
 )
 
 #: The status members neither vocabulary can express, measured against `LoopStatus` / `RunStatus`.
-#: This is the concrete cost of the change's "one status vocabulary" clause: each orphan is a
+#: This is the concrete cost of "one status vocabulary": each orphan is a
 #: decision (map it, or drop the state), not a rename.
 STATUS_VOCABULARY_DELTA: dict[str, tuple[str, ...]] = {
     # LoopStatus members with no RunStatus equivalent. `intake`/`planning`/`review`/`ready` are the

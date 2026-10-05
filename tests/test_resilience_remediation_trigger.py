@@ -1,6 +1,6 @@
 """The remediation engine as ONE adaptive-clock trigger, and its runs in the digest.
 
-The change's criterion has two clauses and this file covers both, each as a CALL-SITE assertion
+Two promises, and this file covers both, each as a CALL-SITE assertion
 rather than a config one:
 
 1. **"runs as ONE adaptive-clock trigger (`created_by: system`) on the Automations page instead of
@@ -15,7 +15,7 @@ rather than a config one:
    Driven through `delivery.report_run` — the single point every store-backed
    fire reports from — into a real `DashboardState.notify`, so the rule resolution
    (`resolve_rule_for_legacy` → mode) is the shipped one. A hand-built note in the queue would prove
-   nothing: it would skip the very selection this clause is about. Each pickup assertion is paired
+   nothing: it would skip the very selection this promise is about. Each pickup assertion is paired
    with a run that must NOT be picked up, so a queue that swallowed everything would fail.
 """
 
@@ -102,11 +102,11 @@ def _patch_config(monkeypatch, **kw):
     return fake
 
 
-# ── clause 1a: the adaptive clock kind ──────────────────────────────────────────────────
+# ── the adaptive clock kind ─────────────────────────────────────────────────────────────
 
 
 class TestAdaptiveClockKind:
-    """§4.3's "adaptive clock kind" — the cadence primitive, independent of the engine."""
+    """The "adaptive clock kind" — the cadence primitive, independent of the engine."""
 
     def test_the_kind_is_accepted_and_both_cadences_are_required(self):
         from personalclaw.triggers.models import CLOCK_KINDS, validate_spec
@@ -177,13 +177,13 @@ class TestAdaptiveClockKind:
         described = describe_cadence(t)
         assert "60m" in described and "5m" in described and "(now: every 5m)" in described
         # Named by what switches the clock, not "healthy": the health score also counts failures
-        # only a person can clear, and those leave the clock on its long sleep (settings B16).
+        # only a person can clear, and those leave the clock on its long sleep.
         t.spec["health_state"] = "healthy"
         described = describe_cadence(t)
         assert "(now: every 60m)" in described and "healthy" not in described
 
 
-# ── clause 1b: ONE trigger, created_by system, listed on the page ────────────────────────
+# ── ONE trigger, created_by system, listed on the page ──────────────────────────────────
 
 
 class TestTheTriggerIsRegisteredAndListED:
@@ -263,7 +263,7 @@ class TestTheTriggerIsRegisteredAndListED:
         assert P.PROVIDER_NAME in WRITE_CAPABLE_PROVIDERS
 
     def test_the_trigger_carries_the_write_capable_grant(self, store, monkeypatch):
-        """Decision 7: the engine prunes and re-indexes unattended, so the fence needs a frozen
+        """The engine prunes and re-indexes unattended, so the fence needs a frozen
         grant. An empty capability block is denied at fire time."""
         _patch_config(monkeypatch)
         P.reconcile_remediation_trigger(store)
@@ -316,7 +316,7 @@ class TestTheTriggerIsRegisteredAndListED:
         assert P.REMEDIATION_TRIGGER_ID not in {r["raw_id"] for r in _listed_schedules(H)}
 
 
-# ── clause 1c: instead of the heartbeat job ─────────────────────────────────────────────
+# ── instead of the heartbeat job ────────────────────────────────────────────────────────
 
 
 class TestTheHeartbeatNoLongerRemediates:
@@ -420,7 +420,7 @@ class TestTheRunRearmsItsOwnClock:
     def test_a_failure_only_a_person_can_clear_does_not_keep_the_clock_awake(
         self, store, monkeypatch
     ):
-        """Settings B16: the score now counts failed Doctor checks, including ones no job can
+        """The score now counts failed Doctor checks, including ones no job can
         repair (an unclaimed path, a tampered skill). Keying the clock on the SCORE would wake the
         engine every few minutes, forever, to find nothing it can run — so it keys on what the
         engine's own jobs can still win back."""
@@ -488,7 +488,7 @@ class TestTheRunRearmsItsOwnClock:
         assert result.success and calls == []
 
 
-# ── clause 2: the runs-inbox digest picks the runs up like any other run ────────────────
+# ── the runs-inbox digest picks the runs up like any other run ──────────────────────────
 
 
 def _queued(home: Path) -> list[dict]:
@@ -587,8 +587,8 @@ class TestTheRunsReachTheDigest:
         assert state._notification_log == []
 
     def test_the_queued_run_deep_links_to_its_own_run(self, store, monkeypatch, home):
-        """ "Like any other run" includes R18's statusUrl: a digest line the user cannot follow back
-        to the run is the notification→journal dead end R18 exists to close."""
+        """ "Like any other run" includes the notification's statusUrl: a digest line the user
+        cannot follow back to the run is the notification→journal dead end statusUrl closes."""
         trigger = self._trigger(store, monkeypatch)
         _set_rule(home, _outcome_rule_key(trigger, ok=True), "digest")
         _deliver(monkeypatch, trigger, ok=True)
@@ -598,7 +598,7 @@ class TestTheRunsReachTheDigest:
 
     def test_the_digest_DRAIN_renders_the_run(self, store, monkeypatch, home):
         """The last hop: `run_digest` is what turns the queue into ONE inbox item. Asserting the
-        queue alone would stop one function short of the surface the clause names."""
+        queue alone would stop one function short of the surface the promise names."""
         from personalclaw import notification_rules as nr
 
         trigger = self._trigger(store, monkeypatch)

@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { join } from 'node:path'
 import { filesUnder, readSource } from '../test/sourceTree'
 
-// ── Table-family adoption ratchet (audit AB-3) ──────────────────────────────
+// ── Table-family adoption ratchet ──────────────────────────────
 // The canonical data-table family is ui/Table.tsx (Table/THead/Th/Td): required
 // sr-only caption, `scope="col"` headers, the seed treatment in one place.
 // Eleven pages had hand-rolled `<table>` markup that drifted on exactly those

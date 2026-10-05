@@ -1,4 +1,4 @@
-"""AcpSession — one ACP session's turn loop over a FrameRouter queue (P9 step 2).
+"""AcpSession — one ACP session's turn loop over a FrameRouter queue.
 
 The demux consumer side of concurrent ACP. Where today's ``AcpClient`` reads the
 process's stdout INLINE during a turn (serializing all turns behind one lock),
@@ -356,9 +356,9 @@ class AcpSession:
 
         A dialect that does not declare mid-turn support is REFUSED here and the source is
         left unset, so the dispatcher learns ``False``, marks the session non-draining, and
-        the message routes to the visible queue. This is the gate that keeps the S6.1
-        invariant intact now that a drain path exists at all: nothing may buffer a steer
-        against a turn that has no reader."""
+        the message routes to the visible queue. This is the gate that keeps the invariant
+        intact now that a drain path exists at all: nothing may buffer a steer against a
+        turn that has no reader."""
         if pull is not None and not self.steer_capable():
             self._steer_pull = None
             return False
@@ -426,7 +426,7 @@ class AcpSession:
     async def _deliver_steers_at_tool_boundary(self) -> list[str]:
         """Write every pending steer to the CLI as the dialect's mid-turn request.
 
-        THE delivery path PR2-10 exists to build. Called from :meth:`_dispatch_frames` at a
+        THE delivery path of a mid-turn steer. Called from :meth:`_dispatch_frames` at a
         tool boundary — the point mid-turn where the agent is between decisions, so an
         extra prompt can still change the answer being written rather than arriving after
         it. Returns the steers written, in order.
@@ -866,7 +866,7 @@ class AcpSession:
         self._carry_ons = 0
         # Per-turn steer state. Clearing ``_steer_pending`` at the START is deliberate: a
         # steer that could not be delivered belongs to the turn it was aimed at, and letting
-        # it survive into the next one is the cross-turn leak S6.1 closed. The dispatcher
+        # it survive into the next one would leak it across turns. The dispatcher
         # reads ``undelivered_steers()`` at the end of the SAME turn.
         self._steers_delivered = 0
         self._steer_pending.clear()
@@ -1144,13 +1144,13 @@ def _parse_slash_command(command: str) -> tuple[str, dict]:
 
 
 class AcpConnection:
-    """One ACP backend process, shared by N concurrent :class:`AcpSession`s (P9 step 2b).
+    """One ACP backend process, shared by N concurrent :class:`AcpSession`s.
 
     Owns the process handle + the single :class:`FrameRouter` over its stdout + the
     ``initialize`` handshake + a monotonic request-id counter. ``new_session()`` issues
     ``session/new`` on the SAME process, registers the returned ``sessionId`` with the
     router, and returns an :class:`AcpSession` bound to that session's queue. Multiple
-    calls → multiple concurrent sessions on one process — the P9 win, gated by the
+    calls → multiple concurrent sessions on one process — what the single reader buys, gated by the
     backend dialect's ``supports_concurrent_sessions`` (the caller checks it before
     opening more than one).
 
@@ -1426,7 +1426,7 @@ class AcpConnection:
         that can disagree. Same one-key shape as ``AcpClient._can_load_session``
         (``loadSession``), and the same allowlist direction: an agent that said nothing
         gets no ``commands/execute`` request, because a ``-32601`` reply fails the whole
-        turn instead of degrading (`O23`/`G4`)."""
+        turn instead of degrading."""
         return bool(self._agent_capabilities.get(CAP_COMMANDS, False))
 
     @property

@@ -1,5 +1,4 @@
-"""``visualize(data, hint)`` — the one agency-free generative-UI primitive
-(AMBIENT-SURFACES §5.3).
+"""``visualize(data, hint)`` — the one agency-free generative-UI primitive.
 
 The two-step pattern: a reasoning agent produces *data*; this SEPARATE, no-tools
 step renders it into a genui widget spec. It is "agency-free" by construction — it
@@ -7,10 +6,10 @@ resolves through :func:`one_shot_completion` on the **reasoning** use-case axis,
 which builds a plain model provider (never the NativeAgentRuntime that ``chat``/
 ``code_tools`` return), so there are no tools to call: it can only turn data into a
 widget spec, never act. Output is constrained to the registry DSL (``genui.py``'s
-catalog) and validated FE-side per §5.2 (unknown/invalid lines drop, never crash).
+catalog) and validated FE-side (unknown/invalid lines drop, never crash).
 
 One shared mechanism behind every producer — the ``visualize`` MCP tool, the
-WORKFLOWS-V2 ``visualize`` node, cockpit summaries, tiles, digests, "chart this"
+workflow ``visualize`` node, cockpit summaries, tiles, digests, "chart this"
 chat asks. Keeping the single ``one_shot_completion`` call here (not duplicated in
 each caller) is why only THIS file appears in the degraded-contract lint map.
 
@@ -131,7 +130,7 @@ async def visualize(
 ) -> Visualization:
     """Turn ``(data, hint)`` into a genui widget spec, agency-free.
 
-    ``completion`` is injected so tests (and the WF2 executor) can drive this
+    ``completion`` is injected so tests (and the workflow executor) can drive this
     without a live provider; production leaves it ``None`` and this resolves
     :func:`one_shot_completion` on the reasoning axis. Raises on a provider/model
     failure (the caller maps it to its own surface's degraded floor: no

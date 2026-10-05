@@ -10,9 +10,9 @@ it.
 
 ## The one leg that cannot be reached from a test process
 
-The change's acceptance criterion ends with *"a locked-phone push → tap opens
+The end-to-end journey finishes with a locked-phone push → tap opens
 ``#/companion?approval=<id>`` with the correct card focused → approve → the paused run
-proceeds, <30s on cell data (timed)"*. The **locked phone on cell data, timed** is an
+proceeds, <30s on cell data (timed). The **locked phone on cell data, timed** is an
 environment the suite does not have: it needs a physical handset, a mobile network, and a
 human with a stopwatch. It is named here as an explicit ENVIRONMENT LIMIT rather than
 approximated, because a fake stopwatch would be worse than an honest gap.
@@ -435,8 +435,7 @@ def test_the_ntfy_body_is_the_ids_json_and_nothing_else(
 
     Also asserts the absence of ntfy's rendering headers (`Title`, `Tags`, `Click`,
     `Message`): each is shown to the user, so anything worth putting there would have been
-    composed from the item — i.e. content — and the audit fixture for `MC-9` will check
-    exactly this shape.
+    composed from the item — i.e. content.
     """
     monkeypatch.setattr(push, "push_backend", lambda: "ntfy")
     monkeypatch.setattr(push, "ntfy_topic_url", lambda: "https://ntfy.example/personalclaw")
@@ -513,7 +512,7 @@ def test_a_dead_endpoint_is_pruned_rather_than_retried_forever(
     assert push.load_subscriptions() == {}
 
 
-# ── Plan 42's `push` target ─────────────────────────────────────────────────
+# ── The notification rules' `push` target ────────────────────────────────────
 
 
 def test_the_approval_kind_is_registered_and_carries_no_default_push_target(home: Path) -> None:
@@ -579,7 +578,7 @@ def test_ensure_target_leaves_every_other_rule_alone(home: Path) -> None:
 def test_notify_pushes_only_when_the_rule_targets_push(
     home: Path, sent: list[dict[str, object]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`DashboardState.notify` is the chokepoint plan 42 routes every emitter through."""
+    """`DashboardState.notify` is the chokepoint every emitter is routed through."""
     push.push_init()
     _subscribe_one("phone-1")
     delivered: list[tuple[str, str]] = []
@@ -649,7 +648,7 @@ async def test_the_whole_push_to_approval_chain_advances_a_paused_run(
 ) -> None:
     """Subscription → sender → wire payload → deep link → approve → **the run proceeds**.
 
-    ⚠️ ENVIRONMENT LIMIT — the change's last clause is NOT covered here and cannot be. "A
+    ⚠️ ENVIRONMENT LIMIT — the journey's last leg is NOT covered here and cannot be. "A
     LOCKED PHONE on CELL DATA, TIMED under 30s" needs a physical handset, a mobile network
     and a stopwatch; none exists in a test process. This test proves every server-side link
     of that chain and the browser half is proven in the vitest specs named in the module
@@ -794,8 +793,8 @@ async def _drive_routes(client) -> None:  # noqa: ANN001
     }
     first = await client.post("/api/push/subscribe", json=good)
     assert first.status == 200
-    # Subscribing IS the "wake me for a blocked run" statement, so the route configures plan
-    # 42's rule for a user who never set one — otherwise the button would be one of two
+    # Subscribing IS the "wake me for a blocked run" statement, so the route configures the
+    # approval rule for a user who never set one — otherwise the button would be one of two
     # switches and would read as broken.
     assert (await first.json())["approval_rule_written"] is True
     after = await (await client.get("/api/push")).json()

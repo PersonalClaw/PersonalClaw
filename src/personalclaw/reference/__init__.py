@@ -1,4 +1,4 @@
-"""Shipped offline agent reference (PLATFORM-LEGIBILITY §3.1).
+"""Shipped offline agent reference.
 
 The markdown files here are GENERATED, not hand-edited — run
 ``python -m personalclaw.manifest_reference`` to regenerate them from the live

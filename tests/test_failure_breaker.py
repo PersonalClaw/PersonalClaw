@@ -63,7 +63,7 @@ def test_breaker_reset_clears_all():
     assert b.total_failures == 0 and b.count("k") == 0
 
 
-# ── unit: structural loop detection (E3.1) ──
+# ── unit: structural loop detection ──
 
 
 def test_result_digest_strips_volatile_fields():

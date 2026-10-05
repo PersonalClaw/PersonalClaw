@@ -1,4 +1,4 @@
-"""Native knowledge provider (#30 Task A).
+"""Native knowledge provider.
 
 The ONE bundled provider. It offers the 13 typed-create entry points, stores items
 in the knowledge library (the ``items`` table = the uber-pool), and **enqueues each

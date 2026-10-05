@@ -51,7 +51,7 @@ const DOWNGRADE_ADVICE = (
  *
  *  🔑 THE ROLLBACK CONTROL IS NOT DECORATIVE. It offers `updates.last_version`, which
  *  `self_update.record_running_version` writes at gateway startup when the running version
- *  changes — until RUM-9 nothing wrote that field, so an earlier "Roll back" button
+ *  changes — before that, nothing wrote that field, so an earlier "Roll back" button
  *  would have read an always-empty string. It is hidden when there is nothing to offer,
  *  because "Roll back to v" with nothing after it is worse than no offer. */
 /** The document's front matter is written for CONTRIBUTORS, and it was rendering as product copy.
@@ -433,7 +433,7 @@ export function UpdatesPanel() {
             </div>
           ) : null}
           {/* Desktop: the SHELL owns updates, so there is no in-app apply. What the shell does
-              about it is a re-download today — the electron-updater half of `DC-1` is unbuilt
+              about it is a re-download today — the electron-updater half is unbuilt
               (no electron-updater dependency in desktop/package.json, nothing in the shell
               checks for a release), and this note promised a self-update on next launch for the
               whole life of the shipped Linux artifact (issue 2673). Naming the release page is

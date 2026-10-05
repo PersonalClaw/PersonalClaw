@@ -1350,10 +1350,7 @@ class TestFlushSegment:
     """Unit tests for _flush_segment helper function."""
 
     def test_flush_segment_persists_and_broadcasts(self, tmp_path, monkeypatch):
-        """_flush_segment persists assistant message and broadcasts chat_segment.
-
-        Validates: Requirements 1.1, 1.2, 4.3, 6.3
-        """
+        """_flush_segment persists assistant message and broadcasts chat_segment."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         state.broadcast_ws = MagicMock()
@@ -1412,8 +1409,6 @@ class TestRunChatSegmentFlush:
     async def test_text_tool_text_complete_produces_two_segments(self, tmp_path, monkeypatch):
         """Mock event stream: text → tool_call → text → complete produces
         two assistant messages and one tool message.
-
-        Validates: Requirements 1.1, 1.2, 1.3, 4.3
         """
         from personalclaw.llm.base import (
             EVENT_COMPLETE,
@@ -1455,8 +1450,6 @@ class TestRunChatSegmentFlush:
     async def test_text_permission_request_flushes_segment(self, tmp_path, monkeypatch):
         """Mock event stream: text → permission_request flushes segment
         before permission flow.
-
-        Validates: Requirements 1.4
         """
         from personalclaw.llm.base import (
             EVENT_COMPLETE,
@@ -1498,10 +1491,7 @@ class TestRunChatSegmentFlush:
 
     @pytest.mark.asyncio
     async def test_text_only_complete_no_segments(self, tmp_path, monkeypatch):
-        """Text-only stream → complete produces one assistant message (no segments).
-
-        Validates: Requirements 8.1
-        """
+        """Text-only stream → complete produces one assistant message (no segments)."""
         from personalclaw.llm.base import (
             EVENT_COMPLETE,
             EVENT_TEXT_CHUNK,
@@ -1584,8 +1574,6 @@ class TestRunChatSegmentFlush:
     async def test_chunk_seq_monotonically_increasing_across_segments(self, tmp_path, monkeypatch):
         """chunk_seq values in broadcast calls are monotonically increasing
         across segments.
-
-        Validates: Requirements 7.1
         """
         from personalclaw.llm.base import (
             EVENT_COMPLETE,
@@ -1851,8 +1839,6 @@ class TestPrepareMessagesInterleaved:
     def test_interleaved_assistant_tool_streaming_structure(self):
         """_prepare_messages with interleaved assistant/tool and an answer still
         streaming returns correct structure.
-
-        Validates: Requirements 6.1
         """
         from personalclaw.dashboard.chat import _prepare_messages
 
@@ -3040,7 +3026,7 @@ class TestPromptBusyRecovery:
     async def test_terminal_acp_error_fires_error_hook(self, tmp_path: Path) -> None:
         """A terminal ``AcpError`` must fire the ``Error`` lifecycle hook.
 
-        AAP-1 measured the ``Error`` hook firing **zero** times on two providers
+        An audit measured the ``Error`` hook firing **zero** times on two providers
         despite real, user-visible ACP failures. Cause: ``HOOK_EVENT_ERROR`` had
         exactly one fire site — the generic ``except Exception`` — so every
         ``AcpError``, the whole error class an ACP session can raise, ended with an
@@ -4872,7 +4858,7 @@ class TestForkSession:
         assert kw["outcome"] == "allowed"
         assert "from=src" in kw["resources"]
         assert f"to={data['key']}" in kw["resources"]
-        # L5 audit enrichment: at_index + prompt_len present
+        # Audit enrichment: at_index + prompt_len present
         assert "at_index=last" in kw["resources"]
         assert "prompt_len=0" in kw["resources"]
 
@@ -4960,7 +4946,7 @@ class TestForkSession:
 
     @pytest.mark.asyncio
     async def test_fork_of_fork_chains_forked_from(self, tmp_path):
-        """M10: fork of a fork titles correctly and `forked_from` points to intermediate, not root."""  # noqa: E501
+        """Fork of a fork titles correctly and `forked_from` points to intermediate, not root."""  # noqa: E501
         state = _make_state(tmp_path)
         root = state.get_or_create_session("root")
         root.title = "Original"
@@ -4995,7 +4981,7 @@ class TestForkSession:
 
     @pytest.mark.asyncio
     async def test_fork_reads_full_history_from_disk_when_memory_capped(self, tmp_path):
-        """M12: when in-memory snapshot is smaller than full history, fork reads from disk."""
+        """When in-memory snapshot is smaller than full history, fork reads from disk."""
         state = _make_state(tmp_path)
         session = state.get_or_create_session("src")
         for i in range(250):
@@ -5026,7 +5012,7 @@ class TestForkSession:
 
     @pytest.mark.asyncio
     async def test_fork_preserves_full_history_when_dirty_and_capped(self, tmp_path):
-        """A1 regression: _dirty=True + capped in-memory must NOT truncate disk history."""
+        """Regression: _dirty=True + capped in-memory must NOT truncate disk history."""
         state = _make_state(tmp_path)
         session = state.get_or_create_session("src")
         for i in range(250):
@@ -5062,7 +5048,7 @@ class TestForkSession:
 
     @pytest.mark.asyncio
     async def test_fork_concurrent_requests_both_succeed(self, tmp_path):
-        """R2-7: two rapid fork requests on the same session both return 200 with
+        """Two rapid fork requests on the same session both return 200 with
         identical visible-message counts. Each fork produces an independent new
         session; no messages lost or duplicated."""
         import asyncio
@@ -5095,7 +5081,7 @@ class TestForkSession:
 
     @pytest.mark.asyncio
     async def test_fork_audits_denied_on_ephemeral(self, tmp_path, monkeypatch):
-        """M-1 regression: ephemeral rejection must emit a denied SEL event."""
+        """Regression: ephemeral rejection must emit a denied SEL event."""
         from unittest.mock import MagicMock
 
         mock_sel = MagicMock()
@@ -5144,7 +5130,7 @@ class TestForkSession:
 
     @pytest.mark.asyncio
     async def test_fork_app_isolation_rejects_cross_app(self, tmp_path, monkeypatch):
-        """M-2 regression: app A cannot fork a conversation app B started."""
+        """Regression: app A cannot fork a conversation app B started."""
         from unittest.mock import MagicMock
 
         rows = MagicMock()
@@ -5173,7 +5159,7 @@ class TestForkSession:
 
     @pytest.mark.asyncio
     async def test_fork_inherits_app_ownership(self, tmp_path, monkeypatch):
-        """I-1 regression: the fork is the requesting app's (or yours, for the dashboard)."""
+        """Regression: the fork is the requesting app's (or yours, for the dashboard)."""
         state = _make_state(tmp_path)
         session = state.get_or_create_session("src", created_by_app="app-x")
         session.append("user", "hi", "msg msg-u")
@@ -5193,7 +5179,7 @@ class TestForkSession:
 
     @pytest.mark.asyncio
     async def test_fork_rejects_when_session_cap_reached(self, tmp_path, monkeypatch):
-        """zejiangg rev 3 #46: fork must return 429 + denied audit when session cap hit."""
+        """Fork must return 429 + denied audit when session cap hit."""
         from unittest.mock import MagicMock
 
         mock_sel = MagicMock()
@@ -5356,7 +5342,7 @@ class TestLumonPersonaInjection:
 
 
 class TestStopReasonCancelled:
-    """Phase 4: handler response to stopReason='cancelled'."""
+    """Handler response to stopReason='cancelled'."""
 
     @staticmethod
     def _make_mock_client(events):
@@ -5475,7 +5461,7 @@ class TestStopReasonCancelled:
         assert any("partial output here" in m["content"] for m in assistant_msgs)
 
 
-# ── Phase 5: Soft-stop dashboard backend tests ──
+# ── Soft-stop dashboard backend tests ──
 
 
 class TestStopTurnSessionState:

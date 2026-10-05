@@ -1,6 +1,6 @@
 """The failure event `docs/guides/automations.md` PROMISES must be the one the code SENDS.
 
-Same shape as ``test_forwarded_header_docs_match_code.py``, and for the same reason. DL-12's
+Same shape as ``test_forwarded_header_docs_match_code.py``, and for the same reason. The
 guide tells a user that a failing automation reaches their inbox *even when delivery is* ``none``,
 and it names the event that carries it: ``automation.run.failed``. That name is the one thing in the
 guide a reader might go looking for by string — in a notification row, in a log line, in a filter —
@@ -37,8 +37,8 @@ _EVENT_RE = re.compile(r"`(automation\.run\.[a-z_]+)`")
 
 
 def test_the_guide_exists_and_names_the_failure_event():
-    """The first acceptance criteria: the guide is the surface a prospect and a user both meet."""
-    assert GUIDE.is_file(), f"{GUIDE} is missing — DL-12's guide is the deliverable"
+    """First, the guide exists: it is the surface a prospect and a user both meet."""
+    assert GUIDE.is_file(), f"{GUIDE} is missing — the guide is the user-facing promise"
     names = set(_EVENT_RE.findall(GUIDE.read_text(encoding="utf-8")))
     assert names, (
         "docs/guides/automations.md names no `automation.run.*` event, so this rail would be "

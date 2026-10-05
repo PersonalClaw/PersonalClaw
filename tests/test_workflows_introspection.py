@@ -1,4 +1,4 @@
-"""Tests for the introspection checklist and RunStats projection (R5/R6/R9).
+"""Tests for the introspection checklist and RunStats projection.
 
 Everything here is a projection over the REAL journal, so the tests write real journal
 events with the
@@ -184,7 +184,7 @@ def test_run_stats_and_run_totals_agree_on_the_token_DISCLOSURE(
     assert (stats.tokens if stats.tokens_recorded else None) == official["tokens"], label
     assert stats.tokens_recorded is official["tokens_recorded"], label
     # The money fact is untouched in every case, which is what makes the token fact the only
-    # variable — and is #2630's ruling asserted rather than remembered.
+    # variable — and is #2630's decision asserted rather than remembered.
     assert stats.priced is True, label
 
 
@@ -376,7 +376,7 @@ def test_a_run_that_completed_NOTHING_has_no_debt():
 
 
 def test_the_debt_threshold_is_not_ZERO():
-    """A plan legitimately contains zero-token actions whose output IS the check (S42's
+    """A plan legitimately contains zero-token actions whose output IS the check (the
     contract lint
     exempts them), so a 0% target would flag correct structure — and the rule that fires on correct
     work is the rule that gets suppressed wholesale."""
@@ -406,7 +406,7 @@ def test_gate_stats_read_the_APPROVED_field(journal_home):
 
 
 def test_GATE_REJECTED_is_still_emitted_NOWHERE():
-    """The measurement this module is built around. If a future session starts emitting it,
+    """The measurement this module is built around. If a future change starts emitting it,
     this test
     fails and the projection should be revisited to count it — a silent second source of truth for
     rejections would double-count them."""

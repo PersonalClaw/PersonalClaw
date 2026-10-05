@@ -2,7 +2,7 @@
 
 `tests/test_workflows_frontier_golden.py` proves the seam changed nothing. This module proves the
 seam is a seam — that composition is by capacity rather than by position, that a tie between two
-policies resolves toward the refusal that has a name, and that `PP-12` can add `Lease` here without
+policies resolves toward the refusal that has a name, and that `Lease` can be added here without
 re-auditing the three rules already in the list.
 """
 
@@ -40,7 +40,7 @@ def _container(**config) -> AdmissionRequest:
 
 @dataclass(frozen=True)
 class _Fixed(AdmissionPolicy):
-    """A stand-in for the policies `PP-12` will add — enough to test composition without
+    """A stand-in for the policies added later — enough to test composition without
     pre-committing to `Lease`'s shape."""
 
     value: int | None = None
@@ -202,7 +202,7 @@ class TestSeamIsLoadBearing:
         ]
         assert not literals, (
             "tick.py reads `max_concurrency` directly — admission decisions must come from the "
-            "policy list, or PP-12's Lease will not apply to this container"
+            "policy list, or `Lease` will not apply to this container"
         )
 
     def test_a_policy_appended_to_the_list_tightens_the_real_frontier(self) -> None:

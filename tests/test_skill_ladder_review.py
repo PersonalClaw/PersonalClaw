@@ -1,4 +1,4 @@
-"""learn-after-turn-review skill axis: the forked-LLM 4-tier skill ladder.
+"""The after-turn review's skill axis: the forked-LLM 4-tier skill ladder.
 
 A bounded background review decides at most one skill action (refine < support_file
 < create, biasing toward refining what exists) and ENQUEUES it as a propose-only
@@ -186,7 +186,7 @@ def test_a_pass_that_proposes_nothing_is_still_observable(home):
     assert proposals.list_pending() == []  # indistinguishable half, unchanged
 
     rec = proposals.last_review()
-    assert rec is not None, "a pass that proposed nothing recorded nothing — `G44` is back"
+    assert rec is not None, "a pass that proposed nothing recorded nothing — it reads as never-ran"
     assert rec["verdict"] == "no_action"
     assert rec["session_key"] == "sess:1"
     assert isinstance(rec["elapsed_ms"], int) and rec["elapsed_ms"] >= 0
@@ -223,7 +223,7 @@ def test_marker_is_not_mistaken_for_a_proposal(home):
 
 
 def test_route_reports_the_marker_and_its_absence(home):
-    """The API is the surface `O31` was taken from, so the field has to be ON it —
+    """The API is where the empty list was observed, so the field has to be ON it —
     a recorded marker no route exposes would be the same observation as before."""
     import asyncio
 

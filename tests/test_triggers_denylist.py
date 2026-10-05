@@ -1,14 +1,14 @@
 """The denylist at the THIRD dispatch seam — `gateway._fire_store_trigger`.
 
-🔴 THE DEFECT, measured before a line was written. AUTONOMY-GUARDRAILS §1.2 declares the
+🔴 THE DEFECT, measured before a line was written. The autonomy guardrails declare the
 path/action denylist is enforced at the three dispatch seams every action-provider execution
 passes through, "so an app-contributed provider inherits the denylist without knowing it exists",
-and names them: `hooks.py`, `gateway.py:701`, `event_triggers.py`. Counting `enforce_action` per
-seam file gave 1 / 0 / 1 — the gateway seam had the kill switch (2 `incident_active` calls) and,
-since AG-7, the rung ladder, but no denylist at all.
+and name them: `hooks.py`, `gateway.py:701`, `event_triggers.py`. Counting `enforce_action` per
+seam file gave 1 / 0 / 1 — the gateway seam had the kill switch (2 `incident_active` calls) and
+the rung ladder, but no denylist at all.
 
-The third name, `gateway.py:701`, is `_run_action_job`, which retired with `ScheduleService`
-(S112); the note left at its old site says the substrate "GENERALIZED both: action dispatch is
+The third name, `gateway.py:701`, is `_run_action_job`, which retired with `ScheduleService`;
+the note left at its old site says the substrate "GENERALIZED both: action dispatch is
 `_fire_store_trigger`". The gate was lost in that retirement and never re-established on the
 successor — retiring a legacy path is never a pure deletion. And the successor is the busiest
 unattended path in the product: every clock, file, webhook and chained trigger dispatches through
@@ -102,7 +102,7 @@ def test_an_allowed_action_STILL_FIRES(provider):
 def test_the_refusal_IS_RECORDED_and_not_as_a_failure(provider):
     """Observable, not silent. `enforce_action` writes the SEL row and (for `needs_human`) the
     notification; this seam owes the Runs-history row, because a refusal only a log knows about is
-    a silent drop by criterion 8's definition.
+    a silent drop by definition.
 
     `skipped_gate` and NOT `failed`: `failed` is the only outcome that counts toward
     autopause-after-5, so recording a policy refusal as a failure would disable a user's

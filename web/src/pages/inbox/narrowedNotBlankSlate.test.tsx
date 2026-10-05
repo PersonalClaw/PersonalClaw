@@ -7,7 +7,7 @@ import { filesUnder, readSource } from '../../test/sourceTree'
 //
 // "You have none" and "none match" are different sentences, and the second one must never carry the
 // first one's advice. Censused every list surface by filtering it to nothing in a real browser and
-// reading the VISIBLE empty state (sr-only live regions stripped, so cycle 120's announcement could
+// reading the VISIBLE empty state (sr-only live regions stripped, so the screen-reader announcement could
 // not be mistaken for on-screen copy):
 //
 //   #/artifacts   "No matching artifacts · Try a different search, kind, or collection."   ✅
@@ -88,7 +88,7 @@ function censusNarrowed(): { primitive: string[]; handRolled: string[] } {
 const inbox = readSource(join(SRC, 'pages/inbox/InboxPage.tsx'))
 /** 🪤 Comments stripped, because this rail's first version flagged its own subject's PROSE: the file
  *  documents the historical `filter !== 'all'` trap in a comment, and the assertion below counted that
- *  sentence as code. Fifth time in this session a rail has measured an explanation instead of a
+ *  sentence as code. Fifth time a rail has measured an explanation instead of a
  *  program — strip first, always. */
 const inboxCode = inbox.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
@@ -175,8 +175,8 @@ describe('the inbox distinguishes "nothing matches" from "you have nothing"', ()
     // names what the user should change. Asserted per file, since that is where a regression lands.
     const CANONICAL: [string, RegExp][] = [
       ['pages/artifacts/ArtifactGrid.tsx', /Try a different search, kind, or collection\./],
-      // Knowledge graduated from the single narrowed sentence to the emptyStateNoMatch split
-      // (AUD-NZ10) — the pin follows the copy to its query-named form; the narrowed-vs-blank
+      // Knowledge graduated from the single narrowed sentence to the emptyStateNoMatch split —
+      // the pin follows the copy to its query-named form; the narrowed-vs-blank
       // distinction this rail guards is still there (the blank slate stays "Knowledge base is
       // empty" and is pinned by knowledgeNoMatch.test.ts alongside the split).
       ['pages/knowledge/KnowledgeListPage.tsx', /No items match “\$\{submitted\}”/],

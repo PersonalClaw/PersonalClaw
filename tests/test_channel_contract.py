@@ -1,4 +1,4 @@
-"""Normalized channel contract (#40) — ChannelMessage + ChannelCapabilities + ABC."""
+"""Normalized channel contract — ChannelMessage + ChannelCapabilities + ABC."""
 
 from __future__ import annotations
 

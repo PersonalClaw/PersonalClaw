@@ -312,7 +312,7 @@ class TestStage:
         assert sp.calls[0]["task"] == "do work"
 
     async def test_a_stage_may_PIN_a_model_and_defaults_to_INHERITING_one(self) -> None:
-        """Homogeneous-by-default, heterogeneous by MODEL (WORK-CONTAINERS amendment (a)).
+        """Homogeneous-by-default, heterogeneous by MODEL.
         An absent pin must send `None`, which is what makes `spawn` resolve the `orchestration`
         chain and inherit the parent's binding — sending `""` would look to `spawn` like a pin to
         nothing in particular, and homogeneity would stop being the default."""
@@ -655,11 +655,11 @@ class TestWaitAndGate:
 
 
 class TestJudgePreTier:
-    """The free rule tier that runs BEFORE any LLM judge call (LOOPS-EVOLUTION criterion 2).
+    """The free rule tier that runs BEFORE any LLM judge call.
 
-    The plan calls this "the single biggest token saver": anything rule-solvable — empty output, a
+    This is the single biggest token saver: anything rule-solvable — empty output, a
     stub, a worker give-up — must never reach the probabilistic model. `judge_pretier.run_pretier`
-    shipped in session 30 with no caller; these tests pin the wiring, and each asserts the model was
+    once shipped with no caller; these tests pin the wiring, and each asserts the model was
     NOT called on a rejection (the whole point is the saved completion).
     """
 
@@ -675,7 +675,7 @@ class TestJudgePreTier:
         return r, calls["n"]
 
     async def test_a_judge_with_NO_evidence_binding_is_unchanged(self) -> None:
-        """The additive contract: every judge shipped before S144 binds no `evidence`, so it must
+        """The additive contract: an older judge binds no `evidence`, so it must
         behave exactly as before — reach the model. Screening it would reject a working gate as
         "nothing to judge"."""
         r, calls = await self._judge({"prompt": "does it meet the goal?"})
@@ -785,7 +785,7 @@ class TestDispatchTable:
         assert "engine bug" in r.failure.remediation
 
     async def test_subworkflow_without_a_supervisor_is_an_ENGINE_failure(self) -> None:
-        """Nesting landed in Slice 10a; this used to assert "not executable yet".
+        """Nesting has landed; this used to assert "not executable yet".
 
         With no supervisor injected the dispatcher cannot create a child run, and that is an
         engine WIRING problem rather than a spec problem — the distinction matters because a USER
@@ -829,7 +829,7 @@ class TestJudgeSamples:
     used to be RESTATED over a second verdict enum, because `verify.Verdict` was
     PASS/RETRY/ESCALATE/REJECT while `judge_contract.Verdict` was
     PASS/REJECT/REPLAN/ESCALATE/NEEDS_INPUT and feeding one to the other's aggregator is the
-    cross-vocabulary defect S130 found in the fail-mode classifier. The enums were merged and the
+    cross-vocabulary defect once found in the fail-mode classifier. The enums were merged and the
     restatement deleted, so these tests now pin the shared function.
     """
 
@@ -900,7 +900,7 @@ class TestJudgeSamples:
 
     async def test_an_unparseable_sample_fails_the_whole_gate(self) -> None:
         """A terminal accept decided from 2 of 3 samples is a quieter version of the single-sample
-        bug this session exists to fix, so an unparseable sample stops the gate where it stands."""
+        bug this guards against, so an unparseable sample stops the gate where it stands."""
         r, calls = await self._judge({"judge_samples": 3}, ["PASS", "banana", "PASS"])
         assert calls == 2, "it must stop at the bad sample, not press on"
         assert r.state == InstanceState.FAILED

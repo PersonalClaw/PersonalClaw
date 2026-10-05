@@ -23,9 +23,9 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // bans the suffix on the LOW ink token in the ONE file where every instance was measured, rather than declaring
 // 45 sites broken on a source pattern alone. Widening it means measuring each surface first.
 //
-// The other two violations axe found behind the click gate are recorded in the ledger, not fixed here:
+// The other two violations axe found behind the click gate are known and deliberately not fixed here:
 //   · `ui/Segmented`'s TONED selected state — tone text on a 20% fill of the same tone, 4.23:1. A
-//     visual-language decision across 54 call sites and 6+ tone registries → owner taste call.
+//     visual-language decision across 54 call sites and 6+ tone registries → a design call of its own.
 //   · `nested-interactive` on the project rows and the agent form → a structural change to a
 //     row-as-button pattern, its own family.
 
@@ -102,7 +102,7 @@ describe('the measured surfaces keep their ink undimmed', () => {
 
 describe('the rail is not vacuously green', () => {
   it('it scans real className strings', () => {
-    // A broken extractor would report zero hits forever. Two cycles ago a rail matched nothing and
+    // A broken extractor would report zero hits forever. A rail once matched nothing and
     // reported a clean sweep, so pin a floor.
     const all = classAttributes()
     expect(all.length, 'the extractor must find the tree\'s className strings').toBeGreaterThan(2000)

@@ -1,4 +1,4 @@
-"""The App-path validation fixture (contract C3).
+"""The App-path validation fixture.
 
 Proves the app boundary for feedback end to end with a real fixture app that
 declares ``/api/feedback`` in ``permissions.api``:
@@ -6,7 +6,7 @@ declares ``/api/feedback`` in ``permissions.api``:
 * An app-scoped POST /api/feedback lands a record with ``source_app`` stamped
   **server-side** (never client-claimed) and its producer forced into the app
   namespace — ``producer_kind="app"``, ``producer_id="<app>:<producer>"`` — so an
-  app can never impersonate a core producer (contract C3).
+  app can never impersonate a core producer.
 * Its TARGET is forced to ``app_judgment`` too, so an app cannot supersede the
   user's own verdict on a core target (#2784) — see
   ``TestAnAppCannotSupersedeACoreVerdict``, which drives BOTH doors.
@@ -15,9 +15,8 @@ declares ``/api/feedback`` in ``permissions.api``:
 * An app path the fixture did NOT declare is rejected 403 by the enforcement
   middleware before the handler runs.
 
-T2.4 ships the enforcement wired; this fixture is the executable proof, matching
-the plan header's note that the raw mechanics "remain unwired by design" beyond
-the route + middleware that already exist.
+The enforcement ships wired; this fixture is the executable proof. The raw mechanics
+remain unwired by design beyond the route + middleware that already exist.
 """
 
 from __future__ import annotations
@@ -113,7 +112,7 @@ async def _client(tmp_path, *, api_scope: list[str]):
 @pytest.mark.asyncio
 async def test_declared_app_path_stamps_source_app_and_forces_producer(tmp_path):
     """A declared /api/feedback POST records with source_app set and the producer
-    forced to app:<name>:<producer> (contract C3)."""
+    forced to app:<name>:<producer>."""
     async with _client(tmp_path, api_scope=["/api/feedback"]) as c:
         resp = await c.post(
             "/api/feedback",

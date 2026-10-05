@@ -47,8 +47,8 @@ CAPABILITIES: tuple[str, ...] = (
     "embedding",
     "stt",
     "tts",
-    # Diarization ("who spoke when") is its OWN parent capability with NO fallback
-    # (core L1): if no diarization model is bound, the feature is simply off — exactly
+    # Diarization ("who spoke when") is its OWN parent capability with NO fallback:
+    # if no diarization model is bound, the feature is simply off — exactly
     # like STT with no model. Served by the separate diarization provider app.
     "diarization",
     "image_modality",
@@ -139,7 +139,7 @@ def parent_capability(use_case: str) -> str:
 
 
 def active_models_path() -> Path:
-    """The single active-model store. Public because the ES-7 model-upgrade watchdog
+    """The single active-model store. Public because the model-upgrade watchdog
     watches this exact file for changes, and a second module deriving the path itself is
     how two "the same" paths drift apart."""
     from personalclaw.config.loader import config_dir
@@ -273,7 +273,7 @@ def load_active_models() -> dict[str, list[str]]:
     """Active-model selections per use-case, with refs from removed providers
     pruned so no consumer surfaces a ghost model.
 
-    Tolerant chain read (MODEL-USE-CASES-V2, clean break under the pre-1.0
+    Tolerant chain read (a clean break under the pre-1.0
     banner): every value is semantically an ordered fallback CHAIN. A bare
     string value from an older store normalizes to a one-entry chain; writes
     (:func:`save_active_models`) emit lists only.
@@ -319,9 +319,8 @@ def active_model_refs(use_case: str) -> list[str]:
 def resolution_chain(use_case: str, *, session_override: str = "") -> list[str]:
     """Ordered candidate refs for one resolution: ``[override?] + chain``.
 
-    The composer/session override sits ONE LEVEL ABOVE the chain (owner-decided
-    semantics, MODEL-USE-CASES-V2): it is a single ref — never itself a chain —
-    prepended to the use case's chain (or, for an unbound sub-category, the
+    The composer/session override sits ONE LEVEL ABOVE the chain: it is a single ref —
+    never itself a chain — prepended to the use case's chain (or, for an unbound sub-category, the
     parent ``chat`` chain via :func:`active_model_refs`). Duplicates dedupe with
     the override keeping the front position. Resolution walks the result in
     order: override fails → chain default → fallback 1 → …

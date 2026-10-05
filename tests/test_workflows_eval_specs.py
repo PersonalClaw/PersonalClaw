@@ -1,4 +1,4 @@
-"""Tests for derived per-template eval specs (UP-R13.3).
+"""Tests for derived per-template eval specs.
 
 These run against the SHIPPED library, because a derived benchmark's whole value is that it cannot
 drift from the artifact — and a fixture-backed test of a derivation would let it drift into being
@@ -149,7 +149,7 @@ def test_a_fixture_intent_is_built_from_keywords_a_user_would_TYPE():
 
 def test_an_example_output_becomes_a_fixture_phrased_as_a_REQUEST():
     """An intent resembles its desired output far more than it resembles prose about a workflow —
-    session 40's T2 finding, reused rather than re-derived."""
+    an earlier finding, reused rather than re-derived."""
     derived = derive_eval_spec(
         "t", {"root": {}}, {"example_outputs": ["A ranked list of findings"]}
     )
@@ -165,8 +165,8 @@ def test_a_template_with_no_matchable_surface_still_enters_the_suite():
 
 @pytest.mark.parametrize("name", TEMPLATES)
 def test_a_fixture_never_expects_a_parameter_the_TREE_does_not_read(name):
-    """The mirror of session 42's finding. A fixture asserting a phantom parameter would fail
-    forever on a correct template, which trains a maintainer to loosen the assertion."""
+    """The mirror of a declared input nothing reads. A fixture asserting a phantom parameter
+    would fail forever on a correct template, which trains a maintainer to loosen the assertion."""
     from personalclaw.workflows.contracts import resolve_unfilled_inputs
 
     spec, _metadata = parts(name)

@@ -3,9 +3,8 @@
 One of the cohesive native tool-provider categories. Saved Prompts are their own
 entity (``/api/prompts``), unrelated to workflows; ``prompt_render`` only lived in
 ``mcp_workflows`` because both were authored in the same sitting. It is relocated here
-so the Prompts surface survives the workflow feature's replacement (WORKFLOWS-V2
-Phase 0) — the old module is deleted wholesale in Phase 1, and a tool the user relies
-on must not go with it.
+so the Prompts surface survives the workflow feature's replacement — the old module is
+deleted wholesale, and a tool the user relies on must not go with it.
 
 Exposes ``_list_tools`` / ``_call_tool`` (the same shape as ``mcp_core`` /
 ``mcp_schedule``) so the in-process ``InProcessMcpToolProvider`` and the aggregating

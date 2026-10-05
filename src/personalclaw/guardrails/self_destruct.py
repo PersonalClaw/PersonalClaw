@@ -240,7 +240,7 @@ class HostEffect:
         return bool(self.kind) and self.target != "other"
 
     def reason(self) -> str:
-        """The refusal text. Names the operation AND the interactive path (WF2AUT-14)."""
+        """The refusal text. Names the operation AND the interactive path."""
         interactive = (
             "run it yourself from an interactive session — the dashboard's Updates panel, or "
             "your own shell — where it is not an unattended run killing its own runner"

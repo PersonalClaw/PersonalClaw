@@ -4,14 +4,14 @@ import { join } from 'node:path'
 
 // ── Thirteen switches and ten inputs showing settings nobody saved ──────────────────────────
 //
-// `AgentDefaultsPanel` already carries the ruling, comment and all: **a settings panel must not present
+// `AgentDefaultsPanel` already carries the rule, comment and all: **a settings panel must not present
 // FABRICATED values as saved state.** Its siblings that read the SAME endpoint had not been converged.
 // Censused `pages/settings` for readers that substitute a value on rejection — **55** of them — and
 // narrowed to the family where the substitution decides what a CONTROL claims: panels whose
 // `api.personalclawConfig()` read is the panel.
 //
 // Driven at 1440×900 with `/api/config/personalclaw` at 500 and a cold sessionStorage, measured against
-// the PARENT worktree (`grep -c 'personalclawConfig().catch'` = 1 there, 0 here — the only way to know
+// the tree before the change (`grep -c 'personalclawConfig().catch'` = 1 there, 0 here — the only way to know
 // which tree a dev server is serving):
 //
 //                            before                              after
@@ -30,7 +30,7 @@ import { join } from 'node:path'
 //   hub → the panel       cache="{}"   → **2 switches, no alert**   🔴 defeated
 //   after                 cache=null   → the alert, both ways
 //
-// Same key-poisoning shape cycle 117 found for `apps` / `settings:archives` /
+// Same key-poisoning shape found earlier for `apps` / `settings:archives` /
 // `settings:projection-rules`. **A per-surface honesty fix is not done until every consumer of its cache
 // key stops substituting** — and the hub is a consumer of eleven of them.
 //
@@ -64,9 +64,9 @@ describe('a config panel does not present fabricated values as saved state', () 
       expect(code, 'the config read must be bare').toMatch(/api\.personalclawConfig\(\)/)
       // 🪤 SAME LINE, not a character window. `[\s\S]{0,80}` from `personalclawConfig()` reaches the NEXT
       // element of the `Promise.all` — `api.durabilityStatus().catch(() => null)`, a legitimate
-      // decorating fallback — and reported it as this read's. Third time in this session an over-wide
-      // proximity window has produced a false positive (cycle 120 replaced one with paren-matching,
-      // cycle 122 with per-definition segmentation). A chained `.catch` cannot be on another line.
+      // decorating fallback — and reported it as this read's. Third time an over-wide
+      // proximity window has produced a false positive (one was replaced with paren-matching,
+      // another with per-definition segmentation). A chained `.catch` cannot be on another line.
       const chain = code.split('\n').find((l) => l.includes('api.personalclawConfig()')) ?? ''
       expect(chain, 'a `.catch` chained onto THIS read fabricates the whole panel')
         .not.toMatch(/\.catch\(\(\)\s*=>/)
@@ -88,7 +88,7 @@ describe('a config panel does not present fabricated values as saved state', () 
     // panel that could have rendered.
     const dur = codeOf('pages/settings/DurabilityPanel.tsx')
     expect(dur).toMatch(/api\.durabilityStatus\(\)\.catch\(\(\) => null\)/)
-    // `durabilityArchive` — it replaced `durabilitySnapshots` when the §6
+    // `durabilityArchive` — it replaced `durabilitySnapshots` when the
     // archive browser landed. Still a DECORATING read, so it keeps its fallback.
     expect(dur).toMatch(/api\.durabilityArchive\(\)\.catch\(\(\) => null\)/)
   })
@@ -194,10 +194,10 @@ describe('a config panel does not present fabricated values as saved state', () 
       .reduce((a, b) => a + b, 0)
     // 🪤 THIS NUMBER WAS 3 AND THE REAL COUNT IS 31 — the comment above says "records the number so the
     // next pass starts from a count", and it recorded a tenth of it. 28 of the 31 could have vanished with
-    // the rail still green. Measured by instrumenting every floor assertion in the suite (cycle 134).
+    // the rail still green. Measured by instrumenting every floor assertion in the suite.
     // It moves only deliberately: de-swallowing one of these is a real change, so lower it in that PR.
     //
-    // 🔻 31 → 30, and this is that PR. Cycle ux-673 de-swallowed the `settings:doctor` and
+    // 🔻 31 → 30, and this is that PR. It de-swallowed the `settings:doctor` and
     // `settings:incident` tiles (a health card and a SAFETY card, both of which rendered a blank body
     // on a failed read because the substituted `null` resolved the fetcher and cleared `loading`).
     // Measured on both sides: the population was 32 before — the floor had drifted BELOW the real count

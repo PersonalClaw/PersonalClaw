@@ -149,12 +149,12 @@ function CopyButton({ value, label }: { value: string; label: string }) {
  *
  *  On the QR: `pair/start` returns a `pairing_url` that already contains the code, which is what
  *  makes it actionable on its own — the QR is a RENDERING of that URL, not a separate mechanism.
- *  `MC-8` supplies the image (`PairingQr` + `lib/qr.ts`, no new dependency); the URL and the code
+ *  `PairingQr` + `lib/qr.ts` supply the image (no new dependency); the URL and the code
  *  stay on screen beside it, because a camera that will not focus must not be the only way in. */
 export function DevicesPanel() {
   const { data, error: loadErr, refresh } = useQuery('settings:devices', () => api.devices())
   // The tokens external agents reach the inbound surfaces with. Not sessions — but "what can reach
-  // this gateway?" is asked here, so they are answered here, with a revoke (ledger 317a).
+  // this gateway?" is asked here, so they are answered here, with a revoke.
   const {
     data: integrationsData, error: integrationsErr, refresh: refreshIntegrations,
   } = useQuery('settings:integrations', () => api.deviceIntegrations())

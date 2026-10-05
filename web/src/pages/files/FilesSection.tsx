@@ -33,7 +33,7 @@ const TAB_KEY = 'files-tab'
 
 /** Files page — the raw file roots (Workspace/Home/Outbox): explorer + a rich
  *  multi-tab editor/preview. Artifacts moved to their OWN top-level surface
- *  (`#/artifacts`, ARTIFACTS S1b) — they were a tab here for navigational
+ *  (`#/artifacts`) — they were a tab here for navigational
  *  similarity only. Old `#/files/<slug>` deep-links redirect there. */
 export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: RouteProps) {
   // 🔴 `rootsErr` used to be discarded in `useFileRoots`, so an unreachable `/api/files/roots`
@@ -369,7 +369,7 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
                 // carried `tabIndex={0}`, so an open editor put N separate stops in the tab order
                 // instead of one stop plus arrows, and none said which was selected.
                 // 🪤 A `{/* … */}` comment cannot go here: this is EXPRESSION position (right after
-                // `&& (`), where only `//` and bare `/* */` parse. Third time this session.
+                // `&& (`), where only `//` and bare `/* */` parse.
                 <div role="tablist" aria-label="Open files"
                   onKeyDown={tabListKeys((i) => fileTabs.setActivePath(fileTabs.tabs[i].path))}
                   className="flex items-stretch gap-1 overflow-x-auto border-b border-outline/40 px-2 pt-2">

@@ -55,9 +55,8 @@ describe('the loop cockpit says whether its feed is alive', () => {
   })
 
   it('the DESIGN cockpit shows it too — the loops family is now complete', () => {
-    // Cycle 593. `DesignCockpitPage` is the third full-page watch surface on this hook, and the one my
-    // ux-592 probe accidentally proved is reachable (a `design`-kind loop routes here, not to
-    // LoopCockpitPage). Same gate, same vocabulary.
+    // `DesignCockpitPage` is the third full-page watch surface on this hook, and it is reachable
+    // (a `design`-kind loop routes here, not to LoopCockpitPage). Same gate, same vocabulary.
     const code = read('pages/loops/DesignCockpitPage.tsx')
     expect(code).toMatch(/const \{ connected \} = useRunStream/)
     expect(code).toMatch(/\{connected \? 'Streaming' : 'Connecting…'\}/)

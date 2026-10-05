@@ -1,13 +1,13 @@
-"""The flywheel observability panel, end to end (LEARN-R14b / WF2LEA-9 parts 3 + 5).
+"""The flywheel observability panel, end to end.
 
 Four metrics, each traced from its live WRITER to the endpoint that renders it:
 
 | Metric | Writer | Reader |
 |---|---|---|
 | budget utilization | `context._record_ambient_measurements` → `allocation_samples` | composite |
-| per-op cost (R19e) | `StagingStore.record_flush(cadence, cost_usd)` | `cost_by_op` |
-| judge MAE (R10d) | `controller` → ledger `judge_verdict.evidence.samples` | `judge.mae` |
-| attribution (R16) | `attribution.grade_accepted_changes` → resolved records | `attribution` |
+| per-op cost | `StagingStore.record_flush(cadence, cost_usd)` | `cost_by_op` |
+| judge MAE | `controller` → ledger `judge_verdict.evidence.samples` | `judge.mae` |
+| attribution | `attribution.grade_accepted_changes` → resolved records | `attribution` |
 | ablation delta | `context._record_ambient_measurements` → `ablation_sweeps` | `ablation` |
 
 The unmeasured-vs-zero tests are the load-bearing ones. Every metric here is absent on a
@@ -65,7 +65,7 @@ def test_allocation_samples_are_a_rolling_window(store):
     assert store.utilization()["samples"] <= store.ALLOCATION_KEEP
 
 
-# ── Per-op cost (R19e) ──
+# ── Per-op cost ──
 
 
 def test_cost_by_op_splits_by_the_cadence_the_writer_records(store):
@@ -142,7 +142,7 @@ def test_the_composite_weights_sum_to_one():
     assert sum(measure.HEALTH_WEIGHTS.values()) == pytest.approx(1.0)
 
 
-# ── Judge MAE (R10d) ──
+# ── Judge MAE ──
 
 
 def _verdict(node: str, verdict: str, samples: list[str], run: str = "r1"):

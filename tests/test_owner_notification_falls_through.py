@@ -140,7 +140,7 @@ def _email_and_telegram(channels, *, telegram_fails: bool = False) -> tuple[Magi
 
 @pytest.mark.asyncio
 async def test_email_first_hands_over_to_telegram(channels, tmp_path):
-    """The exact case the other lane measured, through the gateway's own owner DM (a heartbeat or
+    """The exact case that was measured, through the gateway's own owner DM (a heartbeat or
     cron result delivered to `channel`)."""
     email, telegram = _email_and_telegram(channels)
     state = _state(tmp_path)

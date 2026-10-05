@@ -25,7 +25,7 @@ import { InstallDialogHarness } from '../../test/installDialogHarness'
 //
 // So install consent showed declared permissions, and the thing it showed was not the
 // thing that bounds the UI — an app declaring NO permission still gets host-page
-// authority the moment its page mounts. Same shape of fix as EI-12 D2 made for `network`:
+// authority the moment its page mounts. Same shape of fix as the one made for `network`:
 // its own advisory row, outside the enforced bullets, stated either way. Three readings
 // have to be killed, and a test that only asserted the new sentence would miss two:
 //

@@ -69,7 +69,7 @@ function fmtRate(kbs: number | undefined): string {
 
 /** System & Capability Health — a wide strip of LIVE health metrics: CPU%, memory
  *  used/total, network rx/tx, disk, load, plus uptime/version/crons/subagents. The
- *  live rates come from /api/system (P27 — already computed server-side, surfaced
+ *  live rates come from /api/system (already computed server-side, surfaced
  *  here) with a rolling CPU sparkline; an inline Update action + a YOLO indicator. */
 export function SystemHealth({ navigate }: RouteProps) {
   const { status, system, doctor, doctorErr, doctorOff } = useDashboardLive()
@@ -118,7 +118,7 @@ export function SystemHealth({ navigate }: RouteProps) {
     <div className="flex h-full w-full flex-wrap items-center gap-x-l gap-y-s @6xl:gap-x-xl">
       <Metric icon={Clock} value={status.uptime ?? '—'} label="uptime" />
       <Metric icon={Tag} value={`v${status.version ?? '?'}`} label={status.platform ?? ''} />
-      {/* Live metrics from /api/system (P27). The gateway leaves out a reading its probe could not
+      {/* Live metrics from /api/system. The gateway leaves out a reading its probe could not
           take on this poll (`lib/readings`): cpu and mem then show the placeholder rather than
           throwing, which blanked Home; net, disk and load show only on a host that reports them. */}
       {system && (

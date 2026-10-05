@@ -1,8 +1,8 @@
-"""Full-matrix as-a-user validation sweep (MULTIMODAL-IO MI-5 capstone).
+"""Full-matrix as-a-user validation sweep.
 
-The acceptance criteria: "full-matrix as-a-user validation passes across profile CRUD × lock ×
+The bar: full-matrix as-a-user validation passes across profile CRUD × lock ×
 both engines × per-surface bindings × duplex behaviors × screen share on vision and
-non-vision models." This walks that matrix through the SAME HTTP handlers the dashboard
+non-vision models. This walks that matrix through the SAME HTTP handlers the dashboard
 calls (profile/binding/consent/lock/migrate routes), plus the resolver→capability-gate→
 engine path for both engines and the pure duplex/screen-context decisions — all with
 zero model spend and an isolated home.
@@ -174,7 +174,7 @@ async def test_crud_bindings_and_migration_over_http(home):
         other = await (await client.get("/api/voice/resolve?surface=channel:slack")).json()
         assert other["level"] == vb.LEVEL_DEFAULT and other["profile_id"] == design["id"]
 
-        # §6 one-click migration → a fresh design profile becomes default
+        # one-click migration → a fresh design profile becomes default
         migrated = await (await client.post("/api/voice/migrate", json={"name": "Current"})).json()
         assert migrated["kind"] == "design"
         binds = (await (await client.get("/api/voice/bindings")).json())["bindings"]

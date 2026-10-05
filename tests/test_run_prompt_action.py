@@ -1,4 +1,4 @@
-"""The ``run-prompt`` action (T1) — run a saved Prompt on a trigger's cadence.
+"""The ``run-prompt`` action — run a saved Prompt on a trigger's cadence.
 
 Covers: missing prompt_id (error), unknown prompt (error), bad vars type
 (error), empty-render (error), the success path (resolve → render → frame →
@@ -107,7 +107,7 @@ def test_render_saved_prompt_normalizes_prompt_render_error():
 
 
 def test_bundled_digest_prompt_resolves_and_renders():
-    """P10: the bundled ``task-digest`` prompt is a real resolvable saved prompt that
+    """The bundled ``task-digest`` prompt is a real resolvable saved prompt that
     ``run-prompt`` can fire — resolve it and render its three vars (sources/window/
     target) through the SAME render_saved_prompt path the action uses. Proves the
     digest primitive is composition (a Prompt fired by a trigger), no new service."""
@@ -127,7 +127,7 @@ def test_bundled_digest_prompt_resolves_and_renders():
 
 
 def test_bundled_digest_prompt_is_in_use_case_vocabulary():
-    """P10: the digest use_case auto-registers in PROMPT_USE_CASES (derived from the
+    """The digest use_case auto-registers in PROMPT_USE_CASES (derived from the
     catalog) so binding/resolution work — without polluting the model-capability vocab."""
     from personalclaw.providers.prompt_use_cases import PROMPT_USE_CASES, active_prompt_ref
     from personalclaw.providers.use_cases import USE_CASES
@@ -297,7 +297,7 @@ def test_a_spawn_that_raises_is_the_fires_failure(monkeypatch):
     assert res.success is False and "did not start: no event loop" in res.error
 
 
-# ── loop.md default-recurring-prompt (T3) ──
+# ── loop.md default-recurring-prompt ──
 
 
 def test_resolve_loop_md_project_beats_user(tmp_path, monkeypatch):

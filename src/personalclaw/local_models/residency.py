@@ -234,7 +234,7 @@ async def unload_provider(key: str) -> dict[str, Any]:
 
     Returns ``{ok, provider, kind, freed, pressure}`` — the post-unload pressure snapshot
     is what makes "Unload actually frees RSS" verifiable from the surface rather than
-    asserted (Success Criterion 8).
+    asserted.
     """
     from personalclaw.local_models.registry import get_provider
     from personalclaw.local_models.sidecar import SidecarCrashed, SidecarWorkerError, get_runner

@@ -1,8 +1,8 @@
-"""Self-updating project context, reviewed and gated (LEARN E1.4).
+"""Self-updating project context, reviewed and gated.
 
 `project_context.py` owns what a project KNOWS — the living overview and the wayfinder ledgers;
 the project record holds its operating instructions. This module is the propose-half of the pattern
-the plan names in §(c): you ask the assistant to review a conversation, it proposes updates to
+where you ask the assistant to review a conversation, it proposes updates to
 the project's **instructions**, **files**, and **skills** with a reason per item, and *nothing
 is written until you accept*.
 
@@ -14,7 +14,7 @@ shared human-gated queue (`learning.proposals`) and installs nothing at review t
   an agent that loads the project's context is given as its rules);
 * ``project_file`` → an inlined context file under the project's ``context/`` dir;
 * ``project_skill`` → a new skill via the existing ``SkillsLoader.create_skill`` rail (no new
-  store — the plan's E1.3 was explicit that a second skill path is out of scope).
+  store — a second skill path is out of scope).
 
 **Deterministic, no model at review time.** The reviewing agent has the conversation in-context
 and identifies the candidate changes; this module VALIDATES and ROUTES them — it does not run an
@@ -24,7 +24,7 @@ transcript it grounds each proposal in, and keeps this file off the degraded-LLM
 **Decision memory is reused, not reinvented.** Every candidate goes through `proposals.enqueue`,
 which already fingerprints the change, suppresses one a prior decision ACCEPTED or REJECTED, and
 reinforces a pending duplicate. So a suggestion the user declined does not re-surface on a second
-review — clause 4 of the contract is the queue's existing machinery, wired through, not rebuilt.
+review — that guarantee is the queue's existing machinery, wired through, not rebuilt.
 """
 
 from __future__ import annotations
@@ -230,7 +230,7 @@ def _install_file(project_id: str, name: str, body: str) -> bool:
 
 
 def _install_skill(name: str, body: str) -> bool:
-    """Create a new skill via the existing loader rail (no new store — E1.3).
+    """Create a new skill via the existing loader rail (no new store).
 
     `create_skill` returns False on an unsafe name or an existing skill; both become a raised
     error so the accept fails rather than recording a decision for a change that did not land.

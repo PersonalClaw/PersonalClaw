@@ -1,4 +1,4 @@
-"""Unified Loop ↔ Tasks provisioning (Slice 2c.iv.c) — provision the backing Tasks
+"""Unified Loop ↔ Tasks provisioning — provision the backing Tasks
 Project + per-phase TaskLists, seed/decompose planner tasks, reconcile, teardown.
 Operates on the Loop entity, phases keyed by the kind strategy's phase_key."""
 
@@ -163,7 +163,7 @@ class TestReconcileAndTeardown:
     def test_reconcile_is_idempotent(self):
         # Safe to call again after tasks are already done (parallel mode marks them
         # done individually before the stage-advance reconcile runs — must not error
-        # or re-close). Guards the cycle-30 stage-advance + parallel-mode interaction.
+        # or re-close). Guards the stage-advance + parallel-mode interaction.
         c = _code(plan=[_stage("implementation")])
         tasks_link.provision(c.id)
         _run(tasks_link.decompose_phase(c.id, "implementation", [{"title": "A"}, {"title": "B"}]))

@@ -1,4 +1,4 @@
-"""ConfirmationRequest: ONE durable typed record for every gate (R6).
+"""ConfirmationRequest: ONE durable typed record for every gate.
 
 Four flows asked the user for something and none of them said what an approval IS as data: checklist
 sign-offs, workflow approval gates, needs-input questions, destructive-action confirmations. Four
@@ -13,7 +13,7 @@ to answer one.
 The properties that decide the shape:
 
 * **Single-use resolution is a CLAIM, not a check.** `human_input.consume_continuation` owns it, and
-  this session fixed it: it used to read-then-`unlink`, and measured, 8 racing resumes had multiple
+  it was fixed there: it used to read-then-`unlink`, and measured, 8 racing resumes had multiple
   callers receive the payload in 36 of 40 trials. `os.rename` decides the winner BEFORE anything is
   read (0 of 40). Double-clicking Resume can now never replay a clarification downstream.
 * **Auto-resume must not re-execute completed stages.** The run pauses ON the record;
@@ -253,7 +253,7 @@ def build_request(
 
     `ttl_seconds` defaults to the CONFIG value, not the module constant:
     `workflows.confirmation_ttl_secs` is live-editable, and reading the constant would make an
-    owner's change to the approval lifetime storable and ignored (S61k).
+    owner's change to the approval lifetime storable and ignored.
     """
     if ttl_seconds is None:
         from personalclaw.workflows.settings import confirmation_ttl_secs

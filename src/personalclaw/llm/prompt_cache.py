@@ -31,12 +31,12 @@ class PromptCache(str, Enum):
     * ``NONE`` — no caching hint; the message list is handed to the provider
       untouched. The correct, safe default for any provider that has not opted in.
     * ``AUTOMATIC`` — the provider caches a stable prompt PREFIX on its own, with no
-      per-request marker to place. The stable-prefix wire ordering (PCS-1 — stable
+      per-request marker to place. The stable-prefix wire ordering (stable
       assembled context leads, the volatile per-turn note rides at the tail) is what
       makes this work; there is nothing for the loop to mark. (OpenAI-family.)
     * ``EXPLICIT`` — the provider needs a per-request cache marker on exactly one
-      message, which its OWN adapter translates to that vendor's wire form (a later
-      atom). The loop places a NEUTRAL marker; the adapter consumes it. (Anthropic.)
+      message, which its OWN adapter translates to that vendor's wire form. The loop
+      places a NEUTRAL marker; the adapter consumes it. (Anthropic.)
     """
 
     NONE = "none"
@@ -104,15 +104,15 @@ def turn_note_message(note: str) -> dict:
 def effective_cache_mode(declared: PromptCache, *, enabled: bool) -> PromptCache:
     """Fold the user's ``agent.prompt_cache_enabled`` switch into ``declared``.
 
-    The switch is the diagnosis escape hatch (PROMPT-CACHE-SUBSTRATE §C6): when it is
+    The switch is the diagnosis escape hatch: when it is
     off, the loop must serve the provider exactly what it served before the marker
     existed. That is expressed by collapsing the mode to :attr:`PromptCache.NONE` —
     the mode that ALREADY means "hand the message list back untouched" — rather than
     by branching around :func:`mark_cacheable_prefix`. One code path, one definition of
     "no marker": disabling the switch takes the same route an undeclared provider takes.
 
-    What the switch does NOT do: it does not revert the §C2 wire ordering (stable
-    assembled context leads, the volatile per-turn note rides at the tail) or the §C3
+    What the switch does NOT do: it does not revert the wire ordering (stable
+    assembled context leads, the volatile per-turn note rides at the tail) or the
     date-line relocation. Those are unconditional correctness repairs, not cache
     features, and forking them into two maintained orderings is exactly the dual path
     the clean-break doctrine forbids.
@@ -129,7 +129,7 @@ def mark_cacheable_prefix(
 
     * ``NONE`` / ``AUTOMATIC`` → return ``messages`` UNCHANGED (same object
       identity). ``AUTOMATIC`` needs no marker: the provider caches the stable
-      prefix on its own, and PCS-1 already ordered the prompt so that prefix is
+      prefix on its own, and the wire ordering already keeps that prefix
       stable across turns.
     * ``EXPLICIT`` → return a NEW list in which exactly ONE message carries
       ``{CACHE_HINT_KEY: {"generation": generation}}``, applied via a SHALLOW COPY
@@ -137,14 +137,14 @@ def mark_cacheable_prefix(
       reference, unchanged. No caller dict is ever mutated.
 
     Which message gets the hint (deterministic, documented): the LAST message that
-    is neither a tool result (``role == "tool"``) nor the PCS-1 volatile per-turn
+    is neither a tool result (``role == "tool"``) nor the volatile per-turn
     note (``_volatile`` key). That message is the trailing boundary of the stable,
     cacheable content — everything up to and including it is worth caching. If no
     such message exists (every message is a tool result or volatile note), the hint
-    falls back to ``messages[0]``, the stable head PCS-1 established.
+    falls back to ``messages[0]``, the stable head the wire ordering establishes.
 
     An EXPLICIT-capable provider's adapter consumes whichever message carries
-    :data:`CACHE_HINT_KEY` (a later atom). ``generation`` lets the adapter tell a
+    :data:`CACHE_HINT_KEY`. ``generation`` lets the adapter tell a
     fresh cache prefix from one invalidated by compaction.
 
     An empty ``messages`` is returned unchanged for every mode.

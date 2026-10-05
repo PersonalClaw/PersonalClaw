@@ -1,6 +1,6 @@
 """Stage 5 — rank + render.
 
-Ranking is the substrate's materiality order and nothing else (`MATERIALITY_ORDER`, AUTO-R2):
+Ranking is the substrate's materiality order and nothing else (`MATERIALITY_ORDER`):
 runs that touched the world lead, errors follow, words follow those, noise sinks. Re-deriving
 a second weighting here — "importance", "urgency" — would be a fifth dialect for the same
 question the Run Ledger already answers, so this module consumes that vocabulary rather than
@@ -13,8 +13,7 @@ also makes the digest assertable: a test can require that a dropped item's title
 which is the property the gate's refusal path only *means* something through.
 
 The digest is `info`-ranked on purpose. `notification_allowed` defers `info` inside quiet
-hours, which for a MORNING digest is the correct behaviour rather than a limitation — success
-criterion 1 asks for exactly that deferral.
+hours, which for a MORNING digest is the correct behaviour rather than a limitation.
 """
 
 from __future__ import annotations
@@ -116,12 +115,12 @@ def render_digest(
 ) -> Digest:
     """Assemble the digest body from typed fields — no model call, no free-text passthrough.
 
-    Sections, in the order §1.5 asks for: what your machine did (the run lane, permalinks
+    Sections, in order: what your machine did (the run lane, permalinks
     inline), what needs you (ranked proposals with their enforced tier), then everything else
     as a ranked list. A window the gate emptied renders the "nothing needs you" line rather
     than an empty body, because a blank digest reads as a broken digest.
 
-    ``auto`` is the auto-execution stage's outcome, when it ran. What LANDED is §1.6 bound 4's half
+    ``auto`` is the auto-execution stage's outcome, when it ran. What LANDED is the other half
     of the first section: what the machine did WITHOUT being asked, each line naming the rule
     that authorised it. It joins the run lane under one heading rather than getting its own,
     because "what your machine did" is one question and two headings would make the user read

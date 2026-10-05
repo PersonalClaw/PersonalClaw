@@ -1,4 +1,4 @@
-"""Tests for the terminal sandbox-providers endpoint (EXECUTION-ISOLATION EI-4 §1.3(3))."""
+"""Tests for the terminal sandbox-providers endpoint."""
 
 from __future__ import annotations
 

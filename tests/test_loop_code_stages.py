@@ -1,4 +1,4 @@
-"""Code kind's per-cycle stage-gate orchestration (Slice 2c.iv.b) — on_new_cycle
+"""Code kind's per-cycle stage-gate orchestration — on_new_cycle
 advances SDLC stages on a passed gate, completes on the last, and handles the
 no-stage-plan project-level gate. The judge + verify command are stubbed."""
 
@@ -270,7 +270,7 @@ class TestStageAdvance:
         Regression for live loop 4fb50978: the worker recorded stage ``test_suite`` (a
         reasonable slug of "Test suite"), but the matcher only accepted ``verification`` or
         ``test suite`` (space) → the verification stage saw ZERO findings →
-        _observe_stage_metric scored nothing → P6 metric gate + rollback went silently
+        _observe_stage_metric scored nothing → the metric gate + rollback went silently
         inert (loop completed with quality_scores=None, verdicts=0)."""
         s = kinds.get("code")
         c = _code(
@@ -652,7 +652,7 @@ class TestStageAdvance:
         )
         assert any(e[1] == "gate_check" and e[2].get("ok") is False for e in ctx.events)
 
-    # ── Slice A: stage-appropriate gate (the planning-stage hard-fail fix) ──
+    # ── stage-appropriate gate (the planning-stage hard-fail fix) ──
 
     def test_planning_stage_verify_command_skipped_when_not_buildable(self, monkeypatch, tmp_path):
         """The bug: a planning/scaffold stage runs before package.json exists, so the
@@ -850,8 +850,8 @@ class TestStageAdvance:
         ps = store.get(c.id).phase_status
         assert ps["implementation"] == "done" and ps["verification"] == "active"
 
-    def test_slice_b_feeds_deliverable_content_to_judge(self, monkeypatch, tmp_path):
-        """Slice B: the gate reads the deliverable file's REAL content and feeds it into
+    def test_the_gate_feeds_deliverable_content_to_judge(self, monkeypatch, tmp_path):
+        """The gate reads the deliverable file's REAL content and feeds it into
         the judge prompt — the judge scores the observed artifact, not the worker's
         summary. Captures the prompt the judge received and asserts the content is in it,
         and that a gate_check surfaces the observed byte count."""
@@ -1184,11 +1184,11 @@ async def _async(v):
     return v
 
 
-class TestP6TickDecision:
-    """P6 step-4: the stepwise lifecycle decision IS the pure ``tick.evaluate``.
+class TestTickDecision:
+    """The stepwise lifecycle decision IS the pure ``tick.evaluate``.
     ``_tick_decide`` builds the TickState snapshot from persisted state + the adapter's
     observed (gate, metric) and returns the authoritative Decision. A stage with no
-    metric_pass degrades to the pre-P6 behavior (gate passed → advance/complete)."""
+    metric_pass degrades to the earlier behavior (gate passed → advance/complete)."""
 
     def _one_metric_stage(self):
         # Single metric-gated stage (advance clears the whole plan → COMPLETE).
@@ -1291,9 +1291,9 @@ class TestP6TickDecision:
         assert d.action is tick.Action.COMPLETE and "cap" in d.reason
 
 
-class TestP6EndToEnd:
-    """P6 step-4 through the live ``on_new_cycle`` path: a metric-gated stage OBSERVES a
-    scored quality metric (P4 judge), PERSISTS it to the quality trail, and the tick
+class TestTickEndToEnd:
+    """The tick decision through the live ``on_new_cycle`` path: a metric-gated stage OBSERVES a
+    scored quality metric, PERSISTS it to the quality trail, and the tick
     Decision drives advance/hold/rollback — the single authoritative decision path."""
 
     def _stub_scored_judge(self, monkeypatch, score: float):

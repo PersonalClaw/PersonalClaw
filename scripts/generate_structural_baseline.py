@@ -30,7 +30,7 @@ the other two.
     file exists to surface. Regeneration is legitimate ONLY when a counter LEGITIMATELY
     SHRANK, and then it must happen in that same commit.
 
-⚠️  SHIP AT THE MEASURED POPULATION, NEVER AT ZERO. This is its own ruling, restated
+⚠️  SHIP AT THE MEASURED POPULATION, NEVER AT ZERO. This is its own rule, restated
     here so this change cannot repeat the outage it warns about: a never-run gate given teeth
     at zero reds the whole tree at once. Every threshold below is derived from a MEASUREMENT of
     the tree as it stands (max 5447 lines, 9 files in the watch band; 66 upward import edges in
@@ -90,7 +90,7 @@ the other two.
     (``test_the_watch_band_is_not_sitting_on_a_cliff``) reporting under 100 lines of headroom,
     which means the boundary has stopped sitting at a gap. When that happens: measure the whole
     distribution, pick the boundary at a real gap, and record the measured table plus the
-    reasoning in the execution log — 2500 -> 2800 on 2026-08-21 is the
+    reasoning beside SIZE_WATCH_BAND_LINES — 2500 -> 2800 on 2026-08-21 is the
     worked example.
 
     It is FORBIDDEN to move the band in response to a population RISE. That is a counter, the
@@ -259,7 +259,7 @@ class Scan:
 # Files at or above this length are the WATCH BAND, and the ratchet counts HOW MANY there are
 # (shrink-only) rather than pinning each one's length. The boundary must sit at a real GAP in the
 # measured distribution, never at a round number, and this repo proved why within three days of
-# the band being authored: ``agents/native/builtin_tools.py`` grew ~233 lines (AG-14 alone added
+# the band being authored: ``agents/native/builtin_tools.py`` grew ~233 lines (one change added
 # 122) to 2467, which left the original 2500 band with **33** lines of headroom — the cliff rail
 # caught it, and the band had to move.
 #
@@ -337,7 +337,7 @@ _SIZE_RATIONALE = (
     "and is deliberately NOT a violation. Everything below the band is unconstrained except by "
     "the ceiling: routine work is untaxed, and the count is what has to come down. WHY 2800 AND "
     "NOT A ROUND 2500: the boundary has to sit at a real gap, and this repo proved it within "
-    "three days — agents/native/builtin_tools.py grew ~233 lines (AG-14 added 122) to 2467, "
+    "three days — agents/native/builtin_tools.py grew ~233 lines (one change added 122) to 2467, "
     "leaving the original 2500 band 33 lines of headroom. 2800 sits in the 225-line gap between "
     "engine.py (2583) and chat_handlers.py (2808): 217 lines of headroom, 2.17x the cliff rail's "
     "floor. It also leaves engine.py and builtin_tools.py OUTSIDE the band, where crossing 2800 "
@@ -511,10 +511,10 @@ DIRECTION_RULES: tuple[DirectionRule, ...] = (
         lower=("ledger",),
         upper=("dashboard", "sdk", "workflows", "loop", "agents", "knowledge", "learning"),
         rationale=(
-            "PP-4 extracted the run ledger OUT of workflows as a platform primitive; "
+            "The run ledger was extracted OUT of workflows as a platform primitive; "
             "workflows/journal.py is now a 685-line facade OVER it. An import back up into a "
             "consumer would silently undo that extraction: the ledger would stop being usable "
-            "by loops, tasks or evals (PP-5/PP-9 are exactly those consumers) and the "
+            "by loops, tasks or evals (exactly the consumers it was extracted for) and the "
             "extraction would have to be paid for twice. Measured at 0 edges — the extraction "
             "is clean today, and this rule is what keeps it that way for the cost of one line."
         ),
@@ -664,7 +664,7 @@ DUPLICATE_FAMILIES: tuple[DuplicateFamily, ...] = (
         name="http-error-envelope-helper",
         canonical=None,
         rationale=(
-            "PL-8 deleted THIRTEEN module-local ``json_error`` clones, one of which had minted "
+            "THIRTEEN module-local ``json_error`` clones were deleted, one of which had minted "
             "a third ``WF_UPPER_SNAKE`` code vocabulary inside the HTTP envelope. Twelve "
             "survive under other names (``_err``, ``_bad``, ``_bad_request``, ``_rpc_error``, "
             '``_invalid_path``, …), each a one-statement re-derivation of the ``{"error": '
@@ -672,7 +672,7 @@ DUPLICATE_FAMILIES: tuple[DuplicateFamily, ...] = (
             "silently — a wrong status, an UPPER_SNAKE code where the wire wants "
             "lowercase_snake, a missing field — and no round-trip test can see it, because "
             "each handler's test asserts against that handler's own clone. There is "
-            "deliberately NO canonical HTTP helper yet: the two-error-envelope ruling keeps "
+            "deliberately NO canonical HTTP helper yet: the two-error-envelope rule keeps "
             "``AgentError`` and the wire shape apart, and this counter measures the population "
             "rather than mandating a merge. The fix for a thirteenth is to PROMOTE one shared "
             "helper, never to add another."
@@ -682,9 +682,9 @@ DUPLICATE_FAMILIES: tuple[DuplicateFamily, ...] = (
         name="verdict-type",
         canonical="src/personalclaw/workflows/judge_contract.py",
         rationale=(
-            "PP-14's thesis: the engine implements verdict semantics several times over "
-            "because the primitive was never named. WF2LOO-16 deleted ``CycleVerdict`` into "
-            "``judge_contract.JudgeVerdict`` and measured that 0 of 4 loop-verdict shapes "
+            "The engine implements verdict semantics several times over because the "
+            "primitive was never named. The change that deleted ``CycleVerdict`` into "
+            "``judge_contract.JudgeVerdict`` measured that 0 of 4 loop-verdict shapes "
             "satisfied ``validate_verdict`` — four dialects, none interoperable. 23 "
             "verdict-shaped types still live outside the canonical module, each with its own "
             "pass/fail tokens and its own reason field, so no supervisor, ledger or evaluator "
@@ -698,7 +698,7 @@ DUPLICATE_FAMILIES: tuple[DuplicateFamily, ...] = (
         name="durable-write",
         canonical="src/personalclaw/atomic_write.py",
         rationale=(
-            "DAS-9: a handler rolled its own ``mkstemp`` + ``rename`` and so vanished from the "
+            "A handler rolled its own ``mkstemp`` + ``rename`` and so vanished from the "
             "history seam — the write landed on disk and no post-write hook ever fired, which "
             "is the swallowed-write defect with a green test on both sides. ``atomic_write.py`` "
             "is the ONE implementation that keeps that seam (and fsync durability) intact. "

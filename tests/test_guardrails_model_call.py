@@ -1,4 +1,4 @@
-"""Tests for the model-call chokepoint (Session 1).
+"""Tests for the model-call chokepoint.
 
 Covers the circuit breaker FSM, the attempt-level JSONL audit trail, and the
 ModelCallGuard integration (breaker check → hard timeout → audit) plus the typed

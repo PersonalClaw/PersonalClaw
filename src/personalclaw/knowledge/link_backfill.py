@@ -1,5 +1,5 @@
-"""Resumable batched entity-link backfill — the third job KL-14 clause 7 named (the
-"graph linker backfill") and could not register, because no such callable existed.
+"""Resumable batched entity-link backfill — the third standing maintenance job (the
+"graph linker backfill"), which could not be registered while no such callable existed.
 
 `maintenance_passes.py` recorded the gap with its evidence: the only linker code was
 `action_providers/knowledge_maintain_provider._reindex` / `_wikilink_mentions`, both private
@@ -76,7 +76,7 @@ def _linkable_text(row: dict) -> str:
 
     Deliberately NOT `embedder.compose_item_text`, which is the WHOLE-ITEM VECTOR text —
     title + summary only, with its docstring stating that `content` is "accepted for a stable
-    signature but unused" since KL-9 moved body recall to the chunk index. A vector wants a
+    signature but unused" since body recall moved to the chunk index. A vector wants a
     compact identity signal; the linker wants every place a name could appear, and a name
     mentioned once in a body is exactly the edge this backfill exists to record. It is also a
     superset of what the ingest path passes (`runner.py` gives `link_known_entities` the bare

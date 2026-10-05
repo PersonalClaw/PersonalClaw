@@ -1,5 +1,5 @@
 """Unit tests for design_plan_briefs — the design kind's dynamic planning-walkthrough
-briefs/parsers/projection, including the D2 multi-modal intake block."""
+briefs/parsers/projection, including the multi-modal intake block."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from personalclaw.loop import design_plan_briefs as pw
 
 
 def test_design_brief_lists_multimodal_inputs():
-    # D2: each provided reference input must appear in the design-pass brief with a
+    # Each provided reference input must appear in the design-pass brief with a
     # concrete "how to consume it" instruction so the planner works through every one.
     brief = pw.build_design_brief(
         "a warm recipe-app system",
@@ -72,7 +72,7 @@ def test_build_plan_to_phases_empty_on_garbage():
 
 
 def test_token_step_contract_emits_token_overrides():
-    # D3: foundations/palette/typography artifacts carry a machine-readable
+    # Foundations/palette/typography artifacts carry a machine-readable
     # token_overrides patch the walkthrough merges + previews. Other kinds don't.
     for k in ("foundations", "palette", "typography"):
         c = pw._artifact_contract(k)

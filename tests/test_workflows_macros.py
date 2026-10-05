@@ -1,4 +1,4 @@
-"""Template macros — one-liner patterns that expand into core nodes (Slice 9a).
+"""Template macros — one-liner patterns that expand into core nodes.
 
 The engine has thirteen node kinds and no more. A judge panel, adversarial verification, intent
 routing and a multi-modal sweep are all COMPOSITIONS of those kinds — adding `judge_panel` as

@@ -106,7 +106,7 @@ _CODE_RE = re.compile(r"^[a-z0-9]+(?:_[a-z0-9]+)*$")
 #: Emitter call sites whose code is an expression (``exc.reason``, an f-string, a
 #: local). A CEILING: an f-string is the one place a brand-new, unregistered wire
 #: code can enter without this rail noticing, so the number of such sites may not
-#: grow. Measured at PL-8: 13 in voice_profiles (``exc.reason``), 2 in packs
+#: grow. Measured when the ceiling was set: 13 in voice_profiles (``exc.reason``), 2 in packs
 #: (``f"pack_refused_{...}"``), 1 in devices (a local chosen from its constants).
 #:
 #: 17th: ``inbound/openai_dialect.openai_error`` forwards a keyword-only ``code``

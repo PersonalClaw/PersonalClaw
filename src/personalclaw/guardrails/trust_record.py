@@ -19,7 +19,7 @@ Two deliberate rails:
 
 Write failures never block a grant (the grant is the user's decision; the ledger is
 its receipt). Read failures never license anything (an unreadable record reads as
-revoked=False, absent evidence — exactly the pre-ES-13 behavior).
+revoked=False, absent evidence — exactly the behavior before trust records existed).
 """
 
 from __future__ import annotations
@@ -205,8 +205,8 @@ def record_grant(
 def record_demotion(key: str, *, floor: str, cause: str, at: str) -> None:
     """Write the receipt for a demotion: rung drops to the floor, revoked is set.
 
-    Revocation is the fail-safe direction, so it needs no human (mirrors the plan's
-    §4.2 ruling); only :func:`record_grant` — a human click — clears it.
+    Revocation is the fail-safe direction, so it needs no human; only
+    :func:`record_grant` — a human click — clears it.
     """
     if not _valid_rung(floor):
         logger.warning("trust record refused unknown floor %r for %s", floor, key)

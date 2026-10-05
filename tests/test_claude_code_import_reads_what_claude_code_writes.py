@@ -1,4 +1,4 @@
-"""The Claude Code importer reads the files Claude Code actually writes (F-01…F-04).
+"""The Claude Code importer reads the files Claude Code actually writes.
 
 Every test runs against ``tests/fixtures/agent_tool_homes/noor`` — a small copy of a real
 ``~/.claude`` (Claude Code 2.1.x) and the one repository it names, laid out exactly as Claude Code

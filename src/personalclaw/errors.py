@@ -35,8 +35,8 @@ from typing import Any
 # code → one-line meaning (the STABLE contract; the per-instance ``what``/``why``
 # carry the concrete detail). APPEND-ONLY: add a row for a new failure path;
 # never delete or reword an existing one (a saved SOP may branch on it). Seeded
-# with the codes this slice's seams raise; later slices append their own
-# (AMBIENT-SURFACES' ``unknown-component``-class, the ``ERR_UNKNOWN_NODE``)
+# with the codes the first seams raised; later features append their own
+# (dashboard views' ``unknown-component``-class, the ``ERR_UNKNOWN_NODE``)
 # to the same registry they cite.
 ERROR_CODES: dict[str, str] = {
     "ERR_TOOL_ARG_INVALID": (

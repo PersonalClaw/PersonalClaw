@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 
-// ── FB-05: what the product does ON ITS OWN is told at first run, not discovered ──────
+// ── What the product does ON ITS OWN is told at first run, not discovered ─────────────
 //
 // Two things it can do unasked: install an update and restart (opt-in, and only a source
 // checkout can), and read the seeded community Store source (on by default). A local-first

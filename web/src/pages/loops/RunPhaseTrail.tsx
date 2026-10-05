@@ -2,7 +2,7 @@ import { Check, Loader2 } from 'lucide-react'
 import { phaseForCycle } from './loopPhases'
 import type { LoopFinding } from '../../lib/api'
 
-/** The phase-progress TRAIL shared across run surfaces (P16) — a row of role pills
+/** The phase-progress TRAIL shared across run surfaces — a row of role pills
  *  (Plan → Build → Verify …) where the active phase is primary-filled with a spinner,
  *  completed phases are ok-tinted, and each phase shows a check per cycle completed
  *  within it. Extracted from the Loop cockpit so the cockpit, its status bar, and any

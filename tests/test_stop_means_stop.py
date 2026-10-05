@@ -9,7 +9,7 @@ below; each of those tests reds on the pre-fix line.
 =========================== ============ =====================================================
 layer                       reached?     evidence (pre-fix file:line)
 =========================== ============ =====================================================
-PR2-3 mid-turn cancel path  PARTLY       ``chat_handlers.py:1030`` sets ``session._stop_state``
+mid-turn cancel path        PARTLY       ``chat_handlers.py:1030`` sets ``session._stop_state``
                                          and ``session.py:1829`` calls ``provider.cancel``. But
                                          ``_stop_state`` had NO reader in ``chat_runner.py`` —
                                          its only readers were ``chat_handlers``,
@@ -23,7 +23,7 @@ in-flight model request     NO           ``runtime.py:1287-1290`` — ``cancel()
                                          ``anthropic.py:788``, ``acp_agent.py:605``). The loop
                                          at ``runtime.py:670-676`` then checked the flag only
                                          when the NEXT event arrived — awaited-and-discarded,
-                                         which is exactly what the clause forbids.
+                                         which is exactly what a stop must rule out.
 dispatched tool subprocess  NO           ``builtin_tools.py:1512-1529`` — the bash child was
                                          reachable only by its own TIMEOUT. No registry existed
                                          for a cancel to consult, and the timeout's
@@ -58,7 +58,7 @@ DELIBERATELY OUT OF SCOPE (recorded, not silently omitted)
   ``:4012``). It is fire-and-forget background spend, but it belongs to the turn that
   ALREADY COMPLETED — chips are generated after the terminal event and cancelled by the
   next dispatch. A stop on turn N killing turn N-1's chips would remove chips the user
-  can still see, for ~200 tokens. Not one of the five layers the clause enumerates.
+  can still see, for ~200 tokens. Not one of the five layers the census enumerates.
 * **An ACP-backed session reports ``cancelled``, not ``stopped_by_user``.** Its stop
   reason arrives on the wire from the external agent, so the distinction cannot be made
   locally without a second bookkeeping flag — which is the defect this change is written
@@ -82,9 +82,9 @@ Two further defects the same reading turned up, both closed here:
 
 THE BAR
 =======
-The clause asks for "a real driven stop asserting no child process survives and no
+The bar is a real driven stop asserting no child process survives and no
 further tool call is dispatched after the signal — not an assertion that a flag was
-set". So the load-bearing tests here drive a real ``NativeAgentRuntime`` over a real
+set. So the load-bearing tests here drive a real ``NativeAgentRuntime`` over a real
 ``bash`` child, stop it, and then poll the OS for the child (and its grandchild) and
 count tool dispatches. Nothing below asserts ``_cancelled is True`` as a conclusion.
 """
@@ -139,8 +139,8 @@ _POLL = 0.02
 def _pid_alive(pid: int) -> bool:
     """True while *pid* exists (signal 0 probes without delivering).
 
-    A zombie still "exists" to ``kill -0``. That is deliberate: the clause says a
-    stopped turn leaves no orphan, and an unreaped zombie IS the shape of orphan that
+    A zombie still "exists" to ``kill -0``. That is deliberate: a
+    stopped turn must leave no orphan, and an unreaped zombie IS the shape of orphan that
     still holds its end of a pipe — so this probe must not forgive one. The reaping in
     ``terminate_and_reap`` is what makes it go away.
     """
@@ -549,7 +549,7 @@ class TestARealDrivenStop:
                 tool.release.set()
                 await driver.finish()
 
-        # The shipped timing line is the evidence that the wave really was wide — HC-1's
+        # The shipped timing line is the evidence that the wave really was wide — the
         # contract: read the line production emits, don't keep a second stopwatch.
         timing = [r.getMessage() for r in caplog.records if r.getMessage().startswith("tool batch")]
         assert timing, "the batch dispatcher's timing line did not ship"
@@ -922,7 +922,7 @@ def test_the_bash_tool_spawns_into_its_own_process_group():
 
 
 def test_the_wave_loop_checks_the_signal_before_each_call():
-    """Structural guard on the queued-call drop, at the seam HC-6 moved it to.
+    """Structural guard on the queued-call drop, at the seam it now lives in.
 
     The check has to be INSIDE the per-call dispatch decision. Two weaker placements
     both pass every behavioural test that stops BETWEEN batches:
@@ -1232,7 +1232,7 @@ class TestStopTurnReachesSpawnedWork:
 
 
 def test_the_stop_card_reports_what_the_stop_reached():
-    """Clause 4's record, at the surface that renders it (the shape PR2-13 consumes)."""
+    """The stop's reach record, at the surface that renders it (the stop card's shape)."""
     from personalclaw.dashboard.chat_handlers import _stop_reach_report
 
     class _Prov:

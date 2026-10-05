@@ -29,8 +29,8 @@ import { api, isCreatedLoopRun } from '../../lib/api'
  *     token is spent that the owner did not agree to by name.
  *
  *     The budget is ONE cycle, sent as `max_cycles` and read back from the run
- *     (`GET /api/loops/<run_id>`). `general` is ported onto the workflows engine
- *     (PP-16), so `POST /api/loops` starts a run, and the run honours `max_cycles`
+ *     (`GET /api/loops/<run_id>`). `general` is ported onto the workflows engine,
+ *     so `POST /api/loops` starts a run, and the run honours `max_cycles`
  *     (#3613). Without it the run took the template's own cap of six cycles, and a
  *     first-run demo that promised one kept asking for approvals.
  *

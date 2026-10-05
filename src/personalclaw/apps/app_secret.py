@@ -1,7 +1,7 @@
 """Per-app proxy secret — mint + read the HMAC key that authenticates the proxy.
 
-An app backend binds on loopback with no inbound auth of its own (see
-``docs/architecture/app-platform.md`` §2.1): the port is a *network* boundary, not
+An app backend binds on loopback with no inbound auth of its own (see "Inbound
+authentication" in ``docs/architecture/app-platform.md``): the port is a *network* boundary, not
 an *authorization* one. To make the permission model hold, every request the gateway
 reverse-proxy forwards is signed with an HMAC over a per-app secret, and the backend's
 SDK middleware refuses anything unsigned (fail-closed). This module owns that secret's

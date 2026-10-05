@@ -1,4 +1,4 @@
-"""Calendar-aware scheduling: quiet windows + the duty gate (AUTOMATION-SUBSTRATE AUTO-A1/A2).
+"""Calendar-aware scheduling: quiet windows + the duty gate.
 
 `gates.quiet_hours` has been a RESERVED key with no semantics — declared in `GATE_KEYS`,
 accepted by validation, and consulted by nothing. This module gives it meaning, and adds the
@@ -6,7 +6,7 @@ duty-gate seam beside it.
 
 **Measured before writing.** `providers/entity_routes._in_quiet_window` already exists and gets the
 hard part right (a window may wrap midnight; a zero-length window never matches). But it is
-notification-scoped and cannot express what AUTO-A1 requires: no day-of-week, one window per call,
+notification-scoped and cannot express what a trigger needs: no day-of-week, one window per call,
 server-local minutes with no timezone, and a bare bool with no catch-up-or-skip resolution. So the
 wrap SEMANTICS are preserved deliberately — two different answers to "is 23:00 inside
 22:00→08:00" on one machine would be a bug nobody could explain — while the shape grows the three
@@ -51,12 +51,12 @@ logger = logging.getLogger(__name__)
 #: surface, and the fail-open default means a timeout costs nothing but an unfiltered fire.
 DUTY_GATE_TIMEOUT_SECS = 2.0
 
-#: Gate keys that are validated and carried but have NO METER reading them (§3.6 — S133, extended
-#: S150). `max_fires` is deliberately absent: S133 wired it against `run_count`, and `quiet_hours`,
+#: Gate keys that are validated and carried but have NO METER reading them. `max_fires` is
+#: deliberately absent: it is wired against `run_count`, and `quiet_hours`,
 #: `skip_dates`, `duty_gate` and `condition` are all genuinely enforced on the fire path.
 #:
-#: 🔴 The FIVE storm-spacing keys were added S150 after a `GATE_KEYS` sweep found them declared and
-#: unread — and the asymmetry that made it worth a session: a user setting a per-window cost cap was
+#: 🔴 The FIVE storm-spacing keys were added after a `GATE_KEYS` sweep found them declared and
+#: unread — and the asymmetry that made it worth fixing: a user setting a per-window cost cap was
 #: honestly told it is unmetered, while a user setting `debounce_secs: 300` got SILENCE and believed
 #: their automation was spacing its fires. `firepath`'s own module docstring names the order as
 #: "debounce/quiet/cooldown/condition", so three of the four gates it advertises are absent from
@@ -64,8 +64,8 @@ DUTY_GATE_TIMEOUT_SECS = 2.0
 #:
 #: What each still needs, so this list shrinks for a reason rather than by guesswork:
 #:
-#: * `max_cost_usd_per_run` — **WIRED S154**, so deliberately absent from this set. S153 made a
-#:   fire's spend attributable; S154 added the enforcement READ, in `ModelCallGuard` beside the day
+#: * `max_cost_usd_per_run` — **WIRED**, so deliberately absent from this set. A fire's spend is
+#:   attributable, and the enforcement READ lives in `ModelCallGuard` beside the day
 #:   check rather than as a fire-path gate. That placement is forced by the meter: run totals accrue
 #:   in-process AS the run spends, and the fire seam binds a FRESH per-fire key before the first
 #:   call, so a pre-fire gate would read $0.00 every time and be inert by construction.
@@ -74,14 +74,14 @@ DUTY_GATE_TIMEOUT_SECS = 2.0
 #:   capped per run (`max_cost_usd_per_run`) and per day (the day's dollar budget), both enforced; a
 #:   stored row that still carries the old key is named by the doctor, as every key nothing reads is
 #:   (`models.GATE_KEYS`).
-#: * `max_runs_per_hour` / `max_actions_per_hour` / `rate_cap` — **WIRED S152**, so deliberately
+#: * `max_runs_per_hour` / `max_actions_per_hour` / `rate_cap` — **WIRED**, so deliberately
 #:   absent. They needed a windowed history query; `ScheduleRunStore.count_since` is it, and
 #:   `firepath`'s `rate` gate delegates the decision to `missed.within_rate_window`.
-#: * `debounce_secs` / `cooldown_secs` — **WIRED S151**, so deliberately absent from this set. They
+#: * `debounce_secs` / `cooldown_secs` — **WIRED**, so deliberately absent from this set. They
 #:   needed a last-FIRE timestamp (`last_success_at`/`last_failure_at` describe an OUTCOME, and a
 #:   SUPPRESSED fire is neither); `Trigger.last_fired_at` now supplies it, written beside
 #:   `run_count` at the single fire-grant point, and `firepath`'s `spacing` gate reads it.
-#: * `idempotency` / `threshold` — R12 bundles them without pinning semantics; naming them keeps the
+#: * `idempotency` / `threshold` — declared without pinned semantics; naming them keeps the
 #:   gap visible instead of letting a `threshold: 3` read as enforced.
 #:
 #: Naming beats implying: a user who set a cap believes their automation is bounded.
@@ -94,18 +94,18 @@ UNMETERED_CAPS: frozenset[str] = frozenset(
 
 
 def run_budget_for(gates: dict[str, Any] | None) -> Any:
-    """The RUN-scope ceiling a trigger's gates declare, or an unlimited Budget (S154).
+    """The RUN-scope ceiling a trigger's gates declare, or an unlimited Budget.
 
     Reads `max_cost_usd_per_run`, the one per-run cap key.
 
-    **Malformed values are ignored rather than defaulted** — the fail-OPEN direction §1.4 assigns
-    the per-trigger cap keys. A typo'd `max_cost_usd_per_run: "ten"` must not become a $0 ceiling
-    that refuses the trigger's first model call; a cap that silences an automation is the failure
-    mode that looks exactly like a broken scheduler. Zero/negative means unlimited, matching
-    `Budget`'s own convention.
+    **Malformed values are ignored rather than defaulted** — the fail-OPEN direction
+    `gate_failure_mode` assigns the per-trigger cap keys. A typo'd `max_cost_usd_per_run: "ten"`
+    must not become a $0 ceiling that refuses the trigger's first model call; a cap that silences
+    an automation is the failure mode that looks exactly like a broken scheduler. Zero/negative
+    means unlimited, matching `Budget`'s own convention.
 
     **This is deliberately the OPPOSITE of `max_fires`**, whose malformed value fails CLOSED
-    (`service._budget_remaining` — S133). Not an inconsistency: `gate_failure_mode` classifies the
+    (`service._budget_remaining`). Not an inconsistency: `gate_failure_mode` classifies the
     two keys differently, and each implementation follows its own entry. A bad `max_fires` costs one
     visibly refused fire, recorded as a typed `skipped_budget` row a user can see; a bad
     `max_cost_usd_per_run` would instead break every model call INSIDE a run that already started,
@@ -303,8 +303,8 @@ def resolution_of(raw: Any) -> str:
     """The `quiet_resolution` for a gates block, defaulting to `skip`.
 
     `skip` is the default because it is the reversible one: a skipped fire is one missing run the
-    user can trigger by hand, while an unwanted catch-up is an action already taken. When the
-    plan says "per-trigger resolution", the safe end of that choice is the one that does less.
+    user can trigger by hand, while an unwanted catch-up is an action already taken. When
+    resolution is per-trigger, the safe end of that choice is the one that does less.
     """
     if isinstance(raw, dict):
         value = str(raw.get("resolution", "") or "").strip().lower()
@@ -368,10 +368,11 @@ class GateOutcome(str, Enum):
     ALLOWED = "allowed"
     QUIET = "quiet"
     OFF_DUTY = "off_duty"
-    #: A date the job's own `skip_dates` excludes (§AUTO-A3's "struck columns"). A distinct outcome
-    #: from QUIET because they are different promises: a quiet window suppresses a TIME OF DAY and
-    #: may catch up, while a skip date removes a WHOLE DAY and never does. Collapsing them would
-    #: render a struck column as a shaded band, which reads as "delayed" rather than "cancelled".
+    #: A date the job's own `skip_dates` excludes (a "struck column" on the week grid). A distinct
+    #: outcome from QUIET because they are different promises: a quiet window suppresses a TIME OF
+    #: DAY and may catch up, while a skip date removes a WHOLE DAY and never does. Collapsing them
+    #: would render a struck column as a shaded band, which reads as "delayed" rather than
+    #: "cancelled".
     SKIPPED = "skipped"
 
 
@@ -406,7 +407,7 @@ def evaluate_quiet(
 ) -> tuple[CalendarDecision, list[str]]:
     """The quiet-hours gate. Returns `(decision, parse_issues)`. Pure, and cannot hang.
 
-    A suppression records `skipped_gate` at the caller with THIS reason — S62's `require_reason`
+    A suppression records `skipped_gate` at the caller with THIS reason — the `require_reason`
     rule
     means "skipped_gate" alone is not enough, because it does not say which gate or which window.
     """
@@ -439,7 +440,7 @@ def evaluate_quiet(
     )
 
 
-# ── the duty-gate provider seam (AUTO-A2) ──
+# ── the duty-gate provider seam ──
 
 
 @dataclass
@@ -458,7 +459,7 @@ class DutyVerdict:
 
 
 #: The registry. A flat dict, matching the `action_providers` shape rather than inventing a second
-#: registry idiom — the plan is explicit that this seam is `action_providers`-shaped.
+#: registry idiom — this seam is deliberately `action_providers`-shaped.
 _DUTY_GATES: dict[str, Callable[[datetime, dict[str, Any]], Awaitable[DutyVerdict]]] = {}
 
 
@@ -503,8 +504,8 @@ async def evaluate_duty(
     Every failure path returns ALLOWED, and each one is deliberate:
 
     * **No gate configured** — nothing to consult.
-    * **Unknown provider name** — an app that supplied the gate may be disabled or uninstalled. §1.4
-      classifies this gate fail-open, and refusing here would mean uninstalling a calendar app
+    * **Unknown provider name** — an app that supplied the gate may be disabled or uninstalled. This
+      gate is classified fail-open, and refusing here would mean uninstalling a calendar app
       silently stops every automation that referenced it.
     * **The provider raised** — a broken third-party gate must not become a global kill switch.
     * **The provider timed out** — this runs on EVERY fire, so a hanging gate would otherwise stall
@@ -551,7 +552,7 @@ async def evaluate_duty(
     )
 
 
-# ── the week grid (AUTO-A1's read-only view) ──
+# ── the week grid (a read-only view) ──
 
 
 @dataclass
@@ -635,7 +636,7 @@ def project_occurrences(
     have, and the whole point of the view is to explain why a trigger is not firing when they expect
     it to.
 
-    **`skip_dates` and `tz_name` were measured as a gap, together.** AUTO-A3 requires skip dates to
+    **`skip_dates` and `tz_name` were measured as a gap, together.** Skip dates must
     render as struck columns, and this function did not read them at all — driven with a daily
     trigger and tomorrow-plus-one declared a skip date, the projection returned that fire completely
     unannotated while `SchedulerService` would refuse it. Worse, the two halves have to arrive
@@ -650,10 +651,10 @@ def project_occurrences(
     a moment in time — calling it 200 times for a projected week would be both slow and wrong (a
     calendar's answer for next Thursday is not knowable now).
 
-    **🔴 `next_after` closes the CRON GAP (S103).** This function took only `interval_secs`, so the
+    **🔴 `next_after` closes the CRON GAP.** This function took only `interval_secs`, so the
     week grid OMITTED every cron trigger — its caller's own comment admitted it ("a cron trigger is
     omitted rather than mis-plotted"). At the time that was right: nothing could iterate a cron's
-    fires. S96's `arm.next_fire` can, so a caller now passes a stepper — `next_after(t) -> float` —
+    fires. `arm.next_fire` can, so a caller now passes a stepper — `next_after(t) -> float` —
     and a cron plots on the same annotated grid as an interval. Omitting them made the week view a
     forecast of only half the user's automations, silently.
     """
@@ -664,7 +665,7 @@ def project_occurrences(
     from datetime import timezone as _tz
 
     windows, _issues = parse_windows((gates or {}).get("quiet_hours"))
-    # `gates.skip_dates` is accepted as well as the explicit argument: §1.1 reserves the key on the
+    # `gates.skip_dates` is accepted as well as the explicit argument: the key is reserved on the
     # unified Trigger entity, while a legacy `ScheduleJob` carries the list as a top-level field.
     # Accepting only one of the two would have quietly ignored half the triggers.
     skips = {str(d).strip() for d in (skip_dates or (gates or {}).get("skip_dates") or []) if d}
@@ -733,7 +734,7 @@ def project_occurrences(
     return out, False
 
 
-# ── `automation doctor` (§7 criterion 12) ──
+# ── `automation doctor` ──
 
 #: A file-watch glob is "broad" when fewer than this many path segments precede the first wildcard.
 #: `~/**` and `/**` are the cases that matter: they match every file the user owns, so a watch
@@ -808,9 +809,8 @@ def diagnose(
 ) -> DoctorReport:
     """Structural problems across every trigger. Pure; never raises.
 
-    The two findings §7's criterion 12 names by hand — an orphaned workflow ref and a broad
-    file-watch
-    glob — plus the ones that fell out of the entity work and are equally silent:
+    The two headline findings — an orphaned workflow ref and a broad file-watch glob — plus the
+    ones that fell out of the entity work and are equally silent:
 
     * a trigger referencing a workflow def that does not exist fires and fails forever,
     * a broad watch glob fires on everything the user owns,
@@ -840,7 +840,7 @@ def diagnose(
         tid = str(entry.get("id", "") or "")
         # Annotated two-step rather than a ternary: the conditional form types as
         # `Any | dict | None`, which mypy correctly refuses at every `.get` below. Third time this
-        # pattern has come up in this program — the two-step is the fix.
+        # pattern has come up — the two-step is the fix.
         raw_gates = entry.get("gates")
         gates: dict[str, Any] = dict(raw_gates) if isinstance(raw_gates, dict) else {}
         raw_workflow = entry.get("workflow")
@@ -925,8 +925,8 @@ def diagnose(
                 )
             )
 
-        # 🔴 An UNFENCED write-capable action (decision 7). The fence is wired as of S116 and
-        # denies on an empty block, so a trigger authored before that ships carries
+        # 🔴 An UNFENCED write-capable action. The capability fence is wired and
+        # denies on an empty block, so a trigger authored before it shipped carries
         # `capabilities: {}`, requests a write-capable provider, and REFUSES on its next fire. The
         # refusal is in the ledger, but the user's question is "why did my automation stop", and
         # the doctor is where that gets answered. Re-saving the trigger freezes the grant.
@@ -1004,8 +1004,8 @@ def diagnose(
                     )
                 )
 
-        # 🔴 An `agent_scope` that ENFORCES NOTHING (§1.4 decision 2). The key is declared,
-        # validated (as of this session) and persisted — but no fire path reads it, because the
+        # 🔴 An `agent_scope` that ENFORCES NOTHING. The key is declared,
+        # validated and persisted — but no fire path reads it, because the
         # store-backed `event` kind fires on memory, inbox and app events, none of which carries an
         # agent, while agent scoping lives on the chat-turn hook path (`fire_for_ids`). An author
         # who set it believes their trigger is fenced to one agent. Named here because that belief
@@ -1132,7 +1132,7 @@ def _workflows_config() -> object | None:
 def default_quiet_window() -> QuietWindow | None:
     """The configured default quiet window, or None.
 
-    Read HERE rather than at each call site, for the reason S61k documented: a knob wired through
+    Read HERE rather than at each call site: a knob wired through
     all four config points is still inert if the module keeps its own constant. Best-effort — a
     malformed `config.json` must not stop an automation from firing.
     """

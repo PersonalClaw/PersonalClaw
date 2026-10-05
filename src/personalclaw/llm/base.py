@@ -23,7 +23,7 @@ from typing import Literal
 
 # Event kinds + the neutral event — the single source of truth is llm/events.py.
 # LLMEvent stays as the public alias every provider/consumer imports; it is now
-# the backend-neutral AgentEvent, no longer the ACP event (decouples G5).
+# the backend-neutral AgentEvent, no longer the ACP event.
 from personalclaw.llm.events import (  # noqa: F401
     EVENT_AGENT_SWITCHED,
     EVENT_CLEAR_STATUS,
@@ -209,7 +209,7 @@ class ModelProvider(ABC):
         those, :meth:`stream_command` below is a plain prompt wearing a command's name.
         A caller that must tell the user which of the two it got — because "the agent ran
         /compact" and "the agent was asked about the text /compact" are different
-        answers — reads THIS, not the method's success (`G4`).
+        answers — reads THIS, not the method's success.
         """
         return False
 

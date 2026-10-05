@@ -3,7 +3,7 @@ walkthrough — the dynamic design-pass step list, per-step briefs, the JSON par
 the decomposition→stage_plan projection. No store/orchestration deps (those live in
 loop.plan_walkthrough); just the deterministic pieces the code Walkthrough delegate
 wraps. Lives in the unified loop package so the code kind doesn't reach into legacy
-code/ (cutover Slice 2e). Legacy code.plan_walkthrough re-exports these until deletion."""
+code/. Legacy code.plan_walkthrough re-exports these until deletion."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ STEP_KIND_GUIDE: tuple[tuple[str, str], ...] = (
 )
 
 
-_CODE_MAP_BUDGET_CHARS = 8_000  # ~2K tokens, per §5.5
+_CODE_MAP_BUDGET_CHARS = 8_000  # ~2K tokens
 
 
 def _code_map_block(workspace_dir: str) -> str:

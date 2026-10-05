@@ -1,13 +1,13 @@
 """The pending-outcome resolver — a decision's bet is graded once its horizon elapses.
 
-LEARNING-FLYWHEEL §3.3 (LEARN-R18). A decision-producing run journals a `pending_outcome` at
+A decision-producing run journals a `pending_outcome` at
 DECISION time — the subject it decided, the `metric` that will reveal whether it was right, the
 `horizon_secs` after which that metric is meaningful, the `baseline` to beat. This module is the
 other half: a one-shot on the curator tick that, for every open question whose horizon has passed,
 measures ground truth from semantic memory, scores it against the baseline, journals an
 `outcome_resolved` (closing the question), and files a graded lesson PROPOSAL.
 
-The clauses the acceptance criterion names, each driven against the REAL `MemoryService`/
+The properties covered, each driven against the REAL `MemoryService`/
 `VectorMemoryStore`, the REAL Run Ledger (`Journal` over `store`), and the REAL proposal store
 (monkeypatched to a tmp home):
 
@@ -251,7 +251,7 @@ def test_the_score_reflects_beating_the_baseline(svc, home):
 
 
 def test_the_outcome_resolved_record_cites_the_pending_event(svc, home):
-    """LEARN-R18: `outcome_resolved.pending_event_id` == the open question's `event_id`. This link
+    """`outcome_resolved.pending_event_id` == the open question's `event_id`. This link
     is what makes the resolver idempotent."""
     run = _run()
     q = _open_question(run, horizon=100.0)

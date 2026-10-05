@@ -185,7 +185,7 @@ def test_the_scan_finds_real_populations() -> None:
     """
     allowlist = _allowlist()
     keys = _in_scope(allowlist)
-    # 234 as measured after #465 deleted all six ruled allowlist rows. The floor sits just under
+    # 234 as measured after #465 deleted six allowlist rows. The floor sits just under
     # that, not under the 240 reading that preceded the cleanup — a floor above the live count
     # would red on the very cleanup the rail asks for.
     assert len(allowlist) >= 231, f"the allowlist import must find the paths, got {len(allowlist)}"

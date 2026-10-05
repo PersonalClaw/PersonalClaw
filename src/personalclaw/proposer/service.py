@@ -1,10 +1,10 @@
 """Fire-wait-verify orchestration for the second-opinion handoff.
 
-One entry point, :func:`run_second_opinion`, doing exactly what §4.1 specifies and in this order:
+One entry point, :func:`run_second_opinion`, doing exactly this, in this order:
 
 1. **package** — build the brief with a FRESH diff and write it to a unique file under the
    run/loop dir;
-2. **select** — a DIFFERENT cataloged runner than the one that stalled (§3 catalog, health
+2. **select** — a DIFFERENT cataloged runner than the one that stalled (the catalog, health
    evidence, capabilities, the user's binding order for ties), degrading to the ``subagent``
    backend when the exclusion leaves nothing eligible;
 3. **fire** — one shot, headless, hard timeout, in the SAME sandbox class as the stalled run, or,

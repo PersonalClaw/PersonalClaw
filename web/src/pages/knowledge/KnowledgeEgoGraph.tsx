@@ -74,8 +74,8 @@ export function KnowledgeEgoGraph({
   /** Leave the focused view for the full graph. Rendered as "↺ show all" — the Studio's own words
    *  for the same intent — and omitted entirely when unwired, rather than shipping a dead link. */
   onShowAll?: () => void
-  /** Where the depth control STARTS. The depth itself stays user-owned from then on — the clause
-   *  asks for expansion by hop depth, which a fixed depth cannot provide however it is chosen. */
+  /** Where the depth control STARTS. The depth itself stays user-owned from then on — the graph
+   *  expands by hop depth, which a fixed depth cannot provide however it is chosen. */
   defaultHopDepth?: number
 }) {
   const [hopDepth, setHopDepth] = useState(defaultHopDepth)
@@ -178,7 +178,7 @@ export function KnowledgeEgoGraph({
           // a canvas with one node, and the drawer below is what speaks to it.
           //
           // 🪤 Neither of this view's two empty sentences promises a SCHEDULE ("… once the graph
-          // pass has run"), even though the pass is real and cadenced (KL-13 on the host).
+          // pass has run"), even though the pass is real and cadenced.
           // `settings/promisedMechanismsExist.test.ts` censuses "Nothing … yet" copy that also
           // promises an automatic future and requires each one traced to its mechanism in that
           // test's own VERIFIED list. Naming the cause instead of the timetable is both truer

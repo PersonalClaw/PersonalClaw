@@ -3,7 +3,7 @@ import { Layers, Loader2 } from 'lucide-react'
 import { Toggle } from '../../ui/Toggle'
 import { api, type ToolGroupsData } from '../../lib/api'
 
-/** Tool groups (Context Economy §5) — the Tools-page surface for the tool-surface
+/** Tool groups — the Tools-page surface for the tool-surface
  *  partition and what it costs in context.
  *
  *  DESIGN HONESTY: activation is **per-session runtime state** — the agent drives

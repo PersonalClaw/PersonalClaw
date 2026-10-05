@@ -1,9 +1,9 @@
 """The browse loop — perceive, decide, act, verify, park.
 
-BA-1 gave us perception (``extraction`` → ``compress``) and the sentinel action language
-(``sentinels``); BA-2 gave us a navigation path that cannot leave the BROWSE egress policy
-(:class:`~personalclaw.browse.cdp.GatedCdpSession`). This module is the driver that turns
-those into a bounded, auditable agent loop, and it is the ONLY consumer of both.
+Perception (``extraction`` → ``compress``) and the sentinel action language (``sentinels``)
+are one half; a navigation path that cannot leave the BROWSE egress policy
+(:class:`~personalclaw.browse.cdp.GatedCdpSession`) is the other. This module is the driver that
+turns those into a bounded, auditable agent loop, and it is the ONLY consumer of both.
 
 The cycle,::
 
@@ -28,7 +28,7 @@ not a failure: it PARKS, preserving the notes accumulated so far, because a brow
 ran out of steps has usually done most of the work and throwing it away costs the user the
 whole task.
 
-**A SUBMIT is verified, not assumed.** §7.1: a form post whose outcome nobody checked is the
+**A SUBMIT is verified, not assumed.** A form post whose outcome nobody checked is the
 single most common way an autonomous browse silently does nothing (or does it twice). After
 every SUBMIT the loop waits for a URL change or a content delta, re-extracts, and asks the
 model to judge FORM_OK / FORM_FAILED — a second model call, deliberately, because "the page
@@ -85,10 +85,10 @@ from personalclaw.security import fence_untrusted
 
 logger = logging.getLogger(__name__)
 
-#: Plan §7.2 — "configurable per invocation, default 20 (prevents infinite browsing)".
+#: Configurable per invocation; the default of 20 prevents infinite browsing.
 MAX_STEPS_DEFAULT = 20
 
-#: Plan §7.2 stuck detection: the same rendered action this many times in a row earns one
+#: Stuck detection: the same rendered action this many times in a row earns one
 #: warning injected into the next prompt. One MORE repeat after the warning ends the run —
 #: a warning the model ignores is not a guard, it is a slower infinite loop.
 STUCK_REPEAT_LIMIT = 3
@@ -118,19 +118,19 @@ PARK_TAKEN_OVER = "taken_over"
 #: card that answers it; a second literal in this module would be the fifth park reason and the
 #: first one with two spellings.
 
-#: the vision grounding could not reach a model. The park reason is the change's honest refusal:
+#: the vision grounding could not reach a model. The park reason is the honest refusal:
 #: a canvas-only page with no ``image_modality`` model bound must SAY so, because the alternative is
 #: a run that looped until ``max_steps`` over a control it could see and never explain.
 PARK_VISION_UNAVAILABLE = "vision_unavailable"
-#: the soul guardrail reaching the run: the page asks a human to prove they are one. Parked
-#: rather than warned, because a CAPTCHA does not become answerable on the next step, and a warned
-#: agent spends the remaining budget re-trying the one thing it must never do.
+#: the human-challenge guardrail reaching the run: the page asks a human to prove they are one.
+#: Parked rather than warned, because a CAPTCHA does not become answerable on the next step, and a
+#: warned agent spends the remaining budget re-trying the one thing it must never do.
 PARK_HUMAN_CHALLENGE = "human_challenge"
 
 #: The SEL rows this module writes (the `browse_egress` covers the navigation denials).
 SEL_EVENT_SOURCE = "browse"
 SEL_OPERATION_PARK = "browse.park"
-#: BA-10, audited as its OWN operation — the same discipline as the desktop driver's
+#: A vision click, audited as its OWN operation — the same discipline as the desktop driver's
 #: ``computer_click:located``/``:global`` (``computer_use/service.py:_operation``): "a real-cursor
 #: warp is one filter away from every other click". A coordinate click that shared the park row's
 #: operation would be indistinguishable from an ordinary one in the audit, which is the only place
@@ -193,7 +193,7 @@ class PageDriver(Protocol):
     Navigation is deliberately absent: it belongs to
     :class:`~personalclaw.browse.cdp.GatedCdpSession`, which pre-flights every URL through
     the egress guard. A driver that could navigate would be a second, ungated path to the
-    network — the one thing BA-2 exists to prevent.
+    network — the one thing the gated session exists to prevent.
     """
 
     async def html(self) -> str:
@@ -207,7 +207,7 @@ class PageDriver(Protocol):
     async def click(self, ref: ElementRef) -> None: ...
 
     async def click_at(self, x: float, y: float) -> None:
-        """Click a viewport COORDINATE in CSS pixels with a located input event (BA-10).
+        """Click a viewport COORDINATE in CSS pixels with a located input event.
 
         Reached only through the explicitly-enabled vision path. There is deliberately no
         coordinate ``fill`` beside it: a coordinate the agent could TYPE into would be a way to put
@@ -217,7 +217,7 @@ class PageDriver(Protocol):
         ...
 
     async def viewport(self) -> tuple[float, float]:
-        """The CSS viewport ``(width, height)``; ``(0.0, 0.0)`` when unreadable (BA-10)."""
+        """The CSS viewport ``(width, height)``; ``(0.0, 0.0)`` when unreadable."""
         ...
 
     async def fill(self, ref: ElementRef, value: str) -> None: ...
@@ -346,7 +346,7 @@ class BrowseLoopResult:
 
 @dataclass
 class _LoopState:
-    """Mutable bookkeeping, split out so the loop body reads as the plan's numbered cycle."""
+    """Mutable bookkeeping, split out so the loop body reads as the cycle the module draws."""
 
     notes: list[str] = field(default_factory=list)
     steps: list[BrowseStep] = field(default_factory=list)
@@ -526,21 +526,21 @@ async def run_browse_loop(
     ``session`` is a :class:`~personalclaw.browse.cdp.GatedCdpSession` (duck-typed so a test
     can hand in a recorder): the loop calls ``start()`` once and ``navigate(url)`` for the
     first page and every NAVIGATE, so no URL reaches the browser without the egress
-    pre-flight and the in-page safety script BA-2 installs.
+    pre-flight and the in-page safety script the gated session installs.
 
     ``budget_check`` is consulted before EVERY model call. Placing it here rather than in the
     provider is the point: the provider is one caller, and a guard that lives in one caller
-    is bypassed by the next one. ``kill_check`` (BA-5) is checked at the SAME seam and for the
+    is bypassed by the next one. ``kill_check`` is checked at the SAME seam and for the
     same reason — the mirror's stop button must halt an in-flight run, not just refuse the next.
     So are ``close_check`` and ``takeover_check``, which a run in the operator's own browser binds
     to its own tab: the tab closing stops the run, and the operator bringing it to the front
     pauses it.
 
-    ``on_step`` (BA-5) is called once per completed step with the step record and its screenshot
+    ``on_step`` is called once per completed step with the step record and its screenshot
     path — the provider turns each into a ``browse_step`` broadcast so a human can watch the run
     live. It is a relay only: it never changes control flow, and a sink that raises is swallowed.
 
-    ``vision_grounding`` (BA-10) opts this run into the located-click path for pages whose only
+    ``vision_grounding`` opts this run into the located-click path for pages whose only
     control is a canvas or image-map. It defaults to **False** and is NEVER inferred: a run that
     finds zero addressable refs does not switch it on, and a failed ``CLICK <ref>`` does not fall
     back to it. That is the desktop driver's rule for its coordinate methods
@@ -633,7 +633,7 @@ async def run_browse_loop(
 
         try:
             html = await page.html()
-            # 🔴 BA-4: SCREENED at the point it is read, which is the only place the browser's own
+            # 🔴 SCREENED at the point it is read, which is the only place the browser's own
             # URL enters this process. One call therefore covers all six consumers at once — the
             # outline's `# <url>` header, the fence's `source`/`source_id` (both reach the prompt),
             # the Links DSL's base, `final_url` in the run payload, the user-facing park sentence,
@@ -703,7 +703,7 @@ async def run_browse_loop(
             continue
 
         index = _element_index(extraction)
-        # 🔴 BA-4: the model's OWN output is screened before it is recorded, once, here — the only
+        # 🔴 The model's OWN output is screened before it is recorded, once, here — the only
         # place `render()` is called on the way into the run's state. `rendered` flows into the
         # stuck-detector, the next prompt's WARNINGS block, the step ledger, the SEL park row and
         # the parked run's sentence; screening at those five sites is five chances to forget.
@@ -811,7 +811,7 @@ async def run_browse_loop(
             outcome_note = await _actuate(action, page=page, index=index, state=st)
 
         if st.login_required_ref:
-            # 🔴 BA-4 §5.2: the agent tried to authenticate, so a HUMAN must. Parked, not failed —
+            # 🔴 The agent tried to authenticate, so a HUMAN must. Parked, not failed —
             # `_park` keeps the notes, and the provider projects a park into the shipped needs-input
             # gate. The detail names the FIELD's ref; there is no value to name, because
             # `extraction` never read one.
@@ -863,14 +863,14 @@ async def _click_vision(
 
     1. **The run must have opted in.** A refusal the executor makes ITSELF, not merely a line the
        prompt withheld: the prompt is a request, and this is the single call site of ``click_at``.
-       BA-4's credential refusal is placed by the same reasoning, one statement away in
+       The credential refusal is placed by the same reasoning, one statement away in
        :func:`_actuate`.
     2. **A ref must NOT already exist.** The located path is for a page with nothing addressable; on
        a page with refs it is a worse way to do a thing that already works, and letting it run there
        is how a coordinate click becomes the model's default. This is the "never auto-selected" rule
        pointing the other way — the vision path cannot quietly REPLACE the ref path either.
-    3. **The soul guardrail** (:func:`vision.human_challenge`), which also screens the page text, so
-       a CAPTCHA is refused before an image is sent anywhere.
+    3. **The human-challenge guardrail** (:func:`vision.human_challenge`), which also screens the
+       page text, so a CAPTCHA is refused before an image is sent anywhere.
     4. Then grounding, then the viewport, then the event.
 
     Every outcome is SEL-audited under :data:`SEL_OPERATION_VISION_CLICK`, including the refusals —
@@ -964,7 +964,7 @@ async def _click_vision(
 def _audit_vision_click(
     *, outcome: str, detail: str, point: tuple[float, float] | None = None
 ) -> None:
-    """Best-effort SEL row for ONE located-click attempt, allowed or refused (BA-10).
+    """Best-effort SEL row for ONE located-click attempt, allowed or refused.
 
     Its own ``operation`` (:data:`SEL_OPERATION_VISION_CLICK`) so a coordinate click is one filter
     away from every ref-addressed one. ``detail`` is truncated and never carries page content beyond
@@ -995,7 +995,7 @@ async def _actuate(
 ) -> str:
     """Perform a page-local action. Returns the step note; never raises.
 
-    ``index`` arrives BUILT rather than being derived from a ``PageExtraction`` here (BA-4). The
+    ``index`` arrives BUILT rather than being derived from a ``PageExtraction`` here. The
     caller needs the same ref→element map one statement earlier, to screen the rendered action
     line, and two independent builds of the same index is how the executor and the screen would
     eventually disagree about which refs are credential fields — the screen would pass a line the
@@ -1112,7 +1112,7 @@ def _park(state: _LoopState, *, goal: str, url: str, reason: str, detail: str) -
 
 
 def _audit_park(*, reason: str, detail: str, url: str, notes: int) -> None:
-    """Best-effort SEL row for a park (plan §9: stuck-detection exits are audited).
+    """Best-effort SEL row for a park (stuck-detection exits are audited).
 
     Swallows: losing the audit row must not lose the run's notes.
     """

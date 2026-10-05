@@ -122,12 +122,10 @@ _SNAKE_CASE_RE = re.compile(r"^[a-z][a-z0-9_]*$|^\*$")
 class TestConfigSchemaProperties:
     """Property-based tests for the config schema registry."""
 
-    # Feature: config-schema, Property 1: All config fields carry required metadata
+    # Property: All config fields carry required metadata
     def test_all_fields_carry_required_metadata(self) -> None:
         """Every dataclass field in the config hierarchy must have
         'label' (str) and 'help' (str) in its metadata.
-
-        **Validates: Requirements 1.1**
         """
         all_fields = _all_fields_recursive(AppConfig)
         assert len(all_fields) > 0, "Expected at least one field"
@@ -143,7 +141,7 @@ class TestConfigSchemaProperties:
                 meta["help"], str
             ), f"Field '{path}' help must be str, got {type(meta['help'])}"
 
-    # Feature: config-schema, Property 2: Safe defaults for missing optional metadata
+    # Property: Safe defaults for missing optional metadata
     @given(
         has_tags=st.booleans(),
         has_sensitive=st.booleans(),
@@ -160,8 +158,6 @@ class TestConfigSchemaProperties:
         """When optional metadata keys are omitted, ConfigEntry must use
         safe defaults: tags=[], sensitive=False, deprecated=False,
         enumValues=None.
-
-        **Validates: Requirements 1.5**
         """
         meta: dict = {"label": "Test", "help": "Test help."}
         if has_tags:
@@ -204,13 +200,11 @@ class TestConfigSchemaProperties:
         if not has_enum:
             assert entry.enum_values is None
 
-    # Feature: config-schema, Property 3: Registry entries are structurally complete
+    # Property: Registry entries are structurally complete
     def test_registry_entries_structurally_complete(self) -> None:
         """Every SCHEMA_REGISTRY entry must have all required fields and
         every path must be reachable via dataclasses.fields() recursion
         on AppConfig.
-
-        **Validates: Requirements 3.2, 2.6**
         """
         required_attrs = [
             "path",
@@ -267,13 +261,11 @@ class TestConfigSchemaProperties:
             # Verify kind is set
             assert entry.kind == "core", f"Entry '{entry.path}' has unexpected kind '{entry.kind}'"
 
-    # Feature: config-schema, Property 4: Python-to-schema type mapping is correct
+    # Property: Python-to-schema type mapping is correct
     def test_python_to_schema_type_mapping(self) -> None:
         """For every field in the config hierarchy, the schema registry
         must map Python types correctly: str→string, int→integer,
         float→number, bool→boolean, list→array, dict/dataclass→object.
-
-        **Validates: Requirements 3.3, 3.4**
         """
         # Build a lookup from path → ConfigEntry
         registry_by_path: dict[str, ConfigEntry] = {e.path: e for e in SCHEMA_REGISTRY}
@@ -307,7 +299,7 @@ class TestConfigSchemaProperties:
                 f"got {entry.has_children}"
             )
 
-    # Feature: config-schema, Property 5: ConfigEntry serialization round-trip
+    # Property: ConfigEntry serialization round-trip
     @given(
         path=st.text(
             alphabet=st.sampled_from("abcdefghijklmnopqrstuvwxyz_."),
@@ -352,8 +344,6 @@ class TestConfigSchemaProperties:
     ) -> None:
         """Serializing a ConfigEntry via config_entry_to_dict() and
         reconstructing it must produce an equivalent entry.
-
-        **Validates: Requirements 4.4**
         """
         enum_values = ["a", "b", "c"] if has_enum else None
         default_value = None if default_is_none else "test_default"
@@ -404,12 +394,10 @@ class TestConfigSchemaProperties:
         assert reconstructed.enum_values == original.enum_values
         assert reconstructed.default_value == original.default_value
 
-    # Feature: config-schema, Property 15: All config paths use snake_case
+    # Property: All config paths use snake_case
     def test_all_config_paths_use_snake_case(self) -> None:
         """Every segment of every SCHEMA_REGISTRY entry path must match
         [a-z][a-z0-9_]* or be the wildcard '*'.
-
-        **Validates: Requirements 9.3**
         """
         assert len(SCHEMA_REGISTRY) > 0, "Registry should not be empty"
 
@@ -424,24 +412,19 @@ class TestConfigSchemaProperties:
 
 
 # ---------------------------------------------------------------------------
-# Phase 2: Agent-Workspace Bindings Schema Registry Tests
+# Agent-Workspace Bindings Schema Registry Tests
 # ---------------------------------------------------------------------------
 
 
 class TestAgentWorkspaceBindingsSchema:
-    """Unit tests for schema registry entries added by Phase 2 dataclasses.
+    """Unit tests for schema registry entries added by the agent-workspace binding dataclasses.
 
     Verifies that the auto-generated schema registry contains all expected
     paths for agents, workspaces, memory_stores, and top-level defaults.
-
-    **Validates: Requirements 10.1, 10.2, 10.3, 10.4**
     """
 
     def test_agents_paths_exist(self) -> None:
-        """agents.* paths are present in SCHEMA_REGISTRY.
-
-        **Validates: Requirement 10.1**
-        """
+        """agents.* paths are present in SCHEMA_REGISTRY."""
         paths = {e.path for e in SCHEMA_REGISTRY}
         assert "agents" in paths
         assert "agents.*" in paths
@@ -450,10 +433,7 @@ class TestAgentWorkspaceBindingsSchema:
         assert "agents.*.memory_store" in paths
 
     def test_memory_stores_paths_exist(self) -> None:
-        """memory_stores.* paths are present in SCHEMA_REGISTRY.
-
-        **Validates: Requirement 10.3**
-        """
+        """memory_stores.* paths are present in SCHEMA_REGISTRY."""
         paths = {e.path for e in SCHEMA_REGISTRY}
         assert "memory_stores" in paths
         assert "memory_stores.*" in paths
@@ -462,8 +442,6 @@ class TestAgentWorkspaceBindingsSchema:
     def test_top_level_defaults_exist(self) -> None:
         """default_agent top-level entry exists; retired default_memory_store
         stays gone (removed 2026-07 — zero consumers).
-
-        **Validates: Requirement 10.4**
         """
         paths = {e.path for e in SCHEMA_REGISTRY}
         assert "default_agent" in paths
@@ -475,8 +453,6 @@ class TestAgentWorkspaceBindingsSchema:
     def test_additional_properties_for_dynamic_keys(self) -> None:
         """JSON Schema uses additionalProperties for agents and memory_stores
         dynamic keys.
-
-        **Validates: Requirements 10.1, 10.3**
         """
         top_props = JSON_SCHEMA.get("properties", {})
 

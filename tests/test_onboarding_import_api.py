@@ -1,6 +1,6 @@
 """``/api/onboarding/import`` — the onboarding step's two calls.
 
-PEP-4 shipped the engine with no HTTP surface at all; this is the surface, and these
+The import engine shipped with no HTTP surface at all; this is the surface, and these
 are the properties that make it safe to hand to a first-run screen. Every test drives
 the REAL router (``TestClient`` over the registered app), a FIXTURE foreign root bound
 through ``CLAUDE_CONFIG_DIR``/``CODEX_HOME``, and a FIXTURE home bound through
@@ -9,7 +9,7 @@ through ``CLAUDE_CONFIG_DIR``/``CODEX_HOME``, and a FIXTURE home bound through
 test body runs, because an isolation lever that silently missed would turn this suite
 into a scan of the machine it runs on.
 
-The load-bearing tests, one per clause the change names:
+The load-bearing tests, one per property:
 
 * ``test_fresh_home_scan_shows_the_source_with_nothing_already_imported`` — a fresh home
   with a fixture source shows the step something to offer.
@@ -396,7 +396,7 @@ async def test_planted_secret_never_reaches_the_home_through_the_route(make_clie
 
 @pytest.mark.asyncio
 async def test_reentry_marks_already_imported_items_existing(make_client):
-    """The change's re-entry clause, over the wire: import, then scan again."""
+    """The re-entry property, over the wire: import, then scan again."""
     async with make_client() as client:
         scan = await _scan(client)
         status, _ = await _import(client, fingerprints=[_fingerprint(scan, "mcp_servers")])

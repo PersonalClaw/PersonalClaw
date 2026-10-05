@@ -1,6 +1,6 @@
 """Rails for #2821: every approval says whether its call is established as a read.
 
-``ONBOARDING-UX`` Contract C2 names three inputs to the approval brief's blast-radius
+Three inputs feed the approval brief's blast-radius
 derivation — the tool name, the existing risk level, and the backend's read classification.
 The third was once computed per approval and dropped before any wire; then it was published as
 a command-screening verdict with THREE states, ``None`` meaning "not a shell call", so every

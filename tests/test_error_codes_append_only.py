@@ -1,13 +1,13 @@
-"""Append-only guard for the §2 AgentError code registry.
+"""Append-only guard for the AgentError code registry.
 
 A shipped ``ERROR_CODES`` key is a STABLE surface: an agent — and the saved
 prompts/SOPs it writes — branch on the code, never on the prose. So once a code
 is released it is never removed or reworded; new failure paths ADD a code. This
-suite is the enforcement the plan's §2.1 comment promises ("test asserts no
-removal/redefinition").
+suite is the enforcement the registry's own APPEND-ONLY comment promises (no
+removal/redefinition).
 
 The mechanism is a frozen baseline (:data:`_RELEASED`) embedded here: the set of
-codes + meanings released as of this slice. The live registry MUST be a superset
+codes + meanings released so far. The live registry MUST be a superset
 whose baseline entries match byte-for-byte. Adding a code = add a row to
 ``ERROR_CODES`` (the baseline is untouched → still a subset → still green).
 Removing or rewording one = the baseline entry no longer matches → red, which is
@@ -27,7 +27,7 @@ import re
 
 from personalclaw.errors import ERROR_CODES
 
-# The codes released as of the initial slice. APPEND a row
+# The codes released as of the initial baseline. APPEND a row
 # here only when a code is actually released; never edit or delete an existing
 # row. This is deliberately a copy, not an import of a subset of ERROR_CODES —
 # the copy is what detects an in-place reword of the live meaning.

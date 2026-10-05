@@ -18,7 +18,7 @@ import {
 
 /** The Rooms tab's body — the list of rooms, and the way to make the first one.
  *
- *  It sits inside `ChatHistoryPage` under the fifth `origin` scope, which is AGENT-ROOMS C9's
+ *  It sits inside `ChatHistoryPage` under the fifth `origin` scope, which is the
  *  answer to "sidebar peer or a mode of the chat page": there is no sidebar (measured — the
  *  chat page's own comment says so), the session list is this page, and its origin Segmented is
  *  the navigation that does exist. So a room is a scope of it, reached at

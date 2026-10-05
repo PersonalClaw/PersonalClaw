@@ -1,1 +1,1 @@
-"""slice_4 exemplar package (WF2 slice_4)."""
+"""slice_4 exemplar package (mid-flight workflow mutation)."""

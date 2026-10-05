@@ -1,6 +1,6 @@
 # PersonalClaw build & deploy targets
 
-# The virtualenv lives INSIDE this repo at .venv/ (recreated here during the S12
+# The virtualenv lives INSIDE this repo at .venv/ (recreated here during the
 # workspace split — venvs are not relocatable). PyInstaller output stays intra-repo
 # too. Override VENV=... / PYI_BUNDLE_DIR=... if yours differ.
 PYTHON  ?= python3
@@ -101,7 +101,7 @@ test:
 ## default browser gate would make the gate mean nothing — the failure mode every rail in this repo
 ## is written to avoid.
 ##
-## MEASURED OFFLINE AND CREDENTIAL-FREE (the last clause), Darwin dev machine, 2026-08-26:
+## MEASURED OFFLINE AND CREDENTIAL-FREE (the property above), Darwin dev machine, 2026-08-26:
 ## 484 passed / 8 skipped / 0 failed, 7.8m of Playwright time, 469s wall clock including `npm run
 ## build` and both webServer boots. Run with HTTP_PROXY/HTTPS_PROXY/ALL_PROXY pointed at the closed
 ## port 127.0.0.1:1 and NO_PROXY=localhost (localhost MUST stay exempt or the harness cannot reach
@@ -277,14 +277,14 @@ desktop: pyinstaller
 ## desktop-dist: build the macOS .dmg in desktop/dist/, and VERIFY its signature state.
 ## Run on macOS — release.yml's `desktop-mac` job is the canonical caller.
 ##
-## The app is shipped AD-HOC SIGNED AND NOT NOTARIZED, by owner ruling 2026-09-22
+## The app is shipped AD-HOC SIGNED AND NOT NOTARIZED, on purpose
 ## (producing the installer does not require a real signature, and one needs a paid Apple
 ## Developer account the project has deliberately not bought). Getting to that state took
 ## two defects, because each obvious step does something other than what it reads like:
 ##
 ##   1. "WE ADDED NO SIGNING STEP" IS NOT "THE OUTPUT IS UNSIGNED". electron-builder
 ##      AUTO-DISCOVERS an identity from the build machine's login keychain, so a local
-##      build shipped PersonalClaw.app signed `Authority=MeetNote Developer` — an
+##      build shipped PersonalClaw.app signed with another developer's `Authority=` — an
 ##      unrelated third party's identity on a would-be public release artifact — while
 ##      this comment claimed the build was unsigned. `CSC_IDENTITY_AUTO_DISCOVERY=false`
 ##      below and `"identity": null` in desktop/package.json both stop that. Keep BOTH:

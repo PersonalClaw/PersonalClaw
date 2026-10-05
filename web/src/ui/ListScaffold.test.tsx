@@ -3,9 +3,9 @@ import { render, fireEvent } from '@testing-library/react'
 import { Plus } from 'lucide-react'
 import { EmptyState, ListRow } from './ListScaffold'
 
-// ── The primary-empty idiom, locked (design-system consistency S3/T3.1) ──────
+// ── The primary-empty idiom, locked ──────────────────────────────────────────
 // `EmptyState` is the ONE home for a list page's "nothing exists yet" state. The
-// interaction-pattern convergence (cy17) brought the last hand-rolled empties
+// interaction-pattern convergence brought the last hand-rolled empties
 // (LoopsListPage, CodeSection) onto it — a codification, not a redesign. These
 // tests pin the exact markup those call-sites now depend on, so a later edit to
 // the primitive can't silently drift the pattern the whole app inherits:
@@ -77,7 +77,7 @@ describe('EmptyState', () => {
     )
     const btn = container.querySelector('button')
     // The default Button renders the md height rung (h-10); a sm CTA (h-8) is the
-    // outlier cy17 normalized away — locking h-10 keeps empties from shrinking.
+    // outlier the convergence normalized away — locking h-10 keeps empties from shrinking.
     expectTokens(btn, ['h-10'])
     expect(btn?.textContent).toContain('Start a loop')
     fireEvent.click(btn!)

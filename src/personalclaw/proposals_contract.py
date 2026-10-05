@@ -1,4 +1,4 @@
-"""C6 — the Proposal contract and its apply dispatcher.
+"""The Proposal contract and its apply dispatcher.
 
 **Why this module exists.** Before it, a `proposal` inbox item was an ``InboxItem`` with
 ``refs["learning_proposal"]`` and its resolution was hard-wired to
@@ -17,7 +17,7 @@ apply case           existing dispatcher it routes to
                      ``provider.execute(ActionContext, config)`` — the same call
                      shape ``gateway``/``event_triggers``/``hooks`` use.
 ``workflow``         ``workflows.service.start_run(name=..., inputs=...)``
-``skill_promotion``  ``learning.proposals.accept(pid, installer=...)`` (the T4.1
+``skill_promotion``  ``learning.proposals.accept(pid, installer=...)`` (the original
                      path, now one case of the contract rather than the only one)
 ``app_callback``     ``tool_providers.app_routes.resolve_route`` +
                      ``call_app_route`` — the owner's reverse proxy, app-scoped
@@ -74,7 +74,7 @@ class ProposalError(Exception):
 
 @dataclass(frozen=True)
 class Proposal:
-    """The C6 payload, carried in ``refs["proposal"]`` on a ``kind=proposal`` item.
+    """The proposal payload, carried in ``refs["proposal"]`` on a ``kind=proposal`` item.
 
     ``provenance`` is who produced it — ``"skills"``, ``"learning"``, ``"session_org"``,
     ``"app:<name>"``. It is half of the batch-approve grouping key: the UI offers a sweep
@@ -191,7 +191,7 @@ async def _apply_action(args: dict[str, Any], ctx: "ApplyContext") -> dict[str, 
 
     # 🔴 The kill switch, on the proposal-apply path too. This dispatches an action provider
     # directly rather than through `triggers.tools.run`, so enforcing it only there would leave
-    # Approve firing actions during an incident — the same gap S117 found when three unattended
+    # Approve firing actions during an incident — the same gap as when three unattended
     # entry points existed and only one checked the flag. A proposal apply is user-clicked, so
     # `manual_refusal` (the manual Run path's gate) is the right check rather than the
     # unattended denylist seam; the refusal surfaces as a failed apply, which keeps the item
@@ -223,9 +223,9 @@ async def _apply_action(args: dict[str, Any], ctx: "ApplyContext") -> dict[str, 
 async def _apply_workflow(args: dict[str, Any], ctx: "ApplyContext") -> dict[str, Any]:
     """A workflow run through ``workflows.service.start_run``.
 
-    DEVIATION from C6's ``{ref | inline}`` sketch: only ``ref`` is accepted. There is no
+    Only ``ref`` is accepted, never an inline definition. There is no
     existing dispatcher that starts an unsaved inline definition, and declaring a shape
-    nothing serves is this repo's #47 defect (declarable → looks supported → silently
+    nothing serves is the declarable-but-dead defect (declarable → looks supported → silently
     dead). A producer that wants an inline def saves it first, then proposes its name.
     """
     from personalclaw.workflows.service import start_run
@@ -244,7 +244,7 @@ async def _apply_workflow(args: dict[str, Any], ctx: "ApplyContext") -> dict[str
 
 
 async def _apply_skill_promotion(args: dict[str, Any], ctx: "ApplyContext") -> dict[str, Any]:
-    """The T4.1 skill path, now one case of the contract.
+    """The skill-promotion path, now one case of the contract.
 
     Routes to ``learning.proposals.accept`` with the SAME installer dispatch the learning
     handler builds, so accepting from the inbox and accepting from the Learning surface
@@ -344,7 +344,7 @@ async def apply_proposal(
 
 
 def proposal_of(item: Any) -> Proposal | None:
-    """The C6 payload on an inbox item, or None when it carries none."""
+    """The proposal payload on an inbox item, or None when it carries none."""
     refs = getattr(item, "refs", None)
     if not isinstance(refs, dict):
         return None
@@ -461,7 +461,7 @@ def register_app_proposal_kinds(app_name: str, manifest: Any) -> list[str]:
 
     Called at ENABLE time (and idempotent, because re-enabling an app must not raise on the
     duplicate). ``verifiable=True`` by default: an app-emitted proposal is an app's claim,
-    so INU-6's skeptic gate is allowed to apply to it — the gate still runs only when the
+    so the skeptic gate is allowed to apply to it — the gate still runs only when the
     user's rule sets ``verify:true``, so this widens what MAY be checked, never what is.
 
     ``attention=True`` because a proposal is a durable row, not a transient toast.

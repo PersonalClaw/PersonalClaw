@@ -1,4 +1,4 @@
-"""Tests for the pure tick decision core (P6): loop/tick.py evaluate() + collapse().
+"""Tests for the pure tick decision core: loop/tick.py evaluate() + collapse().
 
 Every branch is exercised with a hand-built (cfg, state, now) — no store, no I/O."""
 
@@ -187,7 +187,7 @@ def test_decision_to_dict_lean_and_metric():
 
 
 def test_step_config_from_bare_phase_is_neutral():
-    # A phase with no P6 keys → today's no-dwell / no-metric behavior.
+    # A phase with no tick keys → today's no-dwell / no-metric behavior.
     sc = step_config_from_phase({"title": "Understand", "objective": "x"})
     assert sc.min_dwell_secs == 0.0 and sc.min_findings == 0
     assert sc.metric_pass is None and sc.metric_hold is None
@@ -296,7 +296,7 @@ def test_end_to_end_snapshot_to_decision():
 
 
 def test_sdlc_producer_emits_step_keys():
-    """P6 producer: the SDLC classifier attaches sensible tick step-keys per stage kind,
+    """The producer: the SDLC classifier attaches sensible tick step-keys per stage kind,
     a planner override survives, and every emitted phase passes intake validation."""
     from personalclaw.loop.code_classify import _normalize_plan
 

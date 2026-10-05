@@ -50,7 +50,7 @@ const COMPOSER_ID = 'room-composer'
  *  would be its own per-room SSE stream under the transport doctrine, not a WS frame. */
 const ACTIVE_POLL_MS = 2500
 
-/** One room (`AGENT-ROOMS` C9 / `AR-8`) — the attributed transcript, the pause card, and
+/** One room — the attributed transcript, the pause card, and
  *  per-member status.
  *
  *  ── WHY THIS IS NOT `ChatSession`, AND WHY THAT IS NOT A SECOND CHAT UI ──
@@ -60,7 +60,7 @@ const ACTIVE_POLL_MS = 2500
  *  `/api/rooms/{id}/messages` — a route that returns a speaker QUEUE rather than a stream.
  *  `ChatSession` is 2,400 lines of session machinery (streaming WS, tool projections, rewind,
  *  variants, the session map) none of which a room has. Driving it from a different data source
- *  would be a fork of it, which is the second chat UI the clause forbids.
+ *  would be a fork of it, which is the second chat UI a room must not be.
  *
  *  What "not a second chat UI" actually asks for is that a room does not RE-DRAW chat, and it
  *  does not: the human's words render through `MessageUser`, a member's through
@@ -73,7 +73,7 @@ const ACTIVE_POLL_MS = 2500
  *  one of three kinds — the human, a member, or the ROOM itself — and there is **no merging**.
  *  The session transcript collapses consecutive assistant messages into one turn; in a room
  *  consecutive assistant messages are usually different members, so that collapse would print
- *  one member's words under another's name. AGENT-ROOMS names it as the likeliest room-specific
+ *  one member's words under another's name. That is the likeliest room-specific
  *  defect. A room simply has no merge, so it cannot have that bug, and `roomMeta.test.ts` pins
  *  the shape.
  */

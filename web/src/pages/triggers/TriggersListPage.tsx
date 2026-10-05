@@ -84,7 +84,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   const [openIdRaw, setOpenId] = useQueryParam(query, setQuery, 'open', '')
   const openId = openIdRaw || null
   const [editing, setEditing] = useEditFlag(query, setQuery)
-  // List | Week (AUTO-A3). URL-addressable, unlike the run-detail toggle: a week grid is something
+  // List | Week. URL-addressable, unlike the run-detail toggle: a week grid is something
   // you send someone ("look at Thursday"), and the section is already query-state driven.
   const [view, setView] = useQueryParam(query, setQuery, 'view', 'list', { replace: true })
 
@@ -329,8 +329,8 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                   // a row (open the inspector, or open it straight into edit mode). Both
                   // route through the same `setQuery` the row's click uses — destructive
                   // + enable/disable live inside the opened detail panel, not here.
-                  // A FOREIGN row gets 'Open' and nothing else (TEAM-SHARED-ENTITIES §2.2 —
-                  // TSE-4). It is somebody else's automation: this harness will not arm or fire it,
+                  // A FOREIGN row gets 'Open' and nothing else.
+                  // It is somebody else's automation: this harness will not arm or fire it,
                   // so offering Edit would be offering to change a row whose owner's machine — not
                   // this one — decides what it does. Open still works: the row is informational,
                   // and informational means readable.
@@ -408,7 +408,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                               to a cadence that is not the problem. */}
                           {advisory.length > 0 && <span data-type="caption" className="shrink-0 text-warn">· {t.store?.last_check?.can_fire === false ? "can't fire" : 'check schedule'}</span>}
                           {t.kind === 'store' && t.storeKind && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· {t.storeKind}</span>}
-                          {/* The AUTHOR chip §2.2 asks for. Shown only for a foreign row — a chip
+                          {/* The AUTHOR chip. Shown only for a foreign row — a chip
                               on every row would be noise on the single-user install that is the
                               norm, and the useful signal here is "this one is not mine". */}
                           {t.readOnly && <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 py-px text-on-surface-var text-[0.75rem]"><Users size={11} /> {t.author || 'shared'}</span>}

@@ -101,7 +101,7 @@ def awaits_human(ctl: RunController, path: str) -> bool:
 
 
 def ensure_continuation(ctl: RunController, path: str) -> None:
-    """Mint a durable resume point for a waiting gate (WF2-R7), once per epoch.
+    """Mint a durable resume point for a waiting gate, once per epoch.
 
     Idempotent by (path, epoch): a run can pass through `needs_input` repeatedly as the
     watchdog polls it, and a fresh token per poll would leave a pile of live approval
@@ -659,7 +659,7 @@ def resume_revise(
 def emit_judge_divergence(
     ctl: RunController, instance_path: str, node_id: str, human_approved: bool
 ) -> None:
-    """Record a human overriding a judge on the same gate (LOOPS-EVOLUTION R3).
+    """Record a human overriding a judge on the same gate.
 
     Reads this node's last `judge_verdict` from the ledger; emits `judge_divergence` only when
     the human's decision actually contradicts it. No prior judge verdict (an ordinary approval
@@ -690,7 +690,7 @@ def _open_escalation_outcome(
 ) -> None:
     """Open the escalation's outcome question: we interrupted the user — did it land?
 
-    The `escalation` producer of the general outcome facility (PP-9). `confirmation_pending`
+    The `escalation` producer of the general outcome facility. `confirmation_pending`
     records that we ASKED; this records the bet that asking was worth it, graded from the run's
     own ledger: a `confirmation_resolved` carrying this `confirmation_id` is the measurement,
     and its `approved` boolean IS the number (approved ⇒ 1.0, rejected ⇒ 0.0 against a baseline
@@ -746,7 +746,7 @@ def stable_confirmation_id(run_id: str, step_path: str, epoch: int, ask: int = 0
     cycle it runs in; a node id does not, since every cycle of a loop repeats its body's ids. The
     EPOCH is in the key because a rewind SHOULD produce a new confirmation — the question is being
     asked about different work — and the ASK's ordinal because the same step can ask again within
-    one epoch, and that is a new question too (ledger 249). Minted ONCE, when the ask is, and
+    one epoch, and that is a new question too. Minted ONCE, when the ask is, and
     carried on its continuation (`Continuation.confirmation_id`): every later half — the answer,
     the withdrawal — reads it from there rather than deriving it again, so the halves pair by
     construction.
@@ -767,7 +767,7 @@ def _times_asked(ctl: RunController, path: str) -> int:
 def _confirmation_kind(node_config: dict[str, Any]) -> str:
     """Which `ConfirmationType` this gate is, as its wire value.
 
-    A destructive gate is NOT the same record as an ordinary approval: §4 gives them different
+    A destructive gate is NOT the same record as an ordinary approval: the two have different
     expiry policies (auto-reject vs hold) and only the ordinary one may be muted. Reading the
     node's own declared risk keeps that classification with the author who made it, rather than
     inferring it from the prompt text at render time.

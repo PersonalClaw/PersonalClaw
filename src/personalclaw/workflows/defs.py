@@ -4,8 +4,8 @@ This is the seam only, landed early on purpose. The extension registry's ``workf
 ``_TypeHandler`` has to register into *something*: ``PROVIDER_TYPES`` (the manifest
 validator's allowlist) must equal the runtime type-handler set, or installing — or even
 reinstalling — any app declaring a workflow provider is refused with a validation error
-that names no cause. That is issue #47's bug class, and `test_manifest_types_match_handlers`
-guards it. So the old registry could not simply be deleted; it had to be replaced in the
+that names no cause. That manifest-vs-handler mismatch is what `test_manifest_types_match_handlers`
+guards. So the old registry could not simply be deleted; it had to be replaced in the
 same commit.
 
 What a v2 provider contributes is **definitions** (reusable graph specs), never runs.

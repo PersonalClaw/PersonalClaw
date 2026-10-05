@@ -1,4 +1,4 @@
-"""Shared loop done-ness gates (Slice 2c.i) — the supervisor's verify-command
+"""Shared loop done-ness gates — the supervisor's verify-command
 runner. Tristate (pass/fail/can't-run) so a missing tool isn't misread as a real
 failure; security-screened; bounded + never raises."""
 
@@ -81,7 +81,7 @@ class TestOpenEndedJudgePath:
         from personalclaw.loop import store
         from personalclaw.loop.loop import Loop
 
-        # judge_calibrated=True = the steady state after the P4 canary has proven the judge
+        # judge_calibrated=True = the steady state after the canary has proven the judge
         # once at loop start; these tests exercise the per-cycle verdict path, not the canary,
         # so they represent an already-calibrated loop (the canary path has its own tests in
         # test_loop_instrument.py).
@@ -173,7 +173,7 @@ async def test_verifiable_goal_kind_runs_the_command():
 
 
 class TestJudgeIndependence:
-    """Slice C (O-E2): the open-ended judge independently observes ground truth — runs
+    """The open-ended judge independently observes ground truth — runs
     the goal's verify command + reads named deliverable files — instead of scoring only
     the worker's reported finding."""
 
@@ -229,7 +229,7 @@ class TestJudgeIndependence:
 
     @pytest.mark.asyncio
     async def test_observe_ground_truth_searches_fallback_dirs(self, tmp_path):
-        """V6 fix: the deliverable may live in the loop dir (unbound loop), not the workspace.
+        """The deliverable may live in the loop dir (unbound loop), not the workspace.
         _observe_ground_truth must search fallback_dirs too, else the skeptic wrongly reports
         'no proof the file exists' and overturns a legitimate completion."""
         from personalclaw.loop.judge import _observe_ground_truth

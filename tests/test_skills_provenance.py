@@ -10,7 +10,7 @@ hand, on every surface.
 What these pin:
 
   - a taught skill reports `provenance: "taught"` while `source` stays the TIER
-    (`local`) — the ruling's "do NOT override the tier-derived source", and the thing
+    (`local`) — the tier-derived source is never overridden, which is the thing
     that keeps the editable/deletable decisions reading the tier;
   - an auto-extracted skill reports `provenance: "auto"`;
   - a hand-authored skill reports `""` (the vacuity control — the field is not just
@@ -162,7 +162,7 @@ def test_an_unreadable_skill_file_does_not_break_the_listing(skill_root):
     assert skills_h._parse_provenance(skill_root / "weird" / "SKILL.md") == ""
 
 
-# ── A skill created with New skill says so (day-7 validation) ────────────────────────────────────
+# ── A skill created with New skill says so ───────────────────────────────────────────────────────
 #
 # The inspector described a skill the user had just created in the dashboard as "Unverified — no
 # install baseline (bundled or hand-placed)": nothing recorded where it came from, so the only

@@ -1,6 +1,6 @@
 """The outcome resolver — every open bet gets graded once its horizon elapses.
 
-LEARNING-FLYWHEEL §3.3 (LEARN-R18), generalized. A producer journals a `pending_outcome`
+A producer journals a `pending_outcome`
 at BET time — before the answer is knowable — recording what it did (`subject`), the `metric` that
 will reveal whether it landed, where that metric is read from (`metric_source`), the `horizon_secs`
 after which it is meaningful, and the `baseline` to beat. This module is the other half: a
@@ -60,9 +60,9 @@ _MAX_RUNS = 200
 _TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
 #: Which producers' resolutions become a graded lesson proposal. A DECISION's outcome is a lesson
-#: about how to decide; the others are facts their own consumers interpret (`PP-10` for publish,
-#: the attention surfaces for escalations). Keeping this list short is what stops the resolver
-#: turning every generalization into a new source of queue noise.
+#: about how to decide; the others are facts their own consumers interpret (the dormancy sweep
+#: for publish, the attention surfaces for escalations). Keeping this list short is what stops the
+#: resolver turning every generalization into a new source of queue noise.
 _PROPOSING_PRODUCERS = frozenset({outcomes.PRODUCER_DECISION})
 
 

@@ -97,7 +97,7 @@ async def handle_list_extensions(request: web.Request) -> web.Response:
             }
         )
 
-    # UT6: surface the always-on PLATFORM tool provider (filesystem + shell) so
+    # Surface the always-on PLATFORM tool provider (filesystem + shell) so
     # Settings>Providers shows the WHOLE tool universe — it's not a registered
     # extension (it's built per-session in the runtime, being cwd-coupled), so it
     # would otherwise be the one tool provider missing from this list while

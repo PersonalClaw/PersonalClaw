@@ -15,7 +15,8 @@ a day's items, and a double run cannot silently drop the ones it already read.
 **This is the LLM boundary, and it is where the fence goes.** Every scraped title and body
 is wrapped by the ONE core fence (:func:`personalclaw.security.fence_untrusted`) with
 ``source=f"source:{source_id}"`` before it enters the prompt, under a system instruction saying
-the fenced spans are data. Two properties make SC#8 hold rather than merely look handled:
+the fenced spans are data. Two properties make that fencing hold rather than merely look
+handled:
 
 1. **Nothing unfenced reaches the model.** The item's text is fenced at the only place it is
    composed, so there is no second path that could forget.
@@ -46,7 +47,7 @@ from personalclaw.atomic_write import atomic_json_write
 logger = logging.getLogger(__name__)
 
 #: The digest item's shape. ONE item per run, whatever the window's size — a digest that
-#: minted an item per source would be the item flood §12 lists as a risk.
+#: minted an item per source would be exactly the item flood a digest exists to avoid.
 DIGEST_ITEM_TYPE = "note"
 DIGEST_PROVIDER = "digest"
 
@@ -108,7 +109,7 @@ def write_cursor(seq: int, path: Path | None = None) -> None:
 
 
 def fence_item(*, source_id: str, title: str, content: str) -> str:
-    """One item, fenced for the prompt (§8).
+    """One item, fenced for the prompt.
 
     Title and body are fenced TOGETHER in one span: fencing them separately would put an
     unfenced newline and an unfenced label between two fenced blocks, which is exactly the seam
@@ -158,7 +159,7 @@ def collect_window(
     """The items ingested since ``after_seq``, filtered by the rule grammar. Zero tokens.
 
     Each record is resolved back to its STORE ROW — the structural title/content — rather than
-    read out of the event payload, whose title is fenced (§6.1). The filter is
+    read out of the event payload, whose title is fenced. The filter is
     :mod:`personalclaw.knowledge.source_queries`' grammar, so the digest narrows with the same
     language a saved query uses instead of a second dialect.
 
@@ -225,7 +226,7 @@ async def run_morning_digest(
     max_items: int = MAX_DIGEST_ITEMS,
     title: str = "Morning web digest",
 ) -> DigestResult:
-    """Run one digest: ONE knowledge item + ONE notification through the gate (§6.2, SC#10).
+    """Run one digest: ONE knowledge item + ONE notification through the gate.
 
     ``state`` is the :class:`~personalclaw.dashboard.state.DashboardState` whose ``notify`` is
     the single delivery choke point — it applies ``notification_allowed()`` (mute-all, minimum

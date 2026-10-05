@@ -1,8 +1,8 @@
-"""Per-observer coalesced delivery (batch-5).
+"""Per-observer coalesced delivery.
 
 The claim under test: batching is a TRANSPORT optimization and nothing more. A consumer that
 unwraps a batch must see the same event sequence, in the same order, with the same envelopes
-it would have seen unbatched — otherwise the fold law from Slice 8a no longer holds and the
+it would have seen unbatched — otherwise the fold law no longer holds and the
 saving is paid for in correctness.
 
 The load-bearing behaviours:
@@ -77,7 +77,7 @@ class TestBatching:
     async def test_a_fan_out_in_one_tick_becomes_one_frame(self) -> None:
         """The whole point: 20 nodes completing together is ONE write per connection, not
         20 — 20 JSON encodes, 20 socket writes and 20 renders for one logical moment is the
-        §9 large-spec widget risk."""
+        large-spec widget risk."""
         frames, sink = _sink()
         c = EventCoalescer(sink, window=0.01)
         for i in range(20):

@@ -1,6 +1,6 @@
 """Run outputs as Artifacts — the `publish:` declaration and its integrity rules.
 
-The adversarial review caught the original WORK-CONTAINERS draft inventing a second Artifact noun.
+Run outputs get no second Artifact noun.
 PersonalClaw already has a first-class one (`artifacts/`: named, versioned to 50 snapshots,
 project-scoped, event-logged, with REST routes and chat tools), so this module adds a
 **declaration**

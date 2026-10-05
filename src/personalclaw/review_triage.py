@@ -1,13 +1,13 @@
 """Reviewer-comment triage — line-anchored findings, human acceptance, accepted-subset dispatch.
 
-EXECUTION-ISOLATION §7 asks for Air's productized review loop "built once as a shared primitive
-(not per-surface)": review-producing stages (workflow review/gate nodes, loop judges, the §4
-second-opinion, inbox draft reviewers) emit line-anchored diff comments, a human accepts or rejects
-each one, the accepted subset is dispatched back to the worker that produced the diff, and the
-rejections feed calibration. This module is that primitive. It owns four steps and no surface:
+A review loop built once as a shared primitive, not per surface: review-producing stages
+(workflow review/gate nodes, loop judges, the second-opinion handoff, inbox draft reviewers) emit
+line-anchored diff comments, a human accepts or rejects each one, the accepted subset is
+dispatched back to the worker that produced the diff, and the rejections feed calibration. This
+module is that primitive. It owns four steps and no surface:
 
 1. **Parse** a review stage's output into canonical Finding records
-   (`{severity, location, problem, why, recommended_fix, status}` — WORKFLOWS-V2 §Canonical-Finding,
+   (`{severity, location, problem, why, recommended_fix, status}` — the canonical Finding,
    already the prompt contract in `workflows/bundled/shared/finding-record.md`) plus agentsystem's
    `auto_fixable` flag. One contract; this module adds no second schema.
 2. **Anchor** each finding against the ACTUAL unified diff before anything renders it. This is the
@@ -510,7 +510,7 @@ def auto_apply_candidates(
 ) -> list[AnchoredFinding]:
     """The accepted subset a surface MAY apply mechanically, if it opted in.
 
-    Reads `result.accepted` — never the findings — so the `auto_fixable` batching path §7 allows
+    Reads `result.accepted` — never the findings — so the opt-in `auto_fixable` batching path
     cannot become a second door around acceptance. `auto_fixable: true` on a rejected or untriaged
     finding buys it nothing; it is not in `accepted`, so it is not here.
 
@@ -588,7 +588,7 @@ def dispatch_accepted(
 ) -> DispatchReceipt:
     """Deliver the accepted subset to the originating worker. The ONLY write path.
 
-    `deliver(target, brief)` is the seam, not a hard-wired sink, because §7's dispatch target
+    `deliver(target, brief)` is the seam, not a hard-wired sink, because the dispatch target
     depends on the surface: a live workflow run takes `service.steer_run` (drained at the loop
     boundary by `iteration_context.consume_steering`, so the next iteration acts on it); a finished
     run has no session to resume and takes a fresh session with the same brief as its handoff.

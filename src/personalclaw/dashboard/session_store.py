@@ -22,7 +22,7 @@ Two pieces of state, deliberately separate files:
 session came through (:data:`ISSUERS`), written at mint time by the code that owns that door and
 never by the client. ``device`` is the client behind the session — what it is, when it signed
 in, when and where it was last seen — and EVERY row carries one, because Settings → Devices lists
-every sign-in, not only the paired ones (ledger 255: a list of paired phones hid the owner's own
+every sign-in, not only the paired ones (a list of paired phones once hid the owner's own
 browsers, which were exactly what was being signed out). A row written before the block was
 universal has it synthesized on read with an id derived from its nonce, so the list can describe
 and revoke it; nothing about it is invented beyond "never seen, signed in at an unknown time".
@@ -55,7 +55,7 @@ thing the token middleware needs on its hot path. One stored shape, typed views;
 **An old-shape file (a bare float per row) is DISCARDED, not upgraded.** A row with no issuer
 at all is a session nobody recorded the door of; admitting one would mean shipping a list that
 is silently incomplete. The cost is bounded and documented by the pre-1.0 banner — one
-``personalclaw token`` re-mint, which is exactly the pre-S1 behavior this store replaced.
+``personalclaw token`` re-mint, which is exactly the old behavior this store replaced.
 
 **Why a file and not the credential store:** the key must be readable during middleware
 setup, before any provider or keychain prompt can run, and on a headless box there may be no

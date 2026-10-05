@@ -326,7 +326,7 @@ async def api_memory_settings(request: web.Request) -> web.Response:
             # tab needs the current value to render its control, and a read on the panel's
             # own endpoint is what keeps that control from having to guess the default.
             "slot_size_cap": cfg.memory.slot_size_cap,
-            # Same shape (settings B10): the one control for the learned-fact gate the store
+            # Same shape: the one control for the learned-fact gate the store
             # applies, replacing the Vector Memory app field nothing read.
             "semantic_confidence_threshold": cfg.memory.semantic_confidence_threshold,
         }
@@ -561,7 +561,7 @@ def _folder_memory(folder: str) -> Any:
 async def api_memory_semantic(request: web.Request) -> web.Response:
     """GET /api/memory/semantic — list all semantic memory entries.
 
-    Each entry carries ``contributor`` (TEAM-SHARED-ENTITIES §2.3) plus a resolved
+    Each entry carries ``contributor`` plus a resolved
     ``is_mine`` flag. The flag is computed HERE rather than shipping the owner handle for
     the client to compare, because "is this mine?" is one question with one answer and
     resolving it server-side keeps the two surfaces from disagreeing — an unattributed
@@ -697,7 +697,7 @@ def _stored_key(svc: Any, shown: str) -> str | None:
 async def api_memory_approval_rules(request: web.Request) -> web.Response:
     """GET /api/memory/approval-rules — the triage approval rules, with provenance.
 
-    A plain prefix scan over the semantic table (PROACTIVE-ASSISTANT §1.4: approval
+    A plain prefix scan over the semantic table (approval
     lookups are exact, never vector search). Undecodable rows are reported in
     ``unreadable`` instead of being silently dropped — a rule the matcher ignores
     but the user believes in is exactly the confusion the rules manager exists to
@@ -744,7 +744,7 @@ async def api_memory_approval_rules(request: web.Request) -> web.Response:
 async def api_memory_approval_rule_add(request: web.Request) -> web.Response:
     """POST /api/memory/approval-rules — teach one approve/deny rule.
 
-    Writes through the guarded ``MemoryService.set_semantic`` path (§1.4: the rule
+    Writes through the guarded ``MemoryService.set_semantic`` path (the rule
     text still passes the write-injection scanner even though the user ratified it).
     """
     from personalclaw.proactive.approval import ApprovalRule, Verdict, rule_to_value
@@ -1141,7 +1141,7 @@ async def api_memory_recall(request: web.Request) -> web.Response:
                 )
             # Episodic (relevant past fragments) — two-stage rank (relevance × heat boost),
             # returned WITH provenance (source · session · date) so the agent can see where
-            # and when each fragment came from (mem-tree provenance-first retrieval).
+            # and when each fragment came from (provenance-first retrieval).
             if not _next("searching past conversations"):
                 return None
             epi = memory.recall_with_provenance(
@@ -1315,7 +1315,7 @@ def _has_legacy_memory() -> bool:
 
 
 async def api_memory_daily_digests(request: web.Request) -> web.Response:
-    """GET /api/memory/daily-digests — the per-day rollup nodes (mem-tree),
+    """GET /api/memory/daily-digests — the per-day rollup nodes,
     newest first. A read view over the digest episodics the maintenance cadence
     builds; ``?rebuild=1`` forces a synchronous build first (for the UI button)."""
     svc = _get_service(request)
@@ -1356,7 +1356,7 @@ async def api_memory_vault_status(request: web.Request) -> web.Response:
 async def api_memory_vault_sync(request: web.Request) -> web.Response:
     """POST /api/memory/vault/sync — reconcile the vault against the store.
 
-    The on-demand half of §5.2 (the on-cadence half is the post-consolidation mirror).
+    The on-demand half of vault sync (the on-cadence half is the post-consolidation mirror).
     Works even while ``vault_mode`` is ``off`` — an explicit one-shot export to the
     configured path, so a user can look at a vault before committing to keeping one.
     An ``off`` export never reads pages back: two-way is a mode you choose, not
@@ -1911,10 +1911,10 @@ async def api_memory_entity_proposals(request: web.Request) -> web.Response:
 
 
 async def api_memory_entity_proposals_list(request: web.Request) -> web.Response:
-    """GET /api/memory/entities/proposals — the accept queue (§7.1).
+    """GET /api/memory/entities/proposals — the accept queue.
 
-    The READ half of the propose-don't-write loop. The POST beside it has shipped since
-    MGAV-1, but nothing could list what there was to decide about, so the decision surface
+    The READ half of the propose-don't-write loop. The POST beside it shipped
+    first, but nothing could list what there was to decide about, so the decision surface
     existed with no way to reach it. Returns ``[]`` (not an error) with the graph off: an
     empty queue and a disabled graph are different states, which is what ``enabled`` says.
     """
@@ -1927,7 +1927,7 @@ async def api_memory_entity_proposals_list(request: web.Request) -> web.Response
 
 
 async def api_memory_record_links(request: web.Request) -> web.Response:
-    """GET /api/memory/record-links?ref=sem:<key> — one record's entity links (§7.1).
+    """GET /api/memory/record-links?ref=sem:<key> — one record's entity links.
 
     A query param rather than a path segment because the ref is a composite (``sem:<key>``)
     whose key can itself contain slashes and colons; encoding that into a path segment reads
@@ -1955,7 +1955,7 @@ async def api_memory_record_links(request: web.Request) -> web.Response:
 
 
 async def api_memory_entity_graph(request: web.Request) -> web.Response:
-    """GET /api/memory/graph/entities — the entity topology (§7.2).
+    """GET /api/memory/graph/entities — the entity topology.
 
     Distinct from ``/api/memory/graph``, which visualizes RECORDS. This one returns the
     entity-level graph the Louvain pass partitions, each node carrying its community so the
@@ -1970,10 +1970,10 @@ async def api_memory_entity_graph(request: web.Request) -> web.Response:
 
 
 async def api_memory_graph_export(request: web.Request) -> web.Response:
-    """GET /api/memory/graph/export — the entity graph as ONE self-contained HTML file (§7.2).
+    """GET /api/memory/graph/export — the entity graph as ONE self-contained HTML file.
 
     Rendered server-side and script-free; see ``memory_graph_export`` for why that is a
-    deliberate departure from the plan's interactive sketch. Served as a download because the
+    deliberate choice over an interactive page. Served as a download because the
     point of the artifact is that it survives leaving this gateway.
     """
     from datetime import datetime, timezone
@@ -2034,7 +2034,7 @@ async def api_memory_slot_append(request: web.Request) -> web.Response:
     """POST /api/memory/slots/{name}/lines — append one line.
 
     An over-cap append is a **409 carrying the trim proposal**, not a 400 and not a silent
-    truncation: MGAV-8's contract is that the human chooses which of their own lines to lose,
+    truncation: the contract is that the human chooses which of their own lines to lose,
     so the response has to hand the UI the candidate list to offer.
     """
     svc = _get_service(request)
@@ -2068,7 +2068,7 @@ async def api_memory_slot_line_retire(request: web.Request) -> web.Response:
 
     Tombstone, not delete — hence a retire route rather than a DELETE: the row KEEPS the
     line, marked, so a reflection pass can never re-derive something the user removed
-    (MGAV-8's resurrection guard reads ``tombstoned_by == "human"``). Calling it DELETE would
+    (the resurrection guard reads ``tombstoned_by == "human"``). Calling it DELETE would
     promise a removal the storage model deliberately does not perform.
     """
     svc = _get_service(request)
@@ -2090,7 +2090,7 @@ async def api_memory_slot_line_retire(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
-# ── Preference facets (C15) ──────────────────────────────────────────────────
+# ── Preference facets ────────────────────────────────────────────────────────
 # The override half of the facet feature. The flags persisted and every scoring branch read
 # them, but no route could set one, so the documented pinned/forgotten behaviour was
 # unreachable from anywhere a user can get to (#1783). Shaped like the slot editor above and
@@ -2181,7 +2181,7 @@ async def api_memory_graph_rebuild(request: web.Request) -> web.Response:
 
 
 async def api_memory_volunteer_stats(request: web.Request) -> web.Response:
-    """GET /api/memory/volunteer-stats — per-arm volunteered-vs-used precision (§3).
+    """GET /api/memory/volunteer-stats — per-arm volunteered-vs-used precision.
 
     The push reflex's own report card. "Used" means the record's recall count rose
     after it was volunteered, so a high count with a low precision is the honest

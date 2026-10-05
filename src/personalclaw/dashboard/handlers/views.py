@@ -1,4 +1,4 @@
-"""Dashboard-views CRUD endpoints (AMBIENT-SURFACES §1 / A2-1).
+"""Dashboard-views CRUD endpoints.
 
 ``/api/dashboard/views`` over the ``dashboard_views.json`` registry. Locked presets
 (Overview) are read-only: a PUT/DELETE that targets a preset is refused with 403, and
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 async def api_genui_library(request: web.Request) -> web.Response:
     """GET /api/genui/library — the generative-UI component catalog + the mechanically
-    derived authoring prompt (AMBIENT-SURFACES §5.2).
+    derived authoring prompt.
 
     Served so the visual-output skill / workflow node prompts / the FE embed the
     CURRENT registry rather than a hand-maintained copy that drifts. Read-only.
@@ -130,7 +130,7 @@ async def api_dashboard_view_tiles(request: web.Request) -> web.Response:
 async def api_dashboard_view_tile_binding(request: web.Request) -> web.Response:
     """PUT /api/dashboard/views/{view_id}/tiles/binding {ref, mode, ttl_secs?, skeleton?, data?}
 
-    Bind a tile's chatless refresh (AMBIENT-SURFACES §2.1). ``mode: "ttl"`` + a ``skeleton``
+    Bind a tile's chatless refresh. ``mode: "ttl"`` + a ``skeleton``
     slug + ``data`` nodes makes the tile live; ``mode: "manual"`` unbinds it back to
     refresh-on-button.
     """
@@ -154,9 +154,9 @@ async def api_dashboard_view_tile_binding(request: web.Request) -> web.Response:
 
 
 async def api_dashboard_view_tile_refresh(request: web.Request) -> web.Response:
-    """POST .../tiles/refresh {ref, force?} — run one chatless refresh (§2.3).
+    """POST .../tiles/refresh {ref, force?} — run one chatless refresh.
     GET  .../tiles/refresh?ref=… — the tile's newest ledger row (the freshness/chip source,
-    and the deep-link target §2.4 names).
+    and the deep-link target).
 
     The POST is TTL-GATED unless ``force`` is set: a rendered dashboard polling this must not
     turn a cadence into a fetch-per-paint. ``force`` is the tile's own refresh button — a human

@@ -1,4 +1,4 @@
-"""The app-facing notification-delivery contract (MULTI-TENANCY-ENTITY `TSE2-5`)."""
+"""The app-facing notification-delivery contract."""
 
 from __future__ import annotations
 

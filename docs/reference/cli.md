@@ -95,12 +95,13 @@ there that is not a file, a disk that cannot lock files) is not served: the star
 | `--local-model MODEL_ID` | Model to bind (default: the endpoint's most recently modified chat-capable model, or `$PERSONALCLAW_LOCAL_MODEL`). |
 | `--local-model-apps-dir DIR` | Local checkout of the apps repo to install the `ollama-models` provider app from, when it is not already installed in the home (or `$PERSONALCLAW_LOCAL_MODEL_APPS_DIR`). |
 
-Two fixtures ship:
+Three fixtures ship:
 
 | Fixture | Contents |
 |---|---|
 | `empty` | A bare home — just the `fixture.yaml` marker. Everything else is created on first boot. |
 | `demo-home` | A home that looks used, for screenshots and demos: two projects with briefs, three task lists, ten tasks spanning every status (one blocked on a real dependency), markdown memory (preferences, project context, two days of history), five knowledge docs, and one completed loop with a three-phase plan. Onboarding is pre-completed, so it boots straight to the dashboard. Semantic/episodic memory *records* are still not included — that store is SQLite-only with no text tier, unlike the markdown memory the fixture does carry. **No model provider** — the fixture is a byte-identical copy on every machine, so it cannot carry any one machine's endpoint; `--seed-local-model` is the step that binds one. |
+| `six-month-home` | A home an earlier release (0.1.3) wrote across six months of use, through that release's own writers: `config.json`, run history for two scheduled jobs, Inbox and notification settings, a loop, the memory database, markdown memory and a knowledge database. Seed it to check that a home an older release left behind still loads; `six-month-home.manifest.json` beside it records what each store holds, and `tests/test_state_survival.py` holds a fresh build to that record. No model provider, for the same reason as `demo-home`. |
 
 ### Binding a model into a seeded home
 

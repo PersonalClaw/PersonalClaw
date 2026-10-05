@@ -49,7 +49,7 @@ async def api_browse_status(request: web.Request) -> web.Response:
     drift, and the panel already refetches THIS one on reconnect and on every browse signal.
 
     Values never cross this boundary — ``expired`` carries site slugs; a grant carries its task
-    label, host scope and the fail-closed deadline, never a credential, cookie or token (§5.2).
+    label, host scope and the fail-closed deadline, never a credential, cookie or token.
     """
     from personalclaw.browse import killswitch
     from personalclaw.browse.grant import pending_grants

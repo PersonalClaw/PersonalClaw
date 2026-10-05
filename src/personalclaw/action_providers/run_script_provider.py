@@ -4,9 +4,8 @@ The deterministic (zero-token) counterpart to ``invoke-agent``: instead of
 spawning an LLM, it runs a ``file.py:func`` script under
 ``~/.personalclaw/crons/`` in the sandbox via
 :func:`personalclaw.schedule_script.run_script_sandboxed`. This is the action
-form of a Schedule's ``script`` exec-mode; folding the schedule bridge onto it is
-P4c (#13). Defined here so the provider catalog is complete the moment the
-Trigger entity (P4b) can reference it.
+form of a Schedule's ``script`` exec-mode. Defined here so the provider catalog is
+complete the moment the Trigger entity can reference it.
 
 ``action_config`` shape::
 

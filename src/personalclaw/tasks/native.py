@@ -49,7 +49,7 @@ _T = TypeVar("_T")
 #: `origin_harness` joins this set for the SAME reason `author` is here: it is provenance, stamped
 #: once at CREATE from this home's `machine_id`, and an update must never rewrite WHICH harness
 #: minted a row — a merged foreign row re-stamped with the local origin would silently collapse the
-#: very attribution TSE2-2 exists to preserve.
+#: very attribution the field exists to preserve.
 _IMMUTABLE_FIELDS: frozenset[str] = frozenset(
     {"id", "provider", "created_at", "author", "origin_harness"}
 )
@@ -165,8 +165,8 @@ def _current_username() -> str:
 
 
 def _current_origin_harness() -> str:
-    """This home's stable `machine_id` — the origin handle stamped on a locally-minted task
-    (MULTI-TENANCY-ENTITY TSE2-2). REUSES `durability`'s per-machine key; it is never minted here.
+    """This home's stable `machine_id` — the origin handle stamped on a locally-minted task.
+    REUSES `durability`'s per-machine key; it is never minted here.
     Never raises: origin attribution decorates a write and must never be the reason one fails, so
     an unreadable/unwritable home degrades to ``""`` (= "this harness's", the single-home default).
     """
@@ -380,7 +380,7 @@ class NativeTaskProvider(TaskProvider):
                 # the run's step read, and count, as hers (`Task.belongs_to`).
                 author=_given("author", "")
                 or ("" if binding is not None and binding.managed else _current_username()),
-                # Origin (MULTI-TENANCY-ENTITY TSE2-2): server-owned like `id`/`created_at`, never
+                # Origin: server-owned like `id`/`created_at`, never
                 # caller-set — a locally-minted task's origin IS this home. Empty degrades to "".
                 origin_harness=_current_origin_harness(),
                 assignee=_given("assignee", ""),
@@ -593,7 +593,7 @@ class NativeTaskProvider(TaskProvider):
             return task
 
         edited = await asyncio.to_thread(_as_one_writer, _update)
-        # Fire the task-completion lifecycle hook. Measured in S60 —
+        # Fire the task-completion lifecycle hook. Measured —
         # `TaskComplete` is declared in `hooks.HOOK_EVENTS`, allowlisted in
         # `validation.ALLOWED_HOOK_EVENTS` and rendered by the hook UI, and NO call site in the
         # repo ever fired it, so a user could configure "when a task finishes" and get nothing.

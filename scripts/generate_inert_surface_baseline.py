@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Committed inert-surface inventory baseline (PLATFORM-HARDENING-FLOORS SH3.2).
+"""Committed inert-surface inventory baseline.
 
 A recurring defect class in this codebase: something is *declared* and nothing on the
 other side of the seam consumes or produces it — a config key no ``load()`` mapping
@@ -27,9 +27,9 @@ surface; a cleanup that adds the missing writer/reader lowers it and is welcome.
     an outage: it would red every existing declared-but-inert surface at once. So this
     tool MEASURES the current population and commits the real (non-zero) number as the
     floor; the ratchet only forbids *growth*. Driving the count down (one file per commit,
-    each proving a writer now exists) is a separate effort (SH3.3), not this change. In
+    each proving a writer now exists) is a separate effort, not this change. In
     particular ``SafetyProfile`` (guardrails/policy.py) is expected to appear as inert and
-    is left for PHF-8 to wire — do not "fix" any surface this census reports here.
+    is left to be wired separately — do not "fix" any surface this census reports here.
 
 Detection heuristics are calibrated for a LOW false-positive rate (they under-report
 rather than cry wolf, mirroring ``harness/scanner.py``): a "reader" found anywhere in
@@ -42,14 +42,14 @@ references a surface is exactly the hand-built state that hides the seam gap.
     When a reported surface turns out to be reachable through a consumption shape the
     detector does not recognise, the fix is to TEACH THE DETECTOR THAT SHAPE — never to
     delete the line from the baseline by hand, and never to relax the forbidden-to-raise
-    rule. ``PHF-12`` did exactly that for whole-enum iteration: ``Lineage.INFORMED_BY`` and
+    rule. Whole-enum iteration was taught exactly that way: ``Lineage.INFORMED_BY`` and
     ``Lineage.RELATED`` were reported inert while ``workflows/publish.py:136`` validated
     author-supplied edges against ``{e.value for e in Lineage}``, so a template author
     could reach both members and the census called them dead.
 
-    THE CONVERSE ALSO HOLDS, AND ``PHF-13`` RULED ON IT: a shape is only worth teaching when it
+    THE CONVERSE ALSO HOLDS: a shape is only worth teaching when it
     PROVES reachability. Value-lookup ``E(value)`` does not, so it is deliberately NOT taught —
-    the per-site provenance audit and the arithmetic behind that ruling live in
+    the per-site provenance audit and the arithmetic behind that decision live in
     ``_inert_enum_members``. Clearing a member on a construction that never executes, or one fed
     only from state this codebase itself wrote, would HIDE a real gap instead of naming it, and a
     false clear is the one error this census must not make quietly.
@@ -59,7 +59,7 @@ the output is ``json.dumps(..., indent=2, sort_keys=True)`` with a trailing newl
 it carries no timestamps or absolute paths. A second run is byte-identical to the first.
 
 Per-surface-kind heuristic (each documented at its detector below):
-  * ``config``          — a leaf config field (from the SH3.1 config walk) whose name is
+  * ``config``          — a leaf config field (from the config-baseline walk) whose name is
                           not set in ``AppConfig.load()``'s mapping (no reader).
   * ``enum``            — an Enum member whose name is never accessed as an attribute
                           anywhere in ``src/`` AND whose class is never iterated as a whole
@@ -100,7 +100,7 @@ from typing import Any
 
 # Make the repo root importable so ``scripts.generate_config_baseline`` resolves whether
 # this file is run as a script (``python scripts/...``) or imported under pytest (whose
-# ``pythonpath`` already includes it). The config-leaf census reuses that SH3.1 walk as
+# ``pythonpath`` already includes it). The config-leaf census reuses that config walk as
 # its single source of truth rather than re-deriving the schema here.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 for _p in (_REPO_ROOT, _REPO_ROOT / "src"):
@@ -172,12 +172,12 @@ def _attribute_names_in_src(files: list[Path]) -> set[str]:
     return names
 
 
-# ── Kind: config (reuses the SH3.1 config walk) ──────────────────────────────
+# ── Kind: config (reuses the config-baseline walk) ───────────────────────────
 
 
 #: The ``AppConfig`` methods that may hold the load mapping. ``load()`` itself is a one-line
 #: delegate — the mapping lives in ``load_with_migration_state()``, which returns the parsed
-#: config plus whether it needed migrating (PHF-15 split the two so ``load()`` could stop
+#: config plus whether it needed migrating (the two were split so ``load()`` could stop
 #: writing). Kept as a set rather than one name so the mapping can move again without
 #: silently emptying this detector. Mirrored in ``harness/scanner.py``.
 _LOAD_MAPPING_METHODS = frozenset({"load", "load_with_migration_state"})
@@ -217,7 +217,7 @@ def _load_body_kwarg_names(loader_tree: ast.Module) -> set[str]:
 
 
 def _config_leaf_paths() -> list[str]:
-    """Leaf config paths from the SH3.1 baseline generator (single source of truth)."""
+    """Leaf config paths from the config baseline generator (single source of truth)."""
     from scripts.generate_config_baseline import build_baseline as config_baseline
 
     return [entry["path"] for entry in json.loads(config_baseline())]
@@ -427,8 +427,8 @@ def _inert_enum_members(files: list[Path], attr_names: set[str]) -> list[tuple[P
     That is the deliberate trade — this census exists to name work worth doing, and a
     reported surface that is actually reachable sends someone to "fix" working code.
 
-    VALUE-LOOKUP ``E(value)`` IS DELIBERATELY NOT TAUGHT — audited and ruled on.
-    ``PHF-12`` left it named as the "known remaining false-red shape" on the strength of
+    VALUE-LOOKUP ``E(value)`` IS DELIBERATELY NOT TAUGHT — audited and decided.
+    Teaching iteration left it named as the "known remaining false-red shape" on the strength of
     ``judge_contract.py:342`` (``Verdict(str(raw.get("verdict", "")).upper())`` on model-emitted
     text). Auditing all six value-lookup sites behind the surviving enum surfaces found that
     premise WRONG and the shape unsound as a clearing rule: ``E(value)`` proves reachability only
@@ -1261,7 +1261,7 @@ def _inert_config_reader_paths(
     This is deliberately a REFERENCE census, not a whole-program reachability engine. Any
     production attribute read outside config clears a path even when the function holding
     that read currently has no caller. That boundary is why the former
-    ``learning.min_session_score`` path required a ruled deletion: ``learning/gate.py`` had
+    ``learning.min_session_score`` path required a deliberate deletion: ``learning/gate.py`` had
     a genuine read in an unreachable branch, which only an interprocedural call graph could
     distinguish from live consumption.
     """
@@ -1363,7 +1363,7 @@ def _inert_sdk_export_surfaces() -> list[tuple[str, str]]:
     still reported, which on the tree that added this clear is 170 of 229 surfaces — 54 of
     them exported types (provider protocols, service objects, error classes) and 116 functions
     and constants, which carry no signature for the closure to reach them through. Self-
-    reference does not clear (see ``sdk_surface_closure``'s two narrowing rulings).
+    reference does not clear (see ``sdk_surface_closure``'s two narrowing rules).
 
     Attributed to the submodule that exports it.
     """

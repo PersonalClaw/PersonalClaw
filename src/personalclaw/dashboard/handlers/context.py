@@ -1,4 +1,4 @@
-"""§7 context-provider endpoints — the live-store side of ``context_router``.
+"""Context-provider endpoints — the live-store side of ``context_router``.
 
 Two surfaces:
 

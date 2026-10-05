@@ -128,7 +128,7 @@ import { copyText } from '../app/clipboard'
 //
 // 🔴 THIS WAS A SECOND CACHE. It was a private `sessionStorage` store under its own
 // `chat-detail:` prefix, with its own reader and writer and NO age on the record — the exact
-// hand-rolled fetch-and-cache shape DSC-14 converges, and invisible to any census of the shared
+// hand-rolled fetch-and-cache shape the data layer replaced, and invisible to any census of the shared
 // helper because it never called it. Two caches over one endpoint is what produces the flicker:
 // this one seeded the transcript, the shared `chat:sessions*` keys held the list, and a mutation
 // that busted one could not reach the other.
@@ -296,8 +296,8 @@ function SuggestionChips({ onPick }: { onPick: (s: string) => void }) {
 /** Saved starters on the new-chat screen.
  *
  *  Picking one PREFILLS the composer selection (and the prompt, if the template has
- *  one) instead of creating a session server-side. The plan's §C3 sketched a
- *  `create_from_template() -> session_key`, but this page mints a session lazily on
+ *  one) instead of creating a session server-side. A server-side
+ *  `create_from_template() -> session_key` was considered, but this page mints a session lazily on
  *  first send — a second server-side creation path would mean two ways a session comes
  *  into existence, and an abandoned starter would leave an empty chat behind. Prefilling
  *  reuses the one `ensureSession` path, so a starter the user opens and walks away from
@@ -630,8 +630,8 @@ export function ChatPage({ sub, navigate, navEpoch = 0, query, setQuery }: { sub
   // #/chat/history → the history list. (Chat history is also reachable as a
   // right-docked rail from the new-chat page, so bare #/chat lands on new chat.)
   if (seg === 'history') return <ChatHistoryPage navigate={navigate} query={q} setQuery={setQ} />
-  // #/chat/room/<id> → one Agent Room. A room is a MODE of this page rather than a nav peer
-  // (AGENT-ROOMS C9): there is no sidebar to be a peer of, the session list is this page, and
+  // #/chat/room/<id> → one Agent Room. A room is a MODE of this page rather than a nav peer:
+  // there is no sidebar to be a peer of, the session list is this page, and
   // its origin Segmented is the navigation that does exist — so the Rooms scope lists rooms and
   // this branch opens one. It sits ABOVE the bare/new branch and above the session-key
   // fallthrough, because that fallthrough treats any unrecognised segment as a session key and
@@ -735,7 +735,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // some other tab started (`chat/joinTurn.ts`).
   const stoppedTurnRef = useRef(false)
   // Bumped when a turn settles (streaming → false) so the session-skills review
-  // (skill-ephemeral-promotion) re-checks for drafts the agent just captured.
+  // re-checks for drafts the agent just captured.
   const [sessionSkillsEpoch, setSessionSkillsEpoch] = useState(0)
   // Screen-reader narration of the turn lifecycle: the visual "Thinking"/glow cue is silent to
   // assistive tech, so a polite live region says a turn started, and then how it ENDED, in the
@@ -801,7 +801,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // 🔴 THE CHAT THIS ROUTE NAMES DOES NOT EXIST. The detail read answered 404 — or it stopped
   // existing under us and a send answered `session_not_found`. Before this, the load's catch
   // only cleared the skeleton, so a dead link rendered exactly like a fresh empty chat and its
-  // composer took a message the server then refused and did not save (day-56b `s33`). Terminal
+  // composer took a message the server then refused and did not save. Terminal
   // for this mount: the page says the chat is gone and offers a new one instead.
   const [missing, setMissing] = useState(false)
   // A read that failed for any OTHER reason is not evidence that the chat is gone, so it is
@@ -834,12 +834,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // tappable SidePanel drawer on the mobile form. Open/closed is URL state so it is
   // deep-linkable and survives a reload, exactly like `?activity`.
   //
-  // 🪤 NOT `useQueryFlag`, and the reason is the DEFAULT. §A.1 makes the map always-available, so
+  // 🪤 NOT `useQueryFlag`, and the reason is the DEFAULT. The map is always available, so
   // its default is OPEN — and a present-or-absent flag can only record the non-default, i.e. it
   // could never express "this user closed it". `useQueryParam` with a '1' default is the same
   // one-key URL contract in both directions: open is the clean URL, `?map=0` records a
-  // deliberate close and restores it on refresh. (§A.9 named `useQueryFlag`; this is that
-  // mechanism's two-way form, not a second one — same module, same `setQuery`.)
+  // deliberate close and restores it on refresh. (This is `useQueryFlag`'s two-way form,
+  // not a second mechanism — same module, same `setQuery`.)
   //
   // Which FORM the map takes. `useIsMobile` (the app's ≤768px breakpoint) rather than a
   // `(pointer: coarse)` query of its own: the shell already switches its nav rail to a drawer on
@@ -849,7 +849,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const isMobile = useIsMobile()
   // 🪤 THE DEFAULT IS PER-FORM, AND A SINGLE `'1'` DEFAULT WAS A REAL DEFECT rather than a
   // preference. The "always available" is what the gutter rail delivers for free — it occupies
-  // the empty left column §A.0 measured, so open-by-default costs the transcript nothing. The
+  // the empty left column, so open-by-default costs the transcript nothing. The
   // mobile form is not that: it is the shared `SidePanel`, a docked column whose fit-width fills a
   // 390px viewport, so defaulting it open means the drawer is ALREADY COVERING the composer the
   // moment `started` flips — a phone user arrives at a chat they cannot type into. Measured, not
@@ -943,7 +943,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const [mentionedArtifacts, setMentionedArtifacts] = useState<{ slug: string; name: string }[]>([])
   const [artifactPickerOpen, setArtifactPickerOpen] = useState(false)
   const [pasteBlocks, setPasteBlocks] = useState<PasteBlock[]>([])
-  // uploaded-attachment workspace paths (threaded into send meta.files, B0) +
+  // uploaded-attachment workspace paths (threaded into send meta.files) +
   // composer extras: prompt history (↑/↓), context-usage %, optimize-in-flight,
   // memory mode for the next NEW session, queued-while-streaming message.
   const [attachedPaths, setAttachedPaths] = useState<string[]>([])
@@ -1019,7 +1019,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // Investigate origin: the entity this chat was opened to investigate.
   // Rendered as a header chip deep-linking back to the source surface.
   const [investigateOrigin, setInvestigateOrigin] = useState<import('../lib/api').InvestigateOrigin | null>(null)
-  // "Show full result" (tool-io-rendering TC4): the full raw of a projected tool
+  // "Show full result": the full raw of a projected tool
   // result, fetched on demand from the per-session store + shown in a modal. The
   // OPEN state is the URL (?result=<rawRef>, push); the fetched body + the tool
   // name (for the title) are derived — the ref is stable so a refresh re-fetches.
@@ -1085,7 +1085,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const [openFileRaw, setOpenFileRaw] = useQueryParam(query, setQuery, 'file', '')
   const openFile = openFileRaw || null
   const setOpenFile = (p: string | null) => setOpenFileRaw(p || '')
-  // session title + header actions (#64): rename inline, LLM-regenerate, copy link.
+  // session title + header actions: rename inline, LLM-regenerate, copy link.
   const [title, setTitle] = useState(seededDetail?.title || '')
   // Why the chat has no title yet, when no model is chosen for the chores (the gateway's sentence);
   // read with the chat, on opening it and after each turn, and gone once it has a title.
@@ -1093,7 +1093,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const [renaming, setRenaming] = useState(false)
   const [renameVal, setRenameVal] = useState('')
   const [regenningTitle, setRegenningTitle] = useState(false)
-  // P15 rAF stream coalescer: chat_chunk pushes into this; it flushes ONE growing
+  // rAF stream coalescer: chat_chunk pushes into this; it flushes ONE growing
   // reveal per animation frame (instead of a setTurns per chunk) via onFlush, which
   // replaces the ACTIVE text run's text with the revealed-so-far prefix. Every
   // ownership decision (replace-or-push, above-or-below the live text) is taken when
@@ -1140,7 +1140,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   useEffect(() => { showThinkingRef.current = !!showThinkingCfg }, [showThinkingCfg])
   const coalescer = useStreamCoalescer((revealed) => patchLastAssistant(textRun.flush(revealed)),
     { immediate: streamRevealCfg === 'immediate' })
-  // 🔴 K44 / issue #548 — ONE mechanism for ending a coalesced text run, in two flavours, and
+  // 🔴 Issue #548 — ONE mechanism for ending a coalesced text run, in two flavours, and
   // BOTH clear the coalescer buffer. That is the invariant that makes the leak unreachable: a
   // finished run holds no text, so no later flush can re-emit it.
   //
@@ -1549,7 +1549,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         // What undoing a learned preference needs (its key), when the emitter sent one.
         const ref = String(d.ref ?? '')
         // Keeps a mid-stream activity line BEFORE the coalescer's active text run so the next
-        // flush replaces-in-place instead of pushing a duplicate (K42); de-dupes adjacent
+        // flush replaces-in-place instead of pushing a duplicate; de-dupes adjacent
         // identical lines; tool cards win; carries `origin` onto the new segment. Whether the
         // run is live is decided HERE, not inside the updater: the stats line that ends every
         // turn can share a render batch with `chat_done`, which releases the run first.
@@ -2154,7 +2154,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // of one whose marker is only hidden.
   const livePasteBlocks = useMemo(() => (pasteBlocks.length ? pruneBlocks(input, pasteBlocks) : pasteBlocks), [input, pasteBlocks])
 
-  // "Show full result" (tool-io-rendering TC4): a tool card asked to reveal the
+  // "Show full result": a tool card asked to reveal the
   // full raw of a projected result → the modal is URL-backed (?result=<rawRef>,
   // push → Back closes it; the ref is a stable per-session id so a refresh/deep-link
   // re-fetches). The card's bridge event just writes the param (+ stashes the tool
@@ -2201,7 +2201,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         // memory mode is a create-time property of the session (not per-message).
         memory_mode: memoryMode !== 'persistent' ? memoryMode : undefined,
         // Bind the chat to a project when launched from one — the backend scopes the
-        // session to the project's workspace + (Slice 6 D2) feeds its loop history/context.
+        // session to the project's workspace + feeds its loop history/context.
         project_id: projectId || undefined,
       })
       sessionRef.current = created.key
@@ -2434,7 +2434,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       notice.showError(uploadHold, 'upload')
       return
     }
-    // meta.files = @-mentioned workspace files + uploaded attachments (B0).
+    // meta.files = @-mentioned workspace files + uploaded attachments.
     const files = [...mentionedFiles, ...attachedPaths]
     // Stamp a client ts and pass it to the backend so it stores the SAME ts on the
     // user message. The server otherwise skips broadcasting the user echo ("FE adds
@@ -2460,7 +2460,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // existing chat streams in right after the prior turn — the backend does NOT always emit
     // a chat_done/chat_segment boundary between turns (esp. YOLO/queued dispatch), so without
     // this the new turn's chunks would append onto the PRIOR turn's still-live coalescer run
-    // → turn N+1's bubble absorbed turn N's whole answer (K44). Safe on the very first turn
+    // → turn N+1's bubble absorbed turn N's whole answer. Safe on the very first turn
     // too (clearing an empty core is a no-op). DISCARD rather than seal: the user turn is
     // added locally just above, so a landed tail would be written into the new turn instead
     // of the finished one.
@@ -2612,7 +2612,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   }
   // /undo [N] — roll back N conversation turns via the backend, then re-hydrate the
   // transcript from the truncated server state (so the UI matches disk) + append an
-  // honest notice that side effects were NOT reverted (power-user-surfaces P7).
+  // honest notice that side effects were NOT reverted.
   async function undoTurns(n: number) {
     const s = sessionRef.current
     if (!s) return  // nothing started yet
@@ -2646,7 +2646,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     } catch (e) {
       // A failure is unrequested bad news, not something the assistant said: appending it as an
       // assistant turn put `String(e)` — "ApiError: <raw message>" — into the transcript in the
-      // assistant's voice (AUD-A9). The success notices above stay as assistant turns on purpose
+      // assistant's voice. The success notices above stay as assistant turns on purpose
       // (the preview/result IS the reply); only the failure routes to the error funnel, whose
       // message is already the backend's sentence with no exception-class prefix.
       reportActionFailure(`rewind to turn ${turn}`)(e)
@@ -2754,7 +2754,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     catch (e) { onFailure(e); return false }
     finally { replacingRef.current = false }
     followNewTurn()
-    // The coalescer still holds the PRIOR answer's run; the new reply must open its own (K44/K45).
+    // The coalescer still holds the PRIOR answer's run; the new reply must open its own.
     dropTextRun()
     markStreaming(true)
     readSnapshot(s, (d) => {
@@ -3085,7 +3085,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // the identical array (a "Message 3 of 7" that means a different 7 in each form is two maps).
   const sessionEntries = useMemo(() => sessionMapEntries(turns), [turns])
   /** Scroll the turn at a map coordinate into view — the ONE scroll implementation behind the
-   *  rail's tick and the drawer's row, which since SSM-13 are the only two jump surfaces. */
+   *  rail's tick and the drawer's row, which are the only two jump surfaces. */
   function jumpToTurn(coord: number) {
     const node = turnNodes.current.get(coord)
     node?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -3222,7 +3222,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     if (patch.reasoning !== undefined) persistSelection('this reasoning effort', api.setReasoningEffort(s, patch.reasoning as ReasoningEffort))
   }
 
-  /** Apply a saved starter to the composer (S3 T3.2).
+  /** Apply a saved starter to the composer.
    *
    *  Only fields the template actually carries are applied: a template saved with no
    *  model must not silently reset the user's current pick to "Auto". `applySelection`
@@ -3264,7 +3264,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     }
   }
 
-  // TM8: the model proposed a switch out of a restricted mode and the user clicked
+  // The model proposed a switch out of a restricted mode and the user clicked
   // "Switch to Agent & run it". Flip the session to Agent (UI toggle + backend) and
   // resume the work — the click IS the consent that makes the escalation safe (no
   // silent self-escalation out of a read-only posture). The backend flip is awaited
@@ -3290,7 +3290,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     await send(text)
   }
 
-  // ── session title actions (#64) ──
+  // ── session title actions ──
   function beginRename() { setRenameVal(title || ''); setRenaming(true) }
   async function commitRename() {
     const s = sessionRef.current
@@ -3423,7 +3423,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // In the same render as the chips below, so the hold never lifts before the file is attached.
     done()
     const paths = (r as { paths?: string[] }).paths ?? []
-    // Thread uploaded paths into the next send's meta.files (B0) + show them as
+    // Thread uploaded paths into the next send's meta.files + show them as
     // removable chips alongside @-mentioned files.
     if (paths.length) setAttachedPaths((prev) => [...prev, ...paths.filter((p) => !prev.includes(p))])
   }
@@ -3483,8 +3483,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   }
 
   const stage = (
-    // `data-tour="chat"` — the product tour's chat stop points at the composer stage
-    // (ONBOARDING-UX T5.1). On the chat route this wrapper is the composer.
+    // `data-tour="chat"` — the product tour's chat stop points at the composer stage.
+    // On the chat route this wrapper is the composer.
     <div data-tour="chat" className="w-full" style={{ maxWidth: 'var(--content-width)' }}>
       {/* Memory-mode notice: incognito/temporary sessions look identical to a normal one
           otherwise, so say what this mode does before the user types. The words are
@@ -3638,7 +3638,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             </div>
           )}
         </AnimatePresence>
-        {/* Suggested organization (SM T2.1). Keyed on the message count so it re-asks once a
+        {/* Suggested organization. Keyed on the message count so it re-asks once a
             turn lands and the auto-titler has given the chat a title to reason from — an
             untitled brand-new chat has no signal. Proposal only; nothing applies until
             "File it" is clicked. */}
@@ -3850,7 +3850,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                 `ariaExpanded`, not `active`: this is a disclosure, not an on/off setting.
                 `priority="primary"` because on the mobile form this control IS the in-session
                 navigation — shedding it into the overflow `…` menu is exactly the "mobile loses
-                session nav" outcome §A.8 exists to prevent. */}
+                session nav" outcome this must prevent. */}
             {started && (
               <HeaderControl icon={ListTree} label="Session map" priority="primary"
                 ariaExpanded={mapOpen} onClick={() => setMapOpen(!mapOpen)} />
@@ -3922,7 +3922,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                   the rail's box does not move while the transcript scrolls, AND the scroll
                   container does not contain the rail — because a `sticky` rail inside the
                   scroller would pass the box check and still drift under an ancestor transform.
-                  The gutter is the empty column §A.0 measured ("No left sidebar"), so the rail
+                  The gutter is an empty column (measured: "No left sidebar"), so the rail
                   costs the centred transcript nothing. */}
               <div className="relative flex min-h-0 flex-1">
               {mapOpen && !isMobile && (
@@ -4035,7 +4035,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               </div>
               <div className="relative shrink-0 px-l pb-l">
                 {/* reconnecting cue — the WS dropped; state will re-sync on
-                    reconnect (cycle 59), but tell the user the link is down. */}
+                    reconnect, but tell the user the link is down. */}
                 <AnimatePresence>
                   {!wsConnected && (
                     <motion.div role="status"
@@ -4362,7 +4362,7 @@ function withPrompt(list: RecalledPrompt[], entry: RecalledPrompt): RecalledProm
  *  a message the user sent while a turn was streaming; the backend dispatches them
  *  FIFO as turns finish. A pending item can be cancelled (removes it server-side).
  *  Numbered so the send order is obvious. */
-/** P18a — QueueStack: the queued-message deck rendered as PHYSICAL stacked cards
+/** QueueStack: the queued-message deck rendered as PHYSICAL stacked cards
  *  (top = next to run), overlapping with a translateY/scale/opacity depth falloff
  *  (the Toaster/Sonner idiom), depth offsets scaled by `expr()`. Only the TOP card
  *  shows its full text + actions; deeper cards peek behind it, and expanding on hover
@@ -4709,7 +4709,7 @@ function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, 
   onAnswerQuestion: (id: string, reply: QuestionReply) => Promise<unknown>
   onSwitchToAgent: (continuation: string) => void
   onOpenFile: (path: string) => void
-  /** WT-04: the no-model empty-state's CTA — routes to Settings → Models through the hash router. */
+  /** The no-model empty-state's CTA — routes to Settings → Models through the hash router. */
   onSetupModel: () => void
   /** Send the turn's message again, for a turn that ended on its error without an answer — a
    *  failure, or a restart that cut it off. Given for the last settled turn only. */
@@ -4724,7 +4724,7 @@ function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, 
   modelSubstitution?: string
 }) {
   const fullText = segments.filter((s) => s.kind === 'text').map((s) => (s as { text: string }).text).join('\n')
-  // A restricted-mode turn may OFFER a one-click escalation to Agent (TM8).
+  // A restricted-mode turn may OFFER a one-click escalation to Agent.
   const { switchTo } = parseSwitchToAgent(fullText)
 
   // Transparency signals (what FED the turn / what was LEARNED / telemetry) are
@@ -4784,7 +4784,7 @@ function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, 
     if (seg.kind === 'thinking') return <ThinkingBlock key={i} text={(seg as ThinkingSegment).text} defaultOpen={streaming} />
     if (seg.kind === 'error') {
       const { text, settings } = seg as ErrorSegment
-      // WT-04: a fresh instance with no model resolves the turn to a WHAT/WHY/FIX
+      // A fresh instance with no model resolves the turn to a WHAT/WHY/FIX
       // envelope that reads as a stack dump. Reframe THAT case as a calm setup
       // nudge; every other turn error keeps the plain danger strip.
       // The notice a turn ENDED on — nothing after it but the footer ledger — is where she reads
@@ -4884,7 +4884,7 @@ function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, 
 
       {hasLedger && <ContextLedger fed={ledger.fed} fedNoMemory={ledger.fedNoMemory} learned={ledger.learned} learnedOrigin={ledger.learnedOrigin} learnedRef={ledger.learnedRef} stats={ledger.stats} />}
 
-      {/* Agent-driven one-click escalation (TM8): the model proposed a switch out
+      {/* Agent-driven one-click escalation: the model proposed a switch out
           of a restricted mode; the user approves with a single click, which flips
           the session to Agent AND runs the continuation. Shown on the last turn
           once it's done (the consent gate that keeps Ask/Plan from self-escalating). */}
@@ -5099,7 +5099,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   const [optimistic, setSessions] = useState<ChatSessionSummary[] | null>(null)
   useEffect(() => { if (cachedSessions !== undefined) setSessions(cachedSessions) }, [cachedSessions])
   const sessions = optimistic
-  // View/filter state rides the URL (PLAN 7 unified-URL pattern, matching every
+  // View/filter state rides the URL (the unified-URL pattern, matching every
   // other list page) so the chat list is deep-linkable + reload-stable + back/
   // forward-navigable. All use replace:true — they're filters, not navigation
   // steps, so they update the current entry rather than spamming history.
@@ -5821,7 +5821,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
                     )}
                     {g.items.length === 0 ? <div className="text-on-surface-low text-[0.8125rem] italic pl-5">{folderDragKey ? 'Drop here to move into this folder' : 'Empty'}</div>
                       : (
-                        // THE surface SM-3 deferred windowing on ("pending
+                        // THE surface windowing was first deferred on ("pending
                         // measurement"). `/api/chat/sessions` is uncapped at BOTH ends — no
                         // server page size, no client slice — so this is the one list in the
                         // app that really does reach 5,000 rows. Measured on a real store of

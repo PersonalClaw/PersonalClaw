@@ -33,8 +33,8 @@ function rel(ts?: number | string | null): string {
 export function ScheduleWidget({ navigate }: RouteProps) {
   const { schedule, scheduleDidIds, scheduleSuppressed, read } = useDashboardLive()
   // Suppressed rows are archived out of the default view; the disclosure reveals them on demand.
-  // Collapsed by default because §1.3 is explicit that "the runs inbox is for what the machine
-  // DID" — the fold IS the archive, not a nicety layered over an already-crowded list.
+  // Collapsed by default because the runs inbox is for what the machine
+  // DID — the fold IS the archive, not a nicety layered over an already-crowded list.
   const [showSuppressed, setShowSuppressed] = useState(false)
 
   if (schedule.length === 0) {
@@ -69,10 +69,10 @@ export function ScheduleWidget({ navigate }: RouteProps) {
   }
 
   // 🔴 the ARCHIVE SPLIT as a FOLD. The backend has returned `did_ids`;
-  // S165 got them as far as ordering work-first, but ordering only helps until the real fires run
+  // they first only ordered the list work-first, but ordering only helps until the real fires run
   // out — a minutely trigger inside quiet hours still buried the ONE fire that ran under 11 gate
   // hits once the visible slots filled. So the suppressed rows now archive behind a disclosure:
-  // the default view is work, and §7 criterion 8's "zero silent drops" holds because they are one
+  // the default view is work, and "zero silent drops" holds because they are one
   // click away, not gone. `partitionRuns` is the single shared copy of the split — membership
   // comes from the SERVER's `did_ids`, never from re-testing `is_inert` here (a second copy drifts
   // the moment a new `skipped_*` outcome lands).
@@ -86,9 +86,9 @@ export function ScheduleWidget({ navigate }: RouteProps) {
   const visible = showSuppressed ? [...did, ...suppressed] : did
 
   // 🔴 EVERY READ HERE NOW RESOLVES ON THE SHAPE THIS WIDGET ACTUALLY RECEIVES (issue 466). The
-  // endpoint was re-pointed underneath this file: until S84 `/api/triggers/history` returned raw
+  // endpoint was re-pointed underneath this file: `/api/triggers/history` used to return raw
   // `ScheduleRun` dicts, and this row has read `job_name`/`job_id`/`status`/`trigger` since the
-  // initial public commit. S84 made the default shape the UNIFIED `FireRecord` — deliberately; the
+  // initial public commit. Now the default shape is the UNIFIED `FireRecord` — deliberately; the
   // handler's docstring calls it "the honest cross-kind answer" — and those rows carry none of
   // those four names. Measured on a live gateway with five real fires: every row rendered the
   // literal word "Schedule", so five different automations were indistinguishable (four of them

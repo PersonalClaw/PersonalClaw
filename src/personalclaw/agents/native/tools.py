@@ -12,9 +12,9 @@ Two responsibilities:
    tool module's surface (``_list_tools`` / ``_call_tool`` — e.g.
    ``personalclaw-core`` via ``mcp_core``, ``personalclaw-automation`` via
    ``mcp_schedule``) directly in-process — *without* spawning the MCP server
-   subprocess an external ACP CLI would. This is E2-P4's "option A"
-   (fast, no subprocess); a real in-process MCP stdio *client* (option B,
-   ``mcp_client.py``) can replace it later behind the same ``ToolProvider`` seam.
+   subprocess an external ACP CLI would. This is the fast option
+   (no subprocess); a real in-process MCP stdio *client*
+   (``mcp_client.py``) can replace it later behind the same ``ToolProvider`` seam.
 
 ``_call_tool`` is synchronous (it returns a JSON/text string); it is run in a
 thread executor so a slow tool never blocks the event loop.
@@ -238,7 +238,7 @@ def observed(result: ToolResult, meta_sink: dict) -> str:
         meta["truncated"] = True
         if getattr(result, "original_length", None) is not None:
             meta["original_length"] = result.original_length
-    # TC5: carry recovery_hints (concrete next-steps on failure) so the tool card
+    # Carry recovery_hints (concrete next-steps on failure) so the tool card
     # can surface them — the contract has them, they were dropped at the WS boundary.
     # Also carry the success flag so the card can color-code a failed call (a
     # green "done" check on a failed tool is misleading). Only stamp on FAILURE —

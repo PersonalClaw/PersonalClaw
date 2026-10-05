@@ -1,6 +1,6 @@
 """Removing an MCP server removes it everywhere: both documents, and every value it owns.
 
-🔴 THE DEFECT (measured by #3617's lane, and here on ``origin/main``). The MCP Tool Servers card in
+🔴 THE DEFECT (measured in #3617, and here on ``origin/main``). The MCP Tool Servers card in
 Settings → Providers deleted a server from ``mcp.json`` only (``mcp_instances.delete_instance``).
 The rebuild that followed starts from the existing agent config and merges additively, so the
 server's copy in ``agents/personalclaw.json`` survived: still listed on the Tools page

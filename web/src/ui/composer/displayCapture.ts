@@ -140,14 +140,14 @@ export type OneFrame = { frame: HTMLCanvasElement } | { error: AcquireFailure }
  * whole difference between this and screen sharing, so it is structural here rather
  * than a call-site convention.
  *
- * DESKTOP-CAPABILITIES S2 seam. When the Electron shell ships its capability bridge
+ * Desktop-shell seam. When the Electron shell ships its capability bridge
  * (`window.pclawDesktop.capabilities`, registry entry `screen_capture`: `probe()` for
  * the OS grant state, `request()` to raise the prompt), THIS function is the swap
  * point — probe the bridge first and, where `screen_capture` is granted, take the
  * shell's consent-gated native picker instead of `acquireDisplayStream`. Everything
  * downstream (crop overlay, PNG blob, upload, attachment chip) is provider-agnostic
  * and does not change, and the composer entry point stays exactly where it is:
- * CHAT-CRAFT owns the entry, DESKTOP-CAPABILITIES owns the bridge.
+ * the composer owns the entry, the desktop shell owns the bridge.
  */
 export async function grabOneFrame(): Promise<OneFrame> {
   const acquired = await acquireDisplayStream()

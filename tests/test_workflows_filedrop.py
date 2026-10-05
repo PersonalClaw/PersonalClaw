@@ -1,4 +1,4 @@
-"""The per-run file drop and outbox (R17).
+"""The per-run file drop and outbox.
 
 The load-bearing claims, in the order the risk runs:
 

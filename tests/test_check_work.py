@@ -197,7 +197,7 @@ class TestExecution:
 
 
 class TestAdversarialPlantedFlaw:
-    """SC 5 — a multi-step turn with a deliberately planted flaw. check-work must catch
+    """A multi-step turn with a deliberately planted flaw. check-work must catch
     it with ZERO self-reported passes."""
 
     def test_planted_flaw_is_caught_with_no_self_reported_passes(self, tmp_path):
@@ -224,7 +224,7 @@ class TestAdversarialPlantedFlaw:
         assert "test -e tests/test_widget.py" in rendered  # a reader can re-run it
 
 
-# ── The SDLC post-gate hook (SC 6) ────────────────────────────────────────────────
+# ── The SDLC post-gate hook ───────────────────────────────────────────────────────
 def _fake_loop(tmp_path, findings_stage: str):
     return SimpleNamespace(
         id="loop-hc4",
@@ -365,7 +365,7 @@ class TestCheckWorkOfferHeuristic:
         assert sent == []
 
 
-# ── Config round-trip: the four wiring points (SC 7) ──────────────────────────────
+# ── Config round-trip: the four wiring points ─────────────────────────────────────
 @pytest.mark.parametrize(
     "section,field_name,default",
     [("loops", "check_work_stages", False), ("dashboard", "offer_check_work", True)],

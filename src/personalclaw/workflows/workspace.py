@@ -460,7 +460,7 @@ def plan_provisioning(
     return plan
 
 
-# ── folder contracts (R18) ──
+# ── folder contracts ──
 
 
 @dataclass

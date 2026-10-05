@@ -1,14 +1,14 @@
-"""Action provider schema ↔ executor parity (the #13/#21/#37 drift class).
+"""Action provider schema ↔ executor parity.
 
 Every native action provider's bundled manifest declares a ``settingsSchema``
 whose ``properties`` drive the Triggers UI (ActionConfig) form. If an executor
 reads an ``action_config`` key the schema doesn't declare, that key is
 UNCONFIGURABLE from the UI — the exact failure behind:
-  * #13  webhook empty settingsSchema
-  * #21  create-task missing assignee/due/labels
-  * #37  bash-action empty settingsSchema (command unconfigurable → every bash
-         hook failed "missing 'command' field"); run-prompt missing
-         ``dry_run``.
+  * webhook empty settingsSchema
+  * create-task missing assignee/due/labels
+  * bash-action empty settingsSchema (command unconfigurable → every bash
+    hook failed "missing 'command' field"); run-prompt missing
+    ``dry_run``.
 
 This test statically extracts each executor's ``action_config.get("<key>")`` /
 ``action_config["<key>"]`` reads and asserts every such key is declared in the
@@ -32,7 +32,7 @@ _REPO = Path(__file__).resolve().parents[2]
 _NATIVE_APPS = Path(__file__).resolve().parents[1] / "src" / "personalclaw" / "apps" / "native"
 _ACTION_PKG = Path(__file__).resolve().parents[1] / "src" / "personalclaw" / "action_providers"
 # The webhook action moved to a standalone workspace app (apps/webhook-action) —
-# NOT native. Kept in the parity sweep because it was the original drift bug (#13).
+# NOT native. Kept in the parity sweep because it was the original drift bug.
 _WORKSPACE_APPS = _REPO / "apps"
 
 # provider key → (manifest app.json path, executor .py path). Native providers live
@@ -124,18 +124,18 @@ def test_executor_reads_are_declared_in_schema(provider: str):
         f"{provider}-action manifest schema is MISSING keys its executor reads "
         f"from action_config: {sorted(missing)}. Declared: {sorted(declared)}. "
         f"Add them to settingsSchema.properties or the UI can't configure them "
-        f"(the #13/#21/#37 schema↔executor drift class)."
+        f"(the schema↔executor drift class)."
     )
 
 
 def test_bash_action_exposes_command():
-    """Direct regression for #37: bash-action MUST declare 'command'."""
+    """Direct regression: bash-action MUST declare 'command'."""
     assert "command" in _manifest_props("bash")
 
 
 def test_run_prompt_exposes_dry_run():
-    """#37: dry-run replay must be configurable from the Triggers UI.
+    """Dry-run replay must be configurable from the Triggers UI.
 
-    run-workflow was asserted here too until WORKFLOWS-V2 Phase 1 deleted the
-    provider; Slice 3 re-adds it (with `dry_run`) and this assertion with it."""
+    run-workflow was asserted here too until the old workflow feature deleted the
+    provider; re-adding it (with `dry_run`) brings this assertion back with it."""
     assert "dry_run" in _manifest_props("run-prompt")

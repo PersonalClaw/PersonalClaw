@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Assert the single-container `docker run` in README.md reaches a USABLE dashboard — DIST-15.
+"""Assert the single-container `docker run` in README.md reaches a USABLE dashboard.
 
-`DIST-15`'s `done_when` is deliberately built to reject the cheap answer. A healthz-only
-assertion is **explicitly insufficient**, because until this atom landed the gateway image
+This check is deliberately built to reject the cheap answer. A healthz-only
+assertion is **explicitly insufficient**, because until this check landed the gateway image
 would have passed one: `Dockerfile.backend` copied `src/` + `pyproject.toml` + `setup.py`
 and nothing else, and `setup.py`'s `BuildWithWeb` grafts `web/dist` into the installed
 package only if `web/dist` is already in the build tree — which `.dockerignore` guarantees
@@ -43,20 +43,20 @@ page GET gets the paste-token gate (`dashboard/token_auth.py:_deny`), while `/as
 `/fonts/`, `/sprites/` and `/vendor/` are in `_BYPASS_PREFIXES` and are served without a
 session. So the token comes from `docker exec … personalclaw token` — the same step
 `docs/guides/containers.md` documents — and the asset is fetched cold. Arming
-`PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1` or `PERSONALCLAW_AUTH_MODE=none` to make the bare
-`curl` in the `done_when` literal would have been a weaker rail against a weaker product:
+`PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1` or `PERSONALCLAW_AUTH_MODE=none` to make a bare
+`curl` pass would have been a weaker rail against a weaker product:
 `AUTH_MODE=none` pins the bind to loopback *inside* the container (so `-p` reaches
 nothing) unless `PERSONALCLAW_BIND_HOST` also overrides it, and that combination — no
 auth on `0.0.0.0` — is precisely what the loopback invariant exists to prevent.
 
 **The command is READ, never re-spelled.** Re-typing it here would let README.md drift into
-being wrong while this file stayed green, which is the failure mode DIST-17 is about. The
+being wrong while this file stayed green. The
 only things rewritten are the image ref (`--image`, so CI can test the image built from the
 commit under review rather than whatever `:latest` resolves to), the container name and the
 volume name — the last two for safety: a run must never `docker rm -f personalclaw` or
 remove a `personalclaw_home` volume a reader of this repo is actually using.
 
-Exit 0 = the clause holds. Exit 1 = it does not. Exit 2 = the run could not measure
+Exit 0 = the claim holds. Exit 1 = it does not. Exit 2 = the run could not measure
 (no docker, port in use, README command not found) — never a pass, and a different
 finding, so it says so separately.
 
@@ -148,8 +148,8 @@ def redact_secrets(text: str) -> str:
 def readme_docker_run(readme: Path) -> str:
     """The single-container `docker run` command, as README.md spells it.
 
-    Exactly one is expected. Zero means the README half of the clause regressed (the
-    state DIST-15 started from: ``grep -c 'docker run' README.md`` was 0). More than one
+    Exactly one is expected. Zero means the README half of the check regressed (the
+    state this check started from: ``grep -c 'docker run' README.md`` was 0). More than one
     means there is now a choice to make and this tool must not guess which command a
     reader would copy.
     """
@@ -287,7 +287,7 @@ def published_port(argv: list[str]) -> int:
 
 def _get(url: str, *, token: str = "") -> tuple[int, str, str]:
     """GET *url*; with *token*, authenticated by ``Authorization: Bearer`` — never the URL."""
-    headers = {"User-Agent": "dist15-smoke"}
+    headers = {"User-Agent": "single-container-smoke"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, headers=headers)
@@ -417,7 +417,7 @@ def _assert_asset(base: str, src: str) -> None:
 
     # Negative control on the discriminator itself: if a fabricated asset ALSO comes back
     # as JavaScript, the assertion above passes for any input and proves nothing.
-    bogus = f"/assets/dist15-control-{uuid.uuid4().hex}.js"
+    bogus = f"/assets/single-container-control-{uuid.uuid4().hex}.js"
     status, ctype, _body = _get(f"{base}{bogus}")
     if status == 200 and any(kind in ctype.lower() for kind in _JS_CONTENT_TYPES):
         raise Unmeasurable(
@@ -538,7 +538,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    suffix = f"dist15-{os.getpid()}"
+    suffix = f"single-container-{os.getpid()}"
     name = f"personalclaw-smoke-{suffix}"
     volume = f"personalclaw_home_smoke_{os.getpid()}"
 
@@ -557,7 +557,7 @@ def main() -> int:
 
     # A scratch directory with no PersonalClaw files, which is the clause's subject: the
     # command must not be depending on a checkout it happens to be standing in.
-    scratch = tempfile.mkdtemp(prefix="dist15-scratch-")
+    scratch = tempfile.mkdtemp(prefix="single-container-scratch-")
     base = f"http://127.0.0.1:{port}"
     started = False
     try:

@@ -1,4 +1,4 @@
-"""Tests for the Files content-search endpoint (Files P3).
+"""Tests for the Files content-search endpoint.
 
 Exercises the Python fallback path directly (deterministic, no ripgrep
 dependency) plus the HTTP handler's validation + engine reporting.

@@ -1,7 +1,7 @@
 """Integration tests for the loop-kind bundled templates.
 
 These templates are the descendants of the five loop kinds, and the property that
-matters most is the one the plan calls the platform's oldest rule: **no agent certifies
+matters most is the platform's oldest rule: **no agent certifies
 its own work**. A template whose work stage self-reports `done: true` with no judge
 behind it has that rule broken at the spec level, where no runtime check can help.
 
@@ -27,7 +27,7 @@ from personalclaw.workflows.judge_contract import (
 from personalclaw.workflows.template_lint import lint_template
 from personalclaw.workflows.validator import validate_spec
 
-#: The loop-kind families this session authored. Named explicitly rather than derived
+#: The loop-kind families. Named explicitly rather than derived
 #: from a tag, so a template silently losing its tag cannot silently leave this suite.
 LOOP_TEMPLATES = (
     "goal-pursuit-open-ended",
@@ -36,9 +36,9 @@ LOOP_TEMPLATES = (
     "design-project",
     "diagnose-run",
     # The code/SDLC descendant. It joins this suite rather than getting its own
-    # weaker one: it is one of the plan's per-kind templates, so the judge contract, the
+    # weaker one: it is one of the per-kind templates, so the judge contract, the
     # runtime_hints split, the loop bounds and the shipping metadata are the SAME contract
-    # for it. Its own R5 structural gates are tested in `test_workflows_code_project.py`.
+    # for it. Its own structural gates are tested in `test_workflows_code_project.py`.
     "code-project",
     # The research descendant. It joins this suite as the SECOND half of the research port:
     # before that port it was a triage-and-branch pipeline with no judge, no runtime_hints and an
@@ -74,8 +74,8 @@ def _nodes(node: dict):
 def _effective_prompt(spec: dict, judge: dict) -> str:
     """What the judge actually READS.
 
-    For a judge STAGE that is the template's own prompt. For a judge GATE it is not: since
-    WF2LOO-13 the engine composes the instruction from the template's rubric prose PLUS
+    For a judge STAGE that is the template's own prompt. For a judge GATE it is not: the
+    engine composes the instruction from the template's rubric prose PLUS
     `judge_contract.judge_instruction`, which renders the closed verdict set, the proof
     requirement and the exact rubric keys from the same `JudgeHints` the validation reads.
     Asserting the contract properties against the raw template text would measure the wrong
@@ -153,7 +153,7 @@ def test_no_stage_certifies_its_own_work(name):
     ]
     for node in work_nodes:
         schema = (node.get("config") or {}).get("schema") or {}
-        # `done` is the specific field the plan flags. A worker may report PROGRESS
+        # `done` is the specific field to forbid. A worker may report PROGRESS
         # (which the loop reads) but never completion.
         assert "done" not in schema, f"{name}:{node.get('id')} self-reports done"
 
@@ -194,7 +194,7 @@ def test_cross_model_isolation_is_no_longer_flagged():
     the engine had no seam to keep the claim: the gate was never told the worker's model and
     `one_shot_completion` resolved by use-case, not by model.
 
-    WF2LOO-11 built that seam — `dispatch_gate` now takes `worker_model`, resolves the concrete
+    That seam exists now — `dispatch_gate` takes `worker_model`, resolves the concrete
     judge model, validates its FAMILY against the worker's via `judge_actors.validate_judge_model`,
     and pins it (failing CLOSED when a different family can't be obtained). The claim is now
     ENFORCED at dispatch, so a lint warning that says "the engine cannot enforce this" is FALSE and
@@ -378,7 +378,7 @@ def test_every_loop_has_a_real_exit_and_a_hard_cap(name):
 def test_every_declared_progress_field_can_be_emitted_by_its_body():
     """A declared `progress_field` must be a field some node in that loop's body can EMIT.
 
-    Since WF2LOO-14 the engine decides `until_dry` from this field, so a field no body node
+    The engine decides `until_dry` from this field, so a field no body node
     declares in its `schema` gets the whole-output fallback on every iteration — the template
     reads as "stops when progress dries up" and is actually bounded only by `max_iterations`,
     which is what shipped for a year. Naming it in the schema is not enough either: a key the
@@ -411,7 +411,7 @@ def test_every_declared_progress_field_can_be_emitted_by_its_body():
             ), f"{name}:{loop.get('id')} never tells the body what {field!r} means"
     assert checked >= 3, (
         "the shipped until_dry templates that declare a field must be swept — the floor rose to 3 "
-        "when PP-16's research port gave `deep-research`'s round loop a `new_findings_count` field "
+        "when the research port gave `deep-research`'s round loop a `new_findings_count` field "
         "(before it, that loop declared none and was bounded only by a cap that did not bind)"
     )
 
@@ -593,10 +593,10 @@ def test_the_new_templates_did_not_break_the_shipped_library():
 
 
 def test_the_loop_families_are_all_present():
-    """The five loop kinds the plan replaces each have a descendant."""
+    """The five old loop kinds each have a template descendant."""
     shipped = set(template_names())
     assert set(LOOP_TEMPLATES) <= shipped
-    # deep-research is the research-loop descendant and pre-dates this session.
+    # deep-research is the research-loop descendant and pre-dates the others.
     assert "deep-research" in shipped
 
 
@@ -609,7 +609,7 @@ def test_every_judge_stage_declares_the_contract(name):
 
     Without the declaration `apply_judge_contract` skips the node, so the contract-shaped verdict
     these prompts already ask for goes back to being produced every cycle and discarded — which is
-    exactly what WF2LOO-12 measured.
+    exactly what happened while the contract was unwired.
     """
     stages = [n for n in _judges(_spec(name)) if n.get("kind") == "stage"]
     assert stages, f"{name} has no judge stage"
@@ -652,7 +652,7 @@ def test_the_prompt_offers_the_whole_closed_verdict_set(name):
 
 
 def test_the_validated_verdict_is_bound_by_the_templates_that_produce_it():
-    """Acceptance criteria: the judge stage's output is READ, not just produced.
+    """The judge stage's output is READ, not just produced.
 
     Measured before this change: zero templates bound `nodes.judge.output.*`, so a contract-shaped
     verdict was produced every loop iteration and discarded. The binding site depends on the

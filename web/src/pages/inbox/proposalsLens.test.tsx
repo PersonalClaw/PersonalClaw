@@ -68,7 +68,7 @@ function selectRow(title: RegExp) {
 // Approve is exactly "Approve", so this never matches a row button.
 const batchButton = () => screen.getByRole('button', { name: /^Approve (\d+ from |selected)/ })
 
-describe('INU-7 proposal lens grouping helpers', () => {
+describe('proposal lens grouping helpers', () => {
   it('groups on (provenance, item_kind) and refuses a mixed selection', () => {
     expect(groupKey(learningA)).toBe(groupKey(learningB))
     expect(groupKey(learningA)).not.toBe(groupKey(appOne))

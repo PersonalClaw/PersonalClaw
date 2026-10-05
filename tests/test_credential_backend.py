@@ -1,4 +1,4 @@
-"""The credential backend selector: keychain vs `.env` 0600 (SECURITY-HARDENING SH-1 / C1).
+"""The credential backend selector: keychain vs `.env` 0600.
 
 Two stores sit behind one API. The properties that matter are not "does keyring work" —
 they are the ones a credential store cannot get wrong:
@@ -11,7 +11,7 @@ they are the ones a credential store cannot get wrong:
   backend raises; both are refused rather than adopted.
 * **Doctor reports the OUTCOME.** An install that asks for a keychain it does not have
   must read as `.env`, not as "keychain". A line that echoed the *request* is the exact
-  defect the acceptance clause exists to prevent, so it is asserted directly.
+  defect this rule exists to prevent, so it is asserted directly.
 
 ⚠️  `keyring` is an OPTIONAL extra and is NOT in `[dev]`/`[test]`: CI does not install it.
 Every test here therefore either BLOCKS the import through `sys.meta_path` or installs a
@@ -225,7 +225,7 @@ def test_a_present_keychain_is_not_used_until_it_is_requested(
 ) -> None:
     """Availability alone must not move where secrets are written.
 
-    The lifecycle is opt-in first (SH-2 owns the gate + the consent-triggered migration).
+    The lifecycle is opt-in first (the keychain gate owns the consent-triggered migration).
     A machine that merely HAS a keychain keeps writing `.env` until asked, so no install
     silently ends up with half its secrets in each store.
     """

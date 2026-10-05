@@ -21,7 +21,7 @@ import { withArticle } from '../../lib/article'
  *     study is `judge_unreliable`; drawing it as 0% would claim we measured a catastrophically
  *     position-biased judge, when the truth is that no pair was judgeable at all.
  *  2. **`invalidated` and `judge_unreliable` are shown as loudly as a win.** They are the
- *     append-only honesty §2.4 asks for. A UI that hid them would leave a user believing the
+ *     append-only honesty the study record keeps. A UI that hid them would leave a user believing the
  *     study had not run, and the next thing they would do is re-register it — which is
  *     precisely the re-interpretation the pre-registration exists to prevent.
  *  3. **Nothing is re-decided here.** The verdict, the floor it was judged against and the

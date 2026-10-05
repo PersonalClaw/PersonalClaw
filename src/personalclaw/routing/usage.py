@@ -1,11 +1,11 @@
 """Usage/spend read model — the durable per-day fold ``usage_stats.json``.
 
-The spend-framed lens over telemetry that is ALREADY recorded (zero new collection), riding §1.3's
-fold discipline: ``~/.personalclaw/usage_stats.json`` (``atomic_write``), keyed
+The spend-framed lens over telemetry that is ALREADY recorded (zero new collection), riding the
+routing-stats fold discipline: ``~/.personalclaw/usage_stats.json`` (``atomic_write``), keyed
 ``date -> "provider:model" -> purpose`` of ``{calls, tokens_in, tokens_out, dollars_est, …}``.
 
-**The fold reads ONE record and CENSUSES the other. Why (this is the change's whole design
-question, and the reason it was BLOCKED before — see the plan's MRT-3 execution log ①–⑥):**
+**The fold reads ONE record and CENSUSES the other. Why (this is the fold's whole design
+question):**
 
 PersonalClaw records model cost in two places that cannot be safely summed:
 
@@ -63,7 +63,7 @@ carries it, because a fold that discards rows produces a plausible number for ev
 
 Rebuild: :func:`rebuild` refolds from scratch — the ``--rebuild`` discipline applied to this
 fold (``routing.stats.rebuild`` is its sibling over the audit JSONL). Note that flag does not exist
-yet: ``--rebuild-routing-stats`` appears in §1.3 and in ``stats.py``'s docstring but no ``cli.py``
+yet: ``--rebuild-routing-stats`` appears in ``stats.py``'s docstring but no ``cli.py``
 argument implements it, so the rebuild is reached through :func:`refresh`, which every
 ``GET /api/usage`` calls — a deleted fold self-heals on the next read. :func:`refresh` merges the
 refold OVER the persisted fold so days that have aged out of the capped JSONL survive (the ledger
@@ -97,7 +97,7 @@ _USAGE_FILE = "usage_stats.json"
 #: Bump when the fold's schema changes.
 USAGE_VERSION = 1
 
-#: The fixed purpose vocabulary (plan §"The usage story").
+#: The fixed purpose vocabulary.
 PURPOSES = ("interactive", "background", "loop", "eval", "app")
 
 #: ``usage/turns.jsonl`` ``source`` -> purpose. ``chat``/``room``/``cli``/``channel`` are the
@@ -451,7 +451,7 @@ def rebuild(
 ) -> dict[str, Any]:
     """Refold ``usage_stats.json`` from scratch and persist it.
 
-    The §1.3 rebuild discipline for this fold: the JSONL is capped, so this recovers whatever
+    The rebuild discipline for this fold: the JSONL is capped, so this recovers whatever
     forensic tail remains. A day already aged out of the JSONL is NOT recoverable here — that is
     what :func:`refresh` preserves, and why the fold is the durable record.
     """

@@ -21,7 +21,7 @@ import { checkChatModel, thrownMessage, type ChatModelVerdict } from './checkCha
 import { api, type AppCatalogEntry, type AppSummary, type BundledModelOffer as Offer, type ChatModelOption, type LocalModelEndpoint, type ModelProviderType, type OnboardingState, type OnboardingStatePatch, type ProviderOptionValue, type ToolItem } from '../../lib/api'
 import { HELD_CHANGE_REASON } from '../../lib/staleWrite'
 
-/** ONBOARDING-UX S1 T1.2r — the essential-apps step: the flow's first act
+/** The essential-apps step: the flow's first act
  *  after the name, and the only place a fresh install can become a working agent
  *  without a detour through Settings.
  *

@@ -1,6 +1,7 @@
-"""WIN-1 — the POSIX-only ``resource`` import is guarded so gateway boot never crashes.
+"""The POSIX-only ``resource`` import is guarded so gateway boot never crashes.
 
-The bug (windows-native-audit ``WIN-1``): ``gateway.py`` did a bare ``import resource`` at boot.
+The bug (found by ``docs/research/windows-native-audit.md``): ``gateway.py`` did a bare
+``import resource`` at boot.
 ``resource`` is POSIX-only, so a native-Windows process ``ImportError``ed before it could serve.
 The fix moves the import behind :mod:`personalclaw.resource_limits`, mirroring the guard already
 at ``_spawn_exec_shim.py``, and routes the facility's two consumers through it:
@@ -187,7 +188,7 @@ async def test_doctor_row_degrades_loudly_when_resource_absent(monkeypatch):
 
 
 def test_gateway_boot_has_no_unguarded_import_resource():
-    """The exact WIN-1 deliverable: ``gateway.py`` must not import ``resource`` directly —
+    """The exact fix: ``gateway.py`` must not import ``resource`` directly —
     that bare import at boot was the crash. An AST scan (not a substring grep) so a
     re-introduced ``import resource`` / ``import resource as x`` reds, and it fails on the
     pre-fix tree for the right reason."""

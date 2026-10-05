@@ -174,12 +174,12 @@ def _spawn_cell(
 ) -> CellResult:
     """Run ONE cell in a child process and map its outcome to a ``CellResult``.
 
-    Env construction is the load-bearing §1.3 isolation code, and it is a BUILD rather than
+    Env construction is the load-bearing isolation code, and it is a BUILD rather than
     a copy: ``build_child_env`` composes the child environment from the measured name
     allowlist, then ``PERSONALCLAW_WORKSPACE``/``PERSONALCLAW_HOME`` are set on that fresh
     dict, so both overrides exist in the child and nowhere else and the parent's own env is
     never touched. ``PERSONALCLAW_HOME`` points at an empty per-cell dir the child seeds
-    from the scenario's named ``fixture_home`` (ES-2): the run executes over a known clean
+    from the scenario's named ``fixture_home``: the run executes over a known clean
     state, and everything the child writes lands in the throwaway home rather than the
     user's.
 
@@ -233,7 +233,7 @@ def _spawn_cell(
         # The child seeds this path itself; ``seed()`` refuses a non-empty target
         # without ``replace=True``, so we deliberately do NOT create it here.
         cell_home = Path(cell_tmp) / "home"
-        # ── §1.3 isolation: a BUILT child env, parent env never touched ──
+        # ── isolation: a BUILT child env, parent env never touched ──
         env = _cell_base_env(ws, cell_home)
         # The component toggle rides the child's env, on the same fresh dict. This is the
         # whole of "child-process overlay toggling": nothing in the parent applies the
@@ -318,7 +318,7 @@ def run_matrix(
     ``aggregates.json`` + ``trials.json``, appends a ``results.tsv`` row, and
     SEL-logs matrix-run start + completion (best-effort).
 
-    ``artifact_arm`` (ES-6) is the Loop-2 gate's before/after arm: a set of home-relative files
+    ``artifact_arm`` is the Loop-2 gate's before/after arm: a set of home-relative files
     the CHILD stages into its throwaway home. It is threaded here rather than given its own
     runner because a second spawn path would be a second isolation contract to keep true.
 
@@ -329,7 +329,7 @@ def run_matrix(
     ``experiment.json`` that hardcoded an endpoint would stop being reproducible elsewhere.
     Omit it and every cell resolves the offline ``scripted`` fixture, exactly as before.
 
-    ES-2: the pin is computed FIRST, before any cell runs, and persisted as
+    The pin is computed FIRST, before any cell runs, and persisted as
     ``matrices/<id>/pin.json``. A scenario that cannot be resolved — or that names a
     fixture home that does not ship — raises
     :class:`~personalclaw.evals.scenarios.ScenarioLibraryError` out of here, on
@@ -412,7 +412,7 @@ def _matrix_verdict(aggregates: dict) -> str:
 
 
 def _sel_log(matrix_id: str, spec: MatrixSpec, *, outcome: str) -> None:
-    """SEL-log a matrix-run lifecycle event (§10). Best-effort — never breaks a run."""
+    """SEL-log a matrix-run lifecycle event. Best-effort — never breaks a run."""
     try:
         sel().log_api_access(
             caller=f"matrix:{matrix_id}",

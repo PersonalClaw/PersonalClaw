@@ -1,6 +1,6 @@
 """Generalized autopause, parking, quarantine, and Runs-inbox surfacing.
 
-The plan says autopause-after-5 ALREADY EXISTS for the cron action path and that the substrate
+Autopause-after-5 ALREADY EXISTS for the cron action path, and the substrate
 generalizes it. So this suite starts from what the shipped one does, measured by driving it:
 `GatewayOrchestrator._maybe_autopause` increments one counter at all four of its call sites with no
 notion of WHY the fire failed, so **five consecutive denylist blocks disable the trigger** — a
@@ -40,7 +40,7 @@ from personalclaw.triggers.models import (
     TriggerState,
 )
 
-# ── the shipped behaviour this session generalizes ──
+# ── the shipped behaviour a declared policy generalizes ──
 
 
 def test_the_shipped_budget_is_preserved_exactly():
@@ -395,7 +395,8 @@ def _with_policy(policy):
 
 
 def test_a_DECLARED_autopause_after_is_HONOURED():
-    """🔴 THE DEFECT. §1.1 declares `failure_policy: {autopause_after: 5, dedupe_hash: true}` and
+    """🔴 THE DEFECT. The trigger entity declares
+    `failure_policy: {autopause_after: 5, dedupe_hash: true}` and
     `evaluate` has always accepted `budget=` — the fire path never passed one, so `autopause_after`
     had **zero readers anywhere in the tree**.
 
@@ -414,8 +415,8 @@ def test_a_DECLARED_autopause_after_is_HONOURED():
 
 
 def test_NO_policy_keeps_the_shipped_default():
-    """The control case, and the compatibility guarantee: every trigger authored before this session
-    behaves exactly as it did."""
+    """The control case, and the compatibility guarantee: every trigger authored before a declared
+    policy was read behaves exactly as it did."""
     from personalclaw.triggers.autopause import FAILURE_BUDGET, budget_for
 
     assert budget_for(_with_policy({})) == FAILURE_BUDGET

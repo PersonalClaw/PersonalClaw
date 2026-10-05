@@ -5,7 +5,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The audit of our own floors: 106 of them, and four had rotted ─────────────────────────────
 //
-// Cycle 118 found `expect(users.length).toBeGreaterThan(20)` guarding **28** settings panels — two panels
+// A review found `expect(users.length).toBeGreaterThan(20)` guarding **28** settings panels — two panels
 // could lose their page title with the rail still green. That was filed as "audit the `>N` rail floors",
 // and this is that audit, done by MEASUREMENT rather than by reading: a temporary setup file wrapped
 // `toBeGreaterThan`/`toBeGreaterThanOrEqual` for one full-suite run and logged every floor with the value
@@ -35,7 +35,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //       product: `schemeContrast` measures up to 15.5 against an AA floor of 4.5, and "tightening" that to
 //       15.5 would ratchet a design value into a gate. **Never tighten.**
 //
-// 🪤 CYCLE 118'S MISS WAS TYPE (a) MISFILED AS TYPE (b) — a population count wearing a vacuity guard's
+// 🪤 THE SETTINGS-PANELS MISS WAS TYPE (a) MISFILED AS TYPE (b) — a population count wearing a vacuity guard's
 // clothes. The tell is in the assertion's own message: "the matcher must find the tree" is (b); "the
 // primitive must actually be in use" / "the population must still be visible" is (a) and must sit at the
 // number.
@@ -50,7 +50,7 @@ const read = (rel: string) => readSource(join(SRC, rel))
 
 /** [file, the assertion's tail, the measured population it must sit at] */
 const TIGHTENED: [string, RegExp, number][] = [
-  // 🔻 31 → 30 (cycle ux-673). Read this before assuming the number was lowered to make a red go away:
+  // 🔻 31 → 30. Read this before assuming the number was lowered to make a red go away:
   // the taxonomy above calls this floor a type (a) MEASURED POPULATION whose rule is "sit at the
   // measurement". The measurement moved because two of the counted substitutions were DELETED — the
   // `settings:doctor` and `settings:incident` tiles stopped mapping a rejection to `null` — which is the

@@ -29,7 +29,7 @@ producers, and ``tests/test_legibility_always_on.py`` closes the remaining gap b
 item this module reports is a substring of a really-assembled ``build_session_context`` output —
 with a vacuity floor, so an empty-vs-empty match can never pass for agreement.
 
-Provenance is reported as ``scope`` (global vs project — what the plan asks the user to see) plus a
+Provenance is reported as ``scope`` (global vs project — what the user needs to see) plus a
 finer ``source`` (bundled / user / agent:<name> / project:<id>).
 
 Editability follows the underlying contract rather than convenience: the project **overview** is
@@ -301,8 +301,8 @@ class InstructionWriteError(Exception):
 
     Raised rather than returned because the underlying ``write_overview`` reports failure as a
     bare ``False``: a caller that ignored it would render "Saved" over an edit that never
-    landed. Silently discarding a user's text is the exact failure this atom's
-    "round-trips safely" clause is about.
+    landed. Silently discarding a user's text is the exact failure the
+    "round-trips safely" promise is about.
     """
 
     def __init__(self, reason: str, *, status: int = 500):

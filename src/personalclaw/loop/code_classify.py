@@ -350,7 +350,7 @@ def _normalize_plan(
             "workflow_ids": _filter_ids(p.get("workflow_ids"), workflow_ids),
             "tasks": _normalize_tasks(p.get("tasks")),
         }
-        # P6 producer: carry through any planner-supplied tick keys FIRST (so an explicit
+        # Carry through any planner-supplied tick keys FIRST (so an explicit
         # value survives), then attach sensible per-stage-kind defaults for the rest.
         for k in ("min_findings", "min_dwell_secs", "metric_pass", "metric_hold"):
             if k in p and p.get(k) is not None:
@@ -368,13 +368,14 @@ _METRIC_GATED_STAGES = {"verification", "review"}
 
 
 def _apply_tick_defaults(stage_dict: dict, stage: str) -> None:
-    """Attach P6 tick step-key defaults to a stage dict (in place), without clobbering
+    """Attach tick step-key defaults to a stage dict (in place), without clobbering
     any value the planner already supplied. Conservative + reversible: only fields the
     tick engine reads, all optional, so a plan works identically if the engine is off.
     Keyed on the real SDLC stage id (already validated against SDLC_STAGES upstream)."""
     stage_dict.setdefault("min_findings", 1)  # never advance a stage on zero evidence
     if (stage or "").lower() in _METRIC_GATED_STAGES:
-        # quality_score is 0-5 (P4 judge); require solid quality to pass, hold on marginal.
+        # quality_score is 0-5 (the cycle judge's scale); require solid quality to pass, hold
+        # on marginal.
         stage_dict.setdefault("metric_pass", 3.5)
         stage_dict.setdefault("metric_hold", 2.0)
 

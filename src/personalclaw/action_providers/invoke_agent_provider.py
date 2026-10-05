@@ -1,6 +1,6 @@
 """``invoke-agent`` hook provider — spawn a child agent on a lifecycle event.
 
-The marquee E3 action: a coder agent's ``Stop`` hook spawns a ``code-reviewer``
+The marquee action: a coder agent's ``Stop`` hook spawns a ``code-reviewer``
 agent. Guarded two ways and always fire-and-forget so the lifecycle never
 blocks on the child:
 
@@ -170,7 +170,7 @@ class InvokeAgentActionProvider(ActionProvider):
             return ActionResult(success=False, error=f"invoke-agent: {refused}")
         from personalclaw.subagent import agent_work_id
 
-        # "launched", not "succeeded": the agent's outcome is not known here (T7 honest "started ≠
+        # "launched", not "succeeded": the agent's outcome is not known here (an honest "started ≠
         # succeeded" status). The run's row names the agent, and says how it went when it ends.
         return ActionResult(
             success=True,
@@ -215,7 +215,7 @@ class InvokeAgentActionProvider(ActionProvider):
             cwd=cwd,
             max_turns=max_turns,
             model=model,
-            # §4.1 creation-time write grant, read from the policy: an agent that approves its
+            # The creation-time write grant, read from the policy: an agent that approves its
             # own calls is read-only unless the step carries ``capability: "mutating"``.
             approval_mode=policy.approval_mode or None,
             capability_class=policy.capability_class,

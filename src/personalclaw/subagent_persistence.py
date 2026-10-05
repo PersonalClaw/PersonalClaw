@@ -38,7 +38,7 @@ def _subagents_dir() -> Path:
     which froze the home at first import. Two consequences, one of each kind: a
     ``$PERSONALCLAW_HOME`` established after this module was imported was ignored for the
     rest of the process, and under pytest no fixture could redirect it — a full suite wrote
-    147 entries into the developer's real ``~/.personalclaw/subagents`` (CRE-8). Resolving
+    147 entries into the developer's real ``~/.personalclaw/subagents``. Resolving
     per call means the active home always wins.
     """
     return config_dir() / "subagents"

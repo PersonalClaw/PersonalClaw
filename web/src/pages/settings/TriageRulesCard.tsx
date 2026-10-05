@@ -13,7 +13,7 @@ import { fvs } from '../../design/fontWeight'
 /** The triage rules manager.
  *
  *  The three routes behind this card — `GET`/`POST`/`DELETE /api/memory/approval-rules` — shipped
- *  with PA-1 and had NO frontend consumer at all, which is why a user could teach a rule by
+ *  with NO frontend consumer at all, which is why a user could teach a rule by
  *  replying to a digest and then never see or revoke it. This card is that missing half.
  *
  *  🪤 Two honesty rules the endpoint made possible and this card must not throw away:
@@ -24,7 +24,7 @@ import { fvs } from '../../design/fontWeight'
  *  2. A failed read is not "no rules yet". An empty rules list means the machine will propose
  *     everything; a failed read means we do not know what it will do. They get different UI.
  *
- *  The graduation toggle is deliberately labelled as intent rather than as a send switch: PA-3's
+ *  The graduation toggle is deliberately labelled as intent rather than as a send switch: the
  *  `inbox-op` provider has no send path in it at all (asserted by a source scan in its own
  *  tests), so flipping this on does not start sending. It marks the rule as one a send-capable
  *  provider would be allowed to honour — and the warning badge says exactly that, because a

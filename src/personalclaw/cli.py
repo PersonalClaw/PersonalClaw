@@ -123,7 +123,7 @@ def _resolve_gateway_args(args: argparse.Namespace) -> dict:
         "port_override": port,
         "json_ready": json_ready,
         "approval_mode": approval,
-        # §6 recovery lever. Deliberately NOT part of the --test-mode bundle: a harness
+        # A recovery lever. Deliberately NOT part of the --test-mode bundle: a harness
         # that ran with no app layer would pass while the layer it never loaded was broken.
         "safe_surfaces": getattr(args, "safe_surfaces", False),
     }
@@ -676,7 +676,7 @@ allow and changes nothing.
     cron_trigger = cron_sub.add_parser("trigger", help="Fire a cron job immediately")
     cron_trigger.add_argument("job_id", help="Job ID to trigger now")
 
-    # automation. `cron` stays as-is for one release — §7 makes the
+    # automation. `cron` stays as-is for one release — the migration makes the
     # legacy file read-only rather than gone, and `verify-migration` is the command that check
     # depends on.
     automation_parser = sub.add_parser(
@@ -839,8 +839,8 @@ Examples:
     webhook_revoke = webhook_sub.add_parser("revoke", help="Revoke a sender token")
     webhook_revoke.add_argument("client_id", help="Its id, as `list` shows it")
 
-    # capture — telemetry import for agents that cannot be proxied
-    # (EXTERNAL-ACCESS §8). The proxy half of capture needs no CLI; this half does,
+    # capture — telemetry import for agents that cannot be proxied.
+    # The proxy half of capture needs no CLI; this half does,
     # because the input is a file a human exported from another tool.
     capture_parser = sub.add_parser(
         "capture", help="Import exported agent logs into the capture store"
@@ -903,7 +903,7 @@ Examples:
     push_test.add_argument("--kind", default="approval", help="Payload kind (default: approval)")
     push_test.add_argument("--item-id", default="test", help="Payload item id (default: test)")
 
-    # backup — deterministic shard export + verification (DURABILITY §2). A copy of the records
+    # backup — deterministic shard export + verification. A copy of the records
     # to review and diff; the backup a restore reads is `personalclaw snapshot`.
     backup_parser = sub.add_parser(
         "backup",
@@ -1110,7 +1110,7 @@ Examples:
   personalclaw ablation --dry-run                    # the cell preflight, nothing called
   personalclaw ablation --force                      # measure the next component now
   personalclaw ablation --component judge-node
-  personalclaw ablation --skill code/release-flow     # the §3.3 bench, over its consulted runs
+  personalclaw ablation --skill code/release-flow     # the skill bench, over its consulted runs
 
 The component is toggled by an overlay applied ONLY inside the spawned child; your live
 spec and config are never edited, and a run that leaked an edit refuses to report. A
@@ -1125,7 +1125,7 @@ no-delta verdict files a retirement proposal — removing anything stays your ca
         "--component", default="", help="Measure this component id instead of the next in rotation"
     )
     abl_parser.add_argument(
-        "--skill", default="", help="Bench one SKILL surfaced-vs-suppressed (§3.3) instead"
+        "--skill", default="", help="Bench one SKILL surfaced-vs-suppressed instead"
     )
     abl_parser.add_argument(
         "--subject",
@@ -1148,7 +1148,7 @@ no-delta verdict files a retirement proposal — removing anything stays your ca
         help="Print the cell preflight and exit without calling a model",
     )
 
-    # eval-gate (EVALUATION-SUBSTRATE amendment E2 / ES-6 — the Loop-2 cheap gate)
+    # eval-gate (the Loop-2 cheap gate)
     gate_parser = sub.add_parser(
         "eval-gate",
         help="Re-run the cheap gate subset before/after a proposal's change",
@@ -2039,7 +2039,7 @@ from personalclaw.push import push_cmd as _push_cmd  # noqa: E402
 def _workflow_cmd(args) -> int:  # noqa: ANN001
     """`workflow replay <run_id>` — re-drive a run and name the first node that moved.
 
-    Divergence is a first-class outcome, not a failure (PP-6): a template edit is supposed to
+    Divergence is a first-class outcome, not a failure: a template edit is supposed to
     diverge, and a divergent replay still exits 0. Only a run that cannot be replayed at all — no
     spec, no recorded steps — is an error exit.
     """
@@ -2258,7 +2258,7 @@ def _handle_skills(args) -> None:  # noqa: ANN001
 
 
 def _incident_cmd(args) -> None:  # noqa: ANN001
-    """Dispatch ``personalclaw incident on|off|status`` (the kill switch, §1.3).
+    """Dispatch ``personalclaw incident on|off|status`` (the kill switch).
 
     Operates on ``~/.personalclaw/incident.json`` directly — works with or without
     a running gateway; a live gateway picks up the change via the file's mtime

@@ -91,7 +91,7 @@ def _parse_lint(path: str, raw: bytes) -> str:
     The format is chosen by the pack-relative path suffix — the same suffixes
     :mod:`packs.build` writes (``templates/*.json``, ``prompts/*.yaml``,
     ``skills/*/SKILL.md``, ``agents/*.md``). A component whose bytes are not valid
-    UTF-8 is itself an error (no §1 component is binary text)."""
+    UTF-8 is itself an error (no pack component is binary text)."""
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:

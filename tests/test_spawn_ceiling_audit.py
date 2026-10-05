@@ -1,4 +1,4 @@
-"""Spawn-ceiling audit tripwire (SH1.3a).
+"""Spawn-ceiling audit tripwire.
 
 Every process-spawning call site in ``src/personalclaw`` must be *accounted for*: either
 it is **ceiling-wrapped** (routed through the post-exec shim via ``create_subprocess_limited``
@@ -68,10 +68,10 @@ _CEILING_WRAPPED: dict[str, str] = {
     # Bash action provider — hook/cron shell commands (tool profile).
     "action_providers/bash_provider.py::BashActionProvider.execute::"
     "create_subprocess_limited": "bash action provider → tool ceiling",
-    # Desktop computer-use driver (tool profile) — DESKTOP-COMPUTER-USE §3.5, `DCU-4`. The
+    # Desktop computer-use driver (tool profile). The
     # driver is a subprocess precisely BECAUSE of this ceiling: an accessibility call into an
-    # unresponsive application can block inside the OS for a long time, and the plan requires a
-    # wedged/looping driver to be "bounded by the kernel, not just a userspace timeout". The
+    # unresponsive application can block inside the OS for a long time, and a
+    # wedged/looping driver must be bounded by the kernel, not just a userspace timeout. The
     # operation is model-chosen (which app, which element, which named AX action), so it is
     # agent-influenced in the fullest sense — this is the one spawn in the tree whose child
     # touches the operator's physical input layer.
@@ -94,10 +94,10 @@ _CEILING_WRAPPED: dict[str, str] = {
     "selfqa/fix_branch.py::_git::subprocess.run": (
         "selfqa fix-branch git → build ceiling via spawn_shim_argv"
     ),
-    # React artifact bundle (build profile) — PRODUCT-EXPERIENCE-PARITY `PEP-9`. The source
+    # React artifact bundle (build profile). The source
     # handed to the bundler is a model- or user-authored artifact body, so this is
-    # agent-influenced in the fullest sense and is exactly the unbounded build spawn §1
-    # exists to bound. It is the ONLY spawn in artifacts/, and there is no unwrapped
+    # agent-influenced in the fullest sense and is exactly the unbounded build spawn the
+    # ceiling exists to bound. It is the ONLY spawn in artifacts/, and there is no unwrapped
     # sibling path.
     "artifacts/build.py::_run_esbuild::create_subprocess_limited": (
         "react artifact bundle → build ceiling via create_subprocess_limited"
@@ -106,7 +106,7 @@ _CEILING_WRAPPED: dict[str, str] = {
     "apps/backend_runtime.py::BackendSupervisor.start::subprocess.Popen": (
         "app backend → tool ceiling via spawn_shim_argv (argv-prepend; NOT preexec_fn)"
     ),
-    # App background worker (tool profile) — APE-3. Same ceiling and the same argv-prepend as
+    # App background worker (tool profile). Same ceiling and the same argv-prepend as
     # the backend above, and for a sharper reason: a worker is LONG-LIVED and unattended, so an
     # unceilinged one is the fork bomb nobody is watching. `preexec_fn` is again refused
     # because this spawn can run off the watchdog thread.
@@ -140,7 +140,7 @@ _CEILING_WRAPPED: dict[str, str] = {
         "durable worker spawn → tool ceiling via spawn_shim_argv inside the tmux session"
     ),
     # The ``none`` sandbox provider's handle exec — the single seam every routed spawn
-    # now funnels through. EI-1 moved the direct create_subprocess_limited call out of
+    # now funnels through. The direct create_subprocess_limited call moved out of
     # AcpProcess.spawn (session_host profile — the EMFILE fix, NOFILE raised, no OOM bias) and
     # into this provider handle, which composes the OS path sandbox with the resource ceilings;
     # the profile still rides on the SandboxSpec, so the ACP ceiling is unchanged.
@@ -193,7 +193,7 @@ _CEILING_WRAPPED: dict[str, str] = {
         "connector-pack parse script → tool ceiling via spawn_shim_argv, prepended outside "
         "the OS-sandbox wrap (sync site; rlimits inherit through exec)"
     ),
-    # Model sidecar child (LMMV §3.1) — third-party native model code in its own venv, so
+    # Model sidecar child — third-party native model code in its own venv, so
     # agent-influenced: the ``tool`` profile also gives it the OOM-first bias, which is the
     # disposition wanted for a process holding a multi-gigabyte model. argv-prepend, not
     # preexec_fn: this can run off the watchdog thread (the backend_runtime hazard).
@@ -279,7 +279,7 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     # option-shaped can pose as a sha — the same discipline as the state-history runner above.
     "selfqa/triage.py::_git::subprocess.run": "host-fact: read-only git commit inspection",
     "selfqa/watch.py::_git::subprocess.run": (
-        "host-fact: read-only git HEAD/rev-list probe (SV-11 — the retired sandbox "
+        "host-fact: read-only git HEAD/rev-list probe (the retired sandbox "
         "script's delta logic, moved in-process; same fixed argv, no shell, 30s timeout)"
     ),
     # The Self-QA evidence bundle uses ffmpeg as a host media tool, exactly like the
@@ -405,7 +405,7 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "dashboard/handlers/files.py::api_upload::asyncio.create_subprocess_exec": (
         "operator: native file picker"
     ),
-    # EI-6 tmux substrate, which the terminal's own session management goes through too: the
+    # The tmux substrate, which the terminal's own session management goes through too: the
     # argv is FIXED (`tmux -S <home>/tmux.sock <subcommand>`), no element of it is
     # agent-influenced, and every one of these is a bounded call to the home's own tmux server.
     # A resource ceiling on a `has-session` probe would cap the boot sweep's ability to ask
@@ -429,8 +429,8 @@ _OPERATOR_EXEMPT: dict[str, str] = {
         "operator: stop the home's own tmux server (service uninstall, home wipe)"
     ),
     # Update machinery — operator/service; re-execs the gateway itself (must not be capped).
-    # The install-kind decision + the shared git/pip primitives live in core self_update.py
-    # (DIST-13); the dashboard and the CLI both drive them.
+    # The install-kind decision + the shared git/pip primitives live in core self_update.py;
+    # the dashboard and the CLI both drive them.
     "self_update.py::_run_git::subprocess.run": (
         "service: the one git seam every sync self-update probe funnels through"
     ),
@@ -466,7 +466,7 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "dashboard/handlers_system.py::_collect_system_metrics::subprocess.check_output": (
         "host-fact: system metrics"
     ),
-    # Memory-pressure snapshot (LMMV §7) — `sysctl -n hw.memsize` + `vm_stat`, both static
+    # Memory-pressure snapshot — `sysctl -n hw.memsize` + `vm_stat`, both static
     # argv host-fact READS with no agent-influenced input. Capping a read that exists to
     # report on memory pressure would be self-defeating.
     "local_models/residency.py::_darwin_memory::subprocess.check_output": (
@@ -669,7 +669,7 @@ def test_ceiling_wrapped_and_operator_exempt_are_disjoint():
 
 
 def test_agent_influenced_seams_are_all_ceiling_wrapped():
-    """The named agent-influenced seams from PLATFORM-HARDENING-FLOORS §1 are each present
+    """The named agent-influenced seams are each present
     in the ceiling-wrapped set (a regression guard so one cannot be quietly re-exempted)."""
     required = {
         "agents/native/builtin_tools.py::NativeBuiltinToolProvider._t_bash::"
@@ -678,13 +678,13 @@ def test_agent_influenced_seams_are_all_ceiling_wrapped():
         "create_subprocess_limited",
         "apps/backend_runtime.py::BackendSupervisor.start::subprocess.Popen",
         "mcp_stdio.py::stdio_streams::create_subprocess_limited",
-        # EI-1 routed the ACP session_host spawn through the sandbox provider handle — the
+        # The ACP session_host spawn is routed through the sandbox provider handle — the
         # single seam every routed spawn now funnels through — so the ACP ceiling is asserted
         # here rather than at the former AcpProcess.spawn site.
         "sandbox_providers/none.py::_NoneHandle.exec::create_subprocess_limited",
         "loop/gates.py::run_verify_command::create_subprocess_limited",
         "loop/worktree.py::_git::subprocess.run",
-        # EI-3 closed the last of the seven named seams: the cron/scheduled-script runner had
+        # The last of the seven named seams to close: the cron/scheduled-script runner had
         # the OS sandbox and the clean env but no ceiling. Ratcheted in here so the
         # exemption cannot come back.
         "schedule_script.py::run_script_sandboxed::subprocess.run",

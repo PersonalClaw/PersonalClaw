@@ -1,4 +1,4 @@
-"""Apply merged rows back to the live on-disk store (DAS-6c-ii-c).
+"""Apply merged rows back to the live on-disk store.
 
 The sync cycle's last pure primitive: the inverse of ``shards.py``'s row *extraction*.
 ``shards.export_shards`` turned each inventory entry's on-disk form into a flat row list;

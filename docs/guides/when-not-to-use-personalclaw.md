@@ -89,8 +89,8 @@ a single-user self-hosted system has no directory to federate with — see
 [Security model](../architecture/security.md) and [Remote access](remote-access.md).
 
 Nor can you build a team out of several installs. From
-[Companion apps → No hub, ever](companion-apps.md#no-hub-ever), quoted as an owner
-ruling rather than a status:
+[Companion apps → No hub, ever](companion-apps.md#no-hub-ever), quoted as a
+permanent decision rather than a status:
 
 > **No hub in core, ever. No gateway-to-gateway anything.** Gateways never discover,
 > sync with, or proxy for each other; no shared identity, no cross-gateway search, no
@@ -350,7 +350,7 @@ in an account PersonalClaw has no access to.
 It is not the security threat model — that is
 [threat-model.md](../security/threat-model.md), which maps each control to the OWASP
 Agentic Top-10 with code citations. It is not a roadmap: nothing here is a commitment to
-change, and two of the items (§3's no-hub ruling and §10's no hosted service) are
+change, and two of the items (§3's no-hub decision and §10's no hosted service) are
 permanent boundaries we expect to still be true at 1.0.
 
 If something on this page has gone stale against the code, that is a bug worth filing —

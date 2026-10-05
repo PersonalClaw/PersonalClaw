@@ -1,4 +1,4 @@
-"""Drift guard for the committed config-schema baseline (PLATFORM-HARDENING-FLOORS SH3.1).
+"""Drift guard for the committed config-schema baseline.
 
 ``config-baseline.json`` is GENERATED from the ``AppConfig`` dataclass hierarchy and
 its ``_meta`` metadata by ``scripts/generate_config_baseline.py`` — the same source of

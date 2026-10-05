@@ -1,4 +1,4 @@
-"""The bundled template library (Slice 9a).
+"""The bundled template library.
 
 Six templates shipped inside the package. The tests here are mostly a **contract over the
 library itself** rather than over code, because the failure modes are all of the "ships broken
@@ -53,10 +53,10 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
-#: The six the plan's §6 table names. Asserted as a SET so a template silently disappearing
+#: Every shipped template. Asserted as a SET so a template silently disappearing
 #: from the wheel is a failure rather than a smaller listing.
 EXPECTED = {
-    # The general-purpose library (WF2 Slice 9a).
+    # The general-purpose library.
     "audit-sweep",
     "code-project",
     "deep-research",
@@ -64,11 +64,11 @@ EXPECTED = {
     "produce-and-audit",
     "project-planning",
     # The loop-kind families: descendants
-    # of the five loop kinds the plan replaces. `deep-research` above doubles as the
+    # of the five loop kinds they replace. `deep-research` above doubles as the
     # research-loop descendant, which is why there are five here rather than six.
     "goal-pursuit-open-ended",
     "goal-pursuit-verifiable",
-    # The monitor variant (WF2LOO-9 / R15): a parked run plus a self-created clock trigger.
+    # The monitor variant: a parked run plus a self-created clock trigger.
     # Its park gate has no provider to dispatch — the between-checks mechanism is the
     # trigger substrate's resume target, not an action.
     "goal-pursuit-monitor",
@@ -89,14 +89,14 @@ EXPECTED = {
     # (`one_shot_completion(use_case="background")`); a `stage` spawns a subagent on the
     # orchestration/standard chain and never touches the tier resolution at all.
     "contradiction-review",
-    # The Knowledge Synthesis slate. Four of the twelve: the ones whose mechanisms
-    # actually ship. See the plan's execution log for which were deferred and why — every
-    # omission is a missing PROVIDER (net.fetch, a calendar source), not a missing template.
+    # The Knowledge Synthesis slate: the templates whose mechanisms
+    # actually ship. Every omission is a missing PROVIDER (net.fetch, a calendar source),
+    # not a missing template.
     "knowledge-synthesis",
     "rich-ingest",
     "thesis-tracker",
     "publish-article",
-    # The monitor/ingest slate (§6.1 + §7.1 items 2, 3, 4 and 9). These four were
+    # The monitor/ingest slate. These four were
     # the "missing PROVIDER" the comment above names: they need a DISPATCHABLE HTTP-egress
     # action, and `net.fetch` was a library function until `net-fetch` was registered. Each of
     # them dispatches that provider, which is what `test_the_monitor_slate_dispatches_a_real_
@@ -311,7 +311,7 @@ class TestConventions:
         there — and someone debugs the wrong commit.
 
         Asserted against every node that can WRITE rather than against "the first stage": the
-        gated initializer (R5a) deliberately runs BEFORE the baseline, because it is
+        gated initializer deliberately runs BEFORE the baseline, because it is
         what makes the environment able to run its own checks at all. A baseline captured in a
         tree whose dependencies are not installed records "everything fails" and classifies
         nothing afterwards — so init-then-baseline is the correct order, and the initializer is
@@ -427,7 +427,7 @@ class TestDependencyOrderingCensus:
         """Recorded, not required. Every shipped dependency is ordered by a `sequence`; the
         `needs` half of the rule is proven only by unit tests. If a template ever does
         declare `needs`, this assertion is the prompt to check that the census still holds
-        rather than something to delete quietly — `PP-2` derives these edges and will make
+        rather than something to delete quietly — deriving these edges would make
         the count move on purpose.
         """
         declared = {
@@ -503,7 +503,7 @@ class TestOutputContractCensus:
         assert not any(judged.values()), f"a shipped read now resolves against a contract: {judged}"
 
     def test_the_library_ships_neither_of_the_new_issues(self) -> None:
-        """Named by code, so a future contract addition is attributed to `PP-3` rather than
+        """Named by code, so a future contract addition is attributed to its change rather than
         landing as an anonymous line in a strict-validation diff."""
         for name in sorted(EXPECTED):
             codes = {i.code for i in validate_spec(_pipeline(_raw(name)), strict=True).issues}
@@ -511,7 +511,7 @@ class TestOutputContractCensus:
             assert "WF_UNCONTRACTED_OUTPUT_REF" not in codes, name
 
     def test_the_unscoped_warning_volume_is_what_the_scoping_avoids(self) -> None:
-        """The deviation's justification, kept checkable. Without the spec-level scoping this
+        """The scoping decision's justification, kept checkable. Without the spec-level scoping this
         library emits ~77 warnings (~49 if only sub-path readers count) across 18 templates;
         with it, zero. Bounds rather than equalities so the library can grow, but wide enough
         that a collapse toward zero — which would make the whole decision moot — reds.
@@ -793,7 +793,7 @@ def test_the_templates_are_declared_as_package_data() -> None:
 
 
 class TestActionArgShape:
-    """A real bug this session hit, and the guard that now catches it at authoring time.
+    """A real bug, and the guard that now catches it at authoring time.
 
     The retired `code-implementation` template wrote its bash arguments FLAT beside `provider`.
     The engine reads a
@@ -905,7 +905,7 @@ def test_the_whole_library_passes_the_conventions_lint() -> None:
     assert not problems, "\n".join(problems)
 
 
-#: The four templates `WF2KNO-9` shipped. Named explicitly rather than derived from a tag: the
+#: The four monitor/ingest templates. Named explicitly rather than derived from a tag: the
 #: property under test is that THESE dispatch the egress action, and a tag-derived set would
 #: silently shrink to the empty set if the tag were ever renamed — and then pass.
 MONITOR_SLATE = ("market-monitor", "trending-repo-digest", "dual-sink-watcher", "paper-ingest")
@@ -946,9 +946,9 @@ class TestTheMonitorSlate:
     def test_the_monitor_slate_dispatches_a_real_egress_action(self) -> None:
         """Each of the four names the egress provider on a node the engine will dispatch.
 
-        A template that fetches nothing is not a monitor. This is the clause the change's own
-        criterion turns on ("dispatch a real HTTP-egress action node at run time"), and the
-        reason the slate could not ship before `net-fetch` was registered.
+        A template that fetches nothing is not a monitor. Dispatching a real HTTP-egress action
+        node at run time is what this slate turns on, and the reason it could not ship before
+        `net-fetch` was registered.
         """
         for name in MONITOR_SLATE:
             named = _providers_named_by(name)
@@ -1005,7 +1005,7 @@ class TestContradictionReviewFastTier:
 
     A `stage` node spawns a subagent that resolves the ``orchestration`` (standard) chain and
     never calls ``resolve_use_case``, so it can neither run on the fast tier nor go through the
-    metered model-tier resolution the plan's dependency contract names for fast-model passes
+    metered model-tier resolution that fast-model passes use
     (``one_shot_completion(use_case="background")``). The judge is therefore an ``infer`` node
     declaring ``model_tier: "fast"``, which the standard resolution maps to the ``background``
     use case. Before this change the node was a `stage` with no ``model_tier`` — it ran on the
@@ -1317,14 +1317,14 @@ class TestContradictionReviewFastTier:
         assert (judge.config or {}).get(
             "model_tier"
         ) == "fast", (
-            "the judge must declare the `fast` tier so it is the fast-model pass the atom names"
+            "the judge must declare the `fast` tier so it is the fast-model pass it claims to be"
         )
         # THE contract: the standard model-tier resolution maps `fast` -> the `background` use
         # case, which is what `one_shot_completion(use_case="background")` binds to a live model.
-        # The plan names this exact mechanism for fast-model passes.
+        # This is the exact mechanism for fast-model passes.
         assert resolve_use_case(judge) == "background"
 
-    # ── clause 2: the typed edges the judge names must be PERSISTED ──
+    # ── the typed edges the judge names must be PERSISTED ──
 
     def _relate(self) -> Node:
         root = Node.from_dict(_pipeline(_raw("contradiction-review"))["root"])
@@ -1333,11 +1333,11 @@ class TestContradictionReviewFastTier:
                 return node
         raise AssertionError(
             "contradiction-review has no node dispatching `knowledge-relate` — the judge's "
-            "typed edges reach nothing, which is WF2KNO-10 clause 2's original failure"
+            "typed edges reach nothing, which is the original failure"
         )
 
     def test_the_judge_declares_a_schema_so_its_answer_is_parsed_not_prose(self) -> None:
-        """🔴 The vacuity floor for clause 2, and it is not cosmetic.
+        """🔴 The vacuity floor for persisted edges, and it is not cosmetic.
 
         `dispatch_infer` only parses the model's text when `want_json` is true —
         `bool(cfg.get("schema")) or cfg.get("output") == "json"`. Without one of those, the
@@ -1364,7 +1364,7 @@ class TestContradictionReviewFastTier:
         the deterministic tier a second time."""
         with_cfg = (self._relate().config or {}).get("with") or {}
         assert with_cfg.get("relations") == "{{nodes.judge_conflicts.output}}", (
-            "the write-back is not bound to the judging node's output — before this atom that "
+            "the write-back is not bound to the judging node's output — before this change that "
             f"output reached only a display string. Got {with_cfg.get('relations')!r}"
         )
         assert with_cfg.get("source_item") == "{{nodes.persist.output.item_id}}", (
@@ -1375,7 +1375,7 @@ class TestContradictionReviewFastTier:
     async def test_a_model_proposed_structural_edge_reaches_item_relations(
         self, tmp_path, monkeypatch
     ) -> None:
-        """WF2KNO-10 clause 2, end to end through the SHIPPED bindings.
+        """Persisted typed edges, end to end through the SHIPPED bindings.
 
         Runs the real `knowledge-persist` node to create two items, then resolves the shipped
         write-back node against a judge output shaped exactly as the judge's own schema promises
@@ -1384,9 +1384,9 @@ class TestContradictionReviewFastTier:
         source-precedence ladder, so it can only ever say `supersedes` or `contradicts`): a row
         carrying it exists ONLY if a model-proposed edge was persisted.
 
-        The model call itself is not made here — clause 1 is already covered above and a live
-        provider is not available in CI. What is proved is the half that was missing: the
-        judge's answer, in the shape the template asks for, becomes a stored typed relation.
+        The model call itself is not made here — the fast-tier half is already covered above
+        and a live provider is not available in CI. What is proved is the half that was missing:
+        the judge's answer, in the shape the template asks for, becomes a stored typed relation.
         """
         monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
         monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
@@ -1454,6 +1454,6 @@ class TestContradictionReviewFastTier:
             store.close()
 
         assert (neighbour["item_id"], "depends_on", "inferred") in rows, (
-            "the judge's model-proposed typed edge did not reach `item_relations` — clause 2 "
-            f"is unmet. Rows for the persisted item: {rows}"
+            "the judge's model-proposed typed edge did not reach `item_relations` — the write-back "
+            f"persists nothing. Rows for the persisted item: {rows}"
         )

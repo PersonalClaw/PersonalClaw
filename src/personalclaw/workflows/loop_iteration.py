@@ -103,8 +103,8 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
     # LLM-free: a loop thrashing on the same error is the most common autonomous-run
     # failure, and paying a model to notice it would be slower and less reliable.
     #
-    # This `check_breaker` is the SOLE trip DETECTOR (LOOPS-EVOLUTION R-de-dup): nothing
-    # below re-counts what it counted. What changed in PP-15 is what a trip MEANS. It used to
+    # This `check_breaker` is the SOLE trip DETECTOR: nothing
+    # below re-counts what it counted. What changed is what a trip MEANS. It used to
     # mean "escalate to a human", which made the declared five-rung ladder unreachable — the
     # engine failed binary after two consecutive errors. Now a trip is the question, and
     # `loop.tick.evaluate` — the ONE convergence core, shared with the loop kinds and driven
@@ -137,7 +137,7 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
             return
 
     # Consume steering BEFORE the continue decision, so a mid-run instruction reaches the next
-    # iteration's prompt (R14). Drained even when the loop is about to end — a dropped
+    # iteration's prompt. Drained even when the loop is about to end — a dropped
     # instruction the user cannot see is indistinguishable from one that was silently ignored,
     # so the STEERING event is journaled regardless; only the injection needs a next iteration.
     iteration_context.consume_steering(ctl, parent_path, node, iteration)

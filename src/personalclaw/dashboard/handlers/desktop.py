@@ -1,4 +1,4 @@
-"""Desktop shell seam — the gateway routes behind the capability bridge (DC-2 C2/C3).
+"""Desktop shell seam — the gateway routes behind the capability bridge.
 
 Four write routes for the Electron MAIN process (loopback + a credential) and two
 read routes for the dashboard and for apps holding a ``desktop`` permission. The

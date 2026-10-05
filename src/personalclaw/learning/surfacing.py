@@ -151,7 +151,7 @@ class Candidate:
     #: Honored INSIDE `allocate` on purpose: "the allocator honors a cap per skill and in
     #: aggregate" is one mechanism enforcing two bounds, not a pre-filter plus a budget.
     max_tokens: int = 0
-    #: WHICH match path produced this candidate (LEARN-R4 / §2.5). Attribution is what makes
+    #: WHICH match path produced this candidate. Attribution is what makes
     #: per-arm precision measurable: an exact-name hit and an embedding neighbour that both score
     #: 0.7 are not equally trustworthy, and "a single scalar can't be calibrated per-arm". Empty
     #: means unattributed, which `measure.per_arm_precision` charges to the WEAKEST arm rather
@@ -264,9 +264,9 @@ def _check_ablate(ablate: str) -> str:
 
 
 def env_ablate() -> str:
-    """The heuristic an ES-7 ablation CHILD was told to switch off, or ``""``.
+    """The heuristic an ablation CHILD was told to switch off, or ``""``.
 
-    The §3.1 runner toggles a component through an overlay that exists only inside the
+    The ablation runner toggles a component through an overlay that exists only inside the
     spawned cell (:mod:`personalclaw.evals.overlay`) — never by editing live config. For a
     surfacing heuristic the toggle has nowhere in config to live, so it rides the child's
     own process env. Absent env var ⇒ ``""`` ⇒ the shipped path, byte for byte.
@@ -309,7 +309,7 @@ def score_candidate(
 
 
 def _stronger_arm(left: str, right: str) -> str:
-    """The more trustworthy of two match arms (S71).
+    """The more trustworthy of two match arms.
 
     Compared by confidence rather than by name so the ordering follows the calibrated table instead
     of a second hard-coded precedence list. An empty arm loses to any real one — unattributed is the
@@ -434,7 +434,7 @@ class Allocation:
 def _tier_fits(cost: int, used: int, budget: int, cap: int) -> bool:
     """Does one rendered tier fit BOTH bounds the allocator honors?
 
-    Two bounds, one test (CE2-9): what is left of the shared budget (the aggregate), and
+    Two bounds, one test: what is left of the shared budget (the aggregate), and
     what the candidate itself DECLARED it may spend (`Candidate.max_tokens`, 0 =
     uncapped). Separating them would mean two mechanisms deciding what reaches the
     prompt, which is the defect the allocator exists to remove — so a declared cap is
@@ -463,10 +463,10 @@ def allocate(
     ``budget_tokens`` is the AGGREGATE bound; a candidate may additionally declare its
     own per-item ceiling in ``Candidate.max_tokens``. Both are checked by the same test
     (:func:`_tier_fits`) and both degrade through the same tier ladder, so "a cap per
-    item and in aggregate" stays one mechanism (CE2-9).
+    item and in aggregate" stays one mechanism.
 
     ``ablate`` names one heuristic to switch off, for `ablation_deltas`. Default "" falls
-    back to :func:`env_ablate` (the ES-7 ablation child's process-scoped overlay) and is
+    back to :func:`env_ablate` (the ablation child's process-scoped overlay) and is
     otherwise the live path, paying nothing for the parameter's existence.
     """
     # An explicit argument always wins; the env is consulted only when the caller named
@@ -589,9 +589,9 @@ def allocate(
 
 # ── Ablation-delta sweep ──
 
-#: Below this, a heuristic changed nothing about what got injected. §2.5: "every
+#: Below this, a heuristic changed nothing about what got injected. Every
 #: surfacing heuristic ships with a measured delta and is removed if ~0 — honest
-#: reporting of null results is a feature." Not exactly zero: a delta of one position
+#: reporting of null results is a feature. Not exactly zero: a delta of one position
 #: in a twenty-item render is noise, not evidence of value.
 NULL_DELTA = 0.02
 
@@ -604,7 +604,7 @@ def _signature(alloc: Allocation) -> list[tuple[str, str, str]]:
 def _delta(baseline: list[tuple[str, str, str]], ablated: list[tuple[str, str, str]]) -> float:
     """Disagreement in [0, 1] between two injected sequences.
 
-    Position-sensitive, because §2.4's position policy makes ORDER part of the
+    Position-sensitive, because the position policy makes ORDER part of the
     outcome: the same items in a different order is a different render, and a
     set-difference metric would score that change as zero.
     """

@@ -74,7 +74,7 @@
       "thresholds": {
         "event_fanout_ratio_max": 12.0
       },
-      "rationale": "A single workflow run's journal folded into its per-run SSE projection (key workflow:<id>): one key, many sequential lifecycle events, so events/keys is high by construction — not over-broadcast. The 'fold' block pins the event-fold law's terminal state (WF2-R11): a journal/projection format change that breaks the fold changes this dict and fails the compare (Success Criterion #4). This is the pre-migration gate on the journal format."
+      "rationale": "A single workflow run's journal folded into its per-run SSE projection (key workflow:<id>): one key, many sequential lifecycle events, so events/keys is high by construction — not over-broadcast. The 'fold' block pins the event-fold law's terminal state: a journal/projection format change that breaks the fold changes this dict and fails the compare. This is the pre-migration gate on the journal format."
     },
     "rewind-during-stream": {
       "metrics": {
@@ -108,7 +108,7 @@
       "thresholds": {
         "event_fanout_ratio_max": 12.0
       },
-      "rationale": "A rewind lands mid-stream (epoch 0 -> 1) and a stale epoch-0 node_done arrives AFTER the epoch bump. The fold's epoch supersede-drop guard must drop it: 'dropped':1 and terminal 'epoch':1 are the proof the guard fired (WF2-R11). Single-key fanout is high by construction (one run, many ordered events), same rationale as the journal-projection scenario."
+      "rationale": "A rewind lands mid-stream (epoch 0 -> 1) and a stale epoch-0 node_done arrives AFTER the epoch bump. The fold's epoch supersede-drop guard must drop it: 'dropped':1 and terminal 'epoch':1 are the proof the guard fired. Single-key fanout is high by construction (one run, many ordered events), same rationale as the journal-projection scenario."
     }
   }
 }

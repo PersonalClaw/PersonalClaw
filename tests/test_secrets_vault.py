@@ -71,13 +71,13 @@ def home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 @pytest.fixture
 def vault(home: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A populated vault: one global, one project-scoped, one inherit-from-host."""
-    for name in ("EI10_GLOBAL_TOKEN", "EI10_HOST_TOKEN"):
+    for name in ("DEMO_GLOBAL_TOKEN", "DEMO_HOST_TOKEN"):
         monkeypatch.delenv(name, raising=False)
-    cred.save_credential("EI10_GLOBAL_TOKEN", GLOBAL_VALUE)
-    cred.save_credential(sv.project_secret_key(PROJECT_ID, "EI10_DB_PASSWORD"), PROJECT_VALUE)
+    cred.save_credential("DEMO_GLOBAL_TOKEN", GLOBAL_VALUE)
+    cred.save_credential(sv.project_secret_key(PROJECT_ID, "DEMO_DB_PASSWORD"), PROJECT_VALUE)
     # A host row is a credential-shaped name the vault does NOT hold. Set directly in the
     # environment, never through `save_credential`, which is what makes it inherited.
-    monkeypatch.setenv("EI10_HOST_TOKEN", HOST_VALUE)
+    monkeypatch.setenv("DEMO_HOST_TOKEN", HOST_VALUE)
     return home
 
 
@@ -207,8 +207,8 @@ class TestPresenceIsStructural:
     def test_credential_names_never_reads_a_value(self, vault: Path):
         """`credential_names` is the vault's ONE store call. It returns names, and only names."""
         names = cred.credential_names()
-        assert "EI10_GLOBAL_TOKEN" in names
-        assert sv.project_secret_key(PROJECT_ID, "EI10_DB_PASSWORD") in names
+        assert "DEMO_GLOBAL_TOKEN" in names
+        assert sv.project_secret_key(PROJECT_ID, "DEMO_DB_PASSWORD") in names
         blob = json.dumps(names)
         for value in ALL_VALUES:
             assert value not in blob, "credential_names leaked a VALUE"
@@ -231,7 +231,7 @@ class TestNoValueCrossesTheWire:
         names = {s["name"] for s in body["secrets"]}
         # 🪤 VACUITY FLOOR. If the listing were empty the leak assertion below would pass
         # trivially, so assert the population FIRST — all three row types must be present.
-        assert {"EI10_GLOBAL_TOKEN", "EI10_DB_PASSWORD", "EI10_HOST_TOKEN"} <= names, names
+        assert {"DEMO_GLOBAL_TOKEN", "DEMO_DB_PASSWORD", "DEMO_HOST_TOKEN"} <= names, names
         assert body["counts"]["total"] == len(body["secrets"])
         for value in ALL_VALUES:
             assert value not in raw, f"a stored VALUE reached the GET body: {value}"
@@ -241,35 +241,35 @@ class TestNoValueCrossesTheWire:
         """The hardest case: the handler HELD this value one line before it answered."""
         fresh = "nv-9d4c2e81-JUSTSTORED-do-not-leak"
         async with TestClient(TestServer(_make_app())) as c:
-            r = await c.post("/api/secrets", json={"name": "EI10_NEW_TOKEN", "value": fresh})
+            r = await c.post("/api/secrets", json={"name": "DEMO_NEW_TOKEN", "value": fresh})
             assert r.status == 200, await r.text()
             raw = await r.text()
             body = json.loads(raw)
 
-        assert body["secret"]["name"] == "EI10_NEW_TOKEN"
+        assert body["secret"]["name"] == "DEMO_NEW_TOKEN"
         assert body["secret"]["present"] is True
         assert fresh not in raw, "the POST echoed the value it was handed"
         # And it really was stored — otherwise "no value in the response" is true of a no-op.
-        assert cred.get_credential("EI10_NEW_TOKEN") == fresh
+        assert cred.get_credential("DEMO_NEW_TOKEN") == fresh
 
     @pytest.mark.asyncio
     async def test_delete_does_not_echo_a_value(self, vault: Path):
         async with TestClient(TestServer(_make_app())) as c:
-            r = await c.delete("/api/secrets?name=EI10_GLOBAL_TOKEN")
+            r = await c.delete("/api/secrets?name=DEMO_GLOBAL_TOKEN")
             assert r.status == 200, await r.text()
             raw = await r.text()
         assert GLOBAL_VALUE not in raw
-        assert json.loads(raw)["deleted"] == "EI10_GLOBAL_TOKEN"
-        assert cred.get_credential("EI10_GLOBAL_TOKEN") == ""
+        assert json.loads(raw)["deleted"] == "DEMO_GLOBAL_TOKEN"
+        assert cred.get_credential("DEMO_GLOBAL_TOKEN") == ""
 
     @pytest.mark.asyncio
     async def test_there_is_no_route_that_reads_one_back(self, vault: Path):
         """No per-secret GET exists. The absence is the mechanism, so it is asserted."""
         async with TestClient(TestServer(_make_app())) as c:
             for path in (
-                "/api/secrets/EI10_GLOBAL_TOKEN",
-                "/api/secrets/EI10_GLOBAL_TOKEN/value",
-                "/api/secrets/reveal?name=EI10_GLOBAL_TOKEN",
+                "/api/secrets/DEMO_GLOBAL_TOKEN",
+                "/api/secrets/DEMO_GLOBAL_TOKEN/value",
+                "/api/secrets/reveal?name=DEMO_GLOBAL_TOKEN",
             ):
                 assert (await c.get(path)).status == 404, f"{path} must not exist"
 
@@ -280,15 +280,15 @@ class TestNoValueCrossesTheWire:
 class TestScopesAndRefusals:
     def test_project_rows_decode_to_name_and_owner(self, vault: Path):
         rows = {(r.scope, r.name, r.project_id) for r in sv.list_presence()}
-        assert ("global", "EI10_GLOBAL_TOKEN", "") in rows
-        assert ("project", "EI10_DB_PASSWORD", PROJECT_ID) in rows
-        assert ("host", "EI10_HOST_TOKEN", "") in rows
+        assert ("global", "DEMO_GLOBAL_TOKEN", "") in rows
+        assert ("project", "DEMO_DB_PASSWORD", PROJECT_ID) in rows
+        assert ("host", "DEMO_HOST_TOKEN", "") in rows
 
     def test_a_project_filter_narrows_only_the_project_rows(self, vault: Path, monkeypatch):
-        cred.save_credential(sv.project_secret_key("other-proj", "EI10_OTHER"), "x-value")
+        cred.save_credential(sv.project_secret_key("other-proj", "DEMO_OTHER"), "x-value")
         rows = sv.list_presence(project_id=PROJECT_ID)
         projects = {r.name for r in rows if r.scope == "project"}
-        assert projects == {"EI10_DB_PASSWORD"}, projects
+        assert projects == {"DEMO_DB_PASSWORD"}, projects
         # Global and host rows are UNCONDITIONAL: a project resolves {{secret:…}} against the
         # same store and the same process env, so hiding them would under-report reach.
         assert any(r.scope == "global" for r in rows)
@@ -296,10 +296,10 @@ class TestScopesAndRefusals:
 
     def test_a_stored_name_stops_being_a_host_row(self, vault: Path):
         """Taking ownership REPLACES the inherited row rather than duplicating it."""
-        before = [r for r in sv.list_presence() if r.name == "EI10_HOST_TOKEN"]
+        before = [r for r in sv.list_presence() if r.name == "DEMO_HOST_TOKEN"]
         assert [r.scope for r in before] == ["host"]
-        cred.save_credential("EI10_HOST_TOKEN", "now-in-the-vault")
-        after = [r for r in sv.list_presence() if r.name == "EI10_HOST_TOKEN"]
+        cred.save_credential("DEMO_HOST_TOKEN", "now-in-the-vault")
+        after = [r for r in sv.list_presence() if r.name == "DEMO_HOST_TOKEN"]
         assert [r.scope for r in after] == ["global"], "a vault row must shadow the host row"
 
     def test_a_switch_personalclaw_sets_for_itself_is_not_an_inherited_credential(
@@ -316,7 +316,7 @@ class TestScopesAndRefusals:
         host = {r.name for r in sv.list_presence() if r.scope == sv.SCOPE_HOST}
         assert "HF_HUB_DISABLE_IMPLICIT_TOKEN" not in host
         assert not host & set(library_env()), "no switch PersonalClaw sets is a host credential"
-        assert "EI10_HOST_TOKEN" in host, "a credential the host did set is still listed"
+        assert "DEMO_HOST_TOKEN" in host, "a credential the host did set is still listed"
 
     def test_inherited_from_host_cannot_contradict_scope(self):
         assert sv.SecretPresence(name="A", scope=sv.SCOPE_HOST).inherited_from_host is True
@@ -326,14 +326,14 @@ class TestScopesAndRefusals:
     @pytest.mark.asyncio
     async def test_deleting_a_host_row_is_refused_not_silently_ignored(self, vault: Path):
         async with TestClient(TestServer(_make_app())) as c:
-            r = await c.delete("/api/secrets?name=EI10_HOST_TOKEN")
+            r = await c.delete("/api/secrets?name=DEMO_HOST_TOKEN")
             assert r.status == 409
             assert (await r.json())["error"]["code"] == "secret_host_readonly"
         # The value is untouched — a refusal that had already deleted something would be worse
         # than either outcome.
         import os
 
-        assert os.environ["EI10_HOST_TOKEN"] == HOST_VALUE
+        assert os.environ["DEMO_HOST_TOKEN"] == HOST_VALUE
 
     @pytest.mark.asyncio
     async def test_an_app_token_is_refused_on_every_verb(self, vault: Path):
@@ -351,7 +351,7 @@ class TestScopesAndRefusals:
         """The refusal must not leak the inventory it is refusing access to."""
         async with TestClient(TestServer(_make_app(app_token_name="demo"))) as c:
             raw = await (await c.get("/api/secrets")).text()
-        for leak in ("EI10_GLOBAL_TOKEN", "EI10_DB_PASSWORD", *ALL_VALUES):
+        for leak in ("DEMO_GLOBAL_TOKEN", "DEMO_DB_PASSWORD", *ALL_VALUES):
             assert leak not in raw
 
     @pytest.mark.asyncio
@@ -379,7 +379,7 @@ class TestScopesAndRefusals:
     @pytest.mark.asyncio
     async def test_deleting_something_absent_is_a_404(self, vault: Path):
         async with TestClient(TestServer(_make_app())) as c:
-            r = await c.delete("/api/secrets?name=EI10_NEVER_STORED")
+            r = await c.delete("/api/secrets?name=DEMO_NEVER_STORED")
             assert r.status == 404
             assert (await r.json())["error"]["code"] == "secret_absent"
 
@@ -446,17 +446,17 @@ class TestExportCarriesFlagsNotValues:
     def _project(self, root: Path) -> Path:
         proj = root / "project"
         (proj / "context").mkdir(parents=True)
-        (proj / "project.json").write_text(json.dumps({"id": PROJECT_ID, "name": "EI10"}))
-        (proj / "context" / "overview.md").write_text("# EI10\n\nA project.\n")
+        (proj / "project.json").write_text(json.dumps({"id": PROJECT_ID, "name": "DEMO"}))
+        (proj / "context" / "overview.md").write_text("# DEMO\n\nA project.\n")
         return proj
 
     def test_the_manifest_names_the_project_secrets(self, vault: Path, tmp_path: Path):
         from personalclaw.workflows.project_archive import export_project_archive
 
         raw, plan = export_project_archive(PROJECT_ID, project_root=self._project(tmp_path))
-        assert "EI10_DB_PASSWORD" in plan.secrets_present, plan.secrets_present
+        assert "DEMO_DB_PASSWORD" in plan.secrets_present, plan.secrets_present
         manifest = json.loads(zipfile.ZipFile(io.BytesIO(raw)).read("manifest.json"))
-        assert "EI10_DB_PASSWORD" in manifest["secrets"]
+        assert "DEMO_DB_PASSWORD" in manifest["secrets"]
 
     def test_no_value_appears_anywhere_in_the_zip_bytes(self, vault: Path, tmp_path: Path):
         """Asserted over the ARCHIVE'S CONTENTS, not over the plan's intent.
@@ -484,7 +484,7 @@ class TestExportCarriesFlagsNotValues:
             ), f"a credential VALUE is inside the export archive: {value}"
         # And the flag really did travel, so "no value" is not true of an export that simply
         # forgot the secret existed.
-        assert "EI10_DB_PASSWORD" in json.loads(zf.read("manifest.json"))["secrets"]
+        assert "DEMO_DB_PASSWORD" in json.loads(zf.read("manifest.json"))["secrets"]
 
     def test_a_secret_named_file_inside_the_project_is_flagged_not_carried(
         self, vault: Path, tmp_path: Path
@@ -551,20 +551,20 @@ class TestConsumersAreDerived:
         import personalclaw.secrets_vault as vault_mod
 
         async def _refs():
-            return [("nightly-sync", "Nightly sync", ["EI10_GLOBAL_TOKEN"])]
+            return [("nightly-sync", "Nightly sync", ["DEMO_GLOBAL_TOKEN"])]
 
         monkeypatch.setattr(vault_mod, "_workflow_references", _refs)
         monkeypatch.setattr(vault_mod, "_trigger_references", lambda: [])
 
         consumers = await vault_mod.consumers_for()
-        assert consumers["EI10_GLOBAL_TOKEN"] == (
+        assert consumers["DEMO_GLOBAL_TOKEN"] == (
             sv.SecretConsumer(kind="workflow", id="nightly-sync", label="Nightly sync"),
         )
 
         rows = {r.name: r for r in sv.list_presence(consumers=consumers)}
-        assert [c.label for c in rows["EI10_GLOBAL_TOKEN"].consumers] == ["Nightly sync"]
+        assert [c.label for c in rows["DEMO_GLOBAL_TOKEN"].consumers] == ["Nightly sync"]
         # A secret nothing references has NO links — the derivation must not smear.
-        assert rows["EI10_HOST_TOKEN"].consumers == ()
+        assert rows["DEMO_HOST_TOKEN"].consumers == ()
 
     @pytest.mark.asyncio
     async def test_a_project_row_takes_the_workflows_that_name_it_and_no_automation(
@@ -576,24 +576,24 @@ class TestConsumersAreDerived:
         links to no row: nothing resolves one."""
         import personalclaw.secrets_vault as vault_mod
 
-        store_key = sv.project_secret_key(PROJECT_ID, "EI10_DB_PASSWORD")
-        cred.save_credential("EI10_DB_PASSWORD", "a-global-of-the-same-name")
+        store_key = sv.project_secret_key(PROJECT_ID, "DEMO_DB_PASSWORD")
+        cred.save_credential("DEMO_DB_PASSWORD", "a-global-of-the-same-name")
 
         async def _refs():
             return [
-                ("nightly-sync", "Nightly sync", ["EI10_DB_PASSWORD"]),
+                ("nightly-sync", "Nightly sync", ["DEMO_DB_PASSWORD"]),
                 ("spelled-out", "Spelled out", [store_key]),
             ]
 
         monkeypatch.setattr(vault_mod, "_workflow_references", _refs)
         monkeypatch.setattr(
-            vault_mod, "_trigger_references", lambda: [("t-1", "Backup", ["EI10_DB_PASSWORD"])]
+            vault_mod, "_trigger_references", lambda: [("t-1", "Backup", ["DEMO_DB_PASSWORD"])]
         )
         consumers = await vault_mod.consumers_for()
 
         rows = sv.list_presence(consumers=consumers)
-        scoped = next(r for r in rows if r.scope == "project" and r.name == "EI10_DB_PASSWORD")
-        glob = next(r for r in rows if r.scope == "global" and r.name == "EI10_DB_PASSWORD")
+        scoped = next(r for r in rows if r.scope == "project" and r.name == "DEMO_DB_PASSWORD")
+        glob = next(r for r in rows if r.scope == "global" and r.name == "DEMO_DB_PASSWORD")
         assert [c.id for c in scoped.consumers] == ["nightly-sync"]
         assert sorted(c.id for c in glob.consumers) == ["nightly-sync", "t-1"]
         assert all(c.id != "spelled-out" for r in rows for c in r.consumers)
@@ -621,7 +621,7 @@ class TestConsumersAreDerived:
         consumers = await vault_mod.consumers_for()
 
         rows = {r.name: r for r in sv.list_presence(consumers=consumers)}
-        assert rows["EI10_GLOBAL_TOKEN"].consumers == ()
+        assert rows["DEMO_GLOBAL_TOKEN"].consumers == ()
         # The link did not vanish — it is attributable to a key no row claims, which is what a
         # derived index makes visible and a maintained one would have hidden.
         assert "ei10_global_token" in consumers
@@ -637,7 +637,7 @@ class TestConsumersAreDerived:
             raise RuntimeError("trigger store is corrupt")
 
         async def _ok():
-            return [("wf", "WF", ["EI10_GLOBAL_TOKEN"])]
+            return [("wf", "WF", ["DEMO_GLOBAL_TOKEN"])]
 
         monkeypatch.setattr(vault_mod, "_workflow_references", _ok)
         monkeypatch.setattr(vault_mod, "_trigger_references", _boom)

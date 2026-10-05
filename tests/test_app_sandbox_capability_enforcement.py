@@ -1,4 +1,4 @@
-"""Untrusted-app sandbox P3 — the remaining capability enforcements:
+"""Untrusted-app sandbox — the remaining capability enforcements:
 
 * ``can_use_cron``  → app-declared manifest crons are registered only when the app
   holds the permission and an agent tier for their agents to run at; reconcile prunes them

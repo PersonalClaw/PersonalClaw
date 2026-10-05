@@ -6,7 +6,7 @@ carries ``kind`` + the shared spine fields; kind-specific fields fold into
 verify_command/test_command…) defaulting from the kind strategy. Operates on the
 unified store/manager/watchdog.
 
-Registered at the cutover (Slice 2e) in place of the legacy loops + code routes;
+Registered at the cutover in place of the legacy loops + code routes;
 kept unregistered + import-clean until then so there is never a dual LIVE path.
 """
 
@@ -81,8 +81,8 @@ def _refuse_source_state(
     """The ONE lifecycle refusal: 409 naming the status, unless ``status`` may be a
     SOURCE of ``action``. ``None`` means admissible — proceed.
 
-    ``PATCH /api/loops/{id}`` has spoken this sentence out of
-    :data:`~personalclaw.loop.loop.ACTION_SOURCE_STATES` since `PP-16`
+    ``PATCH /api/loops/{id}`` already speaks this sentence out of
+    :data:`~personalclaw.loop.loop.ACTION_SOURCE_STATES`
     (``Cannot pause a loop in 'planning' state``). The ``/plan/*`` POST family drives the
     same status machine and skipped the vocabulary entirely, so ``plan/retry`` accepted a
     RUNNING loop and dragged it back to ``planning`` — measured: ``pause``/``resume``/
@@ -216,7 +216,7 @@ def _build_loop_from_body(body: dict) -> Loop:
         autopilot=bool_field(body, "autopilot", default=True),
         auto_teardown_on_complete=bool_field(body, "auto_teardown_on_complete", default=False),
         max_cycles=int(body.get("max_cycles", 30)),
-        # `AG-14` ceilings: optional, 0 = uncapped. Clamped non-negative so a negative
+        # Cost and deadline ceilings: optional, 0 = uncapped. Clamped non-negative so a negative
         # payload value cannot mean "already exceeded" and stop the loop on its first poll.
         max_cost_usd=max(0.0, float(body.get("max_cost_usd", 0) or 0)),
         deadline_secs=max(0.0, float(body.get("deadline_secs", 0) or 0)),
@@ -272,8 +272,8 @@ def _derive_name(task: str, limit: int = 60) -> str:
 
 async def _installed_capability_catalogs() -> tuple[list[dict], list[dict]]:
     """Installed skills + workflows ({id,name,description}) the classifier may rank.
-    Best-effort — empty on any failure. The workflows half is empty until
-    WORKFLOWS-V2 Slice 0 (see below)."""
+    Best-effort — empty on any failure. The workflows half is empty for
+    now (see below)."""
     skills: list[dict] = []
     workflows: list[dict] = []
     try:
@@ -289,12 +289,12 @@ async def _installed_capability_catalogs() -> tuple[list[dict], list[dict]]:
         ]
     except Exception:
         logger.debug("skills catalog for classify failed", exc_info=True)
-    # The workflow half stays EMPTY until WORKFLOWS-V2 Slice 0 lands the def store.
+    # The workflow half stays EMPTY until a workflow definition store backs it.
     # The classifier prompts still ask for `suggested_workflow_ids`, and they instruct
     # "use ONLY ids that appear in the catalog … empty when nothing fits" — so an empty
     # catalog makes the model return an empty list, which is the correct answer while
     # no workflows exist. Removing the field from the prompts instead would mean
-    # re-adding it (and re-tuning them) three slices later.
+    # re-adding it (and re-tuning them) later.
     return skills, workflows
 
 
@@ -478,11 +478,11 @@ async def api_loop_grill_tree(request: web.Request) -> web.Response:
 async def _create_ported_kind_as_run(
     request: web.Request, kind: str, task: str, body: dict
 ) -> web.Response:
-    """Start a PORTED loop kind as a ``WorkflowRun`` (PP-16) instead of writing a loops row.
+    """Start a PORTED loop kind as a ``WorkflowRun`` instead of writing a loops row.
 
     ``workflows.service.start_kind_run`` shipped with ZERO callers anywhere in the package — the
-    kind resolved to its template and nothing launched it — so the atom's "a Loop becomes a
-    WorkflowRun" clause had no reachable path from the product at all. This is the door it was
+    kind resolved to its template and nothing launched it — so "a Loop becomes a
+    WorkflowRun" had no reachable path from the product at all. This is the door it was
     missing, and ``PORTED_LOOP_KINDS`` is read from the module that DECLARES it so the route and
     the service cannot disagree about which kinds have arrived.
 
@@ -518,7 +518,7 @@ async def _create_ported_kind_as_run(
     spent it. ``auto_teardown_on_complete`` and ``deadline_secs`` have no home on a run and are
     refused by the shared validation gate above rather than dropped.
     (A retired cycle-count field is DESCRIBED in this module rather than spelled, deliberately.
-    PP-16 seam 4a retired the name, and its rail censuses ``src/`` for it by AST; the rail's SQL arm
+    The name was retired, and its rail censuses ``src/`` for it by AST; the rail's SQL arm
     fires on any string constant carrying the name near ``set ``/``update ``/…, and a docstring IS a
     string constant. The rail's own docstring says prose mentions must never red it, so the cheap
     honest move is to not reprint a retired identifier in a module that has no business holding
@@ -634,8 +634,8 @@ async def api_loop_list(request: web.Request) -> web.Response:
     """GET /api/loops[?project_id=…][?kind=…] — EVERY loop (redacted), newest first.
 
     Two homes, one listing: the loops-table rows AND the runs started as loops
-    (`workflows.loop_view`), which carry a ``run_id``. A ported kind stopped writing a loops row at
-    PP-16, and every surface reading this route — the Loops list, Home's pulse and Active work,
+    (`workflows.loop_view`), which carry a ``run_id``. A ported kind stopped writing a loops row,
+    and every surface reading this route — the Loops list, Home's pulse and Active work,
     Mission Control's Working lane, the nav badge — kept reading the loops table alone, so a running
     General loop was "No loops yet" everywhere except Agent world. One route answering for both is
     what keeps those surfaces from each having to learn a second source.

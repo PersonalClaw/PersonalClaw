@@ -156,7 +156,7 @@ describe('every list whose label states a total discloses its cap', () => {
     // onto a static row would remove a feature.
     //
     // 🪛 THE PROPERTY IS INTERACTIVITY, NOT THE ELEMENT SPELLING. This assertion demanded a
-    // literal `</button>` until DSC-12 moved the control onto `TextLink` — the primitive whose own doc
+    // literal `</button>` until the control moved onto `TextLink` — the primitive whose own doc
     // names "Show more" as its canonical standalone use, and which renders a `<button type="button">`
     // underneath. So the thing this rail protects never changed; only the tag it is written with did.
     // Read the title's sentence and the wired `onClick` together, which is the disclosure itself.

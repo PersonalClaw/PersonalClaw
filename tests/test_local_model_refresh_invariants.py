@@ -3,7 +3,7 @@
 Two invariants that have each already broken once, locked with BEFORE/AFTER registration
 evidence rather than a smoke check:
 
-**(a) The two-population invariant (Success Criterion 9).** Every use-case registry holds
+**(a) The two-population invariant.** Every use-case registry holds
 two populations: providers built from ``config.json`` on demand (remote adapters, the env
 stub, scanner-contributed entries) and providers an APP contributed once through
 ``ModelTypeHandler`` on enable. ``refresh_providers()`` exists to re-read the FIRST
@@ -221,7 +221,7 @@ def test_every_use_case_registry_that_refreshes_declares_a_transient_population(
     undeclared = discovered - set(markers)
     assert not undeclared, (
         f"{sorted(undeclared)} define refresh_providers() but are not covered by the "
-        f"two-population invariant (LMMV Success Criterion 9). Add each to this map with "
+        f"two-population invariant. Add each to this map with "
         f"the name of the transient population it is allowed to drop, and give it a case "
         f"above asserting the app-contributed population survives."
     )

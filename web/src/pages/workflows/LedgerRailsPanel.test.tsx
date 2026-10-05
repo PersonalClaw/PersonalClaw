@@ -3,15 +3,15 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { WorkflowLedgerRails } from '../../lib/api'
 import { EM_DASH, LedgerRailsPanel } from './LedgerRailsPanel'
 
-// ── PP-16 seam 4, the ledger-rails third: the run side renders both rails, and ABSENT IS NOT ZERO ──
+// ── The run side renders both ledger rails, and ABSENT IS NOT ZERO ──
 //
 // The backend rail (`tests/test_ledger_rails.py`) proves the projection reports `null` for a
 // cell whose ledger row carried no key. That guarantee is worth nothing if the panel then prints
 // `null` as `0` — a `toFixed()` on a nullish value, or a `?? 0` — so this file pins the RENDERING.
 //
 // The trap is specific and this project has hit it six times: a loop-shaped `step_completed` carries
-// no cost or token key at all (loop money lives in `usage/turns.jsonl`), and PP-16 retires the loop
-// noun onto the run noun, so those rows will flow through this panel. A `$0.0000` in the cost column
+// no cost or token key at all (loop money lives in `usage/turns.jsonl`), and the loop noun is
+// retiring onto the run noun, so those rows will flow through this panel. A `$0.0000` in the cost column
 // would tell a user their work was free.
 
 let rails: (id: string) => Promise<WorkflowLedgerRails>

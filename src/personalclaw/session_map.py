@@ -137,9 +137,9 @@ class SessionMap:
         ``sessions/<sid>.json`` to exist and would DELETE the mapping when it
         didn't — and nothing anywhere writes that file, so the branch fired every
         time: it reported "no mapping" for a mapping it had just destroyed, which
-        is why ``resume_sid=None`` was unexplainable from the logs (G5/O16) and
+        is why ``resume_sid=None`` was unexplainable from the logs and
         why protocol resume could never happen even once the client stopped
-        gating on its own copy of the same missing file (`G156`). Whether an id is
+        gating on its own copy of the same missing file. Whether an id is
         still loadable is the AGENT's answer, not a local file's: ``AcpClient``
         sends ``session/load`` and falls back to ``session/new`` on refusal, so a
         dead id costs one rejected request instead of a silently erased mapping.

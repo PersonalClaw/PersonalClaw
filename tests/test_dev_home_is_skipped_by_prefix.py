@@ -46,9 +46,9 @@ _DEV_HOME_NAMES = (
     ".dev-home-e2e",
     ".dev-home-i3",
     ".dev-home-ar4",
-    ".dev-home-aap6",
+    ".dev-home-acp-probe",
     ".dev-home-wf7b",
-    ".dev-home-ou14-drive",
+    ".dev-home-first-turn-drive",
 )
 
 
@@ -138,7 +138,7 @@ def test_the_skip_and_gitignore_give_the_same_answer() -> None:
         ".dev-home",
         ".dev-home-e2e",
         ".dev-home-i3",
-        ".dev-home-ou14-drive",
+        ".dev-home-first-turn-drive",
         ".dev-homework",
         "dev-home",
         ".development",

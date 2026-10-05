@@ -30,12 +30,12 @@ from personalclaw.providers.registry import (
 SEAM_TYPES = {"agent", "skills"}
 # ``knowledge`` graduated to a real handler (KnowledgeTypeHandler registers a
 # provider in knowledge_providers.registry, consumed by list_provider_info +
-# search_all — WATCHED-SOURCES §1.3), so it is no longer a seam.
+# search_all), so it is no longer a seam.
 # ``inbox`` graduated the same way (InboxTypeHandler registers a source in
-# inbox_providers.registry, consumed by get_default_provider — INU-8).
+# inbox_providers.registry, consumed by get_default_provider).
 # ``notification`` graduated the same way (NotificationTypeHandler registers a
 # backend in notification_providers.registry, consumed by
-# DashboardState.notify -> deliver_to_addressee — MULTI-TENANCY-ENTITY TSE2-5).
+# DashboardState.notify -> deliver_to_addressee).
 # Its seam's own source_of_truth had said "pluggable delivery backends remain a
 # future design"; the addressee is what made one buildable.
 REAL_REGISTRY_TYPES = {

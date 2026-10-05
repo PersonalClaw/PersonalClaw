@@ -1,12 +1,12 @@
 """Which of the six "one X" clauses have CONVERGED, measured rather than assumed.
 
-The change's criterion names six unifications: *"One status vocabulary, one adoption/reaping path,
+The target is six unifications: *"One status vocabulary, one adoption/reaping path,
 one attention path, one ledger, one projection to tasks, one cockpit contract."* Three of those six
-are **satisfied** — `PP-5` made the loop a `personalclaw.ledger` writer, `workflows/attention.py`
-was built on the loop watchdog's own inbox seam, and the adoption/reaping slice converged both
+are **satisfied** — the loop became a `personalclaw.ledger` writer, `workflows/attention.py`
+was built on the loop watchdog's own inbox seam, and the adoption/reaping change converged both
 nouns' boot sweeps onto `concurrency.boot_sweep`. A clause that has already converged is as
-load-bearing to record as one that has not: a later slice that "unifies the ledger" would be
-writing code for a problem that no longer exists, and a slice that re-forks either seam would
+load-bearing to record as one that has not: a later change that "unifies the ledger" would be
+writing code for a problem that no longer exists, and a change that re-forks either seam would
 silently undo a landed change.
 
 So this rail is a census with two directions, in the idiom `test_loop_field_map.py`
@@ -15,14 +15,14 @@ established for the field map:
 * **The converged clauses are RATCHETS.** Ledger, attention and boot adoption are asserted to still
   funnel through one seam each. If a future change gives loops their own ledger writer, their own
   `state.notify` + `store.add` pair, or their own private boot sweep again, this reds — which is the
-  only thing standing between "`PP-5` landed" and "`PP-5` landed and then rotted". `PP-16` seam 3
-  moved the PLUGGABLE SUPERVISOR into this group too: the convergence decision is declared data plus
+  only thing standing between "the ledger converged" and "the ledger converged and then rotted". The
+  PLUGGABLE SUPERVISOR has moved into this group too: the convergence decision is declared data plus
   one evaluator, and the ratchet is keyed on the retired MEMBERS rather than on a class name (see
   below for why that distinction is load-bearing).
 * **The unconverged clauses are PINNED COUNTS that must SHRINK.** The task projection and the
   cockpit contract each still have exactly two implementations. Each count is pinned with the
-  file:line of both sides, so the slice that unifies one of them reds HERE and updates the census as
-  part of landing — rather than leaving a stale "still open" list in a plan nobody re-measures.
+  file:line of both sides, so the change that unifies one reds HERE and updates the census as
+  part of landing — rather than leaving a stale "still open" list in a document nobody re-measures.
 
 **Why source text and not imports.** These are structural facts about which modules exist and which
 seams they call, and importing `loop.watchdog` or the dashboard handlers drags in a gateway's worth
@@ -58,28 +58,28 @@ def _text(rel: str, root: Path = _SRC) -> str:
 # ── the three clauses that have already converged (ratchets) ──────────────────────────────
 
 
-#: The loop-side and run-side modules that must remain `personalclaw.ledger` writers. `PP-5`
-#: ("loops emit the ledger") is what put the first two on this list; `PP-4` extracted the primitive
-#: they all write through.
-# loop/files.py carries the loop store's ledger-writing half since the PP-16 4b split
+#: The loop-side and run-side modules that must remain `personalclaw.ledger` writers. Making
+#: loops emit the ledger is what put the first two on this list; the primitive they all write
+#: through lives in `personalclaw/ledger/`.
+# loop/files.py carries the loop store's ledger-writing half since the loop store was split
 _LEDGER_WRITERS = ("loop/journal.py", "loop/files.py", "workflows/journal.py")
 
 
 def test_the_ledger_clause_is_converged_and_stays_converged():
-    """`PP-16`'s "one ledger" clause is ALREADY satisfied — both work-unit nouns write
+    """The "one ledger" clause is ALREADY satisfied — both work-unit nouns write
     `personalclaw.ledger`, so there is no second ledger left to unify."""
-    assert (_SRC / "ledger").is_dir(), "personalclaw/ledger/ is gone — PP-4 extraction reverted?"
+    assert (_SRC / "ledger").is_dir(), "personalclaw/ledger/ is gone — extraction reverted?"
     for rel in _LEDGER_WRITERS:
         body = _text(rel)
         assert "personalclaw.ledger" in body, (
-            f"{rel} no longer references personalclaw.ledger. PP-16's 'one ledger' clause was "
-            f"satisfied by PP-5; a loop-side module that stops writing the shared ledger re-forks "
-            f"it and un-lands that atom."
+            f"{rel} no longer references personalclaw.ledger. The 'one ledger' clause was "
+            f"satisfied when loops began writing it; a loop-side module that stops writing the "
+            f"shared ledger re-forks it and undoes that convergence."
         )
 
 
 def test_the_attention_clause_is_converged_and_stays_converged():
-    """`PP-16`'s "one attention path" clause is ALREADY satisfied — the loop watchdog and the
+    """The "one attention path" clause is ALREADY satisfied — the loop watchdog and the
     run-side gate both raise through `inbox.emit_attention_item`."""
     assert "def emit_attention_item" in _text(
         "inbox.py"
@@ -95,7 +95,7 @@ def test_the_attention_clause_is_converged_and_stays_converged():
 
 #: The two watchdogs whose boot sweep must keep running through `concurrency.boot_sweep`. This
 #: row was in `_UNCONVERGED` — `loop/manager.py::reap_orphaned_loops` vs
-#: `workflows/watchdog.py::_boot_sweep` — until the adoption/reaping slice retired the loop side's
+#: `workflows/watchdog.py::_boot_sweep` — until the adoption/reaping change retired the loop side's
 #: gateway hook onto the shared primitive. Kept as a ratchet, not deleted: the census's whole
 #: point is that a converged clause can rot, and a private sweep re-added to either watchdog
 #: would silently restore the duplication with nothing else objecting.
@@ -103,7 +103,7 @@ _BOOT_SWEEPERS = ("loop/watchdog.py", "workflows/watchdog.py")
 
 
 def test_the_adoption_clause_is_converged_and_stays_converged():
-    """`PP-16`'s "one adoption/reaping path" clause is satisfied — both work-unit nouns decide
+    """The "one adoption/reaping path" clause is satisfied — both work-unit nouns decide
     their crash survivors through `concurrency.boot_sweep`, each from the first poll of the
     supervisor that owns the noun, with no second boot hook anywhere."""
     assert "async def boot_sweep(" in _text(
@@ -112,7 +112,7 @@ def test_the_adoption_clause_is_converged_and_stays_converged():
     for rel in _BOOT_SWEEPERS:
         assert "concurrency.boot_sweep(" in _text(rel), (
             f"{rel} no longer sweeps through concurrency.boot_sweep. A private boot-adoption "
-            f"loop here re-forks the path PP-16's adoption slice unified."
+            f"loop here re-forks the path the adoption change unified."
         )
     assert "reap_orphaned_loops" not in _text("gateway.py"), (
         "gateway.py awaits a loop boot-adoption hook again — the second INVOCATION is back even "
@@ -135,7 +135,7 @@ def test_the_seam_probe_rejects_a_symbol_that_does_not_exist():
 
 
 #: One row per unconverged clause: the clause name, and the two implementations by
-#: `path::symbol`. Each pair is a real pair TODAY; the slice that unifies one deletes a side and
+#: `path::symbol`. Each pair is a real pair TODAY; the change that unifies one deletes a side and
 #: reds this rail, which is how the census stays honest instead of rotting into a stale claim.
 _UNCONVERGED: dict[str, tuple[tuple[str, str], ...]] = {
     # loop/tasks_link.py:167 provisions imperatively; workflows/materialize.py:257 PLANS a
@@ -147,11 +147,11 @@ _UNCONVERGED: dict[str, tuple[tuple[str, str], ...]] = {
 }
 
 
-# ── clause 3, CONVERGED by PP-16 seam 3 (a ratchet from here on) ───────────────────────────
+# ── the pluggable-supervisor clause, CONVERGED (a ratchet from here on) ────────────────────
 #
 # This row used to live in `_UNCONVERGED` above, pinning `loop/kinds/__init__.py::class
 # LoopKindStrategy` against `workflows/supervisor_policy.py::class SupervisorPolicy` as two
-# implementations of one concept. Seam 3 unified the SUPERVISOR half: the convergence decision is
+# implementations of one concept. The SUPERVISOR half is now unified: the convergence decision is
 # declared in `KIND_CONVERGENCE` and evaluated once in `loop/supervisor.py`, and no strategy
 # carries a done-ness member any more.
 #
@@ -167,7 +167,7 @@ _RETIRED_SUPERVISOR_MEMBERS = ("is_done_signal", "has_done_check", "budget_stop_
 
 
 def test_the_pluggable_supervisor_clause_is_converged_and_stays_converged():
-    """`PP-16`'s "the supervisor stops being pluggable Python" clause is satisfied for all five
+    """The clause "the supervisor stops being pluggable Python" is satisfied for all five
     kinds: the declaration is data, the evaluator is one module, and no strategy answers a
     convergence question."""
     from personalclaw.loop import kinds
@@ -183,8 +183,8 @@ def test_the_pluggable_supervisor_clause_is_converged_and_stays_converged():
         strategy = kinds.get(kind)
         for member in _RETIRED_SUPERVISOR_MEMBERS:
             assert not hasattr(strategy, member), (
-                f"{kind} strategy re-grew {member!r}. PP-16 seam 3 moved every convergence "
-                f"decision onto the declared SupervisorPolicy; a kind that answers one in Python "
+                f"{kind} strategy re-grew {member!r}. Every convergence decision moved onto "
+                f"the declared SupervisorPolicy; a kind that answers one in Python "
                 f"is the two-path shape the clean-break tenet refuses."
             )
     # Every declared row names a mechanism from the CLOSED vocabulary — a table row with a typo'd
@@ -223,20 +223,20 @@ def test_every_kind_resolves_to_a_declared_convergence_row():
 
 @pytest.mark.parametrize("clause", sorted(_UNCONVERGED))
 def test_the_unconverged_clauses_still_have_exactly_two_implementations(clause: str):
-    """Pins that both sides of each clause exist TODAY. When a slice unifies one, the
+    """Pins that both sides of each clause exist TODAY. When a change unifies one, the
     deleted side reds this — update the census in the same commit; do not delete the assertion."""
     sides = _UNCONVERGED[clause]
     assert len(sides) == 2, f"{clause}: the census row should name exactly two sides"
     for rel, symbol in sides:
         assert symbol in _text(rel), (
-            f"{clause}: {rel} no longer declares {symbol!r}. If a PP-16 slice unified this clause, "
+            f"{clause}: {rel} no longer declares {symbol!r}. If a change unified this clause, "
             f"that is the intended outcome — re-home this row (or delete it) and record the "
-            f"convergence in the plan's execution log. This count must SHRINK as PP-16 lands."
+            f"convergence in this census. This count must SHRINK as the unification lands."
         )
 
 
 #: The cockpit clause, measured differently: it is a FRONTEND duality, two stream hooks and two
-#: fold pipelines over what PP-16 says is one noun. Pinned as file existence because the unification
+#: fold pipelines over what should be one noun. Pinned as file existence because the unification
 #: deletes files rather than symbols.
 _COCKPIT_PAIRS = (
     ("pages/loops/useRunStream.ts", "pages/workflows/useWorkflowStream.ts"),
@@ -246,23 +246,23 @@ _COCKPIT_PAIRS = (
 
 
 def test_the_cockpit_clause_still_has_two_frontend_implementations():
-    """`PP-16`'s "one cockpit contract" clause is NOT converged: a loop run and a workflow run are
+    """The "one cockpit contract" clause is NOT converged: a loop run and a workflow run are
     streamed, folded and rendered by two separate frontend stacks."""
     assert _WEB.is_dir(), f"{_WEB} missing — cannot measure the cockpit clause"
     for loop_side, run_side in _COCKPIT_PAIRS:
         assert (_WEB / loop_side).is_file() and (_WEB / run_side).is_file(), (
-            f"one side of the cockpit pair ({loop_side} vs {run_side}) is gone. If a PP-16 slice "
+            f"one side of the cockpit pair ({loop_side} vs {run_side}) is gone. If a change "
             f"unified the cockpit contract, update this census; the pair count must SHRINK."
         )
 
 
 def test_the_five_kinds_are_templates_plus_policies_and_the_plugin_keeps_only_the_rest():
-    """`PP-16`'s clause 3 — "the five kinds are bundled templates plus policies, so the domain
+    """The clause "the five kinds are bundled templates plus policies, so the domain
     intelligence lives in the policy and the supervisor stops being pluggable Python" — now holds
     on BOTH halves: every kind resolves to a bundled template (`loop_aliases.KIND_TO_TEMPLATE`,
     already true) AND to a declared convergence policy.
 
-    What deliberately REMAINS pluggable is named here rather than left implicit, so the next slice
+    What deliberately REMAINS pluggable is named here rather than left implicit, so the next change
     inherits a measurement instead of re-deriving it: intake (`classify`), worker framing
     (`build_brief` / `cycle_nudge`), planning (`walkthrough`), the multi-cycle orchestration hook
     (`on_new_cycle`) and the projection keys. Those are the bundled TEMPLATE's node prompts and
@@ -282,11 +282,11 @@ def test_the_five_kinds_are_templates_plus_policies_and_the_plugin_keeps_only_th
     assert not unaliased, f"loop kinds with no bundled-template alias: {unaliased}."
     unpoliced = sorted(k for k in KINDS if convergence_key(k, {}) not in KIND_CONVERGENCE)
     assert not unpoliced, (
-        f"loop kinds with no declared convergence policy: {unpoliced}. Both halves of clause 3 "
+        f"loop kinds with no declared convergence policy: {unpoliced}. Both halves of the clause "
         f"must hold for every kind — a kind with a template but no policy is a half-migration."
     )
     assert len(KIND_TO_TEMPLATE) == len(KINDS) == 5, (
-        f"the five kinds are now {len(KINDS)} kinds / {len(KIND_TO_TEMPLATE)} aliases — PP-16's "
+        f"the five kinds are now {len(KINDS)} kinds / {len(KIND_TO_TEMPLATE)} aliases — the "
         f"'five kinds become templates + policies' clause is sized against five."
     )
 
@@ -294,6 +294,6 @@ def test_the_five_kinds_are_templates_plus_policies_and_the_plugin_keeps_only_th
     # that retiring one of them later reds here and the census stays a measurement, not a memory.
     for member in ("classify", "build_brief", "cycle_nudge", "phase_key", "default_kind_config"):
         assert f"def {member}(" in body, (
-            f"LoopKindStrategy no longer declares {member!r}. If a later PP-16 seam moved it into "
+            f"LoopKindStrategy no longer declares {member!r}. If a later change moved it into "
             f"the bundled template, that is the intended outcome — update this list."
         )

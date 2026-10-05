@@ -1,4 +1,4 @@
-"""Retroactive run/conversation → skill promotion (LEARN E1.3).
+"""Retroactive run/conversation → skill promotion.
 
 The clauses of the contract, each pinned against the REAL proposal queue, run store and
 SkillsLoader (monkeypatched to a tmp home), not hand-built state:

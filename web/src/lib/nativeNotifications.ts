@@ -1,4 +1,4 @@
-/** Plan-42's `native` delivery target, renderer half.
+/** The `native` delivery target, renderer half.
  *
  *  `native` sat in the notification-rules target vocabulary from the start as an
  *  accepted-and-persisted string with nothing behind it. The dispatch is now three
@@ -48,7 +48,7 @@ export const NOTIFICATION_SOURCE_ROUTES: Record<string, string> = {
   approval: 'chat',
   apps: 'apps',
   cron: 'triggers',
-  // ES-15 revocation. `notifications`, NOT a Settings → Guardrails deep link, even though that
+  // An autonomy-grant revocation. `notifications`, NOT a Settings → Guardrails deep link, even though that
   // is where the user re-grants: `settings` is in neither NAV nor ROUTABLE, so naming it would
   // red the sibling rail below and make every tap a dead link. The feed is the surface that
   // actually carries the revoked keys and the evidence id, same as `system`.

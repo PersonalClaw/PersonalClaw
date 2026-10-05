@@ -1,8 +1,8 @@
-"""Chat-template role tokens are neutralised in untrusted text (§7/R4 rule b).
+"""Chat-template role tokens are neutralised in untrusted text.
 
-🔴 THE DEFECT. The fencing-hardening rule (b) is explicit: *"fencing **strips chat-template
-special/role tokens** so untrusted text can't forge role boundaries — essential with local model
-providers."* Measured against the real `fence_untrusted` before a line was written:
+🔴 THE DEFECT. Fencing must **strip chat-template special/role tokens** so untrusted text can't
+forge role boundaries — essential with local model providers. Measured against the real
+`fence_untrusted` before a line was written:
 
     ChatML         leaked: ['<|im_start|>', '<|im_end|>']
     Llama-3        leaked: ['<|eot_id|>', '<|start_header_id|>']
@@ -48,7 +48,7 @@ FORGERIES: list[tuple[str, str, tuple[str, ...]]] = [
 
 @pytest.mark.parametrize("family,payload,tokens", FORGERIES)
 def test_a_forged_role_boundary_does_NOT_survive_fencing(family, payload, tokens):
-    """🔴 THE DEFECT, pinned per family. Each of these assertions failed before this session."""
+    """🔴 THE DEFECT, pinned per family. Each of these assertions failed before this change."""
     fenced = fence_untrusted(payload, source="webhook")
     for token in tokens:
         assert token not in fenced, f"{family}: {token} survived the fence"

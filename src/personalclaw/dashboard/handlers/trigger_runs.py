@@ -60,7 +60,7 @@ async def api_trigger_run(request: web.Request) -> web.Response:
     nothing is recorded — the answer carries the gate plan and ``would_run``, the action a real
     run would dispatch, and that answer is the whole result (see ``_run_store``).
 
-    Reads no `state` at all since S110 — the clearest evidence the manual-run path is fully
+    Reads no `state` at all — the clearest evidence the manual-run path is fully
     store-backed.
     """
 
@@ -447,7 +447,7 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
     (:func:`_run_yours`), and a run anyone else asks for, an agent, an app, another automation's
     own work or a program, is the automation firing (:func:`_run_asked`).
 
-    A `dry_run` reports the gate plan of the run the asker would start (S92's: which gates it
+    A `dry_run` reports the gate plan of the run the asker would start (which gates it
     enforces and which it passes over) without executing — that reuses `tools.run`, so the API and
     the chat tool answer identically. A real run dispatches the trigger's declared action through
     the SAME action-provider registry every fire uses, so a Run button and an autonomous fire
@@ -1121,7 +1121,7 @@ async def _record_hand_run(
 
 
 async def api_trigger_view_render(request: web.Request) -> web.Response:
-    """POST /api/triggers/view/render — the `view` kind's production render caller (WF2AUT-6).
+    """POST /api/triggers/view/render — the `view` kind's production render caller.
 
     🔴 THE WIRING THIS CLOSES. `pull_on_view` ships a complete `view`-kind runtime — TTL decide,
     freshness sidecar, render fan-out — whose ONLY caller was its own tests, so `surface_binding`
@@ -1129,7 +1129,7 @@ async def api_trigger_view_render(request: web.Request) -> web.Response:
     render surface (an artifact opening, a dashboard tile mounting) POSTs `{surface}` here as it
     renders; every bound `view` trigger past its TTL refreshes, the rest serve cache.
 
-    It is NOT a poll. §3/R10: a `view` trigger must cost nothing when nobody is looking, so the
+    It is NOT a poll. A `view` trigger must cost nothing when nobody is looking, so the
     runtime is a function a RENDER calls — a background loop would reintroduce the 1440-run-dirs-a-
     day cost the kind exists to avoid. The `pull_on_view` import is function-local for exactly that
     reason: the gateway module must never import it as a loop (the `test_triggers_chain` runtime map

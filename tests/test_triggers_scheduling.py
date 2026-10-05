@@ -1,7 +1,7 @@
 """Crash-safe scheduling discipline.
 
 The disposition is explicit that `schedule.py` is ABSORBED by rename, not
-rewritten — so this session
+rewritten — so this module
 layers the discipline onto the shipped mechanism rather than replacing it. Everything here is a pure
 decision the service applies, which is what makes it assertable without a running gateway.
 
@@ -53,7 +53,7 @@ NOW = 1_700_000_000.0
 
 
 #: The shipped `ScheduleService._jitter_offset(id, 120.0)` values, captured from that method before
-#: S112 deleted it and verified equal to `jitter_offset` at the time of capture. PINNED BY VALUE
+#: it was deleted and verified equal to `jitter_offset` at the time of capture. PINNED BY VALUE
 #: rather than compared against the old implementation, because a parity test whose reference no
 #: longer exists cannot fail — and the property it protects (never silently re-phasing a
 #: migrated schedule into a different slot) outlives the class it was measured against.
@@ -237,8 +237,8 @@ def test_an_overdue_fire_is_PUSHED_not_fired_inline():
 
 
 def test_catch_up_is_RECORDED_but_still_staggered():
-    """The plan's catch_up is "fire ONCE at boot/wake" — session 65 owns the
-    exactly-once bookkeeping;
+    """`catch_up` means "fire ONCE at boot/wake" — the exactly-once bookkeeping lives
+    elsewhere;
     recovery's job is only to make it survivable."""
     _when, why = boot_recovery(next_fire_at=NOW - 5000, now=NOW, trigger_id="t", catch_up=True)
     assert why == "caught_up_staggered"
@@ -402,7 +402,7 @@ def test_EVERY_named_surface_still_EXISTS():
 
 def test_the_ABSORBED_surfaces_each_name_what_they_KEEP():
     """ "Absorbed" without a keeps-list is how a rewrite loses the semantics a rename would have
-    kept — `schedule.py` alone has ten behaviours §2 says are preserved verbatim."""
+    kept — `schedule.py` alone has ten behaviours that are preserved verbatim."""
     from personalclaw.triggers.disposition import absorbed
 
     for row in absorbed():
@@ -421,7 +421,7 @@ def test_the_schedule_machinery_keeps_its_LOAD_BEARING_behaviours():
 
 
 def test_KEPT_WITH_DUTY_is_distinct_from_KEPT():
-    """A kept surface is untouched; one that gains a duty needs an edit in this program. Collapsing
+    """A kept surface is untouched; one that gains a duty needs an edit in this codebase. Collapsing
     them lets a required emission read as "nothing to do here" — and then the
     bus has no publishers.
     """

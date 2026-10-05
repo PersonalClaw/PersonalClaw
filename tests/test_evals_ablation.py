@@ -7,7 +7,7 @@ Four things are load-bearing here and each is asserted with its own falsificatio
    live files before and after — and the vacuity floor is
    ``test_live_state_guard_reds_when_a_mutation_leaks``: a body that DOES write live config
    must make the guard raise, or the guard is decoration.
-2. **A no-delta report attaches to a LEARN-R9 retirement proposal**, at the real
+2. **A no-delta report attaches to a retirement proposal**, at the real
    ``proposals.enqueue`` call site, carrying the *ablation* evidence grade — a distinct
    claim from the queue's default ``correlated``.
 3. **keep / remove / lighten are all reachable.** An unreachable verdict is a
@@ -337,7 +337,7 @@ def test_loading_config_inside_the_block_is_not_reported_as_a_mutation(eval_home
     (defaults + a ``meta.lastTouchedAt`` stamp) on its FIRST load, so the very first ablation
     in a fresh or hand-edited home raised ``LiveStateMutatedError`` over a rewrite the config
     loader did on its own. ``live_state_unchanged`` carried a ``_normalize_config_before_
-    snapshot()`` pre-step to absorb it. PHF-15 made ``load()`` a pure read, so the pre-step
+    snapshot()`` pre-step to absorb it. ``load()`` is a pure read now, so the pre-step
     was deleted rather than kept as a no-op — and this is the rail that says the deletion
     was safe. If ``load()`` ever writes again, this reds first.
     """
@@ -601,7 +601,7 @@ def test_run_ablation_refuses_a_report_when_the_matrix_leaks_a_mutation(eval_hom
     assert list(ablation.reports_dir().glob("*.json")) == [], "no report from a leaked run"
 
 
-# ── 4. the LEARN-R9 attachment — the CALL SITE, and the GRADE ─────────────────
+# ── 4. the retirement-proposal attachment — the CALL SITE, and the GRADE ──────
 
 
 def test_a_no_delta_report_attaches_as_ablation_grade_evidence(eval_home):
@@ -622,7 +622,7 @@ def test_a_no_delta_report_attaches_as_ablation_grade_evidence(eval_home):
     verdict, proposal = ablation.file_retirement_proposal(report)
     assert proposal is not None, f"a no-delta report must file a proposal (got {verdict})"
     assert proposal.kind == proposals.Kind.RETIREMENT.value
-    # The GRADE, not merely "some evidence": R9 asks for ablation-grade evidence and this is
+    # The GRADE, not merely "some evidence": retirement asks for ablation-grade evidence and this is
     # the only tier in the queue that means a paired on/off measurement.
     assert proposal.evidence_strength == ablation.ABLATION_EVIDENCE_STRENGTH
     assert proposal.evidence_strength != "correlated"

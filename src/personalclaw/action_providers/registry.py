@@ -105,8 +105,8 @@ def _ensure_default_providers_registered() -> None:
     when installed. The four native actions (notify / send-message / create-task /
     invoke-agent) reach in-process services via the action service accessor.
 
-    Registering a provider also registers its AUTONOMY DECLARATION (AUTONOMY-GUARDRAILS
-    §5.2): the two paths must not be able to drift, because a provider present in the
+    Registering a provider also registers its AUTONOMY DECLARATION: the two paths must
+    not be able to drift, because a provider present in the
     dispatch registry with no declaration behind it is exactly the case the dispatch seams
     cannot tell apart from an ungoverned action. ``guardrails.rungs.CORE_ACTION_TYPES`` is
     the table; ``test_guardrails_rung_routing`` asserts every built-in name here appears in
@@ -180,7 +180,7 @@ def _ensure_default_providers_registered() -> None:
 
         register_action_provider(IdentityReportActionProvider())
     if "source-digest" not in _providers:
-        # WATCHED-SOURCES §6.2 (the caller). Registered unconditionally, not behind
+        # The watched-sources digest. Registered unconditionally, not behind
         # `sources.enabled`: the bundled clock trigger that names it exists whether or not a
         # user has enrolled a source, and a provider a live trigger names must be dispatchable
         # (the digest itself no-ops on an empty window). A trigger pointing at an unregistered
@@ -236,7 +236,7 @@ def _ensure_default_providers_registered() -> None:
 
         register_action_provider(SelfQaCommitWatchActionProvider())
     if "triage-digest" not in _providers:
-        # PROACTIVE-ASSISTANT §1.1-§1.5 — the triage digest's one call site. Registered
+        # The triage digest's one call site. Registered
         # unconditionally, NOT behind `proactive.triage_enabled`: a provider the bundled
         # "Morning triage" template names must be dispatchable whenever that template can be
         # instantiated, and a registration that depends on config is one the run-start preflight
@@ -280,7 +280,7 @@ def _ensure_default_providers_registered() -> None:
 
         register_action_provider(CallAppRouteActionProvider())
     if "artifact-update" not in _providers:
-        # WORKFLOWS-V2 Slice 9b: the zero-token write a dashboard-style template uses
+        # The zero-token write a dashboard-style template uses
         # to refresh its artifact. Added to ALLOWED_HOOK_PROVIDERS in the SAME commit — a
         # provider in one set but not the other is the mismatch that makes a trigger save and
         # then fail to run.
@@ -343,7 +343,7 @@ def _ensure_default_providers_registered() -> None:
         register_action_provider(KnowledgeConsolidateActionProvider())
         register_action_provider(KnowledgeGapsActionProvider())
     if "render-report" not in _providers:
-        # KNOWLEDGE-SYNTHESIS §6.2 (KNOW-R15): a declarative spec into a sanitized, self-contained
+        # A declarative spec into a sanitized, self-contained
         # export, so a periodic synthesizer regenerates visuals with no model call. Added to
         # ALLOWED_HOOK_PROVIDERS in the SAME commit — a provider in one set but not the other is
         # the mismatch that makes a trigger save and then fail to run.

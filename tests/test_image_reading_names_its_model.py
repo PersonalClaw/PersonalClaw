@@ -1,6 +1,6 @@
 """Reading an image names the model that reads it, or says no image model is set up.
 
-The chat lane's finding after #3654: with nothing bound to image understanding, image reading
+Found after #3654: with nothing bound to image understanding, image reading
 built the Ollama provider with an EMPTY model name, and Ollama answered 400 ``model is required``.
 Resolution for an unbound ``image_modality`` took the implicit fallback — the first provider whose
 TYPE declares vision — and built it with that entry's own ``model``, which an instance saved from

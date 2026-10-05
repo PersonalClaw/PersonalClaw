@@ -32,10 +32,10 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // handler moved here and that panel now reads from this copy, so the count of implementations went
 // 1-correct-plus-3-missing → **one, shared by four**.
 //
-// 🔑 `ui/Segmented`'s OPEN OWNER RULING LANDED IN #3472, AND IT WENT THE OTHER WAY: it is a
+// 🔑 `ui/Segmented`'s OPEN QUESTION WAS SETTLED IN #3472, AND IT WENT THE OTHER WAY: it is a
 // RADIOGROUP. The note here used to record the question (46 call sites — 50 by the time it was
-// ruled — and 0 tabpanels) and warn that giving it tab-style arrow navigation would quietly decide
-// it. The ruling made the count the argument: there is no `role="tabpanel"` anywhere in the app
+// settled — and 0 tabpanels) and warn that giving it tab-style arrow navigation would quietly decide
+// it. The decision made the count the argument: there is no `role="tabpanel"` anywhere in the app
 // except `ChatActivityPanel`'s two, so every one of those call sites announced a tabbed interface
 // that does not exist, and a screen reader said "tab 2 of 6" for the task form's Status field.
 //
@@ -201,7 +201,7 @@ describe('every tab strip in the tree is a real tablist', () => {
     // The inverse of what this expectation used to assert, and the reason the census above needed a
     // comment stripper: `Segmented` documents the roles it gave up, in prose, in this file's reach.
     const seg = codeOf(readSource(join(SRC, 'ui/Segmented.tsx')))
-    expect(seg, 'the ruling landed: single-choice fields are radio groups').toMatch(/role="radiogroup"/)
+    expect(seg, 'the decision landed: single-choice fields are radio groups').toMatch(/role="radiogroup"/)
     expect(seg).toMatch(/role="radio"/)
     expect(seg).toMatch(/aria-checked=/)
     expect(seg, 'a radiogroup must not announce tabs').not.toMatch(/role="tab(list)?"/)
@@ -213,7 +213,7 @@ describe('every tab strip in the tree is a real tablist', () => {
   })
 
   it('and the only tab strips left are the six that reveal something', () => {
-    // The vacuity floor for the clause above: it is also satisfied by a tree with no tab strips at
+    // The vacuity floor for the assertion above: it is also satisfied by a tree with no tab strips at
     // all. These six are hand-rolled view switchers, untouched by #3472, and each one swaps a pane.
     expect(sites().map((f) => f.file).sort()).toEqual([
       'pages/chat/ChatActivityPanel.tsx',

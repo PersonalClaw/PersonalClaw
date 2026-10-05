@@ -72,7 +72,7 @@ class _Nudge:
 
 class _Svc:
     """The nudge service's PUBLIC surface only — no `_loops` dict, which is the real service's
-    shape since WF2AUT-11 (its rows live in the trigger store)."""
+    shape (its rows live in the trigger store)."""
 
     def __init__(self, *session_names: str) -> None:
         self._rows = {f"N{i}": _Nudge(f"N{i}", s) for i, s in enumerate(session_names)}

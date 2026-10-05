@@ -52,7 +52,7 @@ _LOOP_ID_RE = re.compile(r"^[a-f0-9]{8}$")
 #: The worker's cumulative working log, by name. Named rather than inlined in
 #: :func:`read_log` so the RUN side can read the same filename from the same declaration
 #: (``workflows/deliverable.py``) instead of spelling it a second time — two
-#: string literals for one on-disk convention is exactly the drift PP-16 exists to remove.
+#: string literals for one on-disk convention is exactly the drift one declaration removes.
 LOG_NAME = "FINDINGS.md"
 
 #: The document names :func:`read_deliverable` falls back across when the kind declares none,
@@ -956,7 +956,7 @@ def list_redacted(project_id: str = "", kind: str = "") -> list[dict]:
     finding directly). Ported from both legacy engines. Unlike a per-row get_redacted it never
     CREATES anything per loop (no ``files_dir``, hence no ``loop_dir`` mkdir) — but it does READ
     one file per row: ``get_findings`` projects over ``<id>/events.jsonl``, so this path costs
-    O(rows) ledger reads. Measured while retiring ``total_cycles`` (PP-16 seam 4a), and the reason
+    O(rows) ledger reads. Measured while retiring ``total_cycles``, and the reason
     the derived count below reuses the findings already in hand rather than asking for a second
     scan of the same file."""
     loops = list_for_project(project_id) if project_id else list_all()
@@ -988,7 +988,7 @@ def list_redacted(project_id: str = "", kind: str = "") -> list[dict]:
 
 def set_kind_config_key(loop_id: str, key: str, value: Any) -> None:
     """Set a single key in a loop's kind_config (read-modify-write of the JSON blob).
-    Used for small supervisor-owned flags (e.g. the P4 canary's ``judge_calibrated``)
+    Used for small supervisor-owned flags (e.g. the judge canary's ``judge_calibrated``)
     that don't warrant their own column."""
     loop = get(loop_id)
     if loop is None:
@@ -1020,7 +1020,7 @@ def get_marginal_scores(loop_id: str) -> list[float]:
 
 
 # Quality-score trail — the absolute-quality signal (the ratchet guardrail), kept
-# alongside the marginal trail so the calibrated returns-exhaustion band (P4) has a
+# alongside the marginal trail so the calibrated returns-exhaustion band has a
 # variance sample and the supervisor can reason about quality regressions over time.
 def record_quality_score(loop_id: str, quality: float) -> list[float]:
     """Append a cycle's judge quality score to kind_config['quality_scores']; return

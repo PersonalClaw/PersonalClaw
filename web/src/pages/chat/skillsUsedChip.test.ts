@@ -14,7 +14,7 @@ import {
   type SkillUsed,
 } from './chatTypes'
 
-// ── LV-2 ──────────────────────────────────────────────────────────────────────────────────
+// ── What reached the prompt, and where a learned chip lands ───────────────────────────────
 //
 // Two additive backend contracts, and the three ways their frontend could be wrong:
 //
@@ -29,7 +29,7 @@ import {
 //     `origin` says which surface can approve or edit the artifact. Wiring one to the wrong
 //     page is invisible to types and to a smoke test — the chip is tappable either way.
 //
-//  3. THE DEGRADE. Every message persisted before T2.2 lacks `origin`, and any future
+//  3. THE DEGRADE. Every message persisted before the field existed lacks `origin`, and any future
 //     emitter will too. That must leave the chip VISIBLE and merely not a link — not throw,
 //     not hide the chip, and above all not guess a surface.
 //
@@ -134,7 +134,7 @@ describe('learnedSurface — a tap lands where the artifact can be approved or e
 
   it('discriminates: a proposal and a lesson do NOT land on the same surface', () => {
     // Vacuity floor for the whole block. One hardcoded href satisfies every positive
-    // assertion above, and that is precisely the bug T2.2 exists to fix — the row used to
+    // assertion above, and that is precisely the bug `origin` exists to fix — the row used to
     // link all three origins to Memory, which was right for a facet and wrong for a proposal.
     expect(learnedSurface('proposal')?.href).not.toBe(learnedSurface('lesson')?.href)
   })
@@ -202,7 +202,7 @@ describe('stampActivityOrigin — origin survives the LIVE stream, not just a re
     expect(next.some((s) => s.kind === 'activity')).toBe(false)
   })
 
-  it('is a no-op for an ABSENT origin, so a pre-T2.2 frame stamps nothing', () => {
+  it('is a no-op for an ABSENT origin, so an older frame stamps nothing', () => {
     const prev: Segment[] = []
     const next = stampActivityOrigin(prev, insertActivity(prev, 'Learned: Y', 'learned', false), '')
     const seg = next.find((s) => s.kind === 'activity') as ActivitySegment
@@ -373,7 +373,7 @@ describe('hydrateTurns — skills_used reaches the turn on reload', () => {
 // ── The call sites ────────────────────────────────────────────────────────────────────────
 //
 // The helpers above are pure and provable; a control can still ship INERT — correct logic
-// that no surface calls. The change's acceptance criterion names two surfaces ("run/loop panel"), so both
+// that no surface calls. The contract names two surfaces ("run/loop panel"), so both
 // wirings are asserted here. Scanned as JSX ATTRIBUTE/EXPRESSION forms, not bare identifiers:
 // this file's own prose and the source comments both mention the helper names, and a bare
 // substring scan would pass on a comment alone.
@@ -402,7 +402,7 @@ describe('the chip is wired at both surfaces (not an inert helper)', () => {
   })
 
   it('the cockpit reads the meta over the EXISTING session endpoint, adding no channel', () => {
-    // The acceptance clause is "zero new WS/SSE channels". The cockpit reads the worker
+    // The contract is "zero new WS/SSE channels". The cockpit reads the worker
     // transcript through the REST endpoint ChatPage already uses — off the message that started
     // each cycle's turn (its nudge), through the same reader the chat uses.
     expect(cockpit).toContain('api.chatSessionDetail(workerKey)')
@@ -427,7 +427,7 @@ describe('the chip is wired at both surfaces (not an inert helper)', () => {
     expect(chatPage).toContain("ledger.learnedRef = (s as ActivitySegment).ref")
     expect(ledger).toContain('learnedSurface(learnedOrigin, learnedRef)')
     expect(ledger).toContain('<TextLink href={surface.href}>')
-    // Vacuity floor for this whole block: the pre-LV-2 hardcoded link must be GONE. Without
+    // Vacuity floor for this whole block: the old hardcoded link must be GONE. Without
     // this, the three positive scans above pass while the old unconditional Memory link is
     // still what actually renders.
     expect(ledger).not.toContain('<TextLink href="#/settings/memory">Manage in Memory')

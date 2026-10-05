@@ -71,7 +71,7 @@ class AcpConnectionPool:
                 self._slots[runtime_id] = slot
             return slot
 
-    # ── concurrent sessions (P9): one shared AcpConnection, N sessions ──────────
+    # ── concurrent sessions: one shared AcpConnection, N sessions ───────────────
 
     async def open_session(
         self,
@@ -93,7 +93,7 @@ class AcpConnectionPool:
     ) -> "ModelProvider | None":
         """Open a NEW session on a shared, per-runtime :class:`AcpConnection`, returning
         an :class:`AcpSessionProvider`. The connection is spawned + ``initialize``-d once
-        and reused; multiple calls = concurrent sessions on ONE process (the P9 win).
+        and reused; multiple calls = concurrent sessions on ONE process.
 
         Called for a chat the user started, never ahead of one. Callers gate on
         ``acp_session_provider.concurrent_sessions_enabled(dialect)`` before calling.
@@ -116,7 +116,7 @@ class AcpConnectionPool:
             )
             if conn is None:
                 return None
-            return await open_acp_session_provider(  # type: ignore[return-value]  # CI-2
+            return await open_acp_session_provider(  # type: ignore[return-value]
                 conn,
                 runtime_id=runtime_id,
                 cwd=cwd,

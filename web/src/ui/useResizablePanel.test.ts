@@ -2,12 +2,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { useResizablePanel } from './useResizablePanel'
 
-// ── The two capabilities the terminal drawer needed (cycle 192) ────────────────────────────────
+// ── The two capabilities the terminal drawer needed ────────────────────────────────────────────
 //
 // The Code cockpit + SidePanel + ChatFilePanel adoptions all had a STATIC max and a `-w` key, so the
 // hook served them unchanged. The terminal drawer needed two generalisations, and both are pure
 // state/localStorage/resize logic — so they are verified here directly, which is more rigorous than a
-// browser drive of a drawer that only mounts once the app is onboarded (the dev home this cycle was
+// browser drive of a drawer that only mounts once the app is onboarded (the dev home used here was
 // NOT, which is exactly why this lives in the suite instead of a screenshot):
 //
 //   · a DYNAMIC max — a `() => window.innerHeight * frac` thunk, resolved live at every clamp, with the

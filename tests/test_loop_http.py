@@ -1,4 +1,4 @@
-"""HTTP-layer tests for the unified /api/loops route family (Slice 2d). Drives the
+"""HTTP-layer tests for the unified /api/loops route family. Drives the
 handlers via make_mocked_request with a fake state + stubbed autonudge — asserting
 kind-aware create, list/get/update, lifecycle action guards, nudge, delete."""
 
@@ -118,7 +118,7 @@ class _FakeSvc:
         return next((lp for lp in self._loops.values() if lp.session_name == session_name), None)
 
     def list_all(self):
-        # The public surface `manager.pause` scans since WF2AUT-11 (the real service keeps its
+        # The public surface `manager.pause` scans (the real service keeps its
         # rows in the trigger store, not an in-memory dict).
         return list(self._loops.values())
 
@@ -274,7 +274,7 @@ class TestCreate:
     )
     def test_create_every_unported_kind_seeds_its_default_kind_config(self, state, kind, kc_key):
         # Every kind that still creates a LOOP ROW must come back with its kind's default
-        # kind_config. `general` is no longer one of them: PP-16 routes it through
+        # kind_config. `general` is no longer one of them: it routes through
         # `service.start_kind_run`, so it answers 202 + a run identity and seeds no
         # kind_config at all — the run's behaviour lives in the `general-project` template.
         # That claim is asserted in `test_loop_route_starts_a_run.py`; the row was
@@ -718,7 +718,7 @@ class TestClassify:
 
 
 class TestGrillTree:
-    """Guided decomposition (#16) — the /api/loops/{id}/grill-tree endpoint that calls
+    """Guided decomposition — the /api/loops/{id}/grill-tree endpoint that calls
     grill's memory-checked `tree` shape over a created loop's goal."""
 
     def _make(self, state) -> str:
@@ -1780,7 +1780,7 @@ class TestLifecycle:
 
 
 class TestGrillSaveSeam:
-    """The grill SAVE seam (WF2LEA-7 clause D), driven through the REAL handler.
+    """The grill SAVE seam, driven through the REAL handler.
 
     `grill.SaveFn` was declared (`grill.py:38`) and every call site passed None, so a
     memory-checked decomposition never fed the memory it checked. The settle point is the launch
@@ -1920,7 +1920,7 @@ class TestGrillSaveSeam:
 
 
 class TestGrillRecallReadsWhatSaveWrites:
-    """The reader half of the grill SAVE seam (WF2LEA-7 clause D).
+    """The reader half of the grill SAVE seam.
 
     The unwritten-key shape, caught by reading the reader: `write_lesson` stores `lesson.<hash>`
     keys, and `get_semantic_context` EXCLUDES `lesson.%` by design

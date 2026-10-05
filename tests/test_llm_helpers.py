@@ -731,7 +731,7 @@ class TestHumanizeProviderErrorInARoom:
 
 
 class TestHumanizeProviderErrorWithNoMessage:
-    """An exception whose ``str()`` is empty still gets a sentence (day-56b evidence).
+    """An exception whose ``str()`` is empty still gets a sentence.
 
     Measured on a fresh instance: the provider proxy rejected the connection, the native
     runtime raised ``httpx.ReadError('')``, and the chat showed an error bar with NOTHING in

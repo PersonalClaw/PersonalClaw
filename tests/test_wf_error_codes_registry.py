@@ -9,9 +9,9 @@ one guards the THIRD vocabulary: ``workflows.error_codes.WF_ERROR_CODES``,
 no rail. 162 codes a workflow-template author or an MCP caller can hit, and exactly ONE
 documented anywhere in the repository (``WF_MISSING_EXPR``, in
 ``docs/architecture/workflows.md``). #3499 measured 159; three more (``WF_INPUT_BAD_LOOP_FIELD``,
-``WF_INPUT_DUPLICATE_LOOP_FIELD``, ``WF_LOOP_KIND_NO_TASK_INPUT``) arrived on ``main`` from PP-16
-while this was being written, and **this rail is what caught them** — which is the argument for it,
-made on its first day. A code is a contract identifier — something a caller
+``WF_INPUT_DUPLICATE_LOOP_FIELD``, ``WF_LOOP_KIND_NO_TASK_INPUT``) arrived on ``main`` from another
+change while this was being written, and **this rail is what caught them** — which is the argument
+for it, made on its first day. A code is a contract identifier — something a caller
 branches on — so an unregistered one is a contract nobody can depend on.
 
 **Both directions, because the second is the one that gets skipped:**
@@ -27,7 +27,7 @@ scan.** ``error_codes.py`` holds all 162 codes as dict keys — string literals 
 so a scan that counted them would make direction 2 true by construction: a rail proving
 itself. :data:`_REGISTRY_MODULE` is the exclusion and the reason it exists.
 
-🪤 **The scan is AST-based, not textual (brief §15).** A rail that greps raw source counts
+🪤 **The scan is AST-based, not textual.** A rail that greps raw source counts
 the prose documenting a code as a raise of it, so the commit that documents a vocabulary is
 the commit the rail reds. Here that hazard is acute: this repo's modules explain their codes
 at length in docstrings (``supervisor_policy.py`` writes ``WF_SUPERVISOR_*``,
@@ -320,8 +320,8 @@ def test_both_directions_have_teeth_against_main_state():
 
     Neither direction is falsifiable from a green run alone, and the shape of this change
     makes that sharper than usual: on ``origin/main`` there was no registry at all, so
-    "fails on main" cannot be a red — it is an ImportError, which is an absence of evidence
-    (brief §12), not a measurement. This test is the replacement artifact. It runs both
+    "fails on main" cannot be a red — it is an ImportError, which is an absence of evidence,
+    not a measurement. This test is the replacement artifact. It runs both
     directions against synthetic states standing in for the two ways the registry can be
     wrong, and asserts each produces the failure it promises:
 

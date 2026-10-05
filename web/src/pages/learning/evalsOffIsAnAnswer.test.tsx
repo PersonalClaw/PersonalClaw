@@ -4,7 +4,7 @@ import { invalidateKeys } from '../../lib/data'
 import { LearningPage } from './LearningPage'
 import type { LearningInbox, StagingWeek } from '../../lib/api'
 
-// ── Day-7 validation: every visit to #/learning on a default install made 6 × 404 ───────────────
+// ── Every visit to #/learning on a default install made 6 × 404 ─────────────────────────────────
 //
 // `evals.enabled` ships off, and the six eval report reads answered that with 404 `evals_disabled`
 // — one "Failed to load resource" console error per panel on every visit, for a feature nobody had

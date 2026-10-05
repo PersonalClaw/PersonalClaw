@@ -1,4 +1,4 @@
-"""Media + video pipeline nodes + the conditional video DAG (#47)."""
+"""Media + video pipeline nodes + the conditional video DAG."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ def _nodes():
     ensure_nodes_registered()
 
 
-# ── use-case wiring (Q1 hybrid) ──
+# ── use-case wiring ──
 
 
 def test_ingestion_nodes_use_default_capability_bindings():
@@ -88,7 +88,7 @@ def test_video_graph_is_conditional_dag():
     assert ("video_classify", "ocr", "text-heavy") in conds
     assert ("video_classify", "vision", "visual") in conds
     # fan-in to consolidate — the transcript arm now flows through lexicon_correction
-    # (LEX.4) before consolidation; ocr/vision arms fan in directly.
+    # (the post-decode correction) before consolidation; ocr/vision arms fan in directly.
     preds = {e.from_node for e in g.predecessors("video_consolidate")}
     assert {"lexicon_correction", "ocr", "vision"} <= preds
     assert "lexicon_correction" in set(g.nodes)
@@ -109,7 +109,7 @@ def test_image_and_audio_graphs():
 
 
 def test_speaker_fusion_assigns_by_max_overlap():
-    # Deterministic fusion (L1.3): each word gets the speaker whose turn overlaps it most,
+    # Deterministic fusion: each word gets the speaker whose turn overlaps it most,
     # splitting a segment when the speaker changes mid-segment.
     from personalclaw.knowledge.pipeline.nodes import media_nodes as mn
 
@@ -139,8 +139,8 @@ def test_speaker_fusion_assigns_by_max_overlap():
 
 
 def test_speaker_fusion_passthrough_without_turns():
-    # No diarization turns (no model) → transcript passes through unchanged (L0 works
-    # with or without L1).
+    # No diarization turns (no model) → transcript passes through unchanged (transcription
+    # works with or without diarization).
     from personalclaw.knowledge.pipeline.nodes import media_nodes as mn
 
     transcript = {"text": "x", "segments": [{"start": 0, "end": 1, "text": "x", "words": []}]}

@@ -136,7 +136,7 @@ async def api_computer_use_dispatch(request: web.Request) -> web.Response:
 
 
 async def api_computer_use_live_view(request: web.Request) -> web.Response:
-    """GET /api/computer-use/live-view — the human-facing live view + overlay data (`DCU-7`).
+    """GET /api/computer-use/live-view — the human-facing live view + overlay data.
 
     A READ of :func:`personalclaw.computer_use.render.live_view` and nothing else: the
     keystone posture, the mirrored snapshots the model already walked, the cursor-motion

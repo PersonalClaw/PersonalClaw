@@ -34,6 +34,7 @@ is a deliberate, documented judgment (also recorded in-module at each site).
 | `llm/catalog.py` family map + `infer_capabilities()` + `refused_sampling()` | core | **Fallback-only reference data.** Providers that *declare* capabilities always win, and so does a vendor's own model record: a branded app hands its vendor's `/models` records to `register_branded_app(spec, capabilities_of=…)`, and the shared listing reads a record's `root` (the model an alias serves). The markers classify only what the vendor's listing leaves unsaid, and families no job here binds (rerankers, moderation and safety classifiers, completion-only, realtime-only and Responses-only models) read as no capability, so no picker offers them. `refused_sampling()` names the sampling parameters a model family's vendor documents it refusing (a 400), so the Anthropic wire client leaves them off and reports why; the vendor's Models API describes thinking and effort per model but not sampling, so there is no record to read instead, and a model it does not name is sent everything. Same class as public model-pricing tables (`pricing.py`, `model_pricing.json`) — data about the world, not an integration. |
 | `security.py` `xox[bpas]-` token patterns; `sandbox.py` `SLACK_*` env denylist | core | **Secret-DETECTION data.** These patterns exist to *redact and block* leaked credentials. Renaming them to something generic would break the control they implement. Deliberate keep. |
 | `CRED_SLACK_*` constants | core `config/loader.py`, re-exported by `sdk/channel.py` | The literal `.env` credential-store key names (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`) that existing installs already hold. The loader is the credential store's home (the bottom layer, below all apps); `sdk/channel.py` re-exports them as the app-facing surface, so the slack app imports via the SDK and no import direction is inverted. Renaming the keys would break existing installs for zero gain. |
+| `onboarding_import/` (`registry.py` and the `sources/` it lists), `mcp_discovery.py`, `packs/external_formats.py` and the `dashboard/handlers/agent_export.py` route over it, and `dashboard/handlers/mcp.py`'s sync of MCP servers into Claude Code's own config | core | **Interoperability formats.** These read another agent tool's setup and history so they can be imported, or write PersonalClaw's agents and MCP servers into another tool's files. They know where that tool keeps its files and what shape the files have, and nothing else: they hold no account, make no network call, import no vendor SDK and run none of the other product's code. The floors they stand on are core's, and every one of them applies: a credential-bearing path is never opened and a secret found in text is counted, never copied (`onboarding_import/floors.py`); a file PersonalClaw did not write is never overwritten (`packs/external_formats.py`); a config that exists and cannot be read is refused rather than replaced on a write (`ConfigUnreadable` in `dashboard/handlers/mcp.py`); and another tool's files are read only when the owner asks for that tool or has allowed it in Settings. Each file is a `format:` keep in [provider-boundary-keeps.txt](provider-boundary-keeps.txt). |
 | Everything else vendor-specific | `apps/` bundles | Endpoints, auth flows, catalogs, binary resolution, block/attachment formats, scraping — all bundle-resident. |
 
 **Rows 1–2 are machine-enforced, not merely declared (#3500).** `tests/test_provider_boundary_residue.py` sweeps every core `*.py` for vendor SDK imports (`ast` Import nodes, so a comment or docstring mentioning a vendor cannot be counted) and vendor credential/secret literals, and requires each hit to be a listed keep in
@@ -64,14 +65,14 @@ implements it. What matters here is where the boundary sits inside each family:
   (`SearchResult.fallback`), and a provider's state is what its last search
   measured (`last_check`, recorded by its Test and by every search), never
   what its settings suggest.
-- **The chat zero-config floor** is the model axis' version of that same rule
-  (OU-14). `apps/native/bundled-chat` runs a small Apache-2.0 GGUF model in-process
+- **The chat zero-config floor** is the model axis' version of that same rule.
+  `apps/native/bundled-chat` runs a small Apache-2.0 GGUF model in-process
   on `numpy`, so an install answers a first turn with no provider and no key. The
   weight is **not** in any distribution artifact — not the wheel, not the container
   image, not the desktop bundle — but is fetched once into
   `$PERSONALCLAW_HOME/models/bundled-chat/` on an explicit click, digest-verified
-  against the record (owner decision 2026-09-24; a ~147 MiB wheel is over PyPI's
-  100 MiB per-file limit and a cost every installer would pay). So the *first* chat
+  against the record (a ~147 MiB wheel is over PyPI's 100 MiB per-file limit and a
+  cost every installer would pay). So the *first* chat
   needs network and everything after it does not — and no surface claims otherwise.
   It is an app bundle and **adds no in-core exception**: the executor is a *format*
   reader plus arithmetic (no endpoint, no auth, no catalog, no wire dialect), and
@@ -200,8 +201,8 @@ The same pattern applied to the Ollama client (`llm/ollama.py`, 1002 LOC → an
 outright — channels are channel providers, not inbox sources).
 
 The Ollama bundle has since moved into the wheel, as `apps/native/ollama-models/`,
-under an owner ruling (2026-09-21): a fresh install gets a chat and embedding
-provider with no credential and no second repository to clone. That changed
+so a fresh install gets a chat and embedding provider with no credential and no
+second repository to clone. That changed
 where the bundle ships, not where the line is. Its client, catalog and
 endpoints are still bundle code behind the `model` seam; it imports core only
 through `personalclaw.sdk.*` and registers its own type at import, so core gained

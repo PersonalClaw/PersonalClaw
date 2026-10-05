@@ -7,7 +7,7 @@ import { TokensView } from './DesignCockpitPage'
 // ── A tile that is not an action, and a button that would not say why ─────────────────────
 //
 // Two shapes of the same root cause, both on `#/loops`, both found by asking what a natively
-// `disabled` control costs a keyboard user (cycle 109's triage, one layer down into the 21 raw
+// `disabled` control costs a keyboard user (an earlier triage, one layer down into the 21 raw
 // `<button disabled={…}>` sites it could not see).
 //
 // 1. THE READ-ONLY TOKEN TILES. `TokensView` renders each radius and font family as a
@@ -30,8 +30,8 @@ import { TokensView } from './DesignCockpitPage'
 //    stays NATIVE — an in-flight action must not be re-clickable. The dimming had to move with it:
 //    `disabled:opacity-40` never matches an `aria-disabled` element, so the class list carries both.
 //
-// 🪤 WHAT THIS CYCLE DID **NOT** DO, and why. `#/loops` at 390px still fails axe `target-size` on
-// the granularity dial. That is the ledger's ESCALATED OWNER LAYOUT CALL — at phone width the
+// 🪤 WHAT THIS CHANGE DID **NOT** DO, and why. `#/loops` at 390px still fails axe `target-size` on
+// the granularity dial. That is an open LAYOUT DECISION — at phone width the
 // floating shell corner occupies x=211..390 with `pointer-events: auto`, so ~211px of header is
 // usable while the four controls need ~495px even fully collapsed — and PR #1110 (open, in the
 // other chain) already shipped the part that could be fixed without a layout decision. Re-fixing it
@@ -79,7 +79,7 @@ describe('read-only design tokens are not pretending to be buttons', () => {
 describe('the Suggest-more gate keeps its tab stop', () => {
   // `SuggestMoreSubGoals` is a file-local component and the state it needs (a loop draft with a
   // plan) is not reachable in the dev home, so this is asserted at the source. Every line was
-  // read in the browser first for the sites that COULD be driven (cycle 109's account panel).
+  // read in the browser first for the sites that COULD be driven (the account panel).
   const src = readFileSync(join(process.cwd(), 'src/pages/loops/LoopPlanReview.tsx'), 'utf8')
 
   it('names the gate instead of inlining it twice', () => {

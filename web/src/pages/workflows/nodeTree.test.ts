@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { buildTree, initialCollapsed, summarize, summaryLabel, visibleRows } from './nodeTree'
 import type { WorkflowNodeState } from '../../lib/api'
 
-// ── Collapsible containers (WF2 Slice 10b) ──────────────────────────────────
+// ── Collapsible containers ──────────────────────────────────────────────────
 //
 // The run view renders one row per node instance, which is right until a spec fans out: the
 // `deep-research` template expands to 21 rows and 18 of them are one untaken subgraph. A flat list

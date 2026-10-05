@@ -39,11 +39,11 @@ from personalclaw.triggers.migrate import (
 )
 from personalclaw.triggers.models import LEGACY_FIELD_MAP
 
-#: The EXACT key list `ScheduleService._save` wrote, copied from that method before S112 deleted the
-#: class. This is the on-disk `crons.json` format the boot migration still reads, so it is pinned as
-#: data here rather than reconstructed from belief — the original fixture's whole point was that "a
-#: hand-written dict encodes what I THINK the format is, and this program has repeatedly found that
-#: belief wrong". The keys come from the shipped writer; only their source moved.
+#: The EXACT key list `ScheduleService._save` wrote, copied from that method before its class went.
+#: This is the on-disk `crons.json` format the boot migration still reads, so it is pinned as
+#: data here rather than reconstructed from belief — the original fixture's whole point was that a
+#: hand-written dict encodes what its author THINKS the format is, and that belief has repeatedly
+#: proved wrong. The keys come from the shipped writer; only their source moved.
 _SAVED_KEYS = (
     "id",
     "name",
@@ -84,7 +84,7 @@ _SAVED_VERSION = 2
 
 def _as_saved(jobs) -> dict:
     """`ScheduleJob`s in the shape `_save` wrote them. `ScheduleJob` + `ScheduleDefinition` survive
-    S112 precisely because this file needs them: the migration reads that format."""
+    the class's deletion precisely because this file needs them: the migration reads that format."""
     from dataclasses import asdict
 
     return {
@@ -155,7 +155,7 @@ def real_store(tmp_path, monkeypatch):
 
 
 def test_a_REAL_store_migrates_with_NOTHING_unaccounted(real_store):
-    """The bar for this session. Not "looks right" — nothing left the building unaccounted for."""
+    """The bar for the migration. Not "looks right" — nothing left the building unaccounted for."""
     report = migrate_crons(real_store)
     assert report.to_dict()["unaccounted"] == []
     assert report.lossless is True
@@ -168,7 +168,7 @@ def test_every_row_converts(real_store):
 
 
 def test_the_audit_is_PER_FIELD_not_per_row(real_store):
-    """S62 wrote `LEGACY_FIELD_MAP` precisely so this check is possible; running it per row is what
+    """`LEGACY_FIELD_MAP` exists precisely so this check is possible; running it per row is what
     makes "lossless" a measurement rather than a claim."""
     for row in real_store["jobs"]:
         assert unconverted_fields(row) == []
@@ -192,7 +192,7 @@ def test_the_measurement_behind_NEVER_PERSISTED_still_holds():
     becoming wrong.
 
     Measured against `_SAVED_KEYS` (the writer's own key list, pinned at the top of this file when
-    S112 deleted the class) instead of parsing `_save`'s source. Same set, and it cannot silently
+    the class was deleted) instead of parsing `_save`'s source. Same set, and it cannot silently
     pass once the source it used to read no longer exists.
     """
     import dataclasses as dc
@@ -251,7 +251,7 @@ def test_an_INTERVAL_job_does_NOT_become_a_one_shot(real_store):
 
 
 def test_a_ONE_SHOT_keeps_the_user_s_delete_choice(real_store):
-    """§1.2 makes `delete_after_run` the default for `at`, but a one-shot
+    """`delete_after_run` is the default for `at`, but a one-shot
     the user marked to KEEP must
     not be deleted because the new default says otherwise."""
     spec = next(

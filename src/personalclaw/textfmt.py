@@ -111,8 +111,8 @@ def strip_thinking_tags(text: str, *, strip_whitespace: bool = True) -> tuple[st
 #
 # ONE parser for every surface that names a conversation from a model's reply: the dashboard's
 # auto-title (``dashboard.chat_title``) and a channel app's thread titles. It is published on
-# ``personalclaw.sdk.channel`` because the Slack app had to mirror it (#124), private in the
-# dashboard module, with a parity test pinned to a core-private name.
+# ``personalclaw.sdk.channel`` because the Slack app had to mirror it (PersonalClawApps #124),
+# private in the dashboard module, with a parity test pinned to a core-private name.
 
 #: A code-fence line (three or more backticks or tildes, with or without an info string). What a
 #: fence encloses is code the model wrote instead of a title, never the title itself.

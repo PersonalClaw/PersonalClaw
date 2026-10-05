@@ -36,7 +36,7 @@ LATENCY_DRIFT_TOLERANCE = 0.15  # p95 may grow at most +15% over the baseline
 #: not merely "one fewer scenario". These are the required set members whose absence is
 #: how a gate silently rots: the journal-format gate lives entirely in the two workflow
 #: scenarios, so if either recording vanished the journal would be ungated with nothing to
-#: say so (Success Criterion #4). ``required_scenarios`` already treats every recording
+#: say so. ``required_scenarios`` already treats every recording
 #: on disk as present-and-required; this NAMED set adds the "and these two must EXIST" half,
 #: which a disk scan alone cannot express (an absent dir scans as absent, not as failing).
 REQUIRED_SCENARIOS = frozenset(
@@ -144,7 +144,7 @@ def check_metrics(m: Metrics, baseline: Baseline) -> list[str]:
     # is asserting the exact state the journal→SSE projection reconstructs. An EXACT compare,
     # not a threshold: the fold law is a byte-equal invariant, so any drift — a renamed event
     # kind, a dropped guard, a changed terminal state — must fail, which is precisely what
-    # gates the journal format before a Slice 3+ consumer relies on it. A baseline that pins a
+    # gates the journal format before an engine consumer relies on it. A baseline that pins a
     # fold but the recording no longer produces one is also a failure (the projection events
     # vanished from the trace).
     base_fold = baseline.metrics.get("fold")

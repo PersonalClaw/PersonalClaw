@@ -5,7 +5,7 @@ Implements the open `Agent Client Protocol
 stdio). Callers supply a ``command`` (full launch argv) and the client speaks the
 protocol against any ACP-compliant agent.
 
-Architecture (P9 task #7 convergence): ``AcpClient`` is now a **convenience wrapper**
+Architecture: ``AcpClient`` is now a **convenience wrapper**
 that holds exactly ONE :class:`AcpConnection` (one backend process + one
 :class:`~personalclaw.acp.reader.FrameRouter` over its stdout) and ONE
 :class:`AcpSession`, delegating every turn/lifecycle/config method to them. There is a
@@ -148,7 +148,7 @@ class AcpClient:
         resolved_work_dir = Path(work_dir) if work_dir else workspace_root()
         self._model = model or DEFAULT_MODEL
         self._agent = agent
-        # Unattended run (§2.3 gap 3): nobody can answer this agent's own questions, so it is
+        # Unattended run: nobody can answer this agent's own questions, so it is
         # not told at ``initialize`` that it may ask them (:meth:`_owner_answers`). Its tool
         # calls still ask the host, whose unattended fail-fast refuses, with its reason, what no
         # grant answers.
@@ -202,7 +202,7 @@ class AcpClient:
         self.last_prompt_stats = AcpPromptStats()
         self._last_stop_reason: str = ""
         # First non-empty stderr tail seen across ``ensure_ready``'s two attempts
-        # (§ retry teardown, below). ``_teardown()`` clears the transport's live
+        # (see the retry teardown below). ``_teardown()`` clears the transport's live
         # deque on EVERY attempt, including the one whose failure is what a caller
         # actually wants explained, so the tail has to be pulled off before that
         # teardown runs and held here rather than re-read from the transport later.
@@ -220,7 +220,7 @@ class AcpClient:
     def _core_mcp_servers(self) -> list[dict[str, Any]]:
         """The ``mcpServers`` array every ``session/new``/``session/load`` sends.
 
-        Prong A of ACP-AGENT-PARITY §2.1: without it a session sees only the CLI's
+        Without it a session sees only the CLI's
         own tools and none of knowledge / tasks / inbox / artifacts / workflows /
         subagents / notify. Rebuilt per call so a ``rekey()``-ed warm process
         carries the CURRENT session key into the server's env, not the key the
@@ -386,7 +386,7 @@ class AcpClient:
         comment justifying it ("adapters usually send no response") is false:
         measured live, BOTH Zed adapters answer every ``session/set_config_option``.
         The consequence was the worst kind of silence — codex-acp answered
-        ``-32602 Invalid params`` to §2.2's host-authority permission mode on every
+        ``-32602 Invalid params`` to the host-authority permission mode on every
         single session, kept its own default-allow mode, and nothing logged it, so
         the mode read as forwarded when it had been refused.
 
@@ -447,7 +447,7 @@ class AcpClient:
     def _authority_mode(self, mode: str | None) -> str:
         """Clamp a requested native mode so the HOST stays the permission authority.
 
-        §2.2: an ``acceptEdits``/``dontAsk``/``bypassPermissions`` session makes the
+        An ``acceptEdits``/``dontAsk``/``bypassPermissions`` session makes the
         CLI its own authority, and everything it self-approves bypasses the
         deny-list, the task-mode gate and blocking PreToolUse hooks — they all hang
         off ``session/request_permission``. A downgrade is AUDITED, never silent, so
@@ -803,7 +803,7 @@ class AcpClient:
         #     cycle) lost the session's EFFORT pin from turn 2 on, while the agent/model/mode
         #     it re-sent kept the session looking correctly specialized;
         #   * MCP init notifications stayed queued and interleaved into the turn instead of
-        #     being drained before it, on the very path `AAP-4` exists to keep core reachable.
+        #     being drained before it, on the very path that keeps core reachable.
         # Effort follows model here for the same reason it does in the full handshake:
         # granularity can be model-dependent.
         _set_effort = self._dialect.set_effort_request(
@@ -936,7 +936,7 @@ class AcpClient:
         Gated on the declared capability: an agent that never advertised the extension
         gets no request at all, and the caller sees :class:`AcpCommandsUnsupported`
         BEFORE any wire write — so it can substitute a plain prompt knowing the turn is
-        still untouched (`G4`)."""
+        still untouched."""
         await self._ready_for_a_turn()
         if not self._can_execute_commands:
             raise AcpCommandsUnsupported(command)

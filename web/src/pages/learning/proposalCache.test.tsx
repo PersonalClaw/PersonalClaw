@@ -59,7 +59,7 @@ const learningProposals = vi.fn<() => Promise<LearningInbox>>()
 const learningStagingWeek = vi.fn<() => Promise<StagingWeek>>()
 const acceptLearningProposal = vi.fn<() => Promise<{ ok: boolean }>>()
 const rejectLearningProposal = vi.fn<() => Promise<void>>()
-// The page gained a third read (the flywheel health panel, LEARN-R14b). Mocked here because a
+// The page gained a third read (the flywheel health panel). Mocked here because a
 // double that omits a fetch the page makes throws inside a passive effect — which surfaces as
 // five unrelated failures about rows and cache keys, and hides which fetch is missing.
 const learningHealth = vi.fn<() => Promise<never>>()
@@ -242,7 +242,7 @@ describe('refreshAfterDecision sweeps every facet, not just the active one', () 
 
     expect(allFetch, 'the All facet fetched once on mount').toHaveBeenCalledTimes(1)
     await act(async () => { refreshAfterDecision(skill.result.current.refresh) })
-    // DSC-14 STRENGTHENED THIS. The old assertion was `peekCache(proposalsKey('')) ===
+    // ONE DATA LAYER STRENGTHENED THIS. The old assertion was `peekCache(proposalsKey('')) ===
     // undefined` — "the entry is gone, so its NEXT MOUNT refetches rather than seeding the
     // ghost". Under one data layer the sweep reaches every MOUNTED reader of a swept key, so the
     // inactive facet does not wait for a next mount: it re-reads now. Which is the stronger

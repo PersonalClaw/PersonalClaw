@@ -3,20 +3,20 @@
 Two mechanisms that both replace a hand-maintained artifact with a derived one, for the same
 reason: a hand-maintained artifact drifts, and the drift is silent.
 
-**Derived parameters (UP-R8).** A template's `inputs` block stops being the source of truth.
+**Derived parameters.** A template's `inputs` block stops being the source of truth.
 `resolve_unfilled_inputs()` computes the parameter schema as "what the tree references and nothing
 supplies", so the launch form and the spec cannot disagree. Measured on the shipped library: THREE
 of eighteen templates declared an input nothing read — including one where a user could set
 `apply: true` on a consolidation pass and watch the node run with `apply: false`, no effect and no
 error.
 
-**Stage contracts (UP-R3).** Per-stage `scope` / `done_means` / `exclusions`, because approving "a
+**Stage contracts.** Per-stage `scope` / `done_means` / `exclusions`, because approving "a
 plan" approves a shape while approving a contract approves a claim. The rule that carries the
 weight: **goal / verification / stopping-condition is the minimal triple**, and a stage with no
 derivable check is marked unverifiable rather than quietly accepted — an unverifiable stage that
 looks verified is how a run reports success for work nobody checked.
 
-**Decision typing (UP-R16).** Blocking decisions pause the run and enter the needs-input inbox;
+**Decision typing.** Blocking decisions pause the run and enter the needs-input inbox;
 non-blocking ones land as Open Decisions on the finished summary. The auto-classification rule is
 mechanical: a decision whose output feeds a downstream binding is BLOCKING, because the run cannot
 proceed correctly without it; ambiguity that changes no execution path is not.
@@ -367,7 +367,7 @@ def start_problem(
     return coerced, ""
 
 
-# ── the extraction contract (UP-R8) ──
+# ── the extraction contract ──
 
 
 @dataclass
@@ -470,7 +470,7 @@ def _follow_up(missing: list[str], by_name: dict[str, ParamSpec]) -> str:
     return "I still need: " + "; ".join(parts)
 
 
-# ── stage contracts (UP-R3) ──
+# ── stage contracts ──
 
 
 @dataclass
@@ -674,7 +674,7 @@ def contract_issues(contracts: list[StageContract]) -> list[str]:
     return issues
 
 
-# ── decision typing (UP-R16) ──
+# ── decision typing ──
 
 
 @dataclass

@@ -8,7 +8,7 @@ Both halves of this file guard a measured live failure, not a hypothetical:
    ``read-only`` / ``agent`` / ``agent-full-access`` (read off a live ``session/new``
    snapshot). Forwarding ``"default"`` verbatim got ``-32602 Invalid params`` on every
    codex session, which left codex on its own ``agent`` mode — "Read and edit files,
-   and run commands", i.e. exactly the CLI-is-its-own-authority state §2.2 exists to
+   and run commands", i.e. exactly the CLI-is-its-own-authority state host authority exists to
    leave. Measured A/B on one live prompt ("write a file in the workspace"): with the
    untranslated mode the write reported ``ungated`` and executed; with ``read-only``
    the same write raised ``session/request_permission`` and parked on the host gate.
@@ -42,7 +42,7 @@ from personalclaw.acp.permission_authority import (
 #: ever put one of THESE on the wire for codex.
 CODEX_NATIVE_MODES = {"read-only", "agent", "agent-full-access"}
 
-#: claude-code's, from the same measurement. ``auto`` is real and is NOT in AAP-5's
+#: claude-code's, from the same measurement. ``auto`` is real and is NOT in the
 #: canonical five — recorded so a future widening has the true option set to check.
 CLAUDE_NATIVE_MODES = {
     "auto",
@@ -110,8 +110,8 @@ def test_claude_code_vocabulary_is_the_canonical_one():
 
 def test_default_dialect_sends_no_mode_frame():
     """kiro-cli speaks the default dialect and exposes NO permission-mode axis (its
-    ``availableModes`` are agent personas). No frame is the correct outcome — §2.6's
-    "kiro plans by host enforcement" — and it must not become a fabricated one."""
+    ``availableModes`` are agent personas). No frame is the correct outcome — kiro
+    plans by host enforcement — and it must not become a fabricated one."""
     assert DefaultDialect().set_mode_request(session_id="s1", mode=HOST_AUTHORITY_MODE) is None
 
 

@@ -354,7 +354,7 @@ GATING = "frontend changes outgoing — running the render-smoke gate"
 #: The SCOPING decision on its own — the shared prefix of all three "the frontend half is owed"
 #: outcomes (chain running · toolchain absent · topic branch). The vacuity floor below measures
 #: this rather than :data:`GATING`, because TWO rungs sit between the scope and that
-#: announcement — ``command -v npm`` and the ``release_ref`` ruling — and neither is scope.
+#: announcement — ``command -v npm`` and the ``release_ref`` rule — and neither is scope.
 #:
 #: 🪤 The ``pre-push: `` prefix is LOAD-BEARING, not decoration. :data:`REACHED_THE_END` is
 #: ``"no frontend changes outgoing"``, which CONTAINS ``"frontend changes outgoing"`` — so the
@@ -484,7 +484,7 @@ def test_a_branch_that_really_changes_the_frontend_still_gates(rebased: Rebased)
     SCOPE. `run_prepush.sh` grew an npm/node-absent rung — added because those tools "are
     mise-managed here and are NOT on the default PATH" — and it sits BETWEEN the scoping
     decision and the `GATING` announcement. So this floor started failing wherever `npm` is
-    not on the PATH pytest inherits, which is every agent lane, while passing in CI where
+    not on the PATH pytest inherits, which is every autonomous worker, while passing in CI where
     the runners preinstall node. MEASURED on origin/main 2026-09-18 in a clean worktree:
     RED with a plain PATH (`stdout` was the toolchain-skip line), GREEN with the mise shims
     prepended. The gate was never wrong; the marker was.
@@ -507,7 +507,7 @@ def test_a_branch_that_really_changes_the_frontend_still_gates(rebased: Rebased)
     _git(*_IDENT, "commit", "-q", "--no-gpg-sign", "-m", "my own frontend change", cwd=rebased.root)
     head = _git("rev-parse", "HEAD", cwd=rebased.root)
 
-    # Driven with a RELEASE ref on purpose. Since the 2026-09-18 owner ruling a topic branch
+    # Driven with a RELEASE ref on purpose. Since 2026-09-18 a topic branch
     # never reaches the render-smoke chain at all, so a topic ref here would make this test
     # pass for the wrong reason — the skip would be the ref rule rather than the scoping this
     # test exists to measure. `main` is where the chain is still reachable.

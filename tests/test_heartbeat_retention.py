@@ -210,7 +210,7 @@ class TestDeliverySuppression:
 
 
 class TestCommitmentDeliveryHook:
-    """M5e: the heartbeat invokes the on_due_commitments callback each beat
+    """The heartbeat invokes the on_due_commitments callback each beat
     (the proactive-check-in delivery driver), guarded so it never kills the tick."""
 
     @pytest.mark.asyncio

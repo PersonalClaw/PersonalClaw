@@ -137,7 +137,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
   // that did not go through. It stays until dismissed or the next send, as the chat's does.
   const notice = useComposerNotice()
   const [previewDesignSystem, setPreviewDesignSystem] = useState(false)
-  // Design multi-modal intake (D2): a reference URL + file attachments (image/video/
+  // Design multi-modal intake: a reference URL + file attachments (image/video/
   // html/react/DESIGN.md). Persisted as kind_config.design_inputs + uploaded into the
   // loop's files dir so the design-pass planner works through each.
   const [designUrl, setDesignUrl] = useState('')
@@ -203,7 +203,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
       const kc: Record<string, unknown> = { ...(cls.kind_config ?? {}) }
       if (kind === 'goal') kc.granularity = granularity
       if (kind === 'code') kc.project_kind = projectKind
-      // Design multi-modal intake (D2): record the reference URL + each attachment as a
+      // Design multi-modal intake: record the reference URL + each attachment as a
       // {type, ref} input. Files upload into the loop's files dir AFTER create (below);
       // ref is the filename the planner reads from its cwd. URL ref is the URL itself.
       if (kind === 'design') {

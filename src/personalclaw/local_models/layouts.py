@@ -13,7 +13,7 @@ depending on who fetched it, and every consumer was guessing at one of them:
 
 Guessing one layout gives a `downloaded` flag that reads False for a model sitting right
 there — the user re-downloads gigabytes — or a `delete` that reports success while leaving the
-weights behind, so the disk never frees. Both were observed, which is why the plan makes this
+weights behind, so the disk never frees. Both were observed, which is why this is
 ONE shared helper that probes **every** layout rather than per-provider guesses.
 
 **A partial download is NOT downloaded.** `models--…/blobs` holding only `*.incomplete`, or a
@@ -204,7 +204,7 @@ def has_partial(cache_root: str | Path, model: str) -> bool:
 
     True when any layout holds a `.part`/`.tmp`/`.incomplete`/`.download` artifact. This is
     the on-disk *explanation* for a model whose bytes fall short of its declared size, and it
-    is why the §2.3 truncation detector needs no injected "these are downloading right now"
+    is why the truncation detector needs no injected "these are downloading right now"
     set: the evidence is in the same directory the size was measured from.
 
     Deriving it from disk rather than from the job registry also survives a gateway restart —
@@ -243,7 +243,7 @@ def on_disk_bytes(cache_root: str | Path, model: str) -> int:
     """Total bytes *model* actually occupies across every layout that holds it.
 
     Sums `st_size` over the files in each :func:`downloaded_layouts` path — the number the
-    §2.3 truncation detector compares against the card's expected `size_mb`. Zero when the
+    truncation detector compares against the card's expected `size_mb`. Zero when the
     model isn't present. Best-effort per file (an unreadable file contributes nothing)
     rather than raising, mirroring the fail-soft posture of the rest of this module.
     """
@@ -292,7 +292,7 @@ def delete_all_layouts(cache_root: str | Path, model: str) -> list[Path]:
 
 
 def cleanup_candidates(cache_root: str | Path) -> list[dict]:
-    """Partial-download leftovers under *cache_root*, with sizes (§4.2).
+    """Partial-download leftovers under *cache_root*, with sizes.
 
     Feeds the "Reclaim N GB" affordance. Enumerates `*.part`/`*.tmp`/`*.incomplete` and the
     hub's own `*.incomplete` blobs — the files a cancelled or crashed fetch leaves behind,

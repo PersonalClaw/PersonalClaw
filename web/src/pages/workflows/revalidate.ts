@@ -1,6 +1,6 @@
 import type { WorkflowCascadePreview } from '../../lib/api'
 
-/** The mid-flight-edit re-validate warning (LOOPS-EVOLUTION R10b / criterion 9).
+/** The mid-flight-edit re-validate warning.
  *
  *  A bundled template carries a typed doc block whose judge calibration is tuned to the
  *  prompts it shipped with. Editing a stage's prompt on a live run is a legitimate mutation,

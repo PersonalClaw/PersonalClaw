@@ -462,7 +462,7 @@ def _authority_sentence(
 ) -> str:
     """WHERE this type's current rung came from, in one sentence — two when a run moves it.
 
-    The chip's whole job (done_when 3) is to answer "why is this allowed to run by itself?"
+    The chip's whole job is to answer "why is this allowed to run by itself?"
     at a glance, and the honest answer is never the rung name alone — it is the rung PLUS
     its provenance. There are exactly three provenances: an incident is holding a granted
     rung down, you granted it (and here is the record you were shown), or nobody has
@@ -707,18 +707,18 @@ def _file_proposal(key: str, next_rung: str, record: str) -> bool:
         return False
 
 
-# ── §4.4 mechanical revocation ───────────────────────────────────────────────────────
+# ── mechanical revocation ─────────────────────────────────────────────────────
 
 
 def revoke_granted_scopes(*, cause: str, evidence_id: str, source: str) -> list[str]:
     """Revoke every standing grant NOW, because ``evidence_id`` invalidated the trust.
 
-    The plan gives all four revocation triggers — a HARMFUL attribution verdict, a
-    failed pre-registered study, a nodding-loop flag, a watchdog rebind — the same
-    consequence sentence: the record flips to ``revoked`` with the triggering evidence
+    All four revocation triggers — a HARMFUL attribution verdict, a
+    failed pre-registered study, a nodding-loop flag, a watchdog rebind — get the same
+    consequence: the record flips to ``revoked`` with the triggering evidence
     id, a notification is filed, and the next run falls back to per-stage. Uniform on
     purpose: every grant's evidence was collected under the conditions the trigger just
-    invalidated, and the fail-safe direction is the plan's explicit ruling. Revocation
+    invalidated, and the fail-safe direction is deliberate. Revocation
     needs no human; the cost of over-revoking is a re-grant click, the cost of
     under-revoking is autonomy running on void evidence.
 
@@ -751,7 +751,7 @@ def revoke_granted_scopes(*, cause: str, evidence_id: str, source: str) -> list[
 
 
 def revoke_scope(key: str, *, cause: str, evidence_id: str, source: str) -> bool:
-    """Revoke ONE scope's standing grant NOW, because ``evidence_id`` names IT (ES-9).
+    """Revoke ONE scope's standing grant NOW, because ``evidence_id`` names IT.
 
     :func:`revoke_granted_scopes` narrowed to a single scope, for evidence that is
     scope-attributed rather than systemic — a ``lab_field_divergence`` on one action

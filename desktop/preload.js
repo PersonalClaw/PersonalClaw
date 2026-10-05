@@ -51,7 +51,7 @@ const IPC_CHANNELS = {
 };
 
 /**
- * The ONE bridge the renderer gets (DC-2 C1).
+ * The ONE bridge the renderer gets.
  *
  * `window.pclawDesktop` is the whole surface: the loading screen's startup status
  * feed plus the native capability API. The earlier `window.electronAPI` namespace
@@ -163,7 +163,7 @@ contextBridge.exposeInMainWorld("pclawDesktop", {
     set: (enabled) => ipcRenderer.invoke(IPC_CHANNELS.loginItemSet, Boolean(enabled)),
   },
 
-  /** Native OS notifications — plan-42's `native` delivery target.
+  /** Native OS notifications — the `native` delivery target.
    *
    * Deliberately NOT a general "notify the user" API: the renderer calls `show()` only for
    * a gateway note whose rule named the `native` target and whose `native.deliver` came

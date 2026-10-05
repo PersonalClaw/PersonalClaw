@@ -1,10 +1,11 @@
-"""The macOS accessibility driver's operation layer (`DCU-3`, §3.2).
+"""The macOS accessibility driver's operation layer.
 
 :mod:`~personalclaw.computer_use.driver_host` finds this module by importing
 ``personalclaw.computer_use.macos_driver`` and calling ``op_<name>`` — that resolution IS the
-call site this atom lands, and until now it returned ``None`` and every desktop tool answered
-``ERR_COMPUTER_USE_DRIVER_UNAVAILABLE``. Nothing else about the containment story changes: the
-dispatch chain, the ceilinged spawn and the SEL audit were all live before this module existed.
+call site this module lands, and before it existed it returned ``None`` and every desktop tool
+answered ``ERR_COMPUTER_USE_DRIVER_UNAVAILABLE``. Nothing else about the containment story
+changes: the dispatch chain, the ceilinged spawn and the SEL audit were all live before this
+module existed.
 
 **This process holds no authority** and re-states no policy — ``driver_host``'s docstring is the
 contract and ``test_the_driver_child_makes_no_policy_decision`` asserts it. What this module does
@@ -252,7 +253,7 @@ def op_click(request: dict[str, Any]) -> dict[str, Any]:
     The ``auto`` branch calls :func:`macos_ffi.press` and NOTHING else: no mouse event is
     created, so the operator's pointer cannot move as a result of an ordinary click. There is no
     fallback from ``auto`` onto a coordinate method when a press fails, because that fallback is
-    exactly how a cursor moves by accident (§3 floor 2).
+    exactly how a cursor moves by accident.
     """
     method = _text(request, "click_method", required=False) or "auto"
     if method not in ("auto",) + _POINTER_METHODS:

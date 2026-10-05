@@ -3,9 +3,9 @@
 One file you can mail, archive, or open in five years: the graph drawn as inline SVG, the
 legend, and the underlying JSON embedded verbatim so the picture and its data never separate.
 
-**No script, by design — and that IS a deviation from the plan's sketch.** §7.2 describes an
-interactive `graph.html` with the JSON embedded for a client-side renderer. This repo already
-answered that question for exports in ``knowledge/reports.py``: an exported document that can
+**No script, by design**, rather than an interactive `graph.html` with the JSON embedded for a
+client-side renderer. This repo already answered that question for exports in
+``knowledge/reports.py``: an exported document that can
 execute "is worse than a missing export — it is a rendered page the user has been told is a
 report". So the layout is computed HERE and the export ships as static SVG, and the same
 :func:`assert_self_contained` invariant that guards knowledge reports guards this one. Reusing

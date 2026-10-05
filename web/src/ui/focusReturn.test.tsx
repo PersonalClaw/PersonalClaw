@@ -32,7 +32,7 @@ const SRC = join(process.cwd(), 'src')
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 const read = (rel: string) => strip(readFileSync(join(SRC, rel), 'utf8'))
 
-// The hook must live in the component that MOUNTS WITH THE PANEL — the cycle-38 lesson. Calling it
+// The hook must live in the component that MOUNTS WITH THE PANEL. Calling it
 // in a wrapper that survives the toggle captures on the WRAPPER's first render (when nothing is
 // focused yet), so it restores nothing. Production is correct because callers mount SidePanel
 // conditionally (`{peekId && <SidePanel …>}`); an earlier version of this test kept the hook mounted

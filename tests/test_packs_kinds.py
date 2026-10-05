@@ -64,7 +64,7 @@ def _skip_connectors(pack_name: str) -> dict[str, dict[str, str]]:
     return {str(row["name"]): {"mode": "skip"} for row in declared}
 
 
-# ── §4.1 Domain OS packs: export → wipe → import on a FRESH home ──────────────
+# ── Domain OS packs: export → wipe → import on a FRESH home ───────────────────
 
 
 def test_both_domain_os_packs_ship():
@@ -81,7 +81,7 @@ def test_both_domain_os_packs_ship():
 def test_round_trip_on_a_fresh_home_lands_the_trigger_disabled(
     pack_name, tmp_path, build_home, fresh_home
 ):
-    """§Success 1: build → WIPE → import, and every listed property holds in the new home.
+    """Build → WIPE → import, and every listed property holds in the new home.
 
     The pack is built while one home is bound and imported while a DIFFERENT, empty home is
     bound, so nothing here can pass because state leaked from the exporting side.
@@ -181,7 +181,7 @@ def test_an_undeclared_component_file_refuses_the_build(tmp_path, monkeypatch, b
     assert "prompts/orphan.yaml" in str(excinfo.value)
 
 
-# ── §4.2 Agent/roster packs ───────────────────────────────────────────────────
+# ── Agent/roster packs ────────────────────────────────────────────────────────
 
 
 def test_the_roster_stages_with_its_tiers(tmp_path, build_home, fresh_home):
@@ -348,7 +348,7 @@ def test_an_unknown_activation_tier_blocks(tmp_path, build_home, fresh_home):
     assert "invalid_activation" in str(excinfo.value)
 
 
-# ── §4.3 Prompt-card importer ─────────────────────────────────────────────────
+# ── Prompt-card importer ──────────────────────────────────────────────────────
 
 
 _CARD = """\
@@ -547,15 +547,15 @@ def test_the_installer_claims_by_tag_not_by_kind():
 
 
 def test_every_proposal_kind_has_an_inbox_label():
-    """Derived from the enum, so the two AP-4 kinds (and any later one) are covered without a
-    stale literal. An unlabelled kind renders as the generic "Proposal"."""
+    """Derived from the enum, so the ``prompt`` and ``agent`` kinds (and any later one) are covered
+    without a stale literal. An unlabelled kind renders as the generic "Proposal"."""
     from personalclaw.learning.proposals import _KIND_LABELS, Kind
 
     assert {k.value for k in Kind} == set(_KIND_LABELS)
     assert Kind.PROMPT.value in _KIND_LABELS and Kind.AGENT.value in _KIND_LABELS
 
 
-# ── §2.3 / §4.4 One-link serialization ────────────────────────────────────────
+# ── One-link serialization ────────────────────────────────────────────────────
 
 
 def test_one_link_imports_through_the_same_pipeline(tmp_path, build_home, fresh_home):
@@ -576,7 +576,7 @@ def test_one_link_imports_through_the_same_pipeline(tmp_path, build_home, fresh_
         "template:health-weekly-journal",
         "trigger:health-checkup-cadence",
     }
-    # The §3 guarantees came along, not just the bytes: locks, disabled trigger, roster.
+    # The import guarantees came along, not just the bytes: locks, disabled trigger, roster.
     assert (home / "skills" / "health-journal" / ".pclaw-lock.json").is_file()
     staged = list((home / "packs" / "staged").rglob("triggers/*.json"))
     assert staged and json.loads(staged[0].read_text())["enabled"] is False

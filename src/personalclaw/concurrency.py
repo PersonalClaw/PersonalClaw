@@ -14,8 +14,8 @@ two failure modes that in-process guards alone can't cover:
   ``running`` rows that nothing will ever finish. :func:`boot_sweep` is the ONE
   boot-adoption path — both work-unit nouns (loops and workflow runs) resolve
   their crash survivors through it, from inside their own supervisor's first
-  poll rather than from a separate startup hook (`PP-16`, "one adoption/reaping
-  path"). Its docstring carries why that placement, and not the hook, is what
+  poll rather than from a separate startup hook (one adoption/reaping
+  path). Its docstring carries why that placement, and not the hook, is what
   makes a failed sweep retryable and a slow revival non-blocking.
 
 Both are built on ``fcntl.flock``, the established PClaw locking primitive
@@ -82,7 +82,7 @@ def single_flight(job_key: str) -> Iterator[bool]:
     **The exclusion is not cross-process only.** ``flock`` is scoped to the *open
     file description*, and this function opens a fresh one on every call, so two
     THREADS in one process contend exactly as two processes do — the loser gets
-    ``False``. Measured (PP-12): 16 threads on one key, peak simultaneous holders
+    ``False``. Measured: 16 threads on one key, peak simultaneous holders
     inside the critical section = 1. That is what makes ``pool.claim_task``'s
     read-modify-write safe against the engine's in-process ``asyncio.create_task``
     fan-out. Worth stating explicitly because the narrower reading has already cost
@@ -148,7 +148,7 @@ async def boot_sweep(
     process its boot adoption.
 
     **Call it from the owning supervisor's FIRST POLL, never from a separate boot hook**
-    (`PP-16`, "one adoption/reaping path"). Both properties that makes true are load-bearing
+    (one adoption/reaping path). Both properties that makes true are load-bearing
     and neither is available to a boot hook:
 
     * **A failed sweep is retried.** The caller flips its ``_swept`` flag only after this

@@ -72,7 +72,7 @@ def main(argv: list[str]) -> int:
         # day the exemplar regresses to a core dotted path.
         print(
             "[lint_bundled_apps] FAIL: no bundled app ships a module — nothing was checked. "
-            "APE-5's claim is that a bundled app CAN own its provider code; if that is no "
+            "The claim under test is that a bundled app CAN own its provider code; if that is no "
             "longer true, delete this script rather than letting it pass vacuously.",
             file=sys.stderr,
         )

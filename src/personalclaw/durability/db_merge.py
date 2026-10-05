@@ -1,8 +1,8 @@
-"""The sqlite DB-merge seam for the sync cycle (DAS-6c-ii-h).
+"""The sqlite DB-merge seam for the sync cycle.
 
 The pull engine reconciles row entries itself but DECLINES `sqlite`/`tree` entries, calling an
-injected ``db_merger(entry, shard_dir) -> verdict`` for them (DAS-6c-ii-e). This module is that
-callback. It finds the whole-DB copy the exporter staged under ``db/<entry_id>.db`` (DAS-6c-ii-g)
+injected ``db_merger(entry, shard_dir) -> verdict`` for them. This module is that
+callback. It finds the whole-DB copy the exporter staged under ``db/<entry_id>.db``
 and ATTACH-merges it into the live database, reusing the proven snapshot merge machinery rather
 than inventing a second one:
 
@@ -20,7 +20,7 @@ re-embedding). One embedded by another model is not: each merge says rows arrive
 (``embedding_arrivals``), and the gateway's one re-index path re-embeds what the model bound here
 did not embed. Derived indexes (``memory.faiss`` / ``memory_index.db``, `derived=True`) are NOT
 synced and are rebuilt locally by their owning subsystems (boot rebuild + the heartbeat reindex) —
-this merger touches only the authoritative DB, per §4.1 "indexes rebuilt on import, never synced".
+this merger touches only the authoritative DB: indexes are rebuilt on import, never synced.
 
 Verdicts returned to the cursor: ``consumed`` on a clean merge; ``prerequisite-absent`` if this
 seq carried no DB copy for the entry (a row-only export mis-routed here — hold, don't advance
@@ -49,7 +49,7 @@ def make_db_merger(home: Path) -> DbMerger:
     """Build the ``db_merger`` callback the pull engine calls for sqlite/tree entries.
 
     Closes over the live ``home`` so the pull engine's ``(entry, shard_dir)`` signature is
-    honored. The staged DB copy is at ``shard_dir/db/<entry_id>.db`` (DAS-6c-ii-g).
+    honored. The staged DB copy is at ``shard_dir/db/<entry_id>.db``.
     """
 
     def _merge(entry: inv.StateEntry, shard_dir: Path) -> str:

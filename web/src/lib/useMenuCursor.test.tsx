@@ -203,7 +203,7 @@ describe("FileTree's second implementation shares the keyboard contract", () => 
   })
 
   it('arrow keys and a focus-returning Escape are wired', () => {
-    // Cycle 137 moved the arrow/Tab branches into `menuCursorKeydown` so five popups share one
+    // The arrow/Tab branches live in `menuCursorKeydown` so five popups share one
     // spelling; the Escape branch stays local because each popup closes differently.
     expect(src).toMatch(/menuCursorKeydown\(e, \{ move, dismiss: closeAndReturnFocus \}\)/)
     expect(src).toMatch(/if \(e\.key === 'Escape'\) \{ e\.stopPropagation\(\); closeAndReturnFocus\(\); return \}/)

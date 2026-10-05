@@ -1,4 +1,4 @@
-"""P4a — the run-script action provider (zero-token script execution).
+"""The run-script action provider (zero-token script execution).
 
 Wraps :func:`personalclaw.schedule_script.run_script_sandboxed`; asserts the
 missing-field error path and that the sandbox status dict maps onto ActionResult

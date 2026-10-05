@@ -73,7 +73,7 @@ const ONCE_EXEMPT_NOW_CLEAN = [
 /** Backend-composed sentences this tree renders VERBATIM by design, so their grammar is not ours to
  *  change here. Both are recorded in the rails that keep them verbatim:
  *  `workflows/introspection.py`'s branch-distribution string and the `proof.summary` line. Converting
- *  them means changing the Python producer, which is a separate concern (§4 rows 56, 63-adjacent). */
+ *  them means changing the Python producer, which is a separate concern. */
 const BACKEND_VERBATIM_NOTE =
   'strings composed in Python and rendered verbatim are excluded by construction — they never appear ' +
   'as literals in this tree, so the scan cannot see them and must not pretend to.'
@@ -94,7 +94,7 @@ function offenders(): string[] {
 describe('no composed sentence hedges its own count', () => {
   it('the detector still works, in both directions', () => {
     // 🪤 A "zero matches" claim is equally satisfied by a pattern that cannot match, which is how the
-    // §5 `[^;]` sweep reported an area clean while two offenders sat in it. Positive controls first.
+    // earlier `[^;]` sweep reported an area clean while two offenders sat in it. Positive controls first.
     expect(HEDGE.test('`${week.produced_total} proposal(s) filed`'), 'must catch an interpolation').toBe(true)
     expect(HEDGE.test('over 4 pass(es), and'), 'must catch (es) after a literal digit').toBe(true)
     expect(HEDGE.test('`${n} of ${files.length} file(s) to this point?`'), 'must catch the second count').toBe(true)

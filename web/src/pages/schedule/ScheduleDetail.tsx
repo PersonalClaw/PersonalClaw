@@ -273,7 +273,7 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
     )
   }
 
-  // Honest last-run badge (T7 + #685): the health rollup dominates the run row — the
+  // Honest last-run badge (#685): the health rollup dominates the run row — the
   // reaper's degraded/last_error pair must not render "ok" off a stale success row.
   // Precedence lives in ONE place (`triggerStatusMeta`) shared with the list's rows for every kind.
   //
@@ -522,9 +522,9 @@ function Chip({ children }: { children: React.ReactNode }) {
  *
  *  🔴 EXPORTED and keyed on the FULL facade id. It was private and took a bare schedule id,
  *  so a store trigger had no history UI at all even after the backend began serving one
- *  (S166 the list, S167 the detail) — the panel showed "When it runs" and "What it runs" and nothing
+ *  (the list and the detail) — the panel showed "When it runs" and "What it runs" and nothing
  *  about whether it ever had. Reused rather than reimplemented: a second history renderer is how two
- *  surfaces start disagreeing about what a run looks like, the same argument S163/S164 made about
+ *  surfaces start disagreeing about what a run looks like, the same argument that holds for
  *  status mappers.
  *
  *  `supported: false` is rendered as its REASON, not as an empty list: a lifecycle trigger keeps no
@@ -660,8 +660,8 @@ function RunTrace({ triggerId, runId, preview }: { triggerId: string; runId: str
         {run.finished_at && <span>· finished {absTime(run.finished_at)}</span>}
         {run.duration_ms != null && <span>· {(run.duration_ms / 1000).toFixed(1)}s</span>}
       </div>
-      {/* 🔴 A SUPPRESSION'S REASON IS NOT AN ERROR. S171 began persisting a suppressed fire's
-          row, and the reason lands in `ScheduleRun.error` — which this box renders in danger red.
+      {/* 🔴 A SUPPRESSION'S REASON IS NOT AN ERROR. A suppressed fire's row is persisted,
+          and the reason lands in `ScheduleRun.error` — which this box renders in danger red.
           A quiet-hours skip showed a neutral grey "gate" dot beside its reason in RED,
           identical to a real `ConnectionError`, so the row contradicted itself and the alarming half
           is the one a user reacts to. An inert outcome means the automation is working exactly as

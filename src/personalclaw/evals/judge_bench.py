@@ -128,7 +128,7 @@ POSITIONS = (POSITION_FIRST, POSITION_SECOND)
 #: recommendation applies when two adequate rows cost the same.
 TIERS = ("fast", "standard", "reasoning")
 
-#: The sample counts §6 names. 5 is also `engine_support.MAX_JUDGE_SAMPLES`, so the top column is
+#: The sample counts. 5 is also `engine_support.MAX_JUDGE_SAMPLES`, so the top column is
 #: the most a live gate can ask for — asserted in the tests rather than assumed here.
 SAMPLE_COUNTS = (1, 3, 5)
 
@@ -821,7 +821,7 @@ class TableRow:
         }
 
 
-#: The table's TSV columns, in order. A static artifact the user can open is half of §6's
+#: The table's TSV columns, in order. A static artifact the user can open is half of the
 #: output; the panel reads the JSON.
 TABLE_COLUMNS: tuple[str, ...] = (
     "rubric_class",
@@ -986,7 +986,7 @@ def adequacy(stats: RowStats) -> tuple[bool, list[str]]:
 def build_table(observations: list[Observation]) -> list[TableRow]:
     """The tier-recommendation table. Pure, deterministic, no clock and no I/O.
 
-    Grouped per (rubric-class × tier × samples) — §6's unit. Deterministic ordering means
+    Grouped per (rubric-class × tier × samples) — the table's unit. Deterministic ordering means
     two runs over the same ``observations.json`` render byte-identically, which is what
     makes the table quotable: a table that moved between renders could not recommend
     anything.
@@ -1070,7 +1070,7 @@ def build_table(observations: list[Observation]) -> list[TableRow]:
 
 
 def render_table_tsv(rows: list[TableRow]) -> str:
-    """The table as TSV — the static artifact half of §6's output."""
+    """The table as TSV — the static artifact half of the output."""
 
     def cell(value: object) -> str:
         if value is None:
@@ -1297,8 +1297,8 @@ BENCH_ID_PREFIX = "judge-bench-"
 #: 🔴 What a judge-bench ``table.json`` DECLARES itself to be, and the only thing
 #: :func:`list_bench_runs` trusts.
 #:
-#: ``matrices/`` is a deliberately SHARED sink (§5.4 puts every report in one place), and
-#: ES-4 was for a while the only writer of a ``table.json`` in it — so "has a table.json" was
+#: ``matrices/`` is a deliberately SHARED sink (every report lives in one place), and
+#: the bench was for a while the only writer of a ``table.json`` in it — so "has a table.json" was
 #: a working proxy for "is a judge bench". The retrieval ablation is a second writer, and
 #: with that proxy the newest retrieval run was served AS the newest judge bench: the panel
 #: read ``row.wall_secs`` off a P@k row and took the whole Learning page down with
@@ -1508,11 +1508,11 @@ def list_bench_runs() -> list[str]:
     """Persisted judge-bench run ids, newest first (the id sorts chronologically).
 
     🔴 Filtered on :data:`BENCH_ID_PREFIX`, not on "has a ``table.json``". That proxy worked
-    only while ES-4 was the ONLY writer of a ``table.json`` under ``matrices/``: ES-3's
+    only while the judge bench was the ONLY writer of a ``table.json`` under ``matrices/``: the
     retrieval ablation is a second one, and without this filter the newest retrieval run was
     served as the newest judge bench — the panel then read ``row.wall_secs`` off a P@k row and
     crashed the whole Learning page with ``Cannot read properties of undefined``. Measured
-    live, not reasoned about. The shared sink is deliberate (§5.4 puts every report in one
+    live, not reasoned about. The shared sink is deliberate (every report lives in one
     place); the OWNERSHIP of a run has to be explicit rather than inferred from a filename
     that two consumers both happen to write.
     """
@@ -1567,7 +1567,7 @@ def latest_bench_view() -> dict | None:
 
 
 def _sel_log(bench_id: str, fixture_set: FixtureSet, *, outcome: str) -> None:
-    """SEL-log a benchmark lifecycle event (§10). Best-effort — never breaks a run."""
+    """SEL-log a benchmark lifecycle event. Best-effort — never breaks a run."""
     try:
         sel().log_api_access(
             caller=f"judge_bench:{bench_id}",

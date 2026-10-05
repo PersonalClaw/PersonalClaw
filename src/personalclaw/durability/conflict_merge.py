@@ -1,8 +1,8 @@
-"""The propose-only conflict merge pass (DURABILITY-AND-SYNC §4.2 item 2 + §7).
+"""The propose-only conflict merge pass.
 
 A background LLM pass over the review queue: for each unresolved conflict it drafts a
 merged version plus a rationale and writes them ONTO THE RECORD as a proposal. It never
-touches the live store — the soul rule is *propose, don't write* (§7: no auto-applied LLM
+touches the live store — the soul rule is *propose, don't write* (no auto-applied LLM
 merges), so the local version stays authoritative until a human accepts on the review
 surface.
 

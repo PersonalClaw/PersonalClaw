@@ -444,7 +444,7 @@ class InlineSecret:
 
 
 def find_inline_secrets(spec: Any) -> list[InlineSecret]:
-    """Flag credential-shaped literals in a spec (WF2-R14 spec lint).
+    """Flag credential-shaped literals in a spec (a spec lint).
 
     Two independent signals, because either alone misses real cases: a secret-NAMED key
     holding a literal, and any string matching a known credential shape wherever it sits
@@ -502,7 +502,7 @@ def secret_keys_referenced(spec: Any) -> list[str]:
     """Every `{{secret:KEY}}` name a spec depends on.
 
     This is what a run-start preflight checks against the credential store, so a missing
-    credential fails BEFORE tokens are spent rather than mid-run (Slice 6 consumes it).
+    credential fails BEFORE tokens are spent rather than mid-run.
     """
     names: set[str] = set()
 

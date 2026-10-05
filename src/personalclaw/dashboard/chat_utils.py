@@ -266,7 +266,7 @@ _BLOCKED_SLASH_COMMANDS = frozenset(
 )
 
 #: The kind stamped on the substitution notice's ``activity_event``. Reuses the attention
-#: channel CE2-8 established for headroom notices — ``ActivityLine`` renders any kind's
+#: channel the headroom notices use — ``ActivityLine`` renders any kind's
 #: text inline, so this needs no frontend counterpart, only a truthful sentence.
 SLASH_FALLBACK_ACTIVITY_KIND = "slash_fallback"
 
@@ -329,7 +329,7 @@ async def stream_slash_command(
 ) -> "AsyncIterator[LLMEvent]":
     """Run *command* natively if the provider can, else answer *prompt* as plain text.
 
-    THE slash-command dispatch decision (`G4`). Four outcomes, all deliberate:
+    THE slash-command dispatch decision. Four outcomes, all deliberate:
 
     0. **The provider runs THIS command itself, in-process** (``compacts_in_process``) →
        ``stream_command`` is dispatched even though the provider has no wire-level command
@@ -750,7 +750,7 @@ def _cached_persona(theme: str) -> str:
 
 
 def _project_context_preamble(project_id: str) -> str:
-    """First-turn context block for a project-bound chat (Slice 6 D2): tells the
+    """First-turn context block for a project-bound chat: tells the
     agent which Project it's scoped to, its workspace, the loop history run on it, and
     the additional-context dir — so a project chat shares the project's cohesive
     context (every loop + chat under a project can read the others' outcomes). Empty on
@@ -824,7 +824,7 @@ def _project_context_preamble(project_id: str) -> str:
             )
             # List what's actually IN the context dir so the chat knows the shared
             # context that exists (e.g. decisions.md a loop wrote) without guessing —
-            # the path alone left the agent unable to enumerate it (Slice 6 gap).
+            # the path alone left the agent unable to enumerate it.
             try:
                 from pathlib import Path
 
@@ -885,7 +885,7 @@ def _project_context_preamble(project_id: str) -> str:
 def _maybe_consolidate(state, session) -> None:
     """Run the SESSION_END consolidation envelope, gated by the LearningGate.
 
-    Consolidation is the SESSION_END cadence (LEARNING-FLYWHEEL §3.3). Its permission question —
+    Consolidation is the SESSION_END cadence. Its permission question —
     "may this session teach us anything?" — is the gate's job, not this site's: routing it through
     `LearningGate.decide(Cadence.SESSION_END, ...)` is what makes the restriction check identical
     to every other cadence's, and it is the live `Cadence.SESSION_END` reference that lets

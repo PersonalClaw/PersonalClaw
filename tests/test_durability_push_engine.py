@@ -1,4 +1,4 @@
-"""DURABILITY-AND-SYNC §4.1 / DAS-6c-ii-f — the transport-driven push half of the cycle.
+"""The transport-driven push half of the cycle.
 
 Publish a local export as this machine's next seq and announce it via a CAS registry bump,
 composing registry.bump + outbox + transport.push/cas_registry. The push obligation is durable

@@ -1,7 +1,7 @@
 import type { UiDoc } from './uiDoc'
 
-// Doc object for InvestigateButton — the one shared "chat about this" affordance
-// (INVESTIGATE-ANYWHERE plan 60). Every entity row uses THIS; no bespoke variants.
+// Doc object for InvestigateButton — the one shared "chat about this" affordance.
+// Every entity row uses THIS; no bespoke variants.
 const doc: UiDoc = {
   name: 'InvestigateButton',
   keywords: ['investigate', 'chat', 'context', 'entity', 'ask', 'question', 'inspect'],

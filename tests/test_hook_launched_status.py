@@ -1,4 +1,4 @@
-"""Lifecycle-hook honest status (T7): a fire-and-forget action that only LAUNCHED
+"""Lifecycle-hook honest status: a fire-and-forget action that only LAUNCHED
 a background turn records last_status='launched', not 'ok' — matching the
 schedule path, so the lifecycle-trigger badge doesn't overstate it as success.
 """
@@ -63,9 +63,9 @@ def test_failure_records_error(monkeypatch):
 
 
 def test_ungated_block_records_advisory(monkeypatch):
-    """🔴 G89. This `_run` is a bare `run_script_hook` on a `Stop` hook — no gating caller, and no
+    """🔴 This `_run` is a bare `run_script_hook` on a `Stop` hook — no gating caller, and no
     block seam on the event either — so exit 2 was only ever a REQUEST to block. It used to record
-    `blocked`, the same overstatement T7 fixed for `launched`. `blocked` is now reserved for the
+    `blocked`, the same overstatement the `launched` status fixed. `blocked` is now reserved for the
     fire that honored it; `tests/test_hook_advisory_status.py` pins both sides."""
     hook = _run(ActionResult(success=False, blocked=True), monkeypatch)
     assert hook.last_status == "advisory"

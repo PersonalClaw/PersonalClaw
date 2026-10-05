@@ -604,7 +604,7 @@ def speaker_of(msg: dict) -> str:
     """The per-message author, or ``""`` for the human and for every pre-``speaker`` line.
 
     The tolerant half of :meth:`ConversationLog.append`'s ``speaker`` argument. Every
-    message line written before AGENT-ROOMS, and every line a non-room caller writes,
+    message line written before agent rooms existed, and every line a non-room caller writes,
     carries no ``speaker`` key at all — so the absent field must read as the human
     rather than as a fault. Defined here, beside the writer, so the two ends of the
     field cannot drift apart.
@@ -675,7 +675,7 @@ class ConversationLog:
         use :meth:`update_metadata` to change the agent after creation.)
 
         *speaker* names the PER-MESSAGE author and is the one field a shared
-        transcript needs that a per-participant session does not (AGENT-ROOMS C1).
+        transcript needs that a per-participant session does not.
         It is distinct from *agent*, which lands in the file's metadata line on
         creation only and therefore cannot vary line to line, and from
         *source_user*, which means a human participant on a channel. Written only
@@ -1051,7 +1051,7 @@ class ConversationLog:
     def delete_session(self, key: str) -> bool:
         """Delete a session file. Returns True if deleted.
 
-        Also drops the session's full-text-search rows (SM-11): the transcript
+        Also drops the session's full-text-search rows: the transcript
         and the FTS index are separate stores, so without this a deleted chat's
         messages stayed searchable — a privacy hole. Best-effort: search-index
         failure must never block the deletion itself (the periodic
@@ -1471,7 +1471,7 @@ class HistoryConsolidator:
 
     @property
     def _proactive_commitments(self) -> bool:
-        """Whether proactive commitment extraction is opted in (M5e). Read fresh
+        """Whether proactive commitment extraction is opted in. Read fresh
         from config each call so the Settings toggle takes effect live, like the
         auto-promote gate — the feature is OFF by default (creepy when wrong)."""
         from personalclaw.config.loader import AppConfig
@@ -1480,14 +1480,14 @@ class HistoryConsolidator:
 
     @property
     def _proactive_commitments_max(self) -> int:
-        """Hard per-day cap on active proactive commitments per agent (M5e)."""
+        """Hard per-day cap on active proactive commitments per agent."""
         from personalclaw.config.loader import AppConfig
 
         return max(1, int(AppConfig.load().memory.proactive_commitments_max_per_day))
 
     @property
     def _holder_attribution(self) -> bool:
-        """Whether the holder axis is opted in (MEMORY-GRAPH-AND-VAULT §4.2 — MGAV-5).
+        """Whether the holder axis is opted in.
 
         Read fresh per call for the same reason as the commitments gate: the toggle is a
         Settings switch, not a boot-time decision. OFF means the extraction fragment is
@@ -1574,14 +1574,14 @@ class HistoryConsolidator:
             app=app if isinstance(app, str) else "",
         )
 
-    # The explicit session-end seam (E11): an idle-expire / channel-end / CLI
+    # The explicit session-end seam: an idle-expire / channel-end / CLI
     # trigger calls this. Distinct from the fire-and-forget poll so call sites
     # read intentionally ("consolidate this ending session") AND so SEALING only
-    # fires at real session end (M5c) — never on a mid-session idle consolidation.
+    # fires at real session end — never on a mid-session idle consolidation.
     async def consolidate_session(self, key: str) -> bool:
         """Consolidate an ENDING session, then SEAL it: distill the session's
         working memory into a durable in-scope record and sweep unpromoted
-        session-scoped records (memory-architecture.md §3.5). Sealing deepens
+        session-scoped records. Sealing deepens
         tier (working→episodic) at scope=session — it does NOT write to global;
         the heat gate (run on the maintenance cadence) is the only path to global.
 
@@ -1615,7 +1615,7 @@ class HistoryConsolidator:
             except Exception:
                 logger.debug("session seal failed for %s", key, exc_info=True)
         # Mirror memory → markdown vault at the natural post-seal boundary (the
-        # mem-fs-mirror freshness trigger). No-op when the vault is disabled;
+        # vault mirror's freshness trigger). No-op when the vault is disabled;
         # never raises (best-effort, guarded internally).
         try:
             from personalclaw.memory_vault import mirror_after_consolidation
@@ -1821,13 +1821,13 @@ class HistoryConsolidator:
             if include_history:
                 keys.append(render_snippet_block("consolidation-key-lessons"))
 
-            # Agent self-persona (M5e): the agent's own positive growth notes —
+            # Agent self-persona: the agent's own positive growth notes —
             # always available on the history path. Distinct from lessons (which
             # record what NOT to do); this records who the agent is becoming.
             if include_history and has_vector:
                 keys.append(render_snippet_block("consolidation-key-self-persona"))
 
-            # Commitments (M5e — O-A4): inferred proactive check-ins. GUARDRAILED —
+            # Commitments: inferred proactive check-ins. GUARDRAILED —
             # only extracted when the user opted in (off by default). The 'creepy
             # when wrong' class, so the prompt demands high-confidence + genuinely
             # useful time-bound follow-ups the user did NOT ask to be reminded of.
@@ -1898,9 +1898,9 @@ class HistoryConsolidator:
             if entry := result.get("history_entry"):
                 memory.append_history(entry)
                 logger.info("Consolidated %d messages for %s", len(unconsolidated), key)
-                # Session working memory (M5c): reuse this distilled summary as
+                # Session working memory: reuse this distilled summary as
                 # the always-injected rolling session memory — one distillation
-                # pass, not a second summarizer (decision #5). scope=session, so
+                # pass, not a second summarizer. scope=session, so
                 # it's injected every turn for THIS session and swept on seal.
                 try:
                     svc.write_working_memory(key, entry)
@@ -1938,7 +1938,7 @@ class HistoryConsolidator:
             if self._svc.has_vector and (raw_lessons := result.get("lessons")):
                 self._save_lessons(raw_lessons, folder)
 
-            # Agent self-persona + commitments (M5e) — agent-scoped. The agent
+            # Agent self-persona + commitments — agent-scoped. The agent
             # name is normalized to the canonical default when the session didn't
             # pin one (the common dashboard case), so capture keys on the SAME
             # string the context read path uses — otherwise writes and reads
@@ -2006,7 +2006,7 @@ class HistoryConsolidator:
                 logger.info("Category-TTL expired %d memory record(s)", expired)
         except Exception:
             logger.debug("Category-TTL sweep failed for %s", key, exc_info=True)
-        # Heat-gated promotion (M5c): the conservative GLOBAL gate — promote
+        # Heat-gated promotion: the conservative GLOBAL gate — promote
         # in-scope records that earned cross-session heat to scope=global.
         # Runs HERE (maintenance cadence), never at session-end, so global
         # never fills with one-off session noise.
@@ -2016,7 +2016,7 @@ class HistoryConsolidator:
                 logger.info("Heat-promoted %d record(s) to global scope", promoted_scope)
         except Exception:
             logger.debug("Heat promotion failed for %s", key, exc_info=True)
-        # Failure-pattern synthesis (M5d): collapse clusters of same-root-
+        # Failure-pattern synthesis: collapse clusters of same-root-
         # cause procedural failures into one prior so the class never
         # bloats into a tool-call log. The anti-noise mechanism.
         try:
@@ -2025,7 +2025,7 @@ class HistoryConsolidator:
                 logger.info("Synthesized %d procedural failure prior(s)", synth)
         except Exception:
             logger.debug("Failure synthesis failed for %s", key, exc_info=True)
-        # Daily-digest nodes (mem-tree, descoped): roll up each completed
+        # Daily-digest nodes: roll up each completed
         # day's episodic activity into one 'what happened on day D' record.
         # Idempotent (keyed by date) + extractive by default, so it adds no
         # LLM cost to the maintenance cadence.
@@ -2192,7 +2192,7 @@ class HistoryConsolidator:
     async def _form_semantic_memory(
         self, result: dict, key: str, vs: "VectorMemoryStore | None"
     ) -> None:
-        """The Gather → Decide → apply half of memory formation (§4.1 — MGAV-5), over the
+        """The Gather → Decide → apply half of memory formation, over the
         record store *vs* of the memory chat *key* keeps (:meth:`_kept_in`).
 
         Extract already happened: ``result["semantic"]`` is its output. This method adds
@@ -2200,7 +2200,7 @@ class HistoryConsolidator:
         the verdict application (``ADD``/``UPDATE``/``SUPERSEDE``/``NOOP``, with unsure
         contradictions kept as two flagged rows).
 
-        Every failure path degrades to the pre-MGAV-5 behavior — write every candidate as
+        Every failure path degrades to the unadjudicated behavior — write every candidate as
         an ADD — because a formation failure must cost adjudication, never the memories:
 
         * no candidates, or none with an overlap → no Decide call at all (the common
@@ -2255,7 +2255,7 @@ class HistoryConsolidator:
         logger.info("Memory formation for %s: %s", key, report.summary())
 
     def _write_episodic_memory(self, result: dict, key: str, svc: "MemoryService") -> None:
-        """Write episodic entries from a consolidation result (unchanged by MGAV-5) through
+        """Write episodic entries from a consolidation result through
         *svc*, the memory chat *key* keeps (:meth:`_kept_in`)."""
         if not svc.has_vector:
             return
@@ -2281,7 +2281,7 @@ class HistoryConsolidator:
                 logger.info("Wrote %d episodic entries from consolidation", written)
 
     def _write_self_persona(self, result: dict, agent: str, svc: "MemoryService") -> None:
-        """Write extracted agent self-persona traits (M5e), scoped to ``agent``, through *svc*:
+        """Write extracted agent self-persona traits, scoped to ``agent``, through *svc*:
         the memory the chat keeps, whose turns read them (:meth:`_kept_in`).
 
         Best-effort: a positive self-model injected always-on for this agent.
@@ -2307,7 +2307,7 @@ class HistoryConsolidator:
             logger.info("Wrote %d self-persona trait(s) for agent %s", written, agent)
 
     def _write_commitments(self, result: dict, agent: str, key: str) -> None:
-        """Write extracted proactive commitments (M5e — O-A4), GUARDRAILED.
+        """Write extracted proactive commitments, GUARDRAILED.
 
         Only reached when the user opted in (``_proactive_commitments``). The
         service enforces the real guardrails (enabled + confidence>=0.8 + per-day
@@ -2428,7 +2428,7 @@ class HistoryConsolidator:
                         },
                     )
                 else:
-                    # Propose-only (skill-evolution-proposal-only): autonomous
+                    # Propose-only: autonomous
                     # synthesis NEVER writes live — it enqueues a human-reviewable
                     # proposal. A person accepts (→ live auto/ skill) or rejects it
                     # from the Skill-proposals inbox. No auto-install path exists.

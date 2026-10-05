@@ -516,9 +516,9 @@ def _maybe_after_turn_review(
 
         record_denial(decision)
         return stamp_learned(session, announced)
-    # Procedural memory (M5d): drain this turn's tool outcomes into how-to-work priors.
+    # Procedural memory: drain this turn's tool outcomes into how-to-work priors.
     # BOTH runtimes accumulate them now — the native ReAct loop from inside its own
-    # dispatch, and the ACP providers from the translated event stream (`G7`, see
+    # dispatch, and the ACP providers from the translated event stream (see
     # acp/outcomes.py). Before that, `getattr` missed on every ACP provider and a
     # six-tool-call ACP turn produced zero procedural rows. The provider is the
     # ModelProvider returned by get_or_create (threaded in by the caller) — the
@@ -584,7 +584,7 @@ def _maybe_refine_stumble(
     tool_outcomes: list[tuple[str, str]],
     cfg,
 ) -> None:
-    """The S3 refinement arm: a turn that USED a skill and still went wrong proposes a refine.
+    """The stumble refinement arm: a turn that USED a skill and still went wrong proposes a refine.
 
     Runs on the same permitted turn as the memory review above (its caller already returned on
     a denied gate) and behind the same ``skill_ladder`` flag, deliberately: that flag is the
@@ -593,7 +593,7 @@ def _maybe_refine_stumble(
 
     ``session._skills_used`` and not the ladder's ``loaded_skills``: the latter is the
     CANDIDATE index (every indexed skill), so a refine target picked from it would name a skill
-    that had no part in the turn. ``_skills_used`` is the LV-2 narrowing to the allocations
+    that had no part in the turn. ``_skills_used`` is the narrowing to the allocations
     whose content actually reached the prompt, which is the same list the turn-time
     ``record_uses`` counter consumes — so "used" cannot mean two things here.
 
@@ -645,8 +645,8 @@ def _maybe_refine_stumble(
         return
     if prop is None or not getattr(cfg, "surface_chip", True):
         return
-    # The SAME learned-chip emitter LV-2 built, with `origin: "proposal"` — so the chip's
-    # tap-through already lands on `#/skills?mode=proposals`, where the diff renders. A new
+    # The SAME learned-chip emitter the turn's own chips use, with `origin: "proposal"` — so the
+    # chip's tap-through already lands on `#/skills?mode=proposals`, where the diff renders. A new
     # channel or a new origin would be a second idiom for an answer this one already gives.
     label, _ = redact_credentials(redact_exfiltration_urls(f"Proposed refinement: {prop.slug}")[0])
     state.broadcast_ws(
@@ -694,8 +694,8 @@ def _stage_turn_capture(session, user_message: str, learned: str | None, cfg) ->
 def _maybe_skill_ladder_review(
     state, session, user_message: str, assistant_text: str, tool_calls: int, decision=None
 ) -> None:
-    """Schedule the forked-LLM 4-tier skill-ladder review (learn-after-turn-review
-    skill axis) as a background task — non-blocking, never delays the next turn.
+    """Schedule the forked-LLM 4-tier skill-ladder review (the after-turn review's skill
+    axis) as a background task — non-blocking, never delays the next turn.
     ``user_message`` is what the person typed this turn (``own_words``).
 
     Consumes the SAME gate ``decision`` the memory review used (passed in by the
@@ -899,22 +899,23 @@ def _turn_complete_line(
     cache_hit_pct: float | None = None,
     cache_saved_usd: float | None = None,
 ) -> str:
-    """Compose the live-only "Turn complete" telemetry line (CATO-6, PCS-7).
+    """Compose the live-only "Turn complete" telemetry line.
 
     Appends a real cost + in/out token fragment to the existing events/tool-calls/
     context summary. Honest-unpriced: a model with no price row renders ``unpriced``,
     NEVER ``$0.00`` — so a missing price is never mistaken for a free turn.
 
-    Honest-unmeasured (G8): ``context_pct=None`` OMITS the context fragment entirely.
+    Honest-unmeasured: ``context_pct=None`` OMITS the context fragment entirely.
     It used to be a bare float, so a provider that reported nothing printed
     ``context 0%`` — a number the backend never supplied, which is worse than a
     missing chip. A measured ``0.0`` still renders ``context 0%``, because an empty
     context is a real answer.
 
-    The cache fragment (PCS-7) follows exactly that rule, and renders only when the
+    The cache fragment follows exactly that rule, and renders only when the
     provider reported cache activity — so a turn with no cache is byte-identical to
-    the pre-PCS-7 line. It used to collapse reads and writes into one pre-summed
-    ``N cached`` count, which destroyed the split the whole surface exists to show:
+    the line it was before cache numbers were added. It used to collapse reads and
+    writes into one pre-summed ``N cached`` count, which destroyed the split the whole
+    surface exists to show:
     a cache READ is the saving, a cache WRITE is what you paid for it.
 
     * ``cache_hit_pct=None`` omits the ``NN% hit`` piece — never print ``0% hit``
@@ -996,7 +997,7 @@ def _record_turn_usage(
     model: str,
 ) -> None:
     """Append one row to the per-turn cost/token ledger for a completed chat turn
-    (COST-AND-TOKEN-OBSERVABILITY C2, chat write-site). Thin wrapper over the shared
+    (the chat write-site). Thin wrapper over the shared
     :func:`personalclaw.usage_ledger.record_from_event` seam (which owns the
     vendor-cost-wins / honest-unpriced / fail-open logic)."""
     from personalclaw.usage_ledger import record_from_event
@@ -1028,7 +1029,7 @@ def _truncate_snapshot(text: str) -> str:
 
 
 def _capture_declared_file_change(session: _ChatSession, change: dict[str, str] | None) -> None:
-    """File-change chip for a backend that DECLARED the edit (ACP-AGENT-PARITY §2.5).
+    """File-change chip for a backend that DECLARED the edit.
 
     The native path below infers the chip: a write-tool NAME set, a workspace path
     resolution and a disk read, because it has to reconstruct ``after`` from the call's
@@ -1856,7 +1857,7 @@ def _mark_screen_context(session: _ChatSession, value: object) -> None:
     A marker, never the frame: the session JSONL records THAT a frame was attached
     and in which form (``True`` for pixels, ``"described"`` for fenced text), so a
     transcript is honest about what the model was given without the transcript
-    becoming the place the screenshot lives (§5.4).
+    becoming the place the screenshot lives.
     """
     for m in reversed(session.messages):
         if m.get("role") == "user":
@@ -1880,8 +1881,8 @@ async def _describe_screen_frame(data_url: str, *, usage: Attribution) -> str:
     silently drops the frame is worse than one that says nothing, so the caller
     annotates only when this returns text.
 
-    This resolve deliberately gets NO call-failure chain advance (MODEL-USE-CASES-V2
-    T2.4): it runs on the INTERACTIVE chat turn, so it advances at call-start only —
+    This resolve deliberately gets NO call-failure chain advance: it runs on the
+    INTERACTIVE chat turn, so it advances at call-start only —
     the seam's own resolution-time walk already skips a breaker-OPEN or unbuildable
     entry (``provider_bridge.resolve_provider_for_use_case``). Rebuilding from entry
     N+1 here would stack a second provider's wall-clock timeout onto a turn a human is
@@ -1924,8 +1925,8 @@ async def _describe_screen_frame(data_url: str, *, usage: Attribution) -> str:
 async def _apply_screen_frame(session: _ChatSession, client: object, message: str) -> str:
     """Drain this session's staged screen frame and deliver it on THIS turn.
 
-    MULTIMODAL-IO §5.3. Returns *message*, decorated when the frame had to be
-    delivered as text. Four things happen here in a deliberate order:
+    Returns *message*, decorated when the frame had to be delivered as text. Four things
+    happen here in a deliberate order:
 
     1. **Drain first, unconditionally.** The slot is popped before any gate is
        consulted, so every path below leaves it empty. A frame that is refused is
@@ -2248,7 +2249,7 @@ async def run_chat(
     Public because it is the turn engine for the owner's own surfaces — dashboard,
     cron, heartbeat, the CLI — and the `turn_runner` the composition root injects into
     the guarded inbound door (`channel_inbound.deliver_inbound`). It is deliberately
-    NOT on the `personalclaw.sdk.channel` facade any more (EA-7 step 3): a channel app
+    NOT on the `personalclaw.sdk.channel` facade any more: a channel app
     reaches a turn only through `services.deliver_channel_inbound`, so the sender-trust
     gate cannot be routed around. The positional `state, session, message` signature is
     still a contract — the door's injected `turn_runner` calls it by that shape —
@@ -2325,7 +2326,7 @@ async def run_chat(
             asked_for_by=asked_for_by,
         )
 
-    # Phase 1 of the turn checkpoint: open a numbered turn and
+    # The turn checkpoint: open a numbered turn and
     # record the identity set. Only at depth 0 — a nested `run_chat` (prompt expansion,
     # auto-continue) is the SAME user turn, and numbering it separately would make
     # /rewind-to-turn N mean something the transcript's turn N does not. A retry is the same
@@ -2350,8 +2351,8 @@ async def run_chat(
             read_gate.begin_turn(session.key)
         except Exception:  # noqa: BLE001 — never break a turn over the gate's bookkeeping
             logger.debug("read gate: begin_turn skipped", exc_info=True)
-    # Cancel any still-pending follow-up-chip generation from the PRIOR turn (CHAT-CRAFT
-    # S3) — the user is sending again, so its chips are moot; the FE hides them on the
+    # Cancel any still-pending follow-up-chip generation from the PRIOR turn — the user
+    # is sending again, so its chips are moot; the FE hides them on the
     # next stream. Fire-and-forget cancel; the task swallows CancelledError cleanly.
     # getattr-guarded so lightweight session doubles (test_prompts) without the slot work.
     _prev_followups = getattr(session, "_followups_task", None)
@@ -2462,7 +2463,6 @@ async def run_chat(
     # closing call from a turn that never wrote a word (`turn_endings.unanswered_turn`).
     _turn_wrote_text = False
     _steer_rows: list[dict[str, Any]] = []  # hers it took as it ran, which it learns from too
-    last_heartbeat = time.time()
     in_tool_group = False
     _pending_tools: dict[str, str] = {}  # tool_call_id -> tool_name
     # tool_call_id -> the call's effective risk, logged with its `invoked` row and again with the
@@ -2485,17 +2485,16 @@ async def run_chat(
     _calls_refused: set[str] = set()
     # tool_call_id -> (title, declared kind, input) for calls not yet gated
     _ungated_candidates: dict[str, tuple[str, str, str, str]] = {}
-    # Loop-breaker bookkeeping for ACP turns (§2.3 gap 5). The native runtime counts
+    # Loop-breaker bookkeeping for ACP turns. The native runtime counts
     # its own tool failures inside its dispatch loop; an ACP CLI runs its tools out of
     # process, so the host has to do the counting from the neutral event stream — the
-    # SAME observer, so the thresholds and the wording can't diverge (`G6` measured
-    # six consecutive ACP failures producing no warn, block or trip at all).
+    # SAME observer, so the thresholds and the wording can't diverge (six consecutive ACP
+    # failures were once measured producing no warn, block or trip at all).
     # …and it lives on the SESSION, not here. `LoopBreaker` calls its own
     # ceiling "this RUN's total failures" (default 30, `guardrails.loop_breaker`); a fresh instance
     # per turn reset the count every turn, so an unattended loop repeating a failing
     # tool for twenty turns never reached thirty and the circuit rung was unreachable
-    # by construction — proved at the code level in the prior tick and recorded as the
-    # one open reason clause 2 could not close. The session is the host-side run.
+    # by construction. The session is the host-side run.
     _acp_breaker = session._acp_breaker
     # tool_call_id -> the breaker's (tool, params) key. Recorded at tool_call and
     # REFINED at tool_call_update, because ACP adapters routinely send the first frame
@@ -2829,7 +2828,7 @@ async def run_chat(
             provider_kind = _acp_provider
             provider_agent = getattr(session, "acp_provider_agent", "") or ""
 
-        # G5 honesty rail. ``_acp_meta_binding`` is what this session's persisted meta
+        # Honesty rail. ``_acp_meta_binding`` is what this session's persisted meta
         # line asked its runtime to be, recorded on restore whether or not the binding
         # was honoured. If the turn is NOT resolving on that axis, SAY SO: the harm in a
         # lost ACP binding is never the binding itself, it is a turn that runs with a
@@ -2852,7 +2851,7 @@ async def run_chat(
                     },
                 )
 
-        # §2.3 (gap 3) — who answers this turn's asks. A session whose owner decided it says
+        # Who answers this turn's asks. A session whose owner decided it says
         # so (``session._unattended``): the loop manager sets it from the loop's Mode each time it
         # arms a worker, True for an Unattended loop and False for an Attended one, because a
         # loop's key names a loop and not whether anybody is watching it. Every other session is
@@ -2917,8 +2916,8 @@ async def run_chat(
             # the project files dir (engine files live outside the workspace cwd).
             extra_tool_roots=list(getattr(session, "_extra_tool_roots", []) or []) or None,
             # Unattended worker/scheduled turn: strip interactive tools + fail the
-            # approval gate fast so a background run can't wedge waiting for a human
-            # (T5). Consumed by the native runtime AND by the ACP branch of the bridge,
+            # approval gate fast so a background run can't wedge waiting for a human.
+            # Consumed by the native runtime AND by the ACP branch of the bridge,
             # which tells the agent CLI nobody can answer its own questions.
             unattended=_unattended_turn,
             # The owner let this loop's agent CLI approve its own calls (above): the one input
@@ -3235,7 +3234,7 @@ async def run_chat(
                 getattr(session, "natural_voice", ""),
                 _nv.agent_default(session.agent or ""),
             )
-            # Project-bound chat (Slice 6 D2): on the first turn, prepend the project's
+            # Project-bound chat: on the first turn, prepend the project's
             # context — workspace, loop history, context-dir — so the session operates
             # with the project's cohesive shared context. First turn only (is_new); the
             # workspace is already the session cwd (bound at create).
@@ -3243,7 +3242,7 @@ async def run_chat(
                 _proj_pre = _project_context_preamble(session.project_id)
                 if _proj_pre:
                     message = _ahead_of_the_request(_proj_pre, message)
-            # Goal-loop capabilities (planner/quorum IT-5): a loop's confirmed
+            # Goal-loop capabilities (planner/quorum): a loop's confirmed
             # skill_ids/workflow_ids load ACTIVELY into every cycle's turn, on top
             # of passive surfacing. Looked up from the GoalLoop row keyed off the
             # ``loop-<id>`` session. Best-effort: any failure leaves them empty.
@@ -3446,7 +3445,7 @@ async def run_chat(
         if regenerate_hint:
             full_message = f"[System: {regenerate_hint}]\n\n{full_message}"
 
-        # Queue-steering (#37): wire the runtime's steer source, so a message sent into this turn
+        # Queue-steering: wire the runtime's steer source, so a message sent into this turn
         # (steer mode) reaches it at its next boundary: the native loop's model boundaries, an ACP
         # session's tool boundaries. Keyed by the NAMESPACED `session_key` the SessionManager
         # registers under (`dashboard:<id>`); the bare `session.key` missed every lookup.
@@ -3467,7 +3466,7 @@ async def run_chat(
         # Who answers the questions an agent CLI asks her on this turn (`chat_questions.arm`).
         chat_questions.arm(state, session, client, attended=not _unattended_turn)
 
-        # `PreResponse` (AUTO crit 5): declared, selectable in the hook UI, fired by nothing until
+        # `PreResponse`: declared, selectable in the hook UI, fired by nothing until
         # now. Fired BEFORE the stream is created — the last moment the catalog's description
         # ("before the agent streams its reply") is still true, since after `client.stream(...)` the
         # first tokens may already be in flight. The payload carries no message text: a
@@ -3502,8 +3501,8 @@ async def run_chat(
             )
 
         # Slash commands use _vendor.dev/commands/execute for full native output — but ONLY
-        # when the bound provider says it speaks that extension. Sending it blind is what
-        # `G4` measured: claude-code answers `-32601` and the WHOLE TURN hard-errors, so the
+        # when the bound provider says it speaks that extension. Sending it blind was
+        # measured: claude-code answers `-32601` and the WHOLE TURN hard-errors, so the
         # user's `/compact` produced an error card instead of an answer. `stream_slash_command`
         # owns all three outcomes (gate → substitute, `-32601`-before-output → substitute,
         # `-32601`-after-output → refuse and say why) and reports the substitution here so a
@@ -3512,7 +3511,7 @@ async def run_chat(
         # branch after the loop: waiting on `wait_for_compaction` is only meaningful when
         # a real `/compact` COMMAND was dispatched. A substituted turn has no compaction
         # coming, and that branch discards the streamed answer before waiting — so left
-        # ungated it would trade `O23`'s error card for a 120 s stall ending in
+        # ungated it would trade that error card for a 120 s stall ending in
         # "Compaction timed out.", with the answer we just produced thrown away.
         slash_substituted = False
 
@@ -3622,11 +3621,6 @@ async def run_chat(
         running_turn.end_if_moved(session)  # nothing awaits from here to the runtime's prompt
         _turn_events = spent_rows(event_stream, recorder(client, chat_usage(session)))
         async for event in _turn_events:
-            # Heartbeat every 5s during long operations
-            if time.time() - last_heartbeat > 5:
-                state.broadcast_ws("heartbeat", {"session": session.key, "ts": time.time()})
-                last_heartbeat = time.time()
-
             # Security: tool_call_id originates from LLM — redact before any use
             if hasattr(event, "tool_call_id") and event.tool_call_id:
                 _tcid, _ = redact_exfiltration_urls(event.tool_call_id)
@@ -3723,18 +3717,18 @@ async def run_chat(
                 _input_preview = redact_credentials(
                     redact_exfiltration_urls(tool_input_to_str(event.tool_input)[:4000])[0]
                 )[0]
-                # Structured input object for schema-driven field rendering
-                # (tool-io-rendering). Redacted per-value, bounded. The native runtime
+                # Structured input object for schema-driven field rendering.
+                # Redacted per-value, bounded. The native runtime
                 # puts its dict straight into `tool_input`; an ACP frame carries the
                 # pretty-printed string there and the object beside it in
-                # `tool_input_obj` (ACP-AGENT-PARITY §2.5 gap 7 — before that field
+                # `tool_input_obj` (before that field
                 # existed this call was handed a `str`, returned None, and every ACP
                 # card fell back to the flat preview). Still None when neither shape is
                 # a dict, so the string-preview fallback is unchanged.
                 _input_obj = _redact_tool_input_obj(
                     event.tool_input_obj if event.tool_input_obj is not None else event.tool_input
                 )
-                # Loop-breaker identity for an ACP call (§2.3 gap 5). Keyed off the
+                # Loop-breaker identity for an ACP call. Keyed off the
                 # UNREDACTED title + input: the breaker only ever compares keys to
                 # each other, never renders them, and redaction is lossy enough
                 # (two different secrets both become "***") to merge genuinely
@@ -3767,9 +3761,9 @@ async def run_chat(
                             "tool_call_id": event.tool_call_id,
                             "purpose": _purpose,
                             "input": _input_preview,
-                            # The DECLARED tool kind, persisted (`AAP-8` §2.5 gap 7,
-                            # second half). `_kind` was computed above and broadcast on
-                            # the live `tool_call` WS frame, but never written here — so
+                            # The DECLARED tool kind, persisted. `_kind` was computed above
+                            # and broadcast on the live `tool_call` WS frame, but never
+                            # written here — so
                             # the kind read absent on every persisted ACP tool row while
                             # the live socket carried it, which is the `tool_kind: null`
                             # of `acp-parity.md`'s re-drive sitting in the SAME row as a
@@ -3798,7 +3792,7 @@ async def run_chat(
                 # can render below the assistant message at turn end.
                 _capture_file_change(session, event.title, event.tool_input)
                 # …and the same chip from a backend that DECLARED the edit instead of
-                # leaving it to be inferred (§2.5 gap 7). Both paths are live: an ACP
+                # leaving it to be inferred. Both paths are live: an ACP
                 # CLI may put its `diff` block on the opening frame or on the update.
                 _capture_declared_file_change(session, event.file_change)
                 # A question the call puts to her (`owner_questions`): PersonalClaw's own tool's
@@ -3884,7 +3878,7 @@ async def run_chat(
                 # so cards stay scannable when many tools are in play.
                 if event.tool_call_id:
                     # Refine the breaker key now that the real arguments arrived
-                    # (§2.3 gap 5) — see _acp_tool_keys. Only when the update
+                    # — see _acp_tool_keys. Only when the update
                     # actually carries input, so an args-less refinement frame can't
                     # erase a key the first frame got right.
                     if _acp_cli and event.tool_input:
@@ -3896,7 +3890,7 @@ async def run_chat(
                         _acp_tool_reads[event.tool_call_id] = only_reads(
                             _name, event.tool_kind, event.tool_input
                         )
-                    # §2.5 gap 7. A file edit the frame DECLARED (ACP diff content
+                    # A file edit the frame DECLARED (ACP diff content
                     # block) becomes a chip from the declaration alone — no name set, no
                     # path resolution, no disk read, which is what makes it work for a
                     # CLI whose edit tool the host has never heard of.
@@ -3931,7 +3925,7 @@ async def run_chat(
                                     "tool": _name,
                                     "tool_call_id": event.tool_call_id,
                                     "input_preview": _meta.get("input", ""),
-                                    # §2.5 gap 7: the structured object usually arrives
+                                    # The structured object usually arrives
                                     # HERE, not on the opening frame (adapters stream
                                     # `rawInput: {}` first), so a refinement that
                                     # carried only the string left the card's fields
@@ -3946,7 +3940,7 @@ async def run_chat(
                 _out = (event.tool_output or "")[:8000]
                 _out, _ = redact_exfiltration_urls(_out)
                 _out, _ = redact_credentials(_out)
-                # Typed tool-result metadata (tool-io-rendering + projection):
+                # Typed tool-result metadata (for the rich renderer and the projection):
                 # content_type drives the rich output renderer; raw_ref/truncated/
                 # original_length drive the "show full result" affordance. Empty
                 # for backends (ACP) that don't supply it → UI renders as before.
@@ -3955,7 +3949,7 @@ async def run_chat(
                 _raw_ref = str(_tmeta.get("raw_ref", "") or "")
                 _truncated = bool(_tmeta.get("truncated", False))
                 _orig_len = _tmeta.get("original_length")
-                # TC5: concrete next-steps on a failed tool — surfaced as a card note.
+                # Concrete next-steps on a failed tool — surfaced as a card note.
                 _recovery = [str(h) for h in (_tmeta.get("recovery_hints") or [])][:6]
                 # Tool-call outcome: only present (and False) when the tool FAILED, so
                 # the card can color-code it; absent → success (renders as before).
@@ -4089,7 +4083,7 @@ async def run_chat(
                     )
                     if _abort:
                         await acp_ungated.stop_turn(client, "ungated tool call")
-                # ── Loop breaker for the ACP turn (§2.3 gap 5) ──────────────────
+                # ── Loop breaker for the ACP turn ──────────────────
                 # The native runtime counts failures inside its own dispatch loop and
                 # can refuse the NEXT identical call before it runs. Out here the CLI
                 # has already run the tool by the time we see the result, so the host
@@ -4252,7 +4246,7 @@ async def run_chat(
                 # The deny-list, on the REAL command as well as the display title
                 # (`screen_tool_call`, the one screen every approval path asks): an ACP
                 # permission frame's title is a truncated human string ("unknown" when the
-                # adapter sends none — G18), so the patterns read on the title alone silently
+                # adapter sends none), so the patterns read on the title alone silently
                 # miss `git push --force` while the card still offers it. Refused before
                 # anything could approve or ask about it. An operator's auto-approve pattern is
                 # decided on the command a shell call runs, never on that title. The verdict and
@@ -4575,7 +4569,7 @@ async def run_chat(
                         "AUTO-REJECTED tool=%r (batch rejection)", log_title(event.title)
                     )
                     continue
-                # §2.3 (gap 3) — UNATTENDED FAIL-FAST, the last gate before the wedge, and
+                # UNATTENDED FAIL-FAST, the last gate before the wedge, and
                 # deliberately LAST: see `chat_refusals.refuse_unattended`.
                 if _unattended_turn:
                     await chat_refusals.refuse_unattended(
@@ -4710,7 +4704,7 @@ async def run_chat(
                         tool_purpose=event.tool_purpose or "",
                         agent=_agent_label(session),
                         risk=effective_risk,
-                        # #2821: the third input Contract C2 names, read off the RAW input
+                        # #2821: the third input the approval brief names, read off the RAW input
                         # above.
                         is_read_only=read_only,
                         blast_radius=blast_radius,
@@ -4981,8 +4975,8 @@ async def run_chat(
                         event.cost_usd = _turn_price.dollars
                     if event.cost_usd:
                         stats.inc_cost_usd(event.cost_usd)
-                    # Durable per-turn ledger (COST-AND-TOKEN-OBSERVABILITY C2, chat
-                    # write-site): one row beside the in-memory Stats bump.
+                    # Durable per-turn ledger (the chat write-site): one row beside the
+                    # in-memory Stats bump.
                     _record_turn_usage(
                         event,
                         session_key=session_key,
@@ -5192,7 +5186,7 @@ async def run_chat(
         pct = client.context_usage_pct()
         # The "Turn complete" sentence, composed ONCE from the turn's numbers: the live
         # activity line below shows it, and the durable record carries it, so the turn's
-        # details still say it after a reload. PCS-7: both derived cache numbers come from
+        # details still say it after a reload. Both derived cache numbers come from
         # the shared primitives, and both helpers answer None rather than guessing: an
         # unpriced model has no saving to state, and a turn with no denominator has no hit
         # rate. The renderer keeps those Nones honest. The saving is priced at the rate the
@@ -5314,7 +5308,7 @@ async def run_chat(
         _stop_text = redact_credentials(_stop_text)[0]
         await _fire(HOOK_EVENT_STOP, _stop_text)
 
-        # `PostResponse` (AUTO crit 5): declared, selectable in the hook UI, fired by nothing until
+        # `PostResponse`: declared, selectable in the hook UI, fired by nothing until
         # now. It is NOT a duplicate of `Stop`, which fires here too: `Stop` carries the reply TEXT
         # (truncated + redacted) for a hook that reacts to content, while `PostResponse` carries the
         # turn's SHAPE — reply size and tool-call count — for a hook that meters activity. Two
@@ -5448,8 +5442,8 @@ async def run_chat(
                 "msg msg-err",
             )
             session._last_turn_errored = True
-            # AAP-1 `O43`: the `Error` lifecycle hook fired ZERO times across two sweeps
-            # (kiro `K40`, claude-code `O43`) despite real, user-visible ACP failures. Measured
+            # The `Error` lifecycle hook once fired ZERO times across two sweeps (kiro,
+            # claude-code) despite real, user-visible ACP failures. Measured
             # cause: `HOOK_EVENT_ERROR` had exactly ONE fire site — the generic `except Exception`
             # below — so every `AcpError`, i.e. the entire error class an ACP session can raise,
             # terminated here with an error card and no hook. An `Error` hook on an ACP chat was a

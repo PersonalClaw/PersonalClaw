@@ -51,7 +51,7 @@ def _is_done(status) -> bool:
     """The loop side's entry to the ONE task-status vocabulary
     (:func:`personalclaw.workflows.materialize.is_done`). Named here only because callers
     outside this module reach for ``tasks_link._is_done``; it holds no logic of its own, so
-    PP-16's later slices delete it along with the rest of this module."""
+    it goes when the rest of this module does."""
     return _materialize.is_done(status)
 
 
@@ -60,7 +60,7 @@ def _is_resolved(status) -> bool:
     (:func:`personalclaw.workflows.materialize.is_resolved`). This module used to carry its own
     string list — ``("done", "completed", "cancelled")`` — which is the same judgement the run
     side's projection makes, spelled a second time; a loop and a run are the same work unit, so
-    "has this task finished" cannot have two answers (PP-16, "one projection to tasks")."""
+    "has this task finished" cannot have two answers."""
     return _materialize.is_resolved(status)
 
 

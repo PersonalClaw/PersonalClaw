@@ -38,7 +38,7 @@ def register_builtin_providers() -> None:
     """Register the always-present ``none`` provider and the core-native ``docker`` tier.
     Idempotent.
 
-    ``none`` and ``docker`` are core built-ins (EXECUTION-ISOLATION §1.2), registered here rather
+    ``none`` and ``docker`` are core built-ins, registered here rather
     than through the extension system: ``none`` is always available; ``docker`` self-gates via its
     cached daemon probe, so registering it unconditionally is safe (an unavailable ``docker`` name
     refuses at ``wrap`` with a typed error, it does not silently downgrade). Installed ``sandbox``

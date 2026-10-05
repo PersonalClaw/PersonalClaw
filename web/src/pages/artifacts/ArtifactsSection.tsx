@@ -30,7 +30,7 @@ const SORTS = [
   { key: 'kind', label: 'Kind' },
 ] as const
 
-/** Artifacts — the library surface (ARTIFACTS S2 on the route).
+/** Artifacts — the library surface.
  *
  *  No slug → the LIBRARY: a grid of live sandboxed preview cards with a
  *  URL-query-backed toolbar (search ?q, kind ?kind, source ?src, collection
@@ -59,8 +59,8 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
   const [sort, setSort] = useQueryParam(routeQuery, setQuery, 'sort', 'updated', { replace: true })
   // ?v=N pins the detail viewer to a historical version (deep-linkable snapshot).
   const [vParam, setVParam] = useQueryParam(routeQuery, setQuery, 'v', '', { replace: true })
-  // ?iterate=<session-key> opens the split-view iterate panel on that session
-  // (AE-10). `ITERATE_PENDING` means "open it, it still needs staging" — the panel
+  // ?iterate=<session-key> opens the split-view iterate panel on that session.
+  // `ITERATE_PENDING` means "open it, it still needs staging" — the panel
   // rewrites the param once /api/investigate hands back the real key, which makes
   // an open iteration thread deep-linkable and survives a close/reopen.
   const [iterate, setIterate] = useQueryParam(routeQuery, setQuery, 'iterate', '', { replace: true })
@@ -210,7 +210,7 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
   // record, not a filing target — so the control is absent rather than
   // present-and-always-failing.
   const canFile = !!slug && !!active && !active.readonly
-  // Iterating means the agent WRITES this slug (AE-7 stages the session in `agent`
+  // Iterating means the agent WRITES this slug (the session is staged in `agent`
   // mode), so a frozen record is not an iteration target — same reason it can't be
   // filed. The panel is absent rather than present-and-always-refused.
   const canIterate = canFile

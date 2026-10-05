@@ -4,8 +4,8 @@
 nodes are ready, respecting data dependencies and lane caps), the node dispatchers
 (transform / infer / branch / stage / wait / gate), the `RunController` lifecycle with
 terminal-status ownership, and the journal (epoch + inputs-hash keyed resume cache; Run
-Ledger emission). Its own acceptance criterion was "a simple sequence of 2 stages →
-completion"; this exemplar runs a 3-node sequence with a binding leg between each.
+Ledger emission). This exemplar goes past a simple sequence of 2 stages → completion:
+it runs a 3-node sequence with a binding leg between each.
 
 **What this exemplar proves.** One `seed → think → final` sequence driven end to end against
 a temp home with only the model call faked:

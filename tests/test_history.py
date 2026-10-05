@@ -797,7 +797,7 @@ class TestConsolidationOffset:
 
 
 class TestExplicitConsolidationTriggers:
-    """E11-P2: consolidate_now / consolidate_session always use the history path
+    """consolidate_now / consolidate_session always use the history path
     (include_history=True), respect the running guard, and clear it after."""
 
     def _make_consolidator(self):
@@ -819,7 +819,7 @@ class TestExplicitConsolidationTriggers:
         m.assert_awaited_once_with("k", include_history=True)
 
     def test_consolidate_session_runs_consolidation_then_seals(self):
-        """The session-end seam consolidates THEN seals (M5c) — distinct from the
+        """The session-end seam consolidates THEN seals — distinct from the
         fire-and-forget poll so sealing only fires at real session end."""
         c = self._make_consolidator()
 
@@ -1127,7 +1127,7 @@ class TestProcessAutoSkillsIntegration:
                 },
             }
 
-        # Propose-only (Phase F: skill-evolution-proposal-only): autonomous synthesis
+        # Propose-only: autonomous synthesis
         # NEVER writes a live skill — it enqueues a human-reviewable proposal. So the
         # eligible session produces a PROPOSAL (not an auto/ SKILL.md), and no auto
         # skill exists until a person accepts it. Isolate the proposals dir (it lives
@@ -1196,7 +1196,7 @@ class TestProcessAutoSkillsIntegration:
         self, tmp_path, monkeypatch
     ):
         """If the LLM returns a procedure with an AWS key, it's redacted BEFORE the
-        proposal is queued (Phase F: synthesis proposes, never auto-writes). The AKIA
+        proposal is queued (synthesis proposes, never auto-writes). The AKIA
         key must not survive into the enqueued proposal's procedure_md."""
         from personalclaw.memory import MemoryStore
         from personalclaw.skills import SkillsLoader
@@ -1298,7 +1298,7 @@ class TestProcessAutoSkillsIntegration:
     @pytest.mark.asyncio
     async def test_dashboard_schema_messages_trigger_auto_skill(self, tmp_path, monkeypatch):
         """Dashboard-format role='tool' messages pass eligibility and produce a skill
-        PROPOSAL (Phase F: propose-only, never auto-write).
+        PROPOSAL (propose-only, never auto-write).
 
         This is the regression test that would have caught the schema mismatch bug.
         """
@@ -1430,7 +1430,7 @@ class TestAutoSkillSELAudit:
 
     @pytest.mark.asyncio
     async def test_empty_required_field_emits_sel(self, tmp_path, monkeypatch):
-        """Phase F propose-only: slug-regex/size validation moved to ACCEPT time, so
+        """Propose-only: slug-regex/size validation moved to ACCEPT time, so
         a synthesized skill is rejected at synthesis time only when a required field
         (here procedure_md) is empty. That rejection must emit a SEL audit event
         (reason=empty_after_redaction) and queue no proposal."""
@@ -1717,7 +1717,7 @@ class TestConsolidationPromptJsonShape:
 
 
 class TestPersonaCommitmentCapture:
-    """M5e capture wiring: consolidation extracts self_persona (always-on) +
+    """Capture wiring: consolidation extracts self_persona (always-on) +
     commitments (gated by the proactive opt-in). The storage primitives were
     unit-tested before; this proves they're actually CALLED by the runtime."""
 
@@ -1878,7 +1878,7 @@ class TestPersonaCommitmentCapture:
 
 
 class TestCommitmentDeliveryScan:
-    """M5e delivery wiring: due_commitments_all powers the heartbeat's scan."""
+    """Delivery wiring: due_commitments_all powers the heartbeat's scan."""
 
     def _svc(self, tmp_path):
         from personalclaw.memory_service import MemoryService

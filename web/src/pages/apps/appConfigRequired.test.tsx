@@ -37,7 +37,7 @@ describe('missingRequired', () => {
 
   it('treats a key in `satisfied` as filled even when blank', () => {
     // A write-only sensitive field whose secret is already stored: the input is blank BY DESIGN and
-    // blank means "keep it" (#43). Counting it missing makes the form permanently unsavable.
+    // blank means "keep it". Counting it missing makes the form permanently unsavable.
     expect(missingRequired({ api_key: '' }, ['api_key'])).toEqual(['api_key'])
     expect(missingRequired({ api_key: '' }, ['api_key'], { satisfied: ['api_key'] })).toEqual([])
   })

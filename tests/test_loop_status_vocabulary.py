@@ -17,8 +17,8 @@ beside it. And ``pages/workflows/terminalSuccessLabel.test.ts``, the rail that l
 run is *Completed* everywhere", could not see the violation: it named the other two registries by
 path and matched a ``{ label: ... }`` shape that ``lib/loopStatus.ts`` did not use.
 
-PP-16 retires the second table. This is the cross-tier half of that: the surviving registry must
-cover the backend enum EXACTLY, and no second one may reappear.
+Moving loops onto runs retires the second table. This is the cross-tier half of that: the
+surviving registry must cover the backend enum EXACTLY, and no second one may reappear.
 
 **Both drift directions are pinned.** A new ``LoopStatus`` member with no frontend word reds this,
 and a stale frontend key naming a status the backend cannot produce reds it too — a status the
@@ -63,7 +63,7 @@ _SYNTHETIC = {"ended_early", "held"}
 #: `error`) for the ambient worlds — it holds no label and no tone, so it cannot produce the
 #: "Stalled vs Stagnant" or two-meanings-of-green drift this census exists to prevent. Same
 #: reasoning as the rank-order exemption above: a projection is not a words-and-tones table.
-#: (AS-9 added it; the rail matched its `stagnant: 'needs_input'` row, which is a state
+#: (When it was added, the rail matched its `stagnant: 'needs_input'` row, which is a state
 #: name, not a display word.)
 _REGISTRY_ROW = re.compile(r"\bstagnant:\s*[{'\"]")
 

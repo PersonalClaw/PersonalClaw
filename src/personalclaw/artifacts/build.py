@@ -16,7 +16,7 @@ Three properties are load-bearing.
 
 *The build rides the resource-limited spawn.* An artifact body is arbitrary
 model- or user-authored source, and a bundler run over it is exactly the
-unbounded-spawn hazard PLATFORM-HARDENING-FLOORS §1 exists to bound. So the one
+unbounded-spawn hazard the spawn ceiling exists to bound. So the one
 spawn here goes through :func:`personalclaw.sandbox.create_subprocess_limited`
 with :data:`~personalclaw.sandbox.PROFILE_BUILD` — the same profile the model
 sidecar's installer and the loop's worktree git steps use — and there is no
@@ -177,7 +177,7 @@ def toolchain_candidates() -> list[Path]:
 
     Three, deliberately: the explicit lever, the source checkout (where
     ``npm ci`` has already put every dependency the dashboard needs — the
-    "reuse the existing frontend build tooling" the plan asks for), and a
+    existing frontend build tooling, reused), and a
     home-local toolchain a wheel-installed user can drop in without touching the
     package.
     """

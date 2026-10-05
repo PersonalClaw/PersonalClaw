@@ -4,7 +4,7 @@ import { ApiError, type WorkflowRunDetailData, type WorkflowWorkspaceReview } fr
 import { WorkspacePanel } from './WorkspacePanel'
 import { WorkflowRunDetail } from './WorkflowRunDetail'
 
-// ── The code-run cockpit's workspace panel (criterion 7) ────────────────────────────────────
+// ── The code-run cockpit's workspace panel ──────────────────────────────────────────────────
 //
 // The panel fetches `api.workflowRunWorkspace(runId)` ON OPEN and renders the diff plus the two
 // reintegration verbs. What these pins actually protect:
@@ -122,7 +122,7 @@ describe('WorkspacePanel', () => {
     expect(screen.queryByTestId('unsafe-checkout_branch')).not.toBeInTheDocument()
     expect(within(screen.getByTestId('workspace-conflicts')).getAllByRole('listitem')).toHaveLength(1)
     expect(screen.getByTestId('reintegration-note')).toHaveTextContent('checkout is the safer verb')
-    // The ruling, asserted structurally: there is no client method that performs a verb, so the
+    // The rule, asserted structurally: there is no client method that performs a verb, so the
     // panel cannot become one that acts. A future POST companion would red this line.
     const actual = await import('../../lib/api')
     expect(Object.keys(actual.api).filter((k) => /reintegrat|applyLocal|checkoutBranch/i.test(k))).toEqual([])
@@ -235,7 +235,7 @@ describe('WorkspacePanel — localhost web preview', () => {
       expect(link).toHaveAttribute('target', '_blank')
       expect(link.getAttribute('rel')).toContain('noopener')
     }
-    // The scope guard is stated on the surface, not only in the plan.
+    // The scope guard is stated on the surface itself.
     expect(screen.getByText(/Local only/i)).toBeInTheDocument()
   })
 

@@ -1,4 +1,4 @@
-"""auto-campaign-scratch-workspace: a loop's scratch dir lifecycle.
+"""A loop's scratch dir lifecycle.
 
 Default = KEEP (a completed loop's dir persists). Opt-in
 ``auto_teardown_on_complete`` reclaims the loop's OWN dir after completion — but

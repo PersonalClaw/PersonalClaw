@@ -1,4 +1,4 @@
-"""Container workspace mode (WF2WOR-12 / WORK-R20) — the typed manifest and the backends.
+"""Container workspace mode — the typed manifest and the backends.
 
 Two halves, both deliberately small:
 
@@ -9,7 +9,7 @@ Two halves, both deliberately small:
 
 * **The backends** (`detect_backend`) — Docker, containerd (via `nerdctl`) and Apple's
   `container` CLI on macOS, all driven by SHELLING OUT to the CLI the user already has.
-  There is deliberately **no hard Docker dependency and no SDK import**: the plan's posture
+  There is deliberately **no hard Docker dependency and no SDK import**: the posture
   is local-first and opt-in, and an import-time dependency on `docker-py` would tax every
   install for a mode most runs never use. A machine with no backend at all keeps the
   existing graceful degradation in `provisioning._create_workspace` (isolated scratch dir,
@@ -60,7 +60,7 @@ _PROVISION_TIMEOUT_SECS = 900
 
 @dataclass
 class EnvironmentManifest:
-    """§4.4's typed environment manifest.
+    """The typed environment manifest.
 
     `image` XOR `build` is the load-bearing rule: both is ambiguous about which wins,
     neither provisions nothing, and both cases are authoring mistakes better named at

@@ -1,6 +1,6 @@
-"""Criterion 3: a failing automation autopauses after 5 TRUE failures.
+"""A failing automation autopauses after 5 TRUE failures.
 
-Criterion 3: *"A failing automation autopauses after 5 **true** failures (typed exits —
+The rule: *"A failing automation autopauses after 5 **true** failures (typed exits —
 auth/transport outages **park** instead) and surfaces in the Runs inbox."*
 
 🔴 THE DEFECT — three layers, each dead:
@@ -137,7 +137,7 @@ def test_a_CLEAN_run_records_success(tmp_path, monkeypatch):
 
 
 def test_a_TRANSPORT_outage_PARKS_and_stays_ENABLED(tmp_path, monkeypatch):
-    """🔴 Criterion 3's parenthetical, and the important half: "auth/transport outages PARK instead".
+    """🔴 The rule's parenthetical, and the important half: "auth/transport outages PARK instead".
     Pausing a trigger because the network blipped would make the user re-enable it by hand
     after every
     outage — and parking is reversible on its own."""
@@ -226,7 +226,7 @@ def test_the_counter_is_DERIVED_not_stored():
 
 
 def test_the_fire_path_RECORDS_the_outcome():
-    """A recorder nothing calls is the state this session found."""
+    """A recorder nothing calls is the defect this file found."""
     import inspect
 
     src = inspect.getsource(GatewayOrchestrator._fire_store_trigger)
@@ -256,7 +256,7 @@ def test_a_QUARANTINED_trigger_is_never_resumed_by_a_clean_run(tmp_path, monkeyp
     assert decision.state == TriggerState.QUARANTINED.value
 
 
-# ── criterion 3's second clause: "and surfaces in the Runs inbox" ──
+# ── the rule's second clause: "and surfaces in the Runs inbox" ──
 
 
 class _State:
@@ -309,7 +309,7 @@ def _cards(state: _State) -> list[dict]:
 
 
 def test_an_AUTOPAUSED_trigger_surfaces_a_CARD(tmp_path, monkeypatch):
-    """🔴 Criterion 3's second clause.
+    """🔴 The rule's second clause.
 
     `attention_card`, `inbox_fingerprint` and `is_duplicate_card` were all dead, so an
     autopaused automation stopped SILENTLY — and a trigger that stops without saying so
@@ -358,7 +358,7 @@ def test_a_trigger_UNDER_budget_surfaces_no_card(tmp_path, monkeypatch):
 
 
 def test_the_card_goes_through_STATE_NOTIFY():
-    """R18: no second notification path, so a muted channel stays muted."""
+    """No second notification path, so a muted channel stays muted."""
     import inspect
 
     src = inspect.getsource(GatewayOrchestrator._surface_attention_card)

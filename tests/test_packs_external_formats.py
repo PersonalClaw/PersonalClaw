@@ -5,7 +5,7 @@ Four rails carry this change, and each has a test that fails when the rail is re
 * **byte-identical rendering** — every format renders twice inside one test and is compared
   to a COMMITTED golden. A timestamp, an absolute path or a dict-order leak reds both the
   twice-render check and the golden diff.
-* **§2.2 content redaction** — an AWS-key-shaped canary planted in an agent's prompt blocks
+* **content redaction** — an AWS-key-shaped canary planted in an agent's prompt blocks
   the export, and the canary is then grepped for across every byte under the destination.
 * **containment** — an entity named ``../evil`` is refused by the renderer AND by the path
   resolver, and the export writes nothing.
@@ -67,7 +67,7 @@ GOLDEN_DIR = Path(__file__).parent / "fixtures" / "external_formats_golden"
 #: below watches the operator's actual home, not a tmp one.
 _REAL_HOME = Path(os.path.expanduser("~"))
 
-#: AWS-key-shaped so BOTH detectors in the shared §2.2 scanner fire on it.
+#: AWS-key-shaped so BOTH detectors in the shared content scanner fire on it.
 CANARY_AWS = "AKIAIOSFODNN7EXAMPLE"
 
 
@@ -254,7 +254,7 @@ def test_default_dest_dir_is_the_only_home_resolver(monkeypatch, tmp_path):
     assert default_dest_dir(SKILL_MD) is None
 
 
-# ── acceptance criteria: byte-identical rendering, per format, against a committed golden ──
+# ── Byte-identical rendering, per format, against a committed golden ──────────
 
 
 @pytest.mark.parametrize("fmt,entities", GOLDEN_CASES, ids=lambda v: getattr(v, "name", ""))
@@ -292,7 +292,7 @@ def test_no_rendered_output_carries_a_clock_or_a_machine_path():
             ), f"{fmt.name}/{rf.relpath} looks like it stamped a timestamp"
 
 
-# ── acceptance criteria: the file an external tool actually loads (format conformance) ───
+# ── The file an external tool actually loads (format conformance) ─────────────
 
 
 def _frontmatter(text: str) -> dict:
@@ -352,7 +352,7 @@ def test_a_renderer_refuses_an_entity_kind_it_cannot_represent():
         CURSOR_RULES.render([])
 
 
-# ── acceptance criteria: explicit dest confirmation ───────────────────────────
+# ── Explicit dest confirmation ────────────────────────────────────────────────
 
 
 def test_export_refuses_without_explicit_dest_confirmation(tmp_path):
@@ -376,7 +376,7 @@ def test_nested_relpaths_land_under_the_destination(tmp_path):
     assert (tmp_path / "skills" / "ledger-read" / "SKILL.md").is_file()
 
 
-# ── acceptance criteria: §2.2 content redaction runs on RENDERED output ───────
+# ── Content redaction runs on RENDERED output ─────────────────────────────────
 
 
 def test_a_planted_credential_blocks_the_export_and_never_reaches_the_disk(tmp_path):

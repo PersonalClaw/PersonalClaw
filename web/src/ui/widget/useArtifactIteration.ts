@@ -1,5 +1,4 @@
-/** Artifact iteration — the parent half of EDITMODE + annotate mode
- *  (AMBIENT-SURFACES §3 + §4).
+/** Artifact iteration — the parent half of EDITMODE + annotate mode.
  *
  *  Iterating on a visual artifact used to cost a chat turn per tweak. This hook is
  *  the two cheap paths that replace most of them:
@@ -15,7 +14,7 @@
  *     truth refuses rather than writing a guess.
  *   · **Annotate** accumulates clicked-element anchors, each with the user's note,
  *     and composes ONE correction directive — dispatched to whoever owns the artifact
- *     (a chat turn through the widget bridge's C32 refresh-injection path by default,
+ *     (a chat turn through the widget bridge's living-view refresh-injection path by default,
  *     or a host-supplied target such as a design loop's guidance channel).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -39,14 +38,14 @@ const READ_BACK_TIMEOUT_MS = 2000
 /** What a host offers for iterating on the content it is showing. Every field is
  *  optional — a host that supplies neither gets no rail at all. */
 export interface IterationTarget {
-  /** The saved artifact this content IS. Names the C32 refresh target so a
+  /** The saved artifact this content IS. Names the living-view refresh target so a
    *  correction says "refresh THIS view in place" rather than spawning a new one. */
   slug?: string
   /** Persist a renderer-authored source rewrite as a NEW version. Omit and the
    *  EDITMODE rail is live-preview only (an historical version, a read-only host). */
   persistVersion?: (next: string) => void | Promise<void>
   /** Where a correction directive goes. Defaults to the widget action bridge — the
-   *  C32 refresh-injection path into chat. A design loop passes its steer channel so
+   *  living-view refresh-injection path into chat. A design loop passes its steer channel so
    *  the directive lands in the loop's guidance instead. */
   correction?: (directive: string) => void | Promise<void>
 }

@@ -1,6 +1,6 @@
-"""DURABILITY-AND-SYNC §4.1 / DAS-6c-ii-d — reconcile a peer's rows into the live store.
+"""Reconcile a peer's rows into the live store.
 
-The bridge that composes read-local → merge → apply. The crown check is criterion 4 at this
+The bridge that composes read-local → merge → apply. The crown check is convergence at this
 layer: a task made on A and one made on B both exist on both after one reconcile each way, and
 a delete on A stays deleted on B. Non-row kinds are declined (routed elsewhere), and a poison
 entry yields a payload-bad verdict rather than aborting the pull.
@@ -64,7 +64,7 @@ class TestReconcileRowEntry:
 
 
 class TestConvergence:
-    """Criterion 4 at the reconcile layer."""
+    """Two-machine convergence at the reconcile layer."""
 
     def test_two_machines_converge(self, tmp_path):
         entry = _entity_entry()

@@ -223,7 +223,7 @@ class UIConfig:
 
 @dataclass
 class AppSkill:
-    """One SKILL.md skill directory an app ships and OWNS (§4.1).
+    """One SKILL.md skill directory an app ships and OWNS.
 
     Declared as ``{path: "skills/my-skill/"}`` (dir path relative to the app root,
     containing a ``SKILL.md``). On enable / startup discovery the dir is installed
@@ -313,7 +313,7 @@ class BackendConfig:
     port: str = "auto"  # "auto" or a specific port number
     healthCheck: str = "/health"  # health check endpoint path  # noqa: N815
     type: str = ""  # "python", "asgi", "node", or "" (auto-detect)
-    # EXECUTION-ISOLATION EI-4 §1.3(4): the sandbox provider tier this backend launches under
+    # The sandbox provider tier this backend launches under
     # (e.g. "docker", "lima"). Empty → the host (``none`` builtin, no confinement). A NAMED tier
     # that is not registered/available refuses to launch rather than downgrading to the host —
     # ``backend_runtime`` enforces that failure-honesty. The app's declared permissions map onto
@@ -354,7 +354,7 @@ class BackendConfig:
 
 @dataclass
 class ProposalKind:
-    """One proposal kind an app declares it may emit (INU-7, ``permissions.proposals[]``).
+    """One proposal kind an app declares it may emit (``permissions.proposals[]``).
 
     ``kind_suffix`` is namespaced under the app at registration
     (``("app:<name>", "proposal:<kind_suffix>")``), so two apps declaring ``draft`` never
@@ -432,7 +432,7 @@ class Permissions:
     # api.ts) → ``PermissionList`` (web/src/pages/apps/AppsSection.tsx), which names
     # each target (a trailing-``*`` entry as the prefix pattern it is) among the
     # ENFORCED permissions, and states the deny-by-default case when this is empty.
-    # APE-9 shipped the broker without that last mile, so this comment claimed a
+    # The broker first shipped without that last mile, so this comment claimed a
     # consent surface that did not exist; ``test_app_messaging.py`` now pins the
     # server leg and ``permissionConsent.test.tsx`` the rendering.
     appMessaging: list[str] = field(default_factory=list)  # noqa: N815
@@ -471,22 +471,22 @@ class Permissions:
     # ``api`` (the middleware's path gate), and this list decides WHICH kinds may be
     # raised. Neither half alone grants anything.
     proposals: list["ProposalKind"] = field(default_factory=list)
-    # This app may register a long-lived supervised worker (APE-3's
-    # ``sdk/background.py`` hosted by ``backend_runtime``) — richer than ``cron``, which
-    # is N discrete agent runs on a clock. ENFORCED since APE-3 shipped the host:
+    # This app may register a long-lived supervised worker (the
+    # ``sdk/background.py`` worker hosted by ``backend_runtime``) — richer than ``cron``, which
+    # is N discrete agent runs on a clock. ENFORCED since the host shipped:
     # ``worker_runtime.py`` consults ``permissions.can_run_background_tasks()`` before it
     # will spawn OR revive a worker, and it re-asks at every spawn, so revoking the grant
     # in an app update stops the next revival rather than only the first launch. The
     # consent surface lists it among the permissions the gateway enforces ("Run a
     # long-lived background worker", ``PermissionList``, web/src/pages/apps), which is the
-    # move APE-2 already made for ``eventSubscriptions``.
+    # move already made for ``eventSubscriptions``.
     #
     # #3500: this comment used to say "NOT ENFORCED TODAY … the flag grants nothing and
     # denies nothing" and that consent listed it under "declared, not yet in effect". Stale
     # in both halves once the host landed, and stale in the direction that matters most —
     # a comment asserting a permission is unenforced, while the gateway enforces it, invites
-    # the next reader to build on a model the code does not implement. That is the EI-12 D2
-    # defect inverted, and just as wrong.
+    # the next reader to build on a model the code does not implement. That is the opposite of
+    # a comment claiming enforcement that does not exist, and just as wrong.
     backgroundTasks: bool = False  # noqa: N815
     # Typed PLATFORM events this app subscribes to (the ``app_events.py``
     # registry — ``session.created``, ``knowledge.ingested``, ``task.completed``). A
@@ -731,7 +731,7 @@ class SetupConfig:
 
 @dataclass
 class CliConfig:
-    """App-contributed CLI seams (residue #3, #4 — Plan 32).
+    """App-contributed CLI seams.
 
     An app may hook into the two core CLI commands without living in core:
 
@@ -1348,7 +1348,7 @@ _PACK_SECRET_REF_RE = re.compile(r"^secret:([A-Za-z_][A-Za-z0-9_]*)$")
 
 @dataclass
 class PackSourceEntry:
-    """One parse-only source a connector pack contributes (WATCHED-SOURCES §7.1).
+    """One parse-only source a connector pack contributes.
 
     ``script`` parses; it does not fetch. ``fetchSpec`` is a URL template plus method and
     headers that the ENGINE renders and requests through ``net.fetch``, piping the body to
@@ -1513,46 +1513,46 @@ PROVIDER_TYPES = frozenset(
         "search",
         "action",
         "prompt",
-        # AUTOMATION-SUBSTRATE AUTO-A2: an app-contributed is-the-user-on-duty predicate. Its
-        # `DutyGateTypeHandler` lands in the same commit (the #47 rule).
+        # An app-contributed is-the-user-on-duty predicate. Its
+        # `DutyGateTypeHandler` lands in the same commit.
         "duty_gate",
         # An app-contributed sync transport (git-sync, dir-sync). Its
-        # `SyncTypeHandler` lands in the same commit (the #47 rule).
+        # `SyncTypeHandler` lands in the same commit.
         "sync",
         # An app-contributed sandbox provider (container/VM isolation
-        # tier). Its `SandboxTypeHandler` lands in the same commit (the #47 rule). The `none`
+        # tier). Its `SandboxTypeHandler` lands in the same commit. The `none`
         # provider is a core builtin, not an app.
         "sandbox",
-        # AUTOMATION-SUBSTRATE AUTO-A4: an app-contributed ORIGIN of trigger events. The app emits
+        # An app-contributed ORIGIN of trigger events. The app emits
         # typed events onto the one event bus under a namespaced source (`app:<name>:<event>`),
         # which `kind: event` triggers match with the existing `{source, pattern}` spec — no new
-        # trigger kind. Its `TriggerSourceTypeHandler` lands in the same commit (the #47 rule).
+        # trigger kind. Its `TriggerSourceTypeHandler` lands in the same commit.
         "trigger_source",
         # An app-contributed OCR ENGINE — reads text out of
         # pixels with NO model bound. Deliberately not the `model` type: an OCR engine takes no
         # prompt and must be byte-stable for the same input, which the model seam does not
-        # promise. Its `OcrTypeHandler` lands in the same commit (the #47 rule).
+        # promise. Its `OcrTypeHandler` lands in the same commit.
         "ocr",
         # An app-contributed STORE of trigger ROWS — a shared or
         # team trigger backend. NOT `trigger_source` above: that supplies the STIMULUS (live
         # observer, pushes events), this supplies the RULE (passive store, serves definitions).
         # Rows only, never execution: the local TriggerService fires, and only rows whose `author`
-        # is the owner. Its `TriggerTypeHandler` lands in the same commit (the #47 rule).
+        # is the owner. Its `TriggerTypeHandler` lands in the same commit.
         "trigger",
-        # KNOWLEDGE-BASE-VECTOR-STORE KBVS-1: an app-contributed EXTERNAL chunk-vector index —
+        # An app-contributed EXTERNAL chunk-vector index —
         # the user's own Qdrant/pgvector/Chroma serving knowledge vector search in place of the
         # bundled sqlite-vec/vec0 index. NOT the `memory` type: that supplies a memory RECORD
         # store (records plus their own vector layer); this supplies only the chunk-vector INDEX
         # for the knowledge library, and the chunk rows themselves stay local. Its
-        # `VectorStoreTypeHandler` lands in the same commit (the #47 rule).
+        # `VectorStoreTypeHandler` lands in the same commit.
         "vector_store",
     }
 )
 # NOTE: this set MUST equal the runtime type-handler registry
 # (providers/registry.py register_type_handler(...) calls). ``prompt`` was a
-# registered handler (PromptTypeHandler) but was missing here (#47, the split-era
-# #1-'action'-rejected class) — so ProviderConfig.validate() rejected any prompt
-# provider manifest, blocking reinstall/update + third-party prompt providers.
+# registered handler (PromptTypeHandler) but was missing here — so
+# ProviderConfig.validate() rejected any prompt provider manifest, blocking
+# reinstall/update + third-party prompt providers.
 # native-prompts is native (auto-seeded, bypasses install-time validation), which
 # masked it. test_manifest_types_match_handlers guards this equality going forward.
 
@@ -1567,14 +1567,14 @@ _HOOK_OR_ENTRYPOINT_RE = re.compile(
 EXECUTION_IN_PROCESS = "in-process"
 EXECUTION_SIDECAR = "sidecar"
 #: In-process is the DEFAULT and stays it. A sidecar is earned by a crash history
-#: (§10 "no blanket sidecar migration"): flipping the default would silently change the
+#: (there is no blanket sidecar migration): flipping the default would silently change the
 #: runtime of every provider already installed on every machine.
 EXECUTION_MODES = frozenset({EXECUTION_IN_PROCESS, EXECUTION_SIDECAR})
 
 
 @dataclass
 class AutonomyConfig:
-    """An app-contributed action's declared autonomy bounds (AUTONOMY-GUARDRAILS §5.2).
+    """An app-contributed action's declared autonomy bounds.
 
     ``floor`` is the rung the action starts at; ``ceiling`` is the rung it can never pass
     however much track record accrues. Both name a rung from
@@ -1762,8 +1762,7 @@ DESIGN_SYSTEM_LEVELS = frozenset({"v2", "legacy", "n/a"})
 #   TYPE — the registry stays host-owned, so model/app text can only reach
 #   components the host already registered.
 # * ``generative-component`` — the app may REGISTER a genui component into the host
-#   registry (AMBIENT-SURFACES §5.1/§6, the "registration reading" APE-11 deferred to
-#   this change). Strictly additive: an app registration is an L1 layer entry that may
+#   registry. Strictly additive: an app registration is an L1 layer entry that may
 #   add a name, never SHADOW a core one (refused at register time), it is validated
 #   against the HOST's schema like any other component, and it is removed the moment
 #   the app is disabled. Separate from ``generative-widget`` on purpose — supplying a
@@ -1782,7 +1781,7 @@ QUALITY_AXES = ("tested", "designSystem", "a11y")
 
 @dataclass
 class QualityDeclaration:
-    """An app's SELF-DECLARED quality bar — the Store's badge row (APE-4).
+    """An app's SELF-DECLARED quality bar — the Store's badge row.
 
     Deliberately TRI-STATE per axis, because "absent" and "declared false" are
     different facts and a surface that renders them identically lies:
@@ -1967,7 +1966,7 @@ class AppManifest:
     # --- Setup ---
     setup: SetupConfig = field(default_factory=SetupConfig)
 
-    # --- CLI seams (Plan 32) ---
+    # --- CLI seams ---
     # App-contributed hooks into the two core CLI commands: a setup step and a
     # doctor probe. Both are optional "module:function" entry points resolved
     # from the installed app dir at command time (never imported at parse time).
@@ -2394,7 +2393,7 @@ class AppManifest:
         return errors
 
     def _validate_sources(self) -> list[str]:
-        """Errors in the connector-pack ``sources`` block (WATCHED-SOURCES §7.1).
+        """Errors in the connector-pack ``sources`` block.
 
         Two cross-field rules make the kind COHERENT rather than merely well-formed, and both
         are install-time refusals because both failures are otherwise silent:

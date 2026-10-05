@@ -1,17 +1,17 @@
-"""Long-run validation for the Knowledge Synthesis program (§8 success criteria).
+"""Long-run validation for knowledge synthesis.
 
 These are the properties that only break AFTER a while: a watcher whose cost grows every cycle,
 a seen-set that resets on restart, a persist that duplicates on the fiftieth retry. None of them
 fail loudly — the run keeps working and just gets slower, more expensive, or quietly wrong. So
 each test here simulates the passage of many cycles rather than checking one.
 
-The plan's criteria this file covers:
+The properties this file covers:
 
-* #2 — re-executing a persist is a provable no-op (no duplicate items, stable mention counts)
-* #3 — a week of simulated cycles at bounded per-cycle cost, zero re-processed guids
-* #5 — the seen-set survives a restart
-* #6 — health and lint over a 100+-item store
-* #8 — rich-ingest writes knowledge and tasks, and NOTHING to memory
+* re-executing a persist is a provable no-op (no duplicate items, stable mention counts)
+* a week of simulated cycles at bounded per-cycle cost, zero re-processed guids
+* the seen-set survives a restart
+* health and lint over a 100+-item store
+* rich-ingest writes knowledge and tasks, and NOTHING to memory
 """
 
 import asyncio
@@ -62,7 +62,7 @@ def _count(home) -> int:
     return list(_open(home).db.execute("SELECT COUNT(*) AS n FROM items"))[0]["n"]
 
 
-# ── criterion 2: a re-executed persist is a provable no-op ──
+# ── a re-executed persist is a provable no-op ──
 
 
 def test_fifty_identical_persists_write_one_item(home, ctx):
@@ -119,7 +119,7 @@ def test_alternating_content_does_not_fork_the_item(home, ctx):
     assert _count(home) == 1
 
 
-# ── criterion 3: a week of cycles at bounded cost ──
+# ── a week of cycles at bounded cost ──
 
 
 def test_a_week_of_cycles_costs_the_same_per_cycle():
@@ -165,7 +165,7 @@ def test_the_seen_set_footprint_stays_bounded():
     assert len(seen) == 500
 
 
-# ── criterion 5: the seen-set survives a restart ──
+# ── the seen-set survives a restart ──
 
 
 def test_the_seen_set_survives_a_restart():
@@ -193,7 +193,7 @@ def test_a_restart_mid_cycle_does_not_lose_unprocessed_items():
     assert len(revived.unseen(batch)) == 2
 
 
-# ── criterion 6: health and lint over a 100+-item store ──
+# ── health and lint over a 100+-item store ──
 
 
 def test_health_over_a_hundred_item_store(home, ctx):
@@ -246,7 +246,7 @@ def test_lint_does_not_fire_on_a_healthy_quiet_store():
     assert not consolidation.lint_due(persists_since_last=0, every_n=12, health_clean=True)[0]
 
 
-# ── criterion 8: rich-ingest writes knowledge and tasks, never memory ──
+# ── rich-ingest writes knowledge and tasks, never memory ──
 
 
 def test_rich_ingest_writes_no_memory():
@@ -372,7 +372,7 @@ def test_every_lens_tolerates_its_own_failure():
     assert all((n.config or {}).get("allow_failure") for n in lenses)
 
 
-# ── criterion 9: publish-article records its own approval ──
+# ── publish-article records its own approval ──
 
 
 def test_publish_article_appends_a_decision_at_the_gate():
@@ -405,7 +405,7 @@ def test_publish_article_reviews_from_two_independent_angles():
     assert len(reviewers) == 2
 
 
-# ── criterion 4: retrieval reaches prompts fenced and budgeted ──
+# ── retrieval reaches prompts fenced and budgeted ──
 
 
 def test_every_slate_template_fences_what_it_retrieves():
@@ -429,7 +429,7 @@ def test_every_slate_template_fences_what_it_retrieves():
 
 def test_the_synthesis_template_spends_exactly_one_model_call():
     """The whole reason the retrieve and persist halves are ACTIONS. Doing either through a stage
-    would triple the cost of the pattern the plan is built around."""
+    would triple the cost of the pattern this template is built around."""
     from personalclaw.workflows.bundled_defs import read_template
     from personalclaw.workflows.models import Node, walk
 

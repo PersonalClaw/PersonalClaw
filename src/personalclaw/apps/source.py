@@ -1,7 +1,7 @@
 """Install-source resolution — local path or git URL → a local directory.
 
-``install``/``update`` (A1/A2) operate on a local source directory. The REST API
-(A4) accepts two source kinds:
+``install``/``update`` operate on a local source directory. The REST API
+accepts two source kinds:
 
 * **local path** — a directory already on disk (dev installs, bundled fixtures).
 * **git URL** — ``https://…``, ``git@…``, or a ``.git`` URL — shallow-cloned into a

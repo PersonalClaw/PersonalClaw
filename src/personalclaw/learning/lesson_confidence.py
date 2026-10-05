@@ -34,7 +34,7 @@ When evidence both supports and refutes a lesson, refutation wins, in this order
    above it.
 3. **Only then** do corroboration and recency multiply into a confidence.
 
-The consequence is the property the change asks for: a lesson can never be injected
+The consequence is the property that matters: a lesson can never be injected
 alongside its own refutation, because refutation is *subtracted from* the
 evidence rather than scored beside it.
 

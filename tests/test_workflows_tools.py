@@ -1,4 +1,4 @@
-"""The workflow chat surface (Slice 6a) — 23 tools over ONE service layer.
+"""The workflow chat surface — 23 tools over ONE service layer.
 
 The load-bearing claims:
 
@@ -760,7 +760,7 @@ class TestPlan:
 
     def test_it_is_honest_about_what_the_planner_knows(self) -> None:
         """The old assertion was "structural scaffold" — honest while the planner was a stub, and
-        stale now that UNIVERSAL-PLANNING S41 has landed. What must stay honest is the SOURCE of
+        stale now that it is not. What must stay honest is the SOURCE of
         the facts: the grounding block is read from this system's live registries, and the planner
         is told to decline rather than invent when the goal needs something absent."""
         out = T._call_tool("workflow_plan", {"goal": "x"})

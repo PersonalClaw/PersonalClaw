@@ -19,7 +19,7 @@ import { join } from 'node:path'
 //
 // The 8 were every native agent row: `agent.model` is optional (each built-in inherits its model from
 // Settings → Models, so it is absent for all of them) while the `· ` was hard-coded onto
-// `agent.description`. `#/tasks` is the same shape done right — cycle 69's `MetaLine` emits
+// `agent.description`. `#/tasks` is the same shape done right — its `MetaLine` emits
 // `(lead.length > 0 || i > 0) ? '· ' : ''` — which is why 98 of the 106 are fine.
 //
 // ── UPDATE: the sweep above asked the wrong question on one axis ────────────────────────────────

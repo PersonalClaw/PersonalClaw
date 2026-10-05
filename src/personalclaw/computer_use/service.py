@@ -2,7 +2,7 @@
 
 This module is the only place a computer-use decision is made, and
 :func:`computer_dispatch` is the only dispatchable entry point in the package. Everything
-else is a step it calls, in the order DESKTOP-COMPUTER-USE §2 lays out:
+else is a step it calls, in this order:
 
 ===== ============================================ ==================================
 step   what                                          owner
@@ -16,8 +16,8 @@ step   what                                          owner
 7      re-snapshot + redact the result                :func:`_redact_result`
 ===== ============================================ ==================================
 
-**Composition is this change's deliverable, and the ORDER is the substance of it.** `DCU-2`
-shipped steps 2/4/5 as three correct, tested, and provably inert functions — its own audit
+**Composition is this module's job, and the ORDER is the substance of it.** Steps 2/4/5
+first shipped as three correct, tested, and provably inert functions — an audit
 censused the production callers and found zero, which is why
 ``tests/test_computer_use_call_sites.py`` exists. Wiring them is therefore not "add three
 calls": a screen that runs after the driver has already pressed the button is not a screen, so
@@ -31,20 +31,20 @@ replaced"*. So the element handed to step 4 comes from the re-walk, never from t
 snapshot. The ordering rail states this precisely — every screen precedes the **acting** driver
 call, and the only driver interaction before them is the re-walk.
 
-**Exactly one SEL row per attempt, and the allowed path writes one too.** `DCU-2` left this
+**Exactly one SEL row per attempt, and the allowed path writes one too.** This was left
 open by design: ``policy`` raises without recording, because ``gate`` is a separate step *a
 caller must remember* — and this module is that caller. Every exit from the chain passes
 through :func:`_audit` exactly once: a refusal records ``outcome="denied"`` with the refusal's
 stable code, and an approved attempt records ``outcome="approved"`` **before** the driver runs.
-Before, not after, for the reason the plan puts the audit at step 5: a driver that wedges, is
+Before, not after, for the reason the audit is step 5: a driver that wedges, is
 killed by its ceiling, or crashes the machine must still have left evidence that the attempt
 was made and permitted. The consequence is deliberate — the row records the *verdict*, not the
 outcome of the action, and a driver failure is reported to the caller rather than written as a
 second row. One attempt, one row, so "every attempt is audited" stays countable.
 
-**The driver is a subprocess, not an import.** §3.5 requires the driver to run as a ceilinged
-spawn so *"a wedged/looping driver is bounded by the kernel, not just a userspace timeout"*.
-`DCU-3` will ship the macOS accessibility FFI; this change ships the harness it runs inside —
+**The driver is a subprocess, not an import.** The driver runs as a ceilinged
+spawn so *a wedged/looping driver is bounded by the kernel, not just a userspace timeout*.
+The macOS accessibility FFI runs inside a harness —
 :mod:`personalclaw.computer_use.driver_host`, spawned through
 ``sandbox.create_subprocess_limited`` (the one seam that carries the resource ceiling) with a
 userspace timeout on top. Today that child answers every operation with a typed
@@ -128,8 +128,8 @@ DRIVER_TIMEOUT_SECS = 20.0
 DRIVER_CHILD_MODULE = "personalclaw.computer_use.driver_host"
 
 #: Click methods, and which of them touch a pointer. ``auto`` is the default and the only
-#: value that resolves to a pure accessibility press — §3 floor 2: *"Coordinate/global paths
-#: must be explicitly named by the model"*, and ``auto`` never resolves onto them.
+#: value that resolves to a pure accessibility press — coordinate/global paths
+#: must be explicitly named by the model, and ``auto`` never resolves onto them.
 _CLICK_METHODS = ("auto", "located", "global")
 _POINTER_METHODS = ("located", "global")
 
@@ -190,13 +190,13 @@ def reset_snapshots() -> None:
 
 
 def live_snapshots() -> tuple[Snapshot, ...]:
-    """The live snapshots, oldest first — a READ-ONLY handle for the live view (`DCU-7`).
+    """The live snapshots, oldest first — a READ-ONLY handle for the live view.
 
     Exists so :mod:`personalclaw.computer_use.render` can mirror what the model already read
     without reaching into ``_SNAPSHOTS`` — a private a view module holding would be a view
     module that can also mutate the store an acting index resolves against. Returns an
     immutable tuple of frozen dataclasses: the caller can render everything and change
-    nothing, which is the §3 floor 7 property stated as a type.
+    nothing, which is "the human-facing views grant nothing" stated as a type.
     """
     return tuple(_SNAPSHOTS.values())
 
@@ -425,15 +425,15 @@ async def _run_driver(op: str, payload: dict[str, Any], *, tool: str) -> dict[st
     """Step 6 (and step 3's read). Run one operation in a ceilinged child process.
 
     ``sandbox.create_subprocess_limited`` is the repo's single seam for an agent-influenced
-    spawn — it prepends the post-exec ceiling shim and never uses ``preexec_fn`` (PHF-1), so
+    spawn — it prepends the post-exec ceiling shim and never uses ``preexec_fn``, so
     the gateway's event loop is not forked. ``tests/test_spawn_ceiling_audit.py`` classifies
     this call site as ceiling-wrapped, which is what keeps the ceiling from being quietly
     dropped later.
 
     Every failure mode becomes a typed refusal, never a silent empty result: a timeout, a
     non-zero exit, unparseable output, and the child's own "no driver for this platform" all
-    reach the model as WHAT/WHY/FIX. §3 floor 6 is explicit that an unsupported platform
-    reports a typed refusal and *"never a silent no-op or a simulated success"*.
+    reach the model as WHAT/WHY/FIX. An unsupported platform
+    reports a typed refusal, *never a silent no-op or a simulated success*.
     """
     from personalclaw.sandbox import PROFILE_TOOL, create_subprocess_limited
 
@@ -546,7 +546,7 @@ def _redact_result(spec: ToolSpec, result: dict[str, Any]) -> dict[str, Any]:
 def _click_method(params: dict[str, Any]) -> str:
     """Resolve the click method. ``auto`` NEVER becomes a pointer method.
 
-    §3 floor 2 in one function: an absent or empty method is ``auto`` (an accessibility press,
+    That rule in one function: an absent or empty method is ``auto`` (an accessibility press,
     no pointer involved), and the two methods that post or warp a real pointer are reachable
     only by a model naming them. Resolution never *widens* — there is no fallback from ``auto``
     to a coordinate click when an element press is unavailable, because that fallback is how a
@@ -568,8 +568,8 @@ def _click_method(params: dict[str, Any]) -> str:
 def _operation(tool: str, params: dict[str, Any]) -> str:
     """The SEL ``operation`` for this attempt — per-tool, and per pointer method.
 
-    §2 wants the pointer paths distinguishable in the audit ("each emits a distinct SEL
-    ``tool_kind``"); ``SecurityEvent`` documents ``tool_kind`` as a *category*, so the
+    The pointer paths must be distinguishable in the audit, and ``SecurityEvent``
+    documents ``tool_kind`` as a *category*, so the
     distinctness lives in ``operation``, which is the field documented to hold the tool name.
     A real-cursor warp is therefore one filter away from every other click.
     """
@@ -599,7 +599,7 @@ async def computer_dispatch(
     The keystone is the first statement executed, which is what
     ``test_every_computer_use_entry_point_guards_first`` requires of every ``computer_*``
     function in this package. It is wrapped only so a refusal is *audited* before it
-    propagates: `DCU-2`'s clause is "every attempt, allowed or refused, produces a SEL record",
+    propagates: the guarantee is "every attempt, allowed or refused, produces a SEL record",
     and an unaudited keystone refusal would leave the most interesting attempt of all — one
     made against a machine the operator never armed — with no trace.
     """
@@ -621,7 +621,7 @@ async def computer_dispatch(
     snap: Snapshot | None = None
     try:
         spec = _spec(tool)
-        # A coordinate click carries no element index — §2 reserves the coordinate path for
+        # A coordinate click carries no element index — the coordinate path is reserved for
         # canvas/custom-drawn UI that exposes no addressable element, so there is nothing to
         # index. It is NOT a bypass of the chain: the method must be named by the model, the
         # app must be named and allowlisted, and the attempt is audited under its own

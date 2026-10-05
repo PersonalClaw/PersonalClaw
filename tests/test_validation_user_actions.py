@@ -316,14 +316,14 @@ class TestBadInputsCaught:
         assert "WHAT:" in result and "FIX:" in result
 
     def test_a_sub_floor_interval_is_flagged(self):
-        """🔴 The floor moved, and S109 made it REAL for the first time.
+        """🔴 The floor moved, and became REAL for the first time.
 
         This asserted `schedule_add`'s schema `min_val=60`. Retiring that alias would have left the
         floor enforced by nothing: measured, `automation_create` with `interval_secs=5` persisted a
         5-second LLM poll with `ok: True` and zero issues, because `MIN_CLOCK_INTERVAL_SECS` was
         declared and read by no code at all.
 
-        A WARNING rather than an error, because R1 makes the floor overridable — the trigger still
+        A WARNING rather than an error, because the floor is overridable — the trigger still
         runs, which is why the old `min_val=60` hard rejection was not the right shape to port.
         """
         from personalclaw.triggers.models import MIN_CLOCK_INTERVAL_SECS, validate_spec
@@ -332,7 +332,7 @@ class TestBadInputsCaught:
         flagged = [i for i in issues if i.path == "spec.interval_secs"]
         assert flagged, "a 5-second LLM poll must not pass silently"
         assert str(MIN_CLOCK_INTERVAL_SECS) in flagged[0].message
-        assert flagged[0].severity != "error", "R1 makes the floor overridable"
+        assert flagged[0].severity != "error", "the floor is overridable"
         assert not [
             i
             for i in validate_spec(

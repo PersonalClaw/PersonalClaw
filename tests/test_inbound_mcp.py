@@ -90,7 +90,7 @@ class TestSurfaceToken:
         assert "inbound token create mcp" in problem
 
     def test_created_token_is_long_and_lands_in_the_credential_store_at_0600(self, tmp_path):
-        """EA-1 moved surface tokens from a bespoke dotfile to `save_credential`.
+        """Surface tokens moved from a bespoke dotfile to `save_credential`.
 
         So the assertion is about the CREDENTIAL STORE, not `<home>/.inbound_mcp_token`
         (which no longer exists): the token is retrievable through `get_credential`, and
@@ -717,7 +717,7 @@ class TestAudit:
     ):
         """An argument refusal is a refusal, so it must record a reason like the others.
 
-        MRI-5 read the live audit file after a client drive: `unknown tool`, `rate limit`,
+        A read of the live audit file after a client drive: `unknown tool`, `rate limit`,
         `GET not supported` and the kill switch were all there, but a rejected ARGUMENT
         recorded as a plain 200 with no reason — so it never reached SEL either, and a
         caller probing argument shapes left no denied trail. This module's docstring
@@ -840,7 +840,7 @@ class TestConfigWiring:
         assert "/mcp" in _BYPASS_EXACT
 
 
-# ── The curated tool table (Session 2) ───────────────────────────────────────
+# ── The curated tool table ───────────────────────────────────────────────────
 
 _VALID_ARGS = {
     "memory_recall": {"query": "anything"},
@@ -945,7 +945,7 @@ class TestArgumentValidation:
             _call("memory_recall", {"query": "x", "limit": True})
 
     def test_out_of_range_limits_clamp_rather_than_error(self):
-        """§C3 says clamp: an over-large limit is optimism, not an error, and the cap
+        """Clamp, by design: an over-large limit is optimism, not an error, and the cap
         is ours to enforce either way."""
         for limit in (9999, 0, -5):
             assert _body(_call("memory_recall", {"query": "x", "limit": limit}))
@@ -1196,7 +1196,7 @@ class TestProtocolNegotiation:
 
     @pytest.mark.asyncio
     async def test_a_stock_sdk_clients_default_revision_still_handshakes(self, monkeypatch):
-        """The regression that MRI-5 caught: a newer client default must not be fatal.
+        """The regression the real-client drive caught: a newer client default must not be fatal.
 
         Asserting against the installed SDK's own `LATEST_PROTOCOL_VERSION` rather than a
         frozen string, because the defect was precisely that ours falls behind the

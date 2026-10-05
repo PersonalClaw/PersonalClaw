@@ -308,7 +308,7 @@ _SPECIAL = {
     # memory.push_min_confidence is a probability clamped to [0,1] by load() — the
     # generic rule's out-of-range value would (correctly) come back clamped.
     ("memory", "push_min_confidence"): 0.55,
-    # Clamped the same way since it gained a Settings control (settings B10).
+    # Clamped the same way since it gained a Settings control.
     ("memory", "semantic_confidence_threshold"): 0.65,
     # memory.vault_mode is enum-constrained (off|mirror|two_way) — a generated "off-x"
     # would (correctly) be refused by load() and fall back through the legacy
@@ -557,7 +557,7 @@ def test_updates_fields_in_editable_allowlist():
 
 
 def test_legacy_auto_update_true_maps_to_staged_on_stable(cfg_file):
-    """RUM-1 backfill: a home with legacy `auto_update=true` (and no `updates` block)
+    """Backfill: a home with legacy `auto_update=true` (and no `updates` block)
     loads to `updates.auto="staged"` + `channel="stable"` — the existing unattended-update
     git user stops riding raw main and starts riding stable release tags."""
     cfg_file.write_text(json.dumps({"auto_update": True}), encoding="utf-8")
@@ -567,20 +567,20 @@ def test_legacy_auto_update_true_maps_to_staged_on_stable(cfg_file):
 
 
 def test_legacy_auto_update_false_maps_to_off(cfg_file):
-    """RUM-1 backfill (known-false case): `auto_update=false` maps to notify-only."""
+    """Backfill (known-false case): `auto_update=false` maps to notify-only."""
     cfg_file.write_text(json.dumps({"auto_update": False}), encoding="utf-8")
     assert AppConfig.load().updates.auto == "off"
 
 
 def test_legacy_update_dev_mode_true_maps_to_nightly(cfg_file):
-    """RUM-1 backfill: a home with legacy `dashboard.update_dev_mode=true` loads to
+    """Backfill: a home with legacy `dashboard.update_dev_mode=true` loads to
     `channel="nightly"` — the git-only track-main opt-in becomes the nightly channel."""
     cfg_file.write_text(json.dumps({"dashboard": {"update_dev_mode": True}}), encoding="utf-8")
     assert AppConfig.load().updates.channel == "nightly"
 
 
 def test_legacy_update_dev_mode_false_stays_stable(cfg_file):
-    """RUM-1 backfill (known-false case): dev-mode off leaves the default stable channel."""
+    """Backfill (known-false case): dev-mode off leaves the default stable channel."""
     cfg_file.write_text(json.dumps({"dashboard": {"update_dev_mode": False}}), encoding="utf-8")
     assert AppConfig.load().updates.channel == "stable"
 

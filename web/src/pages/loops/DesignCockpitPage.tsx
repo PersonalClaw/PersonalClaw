@@ -101,7 +101,7 @@ export const TOKEN_EDIT_HELD = HELD_CHANGE_REASON
 export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuildWithChat, query, setQuery }: {
   id: string; onBack: () => void; onDeleted?: () => void; onOpenProject?: (projectId: string) => void
   // Open a project-bound chat seeded to build/mix components for THIS design system on
-  // the canvas (D4 agentic chat). Given the loop + its resolved tokens for the seed.
+  // the canvas (agentic chat). Given the loop + its resolved tokens for the seed.
   onBuildWithChat?: (loop: Loop) => void
 } & Partial<Pick<RouteProps, 'query' | 'setQuery'>>) {
   const [loop, setLoop] = useState<Loop | null>(null)
@@ -343,7 +343,7 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
                 an adjacent composer rather than turning a setting on. */}
             {active && <HeaderControl icon={MessageSquarePlus} label="Nudge" variant="secondary" ariaExpanded={nudgeOpen} onClick={() => setNudgeOpen((v) => !v)} />}
             {/* Agentic build — open a chat to build/mix components for this design system
-                on the canvas (D4). Loop-aware via the seed regardless of a project. */}
+                on the canvas. Loop-aware via the seed regardless of a project. */}
             {onBuildWithChat && <HeaderControl icon={MessageSquare} label="Build with chat" variant="secondary" onClick={() => onBuildWithChat(loop)} />}
             {!active && <HeaderControl icon={Trash2} label={confirmDelete ? 'Confirm delete?' : 'Delete'} danger priority="low" onClick={del} />}
           </HeaderActions>
@@ -360,7 +360,7 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
         </div>
       )}
 
-      {/* Dedicated status bar (item 14) — one row below the header carrying the
+      {/* Dedicated status bar — one row below the header carrying the
           execution status: phase trail (the design steps + where the loop is) ·
           status/cycle · elapsed · containing project. The scheme toggle stays at the
           far right (a view control, not status). The title sub-line keeps only the
@@ -393,7 +393,7 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
         </div>
       </div>
 
-      {/* Expandable prompt bar (item 14 / Gap 2) — first line collapsed, full on expand. */}
+      {/* Expandable prompt bar — first line collapsed, full on expand. */}
       <CockpitPromptBar prompt={loop.task || ''} />
 
       <div className="shrink-0 px-2xl pt-2 flex items-center gap-1 border-b border-outline-variant/30">

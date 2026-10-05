@@ -11,7 +11,7 @@ the decisions out of the check, and proposals kept it.
 Now the row is published at once, marked ``checking``, and its one notification waits for the
 verdict, which a worker fetches. When it arrives the row is annotated. A REFUTED claim files a row
 nobody has touched under Filtered and its notification stays withheld (Restore replays it), which
-is what INU-6 did before, only later. A row you already opened or answered stays where you put
+is what happened before, only later. A row you already opened or answered stays where you put
 it: a verdict annotates it and moves nothing.
 
 Two things a restart used to strand are settled when the gateway attaches its Inbox: a check
@@ -228,7 +228,7 @@ def test_a_caller_with_no_loop_is_not_held_either(store, model, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_refuted_files_a_row_nobody_has_touched_under_filtered(store, model):
-    """What INU-6 did before, only later: filed, notification withheld, Restore can replay it."""
+    """What happened before, only later: filed, notification withheld, Restore can replay it."""
     state = MagicMock()
     model.verdict = "REFUTED"
     item_id = _propose(state, store, "Add a skill for a tool you do not have")

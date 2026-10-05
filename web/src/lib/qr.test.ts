@@ -3,7 +3,7 @@ import { QUIET_ZONE, encodeQr, formatField, qrPath, versionField } from './qr'
 
 // ── Proving a hand-written QR encoder, without re-reading it ─────────────────────────────────────
 //
-// `CA-2` declined to write this encoder for one stated reason: "hand-rolling Reed-Solomon +
+// The first version declined to write this encoder for one stated reason: "hand-rolling Reed-Solomon +
 // masking to render a *wrong* QR would be worse than the labelled placeholder". A wrong QR is
 // worse precisely because it LOOKS finished — a screenshot of a garbage symbol is
 // indistinguishable from a screenshot of a good one, and the person who finds out is the owner
@@ -23,8 +23,8 @@ import { QUIET_ZONE, encodeQr, formatField, qrPath, versionField } from './qr'
 //  3. **BCH round-trips** for the format and version fields, brute-forced against every legal
 //     alternative rather than compared to a copy of the expected literal.
 //
-// (`MC-8` additionally round-tripped the RENDERED image through the operating system's barcode
-// detector — recorded in the plan log. That leg needs a decoder binary and is not a unit test.)
+// (The RENDERED image was also round-tripped through the operating system's barcode
+// detector when this landed. That leg needs a decoder binary and is not a unit test.)
 
 // ── An independent reader ───────────────────────────────────────────────────────────────────────
 

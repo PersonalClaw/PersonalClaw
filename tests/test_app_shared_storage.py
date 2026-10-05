@@ -1,4 +1,4 @@
-"""Consented cross-app READ-ONLY file sharing (the mirror of APE-9 messaging).
+"""Consented cross-app READ-ONLY file sharing (the mirror of app-to-app messaging).
 
 The file-sharing seam reuses the shape: DOUBLE-DECLARATION (the sharer opts in with
 ``storageShared`` and the consumer names it in ``storageRead``), DENY-BY-DEFAULT, FENCED

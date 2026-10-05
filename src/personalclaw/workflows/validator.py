@@ -254,11 +254,11 @@ def validate_node_tree(root: Node, *, strict: bool = False) -> ValidationResult:
 
     _validate_binding_targets(res, nodes, ids_seen)
     levels = _kahn_levels(res, nodes, ids_seen)
-    # ONE edge list, three rules and one scheduler over it: `PP-1` asks whether the producer
-    # can be ordered first, `PP-3` whether the path the reader takes through its output can
-    # exist, `PP-2` whether a hand-written `needs` agrees with what the bindings already say —
-    # and `tick.ordering_for` re-reads the same derivation to admit work. Deriving it twice is
-    # the defect all three changes exist to remove.
+    # ONE edge list, three rules and one scheduler over it: the ordering rule asks whether the
+    # producer can be ordered first, the output-contract rule whether the path the reader takes
+    # through its output can exist, the `needs` rule whether a hand-written `needs` agrees with
+    # what the bindings already say — and `tick.ordering_for` re-reads the same derivation to
+    # admit work. Deriving it twice is the defect all three rules exist to remove.
     edges = dep_ordering_edges(nodes, ids_seen)
     unreadable = _validate_recorded_outputs(res, dict(nodes), edges)
     _validate_dep_ordering(res, [edge for edge in edges if edge not in unreadable])
@@ -298,7 +298,7 @@ def _in_reapable_parallel(path: str, tree: dict[str, Node]) -> bool:
 
 def _has_wait(node: Node) -> bool:
     """Does this subtree contain a `wait`? Subtree, not direct child: the wait is normally
-    inside the watcher body's `sequence`, which is the shape every template in the plan uses."""
+    inside the watcher body's `sequence`, which is the usual watcher shape."""
     return any(n.kind == NodeKind.WAIT for _p, n in walk(node))
 
 
@@ -411,8 +411,8 @@ def _validate_shape(
                     "responds and exhaust the run budget",
                     path,
                 )
-        # A loop MAY declare a `SupervisorPolicy`. It is authoring-time validated but
-        # deliberately not yet read by the engine — PP-15 is the wiring owner.
+        # A loop MAY declare a `SupervisorPolicy`. It is authoring-time validated here, and
+        # the engine reads it through loop convergence.
         if "supervisor" in cfg:
             _validate_supervisor(res, path, cfg.get("supervisor"))
 
@@ -612,13 +612,13 @@ def run_identity_sentence(keys: list[str]) -> str:
 
 
 def _validate_supervisor(res: ValidationResult, path: str, raw: Any) -> None:
-    """Authoring-time validation of a loop's `SupervisorPolicy` declaration (PP-14).
+    """Authoring-time validation of a loop's `SupervisorPolicy` declaration.
 
     The closed field set IS the contract: an UNKNOWN top-level field is an error, while a
     missing one is tolerated by the parser's defaults. Bad enum VALUES are flagged too, each
     against the vocabulary that already owns it (reused, never re-minted). This is a pure
-    authoring check — nothing here reads a parsed policy, and the engine is unchanged (PP-15
-    is the wiring owner). Imported lazily so `validator` stays import-cheap and cycle-free.
+    authoring check — nothing here reads a parsed policy, and the engine is unchanged.
+    Imported lazily so `validator` stays import-cheap and cycle-free.
     """
     # Local import: keeps the declaration module (and its transitive loop/judge imports) off
     # `validator`'s import path.
@@ -679,7 +679,7 @@ def _validate_convergence(
     convergence_fields: frozenset[str],
     done_signals: frozenset[str],
 ) -> None:
-    """Authoring-time validation of a ``supervisor.convergence`` block (PP-16).
+    """Authoring-time validation of a ``supervisor.convergence`` block.
 
     The vocabularies are passed in rather than imported again: ``_validate_supervisor`` already
     paid the lazy import, and re-importing here would be a second copy of the same contract.
@@ -842,7 +842,7 @@ def _validate_binding_targets(
     A typo in a binding is a run that fails at ready-time with a BindingError; catching it
     now is free.
 
-    `needs` is resolved against the WHOLE spec (`PP-2`), not against the enclosing
+    `needs` is resolved against the WHOLE spec, not against the enclosing
     `parallel`'s siblings. The sibling-only rule this replaces refused a cross-container edge
     outright, on the grounds that it "would make the tree a graph and break the frontier's
     locality" — but the frontier now honours a derived ordering edge between any two nodes, so
@@ -879,7 +879,7 @@ EDGE_NEEDS = "needs"
 class DepEdge:
     """One ordering edge between two nodes, and whether the engine can honour it.
 
-    ONE list carries both origins (`PP-2`): a `{{nodes.<producer>…}}` binding and a
+    ONE list carries both origins: a `{{nodes.<producer>…}}` binding and a
     hand-written `needs` are the same relation seen from two sides, and deriving them
     separately is precisely the two-edge-lists defect this plan exists to remove. Every
     consumer — the ordering rule, the contract rule, the `needs` cross-check and the
@@ -999,7 +999,7 @@ def _ordering_verdict(
     (in a `parallel`, a `foreach` body, a `branch` case) is still terminal when that
     sibling is, because a container completes only after its children do.
 
-    **`PP-2` widened the question this answers.** It used to be "does the spec ALREADY order
+    **The question this answers is wider than it was.** It used to be "does the spec ALREADY order
     the producer first", where the only orderings that counted were container order and a
     sibling `needs` — so two concurrent legs of a `parallel` were unordered and the author had
     to hand-write the edge. The frontier now enforces the derived edge itself
@@ -1055,7 +1055,7 @@ def _ordering_verdict(
         assert parent is not None
         if _needs_reaches(parent, r_slot[2], p_slot[2]):
             return True, f"a `needs` chain inside the parallel at {lca}"
-        # Concurrent legs of a parallel. Before `PP-2` this was a refusal telling the author
+        # Concurrent legs of a parallel. This used to be a refusal telling the author
         # to hand-write `needs` — and it could only ever be satisfied by an edge between the
         # parallel's DIRECT children, which is why a diamond whose legs rejoin inside nested
         # containers was inexpressible. The frontier holds the reader on this edge now, so the
@@ -1109,11 +1109,11 @@ def dep_ordering_edges(nodes: list[tuple[str, Node]], ids: dict[str, str]) -> li
     (and `WF_UNKNOWN_NEEDS`) already own that, and reporting both would make one typo two
     errors.
 
-    Both origins land in ONE list because there is one relation here, not two (`PP-2`). The
+    Both origins land in ONE list because there is one relation here, not two. The
     engine used to keep a hand-maintained `needs` list for admission and a binding graph for
-    everything else, with nothing checking they agreed; that disagreement is what `PP-1` made
-    visible and what this deletes. `frontier()` consumes this same list, so a reader cannot be
-    admitted under one notion of "ordered first" while the validator checked another.
+    everything else, with nothing checking they agreed; that disagreement is what the ordering
+    rule made visible and what this deletes. `frontier()` consumes this same list, so a reader
+    cannot be admitted under one notion of "ordered first" while the validator checked another.
     """
     parents = _parent_slots(nodes)
     tree = dict(nodes)
@@ -1154,7 +1154,7 @@ def dep_edges_for_root(root: Node) -> list[DepEdge]:
 
 
 def _validate_dep_ordering(res: ValidationResult, edges: list[DepEdge]) -> None:
-    """Refuse a binding whose producer is not ordered before its reader (`PP-1`).
+    """Refuse a binding whose producer is not ordered before its reader.
 
     The engine keeps two edge lists and nothing checked they agree. Admission reads
     `needs` and container order only (`tick._visit_parallel`); bindings are a separate
@@ -1164,15 +1164,15 @@ def _validate_dep_ordering(res: ValidationResult, edges: list[DepEdge]) -> None:
     field exist"* pointing the author at an id that was perfectly correct. Locally
     plausible, globally wrong, and only discoverable by running it.
 
-    `PP-1` added no runtime behaviour — the check existed purely so the disagreement was a
-    typed authoring-time refusal instead of a mid-run failure. `PP-2` then removed the
-    disagreement itself by making the frontier consume this very list.
+    The rule added no runtime behaviour — the check existed purely so the disagreement was a
+    typed authoring-time refusal instead of a mid-run failure. The disagreement itself is gone
+    now that the frontier consumes this very list.
 
     Runs AFTER `_kahn_levels` and stays quiet when a cycle was found: on a cyclic graph the
     only advice this rule can give ("order the producer first") is the advice that closes
     the loop, so `WF_CYCLE` is both the truer fact and the one an author must fix first.
 
-    **`PP-2` narrowed what reaches this rule.** The frontier now holds a reader until the
+    **What reaches this rule is narrower now.** The frontier now holds a reader until the
     producers its bindings name are terminal, so "they run concurrently" is no longer an
     unordered edge — it is an edge the scheduler honours. What is left is the set of
     structural contradictions no wait can resolve, where the run would hang instead of
@@ -1367,7 +1367,7 @@ def _validate_branch_reads(
 
 
 def _validate_needs(res: ValidationResult, edges: list[DepEdge]) -> None:
-    """Check a hand-written `needs` AGAINST the derived set instead of trusting it (`PP-2`).
+    """Check a hand-written `needs` AGAINST the derived set instead of trusting it.
 
     `needs` used to be the engine's only admission input and was refused unless it named a
     sibling of the same `parallel`. Now that ordering is derived from bindings, a `needs` has
@@ -1377,7 +1377,7 @@ def _validate_needs(res: ValidationResult, edges: list[DepEdge]) -> None:
     **A `needs` the structure cannot honour is an ERROR.** `needs: ["later"]` on the first
     child of a `sequence` that runs `later` third is not an ordering, it is a contradiction:
     the frontier would hold the reader for a producer the sequence will not start until the
-    reader finishes, and the run hangs. Before `PP-2` this was invisible — `needs` outside a
+    reader finishes, and the run hangs. This used to be invisible — `needs` outside a
     `parallel` was inert, so the author's declared ordering silently did nothing at all.
     Honouring it globally is what turns that dead declaration into either a real edge or a
     real error, and the error is much the better of the two.
@@ -1387,12 +1387,12 @@ def _validate_needs(res: ValidationResult, edges: list[DepEdge]) -> None:
     the binding says, and the two can now only ever drift apart. Deleting it changes nothing
     about the schedule, which is what makes this the safe half to report.
 
-    **Deviation from the plan's step 3, recorded deliberately.** The plan asked for the
-    opposite warning — on a `needs` ABSENT from the derived set — as "either real non-dataflow
-    ordering or a stale edge". But absence is now the field's ONLY legitimate use, so that
-    warning would fire on every correct `needs` in the tree while carrying no way to say "yes,
-    I meant it". `PP-3`'s warning in this same file was scoped for exactly that reason: a rule
-    that fires on the normal case is how an author learns to skim validator output. The origin
+    **Why not the opposite warning.** A warning on a `needs` ABSENT from the derived set would
+    flag it as "either real non-dataflow ordering or a stale edge". But absence is now the
+    field's ONLY legitimate use, so that warning would fire on every correct `needs` in the
+    tree while carrying no way to say "yes, I meant it". The output-contract warning in this
+    same file was scoped for exactly that reason: a rule that fires on the normal case is how
+    an author learns to skim validator output. The origin
     tag is on every `DepEdge`, so an inspection surface can still show which `needs` carry no
     dataflow without spending the author's attention on it at every save.
 
@@ -1499,7 +1499,7 @@ def output_contract_reads(
     Only the FIRST segment is judged. `required_keys` is a promise about the top level of an
     object and says nothing about what lives inside `output.findings`, so checking deeper
     would mean inventing nesting vocabulary the engine cannot enforce — the one thing this
-    atom must not do.
+    check must not do.
     """
     contracts = _declared_contracts(nodes)
     out: list[ContractRead] = []
@@ -1538,7 +1538,7 @@ def contract_reads_for_root(root: Node) -> list[ContractRead]:
 def _validate_output_contract(
     res: ValidationResult, nodes: list[tuple[str, Node]], edges: list[DepEdge]
 ) -> None:
-    """Cross-check `output_contract` against the bindings that READ it (`PP-3`).
+    """Cross-check `output_contract` against the bindings that READ it.
 
     `engine.check_output_contract` is a good gate that runs before any binding resolves, and
     it only ever looks at the producer. The reader was checked independently and the edge
@@ -1548,11 +1548,11 @@ def _validate_output_contract(
     rescue it — `_walk_path` raises before any pipe runs — so an unsatisfiable path is a
     dead run, which is why it is an ERROR.
 
-    An unordered edge (`PP-1`) and an unsatisfiable path are reported TOGETHER when both
-    hold, unlike the unknown-id case PP-1 suppresses: a typo'd id is one defect wearing two
-    hats, whereas ordering and key-correctness are two independent fixes.
+    An unordered edge and an unsatisfiable path are reported TOGETHER when both
+    hold, unlike the unknown-id case the ordering rule suppresses: a typo'd id is one defect
+    wearing two hats, whereas ordering and key-correctness are two independent fixes.
 
-    **The warning is scoped to specs that use contracts, and that is a deviation worth
+    **The warning is scoped to specs that use contracts, and that choice is worth
     naming.** Censused over the bundled library: 19 templates, 18 of them carrying 145
     distinct `.output` reads (100 at a sub-path), and ZERO declaring an `output_contract`. An
     unconditional warning would therefore fire 77 times across 18 of 19 shipped templates
@@ -1612,7 +1612,7 @@ def _kahn_levels(
 
     Edges come from BINDINGS (`{{nodes.a.output}}`) and from `needs` only. This is not a
     schedule: container semantics (a `sequence` running children in order, a `loop`
-    repeating its body) are the frontier's job in Slice 1, so a container with no
+    repeating its body) are the frontier's job, so a container with no
     bindings correctly lands in level 0 beside nodes it structurally precedes.
 
     The purpose here is narrower and worth keeping narrow — reject a spec whose data
@@ -1724,7 +1724,7 @@ def _validate_budget(res: ValidationResult, spec: dict[str, Any]) -> None:
 
 
 def _validate_loop_intake(res: ValidationResult, spec: dict[str, Any]) -> None:
-    """Authoring-time validation of the `loop_field` input markers (PP-16).
+    """Authoring-time validation of the `loop_field` input markers.
 
     Checked here and not only in `loop_aliases.template_intake` because that reader is tolerant on
     the same terms as every parser in `supervisor_policy` — it drops what it cannot use. A dropped
@@ -1775,7 +1775,7 @@ def _validate_loop_intake(res: ValidationResult, spec: dict[str, Any]) -> None:
 
 
 def _validate_wip_invariant(res: ValidationResult, spec: dict[str, Any], root: Node) -> None:
-    """Refuse a spec that declares WIP=1 and also declares a wider fan-out (R5b).
+    """Refuse a spec that declares WIP=1 and also declares a wider fan-out.
 
     `single_active_feature` is a RUN-level invariant, so the runtime enforces it whatever a
     `foreach` says for itself (see `tick._visit_foreach`). That leaves one bad outcome:

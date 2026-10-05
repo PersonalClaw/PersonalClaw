@@ -122,7 +122,7 @@ export function MemoryPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'set
           return (
             // 🪤 `role="tab"` is a PROMISE of the tab keyboard model. Roving tabIndex — exactly one tab
             // in the tab order — plus the shared arrow handler above, because announcing tabs without
-            // the model is worse than announcing nothing (the ux-689 lesson, one cycle later).
+            // the model is worse than announcing nothing.
             <button key={t.id} type="button" role="tab" aria-selected={on} tabIndex={on ? 0 : -1}
               onClick={() => setTab(t.id)}
               data-type="body-s" className="-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 transition-colors"
@@ -1967,7 +1967,7 @@ function EntityBacklinks({ entity }: { entity: MemoryEntity }) {
 
 /** The Slots editor — the one place a human writes to an always-injected register.
  *
- *  Three MGAV-8 contracts are visible here rather than hidden: the per-slot budget is shown as
+ *  Three slot contracts are visible here rather than hidden: the per-slot budget is shown as
  *  a live "n / cap" so an append is not a surprise; an over-cap append renders the server's
  *  TRIM PROPOSAL (which of your own lines to drop) instead of truncating or failing silently;
  *  and removing a line RETIRES it — the line stays tombstoned so no reflection pass can
@@ -2197,7 +2197,7 @@ function MemoryMaintenance({ stats, onChanged }: { stats: MemoryStats | null | u
   )
 }
 
-// ── Learned preferences (C15 facets) ─────────────────────────────────────────
+// ── Learned preferences ──────────────────────────────────────────────────────
 // The user-facing half of the pinned/forgotten overrides. The flags persisted and every
 // scoring branch read them, but nothing outside the tests could SET one, so the documented
 // override was unreachable (#1783). It sits directly under "Injection & behavior" because
@@ -2384,7 +2384,7 @@ function SettingsTab({ stats, onConsolidated, focusPref }: {
         <Field label="Idle before history rollup (hours)" hint="A conversation idle this long gets consolidated into memory.">
           <NumberField value={s.history_idle_hours} onChange={(v) => patch({ history_idle_hours: v })} step={0.5} min={0.5} width="w-28" ariaLabel="Idle before history rollup (hours)" />
         </Field>
-        {/* The gate the memory store applies to every LEARNED fact (settings B10). Its only control
+        {/* The gate the memory store applies to every LEARNED fact. Its only control
             used to be a "Confidence Threshold" on the Vector Memory provider that nothing read —
             that field is gone, and this writes the value the store reads live. It rides the
             `_EDITABLE_CONFIG` PATCH (one writer), not the settings PUT above. */}
@@ -2423,7 +2423,7 @@ function SettingsTab({ stats, onConsolidated, focusPref }: {
         {/* These three ride `patchConfig` against the `_EDITABLE_CONFIG` allowlist rather
             than the memory-settings PUT above. Not a second write path for one field —
             each of them has NO other writer: the topology and attribution flags were
-            allowlisted by MGAV-5 and had no control at all until now, and the slots budget
+            allowlisted earlier and had no control at all until now, and the slots budget
             is new. The fields the PUT already owns keep riding it (one writer per field). */}
         <Row label="Topology orientation" hint="At the start of a new session, add a tiny map of the neighbourhoods in your memory graph (“people around project X”) so the assistant knows which areas exist before it searches. Off by default: it spends a little context every new session, and says nothing useful until the graph has distinct groups.">
           <Toggle on={Boolean(s.graph_topology_in_context)} onChange={(v) => patchCfg('graph_topology_in_context', v)}
@@ -2464,7 +2464,7 @@ function SettingsTab({ stats, onConsolidated, focusPref }: {
   )
 }
 
-/** Daily-digest nodes (mem-tree) — the per-day "what happened on day D" rollups the
+/** Daily-digest nodes — the per-day "what happened on day D" rollups the
  *  maintenance cadence builds from episodic activity. Read view + a Build-now action
  *  (forces a synchronous rebuild for days not yet digested). */
 function DailyDigestSection() {

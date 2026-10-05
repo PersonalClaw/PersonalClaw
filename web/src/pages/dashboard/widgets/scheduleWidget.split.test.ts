@@ -1,12 +1,12 @@
 /**
- * The archive split, now a FOLD (builds on S165).
+ * The archive split, now a FOLD (builds on the work-first ordering).
  *
  * "inert outcomes collapse to ledger rows and archive out of the default inbox view — the runs
- * inbox is for what the machine DID." S165 ordered work-first, but ordering only helps until the
+ * inbox is for what the machine DID." Ordering work-first only helps until the
  * real fires run out: a minutely trigger inside quiet hours (11 `skipped_gate` rows + ONE `ran`)
- * still buried the real fire once the six visible slots filled. WF2AUT-10 archives the suppressed
+ * still buried the real fire once the six visible slots filled. The fold archives the suppressed
  * rows behind a disclosure — the default view is work; the gate hits are one click away, never
- * dropped (§7 criterion 8).
+ * dropped.
  *
  * These tests exercise the SHARED `partitionRuns` helper the widget uses — not an inline copy. The
  * earlier `order()` in this file WAS that second copy, and the widget's own comments record that a
@@ -46,7 +46,7 @@ describe('the archive fold in the Schedule widget', () => {
   })
 
   it('does NOT drop the suppressed rows — they reveal on demand', () => {
-    // §7 criterion 8: zero silent drops. Expanding shows every gate row.
+    // Zero silent drops: expanding shows every gate row.
     const all = expandedView(quietHours(), ['REAL'])
     expect(all).toHaveLength(12)
     expect(all.filter((r) => r.outcome === 'skipped_gate')).toHaveLength(11)

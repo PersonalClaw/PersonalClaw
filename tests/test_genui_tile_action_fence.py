@@ -1,6 +1,6 @@
 """A tile-widget action re-fires the tile's bound workflow — and ONLY inside its frozen set.
 
-AMBIENT-SURFACES §5.4 / change AS-6, third routing case: *"tile widgets → actions run through
+The third genui action-routing case: *"tile widgets → actions run through
 the tile's bound workflow (re-fire with bound args), subject to the trigger's frozen
 capability set — a rendered button can never introduce actions the trigger didn't declare."*
 
@@ -12,10 +12,10 @@ the feature. So every refusal test here is paired with a CONTROL leg proving the
 is permitted and really re-fires, and the pair is asserted on the same tile.
 
 The frozen set is derived from the tile's SAVED binding (`frozen_capabilities`), never from the
-request — see the DEVIATION note in `dashboard/tile_actions.py` about "the trigger's" set: a
-tile cannot bind a trigger until AUTOMATION-SUBSTRATE step 8 lands (`TileRefresh.mode: "view"`
-is deliberately absent), so the tile's binding is what is frozen today, enforced through the
-SAME helper the trigger fence uses (`triggers.screen.unfenced_actions`).
+request — see the note in `dashboard/tile_actions.py` about "the trigger's" set: a tile cannot
+bind a trigger yet (`TileRefresh.mode: "view"` is deliberately absent), so the tile's binding
+is what is frozen today, enforced through the SAME helper the trigger fence uses
+(`triggers.screen.unfenced_actions`).
 """
 
 from __future__ import annotations

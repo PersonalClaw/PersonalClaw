@@ -17,7 +17,7 @@ import { join } from 'node:path'
 // back to `#ff6b5b`), which is worth a sentence; deleting one you are not using costs only the theme,
 // so it says less. Same discipline as the intent-delete confirm, which counts the matches it will take.
 //
-// 🪤 WHAT THIS CYCLE ALSO FALSIFIED, recorded so it is not "found" again. The ux-605 census listed six
+// 🪤 WHAT THIS CHANGE ALSO FALSIFIED, recorded so it is not "found" again. An earlier census listed six
 // ungated delete sites. Four of them (`deleteULoop` in the loops list, both cockpits and the SDLC card)
 // are NOT ungated: they use a deliberate two-step arm-then-confirm, each with a comment saying why —
 // "so a hover misclick can't destroy a finished loop's history". The census's regex looked for
@@ -56,7 +56,7 @@ describe('a saved theme is not deleted on one click', () => {
 
   it('and spells it the American way, like the rest of the shipped copy', () => {
     // 🪤 The first draft said "colours" and `exclusiveChoiceNamed`'s spelling rail caught it. That rail
-    // scans this whole file; this one pins the two strings this cycle added, so a future edit to them
+    // scans this whole file; this one pins the two strings this change added, so a future edit to them
     // fails here — next to the copy — rather than in a test about mode pills.
     // Anchored on the phrase BOTH bodies share. A wider net (`undone|colors`) caught six strings —
     // this file legitimately ships `colors` in token-group labels.

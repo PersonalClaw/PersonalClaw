@@ -14,11 +14,11 @@ import { join } from 'node:path'
 // which is precisely what a 2px overflow eats. The same argument the agent-row cycle made at 1.1x — and
 // the reason the ratio alone is a bad classifier for this family.
 //
-// 🔑 THIS IS THE LAST UNBLOCKED SLICE OF THE TRUNCATION FAMILY. The app-wide census had 52 remaining
+// 🔑 THIS IS THE LAST UNBLOCKED PART OF THE TRUNCATION FAMILY. The app-wide census had 52 remaining
 // hits; classified, they are: these identifiers, 37 long-prose clips on `#/prompts` (one component, one
-// decision, blocked on the owner's prose-vs-layout ruling), the page/header labels that belong to the
+// decision, waiting on a prose-vs-layout design call), the page/header labels that belong to the
 // open header left-slot taste call, and singles of user prose. Nothing else is shippable without a
-// ruling, which is why this cycle is small.
+// design decision, which is why this change is small.
 //
 // 🪤 THE RATIO HEURISTIC MISCLASSIFIED THREE ROWS AND I ALMOST SHIPPED THEM. `#/prompts` has three hits
 // at 1.29-1.5x that look identifier-shaped by ratio but are `· `-prefixed PROSE from the same component

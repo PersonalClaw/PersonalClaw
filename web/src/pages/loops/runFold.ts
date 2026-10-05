@@ -3,7 +3,7 @@
  *  Code Cockpit, in-chat SdlcProgressCard, Plan Review). No React, no fetch: it's
  *  a pure function of (snapshot, transient-flags), so the "which events must be
  *  handled" contract is UNIT-TESTABLE instead of a hand-maintained comment spread
- *  across three inline switches (P16).
+ *  across three inline switches.
  *
  *  Split of responsibilities:
  *   • `foldRunSnapshot(loop)` — everything derivable from the persisted snapshot

@@ -1,4 +1,4 @@
-"""`{{secret:KEY}}` in a trigger's action config (§7 item 6 / decision 11).
+"""`{{secret:KEY}}` in a trigger's action config.
 
 🔴 THE DEFECT. Workflows have carried this form — the validator REJECTS an inline
 credential and tells the author to use `{{secret:KEY}}`, and three surfaces say so in their error

@@ -1,4 +1,4 @@
-"""The login front door (REMOTE-USER-AUTH C3 / S3).
+"""The login front door.
 
 **This is one more ISSUER of the existing session token, not a second way to be authorized.**
 `POST /api/auth/login` verifies a password and then mints through the same
@@ -64,7 +64,7 @@ from personalclaw.request_validation import json_object_body
 
 logger = logging.getLogger(__name__)
 
-#: Stable error codes (C3). Never reword — clients and docs match on these strings.
+#: Stable error codes. Never reword — clients and docs match on these strings.
 ERR_INVALID = "auth_invalid_credentials"
 # Origin rejection is a MISCONFIGURATION signal, not a secret: the origin is the caller's
 # own address, and telling them "wrong password" for it sends the owner to reset a
@@ -103,8 +103,8 @@ def _client_ip(request: web.Request) -> str:
 
     Uses the TCP remote ONLY. `X-Forwarded-For` is deliberately ignored here: an untrusted
     peer can set it to anything, so trusting it would let an attacker reset their own failure
-    counter every request while also letting them lock out an arbitrary victim address. S4
-    introduces trusted-proxy handling; until then the honest value is the connection's.
+    counter every request while also letting them lock out an arbitrary victim address.
+    Trusted-proxy handling is a separate concern; here the honest value is the connection's.
     """
     return request.remote or "unknown"
 
@@ -250,8 +250,8 @@ def _set_session_cookie(request: web.Request, resp: web.Response, token: str, tt
     """Set the session cookie the middleware already reads.
 
     Same name, same flags as the middleware's own mint, so the two are indistinguishable —
-    including `Secure`, which comes from the SAME `secure_cookies()` the middleware uses
-    (T4.1). Sharing that one resolver is the point: a login cookie that was `Secure` while a
+    including `Secure`, which comes from the SAME `secure_cookies()` the middleware uses.
+    Sharing that one resolver is the point: a login cookie that was `Secure` while a
     link cookie was not would be two different security postures for one session model. And
     the same Max-Age rule: the session plus the grace that lets its end be explained
     (``SIGNED_OUT_NOTICE_GRACE_SECS``) — the gateway refuses it when the session ends.
@@ -679,7 +679,7 @@ document.getElementById('f').addEventListener('submit', function (ev) {
     });
   }).then(function (res) {
     if (res.ok) { window.location.assign(PersonalClawOwnerToken.home()); return; }
-    // `json_error` emits {"error": {"code", "message"}} (PL-8's one wire envelope). Reading
+    // `json_error` emits {"error": {"code", "message"}} (the one wire envelope). Reading
     // `res.data.error` as a bare string made every MESSAGES lookup miss, so this page only ever
     // said "Sign-in failed." and the auth_totp_required branch below could never fire.
     // An UNMODELLED error (unparseable body, proxy 502) must NOT default to the credentials

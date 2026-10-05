@@ -28,11 +28,11 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // the accessible NAME became "Create projectEnter a name first" — the action stopped being
 // findable by its own name, which is worse than the silence it fixed. An `aria-describedby`
 // target outside the button would need a wrapper element at 100+ call sites. So the reason
-// rides `title`, already the kit's convention for a supplementary description (ruled cycle 37)
+// rides `title`, already the kit's convention for a supplementary description
 // and simultaneously the sighted tooltip.
 //
 // 🪤 `loading` KEEPS THE NATIVE ATTRIBUTE even with a reason. An in-flight button must not be
-// re-clickable, and `aria-busy` already announces the state (cycle 52) — the reason a button is
+// re-clickable, and `aria-busy` already announces the state — the reason a button is
 // unavailable *while working* is self-evident.
 
 describe('an unavailable button says why', () => {
@@ -141,13 +141,13 @@ const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !
 
 describe('the migrated submits pass a reason', () => {
   const ADOPTERS = [
-    // cycle 56 — the five create-submits that proved the primitive
+    // The five create-submits that proved the primitive
     'pages/projects/ProjectsSection.tsx',
     'pages/tasks/TaskForm.tsx',
     'pages/tasks/TaskCreatePage.tsx',
     'pages/agents/AgentCreatePage.tsx',
     'pages/prompts/PromptCreatePage.tsx',
-    // cycle 59 — the rest of the Button-primitive tail, per-form copy read from each form
+    // The rest of the Button-primitive tail, per-form copy read from each form
     'pages/settings/MemoryPanel.tsx',
     'pages/settings/MultiInstanceCard.tsx',
     'pages/settings/DesignPanel.tsx',
@@ -287,7 +287,7 @@ describe('the unexplained-submit tail only shrinks', () => {
 //   "Optimize prompt — type something first"   (name, not description)
 //   "Send message — type a bit more first"     (name, not description)
 //
-// That is the approach cycle 56 measured and ruled against: the button stops being findable by
+// That is the approach that was measured and rejected: the button stops being findable by
 // the name it has when it works, so "find the Send button" fails precisely when the user is
 // stuck. `title` (the accessible DESCRIPTION) is where a reason belongs — the name stays
 // constant across states.

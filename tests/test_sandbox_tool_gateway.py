@@ -1,6 +1,6 @@
 """The loopback-free exec-channel tool gateway.
 
-Success criterion 7 has four clauses. Three are host-side and are verified here against the REAL
+The gateway makes four promises. Three are host-side and are verified here against the REAL
 shim over a REAL pipe pair (no mock channel — the shim is executed as a subprocess exactly as a
 sandboxed agent would run it):
 
@@ -15,7 +15,7 @@ sandboxed agent would run it):
   the same surface, over the same channel: refused under ``REVIEW_ONLY`` (``tool_grants="read"``)
   and served under ``CODING`` (``read_write``). Both directions, because a gateway that refuses
   everything would pass the refusal alone.
-* **the docker/lima clause is NOT verified here.** The container tiers are EI-2/EI-4 and do not
+* **the docker/lima promise is NOT verified here.** The container tiers do not
   exist in this tree (``sandbox_providers`` ships ``none`` only), so "inside a docker/lima
   sandbox" cannot be honestly claimed. What IS claimed is the transport and the policy the
   container tier will use unchanged: the channel is a pipe pair the host created, which is the
@@ -115,7 +115,7 @@ def test_the_shim_contains_no_network_transport_at_all() -> None:
 
 def test_the_host_gateway_never_binds_or_listens() -> None:
     """The host end is a pipe reader/writer. A bind here would be a port on the host side of the
-    same channel — no better than the in-container proxy §5.2 rejects."""
+    same channel — no better than an in-container proxy."""
     source = Path(
         str(__import__("personalclaw.sandbox_providers.tool_gateway", fromlist=["x"]).__file__)
     ).read_text(encoding="utf-8")
@@ -144,7 +144,7 @@ def test_the_shims_environment_carries_no_credential_material() -> None:
 
 
 def test_the_shim_reads_no_environment_beyond_the_channel_and_the_offered_list() -> None:
-    """A shim that read a token out of the environment would defeat clause (b) even with a clean
+    """A shim that read a token out of the environment would defeat promise (b) even with a clean
     launch env, so the source is pinned to the three names it may read."""
     read_names = set(re.findall(r'os\.environ\.get\(\s*"([^"]+)"', SHIM_SOURCE))
     assert read_names == {
@@ -296,7 +296,7 @@ def _run_shim_against(
 def test_pclaw_tool_memory_recall_succeeds_through_the_exec_channel(
     home: Path, tmp_path: Path
 ) -> None:
-    """Clause (a)'s companion: the tool call actually WORKS over the fd channel, with no socket
+    """Promise (a)'s companion: the tool call actually WORKS over the fd channel, with no socket
     anywhere. Driven through the installed shim as a subprocess, not through a mock."""
     from personalclaw.sqlite_compat import probe
 

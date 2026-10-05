@@ -228,8 +228,8 @@ def _takes_the_passed_app(node: ast.AST) -> bool:
 def test_loop_has_a_turn_ledger_writer_via_the_worker_session_app() -> None:
     """The loop engine IS a turn-ledger writer, through its worker session's ``app``.
 
-    Two prior MRT-3 sessions recorded the opposite ("the turn ledger has no loop rows at all")
-    because the census only resolved LITERAL ``source=`` arguments and the loop's spelling is a
+    An earlier census recorded the opposite ("the turn ledger has no loop rows at all")
+    because it only resolved LITERAL ``source=`` arguments and the loop's spelling is a
     runtime value. The chain, each hop asserted below: ``loop/manager.py`` names the worker
     session ``app="loop"`` -> ``state.py`` stores it as ``session._app`` -> ``chat_runner``
     passes ``session._app or "chat"`` as the turn ``source``. ``purpose_for_source`` then hits

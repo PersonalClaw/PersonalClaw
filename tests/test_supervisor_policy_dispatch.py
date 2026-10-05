@@ -206,7 +206,7 @@ def test_the_watchdog_resolves_the_declared_policy_for_every_kind(monkeypatch, c
 
     assert seen, (
         f"the watchdog never resolved a policy for kind {kind!r}. The convergence decision would "
-        f"then be coming from somewhere else — which is the pre-PP-16 pluggable supervisor."
+        f"then be coming from somewhere else — which is the old pluggable supervisor."
     )
     assert seen[0][0] == kind and seen[0][1] == cfg
     resolved = real(kind, cfg)

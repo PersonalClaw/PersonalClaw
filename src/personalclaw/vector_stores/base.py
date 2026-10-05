@@ -18,7 +18,7 @@ WHAT IS EXTERNALIZED, EXACTLY. The **chunk** vector search, and nothing else:
   buys nothing and would double the surface that can be unreachable.
 * **Chunk ROWS stay local.** The external store is an INDEX, not the record store. The
   ``chunks`` table keeps the text, the section/line locator, the embedding BLOB and the
-  RET-4 fingerprint, because re-chunking, re-embedding, staleness detection and the
+  embedding fingerprint, because re-chunking, re-embedding, staleness detection and the
   Doctor all read them. Externalizing the *search* is the whole ask; externalizing the
   record would make an unreachable store a data-loss event instead of a degradation.
 

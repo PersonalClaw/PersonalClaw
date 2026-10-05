@@ -2,20 +2,20 @@
 
 `AuthConfig.from_env()` honors exactly one override — `none` — and returns the
 `local_token` default for everything else. `api_key` and `oauth2` were declared on
-`AuthMode` with no configuration able to select them, and were deleted (ledger 317b), so
+`AuthMode` with no configuration able to select them, and were deleted, so
 they are now two more values that are not a mode. An operator who sets
 `PERSONALCLAW_AUTH_MODE=oauth2` believes they enforced IdP SSO and is in fact on a local
 token — and before this change the runtime said NOTHING.
 
 **This change changes no admission decision.** The effective `AuthMode` for every
 input string, and `effective_bind` for every mode, are byte-identical to the
-pre-SL-8 behaviour; the tests below pin that identity so a future "fix" cannot
+behaviour before this change; the tests below pin that identity so a future "fix" cannot
 quietly start enforcing (or refusing) something. What changes is legibility: a
 warning log line at startup plus a `personalclaw doctor` row, each naming which
 mode was requested, that it was NOT applied, and which mode is in force.
 
 The vacuity floor: an assertion that merely greps for the word "oauth2" in the
-output would pass on the pre-SL-8 tree too (the mode name appeared in docstrings
+output would pass on the pre-change tree too (the mode name appeared in docstrings
 and in the mode enum). So every assertion here demands all THREE facts together —
 the requested value, an explicit not-applied statement, and the effective mode —
 from a real emitted record or real captured stdout.
@@ -58,7 +58,7 @@ def _names_all_three(text: str, *, requested: str, effective: str) -> bool:
 
 @pytest.mark.parametrize("requested", ["oauth2", "api_key"])
 def test_a_deleted_mode_warns(requested, monkeypatch, caplog):
-    """REDS on the pre-SL-8 tree: `from_env()` returned LOCAL_TOKEN and emitted nothing."""
+    """REDS on the pre-change tree: `from_env()` returned LOCAL_TOKEN and emitted nothing."""
     _clear_auth_env(monkeypatch)
     monkeypatch.setenv("PERSONALCLAW_AUTH_MODE", requested)
     with caplog.at_level(logging.WARNING, logger=_MODES_LOGGER):
@@ -141,7 +141,7 @@ def test_classifier_matches_from_env_for_every_input(raw, effective, unhonored, 
 
 
 def test_every_declared_mode_is_selectable():
-    """An `AuthMode` nothing can select is the defect ledger 317b deleted — `api_key` and
+    """An `AuthMode` nothing can select is the defect behind that deletion — `api_key` and
     `oauth2` sat in the enum with their request halves built and no way in. A mode added
     to the enum must be added to the selector in the same change, or this reds."""
     declared = {m.value for m in AuthMode}
@@ -182,7 +182,7 @@ def test_an_absurdly_long_value_is_truncated_in_the_detail():
 # ── no admission change: mode + bind identity, pinned against the old rule ───
 
 
-_PRE_SL8_INPUTS = [
+_OLD_RULE_INPUTS = [
     "",
     "none",
     "NONE",
@@ -197,9 +197,9 @@ _PRE_SL8_INPUTS = [
 ]
 
 
-@pytest.mark.parametrize("raw", _PRE_SL8_INPUTS)
-def test_effective_mode_and_bind_are_byte_identical_to_pre_sl8(raw, monkeypatch):
-    """The pre-SL-8 rule, restated independently: NONE iff the value is `none`."""
+@pytest.mark.parametrize("raw", _OLD_RULE_INPUTS)
+def test_effective_mode_and_bind_are_byte_identical_to_the_old_rule(raw, monkeypatch):
+    """The old rule, restated independently: NONE iff the value is `none`."""
     _clear_auth_env(monkeypatch)
     monkeypatch.setenv("PERSONALCLAW_AUTH_MODE", raw)
     cfg = AuthConfig.from_env()

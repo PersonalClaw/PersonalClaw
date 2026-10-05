@@ -147,7 +147,7 @@ class SkillsMarketplace(ABC):
 
     @property
     def trust_tier(self) -> str:
-        """Provenance tier that modulates the scan verdict (S2). Bundled/native content
+        """Provenance tier that modulates the scan verdict. Bundled/native content
         is trusted; an arbitrary community registry (skills.sh) gets the full gate.
         Returns a :class:`~personalclaw.supply_chain.TrustTier` value string."""
         return "community"
@@ -206,7 +206,7 @@ def read_skill_file_entry(path: Path, rel: str) -> "dict[str, Any]":
 
     Text (UTF-8-decodable) files carry ``contents: str``; anything else carries
     ``data: bytes``. Binaries must NOT be dropped — an icon/asset that goes missing
-    means an incomplete install AND a spurious S6 "added" finding on the untracked
+    means an incomplete install AND a spurious integrity "added" finding on the untracked
     file. Both variants flow through staging, the scan, the commit, and the lock."""
     raw = path.read_bytes()
     try:
@@ -218,7 +218,7 @@ def read_skill_file_entry(path: Path, rel: str) -> "dict[str, Any]":
 def _entry_bytes(entry: "dict[str, Any]") -> bytes:
     """The raw bytes a file entry writes to disk — text ``contents`` UTF-8-encoded, or
     binary ``data`` verbatim. One definition shared by stage, commit, and lock so all
-    three hash/write identical bytes (a fresh install verifies intact under S6)."""
+    three hash/write identical bytes (a fresh install verifies intact)."""
     if "data" in entry:
         data = entry["data"]
         return data if isinstance(data, bytes) else str(data).encode("utf-8")
@@ -546,7 +546,7 @@ class SkillsRegistry:
         *,
         force: bool = False,
     ) -> "InstallResult":
-        """The install CHOKEPOINT (S3): every install routes through here so one gate
+        """The install CHOKEPOINT: every install routes through here so one gate
         covers all marketplaces and each ``install()`` stays a dumb file-writer.
 
         Resolves the registered marketplace by name and delegates to the shared gate
@@ -816,7 +816,7 @@ def install_skill_files(
     """
     skill_dir = record_path(target_base, skill_name, suffix="", kind="skill name")
 
-    # Supply-chain gate (S3): scan ALL incoming content with the shared scanner
+    # Supply-chain gate: scan ALL incoming content with the shared scanner
     # BEFORE writing anything to disk. A skill carries executable instructions +
     # optional scripts — the same install-time gate apps run through. A
     # ``dangerous`` verdict is terminal (never written); the scan runs on the

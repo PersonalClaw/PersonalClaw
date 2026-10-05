@@ -11,7 +11,7 @@ pool. What the pool lacked was concurrency SEMANTICS — three of them:
   went, because a scheduler implemented twice decides differently exactly once and then lies.
 * **TTL'd lease claims.** Without compare-and-swap leases, engine-projected tasks WILL be
   double-executed by concurrent sessions. The claim is a `os.rename`-class primitive, not a
-  read-then-write: S57 measured `unlink`-based single-use failing 36 of 40 races, and a lease that
+  read-then-write: `unlink`-based single-use was measured failing 36 of 40 races, and a lease that
   loses a race is worse than no lease because both holders believe they own the work.
 * **Evented unblock.** A completed task must unblock its dependents; a FAILED one must cascade
   `blocked(kind=dependency_failed)` carrying the blocker's reason. Before this, only
@@ -24,12 +24,12 @@ Measured before building:
   allowlisted in `validation.py::ALLOWED_HOOK_EVENTS`, and the hook UI renders it — so a user can
   configure "when a task finishes" and get nothing. `validation.py` says so itself: "the rest are
   reserved for future firing sites and currently never trigger". This module supplies the payload
-  and the edge-trigger rule that make it fireable. The plan's `TaskCreated` is NOT a shipped event
+  and the edge-trigger rule that make it fireable. A `TaskCreated` event is NOT a shipped event
   name; adding one here would create a vocabulary the hook UI does not render, so task creation
   stays out until the event is declared where users can see it.
 * **Acyclicity is ALREADY enforced server-side** by `tasks/native.py` via
-  `reconcile.would_create_cycle` on both create and update. The plan's "the server-side write path
-  adds the authoritative check" is already true — so this module reuses that function for the
+  `reconcile.would_create_cycle` on both create and update. The server-side write path
+  already holds the authoritative check — so this module reuses that function for the
   pool's edge-planning rather than adding a second cycle checker that could disagree with it.
 """
 
@@ -44,7 +44,7 @@ from typing import Any, Iterable, Sequence
 
 # ── leases ──
 
-#: Hard ceiling on a lease. An hour, per the plan: long enough for a real unit of work, short
+#: Hard ceiling on a lease. An hour: long enough for a real unit of work, short
 #: enough that a crashed holder's task returns to the pool the same day.
 MAX_LEASE_SECS = 3600
 
@@ -120,7 +120,7 @@ def acquire(
     """Decide an acquire. Returns `(lease, error)` — the DECISION, not the write.
 
     Pure so the decision is testable without a filesystem, and so the write path (a flocked
-    read-modify-write on the task's JSON, per the plan) has exactly one rule to implement.
+    read-modify-write on the task's JSON) has exactly one rule to implement.
 
     An EXPIRED lease is takeable, and the taker starts at `renewals=0`: carrying the dead holder's
     renewal count forward would make a stuck task look actively worked.
@@ -274,7 +274,7 @@ def plan_unblock(
 
 
 def coalesce(transitions: Sequence[Transition]) -> tuple[list[Transition], str]:
-    """Collapse a cascade burst into ONE notification, per §1's debounce rule.
+    """Collapse a cascade burst into ONE notification.
 
     A parallel fan-in failure produces N cascade transitions at once; N alerts for one upstream
     failure is the noise that makes a user mute the channel. Returns the transitions plus the
@@ -323,7 +323,7 @@ def should_fire_completion(previous_status: str, new_status: str) -> bool:
     """Whether this status change is a completion worth firing.
 
     Edge-triggered, not level-triggered: a save that rewrites an already-done task must not fire
-    again, or an idempotent projection recompute (which §1 makes the NORMAL path) would fire a
+    again, or an idempotent projection recompute (the NORMAL path) would fire a
     hook per rebuild.
     """
     done = {"done", "complete", "completed"}
@@ -338,8 +338,8 @@ def plan_edges(
 ) -> tuple[list[str], str]:
     """Whether these prerequisite edges are safe to write, via the SHIPPED cycle checker.
 
-    Delegates to `tasks.reconcile.would_create_cycle` rather than re-deriving a DFS. Measured
-    (S60): `tasks/native.py` already calls it on both create and update, so the write path is
+    Delegates to `tasks.reconcile.would_create_cycle` rather than re-deriving a DFS. Measured:
+    `tasks/native.py` already calls it on both create and update, so the write path is
     authoritative today — a second checker here would be a second answer, and the looser one would
     let a deadlock through.
 
@@ -355,7 +355,7 @@ def plan_edges(
     return [], ""
 
 
-# ── hand-off edges (R7) ──
+# ── hand-off edges ──
 
 
 @dataclass
@@ -381,9 +381,9 @@ class HandOff:
         }
 
 
-#: The codified edges the seed library ships, per the plan. `review → fix` carries
+#: The codified edges the seed library ships. `review → fix` carries
 #: `requires_user_request` because a review that auto-proposes fixing what it just criticized reads
-#: as the system arguing with itself — the plan calls this out explicitly.
+#: as the system arguing with itself.
 SEED_HANDOFFS: dict[str, tuple[HandOff, ...]] = {
     "incident-response": (
         HandOff(
@@ -442,7 +442,7 @@ def carry_context(edge: HandOff, outcome: dict[str, Any]) -> dict[str, Any]:
     return {key: outcome[key] for key in edge.context_fields if key in (outcome or {})}
 
 
-# ── blueprint sessions (R16 — the third surfacing mode) ──
+# ── blueprint sessions (the third surfacing mode) ──
 
 
 @dataclass
@@ -543,7 +543,7 @@ def route(
 ) -> SurfaceRoute:
     """Pick the mode for one def.
 
-    The structural heuristic the plan states, with blueprint slotted in: a def that needs
+    The structural heuristic, with blueprint slotted in: a def that needs
     gates, multi-turn stages or a schema is a RUN (it needs the engine); a def explicitly
     marked guided is a BLUEPRINT; everything else is passive text.
 
@@ -551,9 +551,9 @@ def route(
     a blueprint has no engine, so there is nothing to pause, and rendering a gate as a numbered
     message would show the user an approval that approves nothing.
 
-    Measured (S61): short-circuiting on `off` BEFORE the structural check reported a gated def as
+    Measured: short-circuiting on `off` BEFORE the structural check reported a gated def as
     PASSIVE, which tells a caller it may be injected as text and silently drops the gate. This
-    function answers "what IS this def" — whether it may surface is S58's `veto_reasons`, which is a
+    function answers "what IS this def" — whether it may surface is `veto_reasons`, which is a
     separate question with a separate answer. What `off` does govern is BLUEPRINT: materializing a
     guided conversation for a def the user switched off would put it on screen anyway.
     """
@@ -626,7 +626,7 @@ def claim_task(
     would be doing exactly the double-claim the lock exists to prevent.
 
     That lock covers THREADS as well as processes (flock is per open file description and
-    `single_flight` opens a fresh one per call), which is the property `PP-12`'s `Lease` admission
+    `single_flight` opens a fresh one per call), which is the property the `Lease` admission
     policy rests on: the engine fans out in-process with `asyncio.create_task`, so a cross-process-
     only claim would not cap the fan-out shape that actually occurs. Measured both ways — 16 threads
     on one resource yield exactly one holder with this wrapper, and 3 to 15 holders without it.

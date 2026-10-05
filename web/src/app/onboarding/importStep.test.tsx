@@ -668,7 +668,7 @@ describe('summaryOfReport names every non-zero outcome, the choice included', ()
   })
 })
 
-// ── what Claude Code actually keeps: scopes, notes, kinds left behind (F-01…F-04) ─────────────
+// ── what Claude Code actually keeps: scopes, notes, kinds left behind ─────────────────────────
 
 describe('everything Claude Code keeps is shown, with where it came from', () => {
   const SCOPED = () => [

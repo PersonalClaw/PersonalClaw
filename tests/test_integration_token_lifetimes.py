@@ -1,4 +1,4 @@
-"""An integration's token has a lifetime, a revoke, and a refusal that says why (ledger 317a).
+"""An integration's token has a lifetime, a revoke, and a refusal that says why.
 
 The tokens an external agent reaches an inbound surface with — a surface token, and a registered
 client's token — had no lifetime at all, so one pasted into an editor's config long ago still

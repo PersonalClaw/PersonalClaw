@@ -1,4 +1,4 @@
-"""The approval brief over the core↔channel seam (C2).
+"""The approval brief over the core↔channel seam.
 
 What these tests hold down, in priority order:
 
@@ -161,7 +161,7 @@ class TestCallSiteCarriesTheBrief:
 
     @pytest.mark.asyncio
     async def test_a_mutating_command_does_not_claim_read_only(self) -> None:
-        """The screening verdict OU-8 left unwired now reaches the brief."""
+        """The screening verdict that was left unwired now reaches the brief."""
         gateway = _make_gateway()
         event = _event(
             "bash",
@@ -256,7 +256,7 @@ class _OldShapedChannel:
 class TestAdditiveOnly:
     @pytest.mark.asyncio
     async def test_old_shaped_consumer_still_works_unchanged(self) -> None:
-        """A pre-OU-9 channel is still called and its decision still stands."""
+        """An old-shaped channel is still called and its decision still stands."""
         gateway = _make_gateway()
         channel = _OldShapedChannel()
         gateway._channel_delivery = channel
@@ -347,7 +347,7 @@ class TestAdditiveOnly:
 
 
 def _ts_text() -> str:
-    assert _TS_SOURCE.is_file(), f"OU-7's module moved: {_TS_SOURCE}"
+    assert _TS_SOURCE.is_file(), f"the approval-brief TS module moved: {_TS_SOURCE}"
     return _TS_SOURCE.read_text(encoding="utf-8")
 
 

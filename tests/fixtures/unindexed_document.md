@@ -1,6 +1,6 @@
 # Quokka telemetry runbook
 
-RET-2 fixture (2): a document with plenty of perfectly extractable text, ingested on a
+Fixture (2) of `tests/test_knowledge_searchability.py`: a document with plenty of perfectly extractable text, ingested on a
 home with **no embedding provider bound**. Nothing about this file is broken — the failure
 under test is the ingest reporting success while writing zero vectors and zero chunks, so
 the whole semantic half of retrieval is silently absent.

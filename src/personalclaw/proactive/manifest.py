@@ -13,7 +13,7 @@ Two properties make that contract worth having, and both are properties of this 
 sorts before numbering (source lane, then timestamp, then source id), so two collects over
 the same window mint the same ordinals. Without that, a re-collect after a gateway restart
 would renumber the window and a reply that said `3 yes` would act on a different item —
-which is success criterion 9's wrong-target execution, reached without any adversary.
+which is a wrong-target execution, reached without any adversary.
 
 **One real item is one ordinal.** Deduplication is by fingerprint, and the fingerprint is
 derived from provenance (source + source id) rather than from rendered text, so an item
@@ -32,7 +32,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-#: The three collect lanes §1.1 names. Ordered — this tuple IS the manifest's lane order,
+#: The three collect lanes. Ordered — this tuple IS the manifest's lane order,
 #: so "inbox first" is one list, not a comparison scattered across the ranking code.
 SOURCE_INBOX = "inbox"
 SOURCE_CHANNEL = "channel"
@@ -41,7 +41,7 @@ COLLECT_SOURCES: tuple[str, ...] = (SOURCE_INBOX, SOURCE_CHANNEL, SOURCE_RUN)
 
 _LANE_ORDER = {name: i for i, name in enumerate(COLLECT_SOURCES)}
 
-#: The substrate's materiality vocabulary (AUTOMATION-SUBSTRATE §1.3 / AUTO-R2), consumed
+#: The substrate's materiality vocabulary, consumed
 #: here rather than re-derived: `action` touched the world, `error` needs a human, `response`
 #: produced words, `none` is noise. Ranking is this order and nothing else, so a new
 #: weight is one entry here rather than a new comparator.
@@ -146,7 +146,7 @@ class Manifest:
         outlives the process which minted it — the digest card a user opens tomorrow, a channel
         reply that arrives after a restart — has to resolve to a store id without re-collecting,
         because a re-collect renumbers the window and `3 yes` then acts on a different item
-        (criterion 9's wrong-target execution, reached with no adversary). So the map travels
+        (a wrong-target execution, reached with no adversary). So the map travels
         with the run's own output rather than being rebuilt from a fresh read.
 
         Provenance only: source lane, store id, title, permalink, materiality. Never `detail`,

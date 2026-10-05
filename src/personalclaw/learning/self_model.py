@@ -1,16 +1,16 @@
-"""The capped self-model — reinforcement-promoted, propose-don't-write (LEARN-R21 / §2.6).
+"""The capped self-model — reinforcement-promoted, propose-don't-write.
 
 The flywheel's ONLY mechanism that learns from what quietly WORKS. Every other cadence learns from
 corrections and failures, which means the system can only ever discover what it did wrong; this one
 notices a habit that keeps succeeding and offers to make it a principle.
 
-That asymmetry is also what makes it dangerous, so §2.6 constrains it three ways and this module
+That asymmetry is also what makes it dangerous, so it is constrained three ways and this module
 enforces all three mechanically rather than by convention:
 
 1. **Propose, never install.** A crossed threshold produces a PROPOSAL in the unified queue, exactly
    like a lesson. Nothing here writes a principle into memory. A system that promotes its own
-   behavioural rules is a system whose behaviour the user cannot predict, and the plan says "never
-   self-installed" for that reason.
+   behavioural rules is a system whose behaviour the user cannot predict, which is why a principle
+   is never self-installed.
 2. **Bounded by construction.** ~6 active principles, ~4 working theories, ~4 current-focus entries,
    a small retrospection ring. Promotion into a FULL cap requires DISPLACING an existing entry, so
    bloat is impossible at the schema level rather than policed by a later cleanup that may not run.
@@ -18,7 +18,7 @@ enforces all three mechanically rather than by convention:
 
 **Measured before writing.** `user.selfmodel.*` was NOT in `_NON_FACT_KEY_CLAUSE`, so a principle
 the harness observed about its own working patterns would have rendered as a FACT ABOUT THE USER — a
-category error and a leak. The exclusion landed with this session. `user.*` was already in
+category error and a leak. The exclusion landed with this module. `user.*` was already in
 `_BUILTIN_PREFIXES`, so no allowlist change was needed; measuring both saved inventing one.
 
 Pure decisions over records. The observer's writes go through `MemoryService`, and the proposals go
@@ -95,8 +95,8 @@ FACETS: tuple[str, ...] = tuple(f.value for f in Facet)
 class Reaction(str, Enum):
     """The user's observed response to a turn — the reinforcement signal.
 
-    Mechanically observed, never asked for. §2.5's rule applies here too: a voluntary "was that
-    good?" is ornamental, so the signal has to be something the user DID.
+    Mechanically observed, never asked for. The measurement rule applies here too: a voluntary
+    "was that good?" is ornamental, so the signal has to be something the user DID.
     """
 
     #: The user built on the result — accepted a diff, ran the thing, moved on to the next step.
@@ -124,7 +124,7 @@ REACTION_WEIGHT: dict[str, float] = {
 class Observation:
     """One recorded turn: what the harness did, and what happened next.
 
-    The tuple §2.6 names — route, tools, outcome, reaction. Deliberately NOT the turn's content: the
+    The tuple — route, tools, outcome, reaction. Deliberately NOT the turn's content: the
     self-model is about working patterns, and storing prompts would make it a transcript with a cap.
     """
 
@@ -186,7 +186,7 @@ class Reinforcement:
 
     @property
     def promotable(self) -> bool:
-        """Both §2.6 thresholds, as a conjunction.
+        """Both promotion thresholds, as a conjunction.
 
         `seen_count` alone promotes a coincidence that happened twice; confidence alone promotes one
         strongly-felt observation. Neither is evidence of a habit on its own.
@@ -194,7 +194,7 @@ class Reinforcement:
         return self.seen_count >= MIN_SEEN_COUNT and self.confidence >= MIN_CONFIDENCE
 
     def promotable_for(self, facet: str) -> bool:
-        """The same conjunction, at *facet*'s own `seen_count` bar (MGAV-8).
+        """The same conjunction, at *facet*'s own `seen_count` bar.
 
         `promotable` keeps the floor so existing callers are unchanged; a principle is checked
         through here because its bar is higher — see `MIN_SEEN_BY_FACET`.
@@ -232,7 +232,7 @@ def reinforce(existing: Reinforcement | None, observation: Observation) -> Reinf
 class Entry:
     """One live self-model entry.
 
-    `evidence` carries the reinforcement provenance §2.6 requires: an accepted principle must be
+    `evidence` carries the required reinforcement provenance: an accepted principle must be
     able to show WHY it exists, because "the system decided this about itself" is not an auditable
     explanation.
     """
@@ -382,7 +382,7 @@ def trim_ring(entries: list[Entry], facet: str = Facet.RETROSPECTION.value) -> l
 
 # ── proposing (never installing) ──
 
-#: The proposal kind a promoted principle files under. `lesson_batch` rather than a new kind: §2.6
+#: The proposal kind a promoted principle files under. `lesson_batch` rather than a new kind:
 #: an accepted principle is "lessons-shaped (constraint-like, always-on)", and the existing kind
 #: already carries the review UI, the fingerprint dedup, and the decision store. A new kind would
 #: mean a second review surface for the same shape of thing.
@@ -432,7 +432,7 @@ def build_proposal(
     Returns None rather than an un-promotable proposal so a caller cannot file one by ignoring the
     plan — the cap and the thresholds are enforced on the path to the queue, not after it.
 
-    The evidence lines are the reinforcement provenance §2.6 requires. Bounded to the most recent
+    The evidence lines are the required reinforcement provenance. Bounded to the most recent
     few: a proposal a reviewer will not read is not evidence, it is volume.
     """
     if not plan.allowed:

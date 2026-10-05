@@ -1,6 +1,6 @@
 """``POST /api/model-providers`` accepts ``bedrock`` as a first-class type.
 
-Pins the parity fix (#49): web offers an "Amazon Bedrock" model-provider type
+Pins the parity fix: web offers an "Amazon Bedrock" model-provider type
 whose form stores an AWS ``region`` + optional ``profile`` (boto3 credential chain,
 no api_key). After the model-provider-as-app migration the create handler no longer
 has a hardcoded VALID_TYPES allowlist — a type is accepted iff its app registered it

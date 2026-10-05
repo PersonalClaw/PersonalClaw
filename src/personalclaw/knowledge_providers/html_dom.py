@@ -17,8 +17,8 @@ desktop bundle) to read a handful of changelog pages is not a trade this project
 here; correctness of *rendering* is not this module's job.
 
 The selector language is a deliberate SUBSET: type, ``*``, ``#id``, ``.class``,
-``[attr]``/``[attr=value]``, descendant, child (``>``), and comma alternatives. It covers the
-html2rss-shaped configs §2.2 describes; anything beyond it is refused by ``validate_spec``
+``[attr]``/``[attr=value]``, descendant, child (``>``), and comma alternatives. It covers
+html2rss-shaped configs; anything beyond it is refused by ``validate_spec``
 rather than silently mis-matched, because a selector that quietly means something else than
 the user wrote is worse than one that is rejected with a reason.
 """

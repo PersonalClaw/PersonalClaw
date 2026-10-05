@@ -241,7 +241,7 @@ def test_a_readded_temp_screenshots_directory_reds(tmp_path):
         "web/dist/index.js",
         "node_modules/left-pad/index.js",
         "coverage/lcov.info",
-        ".worktrees/lane-x/README.md",
+        ".worktrees/feature-x/README.md",
         ".local/state/gh/device-id",
         ".claude/settings.json",
         ".dev-home/.local_secret",

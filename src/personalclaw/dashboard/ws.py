@@ -47,7 +47,7 @@ def _check_ws_origin(request: web.Request) -> None:
     Browsers always send an Origin header on WebSocket handshakes, so the allowlist is the
     rule for anything that presents one, and that path is unchanged.
 
-    **A NATIVE client presents no Origin at all (CA-7).** A desktop or mobile shell that opens
+    **A NATIVE client presents no Origin at all.** A desktop or mobile shell that opens
     the socket itself — rather than loading the SPA into a WebView — has no document origin to
     send. Refusing it was not buying protection, and that is measurable rather than arguable:
     the check only constrains clients that *cannot* choose their own headers. Any non-browser
@@ -91,7 +91,7 @@ async def api_ws(request: web.Request) -> web.WebSocketResponse:
 
     # request["app"] is set by the token middleware when the handshake carried an
     # app-scoped token (?app_token=…). Scope this connection so every send path filters
-    # its events to the app's declared permissions.events (untrusted-app sandbox P1).
+    # its events to the app's declared permissions.events (the untrusted-app sandbox).
     state.register_ws(ws, app=request.get("app", ""))
 
     # Push current sessions immediately so sidebar populates without waiting.

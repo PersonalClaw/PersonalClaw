@@ -4,7 +4,7 @@ One function, deliberately: normalizing a turn's agent identity is needed by any
 that records, scopes, or filters by agent, and it is not workflow-specific. It lived in
 ``workflows/composition.py`` because the old workflow feature's ``scope_ref`` was its
 first consumer; ``chat_runner`` then imported it across that boundary. Relocated here so
-the identity rule outlives whichever feature happens to need it (WORKFLOWS-V2 Phase 0).
+the identity rule outlives whichever feature happens to need it.
 """
 
 from __future__ import annotations

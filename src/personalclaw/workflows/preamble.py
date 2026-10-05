@@ -1,4 +1,4 @@
-"""The grounding preamble (UP-R14) — resolve the entities a goal names, before anything runs.
+"""The grounding preamble — resolve the entities a goal names, before anything runs.
 
 Two failures this prevents, both measured in entity-heavy planning:
 
@@ -40,7 +40,7 @@ IDENTITY_GUARD = (
     "explicitly disproves it."
 )
 
-#: The prohibition added for entity-heavy domains — a stated UP-R14 requirement. A research or
+#: The prohibition added for entity-heavy domains. A research or
 #: financial run must not fit an unresolved name to a plausible narrative.
 NO_PATTERN_MATCH_PROHIBITION = (
     "Do not pattern-match narrative to an unresolved name — if an entity was not resolved, treat "
@@ -146,7 +146,7 @@ def build_preamble_node(goal: str, resolver: EntityResolver | None) -> dict[str,
     A `transform` node, not an action: resolution already happened here (zero-token, against the
     graph), and the node's job is to INJECT that resolved identity into run state under a stable id
     every stage can bind to. Emitting an `action` that re-runs a lookup at run time would be the
-    mid-graph network call the plan forbids. When nothing resolved, the node still emits with a
+    mid-graph network call this design forbids. When nothing resolved, the node still emits with a
     `degraded: true` payload and the name-only context, so the guard and the prohibition still reach
     the stages — a preamble that vanishes on a miss teaches the stages nothing about the gap.
 

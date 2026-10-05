@@ -1,4 +1,4 @@
-"""Project export/import: a manifest ZIP with integrity and path safety (R15).
+"""Project export/import: a manifest ZIP with integrity and path safety.
 
 This is **net-new coverage**, not an extension: `snapshot.VALID_COMPONENTS` covers memory, crons,
 config, skills, workspace, notifications and security — and neither `projects/` nor `tasks/` nor
@@ -241,7 +241,7 @@ def plan_export(
     without a project on disk — and so a caller that already read the files does not
     read them twice.
 
-    *secret_names* are the project's VAULT key names (EI-10). They are presence flags with no file
+    *secret_names* are the project's VAULT key names. They are presence flags with no file
     behind them: a project secret lives in the credential store under a namespaced key, not in a
     file inside the project, so the file-exclusion loop below can never see one and the archive has
     nothing to leave out. Without this argument a project's secrets would be invisible to an
@@ -555,7 +555,7 @@ def import_summary(
 
     ``preview`` is the plan shown BEFORE anything is written — the dashboard's import dialog
     shows this sentence as it is, so for a preview it says what WOULD be imported. It said
-    "imported" for an archive nothing had touched yet (F-62). After the import, ``written`` is
+    "imported" for an archive nothing had touched yet. After the import, ``written`` is
     how many entities it wrote, and ``left`` the links in the home that kept any out
     (``project_archive.commit_import``), each named.
     """

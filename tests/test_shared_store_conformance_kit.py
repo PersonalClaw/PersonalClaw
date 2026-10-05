@@ -1,4 +1,4 @@
-"""The shared-store conformance kit's OWN tests (TEAM-SHARED-HARNESS TSHR-1).
+"""The shared-store conformance kit's OWN tests.
 
 A kit whose failure path is untested is the "test exercises the mechanism, not its use"
 trap: every clause could be inverted or silently vacuous and a green suite would still say
@@ -8,8 +8,8 @@ nothing. So this file does two things:
   multi-tenant ``TaskProvider`` and a ``trigger`` store mirroring the bundled
   ``shared-automations`` app — and asserts it PASSES.
 * Gives EACH clause a mutant: a provider that violates exactly one obligation, and pins
-  which named clause the failure carries. The mutants ARE the non-cheatability guarantee
-  the change demands — a deliberately-unsafe provider MUST fail the suite.
+  which named clause the failure carries. The mutants ARE the non-cheatability guarantee:
+  a deliberately-unsafe provider MUST fail the suite.
 
 The kit is imported the way an APP imports it (``personalclaw.sdk.shared_store``), so the
 export path the apps depend on is the one core exercises. The two provider fixtures use the

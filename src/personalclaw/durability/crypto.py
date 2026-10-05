@@ -24,10 +24,10 @@ is AES-256-GCM ciphertext before it leaves the process.
 **Key schedule.** Two stages, because the two jobs are different:
 
 1. **Stretch** the user passphrase into a 32-byte master key with **Argon2id** over the
-   shared salt. §4.4 says "HKDF from a user passphrase"; HKDF alone is a *fast* KDF, so a
+   shared salt. The obvious shape is "HKDF from a user passphrase"; HKDF alone is a *fast* KDF, so a
    passphrase run through it directly is an offline-brute-force gift to whoever holds the
    bucket — the exact adversary this feature exists for. The stretch is a strengthening of
-   the plan's shape, not a departure from it: same inputs (passphrase + the first-write-wins
+   that shape, not a departure from it: same inputs (passphrase + the first-write-wins
    salt), same machine-agnostic property, one ~50 ms cost per process (the master key is
    cached in the :class:`SyncCodec` and never persisted).
 2. **Expand** per shard with **HKDF-Expand**, ``info`` = the object key. Per-object keys mean
@@ -57,7 +57,7 @@ and are never written anywhere. Losing the passphrase does **not** lose the user
 local home is authoritative and untouched: what is lost is the ability to read the *remote*
 copies, and the recovery is a fresh sync root. There is deliberately **no key rotation
 mechanism** — rotating would mean re-encrypting every historical object under a new salt, and
-that is a plan-level design decision, not something to improvise here.
+that is a design decision of its own, not something to improvise here.
 """
 
 from __future__ import annotations
@@ -119,9 +119,9 @@ DEFAULT_ENCRYPT_BY_TRANSPORT: dict[str, bool] = {
 #: The default for a transport this table does not name — a third-party `type: "sync"` app.
 #:
 #: **OFF, deliberately, and it is the uncomfortable one.** ON is the safer posture in the
-#: abstract, but it is not what §4.4 says (it enumerates a CLOSED set of defaults) and it is
+#: abstract, but the table above is a CLOSED set of defaults, and ON is
 #: measurably worse in practice: with ON, installing any third-party transport turns sync into
-#: a hard stop until the user stores a passphrase, which breaks criterion 10's "a third-party
+#: a hard stop until the user stores a passphrase, which breaks the promise that "a third-party
 #: transport app registers, configures, and *syncs* with zero core changes". Choosing ON here
 #: would let this change silently disable a shipped capability.
 #:
@@ -131,8 +131,8 @@ DEFAULT_ENCRYPT_BY_TRANSPORT: dict[str, bool] = {
 #: once per transport, and `durability/service.status()` reports the RESOLVED verdict, so
 #: "is my bucket readable?" always has an answer that is not the word "auto".
 #:
-#: This is the one genuinely under-specified security default in DAS-8 and is flagged for the
-#: owner in the plan's execution log rather than quietly settled here.
+#: This is the one genuinely under-specified security default in sync, and it is written down
+#: here rather than quietly settled.
 DEFAULT_ENCRYPT_UNKNOWN_TRANSPORT = False
 
 #: Transports whose `auto` resolution has already been logged, so a per-cycle resolution does
@@ -158,7 +158,7 @@ class MissingPassphrase(SyncEncryptionError):
 class MissingSalt(SyncEncryptionError):
     """Encryption is on and the sync root has no salt object that could be read or written.
 
-    §4.4: *never fabricate a salt*. A fabricated salt derives keys no other machine can
+    *Never fabricate a salt*. A fabricated salt derives keys no other machine can
     reproduce, which silently forks the store into two mutually unreadable halves.
     """
 
@@ -172,7 +172,7 @@ def is_ciphertext(data: bytes) -> bool:
 
 
 def is_routing_key(key: str) -> bool:
-    """Whether ``key`` is routing metadata that must stay plaintext (§4.4)."""
+    """Whether ``key`` is routing metadata that must stay plaintext."""
     return key in ROUTING_KEYS
 
 
@@ -181,7 +181,7 @@ def derive_master(passphrase: str, salt: bytes) -> bytes:
 
     Machine-agnostic by construction: the only inputs are the passphrase the user types on
     every machine and the salt object every machine pulls from the shared root, so every
-    machine derives the identical master key and can read every other's shards (§4.4).
+    machine derives the identical master key and can read every other's shards.
     """
     if not passphrase:
         raise MissingPassphrase(
@@ -273,7 +273,7 @@ def read_salt(transport: SyncTransportProvider) -> bytes | None:
 
 
 def ensure_salt(transport: SyncTransportProvider) -> bytes:
-    """The shared salt, creating it once if the root is brand new — first-write-wins (§4.4).
+    """The shared salt, creating it once if the root is brand new — first-write-wins.
 
     First-write-wins falls straight out of the transport contract: ``push`` is insert-only and
     idempotent on key, so a racing second machine's salt write is *skipped*, not applied. The
@@ -307,7 +307,7 @@ class SkipReport:
     them silently loses data:
 
     * ``keys`` — **permanent**: a plaintext object in an encrypted store, or an unsupported
-      format version. These can never become readable, so §4.4 says skip permanently and the
+      format version. These can never become readable, so they are skipped permanently and the
       cursor must ADVANCE past them or the seq is re-pulled forever.
     * ``unreadable`` — **not our decision**: a well-formed ciphertext whose tag failed. That
       is a wrong passphrase OR tampering, and AES-GCM cannot tell us which. Advancing here
@@ -352,7 +352,7 @@ class SyncCodec:
         return f"SyncCodec(master=<{len(self.master) * 8}-bit key withheld>)"
 
     def encrypt_for_push(self, objects: list[SyncObject]) -> tuple[list[SyncObject], SkipReport]:
-        """Encrypt every non-routing object, then re-check the result (§4.4 send side).
+        """Encrypt every non-routing object, then re-check the result (the send side).
 
         The re-check is not paranoia theatre: it is the send-side half of "plaintext in an
         encrypted store is rejected". An object that is somehow still plaintext after the
@@ -378,8 +378,8 @@ class SyncCodec:
         """Decrypt every non-routing object, sorting the failures into the two buckets.
 
         Dropped rather than raised on purpose, so the caller can choose a cursor verdict per
-        bucket: PLAINTEXT is a permanent skip the cursor advances past (§4.4 — it can never
-        become readable, and re-pulling it forever is the error loop the plan forbids), while
+        bucket: PLAINTEXT is a permanent skip the cursor advances past (it can never
+        become readable, and re-pulling it forever is an error loop), while
         a FAILED TAG holds (see :class:`SkipReport` — a mistyped passphrase must be a
         recoverable mistake, not permanent data loss).
         """
@@ -422,7 +422,7 @@ class SyncCodec:
 
 
 def encryption_enabled_for(transport_name: str, setting: str) -> bool:
-    """Whether encryption applies, resolving the ``durability.sync_encrypt`` tri-state (§4.4).
+    """Whether encryption applies, resolving the ``durability.sync_encrypt`` tri-state.
 
     ``on``/``off`` are the user's explicit override; ``auto`` (the default) takes the
     per-transport default from :data:`DEFAULT_ENCRYPT_BY_TRANSPORT` — ON for third-party

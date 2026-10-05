@@ -119,7 +119,7 @@ class ArtifactProvider(ABC):
         slug: str | None = None,
         source_path: str = "",
         description: str = "",
-        tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
+        tags: list[str] | None = None,  # type: ignore[valid-type]
         actor: str | None = None,
         session_id: str | None = None,
         project_id: str = "",
@@ -147,7 +147,7 @@ class ArtifactProvider(ABC):
         session_id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
+        tags: list[str] | None = None,  # type: ignore[valid-type]
         collection: str | None = None,
         event_metadata: dict | None = None,
         #: ADOPT an existing artifact as the live pointer to a file (#290). `create` takes
@@ -168,8 +168,8 @@ class ArtifactProvider(ABC):
         #: Tag names to add to / remove from the tags stored at the moment of the write. One name
         #: in or out cannot undo another writer's tag, so these need no revision; `tags` replaces
         #: the whole list.
-        add_tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
-        remove_tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
+        add_tags: list[str] | None = None,  # type: ignore[valid-type]
+        remove_tags: list[str] | None = None,  # type: ignore[valid-type]
     ) -> Artifact | None: ...
 
     def revert(
@@ -201,7 +201,7 @@ class ArtifactProvider(ABC):
         source: str = "chat",
         slug: str | None = None,
         description: str = "",
-        tags: list[str] | None = None,  # type: ignore[valid-type]  # CI-1
+        tags: list[str] | None = None,  # type: ignore[valid-type]
         actor: str | None = None,
         session_id: str | None = None,
         project_id: str = "",
@@ -233,9 +233,9 @@ class ArtifactProvider(ABC):
         :class:`~personalclaw.artifacts.models.ArtifactVersionConflict` otherwise. It
         belongs on the PROVIDER rather than in a handler because the comparison has to
         happen under the same lock as the write — checking the version first and
-        writing second leaves exactly the race a whole-document save exists to detect
-        (DOCUMENT-FIDELITY-EDITOR §C3). The editor's saves and the agent's document tools
-        pass it. ``None`` means last-write-wins; every binary write cuts a version, so the
+        writing second leaves exactly the race a whole-document save exists to detect.
+        The editor's saves and the agent's document tools pass it. ``None`` means
+        last-write-wins; every binary write cuts a version, so the
         body it replaces stays in the history either way.
 
         A body not of the artifact's kind raises
@@ -254,7 +254,7 @@ class ArtifactProvider(ABC):
 
         A published body that references a workspace file breaks the moment that file moves, which
         is the failure the version dir exists to prevent — so a publish copies what it references in
-        under a ``<stem>@<hash>.<ext>`` name (WORK-CONTAINERS §2.2c). Content-addressed, so the same
+        under a ``<stem>@<hash>.<ext>`` name. Content-addressed, so the same
         unchanged file re-referenced by a later version resolves to the SAME copy rather than
         accumulating byte-identical duplicates.
 
@@ -268,7 +268,7 @@ class ArtifactProvider(ABC):
     def delete(self, slug: str) -> bool: ...
 
     @abstractmethod
-    def list_versions(self, slug: str) -> list[int]: ...  # type: ignore[valid-type]  # CI-1
+    def list_versions(self, slug: str) -> list[int]: ...  # type: ignore[valid-type]
 
     @abstractmethod
     def find_by_source_path(self, source_path: str) -> Artifact | None:

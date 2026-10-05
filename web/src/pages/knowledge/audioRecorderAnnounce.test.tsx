@@ -4,7 +4,7 @@ import { AudioRecorder } from './AudioRecorder'
 
 // ── The recorder's state and elapsed time reach assistive tech ─────────────────────────────────
 //
-// Measured (cycle 200): the recording state was conveyed to SIGHTED users only — a red mic + a growing
+// Measured: the recording state was conveyed to SIGHTED users only — a red mic + a growing
 // level ring — so a screen-reader user clicking "Start recording" got no confirmation it began, and no
 // signal on pause/resume/stop (WCAG 4.1.3). The elapsed-time readout was a bare `<div>` (role=generic),
 // which does not reliably expose an aria-label, so it read as a context-free "0:03".

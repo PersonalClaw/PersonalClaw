@@ -5,11 +5,11 @@ import type {
   AttributionVerdict, HealthComponent, LearningHealth, MaeBucket,
 } from '../../lib/api'
 
-/** The flywheel observability panel (LEARN-R14b / WF2LEA-9 part 3).
+/** The flywheel observability panel.
  *
- *  Four things the plan names had a live writer and no reader: the 0-100 health composite with
- *  its 50-80% budget-utilization ideal band, R10d's judge-calibration MAE buckets, R16's
- *  attribution verdict history, and R19e's per-op LLM cost aggregates. A metric that is computed
+ *  Four things had a live writer and no reader: the 0-100 health composite with
+ *  its 50-80% budget-utilization ideal band, the judge-calibration MAE buckets, the
+ *  attribution verdict history, and the per-op LLM cost aggregates. A metric that is computed
  *  and never rendered is indistinguishable from one that is never computed.
  *
  *  **"Unmeasured" is rendered as unmeasured.** Every score here is `number | null`, and the panel
@@ -113,8 +113,9 @@ function ComponentRow({ component }: { component: HealthComponent }) {
   )
 }
 
-/** R10d's MAE buckets. `labelled` is shown beside `n` on purpose: a bucket with verdicts but no
- *  human labels has no error to report, and printing 0.00 there would read as a perfect judge. */
+/** The judge-calibration MAE buckets. `labelled` is shown beside `n` on purpose: a bucket with
+ *  verdicts but no human labels has no error to report, and printing 0.00 there would read as a
+ *  perfect judge. */
 function MaePanel({ mae, runsScanned, verdicts }: {
   mae: LearningHealth['judge']['mae']
   runsScanned: number
@@ -161,7 +162,7 @@ function MaeBucketCell({ bucket }: { bucket: MaeBucket }) {
   )
 }
 
-/** Every verdict in LEARN-R16's closed five-way set, plus PENDING. Exhaustive by type. */
+/** Every verdict in the attribution's closed five-way set, plus PENDING. Exhaustive by type. */
 const VERDICT_LABEL: Record<AttributionVerdict, string> = {
   EFFECTIVE: 'Effective',
   PARTIALLY_EFFECTIVE: 'Partly effective',
@@ -217,7 +218,7 @@ function AttributionPanel({ attribution }: { attribution: LearningHealth['attrib
   )
 }
 
-/** R19e. A single total answers "was it expensive"; only the per-op split answers "at what". */
+/** Per-op LLM cost. A single total answers "was it expensive"; only the per-op split answers "at what". */
 function CostPanel({ rows, total }: { rows: LearningHealth['cost_by_op']; total: number }) {
   return (
     <div className="flex flex-col gap-s">

@@ -6,9 +6,9 @@ import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── One rule for a row control's name, and one implementation of it ──────────────────────────────
 //
-// Cycle 139 gave row actions their row's subject. Cycle 141 measured the result in Chrome's computed
+// Row actions were first given their row's subject. A later pass measured the result in Chrome's computed
 // accessibility tree and found the opposite failure — five artifact tiles named by 438-695 characters
-// of their own body — so it capped the notification names at 55. Cycle 142 then measured the FIRST
+// of their own body — so it capped the notification names at 55. A third then measured the FIRST
 // fix's own output and found it had never been capped:
 //
 //   surface           row controls   distinct names   max name length   names >80ch
@@ -21,7 +21,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // really are both called triage). So the uncapped version was buying no information with its extra
 // 29 characters.
 //
-// 🪤 TWO CYCLES SHIPPED THE SAME RULE WITH DIFFERENT NUMBERS — 139 uncapped, 141 at 55 — which is how
+// 🪤 TWO CHANGES SHIPPED THE SAME RULE WITH DIFFERENT NUMBERS — one uncapped, one at 55 — which is how
 // a rule becomes drift. One helper now owns both the joining and the number.
 //
 // 🔑 NOT FOR LONG DATA. `#/knowledge` has 29 names over 80 characters because its items are titled
@@ -30,7 +30,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // MORE than a sighted one. Left alone deliberately: capping data truncates an identity, which is a
 // different thing from bounding a name you assembled. Recorded as rejected, not deferred.
 
-// ── Cycle 161: THE INBOX ROW WAS NAMED BY ITS KIND, AND 35 ROWS SHARED ONE NAME ──────────────────
+// ── THE INBOX ROW WAS NAMED BY ITS KIND, AND 35 ROWS SHARED ONE NAME ─────────────────────────────
 //
 // `#/inbox`'s `ListRow` passed `label={channelBacked ? sender : km.label}` — and `km.label` is the KIND
 // word. Measured on the surface, reading the computed name of every row's hit target:
@@ -44,7 +44,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //
 // A screen-reader user tabbing the inbox heard "Proposals, button" thirty-five times while every row's
 // own text identified it ("Refine a skill knowledge-grounding — Add a reference…"). Same defect as
-// cycle 141's kind-named rows, and this helper is what cycle 142 built for it — so the fix is one call,
+// the kind-named rows fixed before, and this helper is what was built for them — so the fix is one call,
 // the shape `#/notifications` already uses.
 //
 // 🪤 `firstLine()` — the transform notifications passes — WAS WRONG HERE, and only re-measuring showed

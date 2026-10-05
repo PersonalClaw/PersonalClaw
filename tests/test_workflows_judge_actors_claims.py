@@ -1,11 +1,11 @@
-"""The rail for `judge_actors`' enforcement claim (WF2LOO-15 measured it; WF2LOO-13 wired it).
+"""The rail for `judge_actors`' enforcement claim.
 
 `judge_actors` opens by describing two invariants. It used to say the engine "ENFORCES" both
 while one of them had no production caller at all, because nothing carried an ACTOR to a node
 transition. A module that claims a guardrail it does not run is worse than one that admits the
 gap: an auditor reading it stops looking.
 
-WF2LOO-13 wired the missing half — the judge gate rules on the actor behind its own terminal
+The missing half is wired now — the judge gate rules on the actor behind its own terminal
 transition, and assembles the judge's evidence through `assemble_judge_evidence` /
 `blind_provenance` — so this rail now holds the OPPOSITE claim in place: every function here has
 a live caller, and the docstring must not carry the unwired disclaimer any more. It stays a rail
@@ -93,7 +93,7 @@ def test_the_once_authored_invariant_is_wired_and_the_docstring_agrees() -> None
     stranded = [name for name in _AUTHORED if not _production_callers(name)]
     assert not stranded, (
         f"{stranded} has no production caller — the worker-transition rule or the evidence "
-        "blinding is authored-and-unrun again, which is what WF2LOO-15 measured and WF2LOO-13 "
+        "blinding is authored-and-unrun again, which is the defect that was once measured and "
         "fixed. Re-wire it, or delete the mechanism rather than leaving a rule nothing applies."
     )
     assert _UNWIRED_MARKER not in doc, (

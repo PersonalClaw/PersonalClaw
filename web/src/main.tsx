@@ -13,7 +13,7 @@ import { registerServiceWorker } from './app/registerServiceWorker'
 import { registerBuiltinContentTypes } from './ui/content/registerBuiltins'
 
 // Define window.__personalclaw_modules so contributed app bundles resolve the
-// host SDK (and share this React) before any app page mounts (A6).
+// host SDK (and share this React) before any app page mounts.
 installAppSdk()
 
 // Populate the content-type registry — the one source of truth the render/edit

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { reentrySummary, revalidateNotice, revalidateSummary } from './revalidate'
 
-// ── Mid-flight-edit re-validate warning (LOOPS-EVOLUTION R10b / criterion 9) ──
+// ── Mid-flight-edit re-validate warning ─────────────────────────────────────
 //
 // A bundled template's judge calibration is tuned to the prompts it shipped with, so editing
 // a stage's prompt on a live run can silently invalidate it. The notice surfaces that before

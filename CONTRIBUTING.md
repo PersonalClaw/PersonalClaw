@@ -18,9 +18,9 @@ engineering bar is not lowered.
 - **The roadmap is maintainer-owned, with a written intake path** — not a closed
   door. To propose or reshape roadmap work: open an **issue** describing the
   problem → discuss in **[Discussions → Ideas](https://github.com/PersonalClaw/PersonalClaw/discussions/categories/ideas)**
-  → the maintainer files or updates a plan under the internal plans. Please
-  don't edit the owner's internal roadmap (not in this repo) directly in a PR; the plan set is curated so the
-  execution order stays coherent.
+  → the maintainer files or updates the roadmap item. The roadmap is kept outside this
+  repository and curated so the execution order stays coherent, so a PR cannot change it:
+  start with the issue.
 - **The newcomer ramp is the [apps repo](https://github.com/PersonalClaw/PersonalClawApps)**,
   not a softened core. First-party and community apps meet the SDK-contract bar
   (import core only via `personalclaw.sdk.*`), ship per-app tests, and get a

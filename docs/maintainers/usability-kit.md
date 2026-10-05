@@ -1,15 +1,14 @@
 # Usability kit — stranger validation
 
 **Status:** the kit is ready to run. The three sessions themselves are the owner's
-(ONBOARDING-UX Owner task 1 — recruit and host three people who have never seen the
+(recruit and host three people who have never seen the
 product). A dry-run against the real product is recorded in
 [§7](#7-dry-run-on-self-2026-08-25), including the four things the first draft of this
 kit got wrong.
 
 Everything a facilitator needs is on this page. You do **not** need to have read the
 codebase or the roadmap, and you should not read the roadmap before a session — knowing
-what we hoped to build is exactly the bias these sessions exist to remove. The one
-roadmap link below is a citation for a number, not required reading.
+what we hoped to build is exactly the bias these sessions exist to remove.
 
 ---
 
@@ -298,13 +297,13 @@ finding, not the latency.
 **Do not compare a session against the existing recorded figure as if it were a human
 baseline.** The only pre-existing number is **9.3 s of scripted-browser interaction**
 from an automated drive with the provider step skipped entirely, recorded on
-2026-08-16 in the maintainer's own (unpublished) onboarding notes. That is a machine floor for
+2026-08-16. That is a machine floor for
 the click path — it is not a person, it does not include reading, deciding, or setting
 up a provider, and a stranger's time will be one to two orders of magnitude larger with
 no defect implied. So:
 
 - **Session 1 establishes the human baseline.** Write it down as the baseline.
-- The delta the plan asks for is measurable from the **re-run after the fix-now list is
+- The delta is measurable from the **re-run after the fix-now list is
   cleared** — same tasks, a fresh participant, and say plainly in the record that it is
   a different person, because it is.
 

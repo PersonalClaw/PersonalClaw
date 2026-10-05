@@ -139,8 +139,8 @@ export function SchemaFields<S extends JsonSchema>({
  *  - `false` and `0` are PRESENT — values a schema can legitimately require.
  *  - `satisfied` names keys some other mechanism already fills, so a blank input is fine. The only
  *    case today is a write-only sensitive field whose secret is already stored: the backend never
- *    sends it back, the input deliberately starts blank, and blank means "keep the stored secret"
- *    (#43). Counting it missing would make such a form permanently unsavable.
+ *    sends it back, the input deliberately starts blank, and blank means "keep the stored secret".
+ *    Counting it missing would make such a form permanently unsavable.
  *
  *  Deliberately STRICTER than the backend, which checks presence only (`key not in values`), so a
  *  blank string satisfies it. A schema author marking a field required does not mean "may be

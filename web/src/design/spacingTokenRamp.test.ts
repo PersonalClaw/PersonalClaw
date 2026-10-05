@@ -32,18 +32,18 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // utility lowers it. It landed first (`a9c03d57e`, ceiling 3135) precisely so the sweep could be
 // done in whatever slices fit, by whoever, without the count silently drifting back up in between —
 // which is exactly what happened to the earlier attempt at this, whose 2963 was measured 745
-// commits ago and had already been overtaken by 172. Slice 1 (`a96ec3d0c`) converted **66
-// utilities across 29 whole files** and re-stated the ceiling at 3069. Slice 2 (`2e007601b`)
+// commits ago and had already been overtaken by 172. The first slice (`a96ec3d0c`) converted **66
+// utilities across 29 whole files** and re-stated the ceiling at 3069. The second (`2e007601b`)
 // converted **14 utilities across 2 files** and re-stated it at 3055 — 2 files, but NOT *whole* ones:
 // it left `py-0.5` in `chat/WorkflowProgressCard` and `gap-y-1.5` in `settings/ChatPanel`, one each,
 // **both sitting on an element it had just converted** (`px-2 py-0.5` → `px-s py-0.5`,
 // `gap-x-2 gap-y-1.5` → `gap-x-s gap-y-1.5`). Neither survivor is rung-equivalent, so the ceiling and
 // the per-file pin were both satisfied while two elements ran split across the two spacing regimes —
 // that is exactly the shape #3220 was filed for, and the last leg below is what now guards it.
-// Slice 3 (`53a80172d`) converted **40 utilities in `settings/DoctorPanel.tsx`** and re-stated it
+// The third (`53a80172d`) converted **40 utilities in `settings/DoctorPanel.tsx`** and re-stated it
 // at 3015.
 //
-// 🪤 SLICE 3'S FINDING — A SECOND RATCHET OWNS PART OF THIS SWEEP'S TERRITORY, so a whole-file pass
+// 🪤 THE THIRD SLICE'S FINDING — A SECOND RATCHET OWNS PART OF THIS SWEEP'S TERRITORY, so a whole-file pass
 // is not always reachable. DoctorPanel held 48 mappable values, not 40. The other 8 are the four
 // `px-4 py-3` container slabs (`:159`, `:239`, `:455`, `:608`), and converting them is pixel-identical
 // yet reds a DIFFERENT rail: `pages/settings/rowGroupPadding.test.tsx` counts the literal string

@@ -333,7 +333,7 @@ async def test_retired_pwa_paths_require_auth(path: str) -> None:
     ],
 )
 async def test_live_pwa_paths_require_auth(path: str) -> None:
-    """The PWA shipped by MOBILE-COMPANION T3.1 stays BEHIND the session.
+    """The phone companion's PWA stays BEHIND the session.
 
     These paths are live (not retired like the ones above), and none of them is in
     ``_BYPASS_PREFIXES``/``_BYPASS_EXACT`` — deliberately. The companion is
@@ -894,7 +894,7 @@ async def test_non_default_port_full_cycle() -> None:
     assert resp2.status == 200
 
 
-# -- Layered app identity (untrusted-app sandbox P1) --
+# -- Layered app identity (untrusted-app sandbox) --
 
 
 def _capturing_request(**kw):

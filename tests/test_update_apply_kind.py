@@ -78,7 +78,7 @@ async def test_desktop_returns_instructions(monkeypatch) -> None:
     assert body["kind"] == "desktop"
     assert body["status"] == "instructions"
     # The detail must name where the new version comes from. It shipped saying "the app
-    # updates itself", which is the unbuilt electron-updater half of DC-1 (#2673).
+    # updates itself", which is the unbuilt electron-updater half of #2673.
     assert "releases page" in body["detail"]
     assert "updates itself" not in body["detail"]
 
@@ -103,8 +103,8 @@ async def test_pip_kind_routes_to_pip_update(monkeypatch) -> None:
     assert body["kind"] == "pip"
 
 
-# The `dashboard.update_dev_mode` endpoint (POST /api/update/dev-mode) was RETIRED
-# in RUM-4: git-kind cadence is now the `updates.channel` block (stable/beta/nightly),
+# The `dashboard.update_dev_mode` endpoint (POST /api/update/dev-mode) was RETIRED:
+# git-kind cadence is now the `updates.channel` block (stable/beta/nightly),
 # so the git developer lane is set by `updates.channel="nightly"` through the config
 # PATCH path, not a bespoke boolean endpoint. See test_config_roundtrip.py for the
 # legacy backfill (`update_dev_mode=true` → `channel="nightly"`) and

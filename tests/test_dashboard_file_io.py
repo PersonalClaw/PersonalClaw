@@ -1056,7 +1056,7 @@ class TestFileUpload:
 class TestDashboardRootsProjectWorkspace:
     """A bound Project.workspace_dir must be in the browse allowlist.
 
-    projects-native-entity makes a Project a first-class entity that can bind an
+    A Project is a first-class entity that can bind an
     arbitrary codebase dir; its detail view peeks that workspace + offers Open-in-
     Files. Regression guard: ``_dashboard_roots`` must surface each bound project
     workspace as a root (mirroring the loop-workspace block), else browsing a

@@ -5,8 +5,8 @@ import { join } from 'node:path'
 
 // ── The learning summary block, asserted at its CALL SITE ────────────────────────────────────────
 //
-// T2.3 asked for this block to be registered with the digest builder. That builder does not
-// exist (no digest-section registry anywhere in `src/`), so the change's sanctioned fallback applies:
+// This block's natural home is the digest builder. That builder does not
+// exist (no digest-section registry anywhere in `src/`), so the fallback applies:
 // the same block renders on the skills page header. Which makes the skills page the surface under
 // test — not the component in isolation. A test that mounted `<LearningSummaryBlock />` alone and
 // checked it renders a count would pass just as happily if nothing on `#/skills` ever called it,

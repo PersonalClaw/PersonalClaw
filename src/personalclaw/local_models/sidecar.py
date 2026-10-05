@@ -103,7 +103,7 @@ _CHILD_HARNESS = Path(__file__).with_name("_sidecar_child.py")
 class SidecarCrashed(RuntimeError):
     """A sidecar child died (or hung) instead of answering.
 
-    ``reason`` is the typed, machine-readable string the FE translates (§1 tenet 3):
+    ``reason`` is the typed, machine-readable string the FE translates:
     ``signal_11`` (the segfault class), ``exit_1``, ``timeout``, ``eof``,
     ``spawn_failed``, ``restart_budget_exhausted``. :attr:`typed_reason` prefixes it with
     the vocabulary's namespace (``sidecar_crashed:signal_11``) for the wire.
@@ -812,7 +812,7 @@ def sweep_sidecars() -> list[dict[str, Any]]:
 
 
 def stop_all_sidecars() -> None:
-    """Terminate every child. Sidecars do not survive a gateway restart (§3.1)."""
+    """Terminate every child. Sidecars do not survive a gateway restart."""
     for runner in runners():
         runner.stop()
 
@@ -884,7 +884,7 @@ class _Step:
 class SidecarInstall:
     """One app's sidecar install: dedicated venv + pip deps + weights check.
 
-    Resumable and idempotent by construction (§3.2). ``run()`` may be called again after
+    Resumable and idempotent by construction. ``run()`` may be called again after
     a kill, a crash, or a success: the venv step skips when the interpreter is already
     there, the deps step skips when the receipt matches the manifest's requirement list,
     and the weights step is a disk probe. Nothing is torn down to be rebuilt.
@@ -964,7 +964,7 @@ class SidecarInstall:
         return [mask_line(line) for line in kept]
 
     def status(self) -> dict[str, Any]:
-        """The rich poll shape (§3.2): what happened, and what to do about it."""
+        """The rich poll shape: what happened, and what to do about it."""
         return {
             "provider": self.app,
             "installed": self.installed,

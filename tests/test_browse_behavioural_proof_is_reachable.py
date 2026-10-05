@@ -1,6 +1,6 @@
 """The rail over the behavioural proof: it must be *reachable*, not merely present.
 
-``BROWSE-AUTOMATION`` `BA-2` has two acceptance clauses that only a running browser can
+The browse gate has two behavioural clauses that only a running browser can
 satisfy — the injected safety script making ``fetch()`` / ``media.play()`` /
 ``navigator.bluetooth`` throw or return blocked, and client-side redirects being re-evaluated per
 ``Page.frameNavigated``. Both are proven by ``tests/test_browse_safety_script.py`` (layer 2) and
@@ -84,7 +84,7 @@ def test_an_installed_chromium_is_discoverable() -> None:
     found = browse_chrome.find_chrome()
     assert found is not None, (
         "Playwright reports an installed Chromium at "
-        f"{[str(path) for path in installed]} but find_chrome() returned None — BA-2's "
+        f"{[str(path) for path in installed]} but find_chrome() returned None — the browse gate's "
         "behavioural proof is skipping on a machine that CAN run it, and a skip reads as a pass."
     )
     assert pathlib.Path(found).is_file()

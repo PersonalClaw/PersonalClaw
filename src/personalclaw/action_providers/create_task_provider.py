@@ -43,7 +43,7 @@ class CreateTaskActionProvider(ActionProvider):
         return ("task",)
 
     async def reverse(self, handle: str) -> ActionResult:
-        """Delete the task this action filed (AUTONOMY-GUARDRAILS §6.1).
+        """Delete the task this action filed.
 
         Undo for "create a task" is "the task is not there any more", so the reversal is a
         real delete through the same registry the creation went through — which is also
@@ -121,8 +121,8 @@ class CreateTaskActionProvider(ActionProvider):
             success=True,
             exit_code=0,
             stdout=f"created task {task_id or '?'}: {title[:80]}",
-            # The reversal handle for the `auto_with_undo` rung (AUTONOMY-GUARDRAILS
-            # §5.2): the row this action filed is exactly what "undo" has to delete, and
+            # The reversal handle for the `auto_with_undo` rung: the row this action
+            # filed is exactly what "undo" has to delete, and
             # the id is the only thing that identifies it. Empty when the provider gave
             # back no id — then the seam records the run and offers no undo, rather than
             # offering one that would have nothing to act on.

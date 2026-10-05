@@ -188,7 +188,7 @@ def test_a_transport_that_never_calls_trust_is_still_checked(turns):
     """The whole point. This transport contains no trust logic whatsoever.
 
     It does exactly what a lazy or hostile new transport would do — normalize its payload
-    and hand it to the platform — and the unpaired sender is still stopped. Before EA-7
+    and hand it to the platform — and the unpaired sender is still stopped. Before the door,
     this transport would have reached a session, because the only thing standing between
     an inbound message and an agent was the transport's own willingness to call
     ``guard_inbound``.
@@ -476,7 +476,7 @@ def _referenced_identifiers(src: str) -> set[str]:
 
 
 def test_no_in_core_transport_starts_a_turn_except_through_the_door():
-    """The rail the ruling asked for: zero in-core inbound entry points bypass the door.
+    """The rail: zero in-core inbound entry points bypass the door.
 
     Carries its own floor, on the same mechanism it checks with. A scan that matched
     nothing reads exactly as clean as a scan that found no violations, so this asserts (a)
@@ -533,7 +533,7 @@ def test_run_chat_is_off_the_facade_for_good():
 
     assert "run_chat" not in channel.__all__, (
         "run_chat is back on the channel SDK facade. That reopens the ungated second "
-        "route past guard_inbound that EA-7 closed — apps must reach a turn only "
+        "route past guard_inbound that the door closed — apps must reach a turn only "
         "through services.deliver_channel_inbound. If an app needs something run_chat "
         "did, extend the door, not the facade."
     )

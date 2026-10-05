@@ -54,7 +54,7 @@ describe('the store panel status line', () => {
   })
 
   it('says a parked automation resumes ITSELF', () => {
-    // S159 made parking self-healing. Telling the user to re-enable it would send them to fix
+    // Parking is self-healing. Telling the user to re-enable it would send them to fix
     // something that fixes itself.
     expect(statusLine('parked', true)).toContain('resumes on its own')
   })
@@ -73,7 +73,7 @@ describe('the store panel status line', () => {
 
 describe('the status dot beside it', () => {
   it('reuses the shared mapper rather than a third local vocabulary', () => {
-    // S163 and S164 each found a local copy of a status vocabulary that had drifted. This panel is
+    // Two earlier fixes each found a local copy of a status vocabulary that had drifted. This panel is
     // the third surface; it maps through the shared reconciler instead of inventing its own.
     //
     // These two stopped states still go through `triggerHealthMeta` directly — that is

@@ -205,7 +205,7 @@ class TestNotificationPersistence:
 class TestUnreadDerived:
     """unread is DERIVED from unresolved INBOX items — no cached counter, no log flags.
 
-    Plan 42 T5.2 moved the badge off the notification log's `acked` flags. The two stores had
+    The badge moved off the notification log's `acked` flags. The two stores had
     become two answers to one question: the log tracked "was a toast acknowledged", the inbox
     tracks "is this dealt with". A user who handled a request in the inbox still saw a badge,
     and dismissing a toast cleared the badge for outstanding work.

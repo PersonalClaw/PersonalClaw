@@ -1,4 +1,4 @@
-"""WS7 — JS-render fetch path (web/render.py + web_fetch render=True).
+"""JS-render fetch path (web/render.py + web_fetch render=True).
 
 Playwright is an optional dep (not installed in CI), so these tests exercise:
 - graceful unavailability when Playwright is absent,

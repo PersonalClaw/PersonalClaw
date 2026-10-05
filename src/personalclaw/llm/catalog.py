@@ -607,8 +607,8 @@ async def openai_compatible_discover_models(
     The ``GET {base}/models`` discovery call routes through the ``net.fetch`` egress
     chokepoint (host classification, redirect-hop re-check, byte cap, timeout, SEL
     audit) rather than raw aiohttp — an operator-configured ``endpoint`` is an
-    egress surface, so discovery is guarded the same as every other outbound call
-    (#41 class). (The inference path is the ``openai`` SDK's own client — a separate,
+    egress surface, so discovery is guarded the same as every other outbound call.
+    (The inference path is the ``openai`` SDK's own client — a separate,
     deliberate boundary; this GET is the cleanly-migratable part.)
     """
     import json as _json

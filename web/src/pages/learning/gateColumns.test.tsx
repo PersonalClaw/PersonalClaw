@@ -6,7 +6,7 @@ import { LearningPage } from './LearningPage'
 import { ApiError } from '../../lib/api'
 import type { LearningGate, LearningInbox, LearningRow, StagingWeek } from '../../lib/api'
 
-// ── ES-6 / amendment E2: the Loop-2 gate's before/after columns on the proposal card ──────────
+// ── The Loop-2 gate's before/after columns on the proposal card ──────────
 //
 // The change's own proof is a planted regression: a candidate skill edit that makes things worse must
 // show a SCORE DROP on its own card, before the user accepts. That is a backend measurement, and

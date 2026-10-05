@@ -12,7 +12,7 @@ guard that graft statically (cheap — no build). The rest drive setuptools' rea
 backend over a small package built from this repository's own ``setup.py`` and
 ``MANIFEST.in``, complementing the full build-install-serve check ``verify_wheel.py`` runs.
 
-Regression: caught 2026-07-21 during the plan-34 release dry-run — the release
+Regression: caught 2026-07-21 during a release dry-run — the release
 pipeline had never run (no tag pushed) and `python -m build` produced a SPA-less
 wheel because there was no MANIFEST.in.
 """

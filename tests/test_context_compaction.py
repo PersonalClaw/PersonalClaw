@@ -62,7 +62,7 @@ def test_prune_leaves_small_results_alone():
 
 
 def test_prune_preserves_projection_raw_ref(caplog):
-    """OP4 (no double-loss): a projected result carries its tool_result_get affordance
+    """No double-loss: a projected result carries its tool_result_get affordance
     in-content; pruning must keep the result_id in the digest so the raw stays
     recoverable AFTER compaction — else a compacted projection is unrecoverable."""
     projected = (

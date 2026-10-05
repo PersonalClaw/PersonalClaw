@@ -1,4 +1,4 @@
-"""Speaker diarization entry point (core L1) — parallel to ``transcribe.py``.
+"""Speaker diarization entry point — parallel to ``transcribe.py``.
 
 Resolves the active ``diarization`` provider + model and returns speaker turns, with the
 same sensitive-path guard ``transcribe.py`` applies. The knowledge pipeline skips its

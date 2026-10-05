@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { render } from '@testing-library/react'
 import { QuietButton } from './QuietButton'
 
-// ── quiet compact inline action contract (design-system consistency S2) ───────
+// ── quiet compact inline action contract (design-system consistency) ──────────
 // Four content-viewer toolbar actions (ArtifactViewer's Source-file + Download,
 // FileViewer's Artifact, LoopCockpitPage's findings-log Download) rendered this
 // exact quiet inline button inline. The primitive is the single source; this
@@ -21,7 +21,7 @@ describe('QuietButton', () => {
     const { getByRole } = render(<QuietButton>Download</QuietButton>)
     const have = classOf(getByRole('button'))
     // `gap-1`/`px-2` → `gap-xs`/`px-s`: Tailwind's own defaults compile but BYPASS the
-    // `--space-scale` slider and cli density (system.md trap 3). Both are 4px/8px at
+    // `--space-scale` slider and cli density (web/DESIGN.md §6). Both are 4px/8px at
     // comfortable density, so the swap moves no pixels there and every pixel at dense/cli.
     for (const t of ['inline-flex', 'items-center', 'gap-xs', 'rounded-md',
       'px-s', 'h-7', 'text-on-surface-low',

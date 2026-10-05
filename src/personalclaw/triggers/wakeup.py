@@ -44,8 +44,8 @@ unless you drive it.
 * `resume` is **never droppable**. It carries a gate ANSWER for a parked run. Dropping one
   because the
   session looks busy would strand the run forever waiting for a reply that was thrown away —
-  §3.2 calls
-  this out as what makes R11 resume-targets and R13 approvals safe. So a resume that cannot be
+  never dropping is
+  what makes trigger resume targets and approvals safe. So a resume that cannot be
   delivered
   is REQUEUED, and `dispatch.droppable()` is the shipped predicate that decides.
 
@@ -69,7 +69,7 @@ logger = logging.getLogger(__name__)
 
 
 class WakeKind(str, Enum):
-    """§3.2's two wakeup kinds. An enum because their drop semantics are opposite, and a bare string
+    """The two wakeup kinds. An enum because their drop semantics are opposite, and a bare string
     would let a caller invent a third with no defined behaviour."""
 
     WAKE = "wake"
@@ -86,7 +86,7 @@ class WakeKind(str, Enum):
 def session_key_for(trigger_id: str, *, session: str = "") -> str:
     """The session key a trigger's fire targets.
 
-    Three cases, all from §3's session-binding note:
+    Three cases:
 
     * `pinned:cron:{id}` → the stateful per-trigger session, so a cron that builds context
       across runs
@@ -97,7 +97,7 @@ def session_key_for(trigger_id: str, *, session: str = "") -> str:
 
     The raw id is used verbatim after the prefix. Namespaced ids (`schedule:j1`) keep their
     namespace,
-    because the id namespace IS §6's migration map and rewriting it here would break the mapping.
+    because the id namespace IS the migration map and rewriting it here would break the mapping.
     """
     raw = trigger_id.split(":", 1)[-1] if trigger_id.startswith("schedule:") else trigger_id
     binding = (session or "").strip()
@@ -108,7 +108,7 @@ def session_key_for(trigger_id: str, *, session: str = "") -> str:
 
 @dataclass
 class Wakeup:
-    """One typed payload plus its wakeup signal — what §3.2 enqueues.
+    """One typed payload plus its wakeup signal — what a fire enqueues.
 
     `payload` is a dict rather than a formatted string: the executor decides how to render a
     fire, and
@@ -206,7 +206,7 @@ class Delivery:
 
 #: The key inside `Trigger.workflow` that names a parked run to resume instead of starting a new
 #: run. Inside the EXISTING `workflow` dict rather than a new `Trigger` field, because a resume
-#: target is per-trigger STATE that already has a home: `workflow` is the automation-substrate slot
+#: target is per-trigger STATE that already has a home: `workflow` is the automation engine's slot
 #: that says WHAT this trigger does (`inline` / `ref` / `provider`), and "resume run r7" is another
 #: answer to that question. It is deliberately not config — nothing global tunes it, every value is
 #: specific to one automation — so the config round-trip contract does not apply to it.
@@ -252,10 +252,10 @@ def resume_target_of(trigger: Any) -> dict[str, Any]:
 
 
 def wakeup_for(fire: Any, *, seq: int = 0, now: float = 0.0) -> Wakeup:
-    """Build the wakeup a due fire becomes. Takes S88's `DueFire`.
+    """Build the wakeup a due fire becomes. Takes the tick's `DueFire`.
 
     A fire is a `wake` unless the trigger declares a RESUME TARGET, in which case it is a
-    `resume`. Both readings of §3.2 are honoured, and the distinction is the trigger's own
+    `resume`. Both kinds are honoured, and the distinction is the trigger's own
     declaration rather than anything about the schedule:
 
     * **No target → `wake`, droppable, unchanged.** "A trigger firing on its schedule has asked
@@ -263,9 +263,9 @@ def wakeup_for(fire: Any, *, seq: int = 0, now: float = 0.0) -> Wakeup:
       sentence used to be this docstring's reason for a hard rule and it is still the reason for
       the DEFAULT — every trigger that does not opt in behaves exactly as before.
     * **A declared target → `resume`, never droppable.** The trigger has asked something: it named
-      a parked run. Dropping that because the session looks busy is what §3.2 refuses.
+      a parked run. Dropping that because the session looks busy is what this refuses.
 
-    This is where §3's documented step "resolve def / **resume target**" (`firepath`'s own header)
+    This is where the documented step "resolve def / **resume target**" (`firepath`'s own header)
     finally has a producer. `resume_for` had ZERO production callers before this — measured — so
     the resume path was a complete decision layer with no call site, and no trigger could target
     an existing run.
@@ -364,7 +364,7 @@ def deliver(sessions: Any, wakeup: Wakeup) -> Delivery:
       so the caller creates the session or spools the payload rather than believing a delivery
       happened.
 
-    `wake` vs `resume` (§3.2): a `wake` for a running session is dropped, because that session
+    `wake` vs `resume`: a `wake` for a running session is dropped, because that session
     will drain
     the inbox itself. A `resume` is never dropped — it carries a gate answer, and discarding
     it strands
@@ -395,9 +395,9 @@ def deliver(sessions: Any, wakeup: Wakeup) -> Delivery:
     if queued:
         return Delivery(Disposition.QUEUED.value, wakeup, "")
     if not wakeup.droppable:
-        # A resume that could not be queued MUST come back. §3.2: "must re-queue until the
+        # A resume that could not be queued MUST come back: it re-queues until the
         # parked lock
-        # releases — overlap guards must never eat gate answers intended for parked runs."
+        # releases — overlap guards must never eat gate answers intended for parked runs.
         return Delivery(
             Disposition.REQUEUED.value, wakeup, "session not ready; a resume is never dropped"
         )
@@ -435,13 +435,13 @@ def deliver_all(sessions: Any, wakeups: list[Wakeup]) -> list[Delivery]:
     """Deliver a batch, preserving order. Returns one `Delivery` per wakeup.
 
     One result per input, always — a caller diffing counts to find what happened would be doing the
-    dispatcher's job, and §7 crit 8's "zero silent drops" applies here as much as to the fire path.
+    dispatcher's job, and "zero silent drops" applies here as much as to the fire path.
     """
     return [deliver(sessions, w) for w in wakeups]
 
 
 def dispatch_fires(sessions: Any, fires: list[Any], *, now: float = 0.0) -> list[Delivery]:
-    """Turn S88's `tick()` output into deliveries. The seam between the scheduler and the executor.
+    """Turn `tick()`'s output into deliveries. The seam between the scheduler and the executor.
 
     Sequence numbers come from the batch position, so fires queued in one tick keep their
     order in the
@@ -476,7 +476,7 @@ def dispatch_fires(sessions: Any, fires: list[Any], *, now: float = 0.0) -> list
 
 
 def retry_queue(deliveries: list[Delivery]) -> list[Wakeup]:
-    """The wakeups that must be re-attempted — the resumes §3.2 refuses to let anyone drop.
+    """The wakeups that must be re-attempted — the resumes nobody may drop.
 
     Returned as wakeups rather than deliveries so the caller can feed them straight back into
     `deliver_all` on the next tick without unwrapping.

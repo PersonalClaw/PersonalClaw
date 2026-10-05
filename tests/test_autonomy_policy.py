@@ -151,7 +151,7 @@ def _matrix() -> list[_Run]:
 
 
 def test_the_map_covers_the_fourteen_knobs_and_every_field_resolves():
-    assert len(POLICY_KNOB_MAP) == 14, "AG-13 consolidates exactly fourteen knobs"
+    assert len(POLICY_KNOB_MAP) == 14, "the policy consolidates exactly fourteen knobs"
     knobs = [m.knob for m in POLICY_KNOB_MAP]
     assert len(set(knobs)) == 14, "a knob appears twice in the map"
     probe = SupervisorPolicy()
@@ -182,7 +182,7 @@ def test_the_behaviour_preservation_matrix():
             want = run.today[m.knob]
             assert got == want, (
                 f"[{run.name}] knob {m.knob!r} → {m.field_path}: consolidated {got!r} "
-                f"!= today's {want!r} — this atom must not change what a run permits"
+                f"!= today's {want!r} — consolidating must not change what a run permits"
             )
 
 
@@ -237,7 +237,7 @@ def test_open_ceiling_is_identity_so_consolidation_is_not_a_behaviour_change():
 
 
 def test_a_dotdot_pattern_does_not_widen_the_write_scope():
-    """PLATFORM-HARDENING-FLOORS §5, lifted verbatim: NEVER ``normpath`` a write-scope PATTERN.
+    """NEVER ``normpath`` a write-scope PATTERN.
     ``/a/**/../b`` collapses under normpath to ``/a/b``, silently widening an allow to a path
     the author never granted. FALSIFICATION 3: ``normpath`` the pattern in ``write_scope_allows``
     and the first assertion reds."""
@@ -268,7 +268,7 @@ def home(tmp_path, monkeypatch):
 
 
 def test_safetyprofile_is_subsumed_not_forked(home):
-    """AG-5 landed ``SafetyProfile`` with live (non-test) readers. AG-13 must not fork it: the
+    """``SafetyProfile`` already has live (non-test) readers. Consolidation must not fork it: the
     consolidated object holds the SAME type, so those readers keep working unchanged."""
     from personalclaw.guardrails.policy import (
         approval_policy_for_session,

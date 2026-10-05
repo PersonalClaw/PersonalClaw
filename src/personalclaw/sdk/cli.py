@@ -1,7 +1,6 @@
 """SDK: the app-contributed CLI seams — ``SetupContext`` and ``DoctorLine``.
 
-Plan 32 (Provider-Boundary Completion) adds two generic seams so an app can
-hook into the two core CLI commands WITHOUT living in core:
+Two generic seams let an app hook into the two core CLI commands WITHOUT living in core:
 
 - ``personalclaw setup`` — the setup runner imports the app's declared
   ``cli.setup`` (``"module:function"``) and calls it with a

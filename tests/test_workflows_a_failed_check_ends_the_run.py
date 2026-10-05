@@ -335,8 +335,8 @@ def _check_gates() -> list[tuple[str, str, str]]:
 
 GATES = _check_gates()
 
-#: The one bundled check that is RECORDED rather than obeyed, and why (ledger 291: "if a template
-#: genuinely intends 'record the failure and continue', give it the explicit declaration"). Each
+#: The one bundled check that is RECORDED rather than obeyed, and why (a template that
+#: genuinely intends 'record the failure and continue' gets the explicit declaration). Each
 #: of `knowledge-lint`'s clusters is condensed and then judged for lost detail; nothing after the
 #: judge writes, the fan-out declares that one bad cluster must not sink the pass, and the verdict
 #: is the pass's report on that cluster.

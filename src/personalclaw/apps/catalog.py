@@ -191,7 +191,7 @@ class CatalogEntry:
     # registry-index pointer whose manifest has not been fetched yet.
     providerCapabilities: list[str] = field(default_factory=list)  # noqa: N815
     tags: list[str] = field(default_factory=list)
-    # P20 federation: when this entry came from a source's registry index (not a
+    # Federation: when this entry came from a source's registry index (not a
     # direct dir-scan), the install POINTER — the exact source string to hand
     # app_manager.install (repo URL, optionally with a #subdirectory) so install
     # still routes through source.resolve + the scanner, unchanged. "" for a
@@ -202,7 +202,7 @@ class CatalogEntry:
     # scanned manifest with no permissions block means "declared none". The consent
     # UI must say different things for those two — this flag is the one authority.
     consentKnown: bool = False  # noqa: N815
-    # P29 install-consent transparency — every field from here to `mcpServers` is ONE
+    # Install-consent transparency — every field from here to `mcpServers` is ONE
     # projection, `apps/disclosure.describe(manifest)`, splatted in by each scan site, so a
     # card and the install dialog cannot disclose different things about one manifest.
     # Metadata only; empty for a registry-index card (pointer-only, manifest not yet
@@ -275,7 +275,7 @@ class CatalogEntry:
     # ``required`` means the app declared no floor. Empty ``{}`` for a registry-index
     # pointer card, whose manifest has not been fetched yet — same as ``permissions``.
     coreCompatibility: dict[str, Any] = field(default_factory=dict)  # noqa: N815
-    # ET-5 registry provenance — what the REGISTRY INDEX claims about a listing, as opposed
+    # Registry provenance — what the REGISTRY INDEX claims about a listing, as opposed
     # to what the app's own manifest claims about itself. Three fields, and the distinction
     # is the whole point of carrying them separately from ``author``/``quality``:
     #
@@ -422,7 +422,7 @@ def resolve_catalog_entries(entries: list[CatalogEntry]) -> list[CatalogEntry]:
 
 
 # ---------------------------------------------------------------------------
-# P20 — registry index (federated app sources)
+# Registry index (federated app sources)
 #
 # A source (git URL or local dir) MAY publish an ``app-registry.json`` at its root:
 # a lightweight pointer list so the Store can enumerate the source's apps WITHOUT
@@ -1499,7 +1499,7 @@ def builtin_git_sources() -> list[str]:
     Folded into every read of :func:`list_git_sources`, so ``remove_git_source`` on one is a
     no-op by construction; the Store hides the remove control for these rather than offering
     a button that silently does nothing. The seeded registry is deliberately absent: it is a
-    real row in the sources file and removing it persists (T2.2).
+    real row in the sources file and removing it persists.
 
     "Cannot be removed" is NOT "cannot be turned off" any more: these are dropped from every
     read when ``apps.bundled_source_enabled`` is off, and the Store points at that switch
@@ -1508,7 +1508,7 @@ def builtin_git_sources() -> list[str]:
     return [u for u in list_git_sources() if _git_source_key(u) in keys]
 
 
-# ── Local-directory app sources (workspace-core-app-split §4) ───────────────
+# ── Local-directory app sources ─────────────────────────────────────────────
 # A local source is a directory containing app subdirs (each with an app.json) —
 # the dev-loop equivalent of a git source (e.g. the post-split ``apps/`` tree). The
 # install pipeline already handles a local path (source.resolve → origin="local");
@@ -1888,7 +1888,7 @@ def _save_notified(notified: dict[str, str]) -> None:
 def surface_app_updates(state: Any) -> list[dict[str, Any]]:
     """Compute available updates AND emit ONE notification per newly-available version.
 
-    The dedup contract (APE-7): a notification fires the first time an app's source offers a
+    The dedup contract: a notification fires the first time an app's source offers a
     given ``latestVersion``, and never again for that version — even after the inbox row is
     dismissed — because the high-water mark is persisted OUTSIDE the inbox
     (``entity_settings/app_updates.json``), keyed by ``name``. Only a version strictly newer
@@ -2013,7 +2013,7 @@ def available_catalog() -> dict[str, Any]:
         # the UI can label them + hide the remove control.
         "firstPartySources": sorted(first_party_sources()),
         "localApps": _kept(local_entries),
-        # P20: apps enumerated from a source's app-registry.json pointer index (git +
+        # Apps enumerated from a source's app-registry.json pointer index (git +
         # local) WITHOUT cloning each — install cards that route through the normal
         # scanner-gated install via their `pointer`. Empty when no source publishes an
         # index (the git-URL list + localApps dir-scan remain the fallback).

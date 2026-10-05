@@ -1,4 +1,4 @@
-"""WS5c — the web_fetch pipeline + tool: provenance gate → egress (net.fetch) →
+"""The web_fetch pipeline + tool: provenance gate → egress (net.fetch) →
 shared extractor → token-budgeted pagination.
 
 net.fetch is mocked (the egress layer is tested in test_net_*); the focus here is the
@@ -327,7 +327,7 @@ async def test_tool_web_fetch_truncation_hint(monkeypatch):
     assert res.truncated is True
     assert res.metadata["next_index"] == 2000
     assert any("start_index=2000" in h for h in res.recovery_hints)
-    # §5 fetch-derived citation: url + the [start, end) char span of this window.
+    # Fetch-derived citation: url + the [start, end) char span of this window.
     assert res.metadata["citations"] == [
         {"url": "https://x.com/big", "start_char": 0, "end_char": 2000}
     ]

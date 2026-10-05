@@ -1,4 +1,4 @@
-"""Per-session raw tool-result store (OP2) — the retrieval half of projection.
+"""Per-session raw tool-result store — the retrieval half of projection.
 
 Projection (:mod:`projection`) shows the model a type-aware *preview* of a large
 tool result; this store retains the **full raw output** so the agent can pull
@@ -10,7 +10,7 @@ Backed by a bounded directory under the session workspace
 keyed by a short ``result_id`` (``r_xxxxxxxx``). Bounded by a per-session file
 cap (oldest evicted) so a long session can't grow it without limit; GC'd with the
 session dir. Reuses the session-workspace substrate rather than a new persistence
-layer (plan §2.3 / open-decision #1 — sibling, not the slug-based Artifacts store
+layer (a sibling, not the slug-based Artifacts store
 which is for user-facing content).
 """
 
@@ -58,12 +58,12 @@ def _store_path(session_id: str) -> Path:
 def _content_id(raw: str) -> str:
     """A content-addressed id: ``r_<sha256(raw)[:12]>``.
 
-    Content addressing (Context Economy §1.1) gives three wins over the old
+    Content addressing gives three wins over the old
     count-based ``r_{n:03d}{suffix}``: (1) **idempotent storage** — the same large
     output stored twice in a session (retries, re-runs) dedupes to one file;
     (2) **marker stability** — the recovery hint appended to a preview becomes a pure
     function of the content, so replayed/compacted transcripts stay byte-identical
-    (the KV-cache prefix-stability contract, §3); (3) **unguessability** — a hash id
+    (the KV-cache prefix-stability contract); (3) **unguessability** — a hash id
     can't be enumerated by a prompt-injected instruction fishing for other results
     (defense-in-depth; ``get_result`` already rejects path-traversal ids).
     """

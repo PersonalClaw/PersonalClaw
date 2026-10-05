@@ -34,10 +34,10 @@ def report_ungated_call(
 ) -> str:
     """Surface an ACP tool call the host was never asked about; return an abort reason.
 
-    §2.2's honest half (`G27`). An ACP CLI chooses which of its tools request
+    An ACP CLI chooses which of its tools request
     permission, so the host's gate is opt-in *by the CLI*. When a tool result lands
     for a call that never reached the gate, the tool already ran — there is nothing
-    left to block. What is still available, and what the finding actually asked for,
+    left to block. What is still available
     is a positive mechanism:
 
     * an **accepted** entry in the per-provider not-gateable registry means this hole

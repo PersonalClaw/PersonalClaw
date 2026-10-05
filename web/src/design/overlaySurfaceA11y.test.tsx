@@ -58,7 +58,7 @@ describe('a scrollable region with no focusable content owns a tab stop', () => 
 describe('the insights dock header is two siblings, not nested controls', () => {
   // Regenerate used to be a `span role="button" tabIndex={0}` INSIDE the disclosure
   // <button> — `nested-interactive` (axe, serious). Same shape as the Combobox Clear fixed
-  // in cycle 46, but this one WAS keyboard reachable, so it was a semantics defect rather
+  // earlier, but this one WAS keyboard reachable, so it was a semantics defect rather
   // than a broken control.
   const src = read('pages/knowledge/KnowledgeDetail.tsx')
 
@@ -97,7 +97,7 @@ describe('an icon-only button carries its own name', () => {
   it('the audit refresh button is named', () => {
     // Its two neighbours (Verify, Rotate) carry text; this one is a bare glyph, so it had
     // no accessible name at all (axe button-name, critical). `title` is the kit's
-    // convention for a bare-glyph control (ruled in cycle 37).
+    // convention for a bare-glyph control.
     const src = read('pages/settings/AuditPanel.tsx')
     const line = src.split('\n').find((l) => l.includes('onClick={reload}') && l.includes('<Button'))
     expect(line, 'the audit refresh Button moved — re-measure').toBeTruthy()

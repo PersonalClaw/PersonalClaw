@@ -1,6 +1,6 @@
 """Dir-source: signature-diff observer, debounce, archive-on-delete.
 
-Covers the change's acceptance criteria as COUNTING claims, not liveness ones:
+Covers its guarantees as COUNTING claims, not liveness ones:
 
 * editing three files inside one debounce window re-indexes each **exactly once** — asserted
   as `len(queue.enqueued) == 3`, and three edits to the SAME file collapse to exactly one;
@@ -626,7 +626,7 @@ def test_validate_spec_refuses_missing_nondir_and_bad_cap(store, watched, tmp_pa
 
 
 def test_validate_spec_refuses_a_sensitive_path(store, watched, monkeypatch):
-    """A credential location is refused even when explicitly configured (decision 7's
+    """A credential location is refused even when explicitly configured (the
     bypass-immune class). ``is_sensitive_path`` keys off the REAL home, so the sensitive
     verdict is injected here — what is under test is that the guard consults it at all."""
     import personalclaw.security as security

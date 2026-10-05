@@ -7,8 +7,8 @@ all eight names it consumed (`job_name`, `job_id`, `status`, `trigger`, `duratio
 was never once executed against the live endpoint.
 
 Both sides moved, and the direction matters. `git log -S job_name` puts the widget's reads at the
-initial public commit; `git log -S unified_feed` puts the endpoint's re-point at S84
-(`94d5291d3`, 2026-08-03), whose predecessor returned `_redact_run(r, job_name=...)` — the legacy
+initial public commit; `git log -S unified_feed` puts the endpoint's re-point at
+`94d5291d3` (2026-08-03), whose predecessor returned `_redact_run(r, job_name=...)` — the legacy
 `ScheduleRun` dicts, `job_name` included. So the **endpoint changed underneath the widget**, and the
 widget's reads were simply never updated. Measured on a live gateway with five real fires:
 
@@ -96,7 +96,7 @@ def history_app(tmp_path, monkeypatch):
     hooks._save_snapshot([h.to_dict() for h in hooks.list_all()])
 
     # The NAME JOIN's real source. `_trigger_names` reads the unified TriggerStore, not
-    # `state.crons` — S110 made it store-only — so a fixture that only faked `list_jobs` would leave
+    # `state.crons` — it is store-only — so a fixture that only faked `list_jobs` would leave
     # every schedule row nameless and this rail would "pass" against a blank it created itself.
     # That is exactly what happened on the first run of this file.
     TriggerStore(base_dir=cfg).upsert(

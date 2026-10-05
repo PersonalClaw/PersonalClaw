@@ -2,7 +2,7 @@
 
 ONE reader for the model-context-window table that the provider adapters
 (anthropic/openai/bedrock) each also load. Used by the adaptive memory-injection
-budget (mem-adaptive-budget) to scale per-section caps to the resolved model's
+budget to scale per-section caps to the resolved model's
 window instead of hardcoding, and resolvable standalone (no provider instance).
 """
 

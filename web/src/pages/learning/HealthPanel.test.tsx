@@ -3,7 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { HealthPanel } from './HealthPanel'
 import type { LearningHealth } from '../../lib/api'
 
-// ── The flywheel observability panel (LEARN-R14b / WF2LEA-9 part 3) ───────────────────
+// ── The flywheel observability panel ───────────────────
 //
 // Four metrics that already had a live writer and no reader. These tests assert each one
 // reaches the DOM, and — the load-bearing half — that ABSENCE reaches the DOM as absence.
@@ -64,7 +64,7 @@ describe('unmeasured renders as unmeasured', () => {
   it('does NOT dress never-ran as a warning — no unmeasured chip when nothing has run', () => {
     // 🔁 Was pinned as `4 unmeasured`. With `measured: 0` the headline already says "not
     // measured yet — nothing has run"; an amber chip beside it restated that zero-state as a
-    // problem, contradicting this panel's own null-not-zero rule (LEARN-1).
+    // problem, contradicting this panel's own null-not-zero rule.
     render(<HealthPanel health={health()} error={null} onRetry={() => {}} />)
     expect(screen.queryByText(/4 unmeasured/)).toBeNull()
     expect(screen.getByText(/not measured yet — nothing has run/)).toBeTruthy()

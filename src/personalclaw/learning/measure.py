@@ -1,12 +1,12 @@
-"""Is the flywheel working? Per-arm precision + Beta-Binomial trust (LEARN-R4 / §2.5).
+"""Is the flywheel working? Per-arm precision + Beta-Binomial trust.
 
-The criterion 7 is the bar: per-arm surfaced-vs-used precision is REPORTABLE per entity kind,
+The bar: per-arm surfaced-vs-used precision is REPORTABLE per entity kind,
 threshold profiles are TUNABLE FROM DATA, and a muted chip visibly LOWERS an entity's trust
-posterior. All three are measurements, not opinions, and the plan is explicit about why:
-"unenforced 'helpful' scores stay ornamental forever".
+posterior. All three are measurements, not opinions, because unenforced 'helpful' scores stay
+ornamental forever.
 
 **Measured before writing.** `learning/surfacing.py` already carries `THRESHOLD_PROFILES` with the
-0.55/0.62 split the plan wants preserved, and `learning/usage.py` already persists
+0.55/0.62 split that must be preserved, and `learning/usage.py` already persists
 `surfaced`/`used`/`successes`/`failures` per entity — the exact counts a posterior needs. What is
 missing is the middle: `Candidate` has no `arm` field, so nothing can attribute a surfacing to the
 match path that produced it, and nothing computes a posterior from the counts that exist.
@@ -14,7 +14,7 @@ match path that produced it, and nothing computes a posterior from the counts th
 So this module adds the attribution and the statistics, and deliberately does NOT add a second
 threshold table or a second usage store.
 
-**Why per-arm and not one scalar.** §2.5: "a single scalar can't be calibrated per-arm". An
+**Why per-arm and not one scalar.** A single scalar can't be calibrated per-arm. An
 exact-name match and an embedding match that both score 0.7 are not equally trustworthy, and
 averaging them produces a threshold too permissive for one and too strict for the other. Precision
 is therefore reported per `(kind, arm)` pair — the unit a threshold can actually be tuned on.
@@ -43,12 +43,12 @@ from personalclaw.memory_push import RECENCY_BONUS as RECENCY_BONUS
 #: `alias`/`exact_name`/`suffix`, and its docstring records that "how the name was recognised IS the
 #: evidence". Writing a second table diverged immediately on first measurement: I had `exact_name`
 #: at 0.90 where the shipped table says 0.80. Two confidence scales for one arm name is precisely
-#: the drift this program keeps finding, so the shipped values win and the retrieval-only arms
+#: the drift this codebase keeps finding, so the shipped values win and the retrieval-only arms
 #: (`exact_title`/`path`/`keyword`/`embedding`, which memory_push has no notion of) extend them.
 ARM_CONFIDENCE: dict[str, float] = {
     **_SHIPPED_ARMS,
     # Retrieval arms, ordered by how much the match itself tells you. `embedding` is last because a
-    # nearest neighbour is a guess: it is the arm the plan names at ~0.6, and the one whose
+    # nearest neighbour is a guess: it is the arm set at ~0.6, and the one whose
     # precision the report is most likely to find wanting.
     "exact_title": 0.80,
     "path": 0.75,
@@ -67,7 +67,7 @@ DEFAULT_ARM = "embedding"
 
 ARMS: tuple[str, ...] = tuple(sorted(ARM_CONFIDENCE))
 
-#: The trust prior. §2.5 says "start 0.50", so a new entity begins at even odds — neither
+#: The trust prior starts at 0.50, so a new entity begins at even odds — neither
 #: suspected. Expressed as Beta(1,1) rather than a bare 0.5 so the first observation moves it a
 #: sensible amount: a stronger prior would need many uses to budge, a weaker one would swing wildly.
 PRIOR_ALPHA = 1.0
@@ -78,7 +78,7 @@ PRIOR_BETA = 1.0
 #: mediocre ones, which stalls the flywheel it is supposed to steer.
 LOWER_BOUND_Z = 1.0
 
-#: A muted chip's weight against the posterior. The criterion says a mute must VISIBLY lower trust,
+#: A muted chip's weight against the posterior. A mute must VISIBLY lower trust,
 #: so it counts as a full negative observation — the same weight as a surfacing that went unused.
 #: Anything less would make muting a gesture the numbers ignore.
 MUTE_WEIGHT = 1.0
@@ -116,7 +116,7 @@ class ArmStats:
     """Surfaced-vs-used counts for one `(kind, arm)` pair.
 
     `used` is derived MECHANICALLY by the caller (a skill body loaded, a template run started, a
-    lesson cited) — never from a voluntary model "was this helpful" call. §2.5 is explicit:
+    lesson cited) — never from a voluntary model "was this helpful" call. Self-reported
     helpfulness scores stay ornamental forever, so this dataclass only ever receives observed facts.
     """
 
@@ -155,7 +155,7 @@ def per_arm_precision(events: list[dict[str, Any]]) -> list[ArmStats]:
     """Aggregate surfacing events into per-`(kind, arm)` precision. Pure.
 
     Takes events rather than reading a store, so one function serves the live report, a backfill
-    over pruned history, and a test — and so the caller owns retention (§2.5 prunes at 90d on the
+    over pruned history, and a test — and so the caller owns retention (events prune at 90d on the
     curator tick).
 
     An event with no `arm` is attributed to `DEFAULT_ARM` rather than dropped. Dropping would make
@@ -273,7 +273,7 @@ def posterior_from_counts(
 def apply_mute(posterior: Posterior, *, count: int = 1) -> Posterior:
     """A muted chip, applied to a posterior. Returns a NEW posterior.
 
-    §7's criterion 7 requires a mute to VISIBLY lower trust, so this is a real negative observation
+    A mute must VISIBLY lower trust, so this is a real negative observation
     rather than a display flag. Returning a new object rather than mutating keeps the call site
     honest that trust changed — a mutation would let a caller drop the result and lose it.
     """
@@ -298,15 +298,15 @@ def rank_by_trust(posteriors: list[Posterior]) -> list[Posterior]:
     )
 
 
-# ── threshold tuning from data (§7 criterion 7's second clause) ──
+# ── threshold tuning from data ──
 
 
 @dataclass
 class ThresholdProposal:
     """A proposed change to one entity kind's threshold, with the evidence behind it.
 
-    A PROPOSAL, never an applied change. §2.5 says recalibration happens "empirically, not by
-    taste" — and the corollary is that it also does not happen automatically: the 0.55/0.62 split
+    A PROPOSAL, never an applied change. Recalibration happens empirically, not by
+    taste — and the corollary is that it also does not happen automatically: the 0.55/0.62 split
     was deliberately calibrated, so overwriting it from a week of data would discard a real
     decision. The caller decides; this says what the data supports.
     """
@@ -447,7 +447,7 @@ def _arm_spread(stats: list[ArmStats]) -> str:
 class FlywheelReport:
     """The answer to "is the flywheel working", as one renderable object.
 
-    Exists because §7's criterion is about REPORTABILITY: three numbers scattered across three
+    Exists because the bar is REPORTABILITY: three numbers scattered across three
     modules do not answer it, and callers assembling them ad hoc would each answer it differently.
     """
 
@@ -508,11 +508,11 @@ def build_report(
     )
 
 
-# ── The flywheel health composite (LEARN-R14b) ──
+# ── The flywheel health composite ──
 
 #: The ideal budget-utilization band. Below `LOW` the allocator is starving a budget the
 #: user is paying for; above `HIGH` it is crowding out on every turn and the sacrificial
-#: slot is doing all the work. §6.2 names this band explicitly — 50-80%.
+#: slot is doing all the work. The band is 50-80%.
 UTILIZATION_IDEAL_LOW = 0.50
 UTILIZATION_IDEAL_HIGH = 0.80
 

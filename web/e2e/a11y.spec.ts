@@ -16,7 +16,7 @@ import { expectNoNonAxeA11yDefects } from './nonAxeA11yChecks'
 
 // ── a11y (WCAG 2 AA) scan — every nav route × both themes ───────────────────
 // axe-core over each route. PRODUCT.md targets AA (not AAA). We FAIL only on
-// serious/critical violations (the plan's bar); moderate/minor are reported
+// serious/critical violations (the blocking bar); moderate/minor are reported
 // but don't block, so the ratchet is actionable without drowning in noise.
 // This is the dynamic scan the audit deferred (it needs a running app);
 // it plus the static scanA11y() coverage complete the a11y picture.
@@ -25,16 +25,16 @@ const BLOCKING = new Set(['serious', 'critical'])
 
 // ── WHEN this gate measures, not just how much it covers ────────────────────
 // The scan below has three tiers, because breadth on the route axis was hiding a
-// hole on the STATE axis. Every a11y defect found by hand in cycles 45-49 lived in
+// hole on the STATE axis. Every a11y defect a hand audit found lived in
 // one of the two tiers this spec did not have:
 //
 //   1. NAV ROUTES (18)         — was the whole gate.
 //   2. SETTINGS PANELS (30)    — each a plain `#/settings/<id>` route that mounts
 //                                only when visited. Scanning `settings` covered 1 of
-//                                31 surfaces. 3 of cycle 49's 5 defects were here.
+//                                31 surfaces. 3 of one audit's 5 defects were here.
 //   3. OPENED SURFACES          — modals, docks, menus. Nothing was ever opened, so
 //                                every defect behind a click was invisible: 10
-//                                blocking violations found by hand in cycle 45 alone.
+//                                blocking violations found by hand in one audit alone.
 //   4. NON-NAV ROUTABLE PAGES   — `App.tsx` routes to pages that have no nav tile.
 //                                `mission-control` is a parameterless authenticated
 //                                page, so "every authenticated route is scanned" was
@@ -158,14 +158,14 @@ test.describe('a11y (WCAG AA): mobile viewport — in-session navigation', () =>
       await gotoRoute(page, 'chat')
       await driveScriptedTurns(page, 'Index this turn on the session map, please', 2)
 
-      // The clause's own floor: in-session nav must remain REACHABLE at this viewport. The
+      // The floor: in-session nav must remain REACHABLE at this viewport. The
       // gutter rail is gone here by design, so if the one named control is also unreachable the
       // mobile user has no in-session navigation at all — and a clean axe result on a surface
       // that lost its navigation is precisely the kind of pass this file exists to refuse.
       expect(
         await openHeaderOverflowIfNeeded(page, 'Session map'),
         'IN-SESSION NAV IS UNREACHABLE at 390px: neither the Session Map rail nor its named\n' +
-          'control is present. SSM-10 exists to prevent exactly this.',
+          'control is present, so the mobile user has no in-session navigation at all.',
       ).toBe(true)
       await page.getByRole('button', { name: 'Session map', exact: true }).click()
       const drawer = page.getByRole('region', { name: 'Session map' })

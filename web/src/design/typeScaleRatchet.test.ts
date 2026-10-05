@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { join } from 'node:path'
 import { filesUnder, readSource } from '../test/sourceTree'
 
-// ── Arbitrary font sizes are frozen debt, not a pattern (AUD-NZ13, the ratchet) ────────
+// ── Arbitrary font sizes are frozen debt, not a pattern (the ratchet) ──────────────────
 //
 // tokens.css ships the type scale as data-type roles (display-* … caption): each role sets
 // font-size + line-height + variable-font weight TOGETHER, so a size never travels without

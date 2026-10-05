@@ -1,4 +1,4 @@
-"""(MULTI-TENANCY-ENTITY): the shared / multi-owner inbox view.
+"""The shared / multi-owner inbox view.
 
 Built on the two attribution fields — ``owner_username`` and ``origin_harness``, the
 same names, defaults and ``belongs_to`` bargain the run ledger already ships — extended to
@@ -274,7 +274,7 @@ def test_the_owners_own_item_is_fenced_but_not_labelled() -> None:
     assert is_fenced(fenced)
     assert "(from " not in fenced
     assert OWNER not in fenced
-    # Byte-identical to an unattributed item's fence — the pre-TSE2-3 output.
+    # Byte-identical to an unattributed item's fence — the output before attribution.
     assert fenced == fence_message_for_prompt(_item("C1_1", message="my own note"), owner=OWNER)
 
 
@@ -378,7 +378,7 @@ def test_attribution_round_trips_through_disk(tmp_path: Path) -> None:
 def test_the_shared_inbox_passes_the_shared_store_conformance_contract(
     tmp_path: Path,
 ) -> None:
-    """The strongest form of "per TSHR-1": drive the shipped kit, don't re-describe it.
+    """The strongest form of conformance: drive the shipped kit, don't re-describe it.
 
     ``shared_store_conformance``'s own docstring names "a shared task/inbox view that
     summarises foreign items" as the shape clause 2 is for, so this is the kit's intended

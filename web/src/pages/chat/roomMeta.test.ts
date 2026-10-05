@@ -6,9 +6,9 @@
  * are pinned here by feeding a wire payload and reading the verdict — not by asserting against a
  * rendered pixel, which cannot distinguish "correct" from "plausible".
  *
- * Two of these tests exist because the plan NAMES the defect they prevent:
+ * Two of these tests exist because the defect they prevent was NAMED in advance:
  *
- *  · the turn-collapse merge (`Risks & open questions`: "the likeliest room-specific UI defect") —
+ *  · the turn-collapse merge (the likeliest room-specific UI defect) —
  *    the session transcript merges consecutive assistant messages into one turn, and in a room
  *    consecutive assistant messages are usually DIFFERENT members;
  *  · the fabricated value (the swallowed-write family) — a member with no status must read as

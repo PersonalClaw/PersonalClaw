@@ -43,7 +43,7 @@ from typing import Any, Iterable, Iterator
 # One source of truth for "touches a credential/secret path" (IMDS, ~/.aws, …).
 from personalclaw.history import _SENSITIVE_TOOL_PATTERNS
 
-# Artifact-signature state carried on every report (C2). signing.py imports nothing
+# Artifact-signature state carried on every report. signing.py imports nothing
 # from here, so this is a one-way edge.
 from personalclaw.signing import SignatureInfo
 
@@ -173,7 +173,7 @@ class ScanReport:
     """The gate's output. ``verdict`` is the decision input; ``findings`` is the
     evidence the install UX surfaces ("community skill — 2 warnings").
 
-    ``signature`` is SECURITY-HARDENING contract C2 — the artifact-signature state of
+    ``signature`` is the artifact-signature state of
     the bundle this report describes (``signed`` / ``unsigned`` / ``invalid`` + signer).
     It is set by the install gate that verified the staged tree, NOT by the scanner: the
     scanner is content inspection, signing is provenance, and conflating them would let
@@ -217,7 +217,7 @@ class ScanReport:
 _DESTRUCTIVE_TARGET_END = r"""(?:\s|;|["'`)\\]|$)"""
 
 # High-confidence DANGEROUS patterns (terminal). Reserved for unambiguous malice
-# so the non-overridable floor doesn't trap legitimate skills (risk #1).
+# so the non-overridable floor doesn't trap legitimate skills.
 _DANGEROUS_SCRIPT: tuple[tuple[str, "re.Pattern[str]"], ...] = (
     # destructive-root: rm -rf / , rm -rf ~ , rm -rf $HOME, rm -fr /
     (
@@ -262,7 +262,7 @@ _DANGEROUS_SCRIPT: tuple[tuple[str, "re.Pattern[str]"], ...] = (
 
 #: The DANGEROUS rules decided on the AST rather than on a regex (issue #2607) — see the
 #: "Native destruction" section below. Every one of them is TERMINAL, exactly like the shell
-#: catalog above: the owner's ruling on #2607 is that destruction spelled in the host
+#: catalog above: destruction spelled in the host
 #: language is the same claim as destruction spelled as a shell command, so it lands in the
 #: same band. One rule per destruction CLAIM, not per API spelling: three sentences a
 #: non-expert can weigh, rather than one rule per function name in :mod:`shutil`.
@@ -1669,11 +1669,10 @@ def _annotate_runtime_use(findings: list[Finding], *, reach: _BundleReach | None
 # scored `clean` with ZERO findings, while `rm -rf /` in a `.sh` next to them was terminal.
 # A bundle that deletes the user's home directory installed without a single finding.
 #
-# THE TIER IS THE OWNER'S RULING, NOT AN INFERENCE. #2607 direction 3 left the severity open
-# ("that is a judgement call about the floor and belongs to the owner"). The ruling is that
-# native destruction gets the SAME TERMINAL severity as shell destruction, so these rules sit
-# in the DANGEROUS band and the floor in `_aggregate` applies to them unchanged — no tier,
-# builtin included, downgrades one.
+# THE TIER IS A DECISION, NOT AN INFERENCE. #2607 direction 3 left the severity open as a
+# judgement call about the floor. It is decided: native destruction gets the SAME TERMINAL
+# severity as shell destruction, so these rules sit in the DANGEROUS band and the floor in
+# `_aggregate` applies to them unchanged — no tier, builtin included, downgrades one.
 #
 # WHY THE SEVERITY TURNS ON THE TARGET AND NOT ON THE CALL. `shutil.rmtree` is a legitimate
 # call; cleanup code uses it constantly, and every one of the 64 shipped bundles that calls it
@@ -2294,9 +2293,9 @@ class SkillScanner:
 
     def scan_text(self, text: str, *, surface: str = "manifest") -> ScanReport:
         """Scan a single text blob. Community tier. ``surface="script"`` runs the
-        full destructive-script ruleset (skill-install gate, S3); any other
+        full destructive-script ruleset (the skill-install gate); any other
         surface runs the prose/injection + invisible-char rules (the memory-write
-        injection gate, S5).
+        injection gate).
 
         NO reachability scoping here, by construction: a bare blob has no bundle around
         it, so non-reachability cannot be proved and the default-deny answer stands. A

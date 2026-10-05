@@ -6,7 +6,7 @@
  *  parts than the rail it replaces.
  *
  *  **The word is `unrecorded`.** Not `priced` — that word already exists in `loop_spend`,
- *  `usage_ledger` and `run_totals` and means precisely "a cost is unknown". #2630 ruled it must
+ *  `usage_ledger` and `run_totals` and means precisely "a cost is unknown". #2630 decided it must
  *  not be widened to cover token counts, because a row with a known cost and an unknown token
  *  count would have to pick one value and either choice lies to one of its two readers.
  *
@@ -29,8 +29,8 @@ export const UNRECORDED_LABEL = 'not recorded'
 /** The `report_schema` at and above which a learning-benchmark report RECORDS its provenance.
  *  Mirrors `learning_bench.PROVENANCE_SCHEMA`.
  *
- *  Below it, an absent `provider_binding` means UNRECORDED and NOT "nothing was bound" — ES-17
- *  added the field and left `REPORT_SCHEMA` at 1 (#2562), so consumers had to branch on
+ *  Below it, an absent `provider_binding` means UNRECORDED and NOT "nothing was bound" — the field
+ *  was added with `REPORT_SCHEMA` left at 1 (#2562), so consumers had to branch on
  *  `'provider_binding' in report`. That trick worked and left every future consumer to rediscover
  *  it, which is why the answer lives here and is read from the schema the report STATES. */
 export const PROVENANCE_SCHEMA = 2
@@ -75,7 +75,7 @@ export function tokensUnrecorded(row: { tokens_recorded?: boolean }): boolean {
  *  (#3218).
  *
  *  It lives HERE rather than in `runCost.ts` because the word is `unrecorded`, not `priced`: this
- *  module owns that vocabulary and already owns `tokensUnrecorded`, and #2630 ruled the money word
+ *  module owns that vocabulary and already owns `tokensUnrecorded`, and #2630 decided the money word
  *  must not be widened to cover token counts.
  *
  *  `≥` rather than `~`: unlike a cost, a token count is counted, not estimated from a price table,

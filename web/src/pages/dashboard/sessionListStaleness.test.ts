@@ -5,7 +5,8 @@ import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── A deleted chat kept its place on the dashboard, across reloads ───────────────────────────────
 //
-// Third instance of the family ux-682 opened, and the worst of the three because of one flag:
+// Third instance of the family `lib/siblingCacheStaleness.test.ts` records, and the worst of the
+// three because of one flag:
 //
 //   `chat:sessions`            ChatPage's sidebar          persist: false
 //   `chat:sessions:archived`   the history page            persist: false
@@ -17,8 +18,8 @@ import { filesUnder, readSource } from '../../test/sourceTree'
 // UI looks wrong could not clear it.
 //
 // 🔑 THE KEY'S NAME WAS THE DEFECT, AGAIN. `dashboard:recent-sessions` is named after the SURFACE, so
-// no bust of the chat-session keys could reach it — the same shape as `chat:artifact-picker` in
-// ux-682. Moved to `chat:sessions:recent`, which the collection's existing prefix already covers.
+// no bust of the chat-session keys could reach it — the same shape `chat:artifact-picker` had.
+// Moved to `chat:sessions:recent`, which the collection's existing prefix already covers.
 // **A key named after its reader is invisible to its collection's invalidation.**
 //
 // 🔑 AND THE RENAME PATH BUSTED NOTHING AT ALL. `commitRename` updated the header optimistically and

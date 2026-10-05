@@ -1,4 +1,4 @@
-"""Knowledge web_url connector routes fetch + detect_changes through the egress guard (N2).
+"""Knowledge web_url connector routes fetch + detect_changes through the egress guard.
 
 Previously it fetched arbitrary user/agent-supplied bookmark URLs with raw httpx and NO
 SSRF check — a bookmark of http://169.254.169.254/ or an internal host was fetched

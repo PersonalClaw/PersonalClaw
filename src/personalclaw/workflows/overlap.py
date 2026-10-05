@@ -102,7 +102,7 @@ def decide(policy: OverlapPolicy, *, active: int, queued: int) -> OverlapAction:
     """What a start should do, given the policy and what is already in flight/queued.
 
     Pure, and exhaustive over the closed enum with a RAISING tail. Every member names
-    itself here — that is the ratchet (WV-14): `QUEUE` was silently inherited "start now"
+    itself here — that is the ratchet: `QUEUE` was silently inherited "start now"
     for the length of the program because nothing anywhere branched on it, and a
     behavioural test alone would happily pass a fallthrough shared by two members.
 
@@ -181,7 +181,7 @@ async def drain(workflow_name: str, supervisor: Any) -> str | None:
     """Launch the oldest pending start for `workflow_name` if nothing is in flight.
 
     Returns the launched run id, or None when there was nothing to do. Never raises: its
-    live call site is inside `controller._finish`, the single terminal writer (WF2-R10),
+    live call site is inside `controller._finish`, the single terminal writer,
     which must not fail a run's terminal status over the NEXT run's start.
 
     Idempotent and single-flight by three independent guards, cheapest first:

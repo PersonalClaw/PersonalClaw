@@ -1,12 +1,12 @@
-"""App filesystem storage model (A1/A2/A4).
+"""App filesystem storage model.
 
 The storage contract an app can rely on:
 * Each app has an ISOLATED data dir at ``~/.personalclaw/apps/{name}/data/`` —
   its own sandbox. The DIRECTORY always exists (created at install); the BACKEND
   is handed its path only when the app declares the ``storage`` capability
-  (untrusted-app sandbox P3), so an app without it has no sanctioned persistence.
+  (the untrusted-app sandbox), so an app without it has no sanctioned persistence.
 * It exists before any lifecycle hook runs and before the backend launches.
-* It is PRESERVED across updates (A2 swap) and across disable/enable.
+* It is PRESERVED across updates and across disable/enable.
 * The backend subprocess is handed the absolute path via the
   ``PERSONALCLAW_APP_DATA_DIR`` env var — a stable contract, not a guess.
 * It is per-app (one app cannot see another's data dir).
@@ -106,7 +106,7 @@ def test_backend_gets_data_dir_env(tmp_path, monkeypatch):
     sup = backend_runtime.BackendSupervisor()
     from personalclaw.apps.manifest import AppManifest
 
-    # storage is a declared capability (sandbox P3) — grant it so the backend
+    # storage is a declared capability — grant it so the backend
     # receives its DATA_DIR.
     app_manager.install(
         _app(tmp_path, "svc", backend=True, permissions={"storage": True}), confirm=True
@@ -118,7 +118,7 @@ def test_backend_gets_data_dir_env(tmp_path, monkeypatch):
 
 
 def test_backend_without_storage_permission_gets_no_data_dir(tmp_path, monkeypatch):
-    """Sandbox P3: a backend whose app does NOT declare the storage capability is
+    """A backend whose app does NOT declare the storage capability is
     NOT handed PERSONALCLAW_APP_DATA_DIR (no sanctioned persistence path)."""
     from personalclaw.apps import backend_runtime
 

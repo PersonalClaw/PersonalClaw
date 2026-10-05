@@ -399,7 +399,7 @@ async def delete_comment(task_id: str, comment_id: str, provider_name: str | Non
 
 
 async def task_graph(provider_filter: str | None = None) -> dict[str, Any]:
-    """Adjacency + DependencyAnalysis for the writable native task set (seam S3).
+    """Adjacency + DependencyAnalysis for the writable native task set.
 
     Only the native provider owns a mutable DAG; read-only providers (project
     runtime) don't participate in dependency analysis.
@@ -434,12 +434,12 @@ def _iso_to_epoch(text: str) -> float:
 
 
 def _rank_ready(ready: list[Task], task_map: dict[str, Task], *, now: float) -> list[Task]:
-    """Order a ready set through the unified admission core (PP-13).
+    """Order a ready set through the unified admission core.
 
     This function is the whole of the impurity the core refuses to carry: it reads the wall clock
     and the lease sidecars, builds one `AdmissionState`, and hands the pure comparator a snapshot.
     `admission.ready` then applies the SAME composed policy list the engine's frontier gets — the
-    three `PP-11` capacity rules abstain on a `RESOURCE` request, and `Lease` is the one that speaks
+    three capacity rules abstain on a `RESOURCE` request, and `Lease` is the one that speaks
     — so the board's exclusions and the engine's are one mechanism rather than two that agree today.
 
     The projection asks as `admission.OBSERVER`, an identity that never takes a lease, so a task
@@ -490,8 +490,8 @@ async def ready_tasks(
     """Tasks that can be started now (no unfinished prerequisites), RANKED, optionally
     scoped to a project label or a task list.
 
-    ``mine_only`` (default True) is the load-bearing guarantee from
-    TEAM-SHARED-ENTITIES §2.1: a multi-tenant provider may return tasks assigned to
+    ``mine_only`` (default True) is the load-bearing guarantee for shared providers:
+    a multi-tenant provider may return tasks assigned to
     other people, and those must never be counted or picked as the owner's work. This
     is the ONE funnel every work-selection path goes through — the ready-count
     endpoint and the agent's next-task tool both call it — so filtering here means
@@ -502,7 +502,7 @@ async def ready_tasks(
     before reconciliation would call it startable.
 
     The ORDER, and the exclusion of work another holder is leasing, come from the unified
-    admission core (`PP-13`). Before that this funnel returned provider order — so the one
+    admission core. Before that this funnel returned provider order — so the one
     projection every work-selection surface reads had no ranking at all, while a second,
     complete ranking sat unwired in `pool.frontier`. Ranking LAST, after the ownership filter, is
     deliberate: an excluded colleague's task must not consume a position, and its dependents are

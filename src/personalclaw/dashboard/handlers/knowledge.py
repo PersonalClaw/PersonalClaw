@@ -250,7 +250,7 @@ async def list_items(request: web.Request) -> web.Response:
         return web.json_response({"items": items, "total": total, "page": page, "limit": limit})
 
 
-# The 13 typed item kinds (knowledge-entity-vision). text-ish types author content
+# The 13 typed item kinds. text-ish types author content
 # directly; bookmark records a url; media types arrive via /ingest (file upload);
 # `decision` is authored by `log_decision`.
 _KNOWLEDGE_TYPES = {
@@ -368,7 +368,7 @@ async def create_item(request: web.Request) -> web.Response:
             _sel_log("item.create.dedup", item_id=existing["id"], url=url)
             return web.json_response(existing, status=200)
     # Route through the native provider so the item is registered into the library
-    # AND enqueued for node-graph ingestion (#30): graph → extracted-content pool →
+    # AND enqueued for node-graph ingestion: graph → extracted-content pool →
     # insights → embed, with live per-item SSE progress. The provider's enqueue
     # replaces the old create-fast/_schedule_intelligence path (the graph's terminal
     # stages now own insights + embed).
@@ -536,7 +536,7 @@ async def get_item_thumbnail(request: web.Request) -> web.StreamResponse:
 
 async def list_providers(request: web.Request) -> web.Response:
     """GET /api/knowledge/providers -- registered knowledge providers (native
-    always-on + any external). Mirrors the inbox source S4 pattern."""
+    always-on + any external). Mirrors the inbox source pattern."""
     from personalclaw.knowledge_providers.registry import list_provider_info
 
     return web.json_response({"providers": list_provider_info()})
@@ -548,7 +548,7 @@ async def list_source_recipes(request: web.Request) -> web.Response:
     With ``?url=`` it answers the create flow's first question — "is this site already
     covered?" — returning each matching recipe with its spec ALREADY resolved from the URL's
     capture groups, so the caller saves what it was shown rather than re-deriving it. Without
-    a URL it returns the whole directory for browsing (WATCHED-SOURCES §7.2).
+    a URL it returns the whole directory for browsing.
     """
     from personalclaw.knowledge.source_recipes import list_recipes, recipes_for_url
 
@@ -1111,7 +1111,7 @@ def _shared_entity_counts(store, item_id: str, others: list[str]) -> dict[str, i
     """How many distinct entities each of ``others`` shares with ``item_id``.
 
     One query for the whole result set, not one per neighbour. This no longer *ranks*
-    anything -- KL-13 ranks by similarity score -- it annotates an already-chosen
+    anything -- the related route ranks by similarity score -- it annotates an already-chosen
     neighbour so a reader can be told why two items sit next to each other in entity
     terms. Neighbours sharing nothing are absent from the result and read as 0.
     """
@@ -1132,7 +1132,7 @@ def _shared_entity_counts(store, item_id: str, others: list[str]) -> dict[str, i
 async def get_related_items(request: web.Request) -> web.Response:
     """GET /api/knowledge/items/{id}/related -- nearest neighbours by embedding similarity.
 
-    KL-13 serves this from the precomputed similarity-edge table behind a real score floor
+    This is served from the precomputed similarity-edge table behind a real score floor
     (``knowledge.similarity_min_score``), replacing the unthresholded
     ``COUNT(DISTINCT entity_id)`` overlap it ranked by before. That count had no floor at
     all, so one incidentally shared entity -- a common tag, a person named once in passing
@@ -1161,7 +1161,7 @@ async def get_related_items(request: web.Request) -> web.Response:
 
     store = _store(request)
     item_id = request.match_info["id"]
-    # Read defensively: these two fields land with a sibling KL-13 change, and the
+    # Read defensively: these two fields arrived in a separate change, and the
     # fallbacks are the contract's own defaults rather than a guess.
     knowledge_cfg = getattr(AppConfig.load(), "knowledge", None)
     top_k = int(getattr(knowledge_cfg, "similarity_top_k", 8) or 8)
@@ -1327,7 +1327,7 @@ def _entity_positions(
 ) -> tuple[dict[str, tuple[float, float]], set[str]]:
     """Position every entity at the CENTROID of the projected items that mention it.
 
-    KL-17 clause 1 says "a 2-D projection of item embeddings" while the graph's nodes are
+    The layout is meant to be "a 2-D projection of item embeddings" while the graph's nodes are
     entities, and entities carry no embedding of their own. The reading under which both
     are true: entity nodes stay the nodes, and each is placed by projecting the embeddings
     of the ITEMS THAT MENTION IT. An entity mentioned by several items sits at their
@@ -1924,7 +1924,7 @@ async def search_for_context(request: web.Request) -> web.Response:
                 "tokens": tokens,
                 "summary": _redact(r.get("summary")) or content[:200],
                 "content": content,
-                # P12 per-item citation locator — so a chat-injection card can deep-link + cite
+                # Per-item citation locator — so a chat-injection card can deep-link + cite
                 # where in the source the match sits, not just name the document.
                 "source_type": r.get("source_type"),
                 "section": r.get("section"),
@@ -2079,7 +2079,7 @@ async def list_item_intents(request: web.Request) -> web.Response:
 def _consolidated_text(store, item: dict) -> str:
     """Best available text for matching: pooled extracted contents, else item content.
 
-    Slice rows (WATCHED-SOURCES §5) are EXCLUDED. A slice is a role-sized view of text
+    Slice rows are EXCLUDED. A slice is a role-sized view of text
     already in the pool, so concatenating them alongside the extraction they were cut from
     sends the same document two or three times — a silently multiplied token bill on a
     model call, and duplicated evidence for the intent matching it feeds.
@@ -2311,7 +2311,7 @@ async def generate_skill_from_intent(request: web.Request) -> web.Response:
             status=422,
         )
     _sel_log("intent.generate_skill", intent_id=intent_id, skill=name)
-    # Feedback-Signal producer meta (#1783), the same identity `GET /api/skills` stamps on
+    # Feedback producer meta (#1783), the same identity `GET /api/skills` stamps on
     # this skill from here on: the synthesizer is the producer, keyed by the skill it just
     # wrote. Returned with the 201 so a caller that renders the fresh skill can attribute a
     # verdict without a second round trip — the single source of the pair is
@@ -2332,7 +2332,7 @@ async def generate_skill_from_intent(request: web.Request) -> web.Response:
 async def get_extracted_contents(request: web.Request) -> web.Response:
     """GET /api/knowledge/items/{id}/extracted -- the per-item extracted-content
     pool (one row per ingestion node output: transcript, video-text, pdf-table…).
-    Drill-down for the detail view's processing transparency (#30)."""
+    Drill-down for the detail view's processing transparency."""
     store = _store(request)
     item_id = request.match_info["id"]
     if not store.get_item(item_id):
@@ -2479,7 +2479,7 @@ async def stream_item_ingest(request: web.Request) -> web.StreamResponse:
     )
 
 
-# ---------- Collections (contract C3) --------------------------------
+# ---------- Collections ----------------------------------------------
 
 
 async def list_collections(request: web.Request) -> web.Response:
@@ -2824,7 +2824,7 @@ async def list_tag_taxonomy(request: web.Request) -> web.Response:
 async def list_conflicts(request: web.Request) -> web.Response:
     """GET /api/knowledge/conflicts — every recorded disagreement in the store.
 
-    A read surface, not a resolution one. Conflicts are flagged at INGEST (§3.2) and both claims
+    A read surface, not a resolution one. Conflicts are flagged at INGEST and both claims
     are always kept; this route exists so the flag is visible to a human rather than sitting in
     `file_metadata` where only the next synthesis would see it. Deciding a conflict is a judgement
     about which source to trust, which is the owner's call — so there is deliberately no
@@ -3242,7 +3242,7 @@ async def bulk_items(request: web.Request) -> web.Response:
 
 # ── Watched sources: the create/tune/inspect surface ──
 #
-# WS-2..WS-5 shipped the store, the poll engine and three providers, and `create_source`
+# The store, the poll engine and three providers shipped first, and `create_source`
 # had ZERO non-test callers — there was no route, no CLI and no UI through which a user
 # could create a watched source of any kind. This is that surface.
 #
@@ -3255,12 +3255,12 @@ async def bulk_items(request: web.Request) -> web.Response:
 #     `LISTING_PAGE_GUIDANCE` / `RENDER_TIER_GUIDANCE`. A copy of any of those in the UI
 #     would be a second artifact that drifts from the thing that actually enforces it.
 #   * A spec is never trusted from the client. Each provider's own `validate_spec` decides,
-#     so save-time validation is byte-identical to the poll-time re-validation WS-3/WS-5
+#     so save-time validation is byte-identical to the poll-time re-validation the providers
 #     already do — one validator, not a client-side approximation of it.
 
 
 #: The remediation a source needs, when it needs one. Two kinds, deliberately NOT collapsed
-#: into a single "found nothing" message: WS-3 measures the discrimination (a page that
+#: into a single "found nothing" message: the page provider measures the discrimination (a page that
 #: rendered plenty of text and yielded no items is the WRONG URL; a page carrying script
 #: with almost no visible text is a JS SHELL) precisely because the two fixes are opposite —
 #: point at a listing page vs. turn on the render tier. One message would send half the
@@ -3289,7 +3289,7 @@ def _kind_descriptor(provider) -> dict:
 
     Class rather than name string on purpose: `"watched-page"` written here would be a
     third copy of a name the provider already owns and the store already persists. An
-    app-contributed source provider (WS-8's connector packs) matches none of the three and
+    app-contributed source provider (a connector pack) matches none of the three and
     gets the generic descriptor — a spec editor and no bespoke form — rather than being
     dropped from the catalog, because a kind the create flow refuses to show is a kind
     nobody can use.
@@ -3341,7 +3341,7 @@ def _kind_descriptor(provider) -> dict:
 def _source_kinds() -> list[dict]:
     """The create flow's catalog: one entry per registered poll-capable provider.
 
-    ``previewable`` is measured, not declared. WS-3 deliberately kept ``preview`` OFF the
+    ``previewable`` is measured, not declared. ``preview`` is deliberately kept OFF the
     :class:`KnowledgeSourceProvider` ABC — a feed's or a directory's preview IS its poll, so
     an abstract ``preview`` would have been a stub on two of three providers. The asymmetry
     is therefore real, and the honest thing is to report it so the UI can offer a paste-URL
@@ -3365,7 +3365,7 @@ def _source_kinds() -> list[dict]:
 def _remediation(source: dict) -> dict:
     """What the user can DO about this source's last poll, or an empty verdict.
 
-    Derived from what the engine already persisted (WS-3 writes ``health_status`` and
+    Derived from what the engine already persisted (it writes ``health_status`` and
     ``last_error_summary`` on every poll, success and failure alike) — never recomputed by
     re-polling, which would make opening a page a fetch at someone else's server.
 
@@ -3460,7 +3460,7 @@ def _serialize_source(
     scan left out because they lead outside the folder
     (:meth:`DirSourceProvider.links_outside`); ``None`` for every other kind.
 
-    ``event_driven`` is the honest answer for a source nothing polls BY DESIGN (PEP-7's
+    ``event_driven`` is the honest answer for a source nothing polls BY DESIGN (the
     ``artifact://`` mirror, which is fed by an in-process change listener). Without it that
     row reads "No provider · never polled · every 1h" — three true-of-a-poller statements
     that are all wrong about this one, and the loudest of them is a danger chip telling the
@@ -3730,7 +3730,7 @@ _PREVIEW_SNIPPET_CHARS = 240
 def _snippet(content: str) -> str:
     """One preview item's body as plain, single-line text.
 
-    An item's ``content`` is sanitized MARKUP (WS-3 moves ``sanitize_html`` onto exactly this
+    An item's ``content`` is sanitized MARKUP (``sanitize_html`` runs on exactly this
     field), and the client renders the snippet as text — correctly, since rendering scraped
     bytes as markup is the injection surface this whole path avoids. So the conversion has to
     happen HERE or every preview row reads ``<p>See how four…</p>`` with ``&#8217;`` for its
@@ -3747,7 +3747,7 @@ def _snippet(content: str) -> str:
 
 
 async def preview_watched_source(request: web.Request) -> web.Response:
-    """POST /api/knowledge/sources/preview — §2.4's dry run for the paste-URL create flow.
+    """POST /api/knowledge/sources/preview — the dry run for the paste-URL create flow.
 
     Persists nothing (no item, no cursor, no seen-set row) and spends the spec's request
     budget, because it is a real fetch at somebody else's server. Only the web kind has a
@@ -3955,7 +3955,7 @@ def setup_knowledge_routes(app: web.Application) -> None:
         pool = LLMPool()
         app["knowledge_llm_pool"] = pool
         # Wire the node-graph ingest queue's insights pool to the shared LLM pool,
-        # and (re)start the queue now that the event loop is running (#30).
+        # and (re)start the queue now that the event loop is running.
         try:
             queue = app["state"].knowledge_ingest_queue()
             queue._insights_pool = pool
@@ -4029,7 +4029,7 @@ def setup_knowledge_routes(app: web.Application) -> None:
     app.router.add_get("/api/knowledge/items/{id}/related", get_related_items)
     app.router.add_get("/api/knowledge/items/{id}/duplicates", get_item_duplicates)
     app.router.add_post("/api/knowledge/items/{id}/merge", merge_items)
-    # Reading highlights (S3 T3.1). Listing/creating is per-item; deleting is keyed by the
+    # Reading highlights. Listing/creating is per-item; deleting is keyed by the
     # highlight's own id, so `/annotations/{id}` is a sibling of `/items`, not nested.
     app.router.add_get("/api/knowledge/items/{id}/annotations", list_item_annotations)
     app.router.add_post("/api/knowledge/items/{id}/annotations", add_item_annotation)

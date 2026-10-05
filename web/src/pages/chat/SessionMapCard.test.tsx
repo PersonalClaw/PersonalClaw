@@ -8,12 +8,12 @@ import type { ChatTurn, Segment } from './chatTypes'
 
 // ── The hover/focus preview card ────────────────────────────────────────────────────────────
 //
-// acceptance criteria, in the owner's reference form: hovering a marker opens a `Popover`-based
+// The contract, in the reference app's form: hovering a marker opens a `Popover`-based
 // card showing the user's request, truncated, in `--color-on-surface` (asserted NOT
 // `--color-on-surface-low`), a MUTED excerpt of the beginning of the reply, and a small timestamp;
 // focus alone does not auto-open the card.
 //
-// VACUITY FLOOR — the ways this clause is satisfiable by something that does not work:
+// VACUITY FLOOR — the ways this contract is satisfiable by something that does not work:
 //
 //  1. "HOVER OPENS A CARD" passes for a card that is ALWAYS mounted. So every open assertion is
 //     preceded by an assertion that the card is ABSENT, and closed again by asserting it goes away
@@ -49,7 +49,7 @@ const fixtureTurns: ChatTurn[] = [
 
 const entries = () => sessionMapEntries(fixtureTurns)
 
-/** The rail's SSM-5/SSM-7 wiring, inert for these pointer cases: no turn nodes means the observer
+/** The rail's viewport/jump wiring, inert for these pointer cases: no turn nodes means the observer
  *  reports nothing on screen, which `currentMarkRange` answers with the newest message. */
 const railProps = { turnNodes: new Map<number, Element>(), scrollRef: { current: null }, onJumpTo: () => {} }
 
@@ -104,7 +104,7 @@ describe('the card: the request, a muted excerpt of the reply, and a timestamp',
     const req = container.querySelector('[data-session-map-request]') as HTMLElement
     expect(req.textContent).toBe('Please run the build.')
     // Whole class tokens: `text-on-surface` is a substring of `text-on-surface-low`, so a
-    // substring match here would pass on the exact defect this clause forbids.
+    // substring match here would pass on the exact defect this contract forbids.
     expect(classes(req)).toContain('text-on-surface')
     expect(classes(req), 'the flagged low-contrast metadata treatment').not.toContain('text-on-surface-low')
     expect(classes(req)).toContain('line-clamp-2')   // truncated, not a wall of text
@@ -196,7 +196,7 @@ describe('the rail opens the card on HOVER and not on FOCUS', () => {
     const { container } = render(<SessionMapRail entries={entries()} {...railProps} />)
     const marker = markers(container).find((el) => el.tabIndex === 0)!
     act(() => marker.focus())
-    // The focus target is REAL — this clause is worthless if nothing can be focused.
+    // The focus target is REAL — this check is worthless if nothing can be focused.
     expect(document.activeElement).toBe(marker)
     expect(card()).toBeNull()
     // And it stays closed past the pointer's own open delay, so this is not just "not yet".

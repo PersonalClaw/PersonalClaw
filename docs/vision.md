@@ -20,8 +20,9 @@ It is local-first, provider-agnostic, and MIT-licensed.
 2. **Agentic chat** — conversational sessions where the agent acts with full tool access.
 3. **Automation** — triggers, schedules, and workflows that fire without the user present.
 
-**Delivery surfaces** (same core everywhere): local server, Docker compose. (An experimental
-macOS-only desktop shell exists but is not yet built or released by CI.)
+**Delivery surfaces** (same core everywhere): local server, Docker compose, and the desktop
+app, which every release ships as a macOS dmg for Apple silicon (ad-hoc signed, not notarized)
+and a Linux AppImage and `.deb` for x86-64 (unsigned).
 
 ---
 

@@ -1,8 +1,8 @@
-"""FrameRouter — the single-reader stdout demux for concurrent ACP sessions (P9).
+"""FrameRouter — the single-reader stdout demux for concurrent ACP sessions.
 
 Today an :class:`AcpClient` reads one backend process's stdout *inline* during a turn,
 matching frames by ``req_id`` only and serializing turns behind a process-wide lock —
-so one process serves one session. The P9 spike confirmed a default-dialect backend
+so one process serves one session. A spike confirmed a default-dialect backend
 actually INTERLEAVES multiple sessions on one process (distinct ``sessionId``s,
 overlapping frames), so the bottleneck is purely PClaw's inline reader.
 

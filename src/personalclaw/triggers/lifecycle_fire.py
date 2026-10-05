@@ -1,7 +1,7 @@
-"""Firing the dormant lifecycle events (AUTO §7 criterion 5).
+"""Firing the dormant lifecycle events.
 
-Criterion 5 has two clauses. S67 closed the first (event-kind API parity). This is the second:
-"**the 8 dormant lifecycle events actually fire**".
+Event-kind API parity was the first half of this work. This is the second: **the dormant
+lifecycle events actually fire**.
 
 **Measured before writing.** `triggers.events.configurable_but_dead()` reports seven events —
 `ApprovalRequest`, `ContextCompact`, `MemoryWrite`, `PostResponse`, `PreResponse`, `SessionEnd`,
@@ -9,8 +9,8 @@ Criterion 5 has two clauses. S67 closed the first (event-kind API parity). This 
 `validation.py` allowlist. They are selectable in the hook UI, they validate, they save, and nothing
 ever calls them. A user can configure one and wait forever.
 
-(The plan says "8"; the eighth was `TaskComplete`, which S61e/S61f wired — `dormant_events()` now
-returns seven. The count in the criterion predates that session.)
+(There were eight; the eighth was `TaskComplete`, which is already wired — `dormant_events()` now
+returns seven.)
 
 **The payload shape is the existing one, deliberately.** `workflows/pool.lifecycle_payload` already
 established that a lifecycle fire passes `event` + a `context` string rather than inventing hook
@@ -121,7 +121,7 @@ def memory_write_payload(
     """The agent writes a memory/lesson.
 
     The KEY and KIND, never the body. A memory body is user content, and the whole point of the
-    fencing work in S69/S79 is that untrusted text does not travel into places that execute.
+    untrusted-content fencing is that untrusted text does not travel into places that execute.
     """
     return {
         "event": "MemoryWrite",

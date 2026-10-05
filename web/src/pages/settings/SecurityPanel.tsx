@@ -168,7 +168,7 @@ export const SIGN_IN_LIFETIMES: { value: string; label: string }[] = [
   { value: '90d', label: '90 days — the limit' },
 ]
 
-/** `auth.session_ttl` — how long a browser sign-in lasts (ledger 317c).
+/** `auth.session_ttl` — how long a browser sign-in lasts.
  *
  *  It had no control anywhere: `personalclaw config set` and a hand-edited `config.json` were the
  *  only ways to shorten how long a stolen cookie keeps working. The write goes through the one
@@ -415,8 +415,8 @@ function SigningKey() {
   )
 }
 
-/** The `sandbox.*` config section — resource ceilings for agent-influenced child processes
- *  (PLATFORM-HARDENING-FLOORS §1), delivered post-exec by the ceiling shim.
+/** The `sandbox.*` config section — resource ceilings for agent-influenced child processes,
+ *  delivered post-exec by the ceiling shim.
  *
  *  All five were on the PATCH allowlist with `_meta` help and live readers (`sandbox.py`,
  *  `config/safety.py`, `sandbox_providers/docker.py`) and NO control anywhere in `web/`, so the one

@@ -270,7 +270,7 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
 
   async function del(p: Loop) {
     setActionErr(null)
-    // Through the shared delete ritual (AUD-A11): confirmDelete composes the identical
+    // Through the shared delete ritual: confirmDelete composes the identical
     // title/danger/label, so hand-rolling confirm() here was drift, not a design choice.
     // The custom body stays — it carries the destruction warning `confirmDelete` has no room for.
     //

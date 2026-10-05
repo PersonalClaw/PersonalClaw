@@ -1,6 +1,6 @@
-"""Tests for SOP surfacing discipline (TASKS-SOPS §2 R3/R4).
+"""Tests for SOP surfacing discipline.
 
-The governing precedent is somebody else's scar tissue, quoted in the plan: OpenSquilla shipped
+The governing precedent is somebody else's scar tissue: OpenSquilla shipped
 auto-trigger-by-default and retreated to manual-first after pasted content kept firing workflows. So
 the tests here are mostly about NOT firing, and the pasted-content case is tested directly.
 
@@ -62,7 +62,7 @@ def meta(**kw) -> SurfacingMeta:
 
 
 def test_a_NEW_def_does_not_surface():
-    """The retreat position the plan's cited precedent arrived at the hard way: auto-trigger by
+    """The retreat position the cited precedent arrived at the hard way: auto-trigger by
     default meant pasted content kept firing workflows."""
     assert DEFAULT_MODE_NEW is SurfaceMode.OFF
     assert SurfacingMeta().surface_mode is SurfaceMode.OFF
@@ -567,8 +567,8 @@ def test_there_is_no_guidance_LIFECYCLE_field_to_declare():
     "unbuilt producer" in as many words. `DefMetadata` had no `lifecycle` field either, so no
     authored def could set it and `meta_from_def` could not carry it. Three members, one reachable
     default, zero observable difference. Deleted rather than documented: a field that only looks
-    configurable teaches an author to declare it and wonder why nothing changed. The rebuild recipe
-    (what a consumer must exist first) is recorded in the execution log.
+    configurable teaches an author to declare it and wonder why nothing changed. Rebuilding it
+    needs a consumer to exist first.
     """
     import dataclasses as dc
 
@@ -581,8 +581,8 @@ def test_there_is_no_guidance_LIFECYCLE_field_to_declare():
 
 
 def test_a_PRE_EXISTING_def_with_none_of_these_keys_loads():
-    """Additive with empty defaults: a def written before this session must read back as OFF with no
-    triggers, which is exactly today's behaviour for a def that never surfaced."""
+    """Additive with empty defaults: a def written before these keys existed must read back as OFF
+    with no triggers, which is exactly today's behaviour for a def that never surfaced."""
     restored = SurfacingMeta.from_dict({})
     assert restored.surface_mode is SurfaceMode.OFF
     assert restored.match_text == ""

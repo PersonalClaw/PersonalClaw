@@ -75,7 +75,7 @@ describe('capableModels', () => {
   })
 })
 
-// The catalog-contract chips (LMMV §2.2/§2.3). modelChips is pure so the mapping is
+// The catalog-contract chips. modelChips is pure so the mapping is
 // tested independently of rendering.
 const MC = (fields: Partial<AvailableModel>): AvailableModel =>
   ({ id: 'm', name: 'm', provider: 'p', capabilities: [], ...fields } as AvailableModel)
@@ -91,7 +91,7 @@ describe('modelChips', () => {
     expect(modelChips(MC({ status: 'sunset' }))).toEqual(['status'])
   })
 
-  it('shows a non-commercial warning chip at bind time (Success Criterion 7)', () => {
+  it('shows a non-commercial warning chip at bind time', () => {
     expect(modelChips(MC({ non_commercial: true, license: 'CC-BY-NC-4.0' }))).toContain('non-commercial')
     expect(modelChips(MC({ non_commercial: false, license: 'MIT' }))).not.toContain('non-commercial')
   })

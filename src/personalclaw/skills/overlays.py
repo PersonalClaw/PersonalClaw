@@ -1,4 +1,4 @@
-"""Skill sidecar overlays — WF2LEA-6 (§3.1 "Skill application substrate").
+"""Skill sidecar overlays.
 
 An accepted skill refinement applies as a SIDECAR OVERLAY rather than mutating the base
 ``SKILL.md``: a single file — ``<skills_dir>/.overlays/<name>.json`` — holds the accepted
@@ -305,7 +305,7 @@ def render_block(ref: dict[str, Any], version: int) -> str:
 def applied(name: str) -> list[Applied]:
     """The refinements applied on top of *name* when it loads, in the order they load.
 
-    Fault-tolerant by contract (§3.1: "a corrupt overlay can't break base loading"): a missing or
+    Fault-tolerant by contract (a corrupt overlay can't break base loading): a missing or
     unreadable overlay applies nothing.
     """
     out: list[Applied] = []

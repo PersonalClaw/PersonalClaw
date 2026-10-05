@@ -189,9 +189,9 @@ async def api_chat_session_fork(request: web.Request) -> web.Response:
 async def api_chat_session_fork_rewound(request: web.Request) -> web.Response:
     """POST /api/chat/sessions/{session}/fork-rewound — restore a rewind tail as a fork.
 
-    True rewind (CHAT-CRAFT S1) retains the discarded tail on the edited user
+    True rewind retains the discarded tail on the edited user
     message's ``rewound`` chain. Restoring it never swaps the active timeline (that
-    would reintroduce the branch bookkeeping the plan deliberately avoids); instead
+    would reintroduce the branch bookkeeping this design deliberately avoids); instead
     it forks — reconstructing ``pre-edit history + retained tail`` into a NEW session.
 
     Body: ``{ index: int, snapshot_index?: int }`` — ``index`` is the visible

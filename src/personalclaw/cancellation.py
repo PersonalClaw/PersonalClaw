@@ -60,7 +60,7 @@ REAP_GRACE_SECS = 2.0
 
 @dataclass
 class StopReport:
-    """What a stop actually REACHED — the shape PR2-13 consumes.
+    """What a stop actually REACHED — the shape the stop card consumes.
 
     Counted rather than asserted. "Cancelled" on its own is a claim; these fields are
     the evidence, and they are what a surface can honestly show a user who wants to
@@ -208,7 +208,7 @@ class CancelScope:
         the turn's own end (its transcript among it) must come after that answer, not race it.
 
         The children are popped BEFORE the first signal, so a concurrent second stop
-        finds nothing to kill — the idempotence the atom asks for lives here, not in
+        finds nothing to kill — the idempotence a stop needs lives here, not in
         the callers.
         """
         procs = list(self._children.values())

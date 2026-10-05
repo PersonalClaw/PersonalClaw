@@ -1,8 +1,7 @@
-"""The end-to-end memory sweep (the last clause).
+"""The end-to-end memory sweep.
 
-The six other clauses shipped in Session 5; this one did not, and the reason it
-did not is recorded in the plan: three of its legs — **volunteer**, **edit-vault**,
-**undo** — "exercise MGAV-3/MGAV-6 machinery this change only surfaces", so they were
+Three of its legs — **volunteer**, **edit-vault**, **undo** — exercise machinery
+built apart from the panel that surfaces it, so they were
 never driven together. Driving them by hand once would not have fixed that. What fixes
 it is a test that walks the whole chain in ORDER, feeding each leg the previous leg's
 output, so a break anywhere between a write and its undo is a red test rather than a
@@ -97,8 +96,8 @@ def store(home):
     everything and the graph arm becomes unobservable. The first draft of this file had
     it, and `test_the_sweep_degrades_cleanly_with_the_graph_disabled` failed with the
     graph-only fact still in the block — the assertion was right and the fixture was
-    lying. Without an embedder recall is keyword + graph, which is what §2.1 degrades
-    between.
+    lying. Without an embedder recall is keyword + graph, which is what graph recall
+    degrades between.
     """
     vs = VectorMemoryStore(db_path=home / "memory.db")
     vs.init()

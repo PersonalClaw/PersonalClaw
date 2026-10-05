@@ -1,4 +1,4 @@
-"""Pinned artifacts — the dashboard's pin list (R13).
+"""Pinned artifacts — the dashboard's pin list.
 
 **Why a list and not a tile registry.** The dashboard has NO tile registry: the bento grid and
 per-user layout persistence were deliberately retired, and widgets are hard-imported by
@@ -70,8 +70,8 @@ def _load() -> list[dict[str, Any]]:
                 "slug": slug,
                 "pinned_at": str(entry.get("pinned_at") or ""),
                 # The run that produced it, when a run did. Carried so the widget can deep-link
-                # back to the producing cockpit — the lineage direction §2.5 already established
-                # for the outbox. Empty for a hand-created artifact.
+                # back to the producing cockpit — the lineage direction the outbox already
+                # uses. Empty for a hand-created artifact.
                 "run_id": str(entry.get("run_id") or ""),
             }
         )

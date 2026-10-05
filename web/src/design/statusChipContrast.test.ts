@@ -83,8 +83,7 @@
  *    `prompts/PromptsListPage:197`, `triggers/TriggersListPage:250`, `knowledge/KnowledgeCreatePage:38`)
  *    put the tint on a `size-10` wrapper and the tone on an `<Icon>` CHILD — a different object, so
  *    the same-object test below excludes them, correctly: a glyph carries the 3:1 non-text floor,
- *    and `PRODUCT-POLISH.md` §5 records that family as killed on measurement with an owner verdict
- *    at `design/accent.ts`. An earlier census that matched "the rest of the line" swept them in and
+ *    and `design/accent.ts` records that family as left alone on measurement. An earlier census that matched "the rest of the line" swept them in and
  *    inflated the population by six.
  *
  * 🪤 A BORDER IS NOT A BACKGROUND. Four sites tint at 35–40% — `ChatPage:2967`, `FileTree:249`,
@@ -401,7 +400,7 @@ const HAIRLINE_TONE_FNS = hairlineToneFns()
  *  measured collateral in `schemes.ts`'s header, and the entry is gone rather than kept: an exclusion
  *  that no longer excludes anything is a rail guarding nothing.
  *
- *  🔴 THE FLOOR WAS NEVER TOUCHED, IN EITHER CYCLE. It is 4.5 for all six tones now. The exclusion
+ *  🔴 THE FLOOR WAS NEVER TOUCHED, IN EITHER RETUNE. It is 4.5 for all six tones now. The exclusion
  *  existed so that "unswept" was legible instead of invisible, never to accommodate 3.4870 — widening
  *  the sweep to six tones against a lowered threshold would have read as broader coverage while
  *  asserting less. The mechanism stays in place for the next tone that needs it: `tone_coverage`
@@ -642,7 +641,7 @@ describe('status-chip tone over its own ≤16% tint clears AA on every resting t
   }
 })
 
-// ═══ Tier 2 — 18%, the strongest strength in the tree, for the token this cycle retuned ══════════
+// ═══ Tier 2 — 18%, the strongest strength in the tree, for the token this change retuned ═════════
 //
 // 96 cells (12 schemes × 2 modes × 4 tiers). Worst after the fix: 4.5528 (rose/light on the canvas).
 // Before it, **48 of the 96** were under AA — the 13px `sm.tone` chip in `tasks/TaskDetail.tsx`,
@@ -663,7 +662,7 @@ describe('status-chip tone over its own ≤16% tint clears AA on every resting t
 // `skills/MarketplaceDetail.tsx:80` (a scan-severity badge) and `ChatPage.tsx:4338` (which uses
 // `--color-secondary`, a token with NO `.light` value at all — it inherits the dark amber). Whether
 // each is a live violation depends on the tier it rests on, and none of the four was reachable with
-// data on this cycle's seeded home, so the honest position is: the cells are recorded, the sweep does
+// data on the seeded home, so the honest position is: the cells are recorded, the sweep does
 // not claim them, and the ceiling ratchet below stops a FIFTH appearing. Moving `ok`/`warn`/`danger`
 // is also a far wider blast radius than moving `info`: they are global values, so a nudge lands on
 // every error surface, every progress bar and every icon in the product at once, and
@@ -744,7 +743,7 @@ describe('the tone-as-ink-and-tint family stays inside the swept envelope', () =
   // simply unfixed. A THIRD one reds this test and has to be argued for.
   const ABOVE_CEILING = new Set([
     // A knowledge-TYPE hue on a selected filter chip. `KnowledgeListPage.tsx` already carries the
-    // ruling beside it: no `<tone>-container` sibling exists, the coral container would be visually
+    // reasoning beside it: no `<tone>-container` sibling exists, the coral container would be visually
     // wrong, and "if one ever fails, it needs its own container value, not a guess made from this
     // one". Respected, not re-litigated.
     'pages/knowledge/KnowledgeListPage.tsx @20% tone',

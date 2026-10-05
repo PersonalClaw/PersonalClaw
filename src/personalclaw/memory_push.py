@@ -23,13 +23,12 @@ prior, gated by ``memory.push_min_confidence``, and each is logged separately so
 volunteered-vs-used stat can say *which arm* earns its keep instead of scoring the
 reflex as one undifferentiated thing.
 
-**Restricted sessions.** §3 says "the reflex checks ``session_restrictions.is_restricted``
-exactly as the recall endpoint does". That is wrong twice over and is corrected here: the
-recall endpoint gates READS on ``memory_reads.reach_of`` (a Temporary chat's work, or an app's
-without the memory permission, reads nothing), and ``is_restricted`` is the WRITE gate (it is
-true for incognito too). Using ``is_restricted`` for reads would silently kill the reflex in
-incognito — contradicting its own next sentence, which says incognito reads are allowed and
-only the volunteer WRITE is suppressed. So: reads gate on the turn's ``blocks_reads`` (that
+**Restricted sessions.** Gating the reflex on ``session_restrictions.is_restricted``, as if that
+were the recall endpoint's check, would be wrong twice over: the recall endpoint gates READS on
+``memory_reads.reach_of`` (a Temporary chat's work, or an app's without the memory permission,
+reads nothing), and ``is_restricted`` is the WRITE gate (it is true for incognito too). Using
+``is_restricted`` for reads would silently kill the reflex in incognito, where reads are allowed
+and only the volunteer WRITE is suppressed. So: reads gate on the turn's ``blocks_reads`` (that
 same answer), volunteer logging gates on ``is_restricted``.
 """
 
@@ -64,7 +63,7 @@ DEFAULT_MIN_CONFIDENCE = 0.7
 
 #: Records volunteered per turn. The soft cap; `HARD_CAP` is the ceiling a config
 #: value cannot exceed, because an unbounded "possibly relevant" block is exactly the
-#: context bloat the plan's guardrail forbids.
+#: context bloat this cap exists to prevent.
 DEFAULT_MAX_RECORDS = 3
 HARD_CAP = 5
 
@@ -102,7 +101,7 @@ def _arm_for(matched: str, name: str, aliases: tuple[str, ...], *, sigil: str = 
     comes back as the bare handle, which for the common ``@sparrow``/``Sparrow`` pair is
     byte-identical to the entity's own NAME. Without recovering the sigil from the
     original text, every ``@handle`` hit would classify as ``exact_name`` and the alias
-    arm — the plan's strongest signal, and its headline example — could never fire.
+    arm — the strongest signal — could never fire.
     Measured against the real tokenizer, not assumed.
     """
     low = (matched or "").strip().lower()

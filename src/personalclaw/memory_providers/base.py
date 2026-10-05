@@ -6,14 +6,13 @@ event log, and declares its capabilities. It owns NO intelligence — supersessi
 promotion, recall ranking, the L1 manifest, lessons, facet derivation, lint, and
 any prompt-shaped string live in the Memory Service (L3). This mirrors how a
 ``KnowledgeProvider`` sources/persists items while the Knowledge platform service
-runs insights/embedding/retrieval over every item regardless of source
-(memory-architecture.md §2/§3.2).
+runs insights/embedding/retrieval over every item regardless of source.
 
 Clean break: the old content-shaped ABC (read_preferences/read_projects/
 read_history/get_context/search) is GONE — those were a filesystem-document shape
 inherited from an earlier lineage. They are not aliased; the Memory Service
 renders preferences/projects/history by querying ``kind=preference|note`` records
-and projecting them (mem-fs-mirror), so there is one source of truth.
+and projecting them, so there is one source of truth.
 """
 
 from __future__ import annotations
@@ -61,7 +60,7 @@ class MemoryProvider(ABC):
 
     @abstractmethod
     def put(self, records: "list[MemoryRecord]") -> None:
-        """Atomically upsert a batch of records (O-A5 / batch ops). Providers
+        """Atomically upsert a batch of records. Providers
         without ``transactional_batch`` apply best-effort one at a time."""
         ...
 
@@ -129,7 +128,7 @@ class MemoryProvider(ABC):
         """Read recent WAL events, newest first."""
         ...
 
-    # ── lifecycle hooks (C27) — defined now, implemented lazily ────────────────
+    # ── lifecycle hooks — defined now, implemented lazily ──────────────────────
     # The service calls these at the corresponding moments; the default no-ops
     # let a provider opt in without forcing every provider to implement them.
 

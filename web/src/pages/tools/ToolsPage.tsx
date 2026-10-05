@@ -56,7 +56,7 @@ interface Group {
   server?: McpServer        // present for mcp groups
   providerDisabled?: boolean  // whole native provider turned off
   providerLocked?: boolean    // platform provider — not toggleable/removable
-  group?: string              // activation group (Context Economy §5); unset when grouping is off
+  group?: string              // activation group; unset when grouping is off
   /** Where this provider CAME FROM — `supply_chain.TrustTier` off the wire (#2627).
    *  Read off the group's tools, which all share a provider and therefore a tier. */
   tier?: string
@@ -664,7 +664,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
   )
 }
 
-/** P23d: the MCP connection-pool observability tile — surfaces the live pool snapshot
+/** The MCP connection-pool observability tile — surfaces the live pool snapshot
  *  (shared vs per-session connections) + lifetime spawn/reuse counters so the user can
  *  see pooling working. Hidden when the pool could not be read or knows no server yet
  *  (no pool activity → no tile clutter). */
@@ -776,7 +776,7 @@ function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, o
           </span>
         )}
         <span data-type="caption" className="text-on-surface-low">· {g.tools.length}</span>
-        {/* Which activation GROUP these tools belong to (Context Economy §5) — the
+        {/* Which activation GROUP these tools belong to — the
             page already groups by provider, which IS the group grain, so this just
             names it. Only shown when grouping is on, since it's meaningless off. */}
         {g.group && (

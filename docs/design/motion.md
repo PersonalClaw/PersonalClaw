@@ -384,8 +384,8 @@ refuses to present a window that never observed a running animation as a result.
 
 ### Environment (state it or the numbers mean nothing)
 
-`chrome-headless-shell` 151.0.7922.34, headless, 1440×900 at DPR 2, **CPU unthrottled**, Apple
-M5 Pro (18 cores), darwin arm64, against a gateway seeded with the `demo-home` fixture. This is
+`chrome-headless-shell` 151.0.7922.34, headless, 1440×900 at DPR 2, **CPU unthrottled**, a recent
+Apple-silicon Mac (darwin arm64), against a gateway seeded with the `demo-home` fixture. This is
 the most generous environment the app will ever run in, and the headline table below is
 labelled as such rather than presented as a guarantee — which is why the 4× throttled and
 headed-on-real-vsync runs follow it.

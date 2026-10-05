@@ -5,7 +5,7 @@ import { LearningPage } from './LearningPage'
 import { ApiError } from '../../lib/api'
 import type { LearningInbox, StagingWeek } from '../../lib/api'
 
-// ── LEARN-1: never-ran is not a warning ────────────────────────────────────────────────────────
+// ── Never-ran is not a warning ────────────────────────────────────────────────────────
 //
 // On an instance where capture has NEVER run, the week header rendered an amber "7 silent" chip —
 // while the page's own zero-states ("no capture pass has run", "not measured yet — nothing has

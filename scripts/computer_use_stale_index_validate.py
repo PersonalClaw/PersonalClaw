@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""DESKTOP-COMPUTER-USE: measure the STALE-INDEX half of `DCU-3`'s ``done_when``, live.
+"""Desktop computer use: measure the STALE-INDEX half of the element-index contract, live.
 
-`DCU-3`'s clause has two halves::
+The contract has two halves::
 
     With the enable on, snapshotting a TextEdit window then AXPress-ing a button by index and
     typing into a field succeeds without the pointer moving; a stale index (past TTL or
@@ -13,7 +13,7 @@ carries the fresh-path positive control beside them, because a harness that only
 refusals has not distinguished *"staleness is caught"* from *"everything is refused"*.
 
 **Every step goes through** :func:`personalclaw.computer_use.service.computer_dispatch`, never
-the driver and never the FFI. Dispatch is the only entry point this plan shipped; reaching
+the driver and never the FFI. Dispatch is the only entry point computer use ships; reaching
 around it would prove the driver works and say nothing about the chain meant to restrain it.
 The one FFI call this script makes is :func:`macos_ffi.list_gui_apps`, and it is not a drive —
 it is the teardown census, taken *before* anything is launched so cleanup can quit only what
@@ -21,7 +21,7 @@ this run started.
 
 **The grant is probed FIRST and an ungranted machine reports ``unproven``, never green.** A
 skip that reads as a pass is the failure mode this repo keeps rediscovering, and it has already
-bitten this atom once: `DCU-3`'s recorded reason said the grant could not be had, when nobody
+bitten this check once: an earlier recorded reason said the grant could not be had, when nobody
 had asked the OS. The symmetric error is to assume it *can* be had because it once was — so
 this script asks again, every run, and reports what the OS answered.
 
@@ -49,7 +49,7 @@ through — remove it and every leg behaves identically.
 
 Usage::
 
-    PYTHONPATH=src python scripts/dcu3_stale_index_validate.py
+    PYTHONPATH=src python scripts/computer_use_stale_index_validate.py
 
 Exit status 0 only when every clause holds. Anything unproven is reported as ``unproven`` with
 the reason, never silently dropped. The run sleeps once for the snapshot TTL (read from
@@ -79,10 +79,10 @@ DETAIL_UNKNOWN_ID = "no such snapshot is live in this gateway"
 #: Prose markers, deliberately not credential- or secret-shaped: step 7 passes every driver
 #: string through ``redact_credentials``, and a marker that got redacted would fail the
 #: read-back for a reason that has nothing to do with staleness.
-MARKER_CONTROL = "DCU-3 stale-index run wrote this on the fresh path"
-MARKER_TTL_RECOVERY = "DCU-3 stale-index run wrote this after the past-TTL re-snapshot"
-MARKER_FP_RECOVERY = "DCU-3 stale-index run wrote this after the fingerprint re-snapshot"
-MARKER_NEVER = "DCU-3 expects this string never to reach a window"
+MARKER_CONTROL = "The stale-index run wrote this on the fresh path"
+MARKER_TTL_RECOVERY = "The stale-index run wrote this after the past-TTL re-snapshot"
+MARKER_FP_RECOVERY = "The stale-index run wrote this after the fingerprint re-snapshot"
+MARKER_NEVER = "The stale-index run expects this string never to reach a window"
 
 APP = "TextEdit"
 
@@ -145,7 +145,7 @@ def _dispatch(tool: str, params: dict[str, Any]) -> tuple[str, Any]:
     try:
         result = asyncio.run(
             service.computer_dispatch(
-                tool, params, source="dcu3_stale_index_validate", caller_identity=""
+                tool, params, source="computer_use_stale_index_validate", caller_identity=""
             )
         )
     except (
@@ -353,10 +353,10 @@ def phase_stale(home: Path) -> dict[str, Any]:
     _install_driver_counter()
     _write_enable(home, [APP])
 
-    doc_a = Path(tempfile.gettempdir()) / "dcu3-stale-index-A.txt"
-    doc_b = Path(tempfile.gettempdir()) / "dcu3-stale-index-B.txt"
-    doc_a.write_text("dcu3 stale-index scratch document A\n", encoding="utf-8")
-    doc_b.write_text("dcu3 stale-index scratch document B\n", encoding="utf-8")
+    doc_a = Path(tempfile.gettempdir()) / "computer-use-stale-index-A.txt"
+    doc_b = Path(tempfile.gettempdir()) / "computer-use-stale-index-B.txt"
+    doc_a.write_text("stale-index scratch document A\n", encoding="utf-8")
+    doc_b.write_text("stale-index scratch document B\n", encoding="utf-8")
 
     # Captured BEFORE the launch, because teardown may only quit what this run started —
     # quitting an app the operator already had open would destroy their unsaved work.
@@ -629,7 +629,7 @@ def main(argv: list[str] | None = None) -> int:
     home.mkdir(parents=True, exist_ok=True)
     os.environ["PERSONALCLAW_HOME"] = str(home)
 
-    result: dict[str, Any] = {"atom": "DCU-3", "clause": "stale index", "home": str(home)}
+    result: dict[str, Any] = {"clause": "stale index", "home": str(home)}
     try:
         result["preflight"] = _preflight()
         result["detail"] = phase_stale(home)

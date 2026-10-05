@@ -1,4 +1,4 @@
-"""Success Criteria 2, driven by the UNMODIFIED `openai` SDK and by `curl`.
+"""The `/v1` doorway, driven by the UNMODIFIED `openai` SDK and by `curl`.
 
 The rest of the suite asserts the wire shapes this dialect emits. That is not the
 same claim as "a real client works": a shape can satisfy every field assertion and
@@ -29,7 +29,7 @@ from personalclaw.inbound import auth
 from personalclaw.inbound import openai_dialect as dialect
 
 openai_sdk = pytest.importorskip(
-    "openai", reason="the `openai` extra is not installed — Success Criteria 2 UNVERIFIED here"
+    "openai", reason="the `openai` extra is not installed — the SDK drive is UNVERIFIED here"
 )
 
 _SURFACES = ("OPENAI", "MCP", "A2A", "CAPTURE", "BRIDGE")
@@ -139,7 +139,7 @@ def _sdk(server, token: str):
 
 @pytest.mark.asyncio
 async def test_sdk_holds_a_multi_turn_conversation(monkeypatch):
-    """Success Criteria 2, first half: an off-the-shelf client, two turns, continuity.
+    """An off-the-shelf client, two turns, continuity.
 
     Continuity is asserted at the SESSION, not just by both calls succeeding: the same
     `user` must land on ONE session key, which is what makes the second turn a
@@ -181,10 +181,10 @@ async def test_sdk_holds_a_multi_turn_conversation(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_sdk_streams_and_sees_the_usage_block(monkeypatch):
-    """T2-A1: `create(..., stream=True)` works verbatim in the SDK.
+    """`create(..., stream=True)` works verbatim in the SDK.
 
-    The usage block is asserted THROUGH the SDK because that is the clause's point —
-    "clients budget off it" is only true if the client's own parser surfaces it.
+    The usage block is asserted THROUGH the SDK because clients budget off it, which is
+    only true if the client's own parser surfaces it.
     """
     server, _, _ = await _serve(monkeypatch, turns=["alpha beta gamma"])
     token = auth.create_surface_token(dialect.OPENAI_SURFACE)
@@ -210,18 +210,18 @@ async def test_sdk_streams_and_sees_the_usage_block(monkeypatch):
     assert text.strip() == "alpha beta gamma"
     assert chunks[-1].usage is not None, "the SDK must surface the final frame's usage"
     assert chunks[-1].usage.total_tokens >= 0
-    # And no chunk claimed a tool call — §2.3, checked through the SDK's own model.
+    # And no chunk claimed a tool call, checked through the SDK's own model.
     assert all(not (c.choices and c.choices[0].delta.tool_calls) for c in chunks)
 
 
 @pytest.mark.asyncio
 async def test_sdk_raises_a_typed_error_for_an_unknown_agent(monkeypatch):
-    """T2-A1: "error shapes parse in the SDK".
+    """Error shapes parse in the SDK.
 
     A 404 carrying the dashboard's ``{"error": "some string"}`` envelope makes the SDK
     raise an APIStatusError with no usable `code`. This asserts the SDK classified it as
-    NotFoundError AND recovered the stable code — the two halves of the Amendment's
-    "the dialect's wire contract wins, stable-code preserved".
+    NotFoundError AND recovered the stable code — the dialect's wire contract wins, and
+    the stable code is preserved.
     """
     server, _, _ = await _serve(monkeypatch)
     token = auth.create_surface_token(dialect.OPENAI_SURFACE)
@@ -287,7 +287,7 @@ async def test_sdk_models_list_shows_only_agents(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_curl_audio_speech_returns_bound_tts_audio(monkeypatch):
-    """Success Criteria 2, second half — with a real `curl`, as the clause words it.
+    """The audio half, with a real `curl`.
 
     A stub stands in for the bound TTS provider because a real one needs a downloaded
     voice model; what is verified end-to-end is the HTTP contract an external caller
@@ -296,7 +296,7 @@ async def test_curl_audio_speech_returns_bound_tts_audio(monkeypatch):
     ``resolve_voice``.
     """
     if shutil.which("curl") is None:  # pragma: no cover — curl is present on macOS/CI
-        pytest.skip("curl is not installed — the Success Criteria 2 audio leg is UNVERIFIED")
+        pytest.skip("curl is not installed — the `curl` audio leg is UNVERIFIED")
 
     handed: dict = {}
 

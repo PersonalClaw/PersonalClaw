@@ -188,7 +188,7 @@ export function CompanionPanel() {
       ) : null}
 
       {/* BROWSER CONTROL. This panel rather than a new surface: the
-          connector is a companion client — BA-8 pairs it through the same device-session
+          connector is a companion client — it pairs through the same device-session
           machinery the section above advertises for — so the switch belongs beside the other
           "what may attach to this gateway" decisions.
           The limits are stated in the hint, not left to be discovered: a scheduled run can never

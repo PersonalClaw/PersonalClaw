@@ -3,10 +3,10 @@ import { animate, motion, useMotionValue, useTransform } from 'framer-motion'
 import { expr, exprHeavy, prefersReducedMotion } from '../../design/motion'
 import { MORPH_FAMILY, familySpring } from './vocabulary'
 
-/** A coral-tinted liquid blob that MORPHS between two shape states (FLUID-MOTION
- *  §S2 T2.2 / change FM-3). Flip `active` and the silhouette flows from `from` to
- *  `to` — for loading→loaded, idle→busy, and ambient state transitions where a
- *  crossfade would read as a swap rather than a change of state.
+/** A coral-tinted liquid blob that MORPHS between two shape states. Flip `active`
+ *  and the silhouette flows from `from` to `to` — for loading→loaded, idle→busy,
+ *  and ambient state transitions where a crossfade would read as a swap rather
+ *  than a change of state.
  *
  *   • BOLD (exprHeavy): the morph on the family's spring (`MORPH_FAMILY.state`,
  *     `vocabulary.ts`) PLUS a slow idle breathe — the radius wanders continuously,
@@ -18,15 +18,14 @@ import { MORPH_FAMILY, familySpring } from './vocabulary'
  *     plain `<path>`; there is no motion value, no spring and no driver to run
  *     (the global CSS rule kills CSS transitions; JS/Motion must self-gate).
  *
- *  **SVG path, not a canvas metaball — decided by measurement**, per the plan's
+ *  **SVG path, not a canvas metaball — decided by measurement**, settling an
  *  open question. At the shape counts this primitive is actually used at (one, a
  *  few) both fit the frame budget, but a metaball's cost is per-PIXEL over its
  *  own area, so it is the one that fails first: on a 20x-throttled CPU the
  *  metaball spends 10.9ms/frame of JS at 4 shapes and 39.9ms at 16 (239 of 240
- *  frames blowing 20ms), where this path costs 0.0ms and 2.3ms. The plan's
- *  premise that "canvas scales better for many shapes" holds for point/particle
- *  fields (`DotGlow`'s construction), NOT for a density field. Full numbers in
- *  the plan's execution log.
+ *  frames blowing 20ms), where this path costs 0.0ms and 2.3ms. The premise that
+ *  "canvas scales better for many shapes" holds for point/particle fields
+ *  (`DotGlow`'s construction), NOT for a density field.
  *
  *  NO WebGL and NO gooey filter (the deleted-primitives lesson, per
  *  `Disintegrate`): the silhouette is real geometry, not blurred circles pushed
@@ -47,8 +46,7 @@ import { MORPH_FAMILY, familySpring } from './vocabulary'
  *  `blob`→`squircle` rather than an arbitrary pair. */
 export type LiquidShapeName = 'circle' | 'squircle' | 'blob'
 
-/** Every tunable in one place — this is the taste surface the owner dials (the
- *  plan's owner task 1: "budget ~30 min per session dialing constants"). The
+/** Every tunable in one place — this is the taste surface to dial by hand. The
  *  feel is NOT claimed settled; these are a starting point, not a verdict. */
 const TUNING = {
   /** Control points around the silhouette. 16 puts a point on every diagonal
@@ -175,7 +173,7 @@ export function LiquidShape({
     if (reduce) { t.set(active ? 1 : 0); return }
     // The family's spring, so the expressiveness knob changes this morph's TIMING the
     // same direction it changes a `Morph`'s or a `Bud`'s (bolder = tauter), not only
-    // its amplitude. Before change FM-4 this rode the bare preset and was the one family
+    // its amplitude. Before the shared vocabulary this rode the bare preset and was the one family
     // member the knob left temporally untouched.
     const controls = animate(t, active ? 1 : 0, familySpring(MORPH_FAMILY.state))
     return () => controls.stop()

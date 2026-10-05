@@ -27,7 +27,7 @@ import { join } from 'node:path'
 // `disabledReason` answers the exact question a user in that state has: *why can't I save just the
 // username?* → "Enter the password too — the username is saved with it".
 //
-// 🪤 THIS IS THE ux-712 FAMILY AT A SITE ITS CENSUS CANNOT SEE. That census keys on a `<Button>` inside
+// 🪤 THIS IS THE ROW-ACTION-NAMES FAMILY AT A SITE ITS CENSUS CANNOT SEE. That census keys on a `<Button>` inside
 // `.map((item) => …)` whose handler references the item — a per-row action. These three Saves are
 // hand-written siblings in one component, so nothing in the derived scan matches them. **A census keyed
 // on repetition-by-iteration misses repetition-by-authorship.**

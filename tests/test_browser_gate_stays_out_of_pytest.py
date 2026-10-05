@@ -1,14 +1,13 @@
 """A bare `pytest` must not run the browser gate — asserted, not merely intended.
 
-The acceptance criterion has a NEGATIVE clause: "`make test-e2e` runs the browser gate offline
+The browser gate's contract has a NEGATIVE clause: "`make test-e2e` runs the browser gate offline
 **and a bare pytest does not run it**". Nothing asserted the second half. It was true only by
 construction — the gate is Playwright, so its specs are `.ts` and pytest collects `.py` — and
 "true by construction" is exactly the state that ends with someone adding
 `tests/test_e2e_smoke.py` that shells `npx playwright test`, because no rail said not to.
 
-The cost is not abstract. `PLATFORM-HARDENING-FLOORS.md` §4 lists it first among the harness's
-load-bearing wiring details: the browser leg is "minutes per interpreter", which "is far too slow
-for the per-commit gate". A browser launch inside the unit suite also breaks two other properties
+The cost is not abstract: the browser leg takes minutes per interpreter, which is far too slow
+for the per-commit gate. A browser launch inside the unit suite also breaks two other properties
 the suite depends on — it needs a built SPA (so the run stops being hermetic) and it spawns a
 gateway subprocess under `-n auto`, i.e. one per xdist worker.
 

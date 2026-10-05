@@ -4,7 +4,7 @@ import { hydrateTurns, type ChatTurn, type Segment, type SubagentCard, type Hist
 
 // ── The typed session-map mark model + derivation (contract owner) ──────────────────────────
 //
-// `sessionMapMarks` is the ONE place the transcript becomes an index. Its acceptance criterion is a
+// `sessionMapMarks` is the ONE place the transcript becomes an index. Its contract is a
 // count ("one mark per turn plus one typed sub-event mark per listed segment"), and a count
 // is the easiest thing in the codebase to fake:
 //
@@ -17,7 +17,7 @@ import { hydrateTurns, type ChatTurn, type Segment, type SubagentCard, type Hist
 //     · the two tool segments (ok + fail) yield TWO distinct tool marks (defeats collapsing);
 //     · `visibleIndex` is the OWNING-TURN coordinate and differs from `markIndex` (defeats
 //       faking the jump coordinate with the array position);
-//     · a bare `activity` with no `activityKind` produces NO mark (§A.2 keys on the kind).
+//     · a bare `activity` with no `activityKind` produces NO mark (the mark is keyed on the kind).
 
 const USER_TS = '2026-09-16T10:00:00.000Z'
 const ASST_TS = '2026-09-16T10:00:05.000Z'
@@ -134,7 +134,7 @@ describe('sessionMapMarks — the vacuity-floor discriminators', () => {
     expect(marks.some((m) => m.preview.includes('private reasoning'))).toBe(false)
   })
 
-  it('does NOT mark a bare `activity` segment that carries no activityKind (§A.2 keys on it)', () => {
+  it('does NOT mark a bare `activity` segment that carries no activityKind', () => {
     const withKind: ChatTurn[] = [{ role: 'assistant', segments: [{ kind: 'activity', text: 'stats', activityKind: 'stats' }] }]
     const withoutKind: ChatTurn[] = [{ role: 'assistant', segments: [{ kind: 'activity', text: 'Thinking…' }] }]
     expect(sessionMapMarks(withKind).some((m) => m.kind === 'activity')).toBe(true)
@@ -150,7 +150,7 @@ describe('sessionMapMarks — the vacuity-floor discriminators', () => {
     expect(tools[0].preview).not.toBe(tools[1].preview)
     expect(tools[0].preview).toContain('Terminal')
     expect(tools[1].preview).toContain('Read')
-    // The failure outcome survives into mark-space (§A.2 danger tone). Only the failed one.
+    // The failure outcome survives into mark-space (the danger tone). Only the failed one.
     expect(tools[0].ok).toBeUndefined()
     expect(tools[1].ok).toBe(false)
   })
@@ -182,7 +182,7 @@ describe('sessionMapMarks — subagents, fallbacks, and the real hydration path'
   })
 
   it('visibleIndex round-trips at_message_index over the REAL hydrateTurns output', () => {
-    // Ties SSM-1 to its declared dep: the derivation must read the coordinate hydrateTurns
+    // Ties the mark model to its declared dep: the derivation must read the coordinate hydrateTurns
     // stamps, not the turn's array position (they diverge on tool-using transcripts).
     const history: HistMsg[] = [
       { role: 'user', content: 'run the build', ts: USER_TS },

@@ -330,7 +330,7 @@ describe('a read failure is a failure, not an empty document', () => {
 describe('the panel carries no money and no ROI axis', () => {
   it('renders no cost figure — issue #2566', async () => {
     // A loop's ledger carries no money keys, so the shared totals read $0.00 for a loop-backed run,
-    // and PP-16 is what sends loop-backed runs through this surface. The backend serves no money
+    // and loop-backed runs go through this surface. The backend serves no money
     // field; this asserts the FE does not invent one from elsewhere.
     payload = () => Promise.resolve(body({ report: present('REPORT.md', 'done') }))
     const { container } = render(<DeliverablePanel runId="r1" />)

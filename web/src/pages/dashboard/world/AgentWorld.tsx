@@ -8,7 +8,7 @@ import {
   staticScene, type RenderTier, type SceneNode,
 } from './worldScene'
 
-// ── Orbit: the first-party agent world (AMBIENT-SURFACES A2-3) ───────────────
+// ── Orbit: the first-party agent world ───────────────
 // An ambient scene of everything your agents are doing: every running loop, live
 // chat session and spawned subagent is a body in orbit, pulled INWARD as it starts
 // to want you. Nothing here is a control — a world is something you glance at.

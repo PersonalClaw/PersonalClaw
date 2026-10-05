@@ -8,7 +8,7 @@ user cannot see to check.
 So the aliases resolve at read time instead. A stored `kind: goal` keeps working because
 lookup understands it, not because something rewrote it. That means **zero migration
 code** for years-old references, and it means the aliases are deletable in one commit at
-the Phase-4 endgame rather than being load-bearing forever.
+the migration's endgame rather than being load-bearing forever.
 
 **The direction is deliberately one-way.** A loop kind resolves to a template; a template
 does not resolve back to a loop kind. Reverse lookup would invite writing new references
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 #: no verify command is open-ended by definition, and mapping it to the verifiable variant
 #: would demand an input the legacy reference never had.
 #:
-#: `code` maps to `code-project`, the R5 restructure of what shipped in Slice 9a as
+#: `code` maps to `code-project`, the restructure of what first shipped as
 #: `code-implementation`. That was a product decision — EVOLVE the one code
 #: template rather than ship a second one beside it — and this alias is why it needed no
 #: migration: a stored `kind: code`, a saved cron and a two-year-old transcript all keep
@@ -65,7 +65,7 @@ VARIANT_HINTS: dict[tuple[str, str], str] = {
     ("goal", "verifiable"): "goal-pursuit-verifiable",
     ("goal", "open_ended"): "goal-pursuit-open-ended",
     ("goal", "open-ended"): "goal-pursuit-open-ended",
-    # WF2LOO-9 (R15): the monitor variant — a goal external events move, checked on a
+    # The monitor variant — a goal external events move, checked on a
     # self-scheduled cadence rather than pursued in back-to-back cycles.
     ("goal", "monitor"): "goal-pursuit-monitor",
 }
@@ -170,12 +170,12 @@ def alias_manifest() -> dict[str, object]:
         "one_way": True,
         "note": (
             "Read-time aliases for legacy loop references. Deleted wholesale at the "
-            "Phase-4 endgame; never written to."
+            "migration's endgame; never written to."
         ),
     }
 
 
-# ── Cockpit live-follow key equivalence (R10c) ──
+# ── Cockpit live-follow key equivalence ──
 #
 # The loop cockpit keys per-loop SSE on `loop:<id>`. A template run streams under a
 # run-scoped key. Strict-equality matching between the two DROPS events silently, which

@@ -523,7 +523,7 @@ def _bound(client: InboundClient | None, name: str) -> bool:
 
     An EMPTY ``tools`` list means "no pin", matching `clients.allowed_tools`' reading
     of the same field — NOT "nothing", which is what an empty ``surfaces`` list means
-    to `may_use`. The asymmetry lives in EA-1's records and is not invented here:
+    to `may_use`. The asymmetry lives in the client records and is not invented here:
     ``surfaces`` is the binding that GRANTS, ``tools`` is the one that NARROWS. A
     surface-token caller has no record and therefore no pin.
     """
@@ -595,7 +595,7 @@ async def handle_actions(request: web.Request) -> web.Response:
 
 
 def _fence_user_content(action: Action, result: dict) -> dict:
-    """Route an action's declared user-content field through the ONE wrapper (§1.4).
+    """Route an action's declared user-content field through the ONE wrapper.
 
     Only the declared key is touched. An action that declares nothing is returned
     untouched, which is the half of this that carries the security value: fencing every

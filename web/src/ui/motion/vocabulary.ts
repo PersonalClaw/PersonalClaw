@@ -31,7 +31,7 @@ import type { Transition } from 'framer-motion'
 import { duration, ease, expr, physics, spring } from '../../design/motion'
 
 /** The family's tunables, in ONE named place. Nothing here is settled — this is the
- *  taste surface the plan's owner task 1 budgets ~30 min a session dialing, and
+ *  taste surface to dial by hand, and
  *  `LiquidShape`'s `TUNING` / `Disintegrate`'s tier list are the amplitude halves of
  *  the same idea. Retuning the whole family's feel is these five numbers. */
 export const MORPH_FAMILY = {

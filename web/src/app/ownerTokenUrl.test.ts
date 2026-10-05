@@ -11,7 +11,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 // asset can load — so this suite reads the shipped file and evaluates it in jsdom, the same bytes
 // a browser runs.
 //
-// Measured before it existed (day-56b `s26`): opening `#/chat/<key>` without a session showed
+// Measured before it existed: opening `#/chat/<key>` without a session showed
 // the Connect gate; pasting the token landed on `/?token=<tok>#/dashboard` — the chat was gone
 // (the gate built `origin + '?token='`) and the owner token sat in the address bar and the
 // history entry for the rest of the visit.

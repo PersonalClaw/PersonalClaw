@@ -1,6 +1,6 @@
 """Pre-v2 SOP archival — the user's own writing survives the clean break.
 
-WORKFLOWS-V2 Phase 1 deletes the old workflow feature, and the v2 def store lands in
+The v2 workflows engine deletes the old workflow feature, and the v2 def store lands in
 the same `workflows/` parent. The old `<name>/WORKFLOW.md` dirs move once into
 `_legacy_sops/` rather than being deleted (they are the user's text) or left in place
 (they would sit beside real definitions looking inexplicably ignored).

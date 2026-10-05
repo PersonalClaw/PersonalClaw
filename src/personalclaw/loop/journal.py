@@ -84,7 +84,7 @@ class LoopJournal(LedgerWriter):
     #: The loop store owns `loop/<id>/`, so it is what this ledger appends through.
     _store: ClassVar[LedgerStore] = loop_files  # type: ignore[assignment]
 
-    # ── the four PP-5 emit points ──
+    # ── the four ledger emit points ──
 
     def cycle(self, cycle: int, finding: dict[str, Any]) -> None:
         """One loop cycle — the worker produced a finding. `step_started` + `step_completed`.
@@ -109,7 +109,7 @@ class LoopJournal(LedgerWriter):
     def verdict(self, verdict: dict[str, Any]) -> None:
         """A supervisor/judge assessment — `judge_verdict` in the reconciled vocabulary.
 
-        `verdict` is `{"cycle": n, **JudgeVerdict.to_dict()}` (WF2LOO-16), so the ledger record
+        `verdict` is `{"cycle": n, **JudgeVerdict.to_dict()}`, so the ledger record
         carries the reconciled keys (`verdict`, `done`, `marginal_value`, `quality_score`, …) at
         top level — the loop no longer speaks a private verdict dialect.
         """
@@ -158,7 +158,7 @@ def ledger(loop_id: str, *, kinds: set[str] | None = None) -> list[dict[str, Any
 def cycles_completed(loop_id: str) -> int:
     """How many cycles a loop has COMPLETED — the ledger's own `step_completed` count.
 
-    The ONE answer (PP-16 seam 4a). `loops.total_cycles` used to cache this number in the SQLite
+    The ONE answer. `loops.total_cycles` used to cache this number in the SQLite
     row: both of its writers wrote exactly ``len(files.get_findings(cid))`` and seven readers read
     the column back, so a quantity the ledger already derives had a second, stored copy that could
     — and did — disagree with the projection it copied. The column is gone; this is what a reader

@@ -24,6 +24,6 @@ fail-CLOSED:
   `fence_untrusted`, so a new tool physically cannot skip the data-not-instructions
   treatment.
 
-Session 1 (this slice) ships the substrate: auth, caps, audit, and the JSON-RPC
-transport with an empty tool table. Session 2 adds the five curated tools.
+The substrate is auth, caps, audit, and the JSON-RPC transport; the curated
+read-only tools sit on it (:mod:`personalclaw.inbound.tools`).
 """

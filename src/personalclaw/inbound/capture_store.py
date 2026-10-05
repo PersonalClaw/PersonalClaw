@@ -1,4 +1,4 @@
-"""Capture-session store: the persistence half of the Dialect-5 capture proxy.
+"""Capture-session store: the persistence half of the capture proxy.
 
 The capture proxy (``capture_proxy.py``) and the telemetry
 importer (``capture_import.py``) both land here, because both owe the *identical*
@@ -8,7 +8,7 @@ guarantee and there must be exactly one implementation of it:
 external-agent content reaches disk it is (a) screened by
 :func:`personalclaw.security.redact_credentials` and (b) wrapped by
 :func:`personalclaw.security.fence_untrusted` with ``source="capture:<client_id>"``.
-That ordering is the whole security argument for this change: when a LEARNING-FLYWHEEL
+That ordering is the whole security argument for this change: when a learning-loop
 pass later reads a capture session, the content is *already* inside fences, so
 ``learning/hygiene.py``'s existing rule ("content inside ``fence_untrusted`` is
 invisible to direct capture cadences; it may only travel the proposal path") applies
@@ -445,7 +445,7 @@ def _build_record(
 ) -> tuple[dict, dict]:
     """Assemble ``(record, sidecar)``. Every content field screened at its own boundary.
 
-    Returns the §7.2 record shape plus the full-content sidecar. Raises on hostile
+    Returns the session record shape plus the full-content sidecar. Raises on hostile
     input; :func:`record_turn` owns the never-raise contract.
     """
     prompt_parts = [_text_of(m.get("content")) for m in _messages(request_body)]
@@ -538,10 +538,10 @@ def _stage_capture(record: dict, sidecar: dict, *, session_id: str, client_id: s
     """Index one captured turn into ``learning.db``'s staging tier. **NEVER raises.**
 
     The FOURTH capture cadence (``Cadence.CAPTURE``), beside per-turn, session-end and
-    run-end — the plan's own framing: the capture proxy feeds the existing flywheel
-    machinery as a new source and "must not grow a parallel learning pipeline". This is
+    run-end — by design: the capture proxy feeds the existing flywheel
+    machinery as a new source and must not grow a parallel learning pipeline. This is
     that hookup, and it is the whole of it: the row lands whether or not any mining pass
-    exists to read it, so capture is durable even with flywheel steps 1-3 absent.
+    exists to read it, so capture is durable even with no mining pass at all.
 
     **The row carries the fence; it does not bypass it.** ``content`` is the sidecar's
     ALREADY-fenced prompt/response verbatim. Two properties depend on that, and both are
@@ -650,7 +650,7 @@ async def record_turn_async(**kwargs: Any) -> str:
     """:func:`record_turn` off the hot path.
 
     Sync file IO inside the async proxy loop stalls the traffic it is observing —
-    the §7.1 "latency honesty" requirement. ``to_thread`` is the whole mechanism;
+    the "latency honesty" requirement. ``to_thread`` is the whole mechanism;
     the never-raise guarantee is inherited from :func:`record_turn`.
     """
     return await asyncio.to_thread(lambda: record_turn(**kwargs))
@@ -660,7 +660,7 @@ def _overlay_imported_facts(record: dict, sidecar: dict, raw: dict) -> None:
     """Overlay an importer's already-extracted tool facts onto a synthesised record.
 
     :func:`_build_record` **derives** ``tool_calls``/``read_paths``/``wrote_paths`` from
-    the request and response bodies. A §8 import has no bodies — only digests plus the
+    the request and response bodies. A telemetry import has no bodies — only digests plus the
     facts its adapter already extracted — so the bodies synthesised in
     :func:`stage_records` contain no tool calls at all and re-deriving from them yields
     nothing. Without this overlay the derivation would therefore silently DROP every tool
@@ -716,7 +716,7 @@ def _overlay_imported_facts(record: dict, sidecar: dict, raw: dict) -> None:
 
 
 def stage_records(records: list[dict], *, source: str) -> dict:
-    """Normalise already-shaped records into capture sessions (§8 telemetry import).
+    """Normalise already-shaped records into capture sessions (telemetry import).
 
     Runs the identical redact→fence→persist pipeline as the live proxy, so an imported
     transcript carries exactly the same guarantees as a proxied one — a second,
@@ -745,7 +745,7 @@ def stage_records(records: list[dict], *, source: str) -> dict:
             continue
         request_body: dict
         response_body: dict | None
-        # `overlay` is set only for the bodiless §7.2 shape; see below.
+        # `overlay` is set only for the bodiless record shape; see below.
         overlay: dict | None = None
         raw_request = raw.get("request_body")
         if isinstance(raw_request, dict):
@@ -753,7 +753,7 @@ def stage_records(records: list[dict], *, source: str) -> dict:
             raw_response = raw.get("response_body")
             response_body = raw_response if isinstance(raw_response, dict) else None
         else:
-            # The adapters emit the §7.2 RECORD shape, not a transcript: digests, tool
+            # The adapters emit the session RECORD shape, not a transcript: digests, tool
             # calls and paths, with no bodies — an SSE dump structurally cannot supply a
             # request half at all. Synthesise the minimal bodies so `_build_record` stays
             # the ONE place that shapes and screens a record; a second, laxer path for

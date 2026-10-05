@@ -1374,7 +1374,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             return tool_failure(
                 f"no skill named '{skill_name}'. Check the skill index for exact names."
             )
-        # Phase-2 disclosure: record the load as a use (#25) so surfacing-ranking
+        # Phase-2 disclosure: record the load as a use so surfacing-ranking
         # and the curator see on-demand invocations, then return the full body.
         try:
             from personalclaw.skills.usage import SkillUsageStore
@@ -1755,7 +1755,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
 
 
 def _suggest_template(args: dict[str, Any]) -> str:
-    """Decide whether the "save as template" offer is welcome, and return its wording (UP-R9).
+    """Decide whether the "save as template" offer is welcome, and return its wording.
 
     The DECISION is `template_pipeline.should_nudge`'s and the wording is `nudge_text`'s — both
     already implement the anti-nag rules, and re-deciding here would give the feature two ideas of
@@ -1967,7 +1967,7 @@ def _run_coro(coro: Any) -> Any:
 
 
 def _project_context_review(args: dict[str, Any]) -> str:
-    """Route reviewer-identified items into typed proposals. Writes NOTHING (LEA-12).
+    """Route reviewer-identified items into typed proposals. Writes NOTHING.
 
     Delegates to `learning.project_context_review`, which files each item through the shared
     human-gated queue — deduping and suppressing anything a prior decision settled. Reports how
@@ -2038,7 +2038,7 @@ _PROMOTE_REFUSALS = {
 
 
 def _skill_promote(args: dict[str, Any]) -> str:
-    """Promote a completed run or conversation into a skill PROPOSAL. Writes NO skill (LEA-11).
+    """Promote a completed run or conversation into a skill PROPOSAL. Writes NO skill.
 
     Delegates to `learning.skill_promotion`, which verifies a named run actually completed and files
     through the shared human-gated queue. Reports what reached the QUEUE — never what was installed
@@ -2071,7 +2071,7 @@ def _skill_promote(args: dict[str, Any]) -> str:
 def _dashboard_tile_propose(args: dict[str, Any]) -> str:
     """Pin a saved artifact as an ``added_by:agent`` tile — a PROPOSAL, never a write.
 
-    Propose-don't-pin (AMBIENT-SURFACES §1.3): an agent addition writes an
+    Propose-don't-pin: an agent addition writes an
     ``added_by:"agent"`` overlay row that renders with an accept/dismiss chip. The
     user decides; the agent never silently rearranges the home. Bounded by the
     ``ambient.max_tiles`` cap in the store.
@@ -2116,7 +2116,7 @@ _AGGREGATED_CATEGORY_MODULES = (
     # Desktop computer use. The category module is the THIN SHIM: it declares the
     # seven tools and forwards each call to the gateway's in-gateway dispatch. It is aggregated
     # here rather than served by a second `personalclaw mcp-computer` stdio server because this
-    # process is already the shim the plan describes — one composition root, one identity
+    # process is already that shim — one composition root, one identity
     # resolver, and a process that never imports a driver.
     "personalclaw.computer_use.tools",
 )

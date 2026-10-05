@@ -1,4 +1,4 @@
-"""TokenJuice savings ledger (Context Economy §1.3) — the counterfactual meter.
+"""TokenJuice savings ledger — the counterfactual meter.
 
 Every projection that truncated a large tool result "saved" the difference between the raw
 size and the projected preview it fed the model. This module records those savings as
@@ -8,7 +8,7 @@ so it can't grow without limit). Surfaced read-only via ``GET /api/tools/savings
 Settings → Tools card.
 
 **This is the SAVINGS (counterfactual) ledger, not spend metering.** Authoritative token/
-dollar spend is AUTONOMY-GUARDRAILS' attempt records (``model_calls.jsonl``); ``cost_usd``
+dollar spend is the guardrails' attempt records (``model_calls.jsonl``); ``cost_usd``
 on LLM events is currently unpopulated. Tokens here are ESTIMATED (``chars/4``, flagged
 ``estimated``); this store will cross-reference the guardrails real token counts once that
 lands rather than duplicating metering.

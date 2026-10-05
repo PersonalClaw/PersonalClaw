@@ -1,12 +1,12 @@
 """The def-side surfacing fields and the def→record adapter.
 
-S58-S60 built the surfacing records as pure decision modules. `WorkflowDef` had none of the fields
+The surfacing records were built as pure decision modules. `WorkflowDef` had none of the fields
 they read — measured against `dataclasses.fields`, there was no `surface_mode`, `cadence_days`,
 `escalation`, `packs`, `hands_off_to` or `guided` anywhere on the def. So every one of those
 mechanisms was reachable only by a caller that hand-built a record, which is another way of saying
 none of them could be driven by an authored template.
 
-This session adds them to `DefMetadata` — the TYPED metadata block, not `extra` — for the reason
+This change adds them to `DefMetadata` — the TYPED metadata block, not `extra` — for the reason
 that block's own comment records: `from_dict` drops what it does not name, and annotating all 18
 bundled templates with `keywords` once left the matcher reading 0/18 while the authors believed the
 field was set. A field in an open dict is a field the reader treats as absent.
@@ -180,7 +180,7 @@ def test_the_ONE_conversion_point_carries_every_field_a_def_can_SUPPLY():
     """The anti-inertness rail for this seam: a field on BOTH dataclasses that `meta_from_def` does
     not name is a field an author can set and no surfacing path will ever see.
 
-    This is the shape WF2TAS-12 measured on `lifecycle` from the other side — there the field was on
+    This is the shape once measured on `lifecycle` from the other side — there the field was on
     `SurfacingMeta` with no `DefMetadata` twin, so nothing could write it. Same defect, one seam:
     the adapter is the only place the two shapes meet, and its own docstring calls itself the ONE
     conversion point. This asserts that claim instead of trusting it.
@@ -193,7 +193,7 @@ def test_the_ONE_conversion_point_carries_every_field_a_def_can_SUPPLY():
 
     shared = {f.name for f in dc.fields(SurfacingMeta)} & {f.name for f in dc.fields(DefMetadata)}
     # Vacuity guard: a rail over an empty intersection passes forever and measures nothing. Seven is
-    # the population measured at WF2TAS-12 (match_text, summary, when_to_use, agent_digest,
+    # the population first measured (match_text, summary, when_to_use, agent_digest,
     # surface_mode, requirements, cadence_days) — a DROP below it means fields left the seam.
     assert len(shared) >= 7, f"the seam shrank to {sorted(shared)} — is the rail still measuring?"
 
@@ -288,7 +288,7 @@ def _gate_in_branch() -> Node:
 
 
 def test_a_gate_buried_in_BRANCH_CASES_still_routes_to_a_RUN():
-    """S45 measured a hand-rolled walk finding 4 of 13 nodes because branch children live under
+    """A hand-rolled walk was measured finding 4 of 13 nodes because branch children live under
     `cases`/`default_case`. Missing a gate here would route a gated def to a blueprint, which has no
     engine to pause."""
     assert sc.route_from_def(_meta(surface_mode="passive", guided=True), _gate_in_branch()) is (

@@ -1,6 +1,6 @@
 """Loop-2 regression gating — the cheap gate subset + before/after proposal columns.
 
-The amendment names three loops. Loop 1 (studies) says *"should be better"*; Loop 3
+There are three loops. Loop 1 (studies) says *"should be better"*; Loop 3
 (field metrics) says *"is"*. Loop 2 is the cheap tier between a change and shipping:
 a curated subset of the Loop-1 scenario library, re-run twice — once over the home as it
 is, once with the candidate artifact staged — so a proposal carries ``{before, after, pin}``
@@ -15,7 +15,7 @@ What this module adds is the *selection*, the *arm staging*, and the *bound*.
 
 ## How the dozen is declared, and why not a subdirectory
 
-The amendment sketched ``evals/scenarios/gate/``. The installed library is a FLAT directory
+The obvious home would be ``evals/scenarios/gate/``. The installed library is a FLAT directory
 that three readers glob (``personalclaw eval``, the matrix runner's resolver,
 :func:`personalclaw.evals.scenarios.install_library`), and none of them descends: a scenario
 in a subdir would be invisible to ``resolve_scenario_path`` and absent from the library
@@ -352,7 +352,7 @@ class GateSubset:
 
         A set-level hash rather than a per-scenario one because the gate's subject IS the set:
         add, remove or edit a member and the subject changed, which is exactly what the pin has
-        to record. Same move ES-4 makes for a judge fixture SET
+        to record. Same move the judge bench makes for a fixture SET
         (:func:`~personalclaw.evals.pinning.compute_pin_for_subject`).
         """
         import hashlib
@@ -893,7 +893,7 @@ def verdict_of(report: GateReport) -> str:
 def _record_ledger_row(report: GateReport, *, pin: pinning.RunPin, k: int) -> None:
     """Append the gate's ``results.tsv`` row — before in ``score_old``, after in ``score_new``.
 
-    Those two columns have existed since ES-1 for exactly this shape. Best-effort: a ledger
+    Those two columns exist for exactly this shape. Best-effort: a ledger
     write that fails must not lose a measurement the proposal card can still render.
     """
     try:

@@ -230,7 +230,7 @@ describe('a destructive confirm names the item', () => {
   })
 
   it('TaskDetail both takes the comment AND is passed it', () => {
-    // 🪤 TWO LINKS, and declaring the parameter is the worthless half. A previous cycle in this repo
+    // 🪤 TWO LINKS, and declaring the parameter is the worthless half. A previous change in this repo
     // added an optional label to a row component, shipped it, and changed nothing — every call site
     // still omitted it, so the value was `undefined` at runtime while the signature looked correct.
     // 🪤 …and read through `code()`, because the FIRST draft of the last assertion below failed on the
@@ -276,7 +276,7 @@ describe('the sentence the dialog actually shows', () => {
   })
 
   it('names an episodic memory by its text', async () => {
-    const text = 'Asked me to stop summarising the roadmap and just take the next atom'
+    const text = 'Asked me to stop summarising the roadmap and just take the next step'
     const { title } = await titleOf(() => confirmDelete('episodic memory', rowSubject([text], 40)))
     expect(title).toBe('Delete episodic memory "Asked me to stop summarising the roadma…"?')
   })
@@ -295,7 +295,7 @@ describe('the sentence the dialog actually shows', () => {
     // "Delete this episodic memory?" (28 chars) to ~66, so the question is what the header does with
     // the overflow. It wraps: the title has no truncation and the card has no height cap, so a
     // two-line title just makes the sheet taller. Asserted rather than reasoned-about in a PR comment,
-    // because a later `truncate` added here would silently clip the subject this cycle introduced —
+    // because a later `truncate` added here would silently clip the subject this change introduced —
     // and clipping it is worse than never naming it, since the user would not know it was cut.
     const shell = readSource(join(SRC, 'ui', 'dialog', 'DialogShell.tsx'))
     const titleLine = shell.split('\n').find((l) => l.includes('data-type="title-l"')) ?? ''

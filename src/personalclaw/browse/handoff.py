@@ -15,7 +15,7 @@ would follow the agent everywhere. The slug is derived from the host by :func:`s
 the only place a URL becomes a path — see its docstring for why that matters.
 
 *The profile is machine-local state, NOT config and NOT entity state.* This was the one real design
-question in BA-4 and it is worth recording the answer rather than the conclusion. A Chrome
+question in this module and it is worth recording the answer rather than the conclusion. A Chrome
 ``user-data-dir`` is an opaque, unbounded, live-session blob: it holds the cookies that ARE the
 authentication. It is not config (nothing in it is a decision the user expressed, and no
 round-trippable field describes it), and it is not entity state (it is not a fact about a person
@@ -33,8 +33,8 @@ that posture.
 :class:`~personalclaw.workflows.needs_input.NeedsInputItem` and a sentence; it does NOT invent a
 second park/resume. The browse loop parks with :data:`PARK_LOGIN_REQUIRED`, the provider maps any
 park to ``outcome="needs_input"``, the engine's action-node dispatch maps that to a WAITING
-instance, and ``workflows/attention.py`` fires the inbox item — the path BA-3 already relies on for
-step/budget exhaustion. A credential handoff is not a new kind of waiting.
+instance, and ``workflows/attention.py`` fires the inbox item — the path the browse loop already
+relies on for step/budget exhaustion. A credential handoff is not a new kind of waiting.
 
 *The session check is a heuristic and says so*.:func:`session_state` answers from the
 profile's own ``.meta.json`` — cheap, offline, and honest about being a guess. A definitive answer
@@ -67,8 +67,8 @@ PARK_LOGIN_REQUIRED = "login_required"
 #: that a weekly automation does not re-prompt (which is how a handoff becomes the thing the user
 #: turns off), short enough that a stale guess is corrected within one cycle of most sites' own
 #: session lifetimes. It is a floor on re-prompting, never a claim — a site that logs the profile
-#: out on day two is caught by the run itself hitting the login wall, so §5.3 is a heuristic
-#: layered UNDER the mid-run escalation rather than a replacement for it.
+#: out on day two is caught by the run itself hitting the login wall, so the pre-run check is a
+#: heuristic layered UNDER the mid-run escalation rather than a replacement for it.
 DEFAULT_SESSION_TTL_SECS = 14 * 24 * 3600
 
 #: Directory + file modes. ``0o700``/``0o600`` because the profile holds the session cookies that
@@ -79,7 +79,7 @@ META_FILE_MODE = 0o600
 
 META_FILENAME = ".meta.json"
 
-#: ``auth_state`` values. ``expired`` is the one BA-5 raises a persistent banner for; it is written
+#: ``auth_state`` values. ``expired`` is the one that raises a persistent banner; it is written
 #: here so the state exists the moment a stale session is observed rather than being invented later.
 AUTH_STATE_ACTIVE = "active"
 AUTH_STATE_EXPIRED = "expired"
@@ -91,7 +91,7 @@ SESSION_FRESH = "fresh"  # a login was recorded and the heuristic TTL has not el
 SESSION_EXPIRED = "expired"  # a profile exists but its session is assumed stale
 
 #: URL path fragments that mean "this is a login page". Used by :func:`looks_like_login_url` as the
-#: §5.2 detector that does not need a DOM — a start_url pointing straight at a sign-in page is a
+#: detector that does not need a DOM — a start_url pointing straight at a sign-in page is a
 #: login wall before a single byte is extracted.
 _LOGIN_PATH_TOKENS: tuple[str, ...] = (
     "/login",
@@ -167,11 +167,12 @@ def profile_dir(url: str) -> Path:
 
 @dataclass
 class ProfileMeta:
-    """``.meta.json`` — §5.1's ``{site, last_login_at, session_valid_until, created_at}``.
+    """``.meta.json`` — ``{site, last_login_at, session_valid_until, created_at}``.
 
-    ``auth_state`` is the fifth field, added here rather than by BA-5: BA-5 *surfaces* an expired
-    session (banner + inbox item) and cannot surface a state nobody writes. Writing it at the moment
-    staleness is observed is what makes that atom a rendering job instead of a re-derivation.
+    ``auth_state`` is the fifth field, added here rather than by the mirror: the mirror *surfaces*
+    an expired session (banner + inbox item) and cannot surface a state nobody writes. Writing it
+    at the moment staleness is observed is what makes the banner a rendering job instead of a
+    re-derivation.
 
     Deliberately holds NO credential — not a cookie, not a token, not a username. The authentication
     lives in the Chrome profile beside this file, where only Chrome reads it; this file is the
@@ -290,7 +291,7 @@ def record_login(
 
 
 def mark_expired(url: str, *, now: float | None = None) -> ProfileMeta:
-    """Record that ``url``'s session is stale — the state BA-5's banner renders.
+    """Record that ``url``'s session is stale — the state the mirror's banner renders.
 
     Written the moment staleness is OBSERVED (a login wall mid-run), not when it is predicted, so
     the file distinguishes "the TTL guess elapsed" from "we actually hit a login page".
@@ -332,7 +333,7 @@ def forget_unused_profile_keys() -> int:
 
 
 def expired_sites() -> list[dict[str, Any]]:
-    """Every site whose saved session is EXPIRED — the set BA-5's persistent banner renders.
+    """Every site whose saved session is EXPIRED — the set the mirror's persistent banner renders.
 
     Scans the profiles root (cheap, offline) and returns the sites whose ``.meta.json`` records
     ``auth_state=expired``. An unreadable meta is surfaced as expired — a profile we cannot read is
@@ -361,7 +362,7 @@ def expired_sites() -> list[dict[str, Any]]:
 
 
 def session_state(url: str, *, now: float | None = None) -> str:
-    """§5.3's pre-run verdict: :data:`SESSION_ABSENT`, :data:`SESSION_FRESH` or
+    """The pre-run verdict: :data:`SESSION_ABSENT`, :data:`SESSION_FRESH` or
     :data:`SESSION_EXPIRED`.
 
     Offline and cheap on purpose — it runs BEFORE the browser is opened and before a model call is
@@ -384,7 +385,7 @@ def session_state(url: str, *, now: float | None = None) -> str:
 
 
 def looks_like_login_url(url: str) -> bool:
-    """§5.2's URL-pattern detector: does this path look like a sign-in page?
+    """The URL-pattern detector: does this path look like a sign-in page?
 
     Path-only. A *query* containing ``login`` is routine on search and analytics pages, and treating
     ``?q=login`` as a login wall would park a research run on its own results.
@@ -444,7 +445,7 @@ def request_login(
     resume_token: str = "",
     now: float | None = None,
 ) -> LoginHandoff:
-    """Build the §5.2 handoff — the sentence and the needs-input card. Writes no state.
+    """Build the login handoff — the sentence and the needs-input card. Writes no state.
 
     Goes through :func:`personalclaw.workflows.needs_input.build_item` so the card is the SAME shape
     every other gate produces (one decision, ``attempted`` before ``recommendation``, capped
@@ -453,8 +454,8 @@ def request_login(
 
     **Nothing in the returned payload can hold a credential.** ``evidence`` carries the screened URL
     and the reason code; there is no field for a value, and the two facts it states — which site,
-    and that a human must act — are exactly the two the plan says the agent may know. The import is
-    function-local so ``browse`` stays importable without the workflows package (BA-2's transport
+    and that a human must act — are exactly the two the agent may know. The import is
+    function-local so ``browse`` stays importable without the workflows package (the CDP transport
     makes the same choice for ``websockets``).
     """
     from personalclaw.browse.credentials import screen_url

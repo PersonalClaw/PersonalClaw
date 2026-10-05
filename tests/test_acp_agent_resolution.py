@@ -1,4 +1,4 @@
-"""P1 regression: an acp_agent entry (acp:<cli>) resolves through the registry's
+"""Regression: an acp_agent entry (acp:<cli>) resolves through the registry's
 own factory (registry.build).
 
 Caught live originally: with a real acp:claude-code entry registered, chat

@@ -24,7 +24,7 @@ export function DiffView({ path, name, ws, deleted = false }: { path: string; na
   const [error, setError] = useState<string | null>(null)
   // Either side capped at the 512KB read limit — surfaced so a large file's diff
   // isn't misread as "the tail was deleted" (no-silent-caps; mirrors fileRead +
-  // the commit view, C407/C408).
+  // the commit view).
   const [truncated, setTruncated] = useState(false)
   const [attempt, setAttempt] = useState(0)
 

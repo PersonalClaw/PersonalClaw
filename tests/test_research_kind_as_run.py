@@ -1,14 +1,14 @@
 """The `research` kind's behaviour ARRIVES in `deep-research`, and the run path
 cannot yet drive it.
 
-The second port, in the shape session 1 established for `general`
+The second port, in the shape the first one established for `general`
 (`tests/test_general_kind_as_run.py`). What is NOT the same is how much of the kind had to
-arrive in the template: `general-project`'s root was already a judged work loop, so that session's
+arrive in the template: `general-project`'s root was already a judged work loop, so that port's
 whole template diff was a convergence block. `deep-research` was a triage-and-branch pipeline with
 **no judge, no `runtime_hints`, and a loop bounded by a cap that did not bind** — so for research
 "the kind resolves to that template" was about as far from "the kind runs there" as it gets.
 
-**Read this first: `research` is NOT in `PORTED_LOOP_KINDS`, and that is the session's finding.**
+**Read this first: `research` is NOT in `PORTED_LOOP_KINDS`, and that is this port's finding.**
 Everything the port owns is here and asserted — the convergence policy, a separate judge, the
 `RESEARCH.md` deliverable, the breadth×depth sweep, the intake seam that lets a launch find the
 template's own parameter name, and membership in the loop-kind contract suite. What is NOT here is
@@ -32,7 +32,7 @@ and escalates.
    **FIXED in #3524**, at the one settle path that produces a stage output.
 
 Each of those three tests asserted the CURRENT behaviour and said in its own body what must change
-when it was fixed, so the session that fixed one was forced to update the claim rather than leave a
+when it was fixed, so the change that fixed one was forced to update the claim rather than leave a
 stale docstring behind. All three have now been rewritten as the fixed behaviour. The discipline
 worked, with one caveat worth keeping: defect 3's pin was **vacuous** (its run never dispatched the
 stage it measured), so it would have stayed green either way — see its docstring. A defect pin needs
@@ -74,7 +74,7 @@ from personalclaw.workflows.supervisor_policy import (
 from personalclaw.workflows.tick import loop_should_continue
 from personalclaw.workflows.validator import validate_spec
 
-#: The kind this session ported the BEHAVIOUR of. Spelled once; every assertion below reads it.
+#: The kind this port carries the BEHAVIOUR of. Spelled once; every assertion below reads it.
 KIND = "research"
 
 #: The template `research` resolves to. Read from the alias table rather than restated, so a
@@ -88,7 +88,7 @@ TEMPLATE = loop_aliases.KIND_TO_TEMPLATE[KIND]
 CONVERGENCE_KEY = supervisor_policy.convergence_key(KIND)
 
 #: Every kind `start_kind_run` still refuses. Derived by subtraction from BOTH tables, so the
-#: session that flips a kind moves this set without editing it.
+#: change that flips a kind moves this set without editing it.
 UNPORTED = tuple(sorted(set(loop_aliases.KIND_TO_TEMPLATE) - service.PORTED_LOOP_KINDS))
 
 #: The loop node the convergence is declared on, and the two stages of its body.
@@ -189,11 +189,11 @@ class _FakeSubagents:
 class _FakeTriage:
     """The `completion` seam `EngineServices` already exposes, answering the ONE `infer` node.
 
-    Session 1's suite faked only the subagent manager, because `general-project` is stages all the
-    way down. `deep-research` opens with an `infer` classifier — the library's blessed opening shape
-    and a rail in `test_workflows_bundled.py` — so the run needs a model answer before a branch can
-    route. Faked here rather than routed around: making `triage` a stage to avoid a fake would break
-    that rail and change the template to suit the test.
+    The `general` port's suite faked only the subagent manager, because `general-project` is stages
+    all the way down. `deep-research` opens with an `infer` classifier — the library's blessed
+    opening shape and a rail in `test_workflows_bundled.py` — so the run needs a model answer
+    before a branch can route. Faked here rather than routed around: making `triage` a stage to
+    avoid a fake would break that rail and change the template to suit the test.
 
     Answers `investigation` so the branch takes the DEEPEST arm. The other two arms exist and route
     (their shapers are pure transforms), but the round loop only runs on this side of the graph, so
@@ -637,11 +637,11 @@ def test_the_launch_door_fills_the_input_the_template_actually_declares(
 ) -> None:
     """`start_kind_run` puts a research loop's task in `question`, not in `task`.
 
-    This is the seam the port needed and session 1 did not. `general-project` happens to call its
-    task `task`, so the door could spell the name as a constant and be right about one template.
-    `deep-research` calls it `question` — measured, `design-project` calls it `brief` — so the
-    constant was `general-project`'s vocabulary masquerading as the platform's, and flipping the
-    frozenset alone would have produced `WF_RUN_MISSING_INPUTS` at every launch.
+    This is the seam this port needed and the `general` port did not. `general-project` happens to
+    call its task `task`, so the door could spell the name as a constant and be right about one
+    template. `deep-research` calls it `question` — measured, `design-project` calls it `brief` —
+    so the constant was `general-project`'s vocabulary masquerading as the platform's, and flipping
+    the frozenset alone would have produced `WF_RUN_MISSING_INPUTS` at every launch.
 
     Driven with `PORTED_LOOP_KINDS` widened to include `research`, because the frozenset is the ONLY
     thing still holding the kind back — the point is to show that the door works the moment the
@@ -830,7 +830,7 @@ def test_the_template_declared_convergence_reaches_the_resolved_policy() -> None
 def test_the_declared_block_and_the_kind_table_cannot_drift() -> None:
     """Two sources fill `convergence`, one per execution path, and they must agree.
 
-    Seam 3's reason for a TABLE over template JSON stands on the loop side: the watchdog resolves a
+    The reason for a TABLE over template JSON stands on the loop side: the watchdog resolves a
     policy on every poll, and a declared table cannot go missing. The run path reads the template,
     where there is no per-poll read to lose. While both paths exist, a `research` loop and a
     `deep-research` run must converge identically — held field by field rather than trusted.
@@ -871,16 +871,16 @@ def test_the_template_names_the_document_its_kind_declares() -> None:
 
 
 def test_the_judges_validated_verdict_is_bound_rather_than_discarded() -> None:
-    """Acceptance criteria: the judge stage's output is READ.
+    """The judge stage's output is READ.
 
-    WF2LOO-12 measured the failure this prevents — a contract-shaped verdict produced every
+    The failure this prevents was measured: a contract-shaped verdict produced every
     iteration and thrown away. `deep-research` had no judge at all before this port; now it has one,
     and `synthesize` (the node after the loop) reads the verdict AND the shortfalls.
 
     Bound from OUTSIDE the loop deliberately. The three templates that carry a critique into the
     next iteration do it through `{{last.output.*}}`, which a loop body cannot bind on any iteration
-    — the blocker session 1 recorded. Reading the last round's verdict after the loop needs no
-    `last`, and `dep_edges_for_root` orders it through the enclosing sequence.
+    — the blocker the `general` port recorded. Reading the last round's verdict after the loop
+    needs no `last`, and `dep_edges_for_root` orders it through the enclosing sequence.
 
     Note what this does NOT claim: that the verdict RESOLVES to a real value. Defect 3 above means a
     reconciled stage's output is raw text, so the binding is correct and its value is not yet — the
@@ -920,10 +920,10 @@ def test_an_unported_kind_is_refused_rather_than_run_as_a_stub(kind: str) -> Non
 
 @pytest.mark.parametrize("kind", UNPORTED)
 def test_an_unported_kind_keeps_its_read_time_resolution_and_table_policy(kind: str) -> None:
-    """Every kind this session did not flip must run exactly as before.
+    """Every kind this port did not flip must run exactly as before.
 
     Both halves: `loop_aliases` still resolves the kind (the NOUN), and `policy_for_kind` still
-    answers with the table row the loop watchdog reads (the SUPERVISOR). A session that landed one
+    answers with the table row the loop watchdog reads (the SUPERVISOR). A change that landed one
     template by breaking four would pass a test that only checked `deep-research`.
     """
     assert loop_aliases.resolve_kind(kind), f"{kind} stopped resolving to a template"
@@ -935,7 +935,7 @@ def test_an_unported_kind_keeps_its_read_time_resolution_and_table_policy(kind: 
 
 
 def test_research_is_still_refused_at_the_door_and_the_reason_is_recorded() -> None:
-    """The session's own conclusion, asserted rather than left in a commit message.
+    """This port's own conclusion, asserted rather than left in a commit message.
 
     `research` is NOT ported, and the thing holding it is the engine rather than the template. This
     reds the moment someone widens the frozenset, which is the prompt to check that defects 2 and 3

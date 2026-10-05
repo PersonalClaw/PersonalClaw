@@ -1,6 +1,6 @@
 """Sidecar isolation, resumable installs, and the residency surface.
 
-Success Criterion 1 is the reason this file exists, so it is proven the only way it can
+Crash recovery is the reason this file exists, so it is proven the only way it can
 be: with a **real child process that is really killed mid-call**. Nothing here simulates a
 crash by returning a failure — a mocked crash would pass over the exact code that decides
 whether a half-written frame is believed.
@@ -206,7 +206,7 @@ def test_a_worker_exception_is_typed_and_does_not_burn_a_restart(runner):
     assert runner.restarts == 0
 
 
-# ── Success Criterion 1: killed mid-encode ──
+# ── killed mid-encode ──
 
 
 def test_killed_mid_encode_raises_typed_crash_and_recovers_without_a_restart(runner):
@@ -373,7 +373,7 @@ def test_the_restart_budget_stops_an_endless_respawn_loop(tmp_path, worker):
 
 
 def test_restart_max_defaults_to_the_config_value(monkeypatch):
-    """The knob is READ, not just declared (LMMV §9)."""
+    """The knob is READ, not just declared."""
     monkeypatch.setattr(sidecar, "_restart_max_default", lambda: 7)
     r = SidecarRunner(app="x", worker=Path("/nonexistent/worker.py"))
     assert r.restart_max == 7
@@ -901,7 +901,7 @@ async def test_ensure_ready_separates_ready_from_unavailable():
 
 
 def test_a_model_resident_after_a_binding_switch_shows_inactive(registered_fake, monkeypatch):
-    """Success Criterion 8's attribution half — the reclaimable case."""
+    """The residency attribution half — the reclaimable case."""
     registered_fake._model = _Loaded()
 
     monkeypatch.setattr(residency, "_bound_refs", lambda: {"fake-embed:L6-v2"})

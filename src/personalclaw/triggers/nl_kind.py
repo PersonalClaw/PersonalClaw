@@ -1,11 +1,11 @@
-"""`when: "…"` → a typed trigger kind + spec (§4 `automation_create`).
+"""`when: "…"` → a typed trigger kind + spec (`automation_create`).
 
-§4 specifies the NL contract on one line: "NL-friendly: `when: "every weekday at 9"` routes
-through `nl_to_cron`; `when: "when a file in ~/notes changes"` → file kind." Two different
+The NL contract fits on one line: `when: "every weekday at 9"` routes
+through `nl_to_cron`; `when: "when a file in ~/notes changes"` → file kind. Two different
 destinations from one field, and NOTHING routes between them today.
 
 **🔴 MEASURED FIRST — the failure this module exists to prevent.** The only NL schedule path is
-`nl_to_cron`, and it is cron-shaped by construction. Fed criterion 2's own sentence:
+`nl_to_cron`, and it is cron-shaped by construction. Fed a file-watch sentence:
 
     parse_cron_response("when a file in ~/notes changes")
       -> ("", "Could not parse a 5-field cron expression from: 'when a file in ~/note…'")
@@ -27,7 +27,7 @@ Ambiguity resolves to NO route and an explanatory error, never to a guess.
 `triggers.when`, or a cadence, which `nl_to_cron` turns into an expression. This module only
 decides WHICH kind, and for `file` extracts the paths, because "when a file in ~/notes changes"
 carries its own glob and asking the user again for something they already said is the friction
-The one-message bar rules out.
+the one-message bar rules out.
 """
 
 from __future__ import annotations
@@ -211,8 +211,8 @@ class Route:
     #: one time or a cadence. This module does not read it — keeping it a pure function is what
     #: makes every branch testable without a model.
     cadence: str = ""
-    #: Why this kind was chosen, echoed back to the user. §4 requires agent-created triggers be
-    #: "announced to the user on creation", and "routed to file because you named ~/notes" is what
+    #: Why this kind was chosen, echoed back to the user. An agent-created trigger is announced
+    #: to the user on creation, and "routed to file because you named ~/notes" is what
     #: makes a wrong route correctable instead of mysterious.
     because: str = ""
     #: Set when the kind is `run_completed` and the request named the run it waits on without its

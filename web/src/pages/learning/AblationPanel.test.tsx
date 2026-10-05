@@ -11,7 +11,7 @@ import type { AblationArmAggregate, AblationView, LearningInbox, StagingWeek } f
 /** The keep/remove/lighten report — and, first, the fact that anything reads it at all.
  *
  *  `GET /api/evals/ablation` shipped REGISTERED, TESTED and documented in `routes.md` with **no
- *  frontend consumer**. Its execution log flagged that deliberately rather than
+ *  frontend consumer**. That was flagged deliberately rather than
  *  half-shipping a panel. So the load-bearing test in this file is not any of the rendering
  *  cases below — it is `is rendered BY LearningPage`, because a suite that only mounts
  *  `AblationPanel` in isolation stays green with the render deleted from the page, which

@@ -1,4 +1,4 @@
-"""The `run_completed` chain runtime — "when X finishes, run Y" (§7 item 8).
+"""The `run_completed` chain runtime — "when X finishes, run Y".
 
 🔴 THE DEFECT. `run_completed` was a declared kind with no firing path. It is in `KINDS`, `SPEC_KEYS`
 accepts `{source_trigger, source_def}`, the store persists it, `/api/triggers` lists it and the
@@ -160,7 +160,7 @@ def test_a_CYCLE_is_refused_AND_NAMED_as_a_cycle(store):
 
 
 def test_the_DEPTH_CAP_refuses_with_a_visible_reason(store):
-    """§7 criterion 8: zero silent drops. A chain that stopped with no row is indistinguishable from
+    """Zero silent drops. A chain that stopped with no row is indistinguishable from
     one that was never configured."""
     _add(store, "run_completed:b", "run_completed", {"source_trigger": "clock:nightly"})
     fires, refused = chain.next_fires(
@@ -276,14 +276,14 @@ def test_a_failing_chain_NEVER_fails_the_run_it_followed():
 #: runtime or a stated reason, and a new kind added without either fails the test below.
 KIND_RUNTIMES: dict[str, str] = {
     "clock": "personalclaw.triggers.loop.run_forever (the tick)",
-    "file": "personalclaw.triggers.file_poll.poll_all (S93)",
-    "web_watch": "personalclaw.triggers.web_poll.poll_all (S121)",
-    "run_completed": "personalclaw.triggers.chain.next_fires (S122)",
+    "file": "personalclaw.triggers.file_poll.poll_all",
+    "web_watch": "personalclaw.triggers.web_poll.poll_all",
+    "run_completed": "personalclaw.triggers.chain.next_fires",
     "event": "personalclaw.triggers.event_fire.EventRouter (the gateway's router on the bus)",
     "manual": "the Run button / automation_run — fires on demand, needs no runtime",
-    "view": "personalclaw.triggers.pull_on_view.on_render (S123 — render-driven, not polled)",
-    "idle": "personalclaw.triggers.idle_poll.poll (WF2AUT-11 — driven off the tick)",
-    "webhook": "DEFERRED: needs POST /api/triggers/{id}/fire, which does not exist yet (see S119)",
+    "view": "personalclaw.triggers.pull_on_view.on_render (render-driven, not polled)",
+    "idle": "personalclaw.triggers.idle_poll.poll (driven off the tick)",
+    "webhook": "DEFERRED: needs POST /api/triggers/{id}/fire, which does not exist yet",
 }
 
 

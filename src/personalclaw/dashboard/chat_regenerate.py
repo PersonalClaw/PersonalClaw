@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 _MAX_VARIANTS = 20
 # Rewind tail snapshots retained per edited user message. Mirrors _MAX_VARIANTS'
-# spirit (bound the persisted growth); owner tunes against real sessions (S4 task).
+# spirit (bound the persisted growth); owner tunes against real sessions.
 _MAX_REWIND_SNAPSHOTS = 5
 
 

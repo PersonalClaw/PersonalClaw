@@ -1,4 +1,4 @@
-"""The desktop shell must DECLARE its install kind (DISTRIBUTION C1) — #2673.
+"""The desktop shell must DECLARE its install kind — #2673.
 
 `self_update.detect_install_kind()` resolves ``PERSONALCLAW_INSTALL_KIND`` first, then asks
 whether the process is FROZEN, then whether the running package comes from a git checkout, then
@@ -8,8 +8,8 @@ env (asserted here) and the frozen artefact answering for itself
 so the correct refusal no longer depends on an environment variable being present. It is
 consumed by three: the Updates panel, ``POST /api/update``, and ``personalclaw update``.
 
-Nothing produced it. `DC-6` shipped the Linux AppImage/.deb to every GitHub Release while
-The install-kind clause was still open, and `desktop/main.js` set ``PROJECT_DIR`` but not
+Nothing produced it. The Linux AppImage/.deb shipped to every GitHub Release while
+the install kind was still unwired, and `desktop/main.js` set ``PROJECT_DIR`` but not
 ``INSTALL_KIND`` — so inside the bundle the project dir is ``…/resources`` (no ``.git``) and the
 gateway classified itself as a **pip install**. The Updates panel then offered an in-app apply
 that runs ``<installer> install -U personalclaw==<tag>`` against ``sys.executable``, which in a
@@ -89,7 +89,7 @@ def test_the_declared_kind_wins_over_an_inherited_one() -> None:
 def test_main_js_builds_the_spawn_env_through_the_shared_builder() -> None:
     """main.js must not reconstruct the env inline again.
 
-    The clause was missable in the first place because the env was an object literal buried in
+    The install kind was missable in the first place because the env was an object literal buried in
     ``startGateway``, invisible to every test. Keep the one seam: the builder is executed by
     ``desktop/test/gatewayEnv.test.js``, an inline literal is executed by nothing.
     """
@@ -135,7 +135,7 @@ def test_no_surface_promises_self_update_while_the_updater_is_unbuilt() -> None:
     #2673's install-kind fix that copy became reachable for the first time, so it had to
     become true rather than merely newly visible.
 
-    WHEN `DC-1` LANDS THE UPDATER this test reds, and that is its second job: restoring the
+    WHEN THE DESKTOP UPDATER LANDS this test reds, and that is its second job: restoring the
     self-update wording is then correct, and the same commit should relax this rail. A
     premise-checked claim, not a permanent ban.
     """

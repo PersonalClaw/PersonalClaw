@@ -10,7 +10,7 @@
  *
  * Four failures, none of which the others would catch:
  *
- *   1. A primitive hardcodes a transition again (the pre-FM-4 state: two hand-rolled
+ *   1. A primitive hardcodes a transition again (the earlier state: two hand-rolled
  *      `expr(70, 0.4)` bonuses with opposite signs, one raw Material bezier). Caught by the
  *      source rail — a primitive may import `expr`/`exprHeavy` for AMPLITUDE, never `physics`,
  *      `spring`, `ease` or `duration` for TIMING.
@@ -85,7 +85,7 @@ describe('the four primitives own no timing of their own', () => {
     // `duration` are TIMING, and timing is the family's, not the member's. This is the rail
     // that would have caught `Disintegrate`'s raw `[0.4, 0, 0.2, 1]` and `Bud`'s inverted
     // `260 - expr(70, 0.4)` on the day each was written.
-    // `prefersReducedMotion` joined this list in change FM-3 and is NOT a fourth timing escape:
+    // `prefersReducedMotion` joined this list later and is NOT a fourth timing escape:
     // it is the a11y OFF-SWITCH, one module-owned accessor the whole family now shares (see the
     // self-gate case below). It answers "may I animate at all", never "how long" or "on what
     // curve", which is the line this rail actually draws.
@@ -133,7 +133,7 @@ describe('the four primitives own no timing of their own', () => {
     // root MotionConfig" (which is what `Bud` did, and why its off-switch was
     // the only one you could not assert from the DOM).
     //
-    // Atom FM-3 made it one ACCESSOR as well as one mechanism. The family had decided the same
+    // It is one ACCESSOR as well as one mechanism. The family had decided the same
     // question three ways — framer's `useReducedMotion` here, a raw `window.matchMedia` read in
     // `ui/DotGlow`, and nothing at all in `ui/WavyProgress` — and the choice of survivor was
     // forced rather than aesthetic: framer caches its probe in a MODULE SINGLETON, so a rail

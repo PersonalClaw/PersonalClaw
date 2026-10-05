@@ -521,8 +521,8 @@ class _ChatSession(ChatQueue):
         # in place. Reset alongside `_file_changes` — an index into an emptied list is
         # what would overwrite slot 0 of the next turn.
         self._declared_file_change_idx: dict[str, int] = {}
-        # The ACP loop breaker, kept for the SESSION rather than the turn
-        # (`G155`). `LoopBreaker` defines its own ceiling as
+        # The ACP loop breaker, kept for the SESSION rather than the turn.
+        # `LoopBreaker` defines its own ceiling as
         # "this RUN's total failures" (default 30, `guardrails.loop_breaker`), and for an
         # ACP session the host-side analogue of a native run is its sequence of turns —
         # a fresh breaker per turn reset the counter every turn, so an unattended loop
@@ -531,8 +531,8 @@ class _ChatSession(ChatQueue):
         # same reason, and `record()` still clears a key on success, so a tool that
         # recovers is not held against the model.
         self._acp_breaker = LoopBreaker()
-        # Episodic memory citations [{n, id, preview}] surfaced into THIS turn's prompt
-        # (MEMORY-GRAPH-AND-VAULT §5.4). Reset per turn, populated from the assembled
+        # Episodic memory citations [{n, id, preview}] surfaced into THIS turn's prompt.
+        # Reset per turn, populated from the assembled
         # context's metadata, and attached to each finalized assistant message's meta so
         # the frontend can turn a `[Memory N]` token into a deep-link to the episode.
         self._memory_citations: list[dict] = []
@@ -992,11 +992,11 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         self.workflows: Any = None
         # Per-item knowledge ingestion progress (key ``knowledge:ingest:<item_id>``).
         # The ingest queue publishes node-graph progress here; the per-item /stream
-        # endpoint serves it. (#30)
+        # endpoint serves it.
         self._knowledge_ingest_sse = SseRegistry()
         self._knowledge_ingest_queue: Any = None  # lazy KnowledgeIngestQueue
         self._knowledge_provider: Any = None  # lazy NativeKnowledgeProvider
-        # Config-tree FS watcher → live UI refresh (key ``fs:config``, #44).
+        # Config-tree FS watcher → live UI refresh (key ``fs:config``).
         self._config_fs_sse = SseRegistry()
         self._config_fs_watcher: Any = None  # lazy ConfigFsWatcher
         # Bundled-model downloads run as background jobs and stream progress over
@@ -1059,7 +1059,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         self._refine_answer_future: asyncio.Future | None = None  # type: ignore[type-arg]
         # WebSocket clients (multiplexed real-time connection)
         self._ws_clients: list[web.WebSocketResponse] = []
-        # Per-connection app identity for untrusted-app scoping (sandbox P1): a WS
+        # Per-connection app identity for untrusted-app scoping: a WS
         # opened by an app's SDK (owner cookie + ?app_token=) records the app name
         # here; every send path then delivers only the events the app's manifest
         # declares (permissions.events), via `_ws_may_receive`. An owner/dashboard
@@ -1289,10 +1289,10 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
             return False
 
     def trigger_counts(self) -> dict[str, int]:
-        """`{total, enabled, broken}` across the unified store (S107).
+        """`{total, enabled, broken}` across the unified store.
 
         One helper, because TWO status surfaces were counting automations off the legacy service and
-        both went blind at the S100/S101 cutover — `GET /api/status`'s `cron` block and the
+        both went blind at the store cutover — `GET /api/status`'s `cron` block and the
         `cron_jobs` metric the dashboard's SystemHealth widget renders as "triggers". Measured
         against a home with three valid store triggers (two enabled): both reported 0.
 
@@ -1304,7 +1304,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         from personalclaw.triggers.store import TriggerStore
 
         try:
-            # No `legacy=` fold-in any more. Proven redundant: since S110 the boot migration
+            # No `legacy=` fold-in any more. Proven redundant: the boot migration
             # imports EVERY legacy row — including the ones the conversion refuses, written disabled
             # — so `counts(store)` and `counts(store, legacy=svc)` returned identical results.
             return SV.counts(TriggerStore(base_dir=config_dir()))
@@ -1358,7 +1358,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
 
         The ONE place "is it safe to restart/apply now?" is answered — reused by the
         manual-restart confirm gate (``/api/system/restart?probe=1``) and the staged
-        auto-update gate (``gateway._work_in_flight``, RUM-5) so the two never diverge.
+        auto-update gate (``gateway._work_in_flight``) so the two never diverge.
         Lives on ``DashboardState`` (not the HTTP handler) because it reads only this
         object's own ``subagents``/``sessions``, and the gateway must consult it without
         importing the dashboard's HTTP surface.
@@ -1593,7 +1593,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         2. **The per-(source, kind) rule** (`notification_rules`) — never / badge /
            immediate / digest, plus conditions that escalate a quieter mode when the text
            matches a keyword or names the operator.
-        3. **The addressee** (`notification_addressing`, `TSE2-5`) — WHO the note is for.
+        3. **The addressee** (`notification_addressing`) — WHO the note is for.
            The first two layers answer "should this be delivered" and "how loudly"; neither
            could answer "to whom", so every note went to *this* dashboard by construction.
            A note addressed to somebody else is recorded here and fired nowhere here, and is
@@ -1775,7 +1775,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
 
         self._append_notification(note)
         self._broadcast(note)
-        # Plan 42's `push` TARGET, live. Deliberately after the
+        # The `push` delivery target, live. Deliberately after the
         # dashboard broadcast and outside its try: the desktop delivery is the one that must
         # never wait on (or be broken by) a third-party push service. `deliver_async` hands
         # the blocking POST to a daemon thread and swallows its own failures.
@@ -1861,8 +1861,8 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
     def unread_count(self) -> int:
         """How many things are actually waiting on you — derived, never cached.
 
-        **This now counts unresolved INBOX items, not unacked notification-log entries**
-        (plan 42 T5.2). The two stores had diverged into two answers to one question: the
+        **This now counts unresolved INBOX items, not unacked notification-log entries**.
+        The two stores had diverged into two answers to one question: the
         log tracked "did a toast get acknowledged", the inbox tracks "is this dealt with".
         A user who handled a request in the inbox still saw a badge, and dismissing a toast
         cleared the badge for work that was still outstanding. Inbox status is the honest
@@ -1904,11 +1904,11 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         return self._knowledge_ingest_sse
 
     def config_fs_sse(self) -> SseRegistry:
-        """Config-tree FS-watch SSE registry (key ``fs:config``, #44)."""
+        """Config-tree FS-watch SSE registry (key ``fs:config``)."""
         return self._config_fs_sse
 
     def config_fs_watcher(self):
-        """Lazy-init the config-tree FS watcher (#44). Publishes file ``changed``
+        """Lazy-init the config-tree FS watcher. Publishes file ``changed``
         events to ``config_fs_sse`` so the UI live-refreshes on out-of-band edits."""
         if self._config_fs_watcher is None:
             from personalclaw.fs_watch import ConfigFsWatcher, default_config_roots
@@ -1924,7 +1924,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         return self._config_fs_watcher
 
     def knowledge_ingest_queue(self):
-        """Lazy-init the knowledge ingestion queue (node-graph engine, #30).
+        """Lazy-init the knowledge ingestion queue (node-graph engine).
 
         Reuses the per-resource SSE substrate for progress. Started on first access;
         both the native provider (on create) and external sync enqueue into it."""
@@ -1946,7 +1946,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         return self._knowledge_ingest_queue
 
     def knowledge_provider(self):
-        """Lazy-init the native knowledge provider (12 typed-create + enqueue, #30)."""
+        """Lazy-init the native knowledge provider (typed create per native type + enqueue)."""
         if self._knowledge_provider is None:
             from personalclaw.knowledge_providers.native import create_native_provider
             from personalclaw.knowledge_providers.registry import register_provider

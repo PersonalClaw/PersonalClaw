@@ -25,7 +25,7 @@ def _projected_tasks(ctl: RunController) -> list[Any]:
     Held in memory on the controller rather than read from the task store per node: the store is
     per-entity JSON, so a read per settled node is one file scan per node, and the controller is
     the single writer for its own run. A restart re-reads from the store via the projection
-    rebuild (§1 makes full recompute the normal path), so nothing is lost by not persisting the
+    rebuild (full recompute is the normal path), so nothing is lost by not persisting the
     cache itself.
     """
     return [type("_T", (), {"workflow_binding": b})() for b in ctl._projected]
@@ -42,7 +42,7 @@ def _schedule_verification(ctl: RunController, spec: Any, path: str, node_id: st
     with no exit criteria is freely completable, and emitting a `task_verified(passed=True)` for
     a node nobody wrote a check for would manufacture evidence that does not exist.
 
-    The emptiness test asks the PARSER, not truthiness. Measured (S61h): `"   "` is truthy, so a
+    The emptiness test asks the PARSER, not truthiness. Measured: `"   "` is truthy, so a
     whitespace-only criterion passed a `if not criterion` guard and then parsed to zero checks —
     which the evaluator correctly reports as UNRUNNABLE, so the node showed a scary "could not
     verify" for a field its author had effectively left blank.
@@ -82,7 +82,7 @@ async def _run_criterion(ctl: RunController, raw: Any) -> bool | None:
     `None` (could not run) is preserved all the way out, never collapsed to False. The whole
     point of the tristate is that a missing binary is not a failing test: reporting "the check
     failed" for a criterion that never executed sends the user to debug their code when the
-    problem is their environment, and §1 projects the two to different blocked kinds for exactly
+    problem is their environment, and the two project to different blocked kinds for exactly
     that reason.
     """
     from personalclaw.workflows import verified_done as _vd
@@ -167,7 +167,7 @@ def _schedule_task_write(ctl: RunController, spec: Any, path: str, node_id: str)
 async def _write_projected_task(ctl: RunController, spec: Any) -> str:
     """Write one projected Task through the task provider. Returns its id, or "" on failure.
 
-    The engine is the ENGINE actor in §1's three-actor matrix, so the write carries
+    The engine is the ENGINE actor in the three-actor matrix, so the write carries
     `managed=True` on the binding and sets the engine-owned fields directly — which is exactly
     what `materialize.reject_write` refuses when anyone ELSE attempts it. The asymmetry is the
     point: one writer for a managed task's status, and a refusal (naming the alternative) for

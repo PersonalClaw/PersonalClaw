@@ -1,12 +1,12 @@
-"""E3-P1 / P4b: agent-scoped lifecycle-trigger resolution chain.
+"""Agent-scoped lifecycle-trigger resolution chain.
 
-F5 shipped the store primitive (``ScriptHookStore.fire_for_ids`` — covered by
-``test_fire_for_ids.py``). P1 wires the *agent* side: an ``AgentProfile`` carries
+The store primitive is ``ScriptHookStore.fire_for_ids`` (covered by
+``test_fire_for_ids.py``). This is the *agent* side: an ``AgentProfile`` carries
 referenced lifecycle-trigger IDs, ``resolve_agent_bindings`` surfaces them on
 ``ResolvedBindings.triggers``, and the chat runner fires only those. These tests
 pin the resolution chain so the "never global" invariant holds end-to-end: the
 IDs the runner will pass to ``fire_for_ids`` come from exactly this agent's
-profile. (The field was renamed hooks→triggers in P4b.)
+profile. (The field was renamed hooks→triggers.)
 """
 
 from __future__ import annotations
@@ -78,7 +78,7 @@ def test_triggers_survive_save_load_roundtrip(tmp_path, monkeypatch):
 
 
 def test_legacy_hooks_key_migrates_to_triggers(tmp_path, monkeypatch):
-    """A pre-P4b config.json with the old ``hooks`` agent key still loads its
+    """An older config.json with the old ``hooks`` agent key still loads its
     scoped triggers (migrate-on-read; the write side only emits ``triggers``)."""
     import json
 

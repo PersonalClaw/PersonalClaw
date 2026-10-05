@@ -1,4 +1,4 @@
-"""ACP-AGENT-PARITY §2.6 gap 10 — an ACP save stamps its Project.
+"""An ACP save stamps its Project.
 
 The defect, precisely: ``artifact_save`` stamps ``project_id=_current_project_id()``, which
 read ONLY the native runtime's per-turn contextvar. An ACP CLI's tools run in a separate

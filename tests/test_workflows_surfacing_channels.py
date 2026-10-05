@@ -4,9 +4,9 @@ Three things were MEASURED before this module asserted anything about them.
 
 **The `create-task` hook silently drops unknown keys.** Probed live: an action config carrying
 `linked_def` and `workflow_binding` returned `success=True` and created a task whose
-`workflow_binding` was `None` and whose persisted JSON held neither value. The plan's "materialized
-tasks carry an explicit bidirectional link block" would therefore have been code that runs, reports
-success, and enforces nothing — so the link lives in the cadence ledger and
+`workflow_binding` was `None` and whose persisted JSON held neither value. A "materialized
+tasks carry an explicit bidirectional link block" design would therefore have been code that
+runs, reports success, and enforces nothing — so the link lives in the cadence ledger and
 `escalation_action` emits only keys the provider actually reads.
 
 **`store.list_runs` is the only run history.** Verified signature
@@ -15,8 +15,8 @@ success, and enforces nothing — so the link lives in the cadence ledger and
 this table the first time a run was deleted.
 
 **`WorkflowDef` has no `scope`, `cadence_days` or `fingerprint` field yet** (measured against
-`dataclasses.fields`). So this session's records are standalone and the def-side wiring is the
-later session's scope — asserting against a field that does not exist is how a test passes while
+`dataclasses.fields`). So these records are standalone and the def-side wiring is
+later work — asserting against a field that does not exist is how a test passes while
 the feature is absent.
 """
 
@@ -83,8 +83,8 @@ def _state(**kw) -> CadenceState:
 
 
 def test_an_untracked_def_is_always_FRESH():
-    """`cadence_days: 0` means the author did not ask to be nagged — the same reading S57 gave
-    `ttl: 0`, and for the same reason."""
+    """`cadence_days: 0` means the author did not ask to be nagged — the same reading
+    `ttl: 0` gets, and for the same reason."""
     assert freshness(_state(cadence_days=0), NOW) is Freshness.FRESH
     assert overdue(_state(cadence_days=0), NOW) is False
 
@@ -224,7 +224,7 @@ def test_a_NEVER_RUN_def_does_not_auto_materialize():
 
 
 def test_escalation_is_throttled_to_ONCE_PER_DAY_not_per_tick():
-    """The plan is explicit: once daily while the condition persists, never per evaluation tick. A
+    """Once daily while the condition persists, never per evaluation tick. A
     tick-rate throttle would put one task on the board per scheduler pass."""
     state = _state(
         escalation=Escalation.AUTO,
@@ -515,7 +515,7 @@ def test_a_project_id_with_separators_cannot_ESCAPE_the_directory(tmp_path, monk
     assert list((tmp_path / "surfacing").iterdir())
 
 
-# ── R18: scope resolution ──
+# ── scope resolution ──
 
 
 def test_NARROWER_shadows_wider():
@@ -569,7 +569,7 @@ def test_a_fully_disabled_name_has_NO_effective_def():
     assert effective([ScopedDef("a", "global", disabled=True)]) == {}
 
 
-# ── R18: adopt ──
+# ── adopt ──
 
 
 def test_adopting_a_BUNDLED_def_targets_an_editable_scope():
@@ -585,7 +585,7 @@ def test_adopting_an_already_editable_def_is_REFUSED():
     assert "already at editable scope" in error
 
 
-# ── R18: per-stage overlays ──
+# ── per-stage overlays ──
 
 
 def test_an_overlay_PATCHES_one_stage_and_inherits_the_rest():
@@ -640,7 +640,7 @@ def test_disabled_stages_are_enumerable():
     assert overlay.disabled_stages() == ["a", "b"]
 
 
-# ── R11: the three-state availability model ──
+# ── the three-state availability model ──
 
 
 def test_a_missing_provider_is_NOT_INSTALLED():
@@ -699,7 +699,7 @@ def test_availability_is_NOT_probed_for_an_uninstalled_provider():
     assert calls == []
 
 
-# ── R11: preflight ──
+# ── preflight ──
 
 
 def test_preflight_PASSES_when_everything_is_available():
@@ -808,8 +808,8 @@ def test_UNMET_requirements_are_reported():
 
 
 def test_the_codes_are_TYPED_not_prose():
-    """S54 paid for prose-matched reasons: a message containing the word "secret" was matched as if
-    it were a secret. A code is what a surface should switch on."""
+    """Prose-matched reasons were paid for once: a message containing the word "secret" was
+    matched as if it were a secret. A code is what a surface should switch on."""
     findings = doctor([{"name": "d", "surface_mode": "passive"}])
     assert findings[0].to_dict()["code"] == UNREACHABLE_NO_CHANNEL
 

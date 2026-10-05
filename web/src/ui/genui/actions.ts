@@ -70,7 +70,7 @@ export function composeDualPayload(input: {
   label?: string
   /** Collected state: form values, the button's declared payload. */
   payload?: Record<string, unknown>
-  /** The saved-artifact identity, when the widget IS one (the C32 living view). */
+  /** The saved-artifact identity, when the widget IS one (the living view). */
   live?: { saved: boolean; slug: string }
 }): DualPayload | null {
   const payload = input.payload && Object.keys(input.payload).length ? input.payload : undefined

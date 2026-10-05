@@ -208,11 +208,11 @@ def test_module_import_pulls_in_no_http_client() -> None:
     Measured by loading the file *in isolation* (``spec_from_file_location``), not via
     ``import personalclaw.browse.safety_script``. That is not a dodge, it is the only way to
     measure THIS module: importing it through the package first runs
-    ``personalclaw/browse/__init__.py``, whose BA-1 chain reaches
+    ``personalclaw/browse/__init__.py``, whose import chain reaches
     ``extraction.py`` -> ``personalclaw.knowledge.connectors.base``, and *that* closure
     contains ``httpx``/``urllib3``/``http.client``. So the package-level import is already not
     HTTP-client-free on ``main``; asserting on it here would measure the dependency, not
-    this change's. What is in scope, and what this asserts, is that safety_script.py adds
+    this module's. What is in scope, and what this asserts, is that safety_script.py adds
     nothing and depends on no ``personalclaw`` module whatsoever.
     """
     import importlib.util
@@ -278,7 +278,7 @@ def _silent_wav_data_uri() -> str:
 
 
 _PAGE_HTML = (
-    "<!doctype html><html><head><title>BA-2 safety probe</title></head>"
+    "<!doctype html><html><head><title>Safety probe</title></head>"
     "<body><h1>probe</h1></body></html>"
 ).encode("ascii")
 
@@ -518,11 +518,11 @@ async def _run_probe(chrome: str, site: _LocalSite, script: str | None) -> dict:
     import websockets
 
     port = _free_port()
-    profile = tempfile.mkdtemp(prefix="ba2-safety-profile-")
+    profile = tempfile.mkdtemp(prefix="browse-safety-profile-")
     # Chrome's own stderr, kept so a launch that never reaches CDP reports its real cause
     # rather than only the generic poll timeout. On GitHub's ubuntu-latest a headless launch
     # without --no-sandbox aborts at startup, and DEVNULL used to swallow that fatal line.
-    stderr_log = tempfile.NamedTemporaryFile(prefix="ba2-safety-stderr-", suffix=".log")
+    stderr_log = tempfile.NamedTemporaryFile(prefix="browse-safety-stderr-", suffix=".log")
     proc = subprocess.Popen(
         [
             chrome,

@@ -1,4 +1,4 @@
-"""Best-of-N sampling core — HC-3.
+"""Best-of-N sampling core.
 
 The three properties that make this primitive worth having (and the three a naive
 implementation silently loses) each get a test that FAILS on the naive form:
@@ -618,7 +618,7 @@ class TestBestOfNSkill:
 
     def test_calls_the_core_through_the_tool_not_a_reimplementation(self):
         """The skill must drive `best_of_n` (one shared core), not describe its own
-        sampling loop — HC-5 later adds a template against the SAME core."""
+        sampling loop — so any later template runs against the SAME core."""
         text = self._text()
         assert "`best_of_n`" in text
         for reimplementation_tell in ("temperature=", "one_shot_completion"):

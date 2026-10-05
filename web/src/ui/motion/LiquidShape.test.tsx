@@ -5,7 +5,7 @@
  * compositor, so "morphs smoothly" is a browser claim, not a jsdom one. What jsdom CAN
  * prove, and what this file pins:
  *
- *   1. REACHABILITY. `FM-4` owns adoption, so this primitive has no product call site
+ *   1. REACHABILITY. Adoption is separate work, so this primitive has no product call site
  *      yet — which makes the barrel the only thing standing between it and being
  *      unreachable dead code. The rail imports it THROUGH `./index`, so deleting the
  *      export line fails here rather than silently stranding the change.
@@ -36,7 +36,7 @@ const d = () => path().getAttribute('d') ?? ''
 describe('LiquidShape is reachable', () => {
   it('is exported from the ui/motion barrel', () => {
     // Identity, not existence: a re-export of something else would pass a truthiness
-    // check. `FM-4` wires the vocabulary; until then this is the only reachability.
+    // check. Adoption is a separate change; until then this is the only reachability.
     expect(FromBarrel).toBe(LiquidShape)
   })
 })

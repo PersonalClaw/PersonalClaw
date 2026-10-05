@@ -26,8 +26,8 @@ export const apiVersionHeaders: Record<string, string> = {
   [API_VERSION_HEADER]: String(CLIENT_API_VERSION),
 }
 
-// The refusal itself needs nothing here: it arrives as PL-8's
-// `{error: {code, message}}`, and `errText.ts` already lifts `error.message` into
+// The refusal itself needs nothing here: it arrives as the shared
+// `{error: {code, message}}` envelope, and `errText.ts` already lifts `error.message` into
 // the `ApiError` every helper throws — so "this client was built for API version N;
 // this gateway speaks M-K. Upgrade the client — reload the page…" is what the user
 // reads, wherever that failure surfaces. A `code` constant here would be an export

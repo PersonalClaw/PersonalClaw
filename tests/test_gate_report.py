@@ -1,6 +1,6 @@
 """Aggregate-gate report tests.
 
-``scripts/gate_report.py`` runs the six §3/§6 drift/inert gates (config-baseline,
+``scripts/gate_report.py`` runs the six drift/inert gates (config-baseline,
 inert-surface, docs-lint, and the three structural ratchets) and reports EVERY failure in
 one run — the "aggregate, don't short-circuit" ergonomic. These tests prove the contract:
 
@@ -28,7 +28,7 @@ from scripts.gate_report import GateResult, main, render_report, run_all_gates
 
 # The three drift/inert gates this module seeds failures for.
 _GATE_NAMES = ["config-baseline", "inert-surface", "docs-lint"]
-# Every gate the aggregate registers, in order. PHF-14 appended the three structural ratchets;
+# Every gate the aggregate registers, in order. The three structural ratchets come last;
 # they are asserted by NAME here so a future registration can neither drop one silently nor
 # reorder the table.
 _ALL_GATE_NAMES = _GATE_NAMES + [
@@ -97,7 +97,7 @@ def _seed_docs_drift(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_three_independent_failures_all_surface_in_one_run(monkeypatch, tmp_path):
-    """Criterion core: a tree with three independent failures reports all three in one run.
+    """The core property: a tree with three independent failures reports all three in one run.
 
     Each gate is seeded to fail independently; ``run_all_gates()`` must return all three as
     ``ok=False`` in a single call — none masked by another's failure — and the aggregate

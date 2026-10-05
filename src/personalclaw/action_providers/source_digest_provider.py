@@ -1,14 +1,13 @@
 """The morning source digest's CALLER (the missing half).
 
-WS-7 shipped `knowledge/source_digest.py:run_morning_digest` fully tested and **with zero
-callers** — its own execution log records the change as PARTIAL for exactly that reason: *"the
-digest is invocable and fully tested, but nothing in the shipped product calls it yet"*. This
+`knowledge/source_digest.py:run_morning_digest` shipped fully tested and **with zero
+callers** — invocable and fully tested, but nothing in the shipped product called it. This
 module is that caller: an action provider the scheduler can dispatch, plus the reconciliation
 that makes a bundled `clock` trigger point at it.
 
-**A clock trigger, NOT a bundled workflow template.** WS-7 chose a callable over a template
-because *"inventing a template format for one consumer would have put `fence_untrusted` inside a
-user-editable prompt string — a security control a template author could delete."* That
+**A clock trigger, NOT a bundled workflow template.** The digest is a callable rather than a
+template because inventing a template format for one consumer would have put `fence_untrusted`
+inside a user-editable prompt string — a security control a template author could delete. That
 reasoning is intact here: the prompt is still composed in `source_digest.build_prompt`, the
 trigger's `workflow.inline.config` is EMPTY, and there is no prompt text anywhere on this path
 for a user to edit. The trigger carries a schedule and a provider name and nothing else.
@@ -21,7 +20,7 @@ disposition, the overlap claim lock, history, `delivery: none` — instead of a 
 mechanism beside it. It also means the digest is dispatchable by hand from the Triggers UI, which
 is the "user can find it and use it" half of user-reachability.
 
-**It writes `crons.json` NEVER.** `reconcile_digest_cron`'s docstring records S108: the boot
+**It writes `crons.json` NEVER.** `reconcile_digest_cron`'s docstring records why: the boot
 migration that imports `crons.json` runs BEFORE reconciliation, so a row written there stays
 inert until the next boot. This writes the unified `TriggerStore` directly.
 
@@ -46,7 +45,7 @@ guarantees, neither invented here:
 
 **The notification gate is not re-implemented or bypassed.** The provider hands
 `DashboardState` straight to the digest; delivery is `state.notify` →
-`notification_allowed()` exactly as WS-7 shipped it, so `mute_all` / minimum severity / quiet
+`notification_allowed()` exactly as the digest shipped it, so `mute_all` / minimum severity / quiet
 hours still suppress. Nothing here notifies on its own, which is why `delivery: none` on the
 trigger costs nothing: the digest's own notification IS the user-visible output.
 """
@@ -70,7 +69,7 @@ SOURCE_DIGEST_JOB_NAME = "system:source-digest"
 #: What the Triggers page calls it. The id above is an identifier, not a label.
 SOURCE_DIGEST_DISPLAY_NAME = "Morning source digest"
 
-#: 07:00 daily. Not a config field: §6.2 calls this the *morning* digest, so the hour is the
+#: 07:00 daily. Not a config field: this is the *morning* digest, so the hour is the
 #: feature's meaning rather than a preference, and a knob with no Settings control behind it
 #: would be an inert control (see the module docstring).
 SOURCE_DIGEST_SCHEDULE = "0 7 * * *"
@@ -166,8 +165,8 @@ def reconcile_source_digest_cron(store: Any) -> None:
     for a name that is still the machine id, which `converge_display_name` turns into the label. A
     scheduler problem must never block startup, hence every step is wrapped.
 
-    Enabled on creation, deliberately. A disabled bundled trigger is the same defect WS-7 was
-    PARTIAL for, one level up: registered and never fired. It is safe to leave on because a home
+    Enabled on creation, deliberately. A disabled bundled trigger is the same zero-callers
+    defect, one level up: registered and never fired. It is safe to leave on because a home
     with no watched sources produces an EMPTY window, and an empty window writes no item, sends
     no notification and spends no model call.
     """
@@ -216,7 +215,7 @@ def reconcile_source_digest_cron(store: Any) -> None:
             delivery="none",
         )
         # Writes a knowledge item and notifies, unattended, forever — write-capable, so the fence
-        # needs the frozen grant (decision 7). A system-created trigger's opt-in is the code path
+        # needs the frozen grant. A system-created trigger's opt-in is the code path
         # that created it.
         trigger.capabilities = _screen.capabilities_for_action(trigger)
         armed = _arm(trigger)

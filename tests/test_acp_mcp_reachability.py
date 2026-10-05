@@ -1,8 +1,8 @@
 """``personalclaw-core`` is reachable from an ACP session.
 
-ACP-AGENT-PARITY §2.1, "the biggest single unlock". Phase 1 measured the same
+The biggest single unlock for an ACP session. The first measurement found the same
 three NOs on all three providers — ``knowledge_search`` NO, ``task_create`` NO,
-``notify`` NO, no ``personalclaw-core`` server (`O4`, `C4`, `K4`) — because every
+``notify`` NO, no ``personalclaw-core`` server — because every
 live ``session/new`` sent ``"mcpServers": []``.
 
 **Prong A is the whole mechanism.** All three ``session/new``/``session/load``
@@ -11,16 +11,16 @@ the session inject-back (``PERSONALCLAW_SESSION_KEY`` + ``PERSONALCLAW_HOME``)
 declared in its env.
 
 **Prong B — config seeding for a CLI that ignores the protocol field — is
-deleted** (`AAP-4` DEVIATION 2): no such CLI exists, nothing ever supplied the
+deleted**: no such CLI exists, nothing ever supplied the
 argument that reached it, and it was kiro-shaped by construction. The rails at the
 bottom of this file are that deletion's regression floor.
 
-The one record that reads like a contradiction, resolved: `K6` found that kiro
+The one measurement that reads like a contradiction, resolved: kiro
 never *discovers* the ``$PERSONALCLAW_HOME/agents/personalclaw.json`` the host
 writes, because its only roots are ``<cwd>/.kiro/agents`` and ``~/.kiro/agents``.
 That is a fact about a **config file path** and it was prong B's motivation — not
 evidence that kiro ignores the protocol array, which is a separate channel and
-measured live (`K54`, `K100`). A config kiro cannot see and a protocol array kiro
+measured live. A config kiro cannot see and a protocol array kiro
 honours are both true, so the deletion removes no kiro mechanism.
 
 Plus the home-isolation break: the generated agent config's bash-audit hook
@@ -193,7 +193,7 @@ def test_client_rebuilds_the_spec_after_rekey(home):
 
 
 def test_fresh_turn_session_carries_core(home):
-    """``start_fresh_turn_session`` — the site the plan names explicitly.
+    """``start_fresh_turn_session`` — the site worth naming explicitly.
 
     claude-code finishes a session after its first turn, so a long-lived driver
     reopens one per cycle through here. If this site alone sent ``[]``, core
@@ -284,7 +284,7 @@ def test_fresh_turn_session_reapplies_the_effort_pin(home):
 
 def test_fresh_turn_session_drains_mcp_init_notifications(home):
     """The other half of the same docstring. Skipping the drain leaves MCP server init
-    notifications queued to interleave into the turn — on the very path `AAP-4` exists to keep
+    notifications queued to interleave into the turn — on the very path that exists to keep
     core reachable."""
     conn = _fresh_turn(home)
     assert conn.drains == 1, f"init notifications were not drained (drains={conn.drains})"
@@ -384,12 +384,12 @@ def test_unresolved_placeholder_fails_closed(home, monkeypatch):
         )
 
 
-# ── prong B is DELETED — AAP-4 DEVIATION 2 ──────────────────────────────────
+# ── prong B is DELETED ──────────────────────────────────────────────────────
 #
 # ``acp/config_seed.py`` seeded a ``personalclaw.json`` symlink into a CLI's own
 # agent-discovery directory, for a CLI that ignored the protocol's ``mcpServers``
 # field. No such CLI exists: the four fenced drives measured all three shipped
-# CLIs honouring the protocol array (`O76`, `K100`, `C90`), and codex decisively —
+# CLIs honouring the protocol array, and codex decisively —
 # ``personalclaw mcp-core`` ran four levels under ``codex-acp`` with zero
 # ``personalclaw`` entries in ``~/.codex/config.toml``, so the protocol frame was
 # the only channel. The seeder was also unreachable (nothing in either repo passed
@@ -397,7 +397,7 @@ def test_unresolved_placeholder_fails_closed(home, monkeypatch):
 # ``personalclaw.json`` filename holding a kiro agent document, where codex reads
 # TOML ``[mcp_servers.*]`` and claude-code reads ``personalclaw.mcp.json``).
 #
-# The rails below are the deletion's regression floor. They exist because `G116`
+# The rails below are the deletion's regression floor. They exist because a measurement
 # proved the three cheap checks all pass on a half-deleted tree: ``mypy`` reports
 # success (``ignore_missing_imports`` hides a missing first-party MODULE), and both
 # ``config_seed`` imports were function-local, so importing ``_register`` succeeded
@@ -436,7 +436,7 @@ def test_the_sdk_signature_no_longer_carries_agent_config_dir():
 
 
 def test_disable_is_registry_only_and_survives_the_deletion(monkeypatch):
-    """`G116` closed by construction: the disable path no longer imports the seeder.
+    """Closed by construction: the disable path no longer imports the seeder.
 
     This is the ONE call path that was ungated, so it is the one that raised
     ``ModuleNotFoundError`` on a tree with ``config_seed.py`` removed. Asserting
@@ -482,7 +482,7 @@ def _stub_registry(monkeypatch):
 
 
 def test_register_provisions_a_declared_session_files_dir(tmp_path, _stub_registry):
-    """The plan's registration deliverable: "the core registration helper creates it".
+    """The core registration helper creates a declared session-files directory.
 
     Both readers of the option probe for files INSIDE the directory (``AcpClient``'s
     ``_meta`` session-file hint, ``AcpSession``'s JSONL tool-result tail), and a path

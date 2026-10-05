@@ -1,7 +1,7 @@
 """``second-opinion`` action provider — the stalled-node handoff.
 
 One dispatchable call site for "this is stuck; ask a different brain once". The three consumers
-§4.1 names — the loop watchdog's `stagnant` offer, a workflow gate node's `on_stall:
+— the loop watchdog's `stagnant` offer, a workflow gate node's `on_stall:
 second_opinion` policy, and the manual button on the run/loop cockpit's stalled banner — all fire
 THIS provider rather than each assembling their own handoff, because the acceptance rule (the
 disk re-diff) must have exactly one definition. The orchestration lives in

@@ -1,6 +1,6 @@
-"""The skill-impact benchmark: the frozen task register, its reports, and V4 reproduction.
+"""The skill-impact benchmark: the frozen task register, its reports, and the reproduction check.
 
-`docs/research/learning-benchmark-protocol.md` is PROTOCOL v1 — owner-signed on
+`docs/research/learning-benchmark-protocol.md` is PROTOCOL v1 — frozen on
 2026-08-16, before any run, including the commitment to publish a modest or negative result.
 This module is the shipped half of executing it: the frozen ten-task register, the preflight
 that says whether a paired run is runnable *before* a model is called, report persistence, and
@@ -56,7 +56,7 @@ TASK_SET_VERSION = 2
 #: not invalidate a measurement, and conflating them would either freeze the schema or silently
 #: retire results.
 #:
-#: **v2 (#2562):** ES-17 added ``provider_binding`` and left this at ``1``, so a consumer holding a
+#: **v2 (#2562):** ``provider_binding`` arrived with this left at ``1``, so a consumer holding a
 #: report with no ``provider_binding`` key could not tell "provenance was never recorded" from
 #: "provenance was recorded and says nothing was bound" — the two states are different claims and
 #: the panel had to branch on ``'provider_binding' in report`` to keep them apart, which left every
@@ -79,8 +79,8 @@ def report_schema(report: dict | None) -> int | None:
 
     ``None`` when the report does not state one — :data:`~personalclaw.evals.provenance.UNRECORDED`
     — which no report this repo has ever written should be, because ``report_schema`` shipped with
-    LV-7. A hand-edited or truncated artifact can be, and it must not read as v1 by default: that
-    is the same absent-versus-declared collapse one level up.
+    the first report. A hand-edited or truncated artifact can be, and it must not read as v1 by
+    default: that is the same absent-versus-declared collapse one level up.
     """
     if provenance.is_unrecorded(report, "report_schema"):
         return None
@@ -214,7 +214,7 @@ def preflight(*, loader=None) -> list[TaskPreflight]:
     2. the named skill exists in the loader's home (a register row naming a skill that no
        longer ships would otherwise "run" as two identical arms);
     3. suppression actually removes the skill body — reusing
-       :func:`personalclaw.evals.skills_bench.verify_suppression`, the same check ES-7's
+       :func:`personalclaw.evals.skills_bench.verify_suppression`, the same check the
        skills bench refuses on. A suppression that does not suppress produces a 0.0 delta that
        reads as "this skill does not earn its place", which is the precise fabricated result the
        protocol exists to prevent.
@@ -348,7 +348,7 @@ def latest_report() -> dict | None:
     return None
 
 
-# ── V4 reproduction ──────────────────────────────────────────────────────────
+# ── Reproduction ─────────────────────────────────────────────────────────────
 
 #: The four conditions §8 states, verbatim in spirit: same task-set version, same
 #: ``scenario_sha256`` set, matching ``prompt_pack_sha256`` and ``config_snapshot_ref``, and a
@@ -392,7 +392,7 @@ class ReproductionCheck:
             "rerun_run_id": self.rerun_run_id,
             "reproduces": self.reproduces,
             "stated_variance": list(REPRODUCTION_CONDITIONS),
-            "stated_variance_source": f"{PROTOCOL_DOC} §8 (Reproduction (V4))",
+            "stated_variance_source": f"{PROTOCOL_DOC} §8 (Reproduction)",
             "conditions": dict(self.conditions),
             "verdict_changes": [dict(c) for c in self.verdict_changes],
             "notes": list(self.notes),

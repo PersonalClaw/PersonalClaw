@@ -10,7 +10,7 @@
  * reads "this automation has never run" when it in fact REFUSED a hostile payload — and because
  * `blocked_injection` never auto-retries, that row is the only record there will ever be.
  *
- * §1.3 exists so surfaces can switch on a typed vocabulary instead of matching prose. A backend
+ * The typed outcome vocabulary exists so surfaces can switch on it instead of matching prose. A backend
  * vocabulary the frontend does not know is that contract half-kept.
  */
 import { describe, it, expect } from 'vitest'

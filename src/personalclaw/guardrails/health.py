@@ -24,7 +24,7 @@ def _percentile(sorted_vals: list[float], pct: float) -> float:
 
 
 def _caller_rollup(rows: list[dict]) -> list[dict]:
-    """Per-CALLER rollup of the same audit rows (ACP-AGENT-PARITY `G47`).
+    """Per-CALLER rollup of the same audit rows.
 
     The read side of the ``caller`` column. Grouped by SUBSYSTEM instead of provider, which
     is the grouping that answers "is my expensive background pass alive?" — a question the
@@ -74,7 +74,7 @@ def provider_health(limit: int = 2000) -> dict:
     passed, failed, pass_rate, p50_ms, p90_ms, p99_ms, failure_modes: {mode: n},
     degraded}], callers: [...], generated_from: n}``. A provider with an OPEN breaker but no
     recent audit rows still appears (breaker state alone), and vice-versa. ``callers`` is the
-    same population regrouped by SUBSYSTEM (:func:`_caller_rollup`, `G47`) — additive, so
+    same population regrouped by SUBSYSTEM (:func:`_caller_rollup`) — additive, so
     every existing reader of this payload is unaffected."""
     rows = read_recent(limit)
     breakers = all_breakers()

@@ -1,4 +1,4 @@
-"""M5d: procedural memory (how-to-work priors) + failure-pattern synthesis."""
+"""Procedural memory (how-to-work priors) + failure-pattern synthesis."""
 
 from __future__ import annotations
 

@@ -5,14 +5,14 @@ import { Skeleton, LoadingStatus } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
 import { api, ApiError, type WorkflowWorkspaceReview } from '../../lib/api'
 
-/** The code-run workspace panel (WORK-CONTAINERS §4.1 / criterion 7).
+/** The code-run workspace panel.
  *
  *  Two questions, one panel: WHAT did this run change, and HOW do I take it. It fetches
  *  `GET …/runs/{id}/workspace` on open — never eagerly, because answering costs the gateway a
  *  `git status` plus a conflict probe, and most runs are never reviewed.
  *
  *  **Reintegration is OFFERED, never performed.** The two verbs render as COPYABLE COMMANDS, not
- *  buttons that act: the plan's ruling is that a run which auto-merged would decide for the user,
+ *  buttons that act: a run which auto-merged would decide for the user,
  *  and the decision is the whole reason the work was isolated. There is deliberately no POST
  *  companion to this route — an "Apply" button here would be the gateway writing into the user's
  *  working tree on their behalf, which is precisely the thing isolation bought them out of.

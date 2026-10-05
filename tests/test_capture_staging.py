@@ -1,4 +1,4 @@
-"""The last two clauses: the `capture` staging source, and the retention CALL SITE.
+"""The `capture` staging source, and the retention CALL SITE.
 
 Both halves of this file exist because of the same defect class. `capture_store.prune`
 was shipped, config-round-tripped and unit-tested, and **nothing ever called it** — its
@@ -182,7 +182,7 @@ def test_the_staged_row_carries_no_raw_credential(_isolated_home):
 
 
 def test_an_imported_record_stages_through_the_same_adapter(_isolated_home):
-    """§8 import and §7.2 proxy converge on ONE staging path. A second, laxer route for
+    """Import and proxy converge on ONE staging path. A second, laxer route for
     imported content would be the whole security argument undone."""
     result = capture_store.stage_records(
         [

@@ -7,8 +7,8 @@ The behaviours the change is defined by:
 2. a demotion flips the record to ``revoked`` with the triggering cause, and
    ``resolve_rung`` clamps a revoked scope to its floor even when the flat rung
    store diverges (record outlives the store);
-3. the rung dialect rail: this ledger accepts ONLY ``autonomy.RUNGS`` names — the
-   plan's L3/observed/unattended vocabulary is refused on write and treated as
+3. the rung dialect rail: this ledger accepts ONLY ``autonomy.RUNGS`` names — any
+   other (L3/observed/unattended) vocabulary is refused on write and treated as
    absent on read, so guardrails/autonomy.py stays the only rung dialect;
 4. every failure direction is fail-safe: unreadable/malformed/mismatched records
    license nothing and revoke nothing.
@@ -129,7 +129,7 @@ def test_fresh_grant_clears_revocation():
 
 
 def test_unknown_rung_is_refused_on_write():
-    tr.record_grant(KEY, "unattended", granted_at="2026-01-01")  # plan §4.2 dialect
+    tr.record_grant(KEY, "unattended", granted_at="2026-01-01")  # a foreign rung dialect
     assert tr.load_record(KEY) is None
     tr.record_demotion(KEY, floor="L3", cause="x", at="2026-01-01")
     assert tr.load_record(KEY) is None
@@ -184,4 +184,4 @@ def test_key_mismatch_reads_as_absent():
 def test_absent_record_changes_nothing():
     assert tr.load_record(KEY) is None
     assert tr.is_revoked(KEY) is False
-    assert au.resolve_rung(KEY) == au.RUNG_DRAFT_ONLY  # floor, as before ES-13
+    assert au.resolve_rung(KEY) == au.RUNG_DRAFT_ONLY  # floor, as before any trust record existed

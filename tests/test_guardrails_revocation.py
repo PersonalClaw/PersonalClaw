@@ -1,4 +1,4 @@
-"""§4.4 mechanical revocation — the shared revoker and the nodding leg.
+"""Mechanical revocation — the shared revoker and the nodding leg.
 
 `revoke_granted_scopes` is the one seam all four revocation triggers share: it demotes
 every STANDING grant through `autonomy.demote` (floor + cooldown + trust-record

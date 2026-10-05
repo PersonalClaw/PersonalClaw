@@ -1,11 +1,11 @@
 """Per-extension configuration storage.
 
 Each extension owns its config at ``~/.personalclaw/apps/{name}/data/config.json``
-— inside ``data/`` so it survives app updates (A2 preserves ``data/``). This is the
+— inside ``data/`` so it survives app updates (an update preserves ``data/``). This is the
 SAME path the Apps config UI writes through :mod:`apps.app_config`; a provider built
 at boot reads its user settings from here. (Historically this read the app-dir root
 ``config.json`` while the UI wrote to ``data/config.json`` — so a key set in the UI
-never reached the provider. Unified onto ``data/`` — bug #31.)
+never reached the provider. Unified onto ``data/``.)
 
 This module provides read/write with JSON Schema validation against the
 extension's declared ``settingsSchema``.
@@ -61,8 +61,8 @@ class ProviderSettings:
 
     @staticmethod
     def config_path(extension_name: str) -> Path:
-        # Inside data/ so it survives updates (A2 preserves data/) — the SAME file
-        # apps.app_config writes through the Apps config UI (bug #31: these once
+        # Inside data/ so it survives updates (an update preserves data/) — the SAME file
+        # apps.app_config writes through the Apps config UI (these once
         # diverged, so UI-set provider keys never reached the provider at build).
         return app_dir(extension_name) / "data" / "config.json"
 

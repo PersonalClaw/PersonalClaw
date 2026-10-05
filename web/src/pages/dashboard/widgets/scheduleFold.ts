@@ -1,11 +1,11 @@
 /** The runs-inbox archive split.
  *
  *  "inert outcomes collapse to ledger rows and archive OUT of the default inbox view — the
- *  runs inbox is for what the machine DID." The backend has returned `did_ids`/`suppressed` since
- *  S132 and the wrapper typed them; S165 got them as far as ORDERING the widget
+ *  runs inbox is for what the machine DID." The backend returns `did_ids`/`suppressed` and the
+ *  wrapper types them; at first they only went as far as ORDERING the widget
  *  (work-first) — but a suppression storm still filled the six visible slots, because ordering
- *  only helps until the real fires run out. This is the fold the section actually asked for: the
- *  default view shows work, the suppressed rows archive behind a disclosure, and §7 criterion 8's
+ *  only helps until the real fires run out. This is the fold that rule actually asks for: the
+ *  default view shows work, the suppressed rows archive behind a disclosure, and
  *  "zero silent drops" holds because they are one click away, not gone.
  *
  *  Kept as a pure module rather than inline in the widget so the partition is unit-testable and

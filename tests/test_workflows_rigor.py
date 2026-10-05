@@ -1,4 +1,4 @@
-"""Tests for the cheap end of the rigor axis (UP-R10).
+"""Tests for the cheap end of the rigor axis.
 
 This module exists to keep spec-driven planning from becoming a waterfall, so its tests are mostly
 about restraint: Specify emits exactly one stage, the fast path schedules its refinement gate after

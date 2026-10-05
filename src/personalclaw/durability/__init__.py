@@ -7,7 +7,7 @@ own exclude sets, and the two had already drifted apart from reality — nine st
 directories (tasks, projects, loop, artifacts, prompts, workflows, agents, apps,
 entity settings) were backed up by *neither*.
 
-Session 1 (this slice) ships the inventory and closes that gap:
+The inventory closes that gap:
 
 * :mod:`personalclaw.durability.inventory` — the declarative manifest of every
   state entry (kind, domain, secret/derived flags, merge strategy), plus the

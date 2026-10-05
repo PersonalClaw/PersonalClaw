@@ -1,4 +1,4 @@
-"""Loop-3 field metrics beside lab results + ``lab_field_divergence`` (E3).
+"""Loop-3 field metrics beside lab results + ``lab_field_divergence``.
 
 The behaviours the change is defined by:
 
@@ -207,8 +207,8 @@ def test_edit_before_approve_comes_from_the_run_journal(monkeypatch):
 
 
 def test_an_action_types_edit_rate_is_unmeasured_never_zero(monkeypatch):
-    """No record anywhere captures an edit on an action type's output (plan 58 defers
-    edit-before-approve records), so the cell is None — 0.0 would claim a measurement."""
+    """No record anywhere captures an edit on an action type's output (edit-before-approve
+    records are not kept yet), so the cell is None — 0.0 would claim a measurement."""
     _only_registered(monkeypatch)
     _register()
     row = {r.subject: r for r in fm.subject_rows()}[KEY]
@@ -394,7 +394,7 @@ def test_no_clause_alone_flags_a_subject(monkeypatch):
 
 
 def test_field_signals_that_predate_the_lab_row_do_not_diverge(monkeypatch):
-    """E3 says a POST-SHIP field decline. A falling trend measured entirely before the
+    """The flag means a POST-SHIP field decline. A falling trend measured entirely before the
     lab row says nothing about the change that row measured."""
     _only_registered(monkeypatch)
     _register()
@@ -407,7 +407,7 @@ def test_field_signals_that_predate_the_lab_row_do_not_diverge(monkeypatch):
     assert row.lab_field_divergence is False
 
 
-# ── 5. the mechanical §4.2 demotion signal ────────────────────────────────────
+# ── 5. the mechanical demotion signal ─────────────────────────────────────────
 
 
 @pytest.fixture()
@@ -444,7 +444,7 @@ def test_a_divergent_action_type_loses_its_own_grant_mechanically(monkeypatch, e
     assert filed == [KEY]
     assert au.resolve_rung(KEY) == "draft_only", "the next decision is the floor"
     record = trust_record.load_record(KEY)
-    assert record is not None and record.revoked, "the §4.2 record carries the flag"
+    assert record is not None and record.revoked, "the trust record carries the flag"
     assert (
         au.resolve_rung("action.bystander") == "one_tap"
     ), "scope-attributed evidence demotes its own scope, not the neighbours"
@@ -542,7 +542,7 @@ def test_the_gateway_sweep_is_the_divergence_paths_production_caller():
     assert "_scan_autonomy_promotions" in loop
 
 
-# ── 6. the E3 discipline: computed by query, stored nowhere new ───────────────
+# ── 6. computed by query, stored nowhere new ──────────────────────────────────
 
 
 def test_the_table_is_a_query_and_writes_no_new_file(monkeypatch, _isolated_home):

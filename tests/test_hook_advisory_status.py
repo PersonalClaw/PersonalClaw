@@ -3,7 +3,7 @@
 🔴 **The measured defect.** A `PreToolUse` hook fired through the informational
 `fire_tool_hooks` seam recorded `last_status: "blocked"` next to `enforcement: "enforcing"` —
 and the out-of-workspace write it claimed to block landed on disk. Driven twice, on codex
-(`C52`) and on claude-code (`K39`/`O39`: the hook fired 3× and `hooked1.txt` still said
+and on claude-code (the hook fired 3× and `hooked1.txt` still said
 `HOOKED`). Worse than inert: it reported success.
 
 `ActionResult.blocked` is a *request* ("PreToolUse exit_code 2 is a block signal"), and only
@@ -86,7 +86,7 @@ def test_informational_fire_never_records_blocked(tmp_path):
     store, hook = _store(tmp_path)
     asyncio.run(store.fire(HOOK_EVENT_PRE_TOOL_USE, tool_name="write_file"))
     assert hook.last_status != "blocked", (
-        "the informational fire reported an enforcement it never achieved (G89) — this seam "
+        "the informational fire reported an enforcement it never achieved — this seam "
         "cannot block, the tool is already running"
     )
     assert hook.last_status == "advisory"

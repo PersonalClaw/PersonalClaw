@@ -14,14 +14,14 @@ is a reviewed constant rather than a scan:
   seven events live off `chat_runner.py`'s **import block** — text that fires nothing.
 * The real `TaskComplete` fire (`tasks/native.py`) passes `payload["event"]` from
   `pool.lifecycle_payload`, so it contains **no constant reference at all** and a scan calls the one
-  event this program deliberately wired DORMANT.
+  event that was deliberately wired DORMANT.
 
 Both directions are harmful, and the second is worse: telling someone their working hook is dead. So
 dormancy is derived from the fire sites reached through `ScriptHookStore.fire`/`fire_for_ids`, which
 is the only path that runs a hook, and `verify_dormancy()` re-derives the live set from the running
 store's own catalog so a wired event cannot leave this list stale and lying.
 
-**Parity, measured.** §2 says the `event` kind's facade is uneven. It is worse than uneven: in
+**Parity, measured.** The `event` kind's facade was known to be uneven. It is worse than uneven: in
 `dashboard/handlers/triggers.py` the `event` kind is handled in `list`, `create` and `DELETE`, and
 `toggle`/`run`/`test`/`history`/`PUT` have **no `event` branch**, so an `event:`-prefixed id falls
 through to the `schedule` branch and is looked up among cron jobs. It is not there, so the user gets
@@ -94,11 +94,11 @@ class EventStatus(str, Enum):
 #: set from the running hook store and reports disagreement, so wiring an event and forgetting this
 #: list is a caught test failure rather than a lie in the UI.
 #:
-#: `TaskComplete` is deliberately ABSENT: it was dormant when AUTOMATION-SUBSTRATE was written (the
-#: plan says 8) and this program wired it in S60 via `tasks/native.py`.
+#: `TaskComplete` is deliberately ABSENT: it was one of the 8 dormant events, and it is wired
+#: via `tasks/native.py`.
 #:
-#: **EMPTY as of S82** — criterion 5's second clause ("the 8 dormant lifecycle events actually
-#: fire") is closed. The remaining seven were wired to real fire sites through
+#: **EMPTY** — the 8 once-dormant lifecycle events now actually
+#: fire. The remaining seven were wired to real fire sites through
 #: `triggers/lifecycle_fire.py`: `MemoryWrite` on a successful `write_lesson`, `SubagentSpawn` on a
 #: non-rejected `spawn`, `ApprovalRequest` alongside the approval broadcast, `ContextCompact` on the
 #: real compaction (not the under-cap passthrough), `PreResponse`/`PostResponse` around the stream,
@@ -108,10 +108,10 @@ class EventStatus(str, Enum):
 #: `hooks.HOOK_EVENTS` ahead of its subsystem belongs here, and a declaration with no fire site is
 #: exactly what this constant exists to make visible.
 #:
-#: 🔎 **What this set cannot express, measured 2026-08-17 (G40 census).** Dormancy here is binary —
+#: 🔎 **What this set cannot express, measured 2026-08-17.** Dormancy here is binary —
 #: "some code path fires it" — and two events are wired on a path narrower than their catalog `desc`
 #: promises. Recorded rather than fixed: widening either one changes WHEN a hook fires, which is a
-#: semantics decision, not the legibility fix G40 was scoped to.
+#: semantics decision, not a legibility fix.
 #:
 #: * `Error` ("An error occurs in the loop") fires from exactly ONE place,
 #:   `dashboard/chat_runner.py:3860`, inside the generic `except Exception`. The three TYPED ACP
@@ -122,7 +122,7 @@ class EventStatus(str, Enum):
 #:   needs an `EVENT_TOOL_RESULT`, which `acp/translate.py:249` emits only for a terminal
 #:   `tool_call_update` (`status` in completed/failed). A CLI that sends the opening `tool_call`
 #:   frame and no terminal update produces none. 0 fires in a sweep where `SessionStart`
-#:   fired 1, `UserPromptSubmit` 17 and `Stop` 15. This is the same host-authority limit G27 records
+#:   fired 1, `UserPromptSubmit` 17 and `Stop` 15. This is the same host-authority limit recorded
 #:   for ungated tool calls — not a missing fire site, so it does NOT belong in the set below.
 DORMANT_EVENTS: frozenset[str] = frozenset()
 
@@ -270,7 +270,7 @@ def verify_dormancy(
 def missing_operations(kind: str, supported: set[str] | list[str]) -> list[str]:
     """Parity operations a kind does not support, minus its declared exemptions.
 
-    What a facade test asserts against. §2 records the event kind shipping with less surface than
+    What a facade test asserts against. The event kind shipped with less surface than
     the clock kind; a per-kind check is what stops the next kind from repeating it.
     """
     exempt = set(PARITY_EXEMPTIONS.get(kind, {}))

@@ -1,11 +1,11 @@
 """Sentinel action vocabulary — the small, fixed action language the browse loop parses out
-of an LLM's response text (plan §2, ref-migrated per amendment 2026-07-26(a)).
+of an LLM's response text.
 
-The whole point of sentinels (from the research synthesis): no JSON function-calling required
+The whole point of sentinels: no JSON function-calling required
 from the executing model — any model that can write structured text can drive the loop, so a
 weak local model works. The vocabulary is deliberately tiny and one-keyword-per-line.
 
-§2 originally addressed elements by positional ``CLICK <link_number>``; the amendment migrates
+Elements were first addressed by positional ``CLICK <link_number>``; the vocabulary moved
 to **stable refs** (``CLICK <ref>`` / ``TYPE <ref>(value)``) because a re-snapshot after a
 dynamic DOM change re-numbers a positional list and silently invalidates the agent's plan —
 the TOCTOU every index-based approach hits. Refs come from ``extraction.ElementRef`` and
@@ -13,7 +13,7 @@ survive an unrelated mutation, so an action the agent emitted against a still-pr
 still names it.
 
 ``parse_sentinel(line)`` returns a typed ``Action`` or ``None`` (unknown/blank lines are
-ignored, matching §2: "first match wins per line, unknown lines are ignored"). Every action
+ignored, and the first match wins per line). Every action
 renders back to its canonical sentinel line via ``render()``, so an emitted action round-trips
 (``parse_sentinel(a.render()) == a``) — the property the loop relies on to echo an agent's
 chosen action back into the notes trail.
@@ -104,7 +104,7 @@ class ScrollAction:
 
 @dataclass(frozen=True)
 class WaitAction:
-    """``WAIT <seconds>`` — wait for dynamic content, clamped to 1-10s (§2)."""
+    """``WAIT <seconds>`` — wait for dynamic content, clamped to 1-10s."""
 
     seconds: int
 
@@ -167,7 +167,7 @@ _NOTES_RE = re.compile(r"^NOTES\s+(.*\S)\s*$", re.IGNORECASE | re.DOTALL)
 def parse_sentinel(line: str) -> Action | None:
     """Parse one line into a typed ``Action``, or ``None`` if it is not a sentinel.
 
-    First-match-wins per line (§2). Bare-word sentinels (SUBMIT/GO_BACK/DONE) are matched
+    First-match-wins per line. Bare-word sentinels (SUBMIT/GO_BACK/DONE) are matched
     case-insensitively on the stripped line; the parameterized forms use anchored regexes.
     """
     if not line:

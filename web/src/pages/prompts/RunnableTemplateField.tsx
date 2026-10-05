@@ -9,7 +9,7 @@ const LAUNCH_KINDS: { id: LoopKind; label: string }[] = [
 ]
 const RIGORS = ['minimal', 'grill', 'thorough']
 
-/** Runnable-template (#17) authoring — turn a prompt into a "campaign template" you
+/** Runnable-template authoring — turn a prompt into a "campaign template" you
  *  fill + launch into a Project/Loop run. Off by default (plain prompt); enabling it
  *  seeds a minimal goal launch_spec, then exposes the loop-launch knobs. Shared by the
  *  create form (PromptForm) AND the in-place editor (PromptEditFields) so a template's

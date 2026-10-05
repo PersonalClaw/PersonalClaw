@@ -1,4 +1,4 @@
-"""Tests for the risk registry, autonomy floors and the confirmation matrix (UP-R4/R6).
+"""Tests for the risk registry, autonomy floors and the confirmation matrix.
 
 The scanner is measured against the SHIPPED library, not fixtures, because its most damaging failure
 mode is the false positive: a risk scanner that fires on a template doing its job gets suppressed
@@ -448,7 +448,7 @@ def test_only_two_interrupts_exist():
     """ "Anything surprising" is not a taxonomy — it is a licence to stop whenever, which makes
     unattended mode a slower per-stage mode.
 
-    Two, not three: WF2UNI-13 deleted `CONFLICTING` because no signal a `ConfirmationRequest`
+    Two, not three: `CONFLICTING` was deleted because no signal a `ConfirmationRequest`
     carries says "these requirements contradict each other", and a documented stop nothing can
     produce reads to an auditor like a stop that exists.
     """
@@ -601,8 +601,8 @@ def test_the_plan_surface_carries_the_interrupt_verdicts():
 
 class TestInterruptExhaustiveness:
     """Two ratchets. A new `ConfirmationType` must declare whether an unattended run stops for it,
-    and a new `Interrupt` must have something that produces it — the second is the one WF2UNI-13
-    exists to install, because `UNINFERABLE` and `CONFLICTING` were both documented and
+    and a new `Interrupt` must have something that produces it — the second exists
+    because `UNINFERABLE` and `CONFLICTING` were both documented and
     unproducible."""
 
     @pytest.mark.parametrize("kind", list(ConfirmationType), ids=lambda k: k.value)

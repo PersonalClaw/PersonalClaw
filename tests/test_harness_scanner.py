@@ -1,4 +1,4 @@
-"""Tests for the harness static boundary scanner + diff-aware selection (Session 2).
+"""Tests for the harness static boundary scanner + diff-aware selection.
 
 The load-bearing test is `test_scanner_clean_on_current_tree`: the scanner must produce
 ZERO error-level findings on the real repo, or it's noise. The rest prove each check

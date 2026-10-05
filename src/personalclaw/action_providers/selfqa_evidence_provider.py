@@ -1,6 +1,6 @@
 """``selfqa-evidence`` action provider — seal the proof bundle, deterministically.
 
-The plan's evidence node was an LLM ``stage`` told to "compute the digests; do not estimate them"
+An LLM ``stage`` evidence node is told to "compute the digests; do not estimate them"
 — an instruction a model can quietly ignore. This provider replaces that trust with code: it
 derives the contact-sheet and GIF from the recording (ffmpeg as a local subprocess, degrading
 typed when ffmpeg is absent), computes the SHA256 manifest from the bytes on disk, registers the
@@ -21,16 +21,16 @@ Output (one JSON object, so the template binds ``{{nodes.evidence.output.*}}``):
         "evidence_ref": "artifact:<slug>",   # the single Artifact
         "complete": true|false,               # the required-kinds gate
         "present": ["screenshot", …],
-        "missing": ["recording", …],          # the gate's missing-kinds list (Criterion #7)
+        "missing": ["recording", …],          # the gate's missing-kinds list
         "degraded": [{"kind": "gif", "reason": "…"}],
         "fix_branch": "pclaw/selfqa-<sha8>"    # "" unless a failure + fix_branch_enabled
     }
 
 A missing required kind returns ``success=False`` with the missing list, which marks the node —
 and so the run — incomplete: a run cannot pass while its declared proof is absent, independent of
-what the driving agent claimed. The "no new provider TYPE" holds — this is an action provider
-added to ``ALLOWED_HOOK_PROVIDERS`` exactly as §5 requires for one, the QA run still fires through
-``run-workflow``, and no new inbox source or task provider is introduced.
+what the driving agent claimed. No new provider TYPE is introduced — this is an action provider
+added to ``ALLOWED_HOOK_PROVIDERS`` exactly as every action provider must be, the QA run still
+fires through ``run-workflow``, and no new inbox source or task provider is introduced.
 """
 
 from __future__ import annotations
@@ -188,7 +188,7 @@ class SelfQaEvidenceActionProvider(ActionProvider):
         if not gate.complete:
             # A run cannot count complete while a declared proof kind is missing. Reported as a
             # failed action so the engine marks the node — and the run — incomplete, naming what
-            # is missing (Criterion #7). The evidence_ref is still in the output, so the partial
+            # is missing. The evidence_ref is still in the output, so the partial
             # bundle that WAS produced is not lost.
             return ActionResult(
                 success=False,

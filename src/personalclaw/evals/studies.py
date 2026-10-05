@@ -1,17 +1,17 @@
-"""Pre-registered template A/B studies — EVALUATION-SUBSTRATE §2.
+"""Pre-registered template A/B studies.
 
 The formal instrument for "is template v(N+1) actually better than v(N)?". Every clause
 below exists because a cheaper version of it can be gamed, so the module is organized
 around the four defeats rather than around the happy path:
 
-1. **§2.1 immutable pre-registration.** The design is fixed before arm 1 runs, and
+1. **Immutable pre-registration.** The design is fixed before arm 1 runs, and
    `store.write_study_registration` refuses a second write. The load-bearing part is not
    the file mode — it is that the RUBRIC is pinned by hash: :func:`rubric_status` compares
    the live rubric AND the on-disk pinned copy against `rubric_sha256`, and either mismatch
    yields verdict ``invalidated``. A study whose rubric can be edited after the results are
    in is a study that was never registered, only narrated.
 
-2. **§2.3 blinded, position-swapped, median-of-3.** Three separate biases, three separate
+2. **Blinded, position-swapped, median-of-3.** Three separate biases, three separate
    mechanisms. Blinding: :func:`render_pair_prompt` is given the rubric and two outputs and
    *nothing else*, and :func:`assert_blinded` asserts the negative over the registration's
    own identifying strings. Position swap: EVERY pair is judged twice with the slots
@@ -19,11 +19,11 @@ around the four defeats rather than around the happy path:
    slot A. Median-of-3: each presentation is sampled `DEFAULT_JUDGE_SAMPLES` times and the
    ordinal median decides, so one eccentric sample cannot carry a pair.
 
-3. **§2.3 agreement floor.** A median-of-3 with no floor launders disagreement into a
+3. **Agreement floor.** A median-of-3 with no floor launders disagreement into a
    verdict. Below `evals.judge_agreement_floor` the study's verdict is `judge_unreliable`
    and it files a judge-calibration item instead of a template verdict.
 
-4. 🔴 **§2.2 `locked/` checks are supervisor-side and never worker-visible.** A check whose
+4. 🔴 **`locked/` checks are supervisor-side and never worker-visible.** A check whose
    text reaches the worker is a check the worker satisfies by construction, which is the
    same as not having it. So the checks run HERE, in the arm's own output workspace, after
    the run finishes — and :func:`assert_no_locked_leakage` asserts the NEGATIVE over every
@@ -38,8 +38,8 @@ Nothing here is a new verdict dialect. The engine's `judge_contract.Verdict` ans
 this work meet its definition of done" over PASS/REJECT/RETRY/…; a study answers "is B
 better than A", which that vocabulary cannot express, so the two do not overlap and neither
 is translated into the other. What IS reused verbatim: `DEFAULT_JUDGE_SAMPLES` (the sample
-count), `parse_judge_json` (JSON extraction and its reject-by-default posture), ES-4's
-`JudgeCall`/`live_judge_caller` seam (the one place a judge costs money), and
+count), `parse_judge_json` (JSON extraction and its reject-by-default posture), the judge
+bench's `JudgeCall`/`live_judge_caller` seam (the one place a judge costs money), and
 `loop.gates.run_verify_command` (the screened tristate every locked command runs through,
 so a check that cannot run reports `verifier_absent` and never a silent pass).
 """
@@ -66,7 +66,7 @@ logger = logging.getLogger(__name__)
 
 # ── vocabulary ───────────────────────────────────────────────────────────────
 
-#: The only study kind ES-5 ships. Carried on the ledger row's ``kind`` column so a reader
+#: The only study kind that ships. Carried on the ledger row's ``kind`` column so a reader
 #: can tell a study row from a matrix row without opening an artifact.
 KIND_TEMPLATE_AB = "template_ab"
 
@@ -132,7 +132,7 @@ class StudyError(ValueError):
 
 
 class LockedLeakError(RuntimeError):
-    """🔴 §2.2 violated, or the guard could not enforce it.
+    """🔴 The locked-check secrecy rule was violated, or the guard could not enforce it.
 
     Both cases are this error on purpose. "A locked token reached worker-visible text" and
     "the guard had nothing to check, so its silence meant nothing" are the same failure of
@@ -141,7 +141,7 @@ class LockedLeakError(RuntimeError):
     """
 
 
-# ── §2.2 the locked check DSL ────────────────────────────────────────────────
+# ── the locked check DSL ─────────────────────────────────────────────────────
 
 
 @dataclass(frozen=True)
@@ -190,7 +190,7 @@ def parse_locked_check(raw: object) -> LockedCheck:
     Two refusals matter more than the shape validation around them:
 
     * a token shorter than :data:`MIN_LEAK_TOKEN_LEN` — the guard cannot distinguish it
-      from incidental prose, and skipping it quietly would leave §2.2 unenforced for
+      from incidental prose, and skipping it quietly would leave secrecy unenforced for
       exactly the checks whose authors were terse;
     * both shapes at once, or neither.
     """
@@ -241,7 +241,7 @@ def parse_locked_check(raw: object) -> LockedCheck:
     if short:
         raise StudyError(
             f"locked check {check_id!r} carries token(s) shorter than {MIN_LEAK_TOKEN_LEN} "
-            f"characters ({', '.join(repr(t) for t in short)}): the §2.2 leak guard cannot "
+            f"characters ({', '.join(repr(t) for t in short)}): the leak guard cannot "
             "tell them from incidental worker text, so the check is refused rather than "
             "silently left unguarded"
         )
@@ -253,7 +253,7 @@ def load_locked_checks(study_id: str) -> tuple[LockedCheck, ...]:
     return tuple(parse_locked_check(raw) for raw in store.read_locked_checks(study_id))
 
 
-# ── §2.1 pre-registration ────────────────────────────────────────────────────
+# ── pre-registration ─────────────────────────────────────────────────────────
 
 
 def canonical_json(data: object) -> str:
@@ -267,18 +267,18 @@ def digest(text: str) -> str:
 
 
 def rubric_sha256(rubric_text: str) -> str:
-    """The pinned rubric hash. Named separately because it is the thing §2.3 invalidates on."""
+    """The pinned rubric hash. Named separately because it is what a study is invalidated on."""
     return digest(rubric_text)
 
 
 def new_study_id() -> str:
-    """A fresh ``st-xxxxxxxx`` id (the §2.1 shape)."""
+    """A fresh ``st-xxxxxxxx`` id."""
     return f"st-{uuid.uuid4().hex[:8]}"
 
 
 @dataclass(frozen=True)
 class StudyRegistration:
-    """The §2.1 pre-registration — fixed before arm 1, hashed, and never rewritten."""
+    """The pre-registration — fixed before arm 1, hashed, and never rewritten."""
 
     study_id: str
     subject: dict
@@ -320,7 +320,7 @@ class StudyRegistration:
         return digest(canonical_json(self.to_dict()))
 
     def blinding_leak_tokens(self) -> tuple[str, ...]:
-        """Strings whose appearance in a judge prompt would un-blind it (§2.3).
+        """Strings whose appearance in a judge prompt would un-blind it.
 
         The hypothesis heads the list: a judge told what the experimenter expects is a
         judge asked to confirm it. Version tokens are rendered in the several spellings a
@@ -445,7 +445,7 @@ def _model_fingerprint() -> dict:
         return {}
 
 
-# ── §2.3 the rubric pin, and what breaks it ──────────────────────────────────
+# ── the rubric pin, and what breaks it ───────────────────────────────────────
 
 SEAL_OK = "ok"
 SEAL_UNSEALED = "registration_unsealed"
@@ -455,7 +455,7 @@ SEAL_TAMPERED = "registration_tampered"
 def seal_status(reg: StudyRegistration) -> tuple[str, str]:
     """``(status, detail)`` — is this registration the one that was registered?
 
-    🔴 This is the clause the rest of §2.1 rests on, and without it the rest of §2.1 is
+    🔴 This is the clause the rest of the pre-registration rests on, and without it the rest is
     decoration. ``registration.json`` carries ``rubric_sha256``, ``k`` and
     ``agreement_floor`` — the study's whole decision rule — and both it and the pinned
     rubric live in the same directory, owned by the same user. So :func:`rubric_status`
@@ -536,7 +536,7 @@ def rubric_status(reg: StudyRegistration, live_rubric_text: str | None) -> tuple
     return RUBRIC_OK, ""
 
 
-# ── 🔴 §2.2 the worker-visible surface, and the guard over it ────────────────
+# ── 🔴 the worker-visible surface, and the guard over it ─────────────────────
 
 #: Fields on :class:`WorkerPayload` that are supervisor bookkeeping and never rendered to
 #: a worker. EVERYTHING ELSE is scanned by :func:`assert_no_locked_leakage`, so a field
@@ -591,7 +591,7 @@ class WorkerPayload:
 
 
 def locked_leak_tokens(study_id: str) -> tuple[str, ...]:
-    """Every substring whose presence in worker-visible text is a §2.2 leak."""
+    """Every substring whose presence in worker-visible text is a locked-check leak."""
     tokens: set[str] = set()
     for check in load_locked_checks(study_id):
         tokens.update(check.leak_tokens())
@@ -641,7 +641,7 @@ def _assert_absent(
 
 
 def assert_no_locked_leakage(study_id: str, worker_visible: Sequence[str]) -> None:
-    """🔴 §2.2: no ``locked/`` content may appear in anything a worker sees.
+    """🔴 No ``locked/`` content may appear in anything a worker sees.
 
     Called from :func:`run_study` before ANY arm is spawned, not only from a test — a rail
     that only fires in the suite protects the suite. Raises rather than degrading: a leak
@@ -657,7 +657,7 @@ def assert_no_locked_leakage(study_id: str, worker_visible: Sequence[str]) -> No
 
 
 def assert_blinded(reg: StudyRegistration, judge_prompts: Sequence[str]) -> None:
-    """§2.3: no judge prompt may carry the study's identifying strings.
+    """No judge prompt may carry the study's identifying strings.
 
     Same vacuity discipline as the locked guard, for the same reason.
     """
@@ -669,7 +669,7 @@ def assert_blinded(reg: StudyRegistration, judge_prompts: Sequence[str]) -> None
     )
 
 
-# ── §2.2 supervisor-side execution, in the arm's own output workspace ────────
+# ── supervisor-side execution, in the arm's own output workspace ─────────────
 
 
 @dataclass(frozen=True)
@@ -794,9 +794,9 @@ async def run_locked_checks(
 
 
 def assert_locked_absent_from_workspace(study_id: str, workspace: str | Path) -> None:
-    """§2.2's other half: the arm's output workspace never held the locked content either.
+    """The guard's other half: the arm's output workspace never held the locked content either.
 
-    §2.2 forbids the checks from a worker's "prompt, bindings, OR workspace", so the prompt
+    The checks are forbidden from a worker's "prompt, bindings, OR workspace", so the prompt
     guard alone is two thirds of the clause. Same vacuity discipline.
     """
     root = Path(workspace)
@@ -836,7 +836,7 @@ def locked_regressions(outcomes: Sequence[LockedOutcome]) -> tuple[str, ...]:
     return tuple(sorted(hits))
 
 
-# ── §2.3 blinded, position-swapped, median-of-3 comparative judging ──────────
+# ── blinded, position-swapped, median-of-3 comparative judging ───────────────
 
 _PAIR_BODY = """You are comparing two candidate outputs for the same task, against a fixed rubric.
 
@@ -909,12 +909,12 @@ def parse_pair_answer(text: str) -> str:
 
 
 def median_slot_winner(samples: Sequence[str]) -> str:
-    """The ordinal median of the sample slot-winners (§2.3's reused median-of-3).
+    """The ordinal median of the sample slot-winners (the reused median-of-3).
 
     `judge_contract.aggregate_samples` is deliberately NOT reused here: it aggregates
     `JudgeVerdict` objects over the engine's PASS/REJECT vocabulary, and a comparative
     slot winner is not a member of it. Feeding one vocabulary's values to the other's
-    aggregator is the exact mistake WF2LOO-13 merged two enums to prevent. What IS reused
+    aggregator is the exact mistake two enums were merged to prevent. What IS reused
     is the RULE — an odd sample count, the middle value decides — and the sample count
     itself (:data:`~personalclaw.workflows.judge_contract.DEFAULT_JUDGE_SAMPLES`).
 
@@ -963,7 +963,7 @@ class PairJudgement:
 
     @property
     def position_flipped(self) -> bool:
-        """The measurement §2.3(b) exists for: the winner changed when the slots did."""
+        """The measurement the position swap exists for: the winner changed when the slots did."""
         return self.judgeable and self.direct_winner != self.swapped_winner
 
     def to_dict(self) -> dict:
@@ -1055,7 +1055,7 @@ async def judge_pair(
     if not judgeable:
         outcome = OUTCOME_NO_SIGNAL
     elif direct_winner != swapped_winner:
-        # §2.3(b) verbatim: a pair whose verdict flips with position is no-signal, counted
+        # A pair whose verdict flips with position is no-signal, counted
         # for neither arm. Recording it as a tie would smuggle it into the tie column and
         # make a position-biased judge look merely indecisive.
         outcome = OUTCOME_NO_SIGNAL
@@ -1110,7 +1110,7 @@ def agreement_rate(pairs: Sequence[PairJudgement]) -> float | None:
 
     A `cannot_judge` pair is excluded from the denominator rather than counted as
     disagreement: a judge that says "I cannot tell" is behaving correctly, and dragging the
-    agreement rate down for it would penalize exactly the honesty §2.3 wants.
+    agreement rate down for it would penalize exactly the honesty the study wants.
     """
     judgeable = [p for p in pairs if p.judgeable]
     if not judgeable:
@@ -1122,7 +1122,7 @@ def agreement_rate(pairs: Sequence[PairJudgement]) -> float | None:
 class CaseOutcome:
     """One input case's resolution — the unit the win rate is computed over.
 
-    §2.1 aggregates "win/loss/tie per CASE", not per trial: the k trials of one case are
+    A study aggregates "win/loss/tie per CASE", not per trial: the k trials of one case are
     repeated measurements of the same thing, so treating each as independent would inflate
     the sample by a factor of k and make a 1-case study look like a 5-case one.
     """
@@ -1155,7 +1155,7 @@ def case_outcome(case_id: str, pairs: Sequence[PairJudgement]) -> CaseOutcome:
     return CaseOutcome(case_id=case_id, outcome=outcome, pairs=tuple(pairs))
 
 
-# ── §2.4 the verdict, and what it does ───────────────────────────────────────
+# ── the verdict, and what it does ────────────────────────────────────────────
 
 
 @dataclass(frozen=True)
@@ -1240,7 +1240,7 @@ def decide(
        be asked and answered without assuming the answer.
     2. **Rubric pin broken → ``invalidated``.** A study whose rubric moved has no
        interpretation, so nothing downstream of it means anything.
-    3. **Locked-check regression → ``loss``.** §2.1's decision rule says "ANY locked-check
+    3. **Locked-check regression → ``loss``.** The decision rule says "ANY locked-check
        regression = fail regardless", and this outranks the agreement floor too: a
        deterministic regression is knowledge even when the judge is noise, and discarding
        it because the judge was bad would throw away the one measurement that did not
@@ -1326,7 +1326,7 @@ def decide(
     return replace(measured, verdict=VERDICT_TIE, detail="wins and losses are level")
 
 
-# ── §2.4 persistence + the two side effects ──────────────────────────────────
+# ── persistence + the two side effects ───────────────────────────────────────
 
 
 def _pin_for(reg: StudyRegistration):
@@ -1345,9 +1345,9 @@ def _pin_for(reg: StudyRegistration):
 def persist(reg: StudyRegistration, result: StudyResult) -> StudyResult:
     """Write ``verdict.json`` + ``runs.json`` + one ``results.tsv`` row, for EVERY outcome.
 
-    §2.4's append-only honesty rule: wins, losses, `invalidated` and `judge_unreliable`
+    The append-only honesty rule: wins, losses, `invalidated` and `judge_unreliable`
     alike. ``verdict.json`` is written FIRST, because the ledger row can legitimately be
-    refused (ES-2's pin requirement) and losing the verdict to a missing model binding
+    refused (the ledger's pin requirement) and losing the verdict to a missing model binding
     would be the worse failure. When the row IS refused the result says so on
     ``ledger_row_written`` — a silent gap in an append-only ledger is exactly the dishonesty
     the rule exists to prevent.
@@ -1382,7 +1382,7 @@ def persist(reg: StudyRegistration, result: StudyResult) -> StudyResult:
 
 
 def emit_evidence(reg: StudyRegistration, result: StudyResult) -> str:
-    """The evidence unit a PASS emits (§2.4 → §4's trust ladder). Returns its path or ``""``."""
+    """The evidence unit a PASS emits for the trust ladder. Returns its path or ``""``."""
     if result.verdict != VERDICT_WIN:
         return ""
     payload = {
@@ -1451,7 +1451,7 @@ def file_demotion_proposal(reg: StudyRegistration, result: StudyResult) -> str:
         occurrences=1,
         min_evidence=1,
     )
-    # §4.4 mechanical revocation: a failed pre-registered study is the strongest
+    # Mechanical revocation: a failed pre-registered study is the strongest
     # causal evidence this substrate produces that the system's changes make things
     # worse. The retirement above reverts the CHANGE; this revokes the AUTONOMY that
     # would keep shipping changes like it unattended.
@@ -1472,9 +1472,9 @@ def file_demotion_proposal(reg: StudyRegistration, result: StudyResult) -> str:
 
 
 def file_judge_calibration(reg: StudyRegistration, result: StudyResult) -> str:
-    """Below-floor agreement files a calibration item for §6's benchmark. Path or ``""``.
+    """Below-floor agreement files a calibration item for the judge benchmark. Path or ``""``.
 
-    §2.3: "a bad judge produces work for the judge harness, never a fake win". Filed
+    A bad judge produces work for the judge harness, never a fake win. Filed
     whenever the agreement was below the floor — including when the VERDICT was a
     deterministic locked-check loss, because the judge being unreliable is a separate fact
     from the template being worse, and the fix for it lives in a different harness.
@@ -1546,7 +1546,7 @@ async def run_study(
 
     1. **Rubric pin first.** A study whose rubric moved is `invalidated` BEFORE a single
        arm runs — it would spend real money producing numbers nobody may interpret.
-    2. **The 🔴 §2.2 leak guard next**, over every worker-visible payload of every arm,
+    2. **The 🔴 leak guard next**, over every worker-visible payload of every arm,
        before any of them is spawned. Raises :class:`LockedLeakError` rather than
        degrading: there is no honest verdict for a study that leaked its own checks, so
        there is nothing to fall back to.
@@ -1690,7 +1690,7 @@ def study_view(study_id: str) -> dict | None:
     """One study's registration + verdict + per-run artifacts, or ``None`` if unregistered.
 
     The rubric TEXT is not in here and the ``locked/`` checks are not in here. The rubric's
-    hash identifies it without publishing it; the locked checks are the §2.2 secret, and a
+    hash identifies it without publishing it; the locked checks are the study's secret, and a
     read-only API that served them would defeat the clause the study is built around — the
     user's own dashboard is one `curl` away from a worker's context.
     """

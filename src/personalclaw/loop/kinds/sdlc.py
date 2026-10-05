@@ -4,9 +4,8 @@ The task is classified to an SDLC entry stage; the plan is an ordered set of
 stages each gated by explicit exit criteria (the supervisor runs the project's
 ``verify_command``/``test_command`` and a conservative judge over recent
 findings — never the worker's self-report). Module named ``sdlc`` to avoid
-shadowing the stdlib ``code`` module. Slice 1 supplies config + phase keying; the
-full stage-gate + worktree behavior ports from the legacy ``code/`` engine in
-Slice 2.
+shadowing the stdlib ``code`` module. It holds config + phase keying and the
+full stage-gate + worktree behavior ported from the legacy ``code/`` engine.
 """
 
 from __future__ import annotations
@@ -31,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 def _task_scope_texts(task) -> list[str]:
     """Every text on a task that might NAME a file it will touch — the input to
-    sparse-worktree scoping (HC-2).
+    sparse-worktree scoping.
 
     Title, description and action-plan steps, because that is where the SDLC
     decomposition puts paths when it names any. Tolerant of both action-plan shapes in
@@ -835,7 +834,7 @@ class CodeKind(LoopKindStrategy):
         separators (whitespace, ``_``, ``-``) to a single space. Without this an LLM that
         slugifies the directive's title "Test suite" → ``test_suite`` (or ``test-suite``)
         never matches the plan's ``verification`` id NOR its ``test suite`` title → the
-        stage's findings read as empty → ``_observe_stage_metric`` scores nothing → the P6
+        stage's findings read as empty → ``_observe_stage_metric`` scores nothing → the tick
         metric gate + rollback go SILENTLY INERT for that stage (observed live: greenfield
         code loop 4fb50978 completed with quality_scores=None / verdicts=0 because every
         verification finding was tagged ``test_suite``). Folding separators makes the id,
@@ -1144,7 +1143,7 @@ class CodeKind(LoopKindStrategy):
     @staticmethod
     def _read_deliverable(path: str, *, max_chars: int = 6000) -> str:
         """Read a resolved deliverable's real content for the judge — the observed
-        artifact, not the worker's narration (Slice B). Bounded (head of the file); binary
+        artifact, not the worker's narration. Bounded (head of the file); binary
         or unreadable files return ""; a middle-truncation marker shows the cap was hit."""
         import os
 
@@ -1193,7 +1192,7 @@ class CodeKind(LoopKindStrategy):
             prior_step_floor=prior_floor,
             rollbacks_on_step=rollbacks,
             # The tick's own `total_cycles` counter, fed from the ledger projection this method
-            # was handed (PP-16 seam 4a retired the cached `loops.total_cycles` column, which
+            # was handed (the cached `loops.total_cycles` column is retired; it
             # additionally lagged by one progress poll — see design.py's note).
             total_cycles=len(findings),
         )
@@ -1202,7 +1201,7 @@ class CodeKind(LoopKindStrategy):
     async def _observe_stage_metric(
         self, loop: Loop, idx: int, stage: str, findings: list[dict], ctx
     ) -> float | None:
-        """The graded quality metric for a METRIC-GATED stage — the P4 scored judge's
+        """The graded quality metric for a METRIC-GATED stage — the scored judge's
         ``quality_score`` (0-5) for the latest stage finding, persisted to the quality
         trail (mirroring goal.py) so the tick metric gate + rollback reason over a real,
         restartable signal instead of the binary structural gate. Returns None (→ the
@@ -1329,7 +1328,7 @@ class CodeKind(LoopKindStrategy):
         if refreshed is not None:
             write_brief(refreshed)
         await rearm_nudge_message(ctx.svc, cid)
-        logger.info("loop %s: P6 ROLLBACK stage %d→%d (%s)", cid, idx, prior_idx, decision.reason)
+        logger.info("loop %s: ROLLBACK stage %d→%d (%s)", cid, idx, prior_idx, decision.reason)
         ctx.publish(
             cid,
             "rolled_back",
@@ -1382,7 +1381,7 @@ class CodeKind(LoopKindStrategy):
         # Independent ground-truth check (no self-report): if the stage declares a
         # document deliverable, it MUST exist on disk before the stage can pass. This
         # gives a doc/planning stage a real gate (not transcript-only) and is the
-        # observe-don't-trust requirement carried from the rehaul (O-E2).
+        # observe-don't-trust requirement.
         deliverable = str(phase.get("deliverable", "")).strip()
         check_evidence = ""
         if deliverable and ws:
@@ -1408,7 +1407,7 @@ class CodeKind(LoopKindStrategy):
                 )
                 return False
             if path is not None:
-                # Slice B — feed the deliverable's REAL content to the judge, not just an
+                # Feed the deliverable's REAL content to the judge, not just an
                 # "exists" note: the gate scores the observed artifact, not the worker's
                 # narration. Read is bounded; binary/empty files add only the exists note.
                 content = self._read_deliverable(path)
@@ -1625,7 +1624,7 @@ class CodeKind(LoopKindStrategy):
             )
 
     async def _check_work_post_gate(self, loop: Loop, idx: int, findings: list[dict], ctx) -> bool:
-        """HARNESS-CRAFT §3.2 post-gate hook — the unattended half of check-work.
+        """Post-gate hook — the unattended half of check-work.
 
         Runs only when ``loops.check_work_stages`` is on (default off). The stage gate
         above verifies the DECLARED deliverable and the configured verify/test command;
@@ -1897,12 +1896,12 @@ class CodeKind(LoopKindStrategy):
             return False  # task-workers still running → wait for them
         if ahead and not await self._stage_work_is_there(loop, idx, stage, findings):
             return False
-        # ── P6: the stepwise lifecycle decision IS the one pure tick.evaluate ────────
+        # ── the stepwise lifecycle decision IS the one pure tick.evaluate ────────────
         # Observe the two inputs the decision needs — the adapter's I/O, per the tick
         # purity contract (loop/tick.py): the STRUCTURAL gate (the supervisor runs the
         # verify command + judges the exit criteria over observed ground truth, never the
         # worker's self-report) and, only for a metric-gated stage, a graded QUALITY
-        # metric (the P4 scored judge, persisted to the quality trail so the metric gate +
+        # metric (the scored judge, persisted to the quality trail so the metric gate +
         # rollback have a live signal). Then tick.evaluate turns (gate, metric, timing,
         # budget) into ONE Decision — no advance/hold logic is duplicated here. For a
         # plan that declares no tick keys (every plan by default) evaluate degrades to the
@@ -2059,7 +2058,7 @@ class CodeKind(LoopKindStrategy):
             self._stood_down.add(loop.id)
             await ctx.svc.update(stage_nudge.id, active=False)
         # Create this phase's worktrees as ONE batch. Creation was serial
-        # here, and HC-1 measured ~5.2 s per worktree on a 10K-file repo — a fan-out of
+        # here, and a measurement found ~5.2 s per worktree on a 10K-file repo — a fan-out of
         # 4 spent ~21 s before any worker started. The pool is bounded
         # (min(cpu_count, 4)); each task's `scope` narrows its hydration to the paths
         # its plan names, or is empty for a full checkout when no scope resolves (or

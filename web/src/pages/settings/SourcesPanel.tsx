@@ -120,7 +120,7 @@ export function SourcesPanel() {
         </RowGroup>
       </Section>
 
-      {/* PEP-7 lives here rather than in a knowledge panel of its own: this is the panel that
+      {/* This section lives here rather than in a knowledge panel of its own: this is the panel that
           already governs what gets pulled into the knowledge library, and the artifact mirror
           is the one such feed that needs no polling. It is `knowledge.*`, not `sources.*` —
           see `patchKnowledge`. */}

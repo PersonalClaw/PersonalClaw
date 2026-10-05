@@ -1,9 +1,9 @@
-"""Pluggable notification DELIVERY backends (MULTI-TENANCY-ENTITY `TSE2-5`).
+"""Pluggable notification DELIVERY backends.
 
 ``providers/registry.py`` carried the ``notification`` provider type as an
 :class:`~personalclaw.providers.registry.EntitySeamHandler` whose ``source_of_truth`` said so
 in as many words: *"No provider declares type=notification; pluggable delivery backends remain
-a future design."* The type was declarable-but-dead — the #47 bug class the
+a future design."* The type was declarable-but-dead — the bug class the
 manifest-vs-handler guard exists to prevent.
 
 This package is that design, and it exists because

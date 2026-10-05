@@ -1,17 +1,17 @@
-"""(LEARN-R17): trajectory-variance tier migration — agentic ↔ fixed.
+"""Trajectory-variance tier migration — agentic ↔ fixed.
 
 A two-way ``tier_migration`` PROPOSAL producer over the Run Ledger. Distinct from the promotion
 ladder (which is about entity KIND) and from the curator's scope-widening (which also files a
 ``TIER_MIGRATION`` but is about *surfacing* scope): this is the execution TIER *within* a template
 — whether its steps run as agentic LLM stages or as fixed deterministic actions.
 
-The plan recorded this clause BLOCKED three times, on the same two absent inputs. Both are present
-now, so the producer is finally buildable **without touching a core contract**:
+The producer depends on two inputs that used to be absent. Both are present
+now, so it is buildable **without touching a core contract**:
 
 * **Tier is DERIVED from structure, never stored.** ``WorkflowDef`` has no execution-tier field and
-  this does NOT add one — a new state-shape field would collide with PLATFORM-PRIMITIVES PP-16
-  (Loop→WorkflowRun), which is exactly the kind of clean break the roadmap wants paid deliberately,
-  not smuggled in behind a detector. Instead :func:`classify_tier` walks the run's own pinned spec
+  this does NOT add one — a new state-shape field would collide with the Loop→WorkflowRun
+  unification, which is exactly the kind of clean break to pay for deliberately,
+  not smuggle in behind a detector. Instead :func:`classify_tier` walks the run's own pinned spec
   (``store.read_spec``) and reads each node's ``kind``: a template is ``agentic`` when it holds
   a STAGE/INFER node — the model-tunable, token-consuming stages ``models.LLM_KINDS`` names — and
   ``fixed`` when its work nodes are all zero-token ACTION/TRANSFORM dispatch with no model node at
@@ -20,8 +20,7 @@ now, so the producer is finally buildable **without touching a core contract**:
 * **Cross-run variance is a pure ledger PROJECTION.** ``introspection.trajectory_signature``
   already collapses a run into its decision-path hash and ``run_cockpit.introspect`` already
   aggregates the sibling distribution. This reads the same ``(signature, failed)`` history
-  ``introspection.trajectory_regression`` consumes — the machinery the earlier BLOCKED notes said
-  did not exist yet.
+  ``introspection.trajectory_regression`` consumes.
 
 The heuristic (stated so the thresholds are tunable):
 
@@ -68,7 +67,7 @@ TIER_MIGRATION_MIN_RUNS = 5
 DISTILL_MIN_DOMINANCE = 0.9
 
 #: An agentic template that fails more often than this is NOT a distill candidate: freezing a flaky
-#: agentic path into a rigid one bakes the failure in. §3.5 distills what already WORKS.
+#: agentic path into a rigid one bakes the failure in. Distill only what already WORKS.
 DISTILL_MAX_FAILURE_RATE = 0.2
 
 #: Failing runs (≥) before a fixed template's repeated deviation is a PROMOTE signal — the "≥M
@@ -81,7 +80,7 @@ PROMOTE_MIN_FAILURES = 3
 #: promote signal, so the "repeatedly failing" and the task's "frequent deviation" both fire it.
 PROMOTE_MIN_FAILURE_RATE = 0.4
 
-#: The ~5× agentic:deterministic cost ratio §3.5 cites, used only to PROJECT the evidence figure — a
+#: The ~5× agentic:deterministic cost ratio, used only to PROJECT the evidence figure — a
 #: projection labelled as such on the proposal, never presented as a measured number.
 AGENTIC_COST_MULTIPLE = 5.0
 

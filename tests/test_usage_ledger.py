@@ -1,9 +1,9 @@
-"""COST-AND-TOKEN-OBSERVABILITY §2.4 / C1 — the per-turn cost/token ledger.
+"""The per-turn cost/token ledger.
 
-Covers the store only (the write sites C2 + surfaces S2 are later changes):
+Covers the store only (the write sites + surfaces are later changes):
 round-trip, the five rollup group keys, the tainted-total `priced` rule, the
 fail-open write contract, and the inventory registration (audit_home passes WITH
-the `usage` entry and fails WITHOUT it — both proven, per the acceptance criteria).
+the `usage` entry and fails WITHOUT it — both proven).
 """
 
 from __future__ import annotations
@@ -119,7 +119,7 @@ def test_iter_rows_tolerates_a_corrupt_line(_home):
     assert [r["model"] for r in rows] == ["good", "good2"]  # bad line skipped, rest kept
 
 
-# ── inventory registration (acceptance criteria: audit passes WITH, fails WITHOUT) ──
+# ── inventory registration (audit passes WITH, fails WITHOUT) ──
 
 
 def test_usage_path_is_registered_in_inventory():
@@ -282,7 +282,7 @@ class TestSubagentWriteSite:
 
 class TestRecordFromEvent:
     """The shared seam every write-site delegates to (chat/subagent/background/
-    channel/cron/cli), and the acceptance criteria: each source appears in rollup(by source)."""
+    channel/cron/cli), and the rule that each source appears in rollup(by source)."""
 
     def _event(self, **over):
         base = dict(
@@ -317,7 +317,7 @@ class TestRecordFromEvent:
         assert r["priced"] is False and r["cost_usd"] == 0.0
 
     def test_each_source_appears_in_rollup_by_source(self, _home):
-        """CATO-4 acceptance criteria: every write-site's source string is a distinct group."""
+        """Every write-site's source string is a distinct group."""
         for src in ("chat", "subagent", "background", "channel", "cron", "cli"):
             ul.record_from_event(self._event(cost_usd=0.1), source=src, model="claude-opus-4.5")
         by_source = {r["source"] for r in ul.rollup(group_by="source")}
@@ -403,7 +403,7 @@ class TestTurnCompleteLine:
 
     def test_cache_fragment_only_when_nonzero(self):
         # This used to assert the pre-summed rendering — `cache_tokens=2000` →
-        # "2,000 cached". PCS-7 deleted that keyword: reads and writes are reported
+        # "2,000 cached". That keyword is gone: reads and writes are reported
         # separately (a read is the saving, a write is its cost), so the sum could
         # state neither the hit rate nor the saved USD. The rule under test is
         # unchanged and still load-bearing: NO cache activity renders NO fragment.
@@ -413,7 +413,7 @@ class TestTurnCompleteLine:
         )
 
     def test_no_tokens_is_backward_compatible_bare_line(self):
-        # A turn with no token counts renders exactly the pre-CATO-6 line.
+        # A turn with no token counts renders exactly the original bare line.
         line = self._line(input_tokens=0, output_tokens=0, cost_usd=0.0, priced=False)
         assert line == "Turn complete: 3 events, 1 tool calls, context 42%"
 
@@ -443,7 +443,7 @@ class TestSessionScopedAggregation:
         assert ul.totals()["cost_usd"] == 3.5 and ul.totals()["turns"] == 3
 
     def test_session_total_matches_sum_of_its_turns(self, _home):
-        # The acceptance criteria invariant: a multi-turn session's reported total == the sum
+        # The invariant: a multi-turn session's reported total == the sum
         # of the individual turn rows for that session.
         self._seed()
         rows = [r for r in ul._iter_rows() if r["session_key"] == "dashboard:a"]

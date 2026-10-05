@@ -1,6 +1,6 @@
 # Outcome model + engine-owned completion + resilience
 
-**What the slice added.** Completion stopped being a node's self-report. Slice 2 threaded
+**What the slice added.** Completion stopped being a node's self-report. The slice threaded
 the extended outcome states (degraded, escalated, no_change, scope_violation, blocked)
 through state/journal/ledger and made the engine the arbiter of whether a node is actually
 done — the verification ladder, the closed verdict enum, the fresh-judge invariant, and the
@@ -19,8 +19,8 @@ workspace, finds `report.md` missing, and flips the node's claimed DONE to FAILE
 - `finalize` never runs (its predecessor never completed);
 - a `STEP_FAILED` record lands on the ledger, named to the node.
 
-This is the acceptance criteria example named in the change and plan §4.1 ("Slice 2 = a 3-node run
-with a failing `required_artifacts` gate"). "A node said it produced its output" is a weaker
+This is the reference case for engine-owned completion: a 3-node run
+with a failing `required_artifacts` gate. "A node said it produced its output" is a weaker
 claim than a passing node looks; the gate is what closes the gap between claim and file.
 
 **Mechanism under test:** `personalclaw.workflows.engine.apply_artifact_gate` +

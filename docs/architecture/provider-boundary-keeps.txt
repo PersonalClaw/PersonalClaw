@@ -1,5 +1,5 @@
 # Provider-boundary keeps — the machine-checked allowlist of DELIBERATE vendor
-# residue in core (plan 32: PROVIDER-BOUNDARY-COMPLETION). Each line is a core file
+# residue in core. Each line is a core file
 # that the residue-sweep test (tests/test_provider_boundary_residue.py) would
 # otherwise flag for a vendor SDK import or a vendor credential-key / secret-detection
 # literal, plus a one-line judgment for why it stays. This file IS the keeps table — the
@@ -21,8 +21,14 @@
 #
 # Format: <repo-relative path> — <judgment>
 #
+# A second kind of keep is marked `format:` (the section at the end). Those files carry no
+# vendor SDK import and no credential literal, so the residue sweep never sees them; they know
+# another agent tool's file layout so that its setup can be imported or PersonalClaw's agents
+# exported into it. The rail checks each one exists, carries no residue, and is named in the
+# "Interoperability formats" row of the architecture doc's judgment table.
+#
 src/personalclaw/config/loader.py — the CRED_SLACK_* credential-store KEY NAMES ("SLACK_APP_TOKEN", …) existing installs already hold; the loader is the credential store's home (bottom layer, below all apps). Renaming breaks existing installs for zero gain. Re-exported to apps via sdk/channel.py.
-src/personalclaw/config/safety.py — NOT a credential key: one "SLACK_BOT_TOKEN" inside SandboxConfig.env_passthrough's `_meta` HELP TEXT, as the example of a name an operator might legitimately let a child inherit. The sweep's own comment says it targets literals "NOT plain vendor words in prose", but SLACK_[A-Z_]*TOKEN cannot tell the two apart, so the judgment is recorded here. It arrived by PHF-14 moving SandboxConfig out of config/loader.py (a keep above) — the residue did not change, its file did. Deliberately NOT reworded: `_meta` help strings are rendered into the config JSON schema, so editing this sentence would be observable config-schema drift.
+src/personalclaw/config/safety.py — NOT a credential key: one "SLACK_BOT_TOKEN" inside SandboxConfig.env_passthrough's `_meta` HELP TEXT, as the example of a name an operator might legitimately let a child inherit. The sweep's own comment says it targets literals "NOT plain vendor words in prose", but SLACK_[A-Z_]*TOKEN cannot tell the two apart, so the judgment is recorded here. It arrived when SandboxConfig moved out of config/loader.py (a keep above) — the residue did not change, its file did. Deliberately NOT reworded: `_meta` help strings are rendered into the config JSON schema, so editing this sentence would be observable config-schema drift.
 src/personalclaw/sdk/channel.py — re-exports the CRED_SLACK_* key names from config/loader as the app-facing surface, so the slack app imports them via the SDK (no inverted import direction).
 src/personalclaw/sandbox.py — the SLACK_* env-var denylist: credential env vars (SLACK_BOT_TOKEN/APP_TOKEN/USER_TOKEN) that must never reach a sandboxed child. Secret-detection data; renaming breaks the control.
 src/personalclaw/security.py — the xox[bpas]- token-detection regexes and the incoming-webhook URL shapes (Slack, Discord, Teams, `hooks.` hosts): secret-DETECTION data that redacts/blocks leaked credentials. Renaming breaks the control.
@@ -31,3 +37,12 @@ src/personalclaw/llm/openai.py — ROW 1 of the judgment table: a WIRE-PROTOCOL 
 src/personalclaw/stt/openai_provider.py — ROW 2: an OpenAI-*compatible* `/v1/audio/transcriptions` client. Same lazy-import contract as llm/openai.py (one importability probe in `is_available`, one in `transcribe`), and the vendor CATALOG — which model ids exist — is contributed by `apps/openai-models` through the media_catalogs.py seam, not held here. Remote inference only: no LocalModelProvider surface, so nothing vendor-specific about download/delete lands in core.
 src/personalclaw/tts/openai_provider.py — ROW 2: the `/v1/audio/speech` half of the same OpenAI-compatible media protocol, with the same two lazy imports and the same app-contributed catalog. Listed separately rather than folded into stt because the keeps table is a per-FILE mirror of measured residue, and a per-directory entry could not detect a clean file going stale.
 src/personalclaw/image_gen/openai_provider.py — ROW 2: the `/v1/images` half. Same protocol judgment, same two lazy imports, same app-owned catalog. Together with the two above this is the whole `stt/`, `tts/`, `image_gen/` `openai_provider.py` row the architecture doc states once.
+#
+# ── Interoperability formats ─────────────────────────────────────────────────────────────
+format: src/personalclaw/onboarding_import/registry.py — the list of agent tools whose setup and history PersonalClaw can import, each a source module below. A registry of file layouts: no account, no network call, nothing of the other tool runs.
+format: src/personalclaw/onboarding_import/sources/claude_code.py — where Claude Code keeps its setup (`$CLAUDE_CONFIG_DIR`, else `~/.claude`) and how its instructions, memory, MCP servers, skills, agents, commands and conversations are laid out, read through the importer's floors (onboarding_import/floors.py): credential-bearing paths are never opened, secrets in text are counted and dropped.
+format: src/personalclaw/onboarding_import/sources/codex.py — the same for Codex (`$CODEX_HOME`, else `~/.codex`): its instructions, memories, MCP servers (config.toml), skills, agents, prompts, refused commands and conversations, read through the same floors.
+format: src/personalclaw/mcp_discovery.py — offers the MCP servers another tool has configured for import, through the two source modules above, and reads a tool's files only when the owner asks for that tool or has allowed it in Settings; nothing found there is loaded without that import.
+format: src/personalclaw/packs/external_formats.py — renders PersonalClaw's agents into other tools' file formats, behind a confirmed destination, contained paths, the outbound secret scan, and a never-overwrite rule for any file PersonalClaw did not write.
+format: src/personalclaw/dashboard/handlers/agent_export.py — the route that exports agents into Claude Code's agents folder, thin over packs/external_formats.py; the folder is worked out from `$CLAUDE_CONFIG_DIR` as Claude Code does, never taken from the request.
+format: src/personalclaw/dashboard/handlers/mcp.py — keeps MCP servers in step with Claude Code's own global config when that agent is in use; a config that exists and cannot be read is refused rather than replaced (ConfigUnreadable).

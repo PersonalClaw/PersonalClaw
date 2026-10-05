@@ -1,9 +1,9 @@
 """The flywheel's two once-orphaned modules must keep a production importer.
 
-`learning/accountability.py` (criterion 9's EFFECTIVE…HARMFUL verdict + auto-filed revert) and
+`learning/accountability.py` (the EFFECTIVE…HARMFUL verdict + auto-filed revert) and
 `learning/detectors.py` (the ad-hoc→template and tier-migration verdicts) both shipped complete and
-well-tested with **nothing importing them**. An AST audit on 2026-08-04 recorded that, `WF2LEA-5`
-wired the first and `WF2LEA-7` the second, and both changes are `done`.
+well-tested with **nothing importing them**. An AST audit on 2026-08-04 recorded that; one change
+wired the first and another the second.
 
 Nothing then pinned the wiring. The failure mode is specific and silent: delete the last call site
 and the modules keep passing their own unit tests forever while the behaviour they exist for — a
@@ -17,11 +17,11 @@ built and MEASURED across every tracked doc, and rejected — it cannot be made 
 
 * a markdown **table** is one paragraph with no sentence-ending period, so the claim's scope
   swallowed every module named in the table (`gateway.py`, `history.py`, `cli_commands.py` …);
-* a `**Done when:** … (module no longer has zero importers)` clause is an aspirational **negation**
+* a completion note like `(module no longer has zero importers)` is an aspirational **negation**
   that reads identically to the claim;
-* roadmap execution logs are full of **past-tense narrative** — "shipped 1,096 lines with zero
-  importers in `src/`" — describing gaps that were then closed. `WORKFLOWS-V2-WORK-CONTAINERS.md`
-  even labels its own block "partially superseded — see the Execution log, which wins".
+* design history is full of **past-tense narrative** — "shipped 1,096 lines with zero
+  importers in `src/`" — describing gaps that were then closed, and some of it even labels its
+  own block "partially superseded".
 
 Distinguishing "has none" from "had none, then we fixed it" needs tense, not pattern matching, and a
 gate that flags correct history teaches people to delete the history. So the general check was
@@ -39,10 +39,10 @@ from personalclaw import learning
 
 PKG = pathlib.Path(learning.__file__).resolve().parent.parent  # src/personalclaw
 
-#: Modules whose whole point is a call site elsewhere, with the change that wired each.
+#: Modules whose whole point is a call site elsewhere, with the behaviour each call site wires.
 WIRED_MODULES = {
-    "learning/accountability.py": "WF2LEA-5 (criterion 9 — the accountability verdict)",
-    "learning/detectors.py": "WF2LEA-7 (ad-hoc→template + tier-migration detectors)",
+    "learning/accountability.py": "the accountability verdict",
+    "learning/detectors.py": "the ad-hoc→template + tier-migration detectors",
 }
 
 
@@ -91,8 +91,8 @@ def _importers(module_rel: str) -> set[str]:
     return found
 
 
-@pytest.mark.parametrize("module_rel,atom", sorted(WIRED_MODULES.items()))
-def test_the_module_has_a_production_importer(module_rel: str, atom: str):
+@pytest.mark.parametrize("module_rel,what", sorted(WIRED_MODULES.items()))
+def test_the_module_has_a_production_importer(module_rel: str, what: str):
     assert (PKG / module_rel).exists(), (
         f"{module_rel} is gone. If it was deleted deliberately, remove its WIRED_MODULES entry in "
         f"the same change — a rail pinned to a missing file measures nothing."
@@ -100,10 +100,10 @@ def test_the_module_has_a_production_importer(module_rel: str, atom: str):
     importers = _importers(module_rel)
     assert importers, (
         f"{module_rel} has NO production importer under src/personalclaw. It shipped orphaned once "
-        f"(AST audit 2026-08-04) and {atom} wired it; this rail exists because nothing else pins "
-        f"that. The module's own unit tests still pass with every call site deleted, so the "
-        f"behaviour it exists for stops silently. Restore the call site, or retire the module and "
-        f"this entry together."
+        f"(AST audit 2026-08-04), then a change wired {what}; this rail exists because nothing "
+        f"else pins that. The module's own unit tests still pass with every call site deleted, so "
+        f"the behaviour it exists for stops silently. Restore the call site, or retire the module "
+        f"and this entry together."
     )
 
 

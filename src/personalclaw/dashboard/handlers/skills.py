@@ -293,7 +293,7 @@ def _skill_rows() -> list[dict[str, Any]]:
     for s in skills:
         s["loaded_by_agents"] = by_agent.get(s["key"], [])
 
-    # Agent-local tier (skill-agent-local-tier): each configured agent may carry
+    # Agent-local tier: each configured agent may carry
     # its own skills under ~/.personalclaw/agents/<slug>/skills/ that override
     # global for that agent only. They're per-agent (a slug can repeat across
     # agents), so they're listed separately with source="agent-local" + the owner,
@@ -902,7 +902,7 @@ async def api_skill_overlay_revert(request: web.Request) -> web.Response:
     )
 
 
-# ── Ephemeral session skills (skill-ephemeral-promotion) ─────────────────────
+# ── Ephemeral session skills ─────────────────────────────────────────────────
 
 
 async def api_ephemeral_skills_list(request: web.Request) -> web.Response:
@@ -973,7 +973,7 @@ async def api_ephemeral_skill_discard(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
-# ── Skill proposals inbox (skill-evolution-proposal-only) ────────────────────
+# ── Skill proposals inbox ────────────────────────────────────────────────────
 
 
 async def api_skill_proposals_list(request: web.Request) -> web.Response:
@@ -984,7 +984,7 @@ async def api_skill_proposals_list(request: web.Request) -> web.Response:
     ever run). It is here rather than on a route of its own because it is the answer
     to a question this route's own payload otherwise cannot answer: an empty
     ``proposals`` list with a ``lastReview`` is a working ladder that found nothing,
-    and an empty list with ``lastReview: null`` is a ladder that never fired (`G44`).
+    and an empty list with ``lastReview: null`` is a ladder that never fired.
     """
     from personalclaw.skills import proposals
 

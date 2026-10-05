@@ -1,4 +1,4 @@
-"""Routing proposals — the learned stage PROPOSES, a human decides (MRT-5 §6.3-6.4).
+"""Routing proposals — the learned stage PROPOSES, a human decides.
 
 The learned scoring stage can measure that one of the user's own bindings beats another for a
 kind of request. It must never act on that alone. ``routing_policy.json`` is the user's table:
@@ -406,7 +406,7 @@ def accept(proposal_id: str, *, home: Path | None = None) -> bool:
     Refuses (returns ``False``, writing no table) when the cell's current ``basis`` is
     ``{"source": "user"}``. That is :mod:`policy`'s own stated invariant — a hand-set order is
     lever 3, which "the learned stage may later propose changing but never silently overwrite"
-    (§6.3) — and the refusal is recorded on the proposal so the surface can say why rather than
+    — and the refusal is recorded on the proposal so the surface can say why rather than
     appearing to do nothing. A user who wants the proposed order still has lever 3 in front of
     them, and setting it by hand records the truth: that a person chose it.
 
@@ -492,7 +492,7 @@ def reject(proposal_id: str, *, home: Path | None = None) -> bool:
 
 
 def _sel_decision(prop: RoutingProposal, decision: str) -> None:
-    """SEL-record one proposal decision (§6.4).
+    """SEL-record one proposal decision.
 
     Routing decides which providers see which content, so a decision that changes the table — or
     that silences a class of suggestion for a fortnight — is security-relevant. Best-effort by

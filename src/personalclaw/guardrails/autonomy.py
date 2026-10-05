@@ -1,6 +1,6 @@
 """Earned-autonomy rung ladder.
 
-The shipped safety floor (§1-§4) is binary: an unattended run is HEADLESS read-only,
+The shipped safety floor is binary: an unattended run is HEADLESS read-only,
 or a write is a creation-time grant. There is no graduated middle and no track
 record — a reply draft approved unchanged forty times still asks every time. This
 module adds the graduated middle ON TOP of that floor. It never relaxes it: a rung
@@ -28,7 +28,7 @@ on every call from two evidence sources that already exist:
 * the SEL (``security_events.jsonl``) — human approval verdicts on tool invocations,
   attributed to a type by the ``action_type`` metadata key the dispatch seams stamp
   (:data:`SEL_ACTION_TYPE_KEY`) or by an ``operation`` equal to the type key;
-* FEEDBACK-SIGNAL records (``feedback.jsonl``) — a 👎 on that type's output, attributed
+* feedback-signal records (``feedback.jsonl``) — a 👎 on that type's output, attributed
   by a ``producer_id`` equal to the type key.
 
 Only *grants* and *demotions* persist, to ``~/.personalclaw/autonomy_rungs.json``
@@ -122,7 +122,7 @@ def rung_rank(rung: str) -> int:
 class PromotionRule:
     """The evidence bar one type must clear before its next rung is *proposed*.
 
-    Defaults are the plan's: ten clean approvals spread over at least seven days with
+    The defaults: ten clean approvals spread over at least seven days with
     zero rejections, then a fourteen-day cooldown after any demotion. A type may
     declare a stricter (or looser) rule on its spec; otherwise the operator's
     ``guardrails.autonomy`` config supplies these.
@@ -390,7 +390,7 @@ def _config_rule() -> PromotionRule:
     """The operator's default evidence bar from ``guardrails.autonomy``.
 
     Lazy + best-effort so the module stays importable without a loaded config; a read
-    failure falls back to the dataclass defaults, which are the plan's stated bar.
+    failure falls back to the dataclass defaults, which are the default bar.
     """
     try:
         from personalclaw.config.loader import AppConfig
@@ -616,7 +616,7 @@ def _event_matches(event: dict, key: str) -> bool:
 
 def _outcome_events(key: str, cutoff: datetime) -> list[tuple[datetime, bool]]:
     """Every human approval (``True``) / rejection (``False``) about ``key`` since
-    ``cutoff``, from the SEL tail. The ONE walk both eligibility and ES-9's field row
+    ``cutoff``, from the SEL tail. The ONE walk both eligibility and the field-metrics row
     derive from, so the two can never disagree about which verdicts belong to a scope."""
     from personalclaw.sel import sel
 
@@ -636,7 +636,7 @@ def _outcome_events(key: str, cutoff: datetime) -> list[tuple[datetime, bool]]:
 
 
 def approval_outcome_series(key: str, *, window_days: int) -> list[tuple[float, bool]]:
-    """(epoch seconds, human said yes?) for ``key``'s SEL verdicts, oldest first (ES-9).
+    """(epoch seconds, human said yes?) for ``key``'s SEL verdicts, oldest first.
 
     The Loop-3 field row's read of the earned-autonomy evidence. Built on the SAME
     attribution (:func:`_event_matches`) and outcome vocabulary
@@ -665,7 +665,7 @@ def _sel_evidence(key: str, cutoff: datetime) -> tuple[int, int, float]:
 
 
 def _feedback_rejections(key: str, window_days: int) -> int:
-    """👎 verdicts on this type's output in the window (FEEDBACK-SIGNAL, plan 58).
+    """👎 verdicts on this type's output in the window.
 
     Attribution is ``producer_id == key``: the surface that records feedback on an
     action's output stamps the action-type key as the producing artifact, so the
@@ -684,7 +684,7 @@ def _feedback_rejections(key: str, window_days: int) -> int:
 def promotion_eligibility(key: str) -> Eligibility:
     """Whether ``key`` has EARNED its next rung — recomputed, never read from disk.
 
-    Derived on every call from the SEL approval verdicts and the FEEDBACK-SIGNAL
+    Derived on every call from the SEL approval verdicts and the feedback-signal
     thumbs for this type. Writes nothing: the return value is a proposal for a human
     to accept with :func:`grant_rung`, and the only thing this module ever persists is
     that accepted click (and any demotion).

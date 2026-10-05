@@ -20,7 +20,7 @@ describe("electron-builder files list", () => {
   it("includes every local require() from the modules main.js pulls in, transitively", () => {
     // `main.js`'s own requires were covered; a module IT requires can require a third, and that
     // third one is just as fatal to a packaged app. Walked rather than listed so the ratchet does
-    // not need editing every time a module gains a dependency. (CA-8 added a four-module chain:
+    // not need editing every time a module gains a dependency. (The connect flow added a four-module chain:
     // main → connectDialog → connectMode → gatewayUrl / endpointRegistry.)
     const seen = new Set();
     const queue = ["main.js"];
@@ -80,10 +80,10 @@ describe("electron-builder Linux target", () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
   const linux = pkg.build.linux;
 
-  it("declares exactly the AppImage + deb targets the ruling shipped", () => {
+  it("declares exactly the AppImage + deb targets the release ships", () => {
     // Exact-match on purpose: a target added here silently changes what the
     // release attaches, and Windows (nsis/portable) is DEFERRED — see
-    // the DC plan (internal, not in this repo) `DC-6`. Widening this list is a ruling, not a tweak.
+    // docs/research/windows-native-audit.md. Widening this list is a decision, not a tweak.
     assert.deepStrictEqual(linux.target, ["AppImage", "deb"]);
   });
 

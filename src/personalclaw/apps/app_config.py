@@ -2,8 +2,8 @@
 
 An app declares a JSON-Schema-ish ``configSchema`` in its manifest; the user's
 chosen values live in ``~/.personalclaw/apps/{name}/data/config.json`` (inside
-``data/`` so they survive updates — A2 preserves ``data/``). The gateway's
-``GET/PUT /api/apps/{name}/config`` routes (A4) read/write through here.
+``data/`` so they survive updates — an update preserves ``data/``). The gateway's
+``GET/PUT /api/apps/{name}/config`` routes read/write through here.
 
 Validation is deliberately a JSON-Schema SUBSET rather than a full engine. The per-property
 rules are shared with the provider ``settingsSchema`` path (see

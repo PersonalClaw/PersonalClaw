@@ -1,4 +1,4 @@
-"""Quiet windows, the duty-gate seam, the week grid, and `automation doctor` (AUTO-A1/A2).
+"""Quiet windows, the duty-gate seam, the week grid, and `automation doctor`.
 
 `gates.quiet_hours` has been a RESERVED key with no semantics: declared in `GATE_KEYS`,
 accepted by validation, consulted by nothing. So the first test here is the one that matters most —
@@ -8,8 +8,8 @@ already answers "is 23:00 inside 22:00→08:00" for notifications, and two diffe
 question on one machine would be a bug nobody could explain.
 
 What the shipped matcher CANNOT express, measured: no day-of-week, one window per call, server-local
-minutes with no timezone, and a bare bool with no catch-up-or-skip resolution. That gap is this
-session's scope, and the wrap semantics are preserved verbatim across it.
+minutes with no timezone, and a bare bool with no catch-up-or-skip resolution. That gap is the
+scope here, and the wrap semantics are preserved verbatim across it.
 """
 
 from __future__ import annotations
@@ -57,7 +57,7 @@ def _restore_duty_gates():
 
     A test that registers a gate and does not restore leaks it into every later test on the same
     xdist
-    worker — the exact class of failure this program has already paid for twice (the SEL
+    worker — the exact class of failure this codebase has already paid for twice (the SEL
     singleton and
     the provider registry).
     """
@@ -373,7 +373,7 @@ def test_clear_duty_gates_is_available_for_tests():
     assert duty_gate_names() == []
 
 
-# ── the #47 rule: PROVIDER_TYPES and the handler land together ──
+# ── PROVIDER_TYPES and the handler land together ──
 
 
 def test_duty_gate_is_a_declarable_provider_type():
@@ -586,7 +586,7 @@ def test_a_trigger_with_no_recurrence_projects_nothing():
     ) == ([], False)
 
 
-# ── skip dates: AUTO-A3's struck columns ──
+# ── skip dates: struck columns ──
 
 
 def _daily(**over):
@@ -606,7 +606,7 @@ def _daily(**over):
 def test_a_skip_date_is_struck_not_silently_fired():
     """🔴 The measured gap: `project_occurrences` did not read `skip_dates` at ALL.
 
-    AUTO-A3 requires skip dates to render as struck columns. Driven with a daily trigger and one day
+    Skip dates must render as struck columns. Driven with a daily trigger and one day
     declared a skip date, the projection returned that fire completely UNANNOTATED while
     `SchedulerService._should_run` would refuse it — a grid confidently showing a fire that will not
     happen.
@@ -698,7 +698,7 @@ def test_a_skip_date_wins_over_a_quiet_window():
 
 
 def test_skip_dates_are_read_from_gates_too():
-    """§1.1 reserves `gates.skip_dates` on the unified Trigger entity, while a legacy `ScheduleJob`
+    """The unified Trigger entity reserves `gates.skip_dates`, while a legacy `ScheduleJob`
     carries the list as a top-level field. Accepting only one would have quietly ignored half the
     triggers."""
     day = (MONDAY + timedelta(days=3)).strftime("%Y-%m-%d")
@@ -737,11 +737,11 @@ def test_skipped_is_a_distinct_gate_outcome():
     assert GateOutcome.SKIPPED.value != GateOutcome.QUIET.value
 
 
-# ── automation doctor (§7 criterion 12) ──
+# ── automation doctor ──
 
 
 def test_an_orphaned_workflow_ref_is_reported():
-    """§7 criterion 12 names this one by hand. It fires and fails forever, silently."""
+    """An orphaned workflow ref fires and fails forever, silently."""
     report = diagnose(
         [{"id": "t1", "workflow": {"def": "nightly-backup"}}], known_workflows={"digest"}
     )
@@ -825,7 +825,7 @@ def test_the_orphan_check_is_skipped_when_the_registry_cannot_be_read():
 
 
 def test_a_broad_watch_glob_is_reported():
-    """The other finding §7 names. It fires on everything the user owns."""
+    """A broad watch glob fires on everything the user owns."""
     report = diagnose([{"id": "t1", "spec": {"glob": "~/**"}}])
     assert [f.code for f in report.findings] == ["broad_watch_glob"]
 

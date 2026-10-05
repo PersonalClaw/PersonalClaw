@@ -16,8 +16,8 @@ export interface ComboOption { value: string; label: string; group?: string; des
  *  in place — pushing the content below it down — and its corner radius eases from
  *  the field radius to the menu radius during the morph; the collapsed value and
  *  the open search-header crossfade. Selecting an option or moving focus away
- *  collapses the same surface and the page settles back. §Goal 4 ("morph, don't
- *  mount") + the researched container-transform pattern. */
+ *  collapses the same surface and the page settles back. "Morph, don't
+ *  mount" + the researched container-transform pattern. */
 export function Combobox({ options, value, onChange, placeholder = 'Select…', emptyText = 'No matches' }: {
   options: ComboOption[]
   value: string

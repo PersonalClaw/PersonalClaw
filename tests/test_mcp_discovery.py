@@ -1079,8 +1079,8 @@ class TestFixStaleManagedCommand:
 
         real = tmp_path / "personalclaw"
         real.write_text("#!/bin/sh")
-        # `personalclaw-core` because `personalclaw-schedule` is no longer a MANAGED server (S109
-        # retired it) — and this function is scoped to managed names, so the old sample made the
+        # `personalclaw-core` because `personalclaw-schedule` is no longer a MANAGED server (it was
+        # retired) — and this function is scoped to managed names, so the old sample made the
         # test assert against a no-op.
         spec = {"command": str(real), "args": ["mcp-core"]}
         with patch(

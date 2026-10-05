@@ -13,7 +13,7 @@ three more. Measured against a live gateway (``openai-models``: ``multiInstance:
   no operator action at all
 * ``GET    /api/apps/{name}``                     → the stored config verbatim, while
   ``GET /api/apps/{name}/config`` — the same file, the same flag, two functions further down
-  the same module — had masked since #43
+  the same module — already masked
 
 Eleven bundled model apps declare exactly that shape (``openai-models``, ``anthropic-models``,
 ``google-models``, ``groq-models``, ``mistral-models``, ``deepseek-models``, ``together-models``,

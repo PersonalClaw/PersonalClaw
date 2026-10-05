@@ -1,18 +1,18 @@
-"""Four trigger defects the persona lane found (coverage rows F-27).
+"""Four trigger defects found by driving the product as a user.
 
 Measured on `main` (33d20e10f) before any of this was written:
 
-* **F-27.** A trigger's "Run workflow" action could not name its workflow. The provider was
+* A trigger's "Run workflow" action could not name its workflow. The provider was
   re-registered against the v2 engine without the manifest its form reads, so the form rendered
   nothing, the action saved with an empty config, and every fire failed with "run-workflow
   requires a `workflow` name". A fire that did name one skipped the input checks the Run button
   makes, so a missing required input became a binding failure mid-run.
-* **F-28.** A cron schedule's missed run was never reported. The boot review walked interval
+* A cron schedule's missed run was never reported. The boot review walked interval
   triggers only, and a cron has no interval, so "Missed scheduled runs" never appeared for one.
   And the notice's "Review them and choose what to run now" had nothing behind it:
   `missed.resolve_missed`, the review's run-now and dismiss, had no caller.
-* **F-34.** A fire a restart interrupted was recorded as `timeout` and simply dropped.
-* **F-60.** `workspace/HEARTBEAT.md` ran every 60 seconds with no UI: an automation nobody could
+* A fire a restart interrupted was recorded as `timeout` and simply dropped.
+* `workspace/HEARTBEAT.md` ran every 60 seconds with no UI: an automation nobody could
   see, check or turn off.
 """
 

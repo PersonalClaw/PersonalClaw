@@ -3,7 +3,7 @@
  *  synchronously at mount, while its WebSocket is still CONNECTING; a sender in
  *  that window returns false. The old cockpit dispatch checked mere registration
  *  and fired ONCE, so every cold "Run tests" click was silently
- *  dropped (S3 round-1 as-a-user find). */
+ *  dropped (found by driving it as a user). */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
   registerTerminal,
@@ -23,7 +23,7 @@ describe('a dropped command says so on screen', () => {
   // because a one-shot send dropped every cold "Run tests" click (the docblock above). At the 15s
   // boundary the silent drop returned: the user pressed Run, waited fifteen seconds, and got nothing.
   // The only record was a `console.warn`, which no user reads — the same shape as
-  // `serviceWorkerBlockedReason` reaching only `console.info` (cycle 181).
+  // `serviceWorkerBlockedReason` reaching only `console.info`.
   it('raises a toast when the terminal never becomes ready, not just a console warning', () => {
     vi.useFakeTimers()
     const toasts: { message: string; level: string }[] = []

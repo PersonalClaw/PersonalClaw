@@ -25,7 +25,7 @@ const ArtifactCompare = lazy(() =>
 )
 
 /** The run cockpit's artifact panel: the outbox, structured version diffs, and multi-view
- *  output tabs (WORK-CONTAINERS §2.2d / R17).
+ *  output tabs.
  *
  *  Three questions in one place, because they are asked in sequence: WHAT did this run publish,
  *  WHAT CHANGED in the latest revision, and (the other direction) what can I hand the run.
@@ -33,7 +33,7 @@ const ArtifactCompare = lazy(() =>
  *  **Every view rides the `contentTypes` registry.** The Rendered/Source split comes from the
  *  resolved type's own preview + edit capabilities via <ContentSurface>, and Compare defers to
  *  <ArtifactCompare>, which resolves the same registry. So a newly registered artifact kind previews,
- *  reads, and diffs here with no edit to this file — the plan's stated reason for choosing that
+ *  reads, and diffs here with no edit to this file — the reason for choosing that
  *  registry as the extension seam instead of a local kind switch.
  *
  *  **Read-only on purpose.** A published artifact is a record of what a run produced; editing it

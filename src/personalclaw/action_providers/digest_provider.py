@@ -70,7 +70,7 @@ def reconcile_digest_cron(store: Any) -> None:
     store, so a user who edits it in Settings must not have to know that a cron exists
     somewhere to be re-registered. Best-effort — a scheduler problem must never block startup.
 
-    **🔴 S108 — this wrote `crons.json`, so the digest DID NOT RUN.** The clock engine reads the
+    **🔴 This used to write `crons.json`, so the digest DID NOT RUN.** The clock engine reads the
     unified store only, and the boot migration that imports `crons.json` ran BEFORE this
     reconciliation — so the digest trigger this function registered was inert until the NEXT boot
     imported it, and a schedule edited in Settings took two restarts to take effect. Writes the
@@ -127,7 +127,7 @@ def reconcile_digest_cron(store: Any) -> None:
                 delivery="none",
             )
             # The digest writes an inbox item, so `notification-digest` is write-capable and the
-            # fence needs the frozen grant (decision 7). A system-created trigger's opt-in is
+            # fence needs the frozen grant. A system-created trigger's opt-in is
             # the code path that created it.
             trigger.capabilities = _screen.capabilities_for_action(trigger)
             armed = _arm(trigger)
@@ -149,7 +149,7 @@ def reconcile_digest_cron(store: Any) -> None:
     if current != schedule:
         try:
             # Preserve the quietly-losable spec keys (`timezone`/`skip_dates`/`strict`) rather than
-            # replacing the spec wholesale — the same contract §1.3 and S101 record for a cadence
+            # replacing the spec wholesale — the same contract that holds for any cadence
             # edit. Re-armed because the next fire is computed FROM the expression.
             trigger.spec = {**spec, "kind": "cron", "expr": schedule}
             armed = _arm(trigger)

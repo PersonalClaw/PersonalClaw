@@ -512,7 +512,7 @@ class TestOrphanedDashboardSessions:
 
 
 class TestSessionExpireCallback:
-    """E11-P2: the on_session_expire seam fires for genuinely-idle sessions
+    """The on_session_expire seam fires for genuinely-idle sessions
     (so skills get a final extraction pass) but not for orphaned tab-closed
     dashboard sessions (the idle poll already covers those)."""
 

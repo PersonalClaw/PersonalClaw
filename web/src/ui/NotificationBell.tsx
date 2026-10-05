@@ -91,7 +91,7 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
       <button type="button" onClick={() => setOpen((o) => !o)}
         // 🪤 NO `aria-haspopup="menu"` — measured with the shade open: **0** `role="menu"` and **0**
         // menuitems. What opens is a panel of notification ROWS (each with its own hit target and two
-        // actions, cycles 164/171), which is not a menu and should not claim to be; a screen-reader
+        // actions), which is not a menu and should not claim to be; a screen-reader
         // user told "menu" then finds a list of buttons with no menu navigation. `aria-expanded` alone
         // honestly describes the disclosure.
         aria-expanded={open}
@@ -172,8 +172,8 @@ function ShadeRow({ n, now, onOpen, onAck, onDelete }: { n: NotificationItem; no
   // 🔴 THE ACTIONS WERE BARE VERBS, and the row beside them already knew better. Measured in the open
   // shade: **"Dismiss" named 5 controls and "Mark read" named 2** — one name per verb for the whole
   // dropdown — while the dashboard's Action Center rows a few pixels away announce
-  // "Reply: <subject>" / "Dismiss: <subject>". Cycle 149 fixed exactly this on `#/notifications`
-  // (83 rows sharing three names) and cycle 164 gave THIS row a named hit target, which left its two
+  // "Reply: <subject>" / "Dismiss: <subject>". Exactly this was fixed on `#/notifications`
+  // (83 rows sharing three names) and THIS row was given a named hit target, which left its two
   // actions as the last unnamed controls on the surface. WCAG 4.1.2.
   //
   // Bound once, like `#/notifications` does: the row and both of its actions must announce the same

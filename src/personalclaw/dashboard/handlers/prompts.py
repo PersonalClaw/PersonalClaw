@@ -54,7 +54,7 @@ def _provider_prompt_to_listing(tpl: "Any") -> dict[str, Any]:
         "tags": list(tpl.tags),
         "updated_at": getattr(tpl, "updated_at", 0.0),
     }
-    # Runnable "campaign template" (#17): surface launch_spec so the list/detail can
+    # Runnable "campaign template": surface launch_spec so the list/detail can
     # show the "runnable" badge + fill-and-launch. Omitted when empty (plain prompt).
     spec = getattr(tpl, "launch_spec", None)
     if spec:
@@ -298,7 +298,7 @@ def _build_prompt_template(body: dict[str, Any], default_name: str = "") -> Any:
             "content": body.get("content") or "",
             "variables": body.get("variables") or [],
             "tags": body.get("tags") or [],
-            # Runnable template (#17): a launch_spec turns a prompt into a campaign
+            # Runnable template: a launch_spec turns a prompt into a campaign
             # template. from_dict ignores a non-dict, so a plain prompt stays plain.
             "launch_spec": body.get("launch_spec") or {},
         }
@@ -482,7 +482,7 @@ _LAUNCH_SPEC_FIELDS = (
 
 async def api_campaign_template_launch(request: web.Request) -> web.Response:
     """POST /api/prompts/{name}/launch {variables} — instantiate a RUNNABLE template
-    (#17): render the content with the supplied values into a task, then create + start
+    — render the content with the supplied values into a task, then create + start
     a loop from the template's ``launch_spec``.
 
     Pure composition of existing seams — the Prompts render engine + the loop

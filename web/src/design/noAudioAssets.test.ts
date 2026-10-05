@@ -1,6 +1,6 @@
 // @module-tag tree-scan
 /**
- * ZERO AUDIO FILES SHIP (the plan's "CI grep").
+ * ZERO AUDIO FILES SHIP.
  *
  * Sound cues are SYNTHESISED: three oscillator recipes, a few hundred bytes of
  * arithmetic. The alternative — bundling samples — would put audio bytes in every

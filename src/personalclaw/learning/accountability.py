@@ -1,4 +1,4 @@
-"""Predict-then-verify: did an accepted change actually help? (LEARN-R16 / §3.1).
+"""Predict-then-verify: did an accepted change actually help?
 
 The last spoke, and the one that closes the loop. Everything upstream files proposals; this measures
 what happened AFTER a human accepted one — and files a revert when the answer is "it made things
@@ -8,7 +8,7 @@ The rule is predict-then-verify, which is stronger than measure-after: an accept
 DECLARED which failures it would fix (`predicted_fixes` on the change manifest), so the verdict can
 compare prediction against outcome rather than just looking at a delta and inventing a story.
 
-That comparison produces the class §3.1 calls the scariest: **`unattributed_regressions`** — things
+That comparison produces the scariest class: **`unattributed_regressions`** — things
 that broke which nobody predicted. A change scored only on its own predictions looks fine while
 having broken something adjacent, and that is exactly the failure a five-way verdict exists to
 catch.
@@ -35,7 +35,7 @@ from typing import Any
 
 
 class Verdict(str, Enum):
-    """§3.1's five-way attribution verdict, plus the honest not-yet state.
+    """The five-way attribution verdict, plus the honest not-yet state.
 
     Reuses `refiner.canary_verdict`'s vocabulary rather than defining a parallel one — the refiner
     computes the scalar case and this module the per-cluster case, and two verdict scales would make
@@ -123,7 +123,7 @@ class Attribution:
     #: Predicted fixes that did NOT materialize. The proposer over-promised, which is a calibration
     #: signal about that proposer rather than a fault in this change alone.
     unfulfilled: list[str] = field(default_factory=list)
-    #: Regressions nobody predicted. §3.1: "the scariest class, surfaced loudly."
+    #: Regressions nobody predicted: the scariest class, surfaced loudly.
     unattributed_regressions: list[str] = field(default_factory=list)
     reason: str = ""
 
@@ -135,9 +135,8 @@ class Attribution:
     def precision(self) -> float:
         """Share of predicted fixes that materialized, in [0, 1].
 
-        The per-proposal input to §3.1's proposer trust signal — "the flywheel learns which of its
-        own
-        proposers to believe". A change that predicted three fixes and delivered one is a different
+        The per-proposal input to the proposer trust signal — the flywheel learns which of its own
+        proposers to believe. A change that predicted three fixes and delivered one is a different
         thing from one that predicted one and delivered it.
         """
         if not self.predicted:
@@ -185,7 +184,8 @@ def attribute(
     nothing to have been right about, so the best it earns is `PARTIALLY_EFFECTIVE` on an
     unpredicted
     improvement. Letting it reach `EFFECTIVE` would reward filing manifests with empty
-    `predicted_fixes`, which is exactly the shortcut §3.1's lenient validation makes tempting.
+    `predicted_fixes`, which is exactly the shortcut the manifest's lenient validation makes
+    tempting.
     """
     predicted = sorted({str(p) for p in (predicted_fixes or []) if str(p).strip()})
     fixed = outcome.fixed
@@ -250,11 +250,10 @@ def attribute(
 class RevertProposal:
     """A revert offered through the QUEUE, never applied.
 
-    §3.1: HARMFUL verdicts "auto-generate revert proposals through the queue, making version-pin
-    rollback mechanical instead of requiring user vigilance". Mechanical means the proposal appears
+    HARMFUL verdicts auto-generate revert proposals through the queue, making version-pin
+    rollback mechanical instead of requiring user vigilance. Mechanical means the proposal appears
     without anyone noticing the regression — it does not mean the revert happens on its own, and
-    S75's
-    gate refuses a non-human accept regardless.
+    the accept gate refuses a non-human accept regardless.
     """
 
     target: str
@@ -281,7 +280,7 @@ def revert_proposal(
     """The revert a HARMFUL verdict owes, or None.
 
     Returns None for every other verdict so a caller cannot file one by ignoring the verdict — the
-    same path-not-postcondition discipline S73 used for `build_proposal`.
+    same path-not-postcondition discipline `build_proposal` follows.
 
     The body NAMES the regressed clusters, including the unattributed ones. A revert proposal that
     said only "this made things worse" would be un-reviewable: the user cannot weigh a rollback
@@ -382,7 +381,7 @@ def proposer_trust(records: list[tuple[str, str]]) -> list[ProposerTrust]:
 def assert_gate_covers_cadences() -> list[str]:
     """Cadences declared by `learning.gate` that NO live call site routes through. Returns the gaps.
 
-    §7 asks for the incognito capture gate "closed + regression-tested". Probed across all three
+    The incognito capture gate must be closed and regression-tested. Probed across all three
     cadences, the permission half genuinely IS closed: a restricted session is refused whatever its
     tool count or correction signal. The gap is COVERAGE — a gate cannot suppress a path nobody
     routes
@@ -397,7 +396,7 @@ def assert_gate_covers_cadences() -> list[str]:
     version matched its own docstring's `Cadence.SESSION_END` mention and reported ZERO gaps for two
     cadences that genuinely had no callers — a checker that certifies coverage by finding itself.
     The
-    same self-referential trap S67's fire-site scan fell into, one module over.
+    same self-referential trap an earlier fire-site scan fell into, one module over.
     """
     import re
     from pathlib import Path

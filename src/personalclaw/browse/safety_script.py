@@ -9,8 +9,8 @@ Why the script exists
 ---------------------
 The egress pre-flight in front of ``Page.navigate`` decides *which URL the agent opens*. It
 cannot constrain what that page then does on its own: its ``fetch()``, an autoplaying video, a
-``navigator.bluetooth`` prompt. This script is the in-page half of that gap (the plan's "§6.3
-headless bypass gap"). The bar it has to clear: **a page must not be able to reach the network,
+``navigator.bluetooth`` prompt. This script is the in-page half of that gap.
+The bar it has to clear: **a page must not be able to reach the network,
 play media, or touch the user's devices behind the agent's back.**
 
 ``fetch()``: rejected, not a synthetic blocked ``Response``
@@ -61,7 +61,7 @@ a browser returns when it blocks autoplay (``NotAllowedError``), so every player
 that catch path.
 
 Device / sensor / location / capture / clipboard: ``bluetooth``, ``usb``, ``serial``, ``hid``,
-``geolocation``, ``mediaDevices``, ``xr``, ``clipboard``. The clause names only bluetooth; we
+``geolocation``, ``mediaDevices``, ``xr``, ``clipboard``. Not only bluetooth: we
 widened deliberately, because a guard that closes ``navigator.bluetooth`` and leaves
 ``navigator.usb`` open is a control with a hole in it. ``clipboard`` is in the list because
 reading the user's clipboard is a real leak on the user's own machine.
@@ -125,7 +125,7 @@ that does **not** buy:
   future engine change that silently reopens the hole reds CI rather than passing quietly.
 * A page can still detect the guard (a non-configurable ``fetch`` that always rejects is a
   giveaway, and ``toString()`` shows the source). Full stealth and a hard in-page policy
-  guard are in tension by construction: §4 can hide the *automation*, not the *policy*. The
+  guard are in tension by construction: stealth can hide the *automation*, not the *policy*. The
   ``window.__personalclawSafety`` marker is therefore non-enumerable but not secret; it adds no
   new class of detectability, and it is what makes "the injection actually took" assertable.
 
@@ -183,7 +183,7 @@ GUARDED_NAVIGATOR_KEYS = (
 _ALLOW_HOSTS_TOKEN = "__PERSONALCLAW_ALLOW_HOSTS__"
 
 _TEMPLATE = """\
-/* PersonalClaw per-page browse safety script (BROWSE-AUTOMATION BA-2 §3).
+/* PersonalClaw per-page browse safety script.
    Injected with Page.addScriptToEvaluateOnNewDocument so it runs BEFORE any page script in
    every new document. It must never throw out of itself: a script that errors would leave the
    page unguarded while looking injected. Rationale, coverage and the enumerated gaps live in

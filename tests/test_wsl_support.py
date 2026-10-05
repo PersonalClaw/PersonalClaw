@@ -1,6 +1,6 @@
 """WSL support: _is_wsl detection, WSL-aware dashboard auto-open, doctor note.
 
-Covers PR-7 (PLATFORM-REACH Track B). The auto-open helper lives in
+The auto-open helper lives in
 ``personalclaw.gateway`` and is exercised in isolation with ``webbrowser.open``,
 ``subprocess.run`` and ``_is_wsl`` monkeypatched; the gateway wiring around it
 (the ``_no_open`` / ``_skip_open`` short-circuits) is covered by the existing

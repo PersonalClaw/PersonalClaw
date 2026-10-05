@@ -179,7 +179,7 @@ describe('one treatment, owned by the card', () => {
     // IS an alert. Sampled on a cold `#/settings`: 28 nav buttons, peak **22 simultaneous** in-flight
     // tiles, last settling at 3.6s. A `role="alert"` per tile is up to 22 assertive announcements for
     // one page load. The failure reaches AT as an `aria-describedby` description on the nav button —
-    // which adds the fact WITHOUT renaming the control, the ruling this component already applies to
+    // which adds the fact WITHOUT renaming the control, the decision this component already applies to
     // its loading state.
     expect(bento, 'no per-tile alert').not.toMatch(/role="alert"/)
     expect(bento, 'the failure is described on the reachable control').toMatch(/aria-describedby=\{failed/)
@@ -221,7 +221,7 @@ describe('the hub no longer fabricates values for a failed read', () => {
     //                       agent's name keeps `.catch(() => '')` and renders '—'.
     //   useToolsSavings     an optional meter; the Tool-output tile headlines the RULE count when
     //                       there is no savings number, so an absent meter is a designed state. Held
-    //                       by a prior ruling with its own rail (`dashboard/healthUnknown.test.ts`),
+    //                       by a prior decision with its own rail (`dashboard/healthUnknown.test.ts`),
     //                       and de-swallowing it would have been a no-op on screen anyway —
     //                       `savedTokens` derives from `savings?.…`, so a rejection and a null render
     //                       identically. It was removed during this change and put back for exactly

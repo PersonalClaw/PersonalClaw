@@ -1,10 +1,11 @@
 """Experiment-matrix TYPES.
 
 One matrix runner is meant to serve five consumers (studies, ablation, retrieval,
-judge benchmark, bake-off). ES-1a defines only the TYPES those consumers share —
+judge benchmark, bake-off). This module defines only the TYPES those consumers share —
 the spec, the per-cell result, the whole-matrix result, and the three-state
 aggregation. The ``run_matrix`` execution body (subprocess spawning, per-cell
-timeouts, cost preflight) is ES-1b; nothing here spawns a process or calls a model.
+timeouts, cost preflight) lives in :mod:`personalclaw.evals.runner`; nothing here
+spawns a process or calls a model.
 
 The three-state outcome is load-bearing: an infra error / timeout / ``None`` reward
 is ``VERIFIER_ABSENT``, never a zero score. :func:`aggregate` computes the mean over

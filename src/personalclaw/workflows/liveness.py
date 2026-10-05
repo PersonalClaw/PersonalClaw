@@ -65,7 +65,7 @@ def last_heard(last_progress: float, calls: CallLog) -> float:
 def _node_stall_window(ctl: RunController, path: str) -> int:
     """This node's stall window: its own `timeout_stall_secs`, else the run-level default.
 
-    🔴 The per-node override was DECLARED BY FOUR SHIPPED TEMPLATES AND READ BY NOTHING (S147).
+    🔴 The per-node override was DECLARED BY FOUR SHIPPED TEMPLATES AND READ BY NOTHING.
     `design-project.refine` asks 600s, `general-project.project` 900s,
     `goal-pursuit-open-ended.work` 900s and `goal-pursuit-verifiable.work` 1200s — and
     `enforce_stall_timeouts` consulted only `services.node_timeout_stall`, so every one of them

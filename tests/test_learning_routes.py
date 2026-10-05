@@ -1,15 +1,15 @@
 """The Learning HTTP surface: the Proposal Inbox and the capture panel.
 
-This closes the plan's success criterion 1 — "One Proposal Inbox SHOWS all six proposal kinds with
+This closes the requirement — "One Proposal Inbox SHOWS all six proposal kinds with
 provenance, evidence manifests, and risk-tier metadata; accept installs, reject dismisses — and the
 model cannot accept its own proposals under any trust mode".
 
-**Measured before writing.** Everything behind that sentence shipped in S75/S76 and had NO HTTP
+**Measured before writing.** Everything behind that sentence had shipped with NO HTTP
 surface: `inbox.build_view` and `StagingStore.week` both return fully-serialized shapes, and
 grepping
-found no `/api/learning` route and no Learning page. So the criterion was unmet for want of a route.
+found no `/api/learning` route and no Learning page. So it was unmet for want of a route.
 
-The load-bearing test is `test_an_app_scoped_token_cannot_accept`. S75 put `require_human` inside
+The load-bearing test is `test_an_app_scoped_token_cannot_accept`. `require_human` sits inside
 `proposals.accept()`, and `actor` defaults to `user` — so a route that omitted the actor would hand
 every caller, including an installed app, the reviewer's authority. The actor is DERIVED from the
 request rather than read from the body, because a caller that could name itself `user` would make
@@ -27,7 +27,7 @@ from aiohttp.test_utils import make_mocked_request
 
 from personalclaw.dashboard.handlers import learning as L
 
-# Every kind the queue serves, derived from the enum so a new kind (the project_* trio, LEA-12) is
+# Every kind the queue serves, derived from the enum so a new kind (the project_* trio) is
 # covered automatically rather than dropped by a stale literal.
 from personalclaw.learning.proposals import Kind as _Kind  # noqa: E402
 
@@ -80,7 +80,7 @@ def _filed(store, pid="p1", **kw):
     return prop
 
 
-# ── criterion 1, first half: the inbox SHOWS every kind ──
+# ── first half: the inbox SHOWS every kind ──
 
 
 def test_the_inbox_serves_every_kind(store):
@@ -92,7 +92,7 @@ def test_the_inbox_serves_every_kind(store):
 
 
 def test_a_row_carries_provenance_and_evidence(store):
-    """§6.1 names these; each absence produces a specific bad review."""
+    """Each of these is required; each absence produces a specific bad review."""
     _filed(store, "p1")
     row = _body(_run(L.api_learning_proposals(_req("GET", "/api/learning/proposals", user="me"))))[
         "rows"
@@ -167,7 +167,7 @@ def test_a_missing_proposal_is_404(store):
     assert resp.status == 404
 
 
-# ── criterion 1, second half: the model cannot accept its own proposals ──
+# ── second half: the model cannot accept its own proposals ──
 
 
 def test_a_dashboard_user_can_accept(store):
@@ -184,9 +184,9 @@ def test_a_dashboard_user_can_accept(store):
 def test_an_app_scoped_token_cannot_accept(store):
     """THE test.
 
-    S75 put `require_human` inside `accept()` and defaulted `actor` to `user`. A route omitting the
+    `require_human` sits inside `accept()` and `actor` defaults to `user`. A route omitting the
     actor would hand an installed app the reviewer's authority — an app acting through the API is
-    exactly the "worker whose self-report needs checking" case §7 names.
+    exactly the "worker whose self-report needs checking" case.
     """
     _filed(store, "p1")
     resp = _run(
@@ -250,7 +250,7 @@ def test_the_actor_is_never_read_from_the_body(store):
 
     # The DOCSTRING is stripped before scanning. The first version of this test failed on
     # `_actor`'s own prose explaining that it never reads the body — a scanner matching a comment
-    # rather than code, which is the exact false-positive class S67 and S69 each hit once.
+    # rather than code, which is the exact false-positive class that has bitten twice before.
     src = re.sub(r'''""".*?"""''', "", inspect.getsource(L._actor), flags=re.S)
     assert "request" in src
     for smuggled in ("body", "json()", "query"):
@@ -258,7 +258,7 @@ def test_the_actor_is_never_read_from_the_body(store):
 
 
 def test_there_is_no_trust_override_on_the_route():
-    """§7: "under ANY trust mode"."""
+    """Under ANY trust mode."""
     import inspect
 
     src = inspect.getsource(L.api_learning_proposal_accept)
@@ -331,7 +331,7 @@ def test_a_bad_days_value_is_400(health_home, store):
     assert resp.status == 400
 
 
-# ── the flywheel health panel (LEARN-R14b) ──
+# ── the flywheel health panel ──
 
 
 @pytest.fixture
@@ -438,8 +438,8 @@ def test_an_unreadable_config_fails_OPEN_for_the_read_surface(monkeypatch):
 
 
 def test_the_literal_paths_register_before_the_id_route():
-    """`staging` must not be captured as a proposal id — the ordering landmine S67 and S70 each paid
-    for once."""
+    """`staging` must not be captured as a proposal id — an ordering landmine already paid
+    for twice."""
     import inspect
 
     src = inspect.getsource(L.register_learning_routes)

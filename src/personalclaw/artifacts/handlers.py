@@ -610,7 +610,7 @@ async def _save_text(
             return web.json_response({"error": "invalid slug"}, status=400)
         if existing is not None:
             return web.json_response({"error": "slug already exists"}, status=409)
-    # Server-backed dedup hint (ARTIFACTS S1): a fresh save (no slug, no source_path)
+    # Server-backed dedup hint: a fresh save (no slug, no source_path)
     # whose name matches an existing artifact 409s with the existing slug so the UI can
     # offer "open it / save anyway". `?force=1` bypasses (mint a new artifact anyway).
     force = request.query.get("force") in ("1", "true")
@@ -900,8 +900,8 @@ async def api_artifact_raw(request: web.Request) -> web.Response:
 #: missing would answer ``GET …/model`` with an empty model, and an empty model reads
 #: exactly like an empty document, so the editor would offer to save the user's file away.
 #: The list lives with the codecs (``documents/model_codec.py``) rather than here, so the
-#: route cannot claim a capability the documents package does not have. DFE-3 shipped the
-#: .docx parser and DFE-7 the .xlsx one; pptx/pdf have writers but no parser yet.
+#: route cannot claim a capability the documents package does not have. Parsers exist for
+#: .docx and .xlsx; pptx/pdf have writers but no parser yet.
 
 
 def _binary_target(
@@ -934,14 +934,14 @@ def _binary_target(
 def _refuse_if_oversized(request: web.Request, cap: int) -> web.Response | None:
     """Refuse an over-cap body from the HEADERS, before one byte is buffered.
 
-    This is the whole point of the clause: the cap is only a defense if it is decided
+    This is the whole point of the guard: the cap is only a defense if it is decided
     from ``Content-Length``, while the body is still on the wire. A handler that reads
     first and measures after has already spent the memory it was meant to protect, and
     ``provider._write_bytes`` would silently TRUNCATE to the cap rather than refuse —
     so a late check produces a corrupt document instead of an error.
 
     A body with no declared length (chunked) is refused for the same reason: there is
-    nothing to check before reading, and a streaming counter is not what §C3 asks for.
+    nothing to check before reading, and the cap is decided from headers, not a streaming counter.
     """
     declared = request.content_length
     if declared is None:
@@ -1026,7 +1026,7 @@ def _store_binary(
 
     Always bumps a version and snapshots, because a binary body has no held-back draft
     state to hold back: there is no silent-save mode to offer, and the version it bumps
-    is what makes a lossy edit revertible (§C5) rather than destructive.
+    is what makes a lossy edit revertible rather than destructive.
     """
     try:
         updated = prov.update_binary(
@@ -1064,7 +1064,7 @@ def _store_binary(
 
 
 async def api_artifact_raw_write(request: web.Request) -> web.Response:
-    """PUT /api/artifacts/{slug}/raw — replace a binary artifact's bytes (§C3).
+    """PUT /api/artifacts/{slug}/raw — replace a binary artifact's bytes.
 
     The body IS the bytes and ``Content-Type`` declares their MIME — no multipart
     envelope, deliberately: the cap has to be decided from ``Content-Length`` before
@@ -1167,7 +1167,7 @@ def _model_target(
 async def api_artifact_model(request: web.Request) -> web.Response:
     """GET /api/artifacts/{slug}/model — the parsed document model + its loss report.
 
-    The editor's READ half (§C4): the browser receives structure — blocks, runs, cells,
+    The editor's READ half: the browser receives structure — blocks, runs, cells,
     page setup; sheets, cells, formulas — and never a byte of OOXML. The parse is the SAME
     shipped parser the round-trip proofs pin (``docx_parser.parse_docx`` /
     ``xlsx_parser.parse_xlsx``, resolved by kind); a second parser here would be a second
@@ -1244,17 +1244,17 @@ async def api_artifact_model(request: web.Request) -> web.Response:
 
 
 async def api_artifact_model_write(request: web.Request) -> web.Response:
-    """PUT /api/artifacts/{slug}/model — re-render a posted model into the artifact (§C3).
+    """PUT /api/artifacts/{slug}/model — re-render a posted model into the artifact.
 
     The editor's SAVE half, and the mechanism behind "the browser never sees OOXML":
     the client posts back the model it was given, the SHIPPED writer renders it here,
     and the resulting bytes take the same guarded path as ``PUT …/raw`` — same required
     ``If-Match``, same byte cap, same single version bump, same audit row.
 
-    ``{"model": {...}}`` rather than a bare model so the body has room for the save-time
-    fields §C5 will need (a lossy-edit acknowledgement) without changing shape later.
+    ``{"model": {...}}`` rather than a bare model so the body has room for save-time
+    fields (a lossy-edit acknowledgement) without changing shape later.
 
-    **``dashboard.document_editing`` is enforced HERE, not only in the UI** (§C6). This
+    **``dashboard.document_editing`` is enforced HERE, not only in the UI**. This
     route is the ONLY way an edit can reach the bytes, and re-rendering a document is
     lossy by construction — so with the switch off the write is refused for every client,
     not just for the one that hides its editor. Read per request, so turning the consent
@@ -1572,7 +1572,7 @@ async def api_artifact_record_event(request: web.Request) -> web.Response:
 
 
 async def api_artifacts_pinned(request: web.Request) -> web.Response:
-    """GET /api/artifacts/pinned — the dashboard pin list (WORK-CONTAINERS §6.5d).
+    """GET /api/artifacts/pinned — the dashboard pin list.
 
     REFERENCES only. Each row is a slug plus when it was pinned; the widget resolves the artifact
     itself through the list route. Returning denormalized names here would go stale on the next
@@ -1964,7 +1964,7 @@ def register_artifact_routes(app: web.Application) -> None:
     app.router.add_delete("/api/artifacts/{slug}", api_artifact_delete)
     app.router.add_post("/api/artifacts/{slug}/changed", api_artifact_changed)
     app.router.add_get("/api/artifacts/{slug}/raw", api_artifact_raw)
-    # The write half of the same path (DFE §C3) — registered beside its GET so the two
+    # The write half of the same path — registered beside its GET so the two
     # halves of one resource cannot drift apart in the table.
     app.router.add_put("/api/artifacts/{slug}/raw", api_artifact_raw_write)
     app.router.add_get("/api/artifacts/{slug}/extract", api_artifact_extract)

@@ -1,8 +1,7 @@
-"""Cross-surface live validator for this session's changes.
+"""Cross-surface live validator.
 
-Hits the gateway of a scratch home you name and asserts the behavioral invariants the
-session's work must hold, across DISTINCT surfaces (not just the unified-tool-universe ones in
-ut7_validate.py):
+Hits the gateway of a scratch home you name and asserts behavioral invariants across
+DISTINCT surfaces (not just the unified-tool-universe ones in tool_surface_validate.py):
 
   - projects-category tool redefinition (project_run_* present, loop tools gone)
   - per-entity provider split (no monolithic 'builtin')

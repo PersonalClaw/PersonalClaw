@@ -74,13 +74,13 @@ class EgressConfig:
 
 @dataclass
 class BudgetConfig:
-    """Default spend ceilings for unattended work (AUTONOMY-GUARDRAILS §1.1).
+    """Default spend ceilings for unattended work.
 
     Zero means UNLIMITED for that dimension — the conservative default so an
     existing user's unattended work is never suddenly capped on upgrade. A
     ceiling bites the ``run`` scope (one goal-loop / cron fire) and the ``day``
     scope (all unattended spend for a calendar day, per the ``spend.json`` meter).
-    Per-trigger overrides arrive with AUTOMATION-SUBSTRATE (Trigger.gates); until
+    Per-trigger overrides arrive with the automation engine (Trigger.gates); until
     then these globals apply to every unattended run.
     """
 
@@ -119,7 +119,7 @@ class BudgetConfig:
 
 @dataclass
 class BreakerConfig:
-    """Per-**provider** circuit-breaker tuning (AUTONOMY-GUARDRAILS §2.3).
+    """Per-**provider** circuit-breaker tuning.
 
     Consumed by the model-call chokepoint's breaker registry. Defaults match the
     breaker module's built-ins; a value here overrides them for every provider.
@@ -148,7 +148,7 @@ class BreakerConfig:
 
 @dataclass
 class LoopBreakerConfig:
-    """Tuning for the runtime-agnostic **tool-loop** breaker (ACP-AGENT-PARITY §2.3).
+    """Tuning for the runtime-agnostic **tool-loop** breaker.
 
     ``guardrails/loop_breaker.py`` counts a run's tool failures and, past a ceiling,
     aborts the run rather than let it burn the rest of its budget. That ceiling was a
@@ -177,7 +177,7 @@ class LoopBreakerConfig:
 
 @dataclass
 class AutonomyConfig:
-    """Earned-autonomy rung ladder thresholds (AUTONOMY-GUARDRAILS §5).
+    """Earned-autonomy rung ladder thresholds.
 
     The evidence bar one action type must clear before ``guardrails/autonomy.py``
     *proposes* its next rung. These are the operator-wide defaults; a type that
@@ -233,13 +233,12 @@ class AutonomyConfig:
 
 @dataclass
 class GuardrailsConfig:
-    """The personal safety-floor substrate (AUTONOMY-GUARDRAILS).
+    """The personal safety-floor substrate.
 
     A *personal* safety floor — one user, one gateway, config plus one policy
-    check per seam. Session 1 shipped the model-call chokepoint (breaker + hard
-    timeout + audit + typed output); Session 2 adds spend metering + the outbound
-    scan mode. Later sessions add the denylist, incident kill switch, and named
-    safety profiles.
+    check per seam: the model-call chokepoint (breaker + hard timeout + audit + typed
+    output), spend metering, the outbound scan mode, the denylist, the incident kill
+    switch, and named safety profiles.
     """
 
     budgets: BudgetConfig = field(
@@ -287,7 +286,7 @@ class GuardrailsConfig:
 
 @dataclass
 class AuthConfigSection:
-    """Owner-login settings (REMOTE-USER-AUTH C4).
+    """Owner-login settings.
 
     Login is **opt-in and off by default**. That default is load-bearing: a local install
     should keep working exactly as it does today — the `?token=` link, `personalclaw token`,
@@ -391,8 +390,8 @@ class SecurityConfig:
         default_factory=list,
         metadata=_meta(
             "Autonomy Denylist",
-            "Path/action deny rules for autonomous action-provider runs "
-            "(AUTONOMY-GUARDRAILS §1.2). Each rule is "
+            "Path/action deny rules for autonomous action-provider runs. "
+            "Each rule is "
             "{paths:[glob], actions:[class], verdict: block|needs_human}. Enforced at "
             "every action-dispatch seam, so an app-contributed provider inherits it. "
             "Composes with (never overrides) the always-on built-in denylists.",
@@ -440,7 +439,7 @@ class SecurityConfig:
 
 @dataclass
 class SandboxConfig:
-    """Resource ceilings applied to agent-influenced child processes (PHF-1).
+    """Resource ceilings applied to agent-influenced child processes.
 
     These are the numeric inputs to the post-exec ceiling shim
     (``personalclaw._spawn_exec_shim``): a soft NOFILE cap, a max-child-process count

@@ -52,7 +52,7 @@ def _state(tmp_path: Path) -> DashboardState:
 
 
 def _bound_session(state: DashboardState, *, task_mode: str = "plan") -> _ChatSession:
-    """A live session in the posture O16 measured: ACP-bound, non-default task mode."""
+    """A live session in the measured posture: ACP-bound, non-default task mode."""
     s = state.get_or_create_session(SESSION)
     s.messages.append({"role": "user", "content": "hello", "ts": "2026-08-21T10:00:00"})
     s.messages.append({"role": "assistant", "content": "hi", "ts": "2026-08-21T10:00:01"})
@@ -115,7 +115,7 @@ class TestBindingSurvivesARestart:
         fresh.sessions.set_task_mode.assert_any_call(HISTORY_KEY, "plan")
 
     def test_workspace_dir_is_the_same_after_a_restart(self, tmp_path, monkeypatch):
-        """Already shipped when G5 was audited — railed so it cannot silently regress.
+        """Already shipped when this was audited — railed so it cannot silently regress.
 
         Unlike its two siblings this one had BOTH halves (written in the end-of-turn
         save, read in both restore paths), so the audit's third claim was already false.
@@ -321,7 +321,7 @@ class TestAnUnrestorableBindingIsAnnounced:
 
 
 class TestResumeSidSurvivesARestart:
-    """AAP-7 supersedes this claim's original form.
+    """A later fix supersedes this claim's original form.
 
     The filed reason ``resume_sid`` was ``None`` after a restart — ``SessionMap.get``
     gating on ``$PERSONALCLAW_HOME/sessions/<sid>.json`` and DELETING the mapping when

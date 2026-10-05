@@ -29,8 +29,8 @@ import { Home, Inbox } from 'lucide-react'
 // `ariaSnapshot()` — neither PRINTS it.** I chased that for three probes. The attribute is real and
 // selectable (`el.matches('[aria-current="page"]')` is true, and a CSS `[aria-current="page"]` rule
 // applies), so the absence from those two views is a TOOLING DISPLAY GAP, not evidence the attribute
-// is inert. Assert the rendered attribute instead. Contrast cycle 37, where CDP *did* answer the
-// question for `title` — so "ask the a11y tree" is right, but check the tool actually reports the
+// is inert. Assert the rendered attribute instead. Contrast `title`, where CDP *did* answer the
+// question — so "ask the a11y tree" is right, but check the tool actually reports the
 // property you are asking about before drawing a conclusion from silence.
 
 const SRC = join(process.cwd(), 'src')

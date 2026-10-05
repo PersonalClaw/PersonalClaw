@@ -19,8 +19,8 @@ deliberate and is the one thing not to "simplify":
     would accept.
 
 ⚠️  AND THIS RAIL SHIPS AT ZERO, which is the opposite of the structural ratchets' "ship at
-    the measured population, never at zero" ruling — deliberately, because the situation is
-    the inverse of the one that ruling warns about. That ruling protects against a never-run
+    the measured population, never at zero" rule — deliberately, because the situation is
+    the inverse of the one that rule warns about. That rule protects against a never-run
     gate given teeth at zero reding a whole tree of pre-existing decay at once. Here the
     decay was REMOVED in the same change that added the rail (``temp-screenshots/`` deleted,
     ``scratch/`` renamed, two ``/Users/<maintainer>`` leaks scrubbed), so zero IS the measured

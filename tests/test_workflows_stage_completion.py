@@ -6,9 +6,8 @@ never left `RUNNING`: `_await_progress` pops the finished asyncio task out of
 `_inflight` (``controller.py:2686``) before `_apply` runs, and once `_inflight` is empty
 the tick loop takes the `else` branch at ``controller.py:573`` and yields on
 `asyncio.sleep(0)` forever — which also means `_await_progress`, the ONLY caller of
-`liveness.enforce_stall_timeouts` (``controller.py:2682``), stops being called at all. Measured in
-`SELF-VERIFICATION.md:430-441`: a node stayed RUNNING for fifteen minutes after its
-subagent reported `done: True`.
+`liveness.enforce_stall_timeouts` (``controller.py:2682``), stops being called at all. Measured: a
+node stayed RUNNING for fifteen minutes after its subagent reported `done: True`.
 
 These tests assert the CALL SITE, not a helper in isolation: the whole defect was that no
 code path ever asked the subagent manager whether the spawn had finished. Every test here
@@ -125,8 +124,8 @@ def wired(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         controller = RunController(
             run, spec, services=EngineServices(subagents=fake, cwd=str(tmp_path))
         )
-        # Spy on the ledger writer rather than the ledger FILE: the symptom recorded in the
-        # plan was "no `step_completed`", and the call is the thing under test.
+        # Spy on the ledger writer rather than the ledger FILE: the recorded symptom
+        # was "no `step_completed`", and the call is the thing under test.
         completed: list[dict[str, Any]] = []
         real = controller.journal.step_completed
 

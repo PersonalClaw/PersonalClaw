@@ -1,9 +1,9 @@
-"""Who a notification is FOR — the addressee (MULTI-TENANCY-ENTITY `TSE2-5`).
+"""Who a notification is FOR — the addressee.
 
 ``DashboardState.notify`` is "THE single delivery choke point for every emitter", and until
 now it had exactly one destination: *this* dashboard. That is correct while every row in every
 store belongs to the owner. It stops being correct the moment a shared store contributes rows
-somebody else owns — which `TSE2-1`/`TSE2-2`/`TSE2-3` made real, stamping ``owner_username``
+somebody else owns — which is now real, with ``owner_username`` stamped
 onto run-ledger rows, entity records and inbox items. A shared inbox now renders a teammate's
 item (``GET /api/inbox/owners``) and, when that item wanted attention, fired a toast at the
 local owner about work that was never theirs.
@@ -18,9 +18,9 @@ emitter supplies the item's own ``owner_username`` and nothing new has to be inv
 on, or kept in sync.
 
 **Foreign-addressed means visible-but-not-fired, and this is the trigger posture exactly.**
-TEAM-SHARED-ENTITIES §2.2 settled the shape for foreign trigger rows and
-:mod:`personalclaw.triggers.ownership` implements it: the harness "arms and fires ONLY the
-owner's triggers … enforced structurally (a foreign row cannot tick, not 'is skipped')", while
+:mod:`personalclaw.triggers.ownership` implements that shape for foreign trigger rows: the
+harness "arms and fires ONLY the owner's triggers … enforced structurally (a foreign row
+cannot tick, not 'is skipped')", while
 the row stays *visible* in the management surface. Two reads, not one filter:
 :func:`personalclaw.triggers.provider.armable` is the FIRE read and drops foreign rows, and
 ``list_triggers``/``all_rows`` is the LISTING read and keeps them. This module is the same

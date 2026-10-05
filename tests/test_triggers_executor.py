@@ -2,9 +2,8 @@
 
 The fire path ends: "… engine executes under the `headless` profile → **outcome
 classification** →
-delivery contract → health rollup + failure policy." S86 built the gate order, S87 the store,
-S88 the
-tick, S89 the dispatcher; this is the last link.
+delivery contract → health rollup + failure policy." The gate order, the store, the
+tick and the dispatcher come before it; this is the last link.
 
 **Two honesty contracts this module inherits rather than invents**, both already fought for in
 shipped
@@ -14,13 +13,13 @@ code and both re-verified here:
 and defaults
    to `"ok"` ONLY if the sentinel survived — its own comment: "so a failed action's 'error' is
    no longer
-   CLOBBERED by an unconditional 'ok' (the honest-status bug T7 set out to kill: a failed run
+   CLOBBERED by an unconditional 'ok' (the honest-status bug: a failed run
    recorded as
    success)".
 2. **`launched` is not success.** `engine.dispatch_action`: "'launched' means background work
 STARTED, not
    that it succeeded … Reporting it as success would make a fire-and-forget action look
-   verified." S84's
+   verified." The
    history projection maps it to `deferred` too. This is the third surface to preserve it.
 
 Every drain test uses a real `SessionManager` inbox and the real `dequeue` (which skips
@@ -75,13 +74,13 @@ async def _launched(_payload):
     return _JobLike()
 
 
-# ── 🔴 the T7 sentinel rule ──
+# ── 🔴 the sentinel rule ──
 
 
 def test_a_surviving_sentinel_defaults_to_success():
     """🔴 The three-state logic `schedule._execute` established: only a SURVIVING sentinel
     becomes `ok`.
-    An unconditional default would clobber a runner's own `"error"` — T7's honest-status bug."""
+    An unconditional default would clobber a runner's own `"error"` — the honest-status bug."""
     assert E.classify("")[0] == Outcome.RAN.value
     assert E.classify(E.STATUS_PENDING)[0] == Outcome.RAN.value
 
@@ -106,7 +105,7 @@ def test_the_sentinel_constant_matches_the_shipped_one():
 
 def test_launched_maps_to_DEFERRED_not_RAN():
     """🔴 `engine.dispatch_action`: "Reporting it as success would make a fire-and-forget action look
-    verified." S84 preserved this in history; this is the third surface."""
+    verified." History preserves this too; this is the third surface."""
     outcome, reason = E.classify("launched")
     assert outcome == Outcome.DEFERRED.value
     assert outcome != Outcome.RAN.value
@@ -179,8 +178,8 @@ def test_a_runner_reporting_via_an_attribute_is_honoured():
 
 
 def test_a_raising_runner_becomes_a_failed_outcome_not_a_crash():
-    """The outcome IS the error; re-raising would lose the row, and a lost row is the silent drop §7
-    crit 8 bans."""
+    """The outcome IS the error; re-raising would lose the row, and a lost row is a silent
+    drop."""
     outcome = asyncio.run(E.run_one({"trigger_id": "t1"}, _raises, now=NOW))
     assert outcome.outcome == Outcome.FAILED.value
     assert "provider exploded" in outcome.reason
@@ -271,9 +270,9 @@ def test_a_non_trigger_row_is_SKIPPED_not_run():
 
 
 def test_the_cap_is_REPORTED_not_silent():
-    """A partial drain that looked complete would make a backed-up queue invisible — the S65
+    """A partial drain that looked complete would make a backed-up queue invisible — a
     rule this
-    program keeps re-learning on new surfaces."""
+    codebase keeps re-learning on new surfaces."""
     manager = _manager("cron:y")
     for i in range(5):
         W.deliver(
@@ -366,8 +365,8 @@ def test_a_DEFERRED_run_produces_NO_delivery():
 
 
 def test_every_executed_payload_yields_a_ledger_row():
-    """S86 writes a row per fire EVALUATED; this writes one per fire that actually ran. Both
-    halves are
+    """The gate walk writes a row per fire EVALUATED; this writes one per fire that actually ran.
+    Both halves are
     needed — a fire that passed every gate then died in the executor would otherwise leave a
     `ran` row
     from the gate walk and nothing else."""
@@ -384,7 +383,7 @@ def test_every_executed_payload_yields_a_ledger_row():
 
 
 def test_a_deferred_run_counts_toward_NEITHER_health_bucket():
-    """🔴 §3.7. Counting a launched-but-unverified run as a success marks a broken automation
+    """🔴 Counting a launched-but-unverified run as a success marks a broken automation
     healthy;
     counting it as a failure autopauses one that works."""
     result = E.DrainResult(
@@ -432,9 +431,9 @@ def test_the_drain_result_serializes_for_a_surface():
 def test_store_to_tick_to_dispatch_to_execute(tmp_path):
     """The substrate end to end, with only the LLM turn injected: store → tick → dispatch → drain.
 
-    This is what every prior session's "NOT DONE: the service/executor" note was waiting for,
+    This is the chain every earlier piece was waiting for,
     and the
-    only mock is the runner — because §3 puts the turn behind `SubagentManager.spawn`, which
+    only mock is the runner — because the turn runs behind `SubagentManager.spawn`, which
     is the one
     piece that genuinely needs a model.
     """
@@ -565,5 +564,5 @@ def test_EVERY_provider_success_status_is_mapped():
         outcome, _reason = E.classify(status)
         assert outcome != Outcome.FAILED.value, (
             f"the provider calls {status!r} a success (success=True) and the fire path records it "
-            "as a FAILURE — the exact asymmetry S155 closed"
+            "as a FAILURE — the exact asymmetry this guards against"
         )

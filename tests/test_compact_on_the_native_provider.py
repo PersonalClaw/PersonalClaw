@@ -95,8 +95,8 @@ class TestTheCapabilityIsNarrow:
         """The two flags are orthogonal and the SECOND must stay False. Flipping
         `supports_native_commands` would have been the shorter fix and the wrong one: every
         other slash word would then reach `stream_command`, whose base implementation is a
-        plain prompt wearing a command's name — the exact `G4` lie, with the notice
-        suppressed because a substitution no longer happened."""
+        plain prompt wearing a command's name — the exact lie the `slash_fallback` notice
+        admits to, with the notice suppressed because a substitution no longer happened."""
         assert _runtime().supports_native_commands is False
 
     def test_both_ABCs_default_to_False(self):

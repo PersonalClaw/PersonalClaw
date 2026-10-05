@@ -5,7 +5,7 @@ executes on a stranger's machine. Until now **nothing in CI ran it, linted it, o
 it to what we serve**, while its own header claimed all three:
 
     # ... it is staged here under deploy/website/ so it is version-controlled,
-    # shellcheck-clean, and CI-smoke-tested (plan 33 full.yml runs it in a bare ubuntu
+    # shellcheck-clean, and CI-smoke-tested (full.yml runs it in a bare ubuntu
     # container weekly).
 
 ``full.yml`` had four jobs — ``matrix``, ``audit``,

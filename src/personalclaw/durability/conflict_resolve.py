@@ -1,4 +1,4 @@
-"""Apply a reviewed conflict's chosen version to the live store (§4.2 item 2).
+"""Apply a reviewed conflict's chosen version to the live store.
 
 :mod:`durability.conflicts` detects a both-sides-edited divergence and HOLDS the local row;
 :mod:`durability.conflict_merge` may draft a proposed merge. Neither writes anything — the
@@ -110,7 +110,7 @@ def chosen_row(rec: conflicts_mod.ConflictRecord, choice: str) -> dict | None:
     Split out so the review surface and the writer agree on what a choice MEANS: a choice
     whose version is absent (an undrafted proposal) has to refuse, not fall back to another
     version — silently applying the local row when the user asked for the proposal is exactly
-    the "partial apply that looks like a success" this atom must not ship.
+    the "partial apply that looks like a success" this module must not ship.
     """
     if choice == CHOICE_KEEP_LOCAL:
         return rec.local_row or None

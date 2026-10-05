@@ -26,7 +26,7 @@ Two things this file is careful about, because both are ways a guard like this g
   and driven individually — a respelled absolute path, a shell variable, a `cd` first, and an
   extra argument appended to an otherwise-innocent command.
 
-Distinctness from WF2AUT-9 (`skip_if_active`) is asserted too, by outcome: that guard admits the
+Distinctness from the `skip_if_active` guard is asserted too, by outcome: that guard admits the
 fire this one refuses.
 """
 
@@ -240,7 +240,7 @@ def test_unattendedness_comes_from_is_unattended_session_and_NOT_a_SECOND_NOTION
 # --------------------------------------------------------------------------------------
 
 
-def test_WF2AUT9s_liveness_guard_ADMITS_the_fire_this_guard_refuses():
+def test_the_liveness_guard_ADMITS_the_fire_this_guard_refuses():
     """The two guards answer different questions, asserted by outcome rather than by prose.
 
     `skip_if_active` (triggers/service.py:547, computed by `_target_active_kwargs` at :815) asks
@@ -252,7 +252,7 @@ def test_WF2AUT9s_liveness_guard_ADMITS_the_fire_this_guard_refuses():
     from personalclaw.triggers.liveness import is_target_active
 
     active, reason = is_target_active(None, now=0.0, base_dir=None)
-    assert (active, reason) == (False, ""), "WF2AUT-9's guard should admit an unguarded trigger"
+    assert (active, reason) == (False, ""), "the liveness guard should admit an unguarded trigger"
     assert unattended_host_effect("personalclaw restart", UNATTENDED) is not None
 
 

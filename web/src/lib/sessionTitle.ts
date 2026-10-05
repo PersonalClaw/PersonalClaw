@@ -21,7 +21,7 @@ export interface TitleableSession {
 // new-session path). The backend's persistence load falls the title back to this
 // raw key (`raw_title = … or session_name`), so a truthy-but-machine title reaches
 // the UI and every naive `title || 'Untitled'` fallback sails straight past it —
-// which is exactly why the raw id showed as a chat title / resume label (WT-11).
+// which is exactly why the raw id showed as a chat title / resume label.
 const RAW_SESSION_KEY = /^chat-\d+-\d+$/
 
 /** `true` when `title` is not a human title: absent/blank, equal to the session

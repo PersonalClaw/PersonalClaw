@@ -17,8 +17,7 @@ Three properties are load-bearing and easy to lose:
   a parallel one.
 
 Scale note: this is one person's memory (hundreds to low thousands of records),
-so the matcher is a token trie rebuilt in-process, not a service. See
-`the plan (internal, not in this repo)` §1 for the design.
+so the matcher is a token trie rebuilt in-process, not a service.
 """
 
 from __future__ import annotations
@@ -63,7 +62,7 @@ LINK_TYPES = (
 MIN_ALIAS_TOKEN_LEN = 3
 
 # How many distinct records must mention an unknown name before it is worth
-# proposing as an entity (§1.1 notability gate).
+# proposing as an entity (the notability gate).
 PROPOSAL_THRESHOLD = 3
 
 # Context snippet budget around a mention, per side.
@@ -205,7 +204,7 @@ class AliasIndex:
     def unknown_capitalized(self, text: str) -> list[str]:
         """Capitalized multi-word names in ``text`` that matched nothing.
 
-        Feeds the notability tally (§1.1) — these are *candidates*, never entities.
+        Feeds the notability tally — these are *candidates*, never entities.
         Restricted to multi-word Title Case because single capitalized words are
         overwhelmingly sentence starts and acronyms.
         """
@@ -582,7 +581,7 @@ class MemoryGraph:
         return [dict(r) for r in rows]
 
     def backlinks(self, entity_id: str, *, limit: int = 100) -> list[dict]:
-        """Records that link TO this entity — the graph recall arm's input (S2)."""
+        """Records that link TO this entity — the graph recall arm's input."""
         rows = self.db.execute(
             "SELECT * FROM mem_links WHERE to_entity = ? ORDER BY id DESC LIMIT ?",
             (entity_id, limit),
@@ -609,7 +608,7 @@ class MemoryGraph:
         return int(cur.rowcount or 0)
 
     def resolve_query(self, text: str, index: "AliasIndex | None" = None) -> list[str]:
-        """Entity ids named in ``text`` — the graph arm's entry point (§2.1).
+        """Entity ids named in ``text`` — the graph arm's entry point.
 
         Uses the SAME matcher as write time, so a query resolves exactly the way the
         record that mentioned it did. Without that symmetry the arm would find records
@@ -623,7 +622,7 @@ class MemoryGraph:
         return seen
 
     def recall_evidence(self, text: str, *, index: "AliasIndex | None" = None) -> dict:
-        """``{from_ref: [entity names]}`` — WHY the graph surfaced each record (§2.2).
+        """``{from_ref: [entity names]}`` — WHY the graph surfaced each record.
 
         The debuggability contract: a recall hit whose relevance came from a link
         should be able to say which entity connected it, or "the graph found it" is an
@@ -806,7 +805,7 @@ class MemoryGraph:
         }
 
     def entity_graph(self) -> dict:
-        """Entities as nodes + co-occurrence edges, with the metadata the FE filters on (§7.2).
+        """Entities as nodes + co-occurrence edges, with the metadata the FE filters on.
 
         Distinct from :meth:`summary` (counts) and from the dashboard's record-level
         visualization: this is the ENTITY topology — who sits next to whom — which is the
@@ -941,8 +940,8 @@ class MemoryGraph:
         """Mined weak labels for the retrieval bench: ``{entity name: [record key, …]}``.
 
         A volunteered record whose recall count LATER ROSE is a positive for the query
-        that named its entity (EVALUATION-SUBSTRATE §5.2's "retrieved-then-used is a
-        positive"). The used predicate and the row population are :data:`_USED_EXPR` /
+        that named its entity (retrieved-then-used is a
+        positive). The used predicate and the row population are :data:`_USED_EXPR` /
         :data:`_VOLUNTEER_FROM_WHERE` — the SAME strings :meth:`volunteer_precision`
         reads, so the offline benchmark's ground truth and the live health panel's
         precision cannot drift into two definitions of "used".
@@ -975,7 +974,7 @@ class MemoryGraph:
         return {q: sorted(refs) for q, refs in sorted(qrels.items())}
 
     def volunteer_precision(self, *, window_days: int | None = None) -> dict:
-        """Per-arm volunteered-vs-used precision (§3).
+        """Per-arm volunteered-vs-used precision.
 
         "Used" = the record's CURRENT ``recall_count`` exceeds what it was when the
         reflex volunteered it. That comparison is why ``recall_at_volunteer`` is stored:

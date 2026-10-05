@@ -306,7 +306,7 @@ from personalclaw.testing.channel_conformance import (
 )
 
 # `parse_title` — THE title-generation-reply parser (#3590), for a channel that names its threads.
-# The Slack app mirrored it (#124) because it was private to the dashboard module.
+# The Slack app mirrored it (PersonalClawApps #124) because it was private to the dashboard module.
 from personalclaw.textfmt import extract_options, parse_title, strip_thinking_tags
 
 # ── Media + prompts + discovery ──

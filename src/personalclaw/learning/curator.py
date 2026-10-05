@@ -457,7 +457,7 @@ def file_review_proposals(report: CuratorReport, *, dry_run: bool = False) -> in
     return filed
 
 
-# ── Heat-earned promotion (LEARN-R6f) ──
+# ── Heat-earned promotion ──
 
 
 @dataclass

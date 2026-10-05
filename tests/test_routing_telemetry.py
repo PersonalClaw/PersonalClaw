@@ -5,8 +5,8 @@ bounded model_calls.jsonl tail: fold supplies n/success/feedback/cost, the tail 
 p50/p95, and each row carries on_frontier (not dominated on quality/latency/cost). Read-only.
 
 Plus the one WRITE this handler owns — ``PUT /api/models/routing-policy``'s ``order`` lever
-(§6.2 lever 3). See :class:`TestRoutingPolicyWrite` for why those rails read the table back off
-disk instead of watching for a call.
+(lever 3 in ``routing/policy.py``). See :class:`TestRoutingPolicyWrite` for why those rails read
+the table back off disk instead of watching for a call.
 """
 
 from __future__ import annotations

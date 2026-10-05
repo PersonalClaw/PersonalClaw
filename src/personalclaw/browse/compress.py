@@ -1,5 +1,4 @@
-"""Context compression layer — the ~20x token reduction that makes autonomous browse viable
-(plan amendment 2026-07-26(a), "Context compression layer + task A1").
+"""Context compression layer — the ~20x token reduction that makes autonomous browse viable.
 
 The measured problem: raw DOM is ~100K+ tokens; a browse node cannot afford to put that in a
 model's context every step. This module sits between the (structural) extraction and the
@@ -33,7 +32,7 @@ from personalclaw.browse.extraction import (
 )
 from personalclaw.learning.surfacing import count_tokens
 
-#: Default outline budget. The plan's target is <1K tokens for a 100K-token DOM; we compress
+#: Default outline budget. The target is <1K tokens for a 100K-token DOM; we compress
 #: to comfortably under that, leaving headroom for the loop's system prompt + goal + notes.
 DEFAULT_MAX_TOKENS = 800
 
@@ -45,7 +44,7 @@ _BASE64_IMG_RE = re.compile(r"data:image/[a-z.+-]+;base64,", re.IGNORECASE)
 
 @dataclass(frozen=True)
 class PageOutline:
-    """The compact context representation of a page (amendment 2026-07-26(a) contract).
+    """The compact context representation of a page.
 
     ``elements`` are the interactive refs (links + fields) an agent can address; ``text`` is
     the trimmed body; ``screenshot_path`` is a filesystem path under the run workspace —
@@ -72,7 +71,7 @@ class PageOutline:
             parts.append(_render_field_lines(fields))
         if self.screenshot_path:
             # Path placeholder only — a multimodal step may explicitly load the file, but it
-            # never rides inline as base64. (plan §7 verification / amendment (a))
+            # never rides inline as base64.
             parts.append(f"[SCREENSHOT: {self.screenshot_path}]")
         return "\n\n".join(parts)
 
@@ -123,8 +122,8 @@ def compress_page(
 
     Priority under the budget (a ranking, not just a counter — the surfacing discipline):
     **form fields** are kept whole (they are the TYPE/SUBMIT surface an agent cannot act
-    without), **links** are trimmed to the top-N that still fit (§1.2 already calls them
-    "top-N navigable"; a 2000-link nav forest must not blow the budget), and the **text body**
+    without), **links** are trimmed to the top-N that still fit (extraction already caps them
+    at the top-N navigable; a 2000-link nav forest must not blow the budget), and the **text body**
     is trimmed last into whatever remains. The screenshot is carried as a path, never inlined.
     """
     fields: list[ElementRef] = []
@@ -162,7 +161,7 @@ def assert_no_base64(rendered: str) -> None:
     """Raise if a rendered outline/prompt carries an inline base64 image payload.
 
     The load-bearing regression guard: a screenshot must be a PATH, never a ``data:image``
-    blob. Called by the loop before a rendered page enters context (and by the BA-1 regression
+    blob. Called by the loop before a rendered page enters context (and by its regression
     test) so the "no base64 in any rendered prompt" invariant fails loudly, not silently."""
     m = _BASE64_IMG_RE.search(rendered)
     if m:

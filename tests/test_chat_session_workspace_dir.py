@@ -115,13 +115,13 @@ class TestChatSessionWorkspaceDir:
 class TestAnOmittedKeyIsNotAClear:
     """A body without ``workspace_dir`` must be refused, not read as "clear it".
 
-    Measured live during the sweep: `POST …/workspace-dir` with a mistyped key
-    (``{"dir": "/private/tmp/aap3-ws/scratch"}``) answered
+    Measured live: `POST …/workspace-dir` with a mistyped key
+    (``{"dir": "/private/tmp/ws/scratch"}``) answered
     ``{"ok": true, "workspace_dir": ""}`` and left the session with **no** workspace.
     The caller had every reason to believe it had set one. For an ACP session that
     binding is where the agent's CLI runs, so the silent clear lands the agent in
     whatever directory the host resolves instead — the same user-visible failure as the
-    `G39` profile-bound cwd escape, reached through an ordinary typo.
+    profile-bound cwd escape, reached through an ordinary typo.
 
     Clearing on purpose is still supported and still tested above
     (`test_clear_workspace_dir`, an explicit empty string).

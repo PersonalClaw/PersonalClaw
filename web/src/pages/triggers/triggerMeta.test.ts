@@ -112,7 +112,7 @@ const storeRow = (over: Partial<WireTrigger> = {}): WireTrigger => ({
 })
 
 describe('scheduleToTrigger', () => {
-  // A schedule the store kept despite a malformed field (S87 lenient load) carries its parse
+  // A schedule the store kept despite a malformed field (the lenient load) carries its parse
   // errors on the wire; the mapper must forward them so the row can flag "needs attention"
   // rather than listing as if healthy — the same contract storeToTrigger honours.
   const schedRow = (over: Partial<ScheduleJob> = {}): ScheduleJob => ({
@@ -274,7 +274,7 @@ describe('eventSourceLabel', () => {
   })
 })
 
-// ── App-source event vocabulary (AUTO-A4) ───────────────────────────────────
+// ── App-source event vocabulary ───────────────────────────────────
 //
 // The AppEvent matcher is a picker over the LIVE registry, not free text: the namespaced name
 // (`app:<app>:<event>`) is derived by core from the app's registered name, so a hand-typed value is
@@ -315,10 +315,10 @@ describe('appEventOptions', () => {
   })
 })
 
-// ── actionIsSendCapable (EIAT-5 draft-by-default surfacing) ──────────────────
+// ── actionIsSendCapable (draft-by-default surfacing) ──────────────────
 //
-// A UI-copy heuristic, NOT a core capability flag (none exists — EIAT-3 owns the real posture in the
-// mail-inbox app). It decides whether to show the draft-by-default reminder next to the action. It
+// A UI-copy heuristic, NOT a core capability flag (none exists — the mail-inbox app owns the real
+// posture). It decides whether to show the draft-by-default reminder next to the action. It
 // must catch the one bundled send provider today and any future `send-*` channel provider, without
 // false-flagging unrelated providers whose names merely contain "send".
 

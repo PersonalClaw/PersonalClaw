@@ -1,4 +1,4 @@
-"""The Self-QA Companion core, one test class per clause of the change's acceptance criteria.
+"""The Self-QA Companion core, one test class per clause of its contract.
 
 The four clauses are checked independently, and each one carries a vacuity floor — a mutation
 that would make it red — because every mechanism here is one whose failure mode is *looking
@@ -252,7 +252,7 @@ class TestClauseOneWatcherFires:
         runner_provider.execute.assert_not_called()
 
     def test_reconcile_swaps_an_interim_clock_row_in_place(self, repo, monkeypatch, tmp_path):
-        """An upgraded Wave-2 home carries a `clock` row under the same id: the swap edits
+        """An upgraded home carries the interim `clock` row under the same id: the swap edits
         THAT row rather than minting a second watcher beside it."""
         from personalclaw.config import loader as loader_mod
         from personalclaw.triggers.models import Trigger
@@ -276,7 +276,7 @@ class TestClauseOneWatcherFires:
         assert trigger.workflow["inline"]["provider"] == "selfqa-commit-watch"
 
     def test_reconcile_removes_the_retired_script_artifacts(self, monkeypatch, tmp_path):
-        """A Wave-2 home's installed script, config, and state are cleaned up — a dead
+        """An upgraded home's installed script, config, and state are cleaned up — a dead
         script left in the fenced crons dir invites a user to schedule it."""
         from personalclaw.config import loader as loader_mod
 
@@ -305,7 +305,7 @@ class TestClauseOneWatcherFires:
 class TestTheInterimScriptStaysRetired:
     """The rule spec: the interim seam must not come back.
 
-    The acceptance criterion asks for a spec that asserts the script's ABSENCE once the vcs trigger
+    The contract asks for a spec that asserts the script's ABSENCE once the vcs trigger
     kind exists — a grep-shaped rail, so a future change that re-materializes a watcher
     script (or resurrects the installer) fails here with the reason attached.
     """
@@ -548,10 +548,10 @@ class TestClauseTwoLedgerOnlySkip:
 
 
 class TestTheSkipIsVisibleInTheRunsSurface:
-    """Success Criterion #6 reads: a test-only commit produces "a ledger-only skip record with a
-    one-line rationale **(visible in the runs surface, no full run spent)**".
+    """A test-only commit must produce a ledger-only skip record with a
+    one-line rationale **(visible in the runs surface, no full run spent)**.
 
-    SV-9 shipped the write and recorded that this parenthetical was unmet. Two independent breaks
+    The write shipped first, with this parenthetical recorded as unmet. Two independent breaks
     stood between a written row and a legible one, and each looked exactly like working code:
 
     1. **The row was stamped with the node id, not the engine's instance key.** `record_triage`
@@ -802,7 +802,7 @@ class TestClauseThreeScenarioDrivesTheUI:
     **What is asserted here is the template contract, not a UI drive.** Executing this clause
     end-to-end needs a reachable Chrome DevTools MCP server and a running gateway built from the
     commit under test. Both were obtained on 2026-08-24 and the clause STILL does not close — the
-    two things in the way are recorded here so the next session does not re-derive them:
+    two things in the way are recorded here so whoever comes next does not re-derive them:
 
     1. **FIXED.** `route` could select neither of its own cases, because the engine keyed a
        boolean selector as `str(True)` → `"True"` and a JSON template can only spell the case
@@ -1044,7 +1044,7 @@ class TestClauseThreeScenarioDrivesTheUI:
 
 
 class TestClauseFourFilesOneOfEach:
-    """`a failing scenario files one Inbox item + one Task` (Success Criterion #6).
+    """A failing scenario files one Inbox item + one Task.
 
     One is a floor and a ceiling. Both ends are asserted, and the counts are read before the
     call as well as after, so "exactly one" cannot be satisfied by an item that was already
@@ -1455,7 +1455,7 @@ class TestWatchTriggerReconcile:
         inline = row.trigger.workflow["inline"]
         assert inline["provider"] == "selfqa-commit-watch"
         assert inline["config"] == {"repo": "/tmp/watched"}
-        # Decision 7: an action that starts a workflow run is write-capable, so the fence
+        # An action that starts a workflow run is write-capable, so the fence
         # needs the frozen grant. Without it the fire is screened off and the watcher is
         # inert a second way.
         assert "selfqa-commit-watch" in row.trigger.capabilities.get("providers", [])

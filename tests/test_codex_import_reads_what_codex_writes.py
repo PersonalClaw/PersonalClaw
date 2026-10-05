@@ -1,4 +1,4 @@
-"""The Codex importer reads the files Codex actually writes (F-03 Codex half).
+"""The Codex importer reads the files Codex actually writes.
 
 Every test runs against ``tests/fixtures/agent_tool_homes/noor/.codex`` — a small copy of a real
 ``~/.codex`` (Codex CLI 0.139 to 0.152) — copied into ``tmp_path``. ``HOME`` is the copy,

@@ -1,7 +1,7 @@
 import type { ReactNode, ThHTMLAttributes, TdHTMLAttributes, HTMLAttributes } from 'react'
 import { cx } from './cx'
 
-/* The one canonical data-table family (audit AB-3). Eleven pages hand-rolled
+/* The one canonical data-table family. Eleven pages hand-rolled
  * `<table>` markup that drifted on the parts a reader depends on: some dropped
  * the sr-only caption (a screen reader announces an anonymous grid), some
  * dropped `scope="col"` (column headers stop associating with their cells),

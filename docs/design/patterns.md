@@ -1,8 +1,8 @@
 # Design-System Pattern Gallery
 
-**Plan:** DESIGN-SYSTEM-CONSISTENCY · **Contract:** C2 · **Authority:** `web/DESIGN.md` + `web/PRODUCT.md`
+**Authority:** `web/DESIGN.md` + `web/PRODUCT.md`
 
-The canonical usage of each shared primitive + each interaction pattern. Every page-touching plan cites this to "stay consistent." A new shared primitive lands here the moment it's added (that's how it stops being a one-off). This is a static doc (zero new dep) — the plan's default over a live Storybook route.
+The canonical usage of each shared primitive + each interaction pattern. Every page-touching change cites this to "stay consistent." A new shared primitive lands here the moment it's added (that's how it stops being a one-off). This is a static doc (zero new dep) — chosen by default over a live Storybook route.
 
 > **Rule:** if you're about to hand-roll chrome that appears elsewhere, it belongs here as a primitive first. Bring outliers to the system; never fork the system.
 
@@ -55,7 +55,7 @@ import { Search } from 'lucide-react'
 
 ## Buttons (existing — `web/src/ui/Button.tsx`, `IconButton.tsx`)
 
-`Button` (variant `primary|secondary|ghost|danger`, size `sm|md|lg`, `shape`, `loading`) and `IconButton` are the canonical clickable chrome. The audit found **420 raw `<button>`** outside `ui/` — migrating those to `Button`/`IconButton` is the largest S2 primitive-adoption task (harness-gated, worst-first: CodeCockpit → ChatPage). Documented here as the target; full variant gallery to be expanded as that migration proceeds.
+`Button` (variant `primary|secondary|ghost|danger`, size `sm|md|lg`, `shape`, `loading`) and `IconButton` are the canonical clickable chrome. The audit found **420 raw `<button>`** outside `ui/` — migrating those to `Button`/`IconButton` is the largest primitive-adoption task (harness-gated, worst-first: CodeCockpit → ChatPage). Documented here as the target; full variant gallery to be expanded as that migration proceeds.
 
 ### `SquareIconButton` — `web/src/ui/SquareIconButton.tsx`
 
@@ -128,7 +128,7 @@ two canonical icon-action shapes — pick by density, don't hand-roll a third.
 
 ## Dialogs (existing — `web/src/ui/Modal.tsx`)
 
-`Modal` is already the sole canonical dialog (the audit found **0** bespoke `<dialog>`/`role="dialog"` outside `ui/`). Keep it that way — the primitive-adoption ratchet (C1/T3.4) guards against regression.
+`Modal` is already the sole canonical dialog (the audit found **0** bespoke `<dialog>`/`role="dialog"` outside `ui/`). Keep it that way — the primitive-adoption ratchet guards against regression.
 
 ---
 
@@ -147,9 +147,9 @@ Prefer a **type-role** (`data-type="title-m"` etc.) when the element maps to one
 
 ---
 
-## Interaction patterns (S3 — in progress)
+## Interaction patterns (in progress)
 
-The S3 pass standardizes and documents these here, one implementation each:
+These are standardized and documented here, one implementation each:
 
 ### Empty state — TWO distinct canonical patterns (don't conflate them)
 
@@ -160,9 +160,9 @@ The audit found the name `EmptyState` was used for two genuinely different thing
 | **Page-empty** | `EmptyState` — `web/src/ui/ListScaffold.tsx` | Full-height **centered** column: tinted icon chip, headline, hint, optional `Button` action | A whole page/list/panel is empty (Tasks page with no tasks, empty Knowledge, etc.) — the empty state IS the content |
 | **Slot-empty** | `SlotEmptyState` — `web/src/pages/dashboard/widgets/kit.tsx` | Compact **top-aligned strip**: small icon + one line + optional inline action, dashed hairline | A dashboard widget/slot sits next to full siblings in a grid — a stretched centered empty would read as a conspicuous void |
 
-> **Cycle 6→7 note:** `kit.tsx`'s slot variant was renamed `EmptyState` → **`SlotEmptyState`** so the name no longer collides with the canonical page-empty primitive (the collision made two intentional patterns look like an accidental duplicate). Pure rename — zero visual change.
+> **Rename note:** `kit.tsx`'s slot variant was renamed `EmptyState` → **`SlotEmptyState`** so the name no longer collides with the canonical page-empty primitive (the collision made two intentional patterns look like an accidental duplicate). Pure rename — zero visual change.
 >
-> **cy17 convergence:** the last two hand-rolled page-empties adopted `EmptyState` — `LoopsListPage`'s "No loops yet" (a Spark-branch drop-in) and `CodeSection`'s "No code projects yet" (its bare dim glyph normalized to the canonical tinted chip; its `size="sm"` CTA to the default md Button). The primitive's markup is now locked by `ListScaffold.test.tsx`. Remaining hand-rolled centered blocks are **not** page-empties and stay distinct: load-error / not-found variants (they carry a retry/back CTA and a danger/warn icon), filtered-empties (a list exists; nothing matches — a `TextLink` reset, not a `Button`), and true slot strips (`ChatActivityPanel`'s side-question panel). Don't force those onto `EmptyState`.
+> **Convergence:** the last two hand-rolled page-empties adopted `EmptyState` — `LoopsListPage`'s "No loops yet" (a Spark-branch drop-in) and `CodeSection`'s "No code projects yet" (its bare dim glyph normalized to the canonical tinted chip; its `size="sm"` CTA to the default md Button). The primitive's markup is now locked by `ListScaffold.test.tsx`. Remaining hand-rolled centered blocks are **not** page-empties and stay distinct: load-error / not-found variants (they carry a retry/back CTA and a danger/warn icon), filtered-empties (a list exists; nothing matches — a `TextLink` reset, not a `Button`), and true slot strips (`ChatActivityPanel`'s side-question panel). Don't force those onto `EmptyState`.
 
 **Usage**
 ```tsx
@@ -243,9 +243,9 @@ panel or "jump to section" list is the thing not to build.
 | **coarse-pointer form** | `SessionMapDrawer.tsx` | one 44px row per user message, the card's content inlined |
 | **return-to-newest** | `SessionMapReturnLatest.tsx` | the app's **one** "back to the newest message" control |
 
-#### The owner's rules
+#### The design rules
 
-The owner ruled on the form property by property, and each rule replaced something an earlier form
+The form was settled property by property, and each rule replaced something an earlier form
 did. They are the spec; the rail's header restates them beside the code.
 
 1. **A marker is a user message.** Replies and their tool calls are not markers: a reply is too long

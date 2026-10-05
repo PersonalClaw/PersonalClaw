@@ -1,10 +1,9 @@
 """Worktree fan-out hydration benchmark + the measure-first gate.
 
-HARNESS-CRAFT §1 is a **measured-bottleneck plan**: its sparse/pooled/reused hydration work
- is only allowed to be built if a fan-out actually pays for full working-tree
-hydration. §1.1 states the gate in one sentence — *"if measurement shows <2s per worktree on the
-benchmark, Session 1's remaining items are SKIPPED and the plan is re-scoped"* — and this module is
-that sentence, executable.
+Sparse/pooled/reused worktree hydration is **measured-bottleneck work**: it is only allowed to
+be built if a fan-out actually pays for full working-tree hydration. The gate fits in one
+sentence — *if measurement shows <2s per worktree on the benchmark, the remaining hydration work
+is SKIPPED and re-scoped* — and this module is that sentence, executable.
 
 Three decisions here are structural rather than incidental:
 
@@ -20,8 +19,8 @@ Three decisions here are structural rather than incidental:
   `fanout_measure.INCONCLUSIVE_BAND_POINTS` set the precedent in this harness: a band the
   measurement cannot see through returns "unresolved" rather than a verdict. Narrowing the band to
   extract a decision is the move that precedent exists to forbid.
-* **A repo under :data:`BENCHMARK_MIN_FILES` cannot deliver the gate verdict at all.** §1.1 names
-  the benchmark case (a 10K-file repo, fan-out of 4); a fast result on a small repo says nothing
+* **A repo under :data:`BENCHMARK_MIN_FILES` cannot deliver the gate verdict at all.** The gate's
+  benchmark case is a 10K-file repo at a fan-out of 4; a fast result on a small repo says nothing
   about it, so the gate reports `unresolved` with the reason rather than an unearned `skip`.
 
 The synthetic repo exists because the measurement has to be reproducible by someone who does not
@@ -68,7 +67,7 @@ from personalclaw.loop import worktree
 
 #: The threshold, verbatim: "<2s per worktree on the benchmark = skip and re-scope".
 #: Not a tunable. Lowering it to make an optimization look justified is the objection that
-#: deferred this plan in the first place ("worktree optimization without a real bottleneck").
+#: deferred this work in the first place ("worktree optimization without a real bottleneck").
 GATE_MS_PER_WORKTREE = 2000.0
 
 #: Half-width of the band around the gate in which no verdict is offered, as a fraction of the
@@ -77,13 +76,13 @@ GATE_MS_PER_WORKTREE = 2000.0
 #: `unresolved` and says what would settle it (an idle machine, more trials).
 GATE_UNRESOLVED_FRACTION = 0.20
 
-#: The benchmark repo size §1.1 names. A smaller repo produces a real number that is simply not
+#: The gate's benchmark repo size. A smaller repo produces a real number that is simply not
 #: an answer to the gate's question, so the verdict says so instead of generalizing.
 BENCHMARK_MIN_FILES = 10_000
 
-#: The fan-out width §1.1 names. Today's creation path is sequential (one `add_worktree` per READY
+#: The gate's fan-out width. Today's creation path is sequential (one `add_worktree` per READY
 #: task inside the scheduler loop), so the benchmark is sequential too — measuring a pooled
-#: creation that does not exist yet would be measuring `HC-2` instead of justifying it.
+#: creation that does not exist yet would be measuring the pooling work instead of justifying it.
 DEFAULT_WIDTH = 4
 
 VERDICT_PROCEED = "proceed"
@@ -187,7 +186,7 @@ def collect_timing_rows() -> Iterator[list[TimingRow]]:
 
 @dataclass
 class GateVerdict:
-    """The §1.1 measure-first decision plus the reasoning that produced it."""
+    """The measure-first decision plus the reasoning that produced it."""
 
     verdict: str
     notes: list[str] = field(default_factory=list)
@@ -222,7 +221,7 @@ def evaluate_gate(samples_ms: Sequence[int], *, repo_files: int, width: int) -> 
     thrown away a unanimous result.
 
     A measurement taken on a repo too small to be the benchmark, or at a narrower fan-out than
-    §1.1 names, is `unresolved` regardless of what it says.
+    the benchmark's, is `unresolved` regardless of what it says.
     """
     notes: list[str] = []
     band = GATE_MS_PER_WORKTREE * GATE_UNRESOLVED_FRACTION
@@ -236,7 +235,7 @@ def evaluate_gate(samples_ms: Sequence[int], *, repo_files: int, width: int) -> 
     if repo_files < BENCHMARK_MIN_FILES:
         notes.append(
             f"repo has {repo_files} tracked files, under the {BENCHMARK_MIN_FILES}-file benchmark "
-            f"case §1.1 names — these are real numbers about a different repo, so they cannot "
+            f"case — these are real numbers about a different repo, so they cannot "
             "open or close the gate"
         )
         return GateVerdict(VERDICT_UNRESOLVED, notes)
@@ -251,15 +250,15 @@ def evaluate_gate(samples_ms: Sequence[int], *, repo_files: int, width: int) -> 
         notes.append(
             f"all {len(samples_ms)} worktrees cost more than the {GATE_MS_PER_WORKTREE:.0f}ms "
             f"gate — the CHEAPEST was {lo}ms, {lo - GATE_MS_PER_WORKTREE:.0f}ms over, so no amount "
-            "of upper-tail noise can move the verdict: hydration is a measured bottleneck and "
-            "§1.2 (sparse + pooled + reuse) is justified — proceed to HC-2"
+            "of upper-tail noise can move the verdict: hydration is a measured bottleneck, so "
+            "sparse + pooled + reused hydration is justified — proceed"
         )
         return GateVerdict(VERDICT_PROCEED, notes)
     if hi < lower:
         notes.append(
             f"all {len(samples_ms)} worktrees cost less than the {GATE_MS_PER_WORKTREE:.0f}ms "
-            f"gate — the most expensive was {hi}ms — so there is no measured bottleneck: §1's "
-            "remaining items are SKIPPED and re-scoped (§1.1); the instrumentation ships regardless"
+            f"gate — the most expensive was {hi}ms — so there is no measured bottleneck: the rest "
+            "of the hydration work is SKIPPED and re-scoped; the instrumentation ships regardless"
         )
         return GateVerdict(VERDICT_SKIP_AND_RESCOPE, notes)
     notes.append(

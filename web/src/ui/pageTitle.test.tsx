@@ -27,13 +27,13 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //
 //   · `ChatPage`'s "Chat history" — a DOCKED PANEL header. A side panel is not the page, and
 //     giving it an h1 would claim the document's title for a drawer.
-//   · ~~`AppFrame` and the DETAIL pages~~ — **SETTLED IN CYCLE 162, and the URL is what settles it.**
+//   · ~~`AppFrame` and the DETAIL pages~~ — **SETTLED, and the URL is what settles it.**
 //     Driven across five surfaces: when the URL's PATH identifies the entity (`#/workflows/runs/<id>`,
 //     `#/projects/<id>`, `#/app/<name>`) the route rendered **NO h1 at all** — axe
 //     `page-has-heading-one`. When the entity is a QUERY PARAM on the list route (`?item=`, `?open=` —
 //     the peek) the list kept its own h1, which is right: a docked panel is not the page. So the entity
-//     takes the h1 exactly where the entity is the destination, and that is the row lesson from cycle
-//     161 one level up — **a destination is named by its identity, not by its category.**
+//     takes the h1 exactly where the entity is the destination, and that is the row lesson applied
+//     one level up — **a destination is named by its identity, not by its category.**
 //     `#/artifacts` with an artifact open swaps its `PageTitle` for a Back button and renders the
 //     artifact name as a bare span; the h1 measured on that route comes from the artifact's own
 //     CONTENT, not from the page title. So the question is genuinely open, not settled by
@@ -42,7 +42,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //     `PromptViewPage`, `CodeSection`/`CodeCockpitPage`/`CodePlanReview`, `AppFrame`,
 //     `ProjectsSection`'s project view, and `SkillsPage`'s browse branch.
 //
-// ── Cycle 150: the CREATE pages, which are not that subset ───────────────────────────────────
+// ── The CREATE pages, which are not that subset ──────────────────────────────────────────────
 //
 // "New task" is no more an entity name than "Tasks" is — a create destination has a static name,
 // exactly like the 20 converged above. All five measured h1-less, driven at 1440x900:
@@ -116,15 +116,15 @@ const DESTINATIONS = [
   'pages/discover/DiscoverPage.tsx',
   'pages/workflows/WorkflowsListPage.tsx',
   'ui/ListScaffold.tsx',
-  // Cycle 162 — the entity-detail destinations (a path segment IS the entity).
+  // The entity-detail destinations (a path segment IS the entity).
   'pages/workflows/WorkflowRunDetail.tsx',
   'pages/workflows/WorkflowDefDetail.tsx',
   'pages/apps/AppFrame.tsx',
   // 2026-09-05 audit — the remaining entity-detail holdouts: the prompt/snippet view rendered
   // its name, and the skills BROWSE branch its static title, as bare title-l spans — heading
-  // navigation landed on nothing (the shape cycle 162 converged for runs/defs/the app frame).
+  // navigation landed on nothing (the shape already converged for runs/defs/the app frame).
   'pages/prompts/PromptViewPage.tsx',
-  // Cycle 150 — the create destinations.
+  // The create destinations.
   'pages/tasks/TaskCreatePage.tsx',
   'pages/triggers/TriggerCreatePage.tsx',
   'pages/agents/AgentCreatePage.tsx',
@@ -243,15 +243,15 @@ describe('an entity is the destination when the URL says so', () => {
 describe('no destination skips a heading level', () => {
   const read = (rel: string) => readSource(join(SRC, rel))
 
-  // ── Cycle 163: the LAST skip in the app, and the sweep that proves it was the last ──────────────
+  // ── The LAST skip in the app, and the sweep that proves it was the last ─────────────────────────
   //
-  // Every destination has an h1 now (cycles 150 and 162), so the next question is whether what follows
+  // Every destination has an h1 now, so the next question is whether what follows
   // it is an h2. Swept 20 surfaces, reading the visible heading sequence on each:
   //
   //   #/tasks/new   h1 → **h3** ×5 ("Basics", "Classification", …)   🔴 the only skip
   //   everything else   a lone h1, or a clean 1→2 sequence (dashboard 12222222, settings 12222, …)
   //
-  // `TaskForm`'s local `Section` rendered the h3, and cycle 150 deferred it because that component has
+  // `TaskForm`'s local `Section` rendered the h3, and the create-page pass deferred it because that component has
   // TWO hosts. Measured, both want h2: on `#/tasks/new` the page h1 is "New task"; in the task detail
   // panel on `#/tasks` the page h1 is "Tasks" and the panel carries no heading of its own (a docked
   // panel is not the page — `PageTitle`'s own rule), so the sections sit one level under the page either
@@ -265,7 +265,7 @@ describe('no destination skips a heading level', () => {
   })
 
   it('nothing in pages/tasks renders an h3 at all', () => {
-    // The surface this cycle measured, held closed. Other areas still have h3s (workflows' drawers,
+    // The surface this change measured, held closed. Other areas still have h3s (workflows' drawers,
     // settings' panels, DiscoverPage) — they sit under an h2 or in a panel, and the sweep found no skip
     // in any of them, so they are deliberately untouched rather than swept on principle.
     const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))

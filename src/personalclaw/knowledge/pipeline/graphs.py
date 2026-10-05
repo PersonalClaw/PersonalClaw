@@ -1,4 +1,4 @@
-"""Per-type pipeline graphs — code-owned OO constructs (#30, Q3).
+"""Per-type pipeline graphs — code-owned OO constructs.
 
 Each knowledge type maps to a :class:`PipelineGraph` subclass that declares its node
 topology in ``build()``. These are NOT user-editable data: the graph shape + lifecycle
@@ -36,7 +36,7 @@ class BookmarkGraph(PipelineGraph):
     content passes through unchanged (no fetch).
 
     The slicer is a leaf here for the same reason as in :class:`DocumentGraph`: a bookmark
-    to an arXiv paper is a document, and the whole point of §5 is that the same
+    to an arXiv paper is a document, and the whole point of the slicer is that the same
     deterministic cut applies however the bytes arrived.
     """
 
@@ -48,13 +48,13 @@ class BookmarkGraph(PipelineGraph):
 
 class DocumentGraph(PipelineGraph):
     """pdf/document/sheet/slides → read file text (pure-python) → consolidate, ‖ slice,
-    with a CONDITIONAL scan branch for a PDF that carries no text layer (KOCR-1):
+    with a CONDITIONAL scan branch for a PDF that carries no text layer:
 
         document_read ─┬─> consolidate
                        ├─> document_slice
                        └─(no-text-layer)─> pdf_rasterize ─> ocr ─> consolidate
 
-    ``document_slice`` (WATCHED-SOURCES §5) hangs off the reader as a LEAF and deliberately
+    ``document_slice`` hangs off the reader as a LEAF and deliberately
     does NOT feed ``consolidate``: consolidate header-concats every upstream it has, so
     routing the slices through it would append three derived views of the document to the
     document itself — tripling the consolidated text the insights/embed stages read.
@@ -81,7 +81,7 @@ class DocumentGraph(PipelineGraph):
 
 class ImageGraph(PipelineGraph):
     """image → exif (pure-python) ‖ ocr + vision (model-backed, skip if no model) →
-    consolidate. Model-backed nodes degrade gracefully (#47). The thumbnail is made
+    consolidate. Model-backed nodes degrade gracefully. The thumbnail is made
     inline at upload (the canonical .thumb.webp the item points at), so the graph does
     not regenerate one."""
 
@@ -103,8 +103,8 @@ class AudioGraph(PipelineGraph):
 
     transcription reuses ``stt``; diarization uses its own use-case. Both the diarization
     branch and speaker_fusion SKIP GRACEFULLY when no diarization model is bound (fusion
-    passes the transcript through), so rich transcripts (L0) work with or without L1. The
-    correction node (LEX.4) likewise no-ops when the Lexicon is empty."""
+    passes the transcript through), so rich transcripts work with or without diarization.
+    The correction node likewise no-ops when the Lexicon is empty."""
 
     def build(self) -> None:
         self.add(NodeSpec(node_type="transcription", backend="stt", uses_use_case="stt"))
@@ -119,7 +119,7 @@ class AudioGraph(PipelineGraph):
 
 
 class VideoGraph(PipelineGraph):
-    """The conditional DAG with an adaptive re-sampling loop (§5 + the vision):
+    """The conditional DAG with an adaptive re-sampling loop:
 
         av_split ─> transcription ──────────────────────────┐
                  └> frame_extract ─> video_classify          │
@@ -181,7 +181,7 @@ class VideoGraph(PipelineGraph):
 class FeedItemGraph(PipelineGraph):
     """A ``raw``-enrichment source item → the fetched feed content IS the extracted text.
 
-    The structural half of WATCHED-SOURCES §6.3's no-AI contract. Every LLM-backed node is
+    The structural half of the watched sources' no-AI contract. Every LLM-backed node is
     ABSENT from this graph rather than present-and-disabled, so no config edit, node-param
     override, or future backend registration can re-enable a model for a raw source. The
     single node is pure-python, which leaves the deterministic terminal work intact: the FTS
@@ -245,10 +245,10 @@ def graph_for(item_type: str, *, enrichment: str = ENRICHMENT_FULL) -> PipelineG
     """Return the validated PipelineGraph for *item_type* under *enrichment*.
 
     Text → passthrough; pdf/doc/sheet/slides → document-read; image/audio/video →
-    their media graphs (#47). Unknown types fall back to the document graph (which
+    their media graphs. Unknown types fall back to the document graph (which
     degrades to the item's raw content when there's no readable file).
 
-    ``enrichment`` is the owning WatchedSource's no-AI setting (WATCHED-SOURCES §6.3).
+    ``enrichment`` is the owning WatchedSource's no-AI setting.
     :data:`~personalclaw.knowledge_providers.base.ENRICHMENT_RAW` overrides the type map: the
     type's own graph may contain LLM nodes (a raw source of images would otherwise route through
     OCR + vision), and the guarantee is that a raw item reaches no model at all, whatever it is.

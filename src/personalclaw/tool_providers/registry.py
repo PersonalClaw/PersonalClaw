@@ -78,7 +78,7 @@ def create_native_provider(config: dict[str, Any] | None = None) -> ToolProvider
 
 def create_automation_provider(config: dict[str, Any] | None = None) -> ToolProvider:
     """Extension factory for the ``personalclaw-automation`` tool surface — in-process over
-    ``mcp_automation`` (§4's `automation_*` namespace: create/list/update/pause/resume/run/
+    ``mcp_automation`` (the `automation_*` namespace: create/list/update/pause/resume/run/
     history/delete over the unified trigger store)."""
     from personalclaw.agents.native.tools import InProcessMcpToolProvider
 
@@ -91,7 +91,7 @@ def create_automation_provider(config: dict[str, Any] | None = None) -> ToolProv
 
 def create_computer_use_provider(config: dict[str, Any] | None = None) -> ToolProvider:
     """Extension factory for the ``personalclaw-computer-use`` tool surface — in-process over
-    ``computer_use.tools`` (`DCU-4`'s seven ``computer_*`` tools).
+    ``computer_use.tools`` (the seven ``computer_*`` tools).
 
     Registered for the same reason every other aggregated category is: ``mcp_core``'s ACP
     surface and the in-process catalog must not diverge
@@ -178,7 +178,7 @@ def create_subagents_provider(config: dict[str, Any] | None = None) -> ToolProvi
 
 def create_code_map_provider(config: dict[str, Any] | None = None) -> ToolProvider:
     """Extension factory for the code-map tool surface — symbol lookup over the
-    tree-sitter codebase index (Context-Economy §5.5), replacing several grep/read
+    tree-sitter codebase index, replacing several grep/read
     round-trips with one call. Registered as ``workflows-tools`` so its group derives
     to ``workflows``; fails soft to grep/read when no index exists."""
     from personalclaw.tool_providers.code_map import CodeMapToolProvider

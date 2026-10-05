@@ -99,8 +99,8 @@ def _trigger_store():
 
     Resolved through this module's `config_dir` so there is exactly ONE place to redirect the
     handler's store — which is what `tests/conftest.py::_isolate_trigger_store` patches. Importing
-    it inside the function instead would defeat that fixture, and S98 already paid for that
-    lesson: the boot migration took `config_dir()` from its caller and wrote to the real home.
+    it inside the function instead would defeat that fixture, and that mistake was made once
+    already: the boot migration took `config_dir()` from its caller and wrote to the real home.
     """
     from personalclaw.triggers.store import TriggerStore
 
@@ -108,7 +108,7 @@ def _trigger_store():
 
 
 def _job_shim_for(state: DashboardState, raw: str) -> Any:
-    """The minimal job-shaped object `inject_schedule_result_to_session` needs (S104).
+    """The minimal job-shaped object `inject_schedule_result_to_session` needs.
 
     Measured: the injection reads exactly `job.id`, `job.name` and `job.agent_id` — nothing else. So
     a store row is projected onto that tiny surface rather than the whole legacy entity, and the
@@ -140,7 +140,7 @@ def _trigger_names(state: DashboardState) -> dict[str, str]:
     too, and a name map that only knew about schedules would blank exactly the rows the new kinds
     contribute.
 
-    Store-only since S110: the boot migration imports every legacy job, INCLUDING the ones it
+    Store-only: the boot migration imports every legacy job, INCLUDING the ones it
     refuses (which it now writes disabled rather than dropping), so there is no id the legacy
     service could name that the store cannot.
     """
@@ -170,10 +170,10 @@ async def _last_result_for(state: DashboardState, raw: str) -> str:
 
 
 def _runs_store() -> Any:
-    """The run-record store, held DIRECTLY rather than through `ScheduleService` (S105).
+    """The run-record store, held DIRECTLY rather than through `ScheduleService`.
 
     🔴 Named `_runs_store`, not `_run_store`: the manual-fire handler is
-    `trigger_runs._run_store(raw, request)` (S94), which lived in this module when the store
+    `trigger_runs._run_store(raw, request)`, which lived in this module when the store
     accessor arrived, and a second function with that name silently SHADOWED it — driven, the
     history endpoint raised "_run_store() missing 2 required positional arguments". Python reports a
     same-name redefinition only at the call site, so the two names stay distinct across the split.
@@ -197,7 +197,7 @@ def _runs_store() -> Any:
 def _last_run_for(trigger_id: str) -> dict[str, Any]:
     """The newest run's PERSISTENT row, or ``{}`` — sync, for the list serializer.
 
-    Same contract `ScheduleService.last_run_status` documented and for the same reason (T7): the
+    Same contract `ScheduleService.last_run_status` documented and for the same reason: the
     honest status survives restarts and distinguishes `launched` from `ok`, where a trigger's own
     field would report a fire-and-forget run as a success. Reads the store's own sync path, once
     per row, so the list serializer stays cheap.
@@ -216,13 +216,13 @@ def _last_run_status_for(trigger_id: str) -> str:
 
 
 def _week_triggers(state: DashboardState) -> list[Any]:
-    """Enabled clock triggers to plot, from the store (S103).
+    """Enabled clock triggers to plot, from the store.
 
     Only ENABLED ones: a disabled trigger has no fires, and drawing them would make the grid a wish
     list rather than a forecast. Broken rows are excluded too — a row the entity refuses has no
     knowable schedule, and plotting a guess is worse than an absence.
 
-    Store-only since S110: the legacy translation retired with `ScheduleService`'s CRUD, because the
+    Store-only: the legacy translation retired with `ScheduleService`'s CRUD, because the
     boot migration imports every legacy job — including the ones it refuses, which it now writes
     disabled rather than dropping.
     """
@@ -242,11 +242,11 @@ def _project_one(
 
     🔴 A CRON NOW PLOTS. The old caller skipped every non-interval trigger with its own admission
     ("a cron trigger is omitted rather than mis-plotted"), which made the week view a forecast of
-    only half a user's automations — silently. S96's `arm.next_fire` can step a cron, so it is
+    only half a user's automations — silently. `arm.next_fire` can step a cron, so it is
     passed to `project_occurrences` as `next_after`. An interval keeps the arithmetic path, because
     a constant step is cheaper and exactly right for it.
 
-    `skip_dates` and `tz_name` are read off the trigger for the reason AUTO-A3 requires: the
+    `skip_dates` and `tz_name` are read off the trigger because the
     SCHEDULER compares skip dates against the date in the trigger's OWN zone, so a grid on server
     time would strike the wrong column for any job that declares one.
     """
@@ -276,7 +276,7 @@ def _project_one(
         # `arm.next_fire` computes the same instant the tick will use, so the forecast is honest
         # whether or not the row happens to be armed yet.
         # 🔴 The RAW cadence, not the skip-aware `next_fire`. `project_occurrences` strikes
-        # a skipped column ITSELF (AUTO-A3's "struck columns"), so a stepper that already advanced
+        # a skipped column ITSELF, so a stepper that already advanced
         # past skipped days would hide exactly the slots the grid exists to show — the user would
         # see a quiet week with no explanation instead of their holiday struck through.
         first = to_epoch(getattr(trigger, "next_fire_at", "")) or raw_next_fire(trigger)
@@ -312,10 +312,10 @@ def _project_one(
 
 
 def _attribution(trigger: Any, *, owner: str) -> dict[str, Any]:
-    """The two attribution keys every store-backed projection carries (TSE-4).
+    """The two attribution keys every store-backed projection carries.
 
-    `read_only` is the FRONTEND's whole instruction for a foreign row (§2.2: "rendered read-only —
-    author chip, no enable/edit/delete"). Computed server-side from the same
+    `read_only` is the FRONTEND's whole instruction for a foreign row (rendered read-only —
+    author chip, no enable/edit/delete). Computed server-side from the same
     `ownership.is_owner_authored` predicate the arm path uses, so the page can never offer a control
     for a row the service would refuse to arm — a UI that derived it from a string comparison of its
     own would be a second opinion about who owns a trigger, and the two would drift.
@@ -332,7 +332,7 @@ def _issue_messages(row: Any) -> tuple[list[str], list[str]]:
     """A loaded row's ``(errors, warnings)`` as plain messages, for the wire.
 
     🔴 ONE OWNER FOR BOTH SEVERITIES (issue 531). `LoadedTrigger` has carried `errors` AND `warnings`
-    since S87 — `validate_spec` raises the `MIN_CLOCK_INTERVAL_SECS` warning for any interval under
+    — `validate_spec` raises the `MIN_CLOCK_INTERVAL_SECS` warning for any interval under
     900s, and its own comment promises "it fires, and it is visibly flagged". It was not flagged:
     every projection below passed `row.errors` only, so the wire had a `broken` key and no
     `warnings` key at all. Measured on a live gateway, on the trigger the create page produces for
@@ -391,8 +391,8 @@ def _serialize_store(row: Any, *, owner: str = "") -> dict[str, Any]:
         "health": trigger.health_status,
         # 🔴 THE LIFECYCLE STATE, which this projection omitted. `Trigger.state` carries
         # `active | paused | autopaused | parked | quarantined | retired` and reached NO surface:
-        # the list rendered an autopaused automation like a running one, so the states S139
-        # (autopause), S159 (park/unpark) and the injection quarantine all decide were invisible
+        # the list rendered an autopaused automation like a running one, so the states
+        # autopause, park/unpark and the injection quarantine all decide were invisible
         # on the one page a user manages automations from. `health` cannot substitute — a PARKED
         # trigger is `health: parked` but an AUTOPAUSED one is `health: failing`, and "failing" does
         # not tell the user the automation has STOPPED.
@@ -446,7 +446,7 @@ def _last_check(trigger: Any) -> dict[str, Any] | None:
 
 
 def _schedule_row_for(state: DashboardState, row: Any, *, owner: str = "") -> dict[str, Any]:
-    """ONE schedule row, projected and masked (S101; the masking is the projection's own).
+    """ONE schedule row, projected and masked (the masking is the projection's own).
 
     Shared by the list (`api_triggers`) and the single-row write responses (create, update), so
     they answer in exactly the same shape. Two projections would drift, and a create that
@@ -465,8 +465,8 @@ def _schedule_row_for(state: DashboardState, row: Any, *, owner: str = "") -> di
     trigger = row.trigger
     errors, warnings = _issue_messages(row)
     store = _trigger_store()
-    # The newest run's row, read once: its status for the honest badge (T7), straight from the RUN
-    # STORE (S105), and what started it (`triggers.run_source`).
+    # The newest run's row, read once: its status for the honest badge, straight from the RUN
+    # STORE, and what started it (`triggers.run_source`).
     last_run = _last_run_for(trigger.id)
     projected = to_schedule_row(
         trigger,
@@ -596,7 +596,7 @@ async def api_trigger_variables(request: web.Request) -> web.Response:
     from :data:`personalclaw.schedule.SCHEDULE_VARS`; data-event vars from
     :data:`personalclaw.event_triggers.EVENT_VARS`, beside `fire_payload`, which builds them.
 
-    ``app_sources`` (AUTO-A4) is the LIVE app-contributed event vocabulary, read from the
+    ``app_sources`` is the LIVE app-contributed event vocabulary, read from the
     ``trigger_sources`` registry rather than from manifests: a declared source whose app is
     disabled is not registered, and offering its events would let a user author a trigger that
     cannot fire until they realise the app is off. Served here rather than on a new route for the
@@ -642,7 +642,7 @@ async def api_trigger_variables(request: web.Request) -> web.Response:
 
 
 def _app_source_catalog() -> list[dict[str, Any]]:
-    """The live app-contributed event vocabulary (AUTO-A4), sorted by app then by event.
+    """The live app-contributed event vocabulary, sorted by app then by event.
 
     Each event carries BOTH its bare name and its full namespaced form, because those answer
     different questions: the bare name is what the app's own docs call it, and `source_event` is the
@@ -684,17 +684,17 @@ def _gather(state: DashboardState, kind: str) -> list[Any]:
 
     The Triggers page lists it and the status strip counts it, and both read it HERE. The count was
     a hand-copied duplicate of the list's gathering, and the strip said "6 triggers" over a page
-    that listed 5 (day 8).
+    that listed 5.
 
-    * ``schedule``: the unified store's ``clock`` rows (§6's re-point, S99).
+    * ``schedule``: the unified store's ``clock`` rows.
     * ``lifecycle``: every hook in the hook store.
     * ``store``: every OTHER unified-store row — data events, file and web watches, idle, manual,
-      … Broken rows (S87 lenient parse) are included, not hidden: a broken automation invisible on
+      … Broken rows (lenient parse) are included, not hidden: a broken automation invisible on
       its own page is undebuggable.
     * ``callback``: every callback the agent registered (`webhook_callbacks`).
 
     ``all_rows``, not ``store.load()``: a registered ``trigger`` provider's rows belong on this page
-    too (TSE-4). Raises on a source that cannot be read; the caller decides what that means.
+    too. Raises on a source that cannot be read; the caller decides what that means.
     """
     if kind in (_SCHEDULE, _STORE):
         from personalclaw.triggers.provider import all_rows
@@ -976,7 +976,7 @@ def _create_run_completed(state: DashboardState, body: dict, request: web.Reques
 
 
 def _create_event(state: DashboardState, body: dict, request: web.Request) -> web.Response:
-    """Create a data-event trigger (#38): a `kind: "event"` row in the one trigger store.
+    """Create a data-event trigger: a `kind: "event"` row in the one trigger store.
 
     🔴 THE STORE IT LANDS IN is the whole fix. This used to write `event_triggers.json`, a second
     store with its own engine: the trigger fired, but no run was ever recorded and nothing else in
@@ -988,7 +988,7 @@ def _create_event(state: DashboardState, body: dict, request: web.Request) -> we
     The body carries ``pattern`` and that pattern's ONE matcher field (the form sends exactly that);
     the source is DERIVED from the pattern, never taken from the wire — a client-supplied source
     could contradict the pattern and defeat the isolation the source gate exists to enforce. A
-    catastrophic ``content_re`` warns rather than refuses (§7/R4 rule d — S128): it runs on the
+    catastrophic ``content_re`` warns rather than refuses: it runs on the
     memory-write path, so the risk is named where the author will see it.
     """
     from personalclaw.event_triggers import (
@@ -1342,7 +1342,7 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
                 resources=f"trigger:lifecycle:{raw}:{hook.name if hook else 'unknown'}",
             )
             return web.json_response({"ok": True})
-        # schedule — the store owns the row (§6 write re-point). Run HISTORY still lives in
+        # schedule — the store owns the row (the write re-point). Run HISTORY still lives in
         # `ScheduleRunStore` (keyed by a plain id, so it survives the cutover unchanged), so the
         # delete has two halves: drop the trigger, then drop its runs.
         store = _trigger_store()
@@ -1623,7 +1623,7 @@ def _update_schedule(
     # 🔴 the write re-point: the store owns the row. Legacy kwargs are translated onto the
     # entity's own addresses (`LEGACY_FIELD_MAP`) — cadence into `spec`, channel/silent into
     # `delivery`, the action into `workflow.inline` — and applied through `tools.update`, whose
-    # allowlist protects the health fields §3.7 autopauses on.
+    # allowlist protects the health fields autopause acts on.
     store = _trigger_store()
     row = store.get(raw)
     if row is not None:
@@ -1689,7 +1689,7 @@ def _update_schedule(
         if "failure_delivery" in kwargs:
             patch["failure_delivery"] = str(kwargs["failure_delivery"] or "").strip()
         if "failure_dedupe" in kwargs:
-            # 🔴 MERGED, never replaced. `failure_policy` also holds `autopause_after`, the §3.7
+            # 🔴 MERGED, never replaced. `failure_policy` also holds `autopause_after`, the
             # threshold `autopause.evaluate` reads, and the form owns exactly one of its keys.
             # Sending `{"dedupe_hash": …}` alone would silently reset a user's tuned failure budget
             # to the default — the quietly-losable class `_carried` exists for one field up.
@@ -1721,10 +1721,10 @@ def _update_schedule(
 
 
 def _carried(spec: dict[str, Any]) -> dict[str, Any]:
-    """Spec keys that survive a CADENCE change (S101).
+    """Spec keys that survive a CADENCE change.
 
     Replacing `{kind, expr}` wholesale would silently drop `timezone`/`skip_dates`/`strict` — the
-    quietly-losable class §1.3 warns about, and the exact fields S91's `verify-migration` exists to
+    quietly-losable class, and the exact fields `verify-migration` exists to
     catch going missing. A user changing `0 9 * * *` to `0 10 * * *` must not lose their holidays.
     """
     return {k: v for k, v in spec.items() if k in ("timezone", "skip_dates", "strict")}
@@ -1978,7 +1978,7 @@ def _redact_run(run: dict[str, Any], *, job_name: str | None = None) -> dict[str
 async def api_trigger_history(request: web.Request) -> web.Response:
     """GET /api/triggers/{id}/history — run records; other kinds answer `supported: false`.
 
-    No longer touches `state` (S105): the run records come straight from `ScheduleRunStore`, so this
+    No longer touches `state`: the run records come straight from `ScheduleRunStore`, so this
     handler is fully decoupled from `ScheduleService`.
     """
     kind, raw = _split_id(request.match_info["id"])
@@ -2022,13 +2022,13 @@ async def api_trigger_history(request: web.Request) -> web.Response:
 async def api_trigger_history_detail(request: web.Request) -> web.Response:
     """GET /api/triggers/{id}/history/{run_id} — one full run record.
 
-    Reads the run store directly (S105), so this handler no longer touches `state` at all — the
+    Reads the run store directly, so this handler no longer touches `state` at all — the
     clearest possible evidence that the run-record surface is fully decoupled from
     `ScheduleService`.
     """
     kind, raw = _split_id(request.match_info["id"])
     # 🔴 A STORE trigger's run must open too. This 404'd every non-schedule kind, so the
-    # list route S166 just fixed hands the UI a `run_id` that the detail route then denies — the
+    # newly fixed list route hands the UI a `run_id` that the detail route then denies — the
     # expander opens on nothing. `LIST -> total=1 run_id='fire-…'` followed by
     # `DETAIL -> 404`. `get_run(raw, run_id)` already works with a store key (verified against a
     # real `file:notes` row), so the gate was the whole defect.
@@ -2048,7 +2048,7 @@ async def api_trigger_history_detail(request: web.Request) -> web.Response:
 
 
 async def api_triggers_week(request: web.Request) -> web.Response:
-    """GET /api/triggers/week — the week-grid projection, from `?start=` (AUTO-A1 — S70).
+    """GET /api/triggers/week — the week-grid projection, from `?start=`.
 
     Read-only, and NO store changes: every occurrence is computed from the recurrence the trigger
     already carries. Quiet windows come back as ANNOTATIONS on each slot rather than as filters — a
@@ -2120,7 +2120,7 @@ async def api_triggers_week(request: web.Request) -> web.Response:
 
 
 async def api_triggers_doctor(request: web.Request) -> web.Response:
-    """GET /api/triggers/doctor — structural problems across every trigger (§7 criterion 12).
+    """GET /api/triggers/doctor — structural problems across every trigger.
 
     Every finding here is invisible at runtime: the trigger looks configured and behaves differently
     than its author intended. An orphaned workflow ref fires and fails forever; a broad watch glob
@@ -2266,9 +2266,9 @@ async def api_triggers_doctor(request: web.Request) -> web.Response:
 
 
 async def api_trigger_history_all(request: web.Request) -> web.Response:
-    """GET /api/triggers/history — the run feed across every kind (AUTO crit 4).
+    """GET /api/triggers/history — the run feed across every kind.
 
-    Criterion 4: "a hook, an event trigger, and a cron all show run history in the same
+    The contract: "a hook, an event trigger, and a cron all show run history in the same
     feed with the same record shape and typed outcomes". This route existed and was
     **schedule-only** — its own docstring said "(schedule runs)" — so the feed a user opens
     to answer "what did my machine do" showed one kind of automation and silently omitted
@@ -2278,7 +2278,7 @@ async def api_trigger_history_all(request: web.Request) -> web.Response:
     `?shape=legacy` keeps the raw `ScheduleRun` dicts for the cron-history UI, which renders
     `trace`/`summary` fields the typed row does not carry. The default is the UNIFIED shape:
     a caller asking for history without naming a shape wants the honest cross-kind answer,
-    and defaulting to legacy would mean the criterion is met only by a flag nobody sets.
+    and defaulting to legacy would mean the contract is met only by a flag nobody sets.
     """
     from personalclaw.triggers import history as H
 
@@ -2338,7 +2338,7 @@ async def api_trigger_history_all(request: web.Request) -> web.Response:
 
 
 async def api_trigger_review(request: web.Request) -> web.Response:
-    """GET / POST /api/triggers/review — what a restart left for you to decide (§3.4).
+    """GET / POST /api/triggers/review — what a restart left for you to decide.
 
     GET lists the cards `triggers/review.py` keeps: each automation's missed runs, and each run a
     restart interrupted. POST ``{trigger_id, kind, action}`` decides one: ``run_now`` runs the
@@ -2472,7 +2472,7 @@ def register_trigger_routes(app: web.Application) -> None:
     app.router.add_get("/api/triggers/variables", api_trigger_variables)
     app.router.add_get("/api/triggers/history", api_trigger_history_all)
     # Registered BEFORE `/{id}` so aiohttp does not capture the literal segments as trigger ids —
-    # the ordering landmine S67 already paid for with `/surfacing`.
+    # the ordering landmine `/surfacing` already paid for.
     app.router.add_get("/api/triggers/week", api_triggers_week)
     app.router.add_get("/api/triggers/doctor", api_triggers_doctor)
     # The `view` kind's render caller. Literal path, registered BEFORE `/{id}` for the

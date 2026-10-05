@@ -1,4 +1,4 @@
-"""Diarization (core L1) — the "who spoke when" capability + provider registry.
+"""Diarization — the "who spoke when" capability + provider registry.
 
 Its own first-class use-case (parallel to ``stt``), served by a separate diarization
 provider app (ONNX default + optional pyannote). Core owns the seam + registry + the

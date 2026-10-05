@@ -168,7 +168,7 @@ def reconcile_heartbeat_tasks_trigger(store: Any) -> None:
         if existing is None:
             trigger.spec = {"kind": "interval", "interval_secs": INTERVAL_SECS}
         trigger.workflow = {"inline": {"provider": PROVIDER_NAME, "config": {}}}
-        # The frozen grant (decision 7): each task is an unattended agent turn, and a
+        # The frozen grant: each task is an unattended agent turn, and a
         # system-created trigger's opt-in is the code path that created it. Whether a task runs at
         # all is the owner's yes to that task, not this grant (`heartbeat.allowed`).
         trigger.capabilities = _screen.capabilities_for_action(trigger)

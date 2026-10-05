@@ -7,7 +7,7 @@
  *  a `<widget kind="genui">` block. Keep the set SMALL — every component costs
  *  prompt space. Charts follow the dataviz conventions (one series = one token).
  *
- *  Most are pure presentational components (AS-4 is the render core). The `Forms`
+ *  Most are pure presentational components. The `Forms`
  *  group is the action-bearing set: activating one emits the dual
  *  payload through the host's emitter — the component never knows, or chooses,
  *  where that action is routed. */

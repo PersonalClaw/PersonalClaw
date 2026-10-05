@@ -6,7 +6,7 @@ import { join } from 'node:path'
 //
 // `TextLink` deliberately grows its hit box with `py-1 -my-1`: the padding takes it to 26px tall for
 // SC 2.5.8, and the negative margin hands the 4px back so a link inside a sentence keeps the line's
-// rhythm (cycle 115 measured that switching to `inline-flex` instead moved 0.83% of the pixels on
+// rhythm (switching to `inline-flex` instead was measured to move 0.83% of the pixels on
 // `#/tasks`). The consequence for LAYOUT is that a TextLink bleeds 4px past its box on both sides, so
 // a flex container that stacks two of them needs `gap-y > 8px` before there is any real space at all.
 //

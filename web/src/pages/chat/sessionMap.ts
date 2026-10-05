@@ -8,7 +8,7 @@
  *     (`dashboard/chat_session_map.py`) mirrors field for field, which is why its closed
  *     vocabulary stays here even though the rail no longer draws every kind.
  *   · the MAP — `SessionMapEntry` / `sessionMapEntries`: what the rail and the drawer actually
- *     show, which is ONE ENTRY PER USER MESSAGE (see `sessionMapEntries` for the owner's ruling).
+ *     show, which is ONE ENTRY PER USER MESSAGE (see `sessionMapEntries` for why).
  *     An entry is the typed index grouped by exchange, so the two can never disagree about which
  *     turns belong to which question.
  *
@@ -51,7 +51,7 @@ export interface SessionMark {
    *  the hover card, and the accessible name. Always a string. */
   preview: string
   /** Tool-mark ONLY: mirrors `ToolSegment.ok` — present and `false` on a FAILED tool call,
-   *  `undefined` otherwise. Carried because §A.2 paints a failed tool mark `--color-danger`,
+   *  `undefined` otherwise. Carried because a failed tool mark is painted `--color-danger`,
    *  and that outcome cannot be recovered from a mark once the raw segment is gone. */
   ok?: boolean
 }
@@ -72,8 +72,8 @@ function toolPreview(tool: string, detail?: string, input?: string): string {
 
 /** Map a single segment to its sub-event mark payload, or `null` when the segment is not an
  *  index event. `text` / `thinking` never produce a mark — the turn mark already stands for
- *  the body. An `activity` segment is marked ONLY when it carries an `activityKind` (§A.2
- *  keys the mark on it): a bare coarse "Thinking…" activity line is not an index-worthy
+ *  the body. An `activity` segment is marked ONLY when it carries an `activityKind` (the mark
+ *  is keyed on it): a bare coarse "Thinking…" activity line is not an index-worthy
  *  event and would only clutter the map. */
 function subEventMark(seg: Segment): Pick<SessionMark, 'kind' | 'preview' | 'ok'> | null {
   switch (seg.kind) {
@@ -93,7 +93,7 @@ function subEventMark(seg: Segment): Pick<SessionMark, 'kind' | 'preview' | 'ok'
 
 /** Derive the ordered Session Map marks from the hydrated transcript, plus the live
  *  subagent cards (which are NOT `ChatTurn` segments — they ride the parallel
- *  `subagent_spawn/tool/done` WS stream into `SubagentCard[]`, §A.2, so they enter here as
+ *  `subagent_spawn/tool/done` WS stream into `SubagentCard[]`, so they enter here as
  *  an optional second argument rather than being invented as a segment kind).
  *
  *  Emits ONE mark per turn (kind = its role), then one typed sub-event mark for each
@@ -149,9 +149,9 @@ export interface SessionMapEntry {
 
 /** The map's entries: ONE PER USER MESSAGE.
  *
- *  🔑 THE OWNER'S RULING, and why the typed index is not what the rail draws any more.
+ *  🔑 ONLY USER MESSAGES, and why the typed index is not what the rail draws any more.
  *  Asked for a map of the conversation, the rail had been drawing every assistant reply and every
- *  tool call, approval and stats line as a mark of its own. The owner: the map should be "only a map
+ *  tool call, approval and stats line as a mark of its own. The map should be "only a map
  *  of user messages", because an assistant response is too long to show in any case, and its
  *  beginning is already visible at the bottom of the user message's hover card. So an entry is a
  *  QUESTION: its card previews the start of the answer, and the answer's turns belong to it.

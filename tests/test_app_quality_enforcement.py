@@ -1,7 +1,7 @@
 """A dishonest quality declaration must turn CI red.
 
 This change's subject IS declared-vs-actual honesty, which makes it self-referential: if
-the enforcement were unrailed, APE-4 would have shipped the very defect it exists to
+the enforcement were unrailed, this change would have shipped the very defect it exists to
 catch — a control that claims something and is never checked. So the load-bearing
 assertion here is not that the schema parses or that a badge renders. It is that **a
 claim which is false fails the build**, proven by planting a lie on each axis and

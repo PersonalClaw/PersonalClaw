@@ -1,4 +1,4 @@
-"""Conversation-turn rollback — `/undo N` (power-user-surfaces P7).
+"""Conversation-turn rollback — `/undo N`.
 
 Rolls the conversation back N turns: removes the last N user→assistant turns from
 the session's message history (in-memory AND persisted transcript), returning to an

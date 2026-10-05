@@ -29,8 +29,8 @@ export interface SidePanelData {
  *  This panel owns NO navigation. It used to open on an "Index" tab — a user-message
  *  outline whose rows jumped to a turn — and the Session Map superseded it: the
  *  map is the in-session index, always-available rather than behind a panel, and it
- *  marks tool calls / approvals / errors / subagents as well as user turns. SSM-13
- *  deleted the tab rather than keeping both, so there is exactly one jump surface.
+ *  marks tool calls / approvals / errors / subagents as well as user turns. The tab
+ *  was deleted rather than kept beside it, so there is exactly one jump surface.
  *  `indexTabRetired.test.tsx` is the rail that keeps it that way. */
 export function ChatActivityPanel({ activity, onOpenFile, subagents = [], onKillFanout, side }: {
   activity: ChatActivity

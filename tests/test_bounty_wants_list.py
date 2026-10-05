@@ -1,7 +1,7 @@
-"""The app bounty wants-list is executable, not prose (ECOSYSTEM-TOOLING ET-7 input).
+"""The app bounty wants-list is executable, not prose.
 
-``docs/maintainers/app-bounty-wants-list.md`` is the single list two plans consume:
-``ET-7`` files one ``bounty`` issue per row, and ``CE-9`` files the three channel rows.
+``docs/maintainers/app-bounty-wants-list.md`` is the single list the bounty issues come from:
+one ``bounty`` issue is filed per row, the three channel rows included.
 A wants-list is exactly the kind of doc that rots silently — it names provider types,
 scaffold commands and file paths, and every one of those can go stale while the table
 still *reads* fine. A contributor who picks up a rotted bounty burns an evening
@@ -15,11 +15,11 @@ So the things a bounty issue would carry over into the public are asserted here:
    registration step to wait on" — asserted by resolving each type through the real
    ``cli_app_new`` type table, the same table ``personalclaw app new --list-types``
    prints.
-3. **At least six rows, spanning all three families.** The acceptance criteria bar is
+3. **At least six rows, spanning all three families.** The bar is
    "≥6 ``bounty`` issues (channels + providers + sources)"; a list that silently fell
-   to five, or lost a family, would fail that change at posting time rather than here.
-4. **The three channel rows are exactly the three channels the plan names.** ``T7.3``
-   names WhatsApp, Signal and Matrix; the check pins that set from outside the table
+   to five, or lost a family, would fail at posting time rather than here.
+4. **The three channel rows are exactly the three wanted channels.** Those are
+   WhatsApp, Signal and Matrix; the check pins that set from outside the table
    rather than reading it back, so a fourth channel row or a silently swapped one reds.
 
 Cited in-tree paths are checked too — the docs-lint ratchet catches a dead *link*, but
@@ -39,7 +39,7 @@ risk statement.
 Every check above validates a row's SHAPE. Not one of them ever asked whether the row's
 claimed GAP still exists — so the file carried a suite that made it look executable
 while a justification went false underneath. It happened: the ``trigger_source`` row
-correctly measured 0/4 adoption across the first-party channel apps, ``CE-10`` drove
+correctly measured 0/4 adoption across the first-party channel apps, one change drove
 that to 4/4 hours after this list merged, and every test here stayed green while the
 list went on publicly soliciting work that was already built and tested.
 
@@ -88,9 +88,9 @@ _WANTS_LIST = _REPO_ROOT / "docs" / "maintainers" / "app-bounty-wants-list.md"
 _MIN_ROWS = 6
 _FAMILIES = frozenset({"channel", "provider", "source"})
 
-#: The three channels CHANNEL-EXPANSION T7.3 names. Not derived from the table under
-#: test — the point is to pin the plan's list against the table independently.
-_T73_CHANNELS = ("WhatsApp", "Signal", "Matrix")
+#: The three wanted channels. Not derived from the table under
+#: test — the point is to pin the intended list against the table independently.
+_WANTED_CHANNELS = ("WhatsApp", "Signal", "Matrix")
 
 #: The ``Ground`` cell value that makes a row a claim about another repository's contents
 #: at a moment in time — the only kind of row that can rot without anybody touching it.
@@ -241,11 +241,11 @@ def test_population_stamp_is_a_real_measurement(population_stamp: tuple[str, str
 
 
 def test_every_measured_gap_row_is_dated(rows: list[Row]) -> None:
-    """A measured gap carries its vintage; a plan-named row does not borrow the look of one.
+    """A measured gap carries its vintage; a named row does not borrow the look of one.
 
     Both directions matter. An undated gap claim is the defect — a row that reads as
     measured but names no day or ref cannot be re-checked by anybody. A *stamped* row whose
-    ground is "named by a plan" is the mirror defect: it dresses an editorial choice up as
+    ground is "named" is the mirror defect: it dresses an editorial choice up as
     evidence.
     """
     undated = [
@@ -260,7 +260,7 @@ def test_every_measured_gap_row_is_dated(rows: list[Row]) -> None:
     borrowed = [r.number for r in rows if r.ground != _MEASURED_GROUND and _STAMP_RE.search(r.why)]
     assert not borrowed, (
         f"{_WANTS_LIST.name}: row(s) {borrowed} carry a measurement stamp but their ground "
-        f"is not {_MEASURED_GROUND!r} — a plan-named row must not present itself as measured"
+        f"is not {_MEASURED_GROUND!r} — a named row must not present itself as measured"
     )
     for row in rows:
         if row.ground == _MEASURED_GROUND:
@@ -379,37 +379,37 @@ def test_every_wanted_type_scaffolds_today(rows: list[Row]) -> None:
     assert not unlisted, f"type(s) absent from the printed --list-types table: {unlisted}"
 
 
-def test_clears_et7_count_and_family_bar(rows: list[Row]) -> None:
+def test_clears_the_bounty_count_and_family_bar(rows: list[Row]) -> None:
     """≥6 rows spanning channels + providers + sources — the literal bar."""
     assert len(rows) >= _MIN_ROWS, (
-        f"wants-list has {len(rows)} rows; ET-7's done_when needs ≥{_MIN_ROWS} bounties "
+        f"wants-list has {len(rows)} rows; the bounty bar needs ≥{_MIN_ROWS} bounties "
         "(channels + providers + sources)"
     )
     families = {r.family for r in rows}
     assert families <= _FAMILIES, f"unknown family value(s): {sorted(families - _FAMILIES)}"
     assert families == _FAMILIES, (
-        f"wants-list covers only {sorted(families)}; ET-7 names all three families "
+        f"wants-list covers only {sorted(families)}; the bar names all three families "
         f"({sorted(_FAMILIES)})"
     )
 
 
-def test_channel_rows_are_exactly_the_three_the_plan_names(rows: list[Row]) -> None:
+def test_channel_rows_are_exactly_the_three_wanted_channels(rows: list[Row]) -> None:
     """The channel rows are exactly the three channels — no more, no fewer.
 
-    Pinned from ``_T73_CHANNELS`` rather than read back off the table under test, so the
+    Pinned from ``_WANTED_CHANNELS`` rather than read back off the table under test, so the
     assertion cannot be satisfied by whatever the table happens to say. A fourth channel row
-    is a bounty nobody decided to offer; a swapped one files an issue for a service the plan
-    never chose.
+    is a bounty nobody decided to offer; a swapped one files an issue for a service nobody
+    chose.
     """
     channel_rows = [r for r in rows if r.family == "channel"]
-    assert len(channel_rows) == len(_T73_CHANNELS), (
-        f"expected {len(_T73_CHANNELS)} channel rows (T7.3 names "
-        f"{', '.join(_T73_CHANNELS)}), got {[r.app for r in channel_rows]}"
+    assert len(channel_rows) == len(_WANTED_CHANNELS), (
+        f"expected {len(_WANTED_CHANNELS)} channel rows (the wanted set is "
+        f"{', '.join(_WANTED_CHANNELS)}), got {[r.app for r in channel_rows]}"
     )
     for row in channel_rows:
         assert _unwrap_code(row.type) == "channel", f"{row!r} is family=channel but type≠channel"
 
-    for name in _T73_CHANNELS:
+    for name in _WANTED_CHANNELS:
         assert any(name in r.app for r in channel_rows), f"wants-list has no {name} channel row"
 
 

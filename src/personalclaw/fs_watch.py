@@ -1,4 +1,4 @@
-"""Config-tree FS watcher → live UI refresh (#44, filesystem-as-truth).
+"""Config-tree FS watcher → live UI refresh (filesystem-as-truth).
 
 PClaw's editable state lives on disk (config.json, agents/, skills/, lessons). When a
 file changes *out of band* (edited on disk, by another tool, by an agent), the UI
@@ -128,9 +128,9 @@ class ConfigFsWatcher:
 def default_config_roots():
     """The editable config trees: config.json + agents/ + skills/.
 
-    The old `workflows/` tree (one WORKFLOW.md per SOP dir) is gone with the feature
-    (WORKFLOWS-V2 Phase 1). Slice 0 re-adds the v2 `workflows/defs/` layout — watching
-    the bare `workflows/` dir meanwhile would fire on the archived _legacy_sops/ move.
+    The old `workflows/` tree (one WORKFLOW.md per SOP dir) is gone with the feature.
+    The v2 layout lives in `workflows/defs/` — watching the bare `workflows/` dir would
+    fire on the archived _legacy_sops/ move.
     """
     from personalclaw.config.loader import config_dir
 

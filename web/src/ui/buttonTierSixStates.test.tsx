@@ -211,7 +211,7 @@ describe('the three tiers spell spacing in tokens, not Tailwind defaults', () =>
     readFileSync(join(UI, f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
   // `gap-1`/`gap-1.5`/`px-2` all COMPILE (Tailwind's own defaults leak past the scale) and all
-  // bypass `--space-scale` and cli density — system.md trap 3. `gap-1`→`gap-xs` and `px-2`→`px-s`
+  // bypass `--space-scale` and cli density. `gap-1`→`gap-xs` and `px-2`→`px-s`
   // are pixel-identical at comfortable density (4px, 8px); `gap-1.5`→`gap-xs` is NOT (6px → 4px,
   // and 6px is not a rung on the scale at all), and it lands on the icon↔label gap QuietButton
   // and SquareIconButton already use.

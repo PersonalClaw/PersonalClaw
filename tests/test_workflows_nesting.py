@@ -1,4 +1,4 @@
-"""Subworkflow nesting and foreach concurrency (Slice 10a).
+"""Subworkflow nesting and foreach concurrency.
 
 **Nesting is a real CHILD RUN, not an inlined subtree.** That costs a row and a directory and buys
 everything that matters: the child can be rewound, resumed, forked and inspected on its own; a
@@ -492,7 +492,7 @@ class TestForeachConcurrency:
 
 
 class TestPipelineFlag:
-    """`pipeline` is accepted and documented. The plan describes it as "no barrier between
+    """`pipeline` is accepted and documented. Its intent is "no barrier between
     stages"; measured against the real engine there is no barrier to remove — each item's body is
     an independent subtree and the frontier is re-derived every tick, so an item advances as soon
     as its OWN previous stage finishes. These tests pin that, so a future change that introduces a

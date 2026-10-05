@@ -56,15 +56,15 @@ describe('epochSeconds', () => {
 })
 
 describe('the two session shapes agree about their timestamps', () => {
-  // ── Cycle 173: the declaration that made cycle 166's phantom look real ────────────────────────
+  // ── The declaration that made a phantom defect look real ──────────────────────────────────────
   //
   // `ChatSession` (the `POST /api/chat/sessions` response) declared `last_ts?: number`.
   // `ChatSessionSummary` (the GET list) declared the SAME field `string`. One entity, two shapes,
   // disagreeing — and read from the wire, the POST returns `last_ts: ""`. **A string.**
   //
   // Nothing consumed it off `ChatSession`, so nothing broke. What it did was make a real-looking
-  // defect: cycle 166 found a note claiming `#/chat`'s labels "render BLANK because they are fed a
-  // NUMBER", deferred to its own cycle — and that number came from this declaration, not from any
+  // defect: an earlier review found a note claiming `#/chat`'s labels "render BLANK because they are fed a
+  // NUMBER", deferred as its own fix — and that number came from this declaration, not from any
   // payload. A wrong type does not only fail to protect you; it actively misleads the next reader.
   //
   // 🪤 THE RULE THIS FILE ALREADY STATED, now enforced: a type is "a declaration, not a check —

@@ -46,7 +46,7 @@ export const ROUTES: RouteEntry[] = [
 // `#/settings` renders the bento HOME grid; every panel lives at its own route and
 // mounts only when you go there. So scanning `settings` covered 1 of 31 surfaces, and
 // the other 30 never rendered under axe at all — three of the five defects found by
-// hand in cycle 49 lived here (design's sub-AA preview, security's unscrollable
+// hand in one audit lived here (design's sub-AA preview, security's unscrollable
 // denylist, audit's nameless refresh button).
 //
 // These need NO interaction recipe: each is a plain hash route. Mirror of SUBPAGES in

@@ -282,7 +282,7 @@ def compress_payload(value: Any, *, cap: int = SIBLING_PAYLOAD_CAP_CHARS) -> tup
 
     Deterministic truncation with a marker, not an LLM summarize: this runs on the hot path of
     every cycle, and a model call here would add a failure mode and a cost to the very
-    mechanism that exists to bound cost. The plan's LLM-summarize path is the caller's to add
+    mechanism that exists to bound cost. An LLM-summarize path is the caller's to add
     around this — a truncate is the fallback that must always work.
 
     Truncation keeps the HEAD, and says how much it dropped. A silent truncation reads as a

@@ -1,4 +1,4 @@
-"""Runner lifecycle — idle-release, lease records, transparent reconnect (§3.1(5)).
+"""Runner lifecycle — idle-release, lease records, transparent reconnect.
 
 A chat that starts an external runner (an ``acp:<cli>`` runtime) holds it, and two facts about
 that used to live nowhere: *who is holding what*, and whether a holder went quiet. Both gaps
@@ -8,14 +8,14 @@ as any observer could tell (forever, silently). The session manager records the 
 chat's runtime starts (``session._record_runner_lease``).
 
 This module adds the durable half, and deliberately does NOT invent a second locking scheme
-for it. It is an APPLICATION of the WORK-R8 claim convention in
+for it. It is an APPLICATION of the workflow claim convention in
 :mod:`personalclaw.workflows.leases`: a flock (mutual exclusion for the read-modify-write) over
 a JSON file under ``~/.personalclaw/locks/leases/`` whose recorded ``expires_at`` is the lease.
 Same record shape, same directory, same expiry-at-render rule. Two lease systems that drift is
-a documented risk of this plan; one convention with two target namespaces is not.
+a known risk; one convention with two target namespaces is not.
 
-The target namespace is ``runner:<runtime_id>`` — disjoint from the run/task ids WORK-R8 uses,
-so neither can shadow the other.
+The target namespace is ``runner:<runtime_id>`` — disjoint from the run/task ids workflow claims
+use, so neither can shadow the other.
 
 **What the lease is and is not.** It is not a lock: nothing waits on it or is refused by it.
 It is the *observable* record — what a co-tenant session and the Settings surface read to
@@ -49,7 +49,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 logger = logging.getLogger(__name__)
 
-#: Lease target prefix. Keeps runner leases from ever colliding with WORK-R8's run/task ids
+#: Lease target prefix. Keeps runner leases from ever colliding with workflow claims' run/task ids
 #: even though they share one directory and one record shape.
 RUNNER_LEASE_PREFIX = "runner:"
 
@@ -61,7 +61,7 @@ IDLE_RELEASE_MAX_SECS = 86_400
 
 
 def lease_target(runtime_id: str) -> str:
-    """The WORK-R8 lease target id for a runner runtime."""
+    """The lease target id for a runner runtime."""
     return f"{RUNNER_LEASE_PREFIX}{runtime_id}"
 
 
@@ -82,7 +82,7 @@ def idle_release_secs() -> int:
 
 
 def durable_sessions_enabled() -> bool:
-    """Whether durable tmux-backed sessions are on AND usable (§5.1).
+    """Whether durable tmux-backed sessions are on AND usable.
 
     BOTH gates, deliberately: the config flag is the user's intent and the binary probe is
     reality. tmux missing means the feature is silently off and behaviour is identical to
@@ -122,7 +122,7 @@ def claim_runner(
 
 
 def release_runner(runtime_id: str, holder: str) -> tuple["Claim | None", str]:
-    """Drop *holder*'s lease on *runtime_id*. Only the holder may (WORK-R8's rule)."""
+    """Drop *holder*'s lease on *runtime_id*. Only the holder may (the lease convention's rule)."""
     if not runtime_id or not holder:
         return None, "no holder"
     from personalclaw.workflows import leases
@@ -164,12 +164,12 @@ def sweep_idle_leases(*, now: float | None = None) -> list[str]:
     """Delete every runner lease whose idle window has elapsed. Returns the runtime ids.
 
     Enumerated from the runner catalog rather than by scanning the leases directory: the
-    directory is shared with WORK-R8's run/task claims, and a sweep that walked it would be
+    directory is shared with the workflow run/task claims, and a sweep that walked it would be
     one prefix-matching bug away from releasing a workflow claim. The catalog is the set of
     runners that can be leased at all.
 
-    The release is issued AS the recorded holder, so WORK-R8's holder-only release rule is
-    honoured rather than bypassed — an expired lease is still somebody's record, and the one
+    The release is issued AS the recorded holder, so the lease convention's holder-only release
+    rule is honoured rather than bypassed — an expired lease is still somebody's record, and the one
     function allowed to drop it is the same one a live holder would call.
     """
     ts = time.time() if now is None else now

@@ -33,8 +33,8 @@ import { join } from 'node:path'
 // derived form — "an empty catch around an `api.*` write must state a reason" — has a population of
 // 28 and would currently also flag four `/* ignore */` sites that a separate open change resolves.
 // Writing it before those land would either red on arrival or need an exemption set that the other
-// change cannot remove. Census recorded in `.validation/ux/PRODUCT-POLISH.md` §4 so it can be
-// written once, cleanly, rather than half-written twice.
+// change cannot remove. It waits for them so it can be written once, cleanly, rather than
+// half-written twice.
 
 const SRC = join(process.cwd(), 'src')
 const widget = readFileSync(join(SRC, 'ui/SystemWidget.tsx'), 'utf8')

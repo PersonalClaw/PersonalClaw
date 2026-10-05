@@ -10,9 +10,9 @@ Holds two pieces of state:
 
 The registry validates two invariants at registration time:
 
-* The entry's ``type`` is a known type (Requirement R1.3).
+* The entry's ``type`` is a known type.
 * The entry's ``declared_capabilities`` are a subset of the type's
-  registered capability set (Requirement R1.4).
+  registered capability set.
 
 It does NOT instantiate providers eagerly; :meth:`ProviderRegistry.build`
 invokes the registered factory on demand. This module is loaded as a side
@@ -78,7 +78,7 @@ inference session (no ``start()``, no ``session_key``)."""
 
 Concrete provider modules register a factory per type. The factory is
 expected to construct an :class:`ModelProvider` whose declared capability
-set is a superset of ``entry.declared_capabilities`` (Requirement R1.7).
+set is a superset of ``entry.declared_capabilities``.
 """
 
 
@@ -306,8 +306,8 @@ class ProviderRegistry:
     def register_entry(self, entry: ProviderEntry) -> None:
         """Register a configured Provider_Entry by name.
 
-        If the provider's type is already registered, validates capabilities
-        (R1.3/R1.4). If the type ISN'T registered yet (the app that owns it
+        If the provider's type is already registered, validates capabilities.
+        If the type ISN'T registered yet (the app that owns it
         may load after sync_entries_from_config in some boot paths), the entry
         is still stored — the type will be available by inference time. A
         duplicate name is a no-op (idempotent).
@@ -348,8 +348,7 @@ class ProviderRegistry:
     def get_entry(self, name: str) -> ProviderEntry:
         """Return the entry registered under ``name``.
 
-        Raises :class:`ProviderResolutionError` if ``name`` is unknown
-        (Requirement R1.6).
+        Raises :class:`ProviderResolutionError` if ``name`` is unknown.
         """
         try:
             return self._entries[name]
@@ -442,15 +441,15 @@ class ProviderRegistry:
         """Instantiate the entry by name via the registered factory.
 
         The factory is invoked with ``entry=entry``, ``session_key=session_key``
-        and any additional keyword arguments. Per Requirement R1.7 the
+        and any additional keyword arguments. The
         factory is expected to return an :class:`ModelProvider` whose
         declared capability set is a superset of
         ``entry.declared_capabilities``; the registry trusts factories
         registered at import time and does not re-validate the returned
         instance.
 
-        Raises :class:`ProviderResolutionError` for an unknown name
-        (Requirement R1.6), and for an entry whose TYPE no loaded app has registered — an
+        Raises :class:`ProviderResolutionError` for an unknown name,
+        and for an entry whose TYPE no loaded app has registered — an
         entry is stored before its type exists on some boot paths (see :meth:`register_entry`),
         so building one early is a resolution failure, not a ``KeyError`` from a dict lookup.
         """
@@ -740,7 +739,7 @@ SCRIPTED_PROVIDER_CAPABILITY = ProviderCapability(
     # tests/test_scripted_provider_binding.py so a later widening reds rather than
     # sliding in.
     #
-    # * CHAT — PHF-7 clause 1: the gateway must complete a scripted chat turn, and
+    # * CHAT — the gateway must complete a scripted chat turn, and
     #   ``chat`` is the capability ``resolve_provider_for_use_case`` matches on.
     # * CODE_TOOLS — the fixture's declared job includes tool-call emission (the
     #   change text), and the native loop only offers tool schemas to a type that

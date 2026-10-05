@@ -237,7 +237,7 @@ def _secrets_for(ctl: RunController, item: ReadyNode) -> Callable[[str], str]:
 
 
 def node_artifacts(ctl: RunController) -> dict[str, str] | None:
-    """node id → artifact ref, for outputs the journal OFFLOADED (WV-11).
+    """node id → artifact ref, for outputs the journal OFFLOADED.
 
     This is the writer that closes the `node_artifacts` seam: `{{nodes.x.artifact}}`
     resolves to a live pointer only for nodes whose output spilled past
@@ -267,7 +267,7 @@ def _sibling_outputs(ctl: RunController, path: str) -> dict[str, list[Any]] | No
 
     A LIST per sibling and not just its current output: a watcher reads a sibling that is
     still producing, so "the output" is the wrong shape — the synthesizer needs the
-    accumulation to see a trend, which is the whole reason the binding exists (§4.2).
+    accumulation to see a trend, which is the whole reason the binding exists.
 
     Accumulated from the JOURNAL rather than from `ctl._outputs`, because a loop body
     overwrites its node-id output every iteration: reading the live map would show cycle
@@ -503,7 +503,7 @@ def resolved_inputs(ctl: RunController, item: ReadyNode, ctx: BindingContext) ->
 def store_prompt(ctl: RunController, path: str, prompt: str) -> str:
     """Persist the fully-resolved prompt and return its ref.
 
-    Required for trajectory replay (§5): the acceptance bar is that prompt → tool
+    Required for trajectory replay: the bar is that prompt → tool
     calls → output is reconstructable from ledger events alone.
     """
     if not prompt:

@@ -156,7 +156,7 @@ async def api_local_model_delete(request: web.Request) -> web.Response:
     provider from the local-model registry.
 
     Freeing the disk is the SHARED layout sweep (:func:`layouts.delete_all_layouts`),
-    not each provider's own ``delete_model`` — that is Success Criterion 2. A model
+    not each provider's own ``delete_model``. A model
     fetched twice by different paths (a provider ``save()`` and later an HF snapshot)
     leaves two copies on disk; a ``delete_model`` that only knows its own ``save()``
     layout frees one and the disk never fully frees. When the provider exposes a
@@ -278,7 +278,7 @@ async def api_sidecar_install_start(request: web.Request) -> web.Response:
 
     Returns ``202`` with the canonical job record. Safe to call again: an in-flight job is
     returned as-is and a finished install re-runs steps that existence-check themselves
-    into ``skipped``, so a killed install resumes rather than starting over (§3.2).
+    into ``skipped``, so a killed install resumes rather than starting over.
     """
     provider = request.match_info["provider"]
     job, error = _registry(request).start_install(provider)
@@ -326,7 +326,7 @@ def _weights_progress(registry, provider: str) -> float:
 
     The install surface reports weights progress without owning it: the weights fetch is
     the ordinary download job, read here from the same canonical record the download UI
-    reads (§4.1). One writer, two readers — never a second progress source.
+    reads. One writer, two readers — never a second progress source.
     """
     for job in registry.list():
         if job.provider == provider and job.kind == "weights" and job.state == "running":
@@ -383,7 +383,7 @@ async def api_models_unload(request: web.Request) -> web.Response:
     """POST /api/models/unload {provider} — free what a provider holds. Idempotent.
 
     The reply carries a FRESH pressure snapshot, so the surface can show that the unload
-    actually freed memory instead of asserting it (Success Criterion 8).
+    actually freed memory instead of asserting it.
     """
     from personalclaw.local_models.residency import unload_provider
 
@@ -426,7 +426,7 @@ def _sel_caller(request: web.Request) -> str:
     return work_of_request(request) or "dashboard:hf-token"
 
 
-# ── HF token cascade (LMMV §5) — status + set/clear, values never leave unmasked ──────
+# ── HF token cascade — status + set/clear, values never leave unmasked ────────────────
 
 
 async def api_hf_token_status(request: web.Request) -> web.Response:
@@ -434,7 +434,7 @@ async def api_hf_token_status(request: web.Request) -> web.Response:
 
     The three cascade sources (credential store → env → ``huggingface-cli`` file), each with a
     live-but-cached whoami verdict. The token VALUE never leaves the server — only the
-    :func:`mask_token` preview (Success Criterion 4)."""
+    :func:`mask_token` preview."""
     from dataclasses import asdict
 
     from personalclaw.local_models import hf_token
@@ -492,15 +492,15 @@ def register_model_download_routes(app: web.Application) -> None:
     app.router.add_post("/api/models/downloads/cleanup", api_model_download_cleanup)
     app.router.add_get("/api/models/downloads/{id}/stream", api_model_download_stream)
     app.router.add_delete("/api/models/downloads/{id}", api_model_download_cancel)
-    # Sidecar isolation (LMMV §3.2): the resumable install job for a provider that
+    # Sidecar isolation: the resumable install job for a provider that
     # declares `execution: sidecar`. Same job registry + SSE hub as a weights download.
     app.router.add_post("/api/models/sidecar/{provider}/install", api_sidecar_install_start)
     app.router.add_get("/api/models/sidecar/{provider}/install/status", api_sidecar_install_status)
     app.router.add_delete("/api/models/sidecar/{provider}/install", api_sidecar_install_delete)
-    # Residency / memory pressure (LMMV §7).
+    # Residency / memory pressure.
     app.router.add_get("/api/models/loaded", api_models_loaded)
     app.router.add_post("/api/models/unload", api_models_unload)
-    # HF token cascade (LMMV §5): read status + set/clear source 1 (the credential store).
+    # HF token cascade: read status + set/clear source 1 (the credential store).
     # Literal `hf-token` prefix — never shadowed by the `local/{provider}` routes below.
     app.router.add_get("/api/models/hf-token/status", api_hf_token_status)
     app.router.add_put("/api/models/hf-token", api_hf_token_set)

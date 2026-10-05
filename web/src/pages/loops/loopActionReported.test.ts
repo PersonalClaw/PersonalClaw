@@ -46,7 +46,7 @@ const WRITES: Array<[string, string, string[]]> = [
   // from (`lib/staleWrite.ts`), where the old `updateULoop` wrote over whatever was stored.
   // `updateULoop` moves a loop that hasn't started onto another runtime ("Runs on").
   ['loops/DesignCockpitPage.tsx', COCKPIT, ['uLoopAction', 'uLoopNudge', 'saveULoopSpec', 'updateULoop']],
-  // deleteULoop joined in AUD-A11: the list's delete hand-rolled its own notify() while
+  // deleteULoop joined because the list's delete hand-rolled its own notify() while
   // every other write in the same file rode reportingWrite.
   ['loops/LoopsListPage.tsx', LIST, ['uLoopAction', 'deleteULoop']],
   ['loop/LoopSection.tsx', SECTION, ['uLoopAction', 'uLoopPlanStart']],

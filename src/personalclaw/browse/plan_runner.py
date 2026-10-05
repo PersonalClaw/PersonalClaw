@@ -1,6 +1,6 @@
-"""BA-6 §(d)/A3 — the production ``TickRunner`` binding for scheduled ``watch_page`` ticks.
+"""The production ``TickRunner`` binding for scheduled ``watch_page`` ticks.
 
-:func:`~personalclaw.browse.plans.execute_tick` (BA-6 core) is kind-agnostic machinery: it
+:func:`~personalclaw.browse.plans.execute_tick` is kind-agnostic machinery: it
 owns the idempotent cursor and the rung floor and calls an injected
 :data:`~personalclaw.browse.plans.TickRunner` to actually touch the page. This module supplies
 the production runner the escalation uses — the read-only *content* path. It
@@ -61,7 +61,7 @@ def make_content_tick_runner(
     that finishes rendering asynchronously — optional to the RUNNER, but not to a real caller:
     ``session.navigate`` only sends ``Page.navigate`` and does not await the load event, so a
     runner built without one reads a JS-rendered page before it renders. The production
-    WATCHED-SOURCES binding supplies
+    watched-sources binding supplies
     :func:`~personalclaw.knowledge_providers.web_source.make_browse_settle`.
 
     A browser fault is a SOFT tick failure — ``ok=False`` with a note, never a raise — because a
@@ -99,7 +99,7 @@ def make_content_tick_runner(
         # `verified` mirrors `ok` for a read: extracting real text IS the confirmation, so a tick
         # that rendered an empty shell reports ok=False and does NOT advance the content cursor.
         # `html` carries the raw markup regardless, so a caller running its own DOM detectors (the
-        # WATCHED-SOURCES browse tier) still gets the page even when no main-text body was found.
+        # watched-sources browse tier) still gets the page even when no main-text body was found.
         return TickOutcome(
             content=text,
             html=html,
@@ -118,7 +118,7 @@ def make_gateway_opener(
     """A :data:`CdpSessionOpener` that connects to the gateway browser's CDP endpoint.
 
     Lazy-imports the CDP transport/driver/session (exactly as ``browse_provider._open`` does) so
-    importing this module never drags in the browser stack — the WATCHED-SOURCES poll path imports
+    importing this module never drags in the browser stack — the watched-sources poll path imports
     it, and most polls never escalate to the browse tier. Returns ``(session, page, closer)`` for a
     resolved ``cdp_url``; the closer tears the transport down.
     """

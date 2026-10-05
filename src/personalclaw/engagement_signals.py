@@ -16,9 +16,9 @@ Design (per the plan):
   its own recency score by ``weight_for(...)``. Persistence mirrors ``InboxStore``
   (a small JSON under ``config_dir()``, atomic-written).
 
-This is P11 steps 1-2 (store + kernel reuse) — pure infrastructure, gated off by default
-(``engagement_ranking_enabled``); the signal-capture wiring + consumers (steps 3-6) layer
-on top without touching this file.
+This module is the store and the kernel reuse — pure infrastructure, gated off by default
+(``engagement_ranking_enabled``); the signal-capture wiring and its consumers layer on top
+without touching this file.
 """
 
 from __future__ import annotations

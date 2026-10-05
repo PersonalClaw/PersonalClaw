@@ -1,4 +1,4 @@
-"""E11-P1: service-aware `personalclaw restart`.
+"""Service-aware `personalclaw restart`.
 
 Covers the branches of cli_server._restart:
   - a service installed for this home → restart_service() → no foreground spawn

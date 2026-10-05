@@ -1,7 +1,7 @@
 """Code-kind run worktrees: preserve, setup, resume, teardown, reintegration.
 
-S49 declared the `workspace` block and returned an ordered plan; this module performs the code-kind
-half of it on the machinery that already exists. `loop/worktree.py` is proven —
+`workspace` declares the `workspace` block and returns an ordered plan; this module performs
+the code-kind half of it on the machinery that already exists. `loop/worktree.py` is proven —
 `.worktrees/<id>` under
 the project's own dir, `pclaw/task-*` branches, idempotent `add_worktree`, `merge_worktree` with a
 typed result — so nothing here re-implements git.
@@ -47,7 +47,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-#: Marker directory for setup idempotency, inside the worktree. Shared name with S49's
+#: Marker directory for setup idempotency, inside the worktree. Shared name with
 #: `workspace.SETUP_MARKER_DIR` so a plan built there and performed here agree — two names for one
 #: convention would mean setup re-running because the performer looked in the wrong place.
 from personalclaw.workflows.workspace import SETUP_MARKER_DIR, setup_marker  # noqa: E402
@@ -183,7 +183,7 @@ def pending_setup(worktree: str | Path, setup: str) -> tuple[list[str], list[str
 
     Setup runs on EVERY resume by contract, so each step guards itself. Markers are
     content-addressed
-    (S49's `setup_marker`), which means editing a step re-runs it — a marker keyed by position would
+    (`setup_marker`), which means editing a step re-runs it — a marker keyed by position would
     skip an edited step as though it had already run.
     """
     root = Path(worktree)
@@ -413,7 +413,7 @@ def reintegration_offer(
 class WorktreeState:
     """Everything the cockpit and the boot sweep need about one run's worktree.
 
-    `alive` feeds S46's substrate check directly: an isolated substrate that survived a
+    `alive` feeds the boot sweep's substrate check directly: an isolated substrate that survived a
     restart makes
     the run SUSPENDED and resumable rather than a zombie, and getting that backwards destroys
     recoverable work while reporting success.
@@ -485,7 +485,7 @@ def inspect_worktree(
 
 
 def substrate_for(state: WorktreeState) -> Any:
-    """The S46 `Substrate` for this worktree, so the boot sweep has ONE source of truth.
+    """The `Substrate` for this worktree, so the boot sweep has ONE source of truth.
 
     Built here rather than re-derived in the sweep: the sweep's whole decision turns on whether an
     isolated substrate is alive, and two places computing that would eventually disagree —

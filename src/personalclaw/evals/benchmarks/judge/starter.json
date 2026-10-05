@@ -1,7 +1,7 @@
 {
   "name": "starter",
   "version": 1,
-  "description": "The shipped judge fixture set (EVALUATION-SUBSTRATE §6). Twelve cases across two rubric classes: four strong/null pairs, two genuinely-short real runs, and two forbidden-success-mode admissions. Grown organically — add your own cases to ~/.personalclaw/evals/benchmarks/judge/ (a file of the same name there wins over this one).",
+  "description": "The shipped judge fixture set. Twelve cases across two rubric classes: four strong/null pairs, two genuinely-short real runs, and two forbidden-success-mode admissions. Grown organically — add your own cases to ~/.personalclaw/evals/benchmarks/judge/ (a file of the same name there wins over this one).",
   "fixtures": [
     {
       "id": "conv-strong-tests",

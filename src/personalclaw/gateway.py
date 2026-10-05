@@ -165,8 +165,8 @@ def _delivery_owning(channel_id: str) -> Any:
 # is earned over DAYS, so a faster clock would buy nothing and cost a file scan a minute.
 _AUTONOMY_PROPOSAL_INTERVAL_SECS = 6 * 60 * 60
 
-# How often a staged auto-update waiter re-checks whether in-flight work has drained
-# (RUM-5). A staged apply HOLDS while a session/subagent is running and fires only once
+# How often a staged auto-update waiter re-checks whether in-flight work has drained.
+# A staged apply HOLDS while a session/subagent is running and fires only once
 # the tree is idle; 30s is responsive without spinning — the wait is measured in the
 # lifetime of the work it defers to, not this cadence.
 _STAGED_APPLY_POLL_SECS = 30.0
@@ -331,7 +331,7 @@ def _asked_for_call(request_id: str) -> dict[str, str]:
 
 
 def injection_approval_policy(parent_key: str) -> "ToolApprovalPolicy":
-    """Tool-approval policy for a subagent RESULT-INJECTION turn (AUTONOMY-GUARDRAILS §3, AG-11).
+    """Tool-approval policy for a subagent RESULT-INJECTION turn.
 
     The injection turn runs IN the parent session (announcing a child's result). For an UNATTENDED
     parent — a cron/channel/inbox/side/loop announce: no human is watching — the approval resolves
@@ -372,7 +372,7 @@ def injection_approval_policy(parent_key: str) -> "ToolApprovalPolicy":
 
 
 def _background_write_surface(fn: Callable[..., Any]) -> Callable[..., Any]:
-    """Label every state write an unattended trigger dispatch causes ``background`` (DAS-9).
+    """Label every state write an unattended trigger dispatch causes ``background``.
 
     `state_history` declares three writing surfaces and the time-travel panel's "what changed
     while I slept" filter reads them — but `SURFACE_BACKGROUND` had ZERO producers. Measured: the
@@ -479,11 +479,11 @@ class GatewayOrchestrator:
         self.ctx_builder: ContextBuilder | None = None
         self.conv_log: ConversationLog | None = None
         self.consolidator: HistoryConsolidator | None = None
-        self._file_watch_task: "asyncio.Task[None] | None" = None  # S93 file-watch poll loop
-        self._web_watch_task: "asyncio.Task[None] | None" = None  # S121 web_watch poll loop
-        self._clock_task: "asyncio.Task[None] | None" = None  # S100 unified clock loop
-        self._reaper_task: "asyncio.Task[None] | None" = None  # S106 trigger reaper
-        self._task_due_task: "asyncio.Task[None] | None" = None  # F-31 task due-date notices
+        self._file_watch_task: "asyncio.Task[None] | None" = None  # file-watch poll loop
+        self._web_watch_task: "asyncio.Task[None] | None" = None  # web_watch poll loop
+        self._clock_task: "asyncio.Task[None] | None" = None  # unified clock loop
+        self._reaper_task: "asyncio.Task[None] | None" = None  # trigger reaper
+        self._task_due_task: "asyncio.Task[None] | None" = None  # task due-date notices
         # Tells the open pages when the incident switch moves (`_start_incident_watch`).
         self._incident_watch_task: "asyncio.Task[None] | None" = None
         # The event bus's router (`triggers.event_fire`): fires `kind: "event"` triggers.
@@ -492,7 +492,7 @@ class GatewayOrchestrator:
         # then applies. One at a time — a second available-update check reuses the
         # live waiter rather than spawning a rival apply against the same tree.
         self._staged_apply_task: "asyncio.Task[None] | None" = None
-        self._last_autonomy_scan: float = 0.0  # §6.1 promotion-proposal scan throttle
+        self._last_autonomy_scan: float = 0.0  # promotion-proposal scan throttle
         self._running_script_ids: set[str] = set()  # zero-token jobs in flight
         self.heartbeat_svc: HeartbeatService | None = None
         self.loop_watchdog: "LoopWatchdog | None" = None
@@ -581,7 +581,7 @@ class GatewayOrchestrator:
     async def deliver_channel_inbound(
         self, provider: str, msg: "ChannelMessage", *, is_dm: bool = True
     ) -> "TrustVerdict":
-        """The guarded inbound door (EA-7) — trust is applied before a session is reached.
+        """The guarded inbound door — trust is applied before a session is reached.
 
         Delegates to :func:`personalclaw.channel_inbound.deliver_inbound`, which owns the
         chokepoint (and its per-message idempotency, so an un-migrated transport that still
@@ -1102,7 +1102,7 @@ class GatewayOrchestrator:
         except Exception:
             logger.warning("Agent config install failed", exc_info=True)
 
-        # Move any pre-v2 workflow SOPs aside (WORKFLOWS-V2 Phase 1). Idempotent and
+        # Move any pre-v2 workflow SOPs aside. Idempotent and
         # non-destructive: the user's own writing is preserved under
         # `workflows/_legacy_sops/`, out of the way of the v2 def store that lands in
         # the same parent. A no-op on every home that has none.
@@ -1186,7 +1186,7 @@ class GatewayOrchestrator:
             auto_min_tool_calls=self._cfg.skills.auto_min_tool_calls,
             auto_similarity_threshold=self._cfg.skills.auto_similarity_threshold,
         )
-        # E11: extract skills from a session one last time when it idles out.
+        # Extract skills from a session one last time when it idles out.
         self.sessions.set_session_expire_callback(self.consolidator.consolidate_session)
 
         # Channel history buffer
@@ -1218,7 +1218,7 @@ class GatewayOrchestrator:
         notification so the user learns their automation is paused for the day without a
         per-fire spam; the caller records the per-fire `needs_input` outcome that projects
         to `Outcome.DEFERRED`, so the PAUSE is legible in the runs feed even though the
-        TOAST is de-duped. (Until AG-2 this said it emitted a "needs-input notification"
+        TOAST is de-duped. (This used to say it emitted a "needs-input notification"
         while emitting a WARNING and having no caller at all — the docstring asserted the
         clause the code did not satisfy.)
 
@@ -1324,7 +1324,7 @@ class GatewayOrchestrator:
             logger.debug("budget notify failed", exc_info=True)
 
     async def _clock_loop(self) -> None:
-        """Drive the unified clock: tick → dispatch → execute (§3 — S100).
+        """Drive the unified clock: tick → dispatch → execute.
 
         The sole engine that fires clock triggers now. `triggers/loop.run_forever` owns the cadence
         and the resilience (one bad tick never kills the loop); this method only supplies the two
@@ -1377,7 +1377,7 @@ class GatewayOrchestrator:
         self._push_trigger_refresh("crons")
 
     def _push_trigger_refresh(self, *kinds: str) -> None:
-        """Hint open dashboard views to refresh after a store-backed fire (S107).
+        """Hint open dashboard views to refresh after a store-backed fire.
 
         Both kinds by default, matching what the legacy `_record_run` pushed plus the list the fire
         may have changed: `cron_history` for the run feed, `crons` for the trigger list's status
@@ -1398,12 +1398,12 @@ class GatewayOrchestrator:
             logger.debug("could not push a trigger refresh", exc_info=True)
 
     async def _trigger_reaper_loop(self) -> None:
-        """Bound every store-backed run: sweep for blown deadlines and free the claim (§3.1 — S106).
+        """Bound every store-backed run: sweep for blown deadlines and free the claim.
 
         Replaces `ScheduleService.start_reaper`, whose sweep read a dict that only the retired
-        legacy timer ever wrote — inert since the S100 cutover, and silently so. Like `_clock_loop`,
-        this method supplies only the two things the gateway knows (the store and its home) and
-        leaves the cadence and resilience to the module.
+        legacy timer ever wrote — inert since the unified-clock cutover, and silently so.
+        Like `_clock_loop`, this method supplies only the two things the gateway knows (the
+        store and its home) and leaves the cadence and resilience to the module.
         """
         from personalclaw.config.loader import config_dir
         from personalclaw.triggers import reaper
@@ -1413,7 +1413,7 @@ class GatewayOrchestrator:
         await reaper.run_forever(store=store, base_dir=store.base_dir)
 
     async def _task_due_loop(self) -> None:
-        """Announce the tasks whose due date is coming (F-31), every `due_notices.SWEEP_SECS`.
+        """Announce the tasks whose due date is coming, every `due_notices.SWEEP_SECS`.
 
         Like `_clock_loop`, this supplies only what the gateway knows — the one notification choke
         point — and leaves every rule (when, once, quiet hours, who) to `tasks/due_notices.py`. A
@@ -1574,8 +1574,8 @@ class GatewayOrchestrator:
             return run_id
         payload, context, facts = fired.payload, fired.context, fired.facts
 
-        # 🔴 RESOLVE `{{secret:KEY}}` HERE, at dispatch (§7 item 6 / decision 11). Workflows
-        # have carried this form since WF2-R14 and three surfaces tell the author to use it, but a
+        # 🔴 RESOLVE `{{secret:KEY}}` HERE, at dispatch. Workflows
+        # have carried this form and three surfaces tell the author to use it, but a
         # TRIGGER action passed the literal placeholder to the provider — measured: a bash command
         # `echo tok={{secret:MY_KEY}}` printed `tok={{secret:MY_KEY}}`. So the only way to make a
         # trigger authenticate was to paste the credential into `triggers.json`, a file that is
@@ -1613,10 +1613,10 @@ class GatewayOrchestrator:
             secret_references=_trigger_secrets.handed(provider, config),
         )
 
-        # 🔴 THE DENYLIST, at the seam that lost it. §1.2 says
-        # the denylist is enforced at the THREE dispatch seams every action-provider execution
+        # 🔴 THE DENYLIST, at the seam that lost it. The denylist was specified for
+        # the THREE dispatch seams every action-provider execution
         # passes through, "so an app-contributed provider inherits the denylist without knowing it
-        # exists", and names the third as `gateway.py:701` — `_run_action_job`, which retired with
+        # exists", and the third was `gateway.py:701` — `_run_action_job`, which retired with
         # `ScheduleService`. The successor that method became inherited the kill switch and
         # the rung ladder but NOT the denylist: measured, `enforce_action` appeared once in
         # `hooks.py`, once in `event_triggers.py` and ZERO times here — while this is the dispatch
@@ -1673,8 +1673,8 @@ class GatewayOrchestrator:
             self._push_trigger_refresh()
             return run_id
 
-        # 🔴 RUNG ROUTING, at the seam the retired one became. The plan
-        # names `_run_action_job` as the third dispatch seam; that method retired with
+        # 🔴 RUNG ROUTING, at the seam the retired one became. The third dispatch seam
+        # was `_run_action_job`; that method retired with
         # `ScheduleService` and, per the note at its old site, "the substrate GENERALIZED
         # both: action dispatch is `_fire_store_trigger`". So this IS the third seam, under a new
         # name — and it is the one every clock / file / webhook / chained / data-event trigger
@@ -1726,7 +1726,7 @@ class GatewayOrchestrator:
         # The dollar ceiling limits the calls that cost money and the guard refuses each of those,
         # so a fire whose work costs nothing still runs past it (`_day_budget_exceeded`).
         #
-        # `needs_input`, not `skipped_gate`: the clause says the fire "pauses into needs-input",
+        # `needs_input`, not `skipped_gate`: the fire is a pause into needs-input,
         # and `executor.STATUS_TO_OUTCOME` already maps that status to `Outcome.DEFERRED` — "parked
         # awaiting a human", the one reading of DEFERRED that means a ceiling only a person can
         # lift. `skipped_gate` is in `INERT_OUTCOMES` and folds OUT of the default runs inbox, which
@@ -1775,10 +1775,10 @@ class GatewayOrchestrator:
             from personalclaw.triggers.firepath import action_timeout
 
             timeout = action_timeout(provider_name)
-            # 🔴 THE RESULT WAS DISCARDED (§3.7 / crit 3). `await provider.execute(...)` threw
+            # 🔴 THE RESULT WAS DISCARDED. `await provider.execute(...)` threw
             # its return value away, so nothing on this path knew if a fire SUCCEEDED. Measured:
             # six consecutive failing provider runs left `health_status: 'ok'` with an empty
-            # `last_failure_at` and `enabled: True` — criterion 3's "autopause after 5" could not
+            # `last_failure_at` and `enabled: True` — the promised "autopause after 5" could not
             # possibly hold, because the whole `autopause` module (13 functions) was imported by NO
             # production code and the counter it spends had no writer.
             # 🔴 BIND the fire's run scope (`calendar.run_scope`), so its model spend is
@@ -1997,7 +1997,7 @@ class GatewayOrchestrator:
         *,
         base_dir: Any = None,
     ) -> None:
-        """Keep what the boot passes found for the user to decide, then say so once (§3.4).
+        """Keep what the boot passes found for the user to decide, then say so once.
 
         The missed slots (`report["review"]`) and the runs a restart interrupted become cards on
         the Triggers page (`triggers/review.py`), where each is run now or dismissed. Neither is run
@@ -2081,7 +2081,7 @@ class GatewayOrchestrator:
         """Put the boot's review in front of the owner: ONE notice (`review.boot_notice`), read off
         the *cards* it keeps on the Triggers page, as a decision the owner owes (`RUN_REVIEW`), so
         quiet hours record it silently instead of dropping it. Goes through `state.notify` like
-        every other substrate notification (R18: no second path). Never raises: the sweep already
+        every other substrate notification (no second path). Never raises: the sweep already
         re-armed the schedule, and failing to announce it must not undo that; a failure is a
         WARNING, because the card is then the only trace.
         """
@@ -2098,7 +2098,7 @@ class GatewayOrchestrator:
             logger.warning("could not surface the missed-fire review", exc_info=True)
 
     def _surface_attention_card(self, trigger: Any, decision: Any) -> None:
-        """Put an autopaused/quarantined trigger in front of the user (crit 3 — S141).
+        """Put an autopaused/quarantined trigger in front of the user.
 
         🔴 `attention_card` returns None for a still-firing or parked trigger, which is why the
         control flow here is "if card: send it" — the module deliberately makes it impossible to
@@ -2108,9 +2108,9 @@ class GatewayOrchestrator:
         trigger INTO a state that needs attention (`run_record._take`), never for one that leaves
         it there, so a trigger that goes autopaused → resumed → autopaused alerts twice and a paused
         one nothing more. The card says why with what the run that failed last said, masked as every
-        note a trigger sends is (`delivery`'s R18 redaction): an agent's error is the agent's text.
+        note a trigger sends is (`delivery`'s redaction): an agent's error is the agent's text.
 
-        Goes through `state.notify` like every other substrate notification (R18: no second path),
+        Goes through `state.notify` like every other substrate notification (no second path),
         so a muted channel stays muted. Never raises — the pause already happened, and failing to
         announce it must not undo it.
         """
@@ -2212,17 +2212,17 @@ class GatewayOrchestrator:
         return told
 
     async def _record_blocked_fire(self, trigger: Any, groups: str, *, source: str) -> str:
-        """Write the `blocked_injection` ledger row for a screened payload (§7 crit 8 — S136).
+        """Write the `blocked_injection` ledger row for a screened payload.
 
         ASYNC because `ScheduleRunStore.append` is. mypy caught the sync version as an
         unused coroutine — i.e. the row would never have been written at all, which is a
-        neater demonstration of this session's own theme than anything I could contrive.
+        neater demonstration of the point than anything I could contrive.
 
         Best-effort by construction: a bookkeeping failure must not change the SECURITY decision.
         The payload is refused before this runs, so the worst case is a refusal with no row —
-        exactly what S134 shipped and this closes, never a re-opened hole.
+        exactly what shipped before this row existed, never a re-opened hole.
 
-        The screened TEXT is deliberately not stored. Criterion 11's discipline generalises: a
+        The screened TEXT is deliberately not stored, and the discipline generalises: a
         blocked payload is hostile third-party content, and copying it into a store the UI renders
         would move an injection attempt out of a refused fire and into a surface a human reads. The
         matched GROUPS name the pattern class, which is what tells a real attack from a false
@@ -2326,7 +2326,7 @@ class GatewayOrchestrator:
         source_def: str = "",
         source_run: str = "",
     ) -> None:
-        """Fire every `run_completed` trigger waiting on the work that just ended (S122): a
+        """Fire every `run_completed` trigger waiting on the work that just ended: a
         trigger's run (*source_trigger*), and when the work was a workflow run, that run
         (*source_run*) and any run of its workflow (*source_def*).
 
@@ -2383,10 +2383,10 @@ class GatewayOrchestrator:
         )
 
     async def _file_watch_poll_loop(self) -> None:
-        """Poll `file` triggers and fire the ones whose watched paths changed (§3 / crit 2 — S93).
+        """Poll `file` triggers and fire the ones whose watched paths changed.
 
         This is the runtime that makes a chat-created "when a file in ~/notes changes…" automation
-        (S92) actually fire. It is DISJOINT from `ScheduleService`: that fires clock crons and reads
+        actually fire. It is DISJOINT from `ScheduleService`: that fires clock crons and reads
         no `file` trigger, and the tick clock (`service.due_ids`) never surfaces a `file` trigger
         (it has no `next_fire_at`). So running this beside the cron loop cannot double-fire anything
         — which is what lets it land as an additive cutover rather than the clock switch-over the
@@ -2411,7 +2411,7 @@ class GatewayOrchestrator:
                     continue
                 for payload in file_poll.poll_all(store):
                     await self._fire_file_trigger(payload)
-                # The watched scratchpad (UP-R18 / universal-planning crit 9). It rides THIS loop
+                # The watched scratchpad. It rides THIS loop
                 # rather than adding a third poll task: it is the same "a local file changed" clock
                 # at the same cadence, and its own fingerprint check makes an unchanged file one
                 # `stat`. Deliberately NOT a store trigger — a scratchpad line never starts a run,
@@ -2431,7 +2431,7 @@ class GatewayOrchestrator:
                 logger.warning("file-watch poll loop iteration failed", exc_info=True)
 
     def _scan_autonomy_promotions(self) -> None:
-        """Raise a proposal for every action type that has EARNED its next rung (§6.1).
+        """Raise a proposal for every action type that has EARNED its next rung.
 
         The ladder only ever climbs on a click, so an earned rung has to travel to the user
         instead of waiting to be found in a Settings panel — that is the difference between
@@ -2460,7 +2460,7 @@ class GatewayOrchestrator:
                 )
         except Exception:  # noqa: BLE001 - additive; never breaks the poll loop
             logger.warning("autonomy promotion scan failed", exc_info=True)
-        # §4.4 mechanical revocation, nodding leg. The other three triggers fire at
+        # Mechanical revocation, nodding leg. The other three triggers fire at
         # their own conclusion events; a nodding gate is a STANDING condition with no
         # event, so this sweep carries it — gateway-side, because guardrails must not
         # import the workflows layer (the same inversion as `note_for` above). The
@@ -2493,7 +2493,7 @@ class GatewayOrchestrator:
                         )
         except Exception:  # noqa: BLE001 - additive; never breaks the poll loop
             logger.warning("autonomy nodding revocation sweep failed", exc_info=True)
-        # E3 lab_field_divergence: a subject whose lab score rose while its live
+        # Lab/field divergence: a subject whose lab score rose while its live
         # field trend fell files the demotion signal mechanically. A divergence is
         # a STANDING condition like the nodding gate above, so it rides the same sweep;
         # it lives in the evals layer (which may import both guardrails and workflows)
@@ -2531,13 +2531,13 @@ class GatewayOrchestrator:
             logger.warning("scratchpad intake failed", exc_info=True)
 
     async def _web_watch_poll_loop(self) -> None:
-        """Poll every `web_watch` trigger and fire the ones with NEW items (§7 item 8 — S121).
+        """Poll every `web_watch` trigger and fire the ones with NEW items.
 
         🔴 Measured before this existed: `web_watch` was a fully declared kind — creatable in chat
         (`nl_kind` routes any URL to it), persisted, listed by `/api/triggers` and rendered on the
         Automations page — and **nothing polled it**. The clock tick skips it (it has no
         `next_fire_at`) and the file poller only reads `file`. So a user could ask for exactly what
-        the plan advertises, be told it worked, and never get a fire.
+        the product advertises, be told it worked, and never get a fire.
 
         Deliberately mirrors `_file_watch_poll_loop` rather than inventing a second shape: same
         incident-mode suspension (an unattended fire is an unattended fire), same per-trigger
@@ -2573,9 +2573,9 @@ class GatewayOrchestrator:
                 logger.warning("web_watch poll loop iteration failed", exc_info=True)
 
     async def _fire_file_trigger(self, payload: dict[str, Any]) -> None:
-        """Run one file trigger's declared action (S93), through the shared store dispatch.
+        """Run one file trigger's declared action, through the shared store dispatch.
 
-        Delegates to `_fire_store_trigger` (S100) rather than repeating the provider lookup: a clock
+        Delegates to `_fire_store_trigger` rather than repeating the provider lookup: a clock
         fire and a file fire must execute the same action the same way, and two near-identical
         dispatches were exactly the dual path the clean break forbids.
         """
@@ -2604,8 +2604,7 @@ class GatewayOrchestrator:
             self._start_event_triggers(enabled=False)
         else:
             # Rotate run history at boot — the ONE load-bearing thing the retired legacy service's
-            # boot call still did. `ScheduleRunStore` owns rotation, so it is called directly
-            # (S112).
+            # boot call still did. `ScheduleRunStore` owns rotation, so it is called directly.
             try:
                 await ScheduleRunStore(config_dir()).rotate_all()
             except Exception:
@@ -2657,7 +2656,7 @@ class GatewayOrchestrator:
             from personalclaw.triggers.store import TriggerStore
 
             _trigger_store = TriggerStore(base_dir=config_dir())
-            # App-declared crons (untrusted-app sandbox P3): register what enabled+permitted apps
+            # App-declared crons (the untrusted-app sandbox): register what enabled+permitted apps
             # declare (can_use_cron) and prune stale `app:*` rows. Idempotent; apps are loaded
             # before this by the extension loader. Best-effort — never block the scheduler on it.
             try:
@@ -2695,11 +2694,10 @@ class GatewayOrchestrator:
             except Exception:
                 logger.warning("usage-recap-cron reconcile failed", exc_info=True)
             # 🔴 The morning source digest. THIS LINE IS the MISSING
-            # HALF: `run_morning_digest` shipped fully tested with zero callers, which its own
-            # execution log records as the change's one PARTIAL clause. Same else-branch as the
-            # recap above for the same reason — an unattended writer must not fire in a harness
-            # run. Creation only: "morning" is the feature, not a setting, so there is no
-            # schedule to converge and no config field behind it.
+            # HALF: `run_morning_digest` shipped fully tested with zero callers, so nothing ever
+            # ran it. Same else-branch as the recap above for the same reason — an unattended
+            # writer must not fire in a harness run. Creation only: "morning" is the feature, not a
+            # setting, so there is no schedule to converge and no config field behind it.
             try:
                 from personalclaw.action_providers.source_digest_provider import (
                     reconcile_source_digest_cron,
@@ -2710,7 +2708,7 @@ class GatewayOrchestrator:
                 logger.warning("source-digest-cron reconcile failed", exc_info=True)
             # 🔴 The periodic identity report. THIS LINE IS THE
             # SCHEDULE HALF: `deliver_identity_report` shipped fully tested with a POST route as
-            # its ONLY caller, so the plan's "scheduled (default monthly, configurable) background
+            # its ONLY caller, so a "scheduled (default monthly, configurable) background
             # job" was a function nothing drove. Same else-branch as the recap and the source
             # digest for the same reason — it writes an artifact, raises an inbox row and spends a
             # background model call unattended, and a harness run must do none of that. CONVERGED
@@ -2754,7 +2752,7 @@ class GatewayOrchestrator:
                 reconcile_heartbeat_tasks_trigger(_trigger_store)
             except Exception:
                 logger.warning("heartbeat tasks trigger reconcile failed", exc_info=True)
-            # 🔴 THE BOOT SWEEP (criterion 7). `service.boot` is what recovers
+            # 🔴 THE BOOT SWEEP. `service.boot` is what recovers
             # the exactly-one-upcoming invariant, STAGGERS an overdue population, and produces the
             # missed-fire review. It had **zero callers**: boot ran `migrate_and_arm`, which only
             # arms rows with NO `next_fire_at` (`needs_arming`), so a trigger that WAS armed and
@@ -2877,7 +2875,7 @@ class GatewayOrchestrator:
             # hardcoded: a `cron:` key classifies as unattended, so `profile_for_session`
             # resolves to HEADLESS and its approval ("hook_based") maps to
             # HOOK_BASED — the unattended heartbeat resolves through HEADLESS by
-            # construction (AUTONOMY-GUARDRAILS Success Criterion #7). The deny-list and
+            # construction. The deny-list and
             # her blocking hooks come first, an operator's pattern approves what it names,
             # and what neither answers is approved by the task's own Allow, never by a call
             # no hook named: nobody is asked, and nothing waits on an unanswerable prompt.
@@ -2964,13 +2962,13 @@ class GatewayOrchestrator:
     async def _init_heartbeat(self) -> None:
         """Initialize and start the heartbeat service.
 
-        No `MemoryStore` is resolved here any more (PR2-8): the only thing that ever wanted one was
+        No `MemoryStore` is resolved here any more: the only thing that ever wanted one was
         `HeartbeatService._legacy_maintenance`, and with the remediation engine re-homed onto
         its own trigger the engine's memory jobs open their own store.
         """
 
         async def _deliver_due_commitments() -> None:
-            """Deliver any due proactive check-ins (M5e — O-A4), then dismiss them.
+            """Deliver any due proactive check-ins, then dismiss them.
 
             Off unless the user opted in. The commitment ``text`` is the LLM-
             authored natural check-in captured at consolidation (guardrails
@@ -3060,7 +3058,7 @@ class GatewayOrchestrator:
         session_search.INDEXER.start()
 
     def _register_graph_maintenance_passes(self) -> None:
-        """Give the standing maintenance jobs their cadence (KL-14).
+        """Give the standing maintenance jobs their cadence.
 
         Registered HERE rather than at import of `maintenance.py`, because that module is
         imported by the knowledge write path — `store.py` marks the watermark on every
@@ -3076,7 +3074,7 @@ class GatewayOrchestrator:
             logger.warning("graph maintenance passes not registered", exc_info=True)
 
     def _install_graph_maintenance_probe(self) -> None:
-        """Tell the graph-maintenance host how to measure in-flight ingest work (KL-14).
+        """Tell the graph-maintenance host how to measure in-flight ingest work.
 
         The host defers its pass while an import is still running, so a bulk import costs ONE
         edge pass instead of one per item. It cannot ask for that depth itself: the queue is a
@@ -3090,7 +3088,7 @@ class GatewayOrchestrator:
         gateway that never ingested anything. Probing must not create the thing it probes.
 
         Without this the host still runs — it treats an unknown depth as drained and logs one
-        warning saying so — but the coalescing clause would be inert, which is why the wiring
+        warning saying so — but the coalescing rule would be inert, which is why the wiring
         has its own test rather than being assumed from the fact that this line exists.
         """
         try:
@@ -3401,10 +3399,10 @@ class GatewayOrchestrator:
         if self.dashboard_state is not None:
             # The unified Loop supervisor — ONE watchdog for every kind
             # (general/goal/code/design) on top of autonudge. Replaces the legacy
-            # goal-loop + code watchdogs at the cutover (Slice 2e). Loops left
+            # goal-loop + code watchdogs at the cutover. Loops left
             # RUNNING/PLANNING by a crash/restart are re-armed by the watchdog's OWN first
             # poll, before it reads a single loop — there is deliberately no boot hook here
-            # (`PP-16`, "one adoption/reaping path": both work-unit nouns sweep from the
+            # ("one adoption/reaping path": both work-unit nouns sweep from the
             # supervisor that owns them, through `concurrency.boot_sweep`). A hook here could
             # not be retried when it raised, and awaiting it delayed everything below,
             # including HTTP readiness, by however long N stranded planner passes took.
@@ -3429,7 +3427,7 @@ class GatewayOrchestrator:
             # registered and saving a definition fails with "no writable provider" unless
             # an app happens to contribute one.
             register_native_provider()
-            # The shipped template library (Slice 9a). Read-only, served straight from the
+            # The shipped template library. Read-only, served straight from the
             # package — no boot-time copy into the user's home, so an upgrade ships new
             # templates with no "did the user edit it?" reconciliation.
             register_bundled_provider()
@@ -3454,8 +3452,8 @@ class GatewayOrchestrator:
                 self.dashboard_state,
                 EngineServices(
                     subagents=self.subagent_mgr,
-                    # The deterministic verifier every `verify_command` gate runs through
-                    # (WF2LOO-10). Previously UNSET here, which made every verification gate
+                    # The deterministic verifier every `verify_command` gate runs through.
+                    # Previously UNSET here, which made every verification gate
                     # in production fail INTERNAL with "no verifier wired" — the engine's
                     # gate contract was complete and its last mile was missing, so two
                     # shipped templates ended on a gate that could not run. Screened +
@@ -3479,7 +3477,7 @@ class GatewayOrchestrator:
             )
             self.workflow_watchdog.start()
             # Publish the supervisor so BOTH consumers can reach it: the REST handlers
-            # (Slice 7a) read `state.workflows`, and the `run-workflow` action provider
+            # read `state.workflows`, and the `run-workflow` action provider
             # reads `ActionServices.workflows`. Without this the routes create runs nobody
             # drives, and the trigger provider returns "no supervisor available" — both
             # already handle a None, but both are inert until this line runs.
@@ -4719,8 +4717,8 @@ class GatewayOrchestrator:
         gateway on another port addressed its children at 10000 — which on a multi-instance
         host is a DIFFERENT instance, not a dead socket (#2539). Two earlier symptoms of the
         same root: ``subagent_run`` answering ``<urlopen error [Errno 61] Connection
-        refused>`` on a kiro ACP session while the in-process tools beside it worked
-        (`AAP-3`, `K58`), and a ``run-script`` action's ``ctx.notify()`` persisting into a
+        refused>`` on a kiro ACP session while the in-process tools beside it worked,
+        and a ``run-script`` action's ``ctx.notify()`` persisting into a
         second instance's notification store.
 
         No ``if self._dashboard_port:`` guard: an unset/zero port here means we bound but
@@ -4996,7 +4994,7 @@ class GatewayOrchestrator:
         and applies once it drains — this never blocks the caller (startup, the
         boot-path check) while work is running. Otherwise apply immediately. Either
         way the apply is :meth:`_auto_apply_update`, which resolves the channel/pin
-        release tag and never touches ``main`` (RUM-4).
+        release tag and never touches ``main``.
         """
         if self._work_in_flight():
             if self._staged_apply_task is not None and not self._staged_apply_task.done():
@@ -5086,7 +5084,7 @@ class GatewayOrchestrator:
 
         carry_scope_into_worker_threads(asyncio.get_running_loop())
 
-        # ── KEYSTONE AUDIT for desktop computer use (DESKTOP-COMPUTER-USE §3 floor 1) ──
+        # ── KEYSTONE AUDIT for desktop computer use ──
         # Resolves the out-of-band enable file ONCE, here, so the posture the whole process
         # runs under is fixed before anything can dispatch and is recorded to the SEL. It
         # does NOT abort: unlike governance, "off" is a normal (and the default) state, so a
@@ -5099,7 +5097,7 @@ class GatewayOrchestrator:
         # (3 pipes) plus MCP server subprocesses, and the default macOS soft limit
         # (256) is too low. The ``resource`` module is POSIX-only; on a platform
         # without it (native Windows) this degrades to a no-op through the guarded
-        # helper instead of ``ImportError``-ing gateway boot here. (WIN-1)
+        # helper instead of ``ImportError``-ing gateway boot here.
         from personalclaw.resource_limits import raise_fd_limit
 
         raise_fd_limit()

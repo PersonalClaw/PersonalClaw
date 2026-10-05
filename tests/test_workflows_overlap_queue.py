@@ -145,7 +145,7 @@ class TestThreePolicies:
         assert _drafts() == []
 
     async def test_queue_creates_a_run_and_does_not_start_it(self, harness) -> None:
-        """The regression. Before WV-14 this returned `launched` with a live controller
+        """The regression. This used to return `launched` with a live controller
         running BESIDE the prior; the queued run must exist and must not be running."""
         spec = harness.install("queue")
         prior = _busy_prior(spec)
@@ -407,7 +407,7 @@ class TestDryRun:
 
 class TestExhaustiveness:
     """A fourth member must not inherit a third member's behaviour — which is how `QUEUE`
-    inherited "start now" for the length of the engine program."""
+    inherited "start now" from the moment it shipped."""
 
     @pytest.mark.parametrize("policy", list(OverlapPolicy), ids=lambda p: p.value)
     def test_every_member_has_a_branch(self, policy: OverlapPolicy) -> None:

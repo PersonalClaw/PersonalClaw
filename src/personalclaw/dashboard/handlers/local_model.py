@@ -1,4 +1,4 @@
-"""HTTP API for the onboarding local-model zero-key on-ramp — OU-13.
+"""HTTP API for the onboarding local-model zero-key on-ramp.
 
 Three routes under ``/api/onboarding/local-model``, all credential-free:
 

@@ -1,5 +1,5 @@
 /**
- * Native OS notifications — the shell half of plan-42's `native` target.
+ * Native OS notifications — the shell half of the `native` delivery target.
  *
  * The gateway decides WHETHER a note is a native one (a rule naming the `native` target,
  * plus a connected shell whose `native_notifications` capability is available — see

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Committed config-schema baseline generator (PLATFORM-HARDENING-FLOORS SH3.1).
+"""Committed config-schema baseline generator.
 
 ``test_config_roundtrip.py`` proves each config field survives a save/load round
 trip, but it cannot see DRIFT: a renamed key, a silently dropped ``_meta``, or a

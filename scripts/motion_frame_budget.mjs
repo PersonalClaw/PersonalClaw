@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Motion frame budget — measure the dashboard's real frame times WHILE it animates.
 //
-// `docs/design/motion.md` §2 calls motion "budgeted", and FM-7 asks for that budget to be
-// proven at 60fps "with no jank" on ChatPage and a cockpit, at bounciness 1 and 0. A frame
+// `docs/design/motion.md` §2 calls motion "budgeted", and this driver proves that budget
+// at 60fps with no jank on ChatPage and a cockpit, at bounciness 1 and 0. A frame
 // rate is the easiest measurement to fake, so this driver is built around what would make
 // its number a lie:
 //

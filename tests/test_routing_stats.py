@@ -107,7 +107,7 @@ class TestRebuild:
 
 
 class TestLiveHookThroughGuard:
-    """The audit path folds the same attempt into routing_stats.json (MRT-1c wiring)."""
+    """The audit path folds the same attempt into routing_stats.json."""
 
     def test_a_guarded_call_folds_into_stats(self, tmp_path, monkeypatch):
         monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)

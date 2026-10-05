@@ -6,7 +6,7 @@ reads — and NOT from a real captured file. No Claude Code session transcript,
 OpenAI request log, or SSE dump exists anywhere in this repo to fixture from
 (``git grep -ln "session.jsonl"`` finds only unrelated dashboard/history tests),
 so a fixture claiming to be a real capture would be a guess wearing a test's
-clothes. What these tests therefore prove is the normalisation contract — a §7.2
+clothes. What these tests therefore prove is the normalisation contract — a capture
 record with every key present, malformed input skipped and counted, idempotence
 by content hash — and *not* that a given vendor's exporter emits exactly these
 keys. If a real export ever disagrees, the adapter is what changes; these
@@ -48,7 +48,7 @@ from personalclaw.inbound.capture_import import (
     load_ledger,
 )
 
-# Every field §7.2 declares. Asserted as a set on every record so a future
+# Every field the capture record declares. Asserted as a set on every record so a future
 # adapter that forgets one cannot pass by omitting the key.
 RECORD_FIELDS = {
     "ts",
@@ -285,7 +285,7 @@ def _sse_dump() -> str:
 # ── 1. One test per format: every field filled, or absent for a named reason ──
 
 
-def test_jsonl_adapter_fills_the_722_record(tmp_path: Path) -> None:
+def test_jsonl_adapter_fills_the_capture_record(tmp_path: Path) -> None:
     """Claude Code session JSONL → one record per assistant turn.
 
     Unfillable here, with reasons:
@@ -333,7 +333,7 @@ def test_jsonl_adapter_fills_the_722_record(tmp_path: Path) -> None:
     assert second["latency_ms"] is None
 
 
-def test_json_adapter_fills_the_722_record(tmp_path: Path) -> None:
+def test_json_adapter_fills_the_capture_record(tmp_path: Path) -> None:
     """OpenAI-format request log → one record per logged exchange.
 
     This is the only format that can fill ``latency_ms`` (the caller wrote the
@@ -385,7 +385,7 @@ def test_json_adapter_fills_the_722_record(tmp_path: Path) -> None:
     assert bare["tool_calls"] == []
 
 
-def test_sse_adapter_fills_the_722_record(tmp_path: Path) -> None:
+def test_sse_adapter_fills_the_capture_record(tmp_path: Path) -> None:
     """Raw SSE dump → one record per response stream, both dialects.
 
     Two fields are unfillable by construction, not by omission:
@@ -899,7 +899,7 @@ async def test_the_route_stages_through_the_same_pipeline_and_fences_what_it_sta
 ) -> None:
     """One drop-directory file in, the CLI's own report out, content fenced on disk.
 
-    The fence assertion is the point of running the real store: §7.2 requires
+    The fence assertion is the point of running the real store: the contract requires
     redact()→fence_untrusted(source=capture:<client_id>) BEFORE persist, and a route that
     reached past `stage_records` into its own writer would satisfy every count in the
     report and still persist raw prompts.
@@ -1053,8 +1053,8 @@ async def test_a_malformed_body_is_a_400_and_a_store_fault_is_a_screened_500(
 ) -> None:
     """Two failure shapes that must not be one shape.
 
-    A file that PARSED badly is a 200 whose `reasons` name the losses (§8's
-    skipped-and-counted, exercised in section 3). Only the machinery failing is an error
+    A file that PARSED badly is a 200 whose `reasons` name the losses (the
+    skipped-and-counted rule, exercised in section 3). Only the machinery failing is an error
     code — and its message is screened, because an exception raised by a writer names a
     path and a path can look like a credential.
     """

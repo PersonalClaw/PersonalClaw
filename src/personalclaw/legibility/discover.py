@@ -227,8 +227,8 @@ def _engaged_loops(_state: Any) -> bool:
 def _engaged_automation(state: Any) -> bool:
     """Whether the USER has any automation — clock, file watch, event, the lot.
 
-    🔴 Read the unified store (S111). This asked `state.crons`, which describes only the legacy
-    `crons.json` — a file nothing has written since S108. Measured: a home with a store trigger read
+    🔴 Read the unified store. This asked `state.crons`, which describes only the legacy
+    `crons.json` — a file nothing writes any more. Measured: a home with a store trigger read
     as NOT engaged with automation, so the legibility surface told a user with live automations that
     they had none.
 

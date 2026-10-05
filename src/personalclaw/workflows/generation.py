@@ -2,7 +2,7 @@
 
 Three mechanisms, each answering a measured failure:
 
-**A GENERATED prompt.** The hand-written YAML reference block in the plan's first revision was
+**A GENERATED prompt.** A hand-written YAML reference block was
 stale the moment a provider changed, and a stale reference fails exactly like a hallucination:
 the planner emits something the validator rejects and the error blames the spec. So the prompt is
 assembled from `grounding.build_bundle()` every time, with the hard requirements placed ABOVE the
@@ -15,7 +15,7 @@ can name the fix rather than the symptom.
 
 **Repair, not regenerate.** An invalid spec comes back with a failure-specific correction note and
 the ORIGINAL spec attached, so the model edits rather than restarts. Regeneration throws away the
-90% that was right and re-rolls the same dice on it — measured elsewhere in this program as the
+90% that was right and re-rolls the same dice on it — measured as the
 difference between converging in one retry and oscillating between two wrong answers.
 
 The planner may also **honestly decline**: `{cannot_plan: reason}` is a valid emission, and a
@@ -243,7 +243,7 @@ def _check_terminal(root: dict, nodes: list[dict], check: SelfCheck) -> None:
 def _check_stopping_condition(nodes: list[dict], check: SelfCheck) -> None:
     """Does anything in this spec establish that the work is DONE?
 
-    The plan calls goal / verification / stopping-condition the minimal triple, and it is the one
+    Goal / verification / stopping-condition is the minimal triple, and this is the one
     self-check rule that is about the plan rather than the syntax: a sequence of stages runs to the
     end and reports success whether or not it achieved anything, because "the last node returned"
     is not the same claim as "the goal was met".
@@ -296,7 +296,7 @@ def _check_slots(spec: dict[str, Any], check: SelfCheck, *, shape_name: str) -> 
 def _check_bindings(spec: dict[str, Any], nodes: list[dict], check: SelfCheck) -> None:
     """Every `{{nodes.X.output}}` must name a node that exists, and every root must be real.
 
-    Measured in session 31: five templates shipped referencing `{{defaults.*}}`, which is not a
+    Five templates once shipped referencing `{{defaults.*}}`, which is not a
     binding root. The validator caught it, but only after the specs were written — checking here
     means the planner is told before anything is presented.
     """

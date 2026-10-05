@@ -182,7 +182,7 @@ def _quiet_window_sanitizer(value: str) -> str:
 
 
 def _push_to_talk_chord_sanitizer(value: str) -> str:
-    """Normalize a push-to-talk accelerator at the WRITE boundary (DC-3 T3.1).
+    """Normalize a push-to-talk accelerator at the WRITE boundary.
 
     ``" Command + Shift + Space "`` and ``"Command+Shift+Space"`` are the same chord to
     a user and different strings to `globalShortcut.register`. Collapsing the spacing
@@ -201,8 +201,8 @@ def _scratchpad_path_sanitizer(value: str) -> str:
 
     `pathguard.canonicalize` is the same realpath+expanduser the trigger capability fence uses, so
     a stored path can never differ from the one a fence would compare — a config file holding
-    ``~/notes/../.ssh/id_rsa`` while the runtime resolved something else is the split-brain S118
-    documented. Empty stays empty: "" is how the feature is turned off.
+    ``~/notes/../.ssh/id_rsa`` while the runtime resolved something else is the split-brain this
+    prevents. Empty stays empty: "" is how the feature is turned off.
     """
     if not value.strip():
         return ""
@@ -412,7 +412,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     },
     # The per-server elicitation grant. A `str_list` and not a bool, because the
     # whole point is that consent is per SERVER: one boolean here would be the global
-    # "MCP can interrupt me" switch the plan forbids. `max_items` is generous rather than
+    # "MCP can interrupt me" switch, which must not exist. `max_items` is generous rather than
     # tight — it bounds the list, and a home with 60 configured MCP servers is a real
     # shape, so a low cap would refuse a legitimate grant.
     "security.mcp_elicitation_servers": {
@@ -435,7 +435,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
         ),
     },
     # The runtime-editable guardrail subset. Incident is
-    # NOT here — it's its own endpoint (a later session). Budgets/breaker/scan are
+    # NOT here — it's its own endpoint. Budgets/breaker/scan are
     # plain scalars edited via Settings.
     "guardrails.budgets.max_tokens_per_run": {
         "type": "int",
@@ -505,7 +505,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
             shows=named({"block": "Block", "redact": "Redact", "warn": "Warn"}),
         ),
     },
-    # Model routing (MODEL-ROUTING-TELEMETRY §7 wiring point (d)) — the runtime-editable
+    # Model routing — the runtime-editable
     # subset: the master switch plus the tuning numbers a user reaches for after watching
     # what routing actually did. Per-use-case mode/pin are NOT here: they live in
     # use_case_settings/{uc}.json + routing_policy.json, beside the other bindings state.
@@ -516,7 +516,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "routing.cloud_quality_margin": {"type": "float", "min": 0.0, "max": 1.0},
     "routing.energy_sampling": {"type": "bool"},
     "routing.reproposal_cooldown_days": {"type": "int", "min": 0, "max": 365},
-    # §5 earned-autonomy thresholds. Runtime-editable because these are the knobs a
+    # Earned-autonomy thresholds. Runtime-editable because these are the knobs a
     # user reaches for after seeing what the ladder actually proposed. Bounded on both
     # sides: `clean_approvals` floors at 1 (a bar of zero would offer a promotion to a
     # type with no record), and every ceiling keeps a typo from budgeting a decade.
@@ -662,7 +662,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # `providers[]` entry, and the cell's key still arrives by env-var NAME (cell_provider).
     "evals.benchmark_model_ref": {"type": "str", "max_len": 128, "sanitize": lambda v: v.strip()},
     # The runtime-editable triage subset.
-    # `auto_execute_enabled` IS here on purpose: it is the plan's one-click revoke, so
+    # `auto_execute_enabled` IS here on purpose: it is the one-click revoke, so
     # a user who dislikes what the digest did must be able to switch acting off from
     # the surface that showed them. Its blast radius is bounded elsewhere (the frozen
     # capability set, the per-run cap, the guardrails budget floor), not by hiding it.
@@ -688,10 +688,10 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "proactive.classifier_gate_enabled": {"type": "bool"},
     "proactive.decision_default_horizon_days": {"type": "int", "min": 1, "max": 3650},
     "tools.projection_rules": {"type": "projection_rules"},
-    # Context Economy §4 — background compression feature flags (runtime-editable).
+    # Background compression feature flags (runtime-editable).
     "tools.bg_compress_enabled": {"type": "bool"},
     "tools.bg_compress_idle_days": {"type": "float", "min": 0.0, "max": 365.0},
-    # Context Economy §5 — dynamic tool-group activation (runtime-editable). Takes
+    # Dynamic tool-group activation (runtime-editable). Takes
     # effect for sessions created after the change (activation state is per-runtime).
     "tools.groups_enabled": {"type": "bool"},
     # The runtime-editable subset of the inbound access seam.
@@ -796,7 +796,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # reads them per turn, so a change takes effect on the next message with no restart.
     "memory.push_context": {"type": "bool"},
     "memory.push_min_confidence": {"type": "float", "min": 0.0, "max": 1.0},
-    # The confidence a LEARNED semantic fact needs before memory keeps it (settings B10). Its
+    # The confidence a LEARNED semantic fact needs before memory keeps it. Its
     # only control used to be a field on the Vector Memory app that nothing read; this is the
     # value the store actually applies, read live, so a change takes effect on the next write.
     "memory.semantic_confidence_threshold": {"type": "float", "min": 0.0, "max": 1.0},
@@ -891,7 +891,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # hand-edited file, defense in depth.
     "agent.bot_name": {"type": "str", "max_len": 50, "sanitize": _bot_name_validator},
     "agent.log_level": {"type": "enum", "values": ["DEBUG", "INFO", "WARNING", "ERROR"]},
-    # Self-QA companion (SELF-VERIFICATION §5 wiring point (d)). All four fields are editable,
+    # Self-QA companion. All four fields are editable,
     # not just the two toggles: a companion you can enable but cannot point at a repo is
     # enabled and inert, which reads as broken. `max_scenarios_per_fire` is clamped to the same
     # [1, 20] window ``AppConfig.load()`` applies, so the file and the dashboard agree.
@@ -951,7 +951,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # per request, so flipping it off closes the write immediately — the UI hiding the
     # editor is the second layer, not the only one.
     "dashboard.document_editing": {"type": "bool"},
-    # P25: opt-in tmux-backed terminal persistence (survives a gateway restart). Read as a
+    # Opt-in tmux-backed terminal persistence (survives a gateway restart). Read as a
     # raw dict from config.json by handlers/terminal.py::_get_config — a 3-part nested path.
     "dashboard.terminal.persist": {"type": "bool"},
     # The loop JUDGE's model axis, independent of the `loops` axis the
@@ -1031,8 +1031,9 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # Capped at MAX_LEASE_SECS (1h) — the ceiling `pool.Lease.expires_at` clamps to. Accepting a
     # larger number here would store a week-long lease that the runtime silently shortens.
     "workflows.lease_ttl_secs": {"type": "int", "min": 30, "max": 3600},
-    # AUTO-A1/A2 gate defaults. Strings rather than enums: a quiet window is an `HH:MM-HH:MM`
-    # range and a duty gate is a provider name an app can supply, so neither has a closed value set.
+    # Quiet-window and duty-gate defaults. Strings rather than enums: a quiet window is an
+    # `HH:MM-HH:MM` range and a duty gate is a provider name an app can supply, so neither has a
+    # closed value set.
     # The window is still checked, by the parser the scheduler reads it with
     # (`_quiet_window_sanitizer`), so a value the scheduler cannot read is refused here rather than
     # saved and then silently applied as no default.
@@ -1046,8 +1047,8 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # default mode is what a user changes after watching a run touch their real tree, and the
     # teardown switch is what they reach for when a teardown command is itself the problem — both
     # mid-session decisions. `container` is in the enum because it is in `workspace.Mode`; it
-    # degrades to an isolated scratch dir until §4.4 lands, so accepting the word here never
-    # promises a runtime the engine does not have.
+    # degrades to an isolated scratch dir until an image or build is given, so accepting the word
+    # here never promises a runtime the engine does not have.
     "workflows.workspace_default_mode": {
         "type": "enum",
         "values": ["scratch", "worktree", "in_place", "container"],
@@ -1058,7 +1059,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # on: while it is off the Learning page says so and offers "Turn learning on", which is this
     # PATCH. Without the row the only way back was hand-editing `config.json`.
     "learning.enabled": {"type": "bool"},
-    # LEARNING-FLYWHEEL capture: the knobs worth changing without a restart. The
+    # Learning-loop capture: the knobs worth changing without a restart. The
     # evidence floor and the session-score threshold are how an owner tunes how
     # eagerly the system learns, and staging can be turned off if the log is
     # unwanted — so all three are live-editable.
@@ -1069,7 +1070,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # move the gate and re-read the Memory studio without restarting the gateway.
     "learning.min_lesson_confidence": {"type": "float", "min": 0.0, "max": 1.0},
     "learning.staging_enabled": {"type": "bool"},
-    # LEARN-R21: the self-model gate. Live-editable because it is the one learning path
+    # The self-model gate. Live-editable because it is the one learning path
     # that acts on what WORKED rather than on corrections — a user who finds that presumptuous
     # should be able to stop it without a restart.
     "learning.self_model_enabled": {"type": "bool"},
@@ -1220,7 +1221,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
             "fit into the same time.",
         ),
     },
-    # Platform-legibility toggles (§6 Discover tips, §7 context adapters).
+    # Platform-legibility toggles (Discover tips, context adapters).
     # discover_tips gates the propose-don't-write Discover section + hub;
     # context_adapters gates writing adapter files into opted-in project workspaces.
     "legibility.discover_tips": {"type": "bool"},
@@ -1250,7 +1251,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
         ),
     },
     # Mobile push — which transport carries a CONTENT-FREE
-    # {kind,item_id} ping to the phone. WHETHER a notification pushes at all is plan 42's
+    # {kind,item_id} ping to the phone. WHETHER a notification pushes at all is the notification
     # rules matrix, not this; these two only pick the pipe. The enum values are read from
     # the loader so the write path cannot drift from the field's own declared choices.
     "mobile.push_backend": {"type": "enum", "values": list(PUSH_BACKENDS)},
@@ -1282,7 +1283,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "background.max_output_tokens": {"type": "int", "min": 512, "max": 65536},
     "background.busy_model_wait_secs": {"type": "float", "min": 0.0, "max": 300.0},
     # Watched sources — the poll engine's runtime knobs. The
-    # network floor is bounded at 300s (the R1-class rate floor) so a UI edit cannot make
+    # network floor is bounded at 300s (the rate floor) so a UI edit cannot make
     # the engine poll a third party abusively. `daily_request_budget` was allowlisted here
     # with nothing counting requests against it (issue #3490) and is gone; the allowance that
     # IS enforced is the per-source, per-poll `budget.max_requests` on the source row.

@@ -135,7 +135,7 @@ def test_a_fire_becomes_a_droppable_wake():
 
 
 def test_a_resume_is_never_droppable():
-    """🔴 §3.2: "overlap guards must never eat gate answers intended for parked runs"."""
+    """🔴 Overlap guards must never eat gate answers intended for parked runs."""
     resume = W.resume_for(
         trigger_id="j1", session_key="cron:j1", answer={"approved": True}, now=NOW
     )
@@ -204,7 +204,7 @@ def test_the_structured_payload_rides_the_queue_kwargs():
 
 
 def test_a_wake_for_a_RUNNING_session_is_dropped():
-    """§3.2's "natural implementation of `overlap: skip`" — the running session drains the inbox
+    """The natural implementation of `overlap: skip` — the running session drains the inbox
     itself, so a second wake is noise."""
     manager = _manager("cron:j1")
     _lock(manager, "cron:j1")
@@ -214,7 +214,7 @@ def test_a_wake_for_a_RUNNING_session_is_dropped():
 
 
 def test_a_RESUME_for_a_running_session_is_still_queued():
-    """🔴 The asymmetry that makes R11 resume-targets and R13 approvals safe. Dropping a gate answer
+    """🔴 The asymmetry that makes resume targets and approvals safe. Dropping a gate answer
     because the session looks busy would strand the parked run forever."""
     manager = _manager("cron:j1")
     _lock(manager, "cron:j1")
@@ -255,7 +255,7 @@ def test_a_wake_with_no_session_reports_NO_SESSION():
 
 
 def test_a_resume_with_no_session_is_REQUEUED_not_lost():
-    """§3.2: "must re-queue until the parked lock releases"."""
+    """A resume must re-queue until the parked lock releases."""
     delivery = W.deliver(
         _manager(), W.resume_for(trigger_id="j1", session_key="cron:gone", answer={}, now=NOW)
     )

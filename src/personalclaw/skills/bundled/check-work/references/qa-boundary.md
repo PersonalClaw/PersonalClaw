@@ -31,8 +31,8 @@ grows into the other, and so a reader can tell in one glance which one they want
 
 ## Status of the deep half
 
-The deep companion is owned by the SELF-VERIFICATION plan (its QA-Companion session),
-not by this skill. Until it lands, escalation is a sentence to the user — "this needs a
+The deep companion is its own verification surface,
+not part of this skill. Until it lands, escalation is a sentence to the user — "this needs a
 deeper, spec-driven pass than check-work does" — and the run stops there. check-work
 does **not** grow a substitute in the meantime; a soft dependency stays soft.
 

@@ -1,4 +1,4 @@
-"""Tests for the scheduled snapshot service + tiered retention (DURABILITY §3).
+"""Tests for the scheduled snapshot service + tiered retention.
 
 The thing being protected against is a lost home directory, so the tests care most
 about the properties that make a backup trustworthy: retention keeps a spread rather
@@ -932,7 +932,7 @@ class TestConfigContract:
         "keep_weekly",
         "keep_monthly",
         "restore_drills",
-        # The runtime-editable sync knobs (DAS-6c-ii-j).
+        # The runtime-editable sync knobs.
         "sync_enabled",
         "sync_transport",
         "sync_stale_after_secs",
@@ -989,7 +989,7 @@ class TestConfigContract:
 
         `False` is the interesting direction for the two bools: `_guard_flag` keeps
         backups ON when a value is unreadable (losing scheduled backups is the very
-        failure the plan exists to prevent), so a DELIBERATE False has to survive the
+        failure backups exist to prevent), so a DELIBERATE False has to survive the
         round trip rather than being read back as True.
         """
         from personalclaw.config.loader import AppConfig, DurabilityConfig

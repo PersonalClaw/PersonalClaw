@@ -126,10 +126,11 @@ def app_dir_on_path(app: str, ext_dir: Path | None) -> Iterator[None]:
 
     ONE definition for every place core runs an app's code by path: the provider loader, a
     bundle module's import, and ``personalclaw setup`` / ``doctor`` (``app_cli``). The CLI
-    runner held none until #124 found ten setup/doctor steps across five apps that read
-    "setup step unavailable — No module named '<app>_runtime'". Which is also why it is where
-    the directory is claimed as *app*'s code (:func:`personalclaw.app_code.claim`): what that
-    code registers, and the modules it loads, leave with the app when it is unloaded.
+    runner held none until PersonalClawApps #124 found ten setup/doctor steps across five
+    apps that read "setup step unavailable — No module named '<app>_runtime'". Which is
+    also why it is where the directory is claimed as *app*'s code
+    (:func:`personalclaw.app_code.claim`): what that code registers, and the modules it
+    loads, leave with the app when it is unloaded.
     """
     if ext_dir is not None:
         # What a program the app's code starts reaches is read from here on (`launch_egress`).

@@ -57,7 +57,7 @@ class DiscoveryResult:
     runtime's base agent). ``models`` are selectable model-override ids.
     ``permission_modes`` are the backend's NATIVE permission mode values (claude's
     5; empty for the default dialect) — raw capability data the trust-rung layer
-    (task #33) maps onto PersonalClaw rungs.
+    maps onto PersonalClaw rungs.
 
     ``supported_efforts`` are the backend-declared reasoning-effort options (from
     ``configOptions.effort``), surfaced VERBATIM as ``{value, label}`` — PClaw does
@@ -144,7 +144,7 @@ class ACPDialect:
     #: Short identifier, e.g. "default", "claude", "codex". For logging only.
     name: str = "default"
 
-    #: P9 capability gate — whether this backend actually SERVICES multiple sessions
+    #: Capability gate — whether this backend actually SERVICES multiple sessions
     #: concurrently on ONE process (interleaved session/prompt), vs. internally
     #: serializing them. Default **False** (safe): the client keeps one-session-per-
     #: process until a backend is PROVEN concurrent by a live 2-session spike. A True
@@ -170,7 +170,7 @@ class ACPDialect:
     # ── mid-turn steering ──
     def mid_turn_prompt_request(self, *, session_id: str, text: str) -> AcpRequest | None:
         """The request that delivers a STEER into the turn already generating, or
-        ``None`` when this dialect cannot deliver one (PR2-10).
+        ``None`` when this dialect cannot deliver one.
 
         The verb is dialect-owned for the same reason every other ``*_request`` here is:
         core ACP's only mid-turn-shaped frame is a second ``session/prompt``, but a
@@ -330,9 +330,7 @@ class ACPDialect:
             {"id": OPTION_ALLOW_ALWAYS, "label": "Allow always", "kind": OPTION_ALLOW_ALWAYS},
         ]
 
-    def select_allow_option_id(
-        self, offered: list[dict[str, str]], *, prefer_always: bool = False
-    ) -> str:
+    def select_allow_option_id(self, offered: list[dict[str, str]]) -> str:
         """Pick the ``optionId`` to echo back when approving, from the options
         the agent actually offered.
 
@@ -340,8 +338,9 @@ class ACPDialect:
         guaranteed to be the well-known ``allow_once`` / ``allow_always``
         constants (claude-code-acp uses different ids). Selection is therefore
         driven by the spec-defined ``kind`` classifier, falling back to the
-        literal id and then to the first non-reject option. Returns ``""`` only
-        when nothing approvable was offered (caller falls back to the default).
+        literal id and then to the first non-reject option. An approval answers
+        one call, so the once option wins over the always option. Returns ``""``
+        only when nothing approvable was offered (caller falls back to the default).
         """
         if not offered:
             return ""
@@ -357,8 +356,7 @@ class ACPDialect:
         once = [o for o in allow_any if "once" in (o.get("kind") or o.get("id") or "").lower()]
         always = [o for o in allow_any if "always" in (o.get("kind") or o.get("id") or "").lower()]
 
-        order = (always, once, allow_any) if prefer_always else (once, always, allow_any)
-        for bucket in order:
+        for bucket in (once, always, allow_any):
             if bucket:
                 return bucket[0]["id"]
         # No clearly-allow option — fall back to the first non-reject option.
@@ -434,7 +432,7 @@ class DefaultDialect(ACPDialect):
 
     name = "default"
 
-    # A CLI speaking this dialect was PROVEN concurrent by the P9 live 2-session
+    # A CLI speaking this dialect was PROVEN concurrent by a live 2-session
     # spike: two sessions on one process, interleaved session/update frames.
     # The Zed adapters (ClaudeCode/Codex) stay at the base False until their own spike.
     supports_concurrent_sessions = True
@@ -494,7 +492,7 @@ class ZedAdapterDialect(ACPDialect):
         live adapter, that belief is false in the way that matters: codex-acp does
         not clamp an out-of-vocabulary value, it answers ``-32602 Invalid params``
         and *keeps its own default-allow mode*. The reply was dropped on the floor
-        (see :meth:`AcpClient._watch_dialect_reply`), so §2.2's "never leave the
+        (see :meth:`AcpClient._watch_dialect_reply`), so the host's rule "never leave the
         CLI in its own default-allow mode" silently did not hold for codex at all.
         The host therefore owns the translation, and an untranslatable mode is
         skipped instead of sent.
@@ -607,7 +605,7 @@ class CodexDialect(ZedAdapterDialect):
     #:                       with network access."
     #:
     #: so the canonical ``default`` was answered ``-32602 Invalid params`` and every
-    #: codex session stayed on ``agent`` — the self-approving mode §2.2 exists to leave.
+    #: codex session stayed on ``agent`` — the self-approving mode the host must leave.
     #: ``read-only`` is codex's most-restrictive mode and the only one that makes the
     #: host the permission authority, so that is where the canonical restrictive mode
     #: lands. ``plan`` maps there too: codex's planning switch is a DIFFERENT axis
@@ -631,7 +629,7 @@ class CodexDialect(ZedAdapterDialect):
         "neverask": "agent",
         # "do not gate anything" → codex's unsandboxed mode. Anything narrower would
         # still escalate network + out-of-workspace writes (measured), so an unattended
-        # run pointed at `agent` would wedge on exactly the calls §2.3 exists to unblock.
+        # run pointed at `agent` would wedge on exactly the calls an unattended run must make.
         "bypasspermissions": "agent-full-access",
         "bypass": "agent-full-access",
         "yolo": "agent-full-access",

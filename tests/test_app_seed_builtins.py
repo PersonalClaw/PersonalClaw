@@ -98,10 +98,10 @@ def test_native_app_survives_restart_reseed(tmp_path):
 
 
 def test_native_manifest_resyncs_from_source_on_restart(tmp_path):
-    """Bug #24: a native app's app.json is packaged-source-owned (the app is locked,
+    """A native app's app.json is packaged-source-owned (the app is locked,
     user config lives in data/config.json). A manifest edit in apps/native/ MUST
     reach the existing install on the next boot — the old seed-once-skip stranded it
-    (which is why the #21 create-task schema fix didn't propagate). Edit the source
+    (which is why the create-task schema fix didn't propagate). Edit the source
     manifest, re-run seeding, and the INSTALLED app.json must reflect the change."""
     _native_manifest(tmp_path, "brave-search", native=True)
     app_manager.seed_builtin_apps()
@@ -126,7 +126,7 @@ def test_native_manifest_resyncs_from_source_on_restart(tmp_path):
 def test_native_bundle_code_resyncs_from_source_on_restart(tmp_path):
     """A bundled app's CODE is packaged-source-owned too, not just its manifest.
 
-    APE-5 lets a native app ship its own ``provider.py`` (``personalclaw-ui-docs`` and
+    A native app may ship its own ``provider.py`` (``personalclaw-ui-docs`` and
     ``ollama-models`` both do). Seeding is once-only and the resync used to copy
     ``app.json`` alone, so a provider fix shipped in a new wheel reached a FRESH home and
     never an existing one — and a native app is locked against the
@@ -232,8 +232,8 @@ def test_de_bundled_app_is_demoted_from_builtin_to_local(tmp_path):
     name from the marker, so the user can manage it like any other installed app.
 
     Deliberately a NEUTRAL fixture name. `ollama-models` was the historical precedent
-    (`retire_orphaned_builtins`' docstring cites it), but an owner ruling
-    re-bundles that app, so naming the fixture after it would have this rail assert a
+    (`retire_orphaned_builtins`' docstring cites it), but that app is
+    bundled again, so naming the fixture after it would have this rail assert a
     story the tree no longer tells. The MECHANISM is what is railed, and it is generic.
     """
     # Create a fake installed.json directly so the reconciliation has something to fix.

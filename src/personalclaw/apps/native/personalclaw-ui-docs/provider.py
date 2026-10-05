@@ -356,8 +356,8 @@ def _brief(text: str) -> str:
 
 # ── ui_list ───────────────────────────────────────────────────────────────
 #
-# The capability this bundle GAINED after it started owning its own provider code
-# (APE-5): a real provider method reachable through the ordinary tool dispatch path,
+# The capability this bundle GAINED after it started owning its own provider code:
+# a real provider method reachable through the ordinary tool dispatch path,
 # added with no edit to any core module that implements, resolves or dispatches it.
 
 

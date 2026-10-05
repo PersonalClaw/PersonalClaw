@@ -4,8 +4,8 @@ The FreshRSS lesson: once a user can save a filter over their item stream, that 
 an addressable event source of its own. So a :class:`SavedSourceQuery` is evaluated against
 every newly-ingested item and emits ``SourceQueryMatched`` when it matches.
 
-**Zero tokens is the design, not an optimisation.** §6.4: "*Deterministic rule language before
-LLM: 90% of triage costs zero tokens.*" This module therefore imports NOTHING from
+**Zero tokens is the design, not an optimisation.** A deterministic rule language comes before
+any LLM, so most triage costs zero tokens. This module therefore imports NOTHING from
 ``llm_helpers``/``providers``, and the grammar below is a hand-rolled matcher over strings —
 deliberately small and boring. ``test_watched_sources_queries.py`` pins the claim by making
 any LLM entry point explode and asserting a match still happens.
@@ -21,12 +21,12 @@ fence-break with extra steps.
 ``trigger_sources.registry.emit`` — the single app-source ingestion point — which namespaces
 the event to ``app:watched-sources:SourceQueryMatched``, fences its text at origin and hands
 it to ``event_triggers.emit_event``. A user subscribes with an ordinary ``AppEvent``/``event``
-trigger whose ``event_glob`` matches that name. §6.4 describes the subscription as
+trigger whose ``event_glob`` matches that name. The obvious subscription would be
 ``{source: SourceQueryMatched, pattern: {query_id}}``; the SHIPPED matcher's ``source`` is one
 of three enum values (``memory``/``inbox``/``app``) and its pattern kinds are a closed set, so
-the plan's literal shape would require a FOURTH event source — a second matcher for one
-producer, which the substrate's own amendment forbids ("no new trigger kind, no second
-matcher"). The query id rides ``meta.query_id`` instead, which is where the inbox bridge puts
+that literal shape would require a FOURTH event source — a second matcher for one
+producer, which the trigger substrate rules out (no new trigger kind, no second
+matcher). The query id rides ``meta.query_id`` instead, which is where the inbox bridge puts
 its ``sender``/``address`` for exactly the same reason.
 """
 
@@ -77,7 +77,7 @@ class QueryTerm:
 
 @dataclass(frozen=True)
 class SavedSourceQuery:
-    """A named, saved filter over the source item stream (§6.4).
+    """A named, saved filter over the source item stream.
 
     ``id`` is stable — a trigger binds to it through ``meta.query_id``, so renaming the query
     must not retire the automation the user built on it.
@@ -255,8 +255,8 @@ class WatchedSourcesTriggerSource:
     ``events`` declares ONLY ``SourceQueryMatched``. ``SourceItemIngested`` and
     ``SourcePollCompleted`` stay on the spool and are deliberately NOT declared here: an event
     declared in a browsable vocabulary that never reaches the bus is the "declared kind without
-    a runtime" defect, and bridging a per-item event to triggers is a firehose this atom was
-    not asked to open.
+    a runtime" defect, and bridging a per-item event to triggers is a firehose this module
+    does not open.
     """
 
     name = TRIGGER_SOURCE_NAME
@@ -327,7 +327,7 @@ def evaluate(
     spool: Any,
     store: Any | None = None,
 ) -> list[str]:
-    """Match one newly-ingested item against every saved query (§6.4).
+    """Match one newly-ingested item against every saved query.
 
     Per match: a ``SourceQueryMatched`` record on the spool AND a fire on the event bus. Both,
     because they answer different questions — the spool is the durable stream a digest reads,

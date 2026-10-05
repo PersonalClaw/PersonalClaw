@@ -30,7 +30,7 @@ CARRIED the weight; it now gates a wheel that must not:
 What is NOT here is the bundle CHOICE: which model, under which licence, from which pinned
 revision, at which digest, is recorded in :data:`DECLARATION_RELPATH` — the bundled-chat app's
 own ``bundled-model-signoff.txt`` — and that record, not this module, is what a reader
-consults. As of OU-14 it names ``unsloth/SmolLM2-135M-Instruct-GGUF`` under Apache-2.0.
+consults. Today it names ``unsloth/SmolLM2-135M-Instruct-GGUF`` under Apache-2.0.
 
 **Why default-DENY and no fuzzy licence matching.** The known-false cases this rail exists for
 all *look* permissive: Gemma ships under Google's own Gemma Terms with use restrictions,
@@ -62,14 +62,14 @@ from typing import Iterable
 
 from personalclaw.local_models.layouts import DIRECT_FILE_EXTENSIONS
 
-#: The ONLY licence identifiers a bundled weight may carry (the owner's sign-off: "genuinely
-#: OSI-permissive — Apache-2.0 or MIT"). Compared exactly, lowercased. Widening this set is a
+#: The ONLY licence identifiers a bundled weight may carry (only a genuinely OSI-permissive
+#: licence is signed off — Apache-2.0 or MIT). Compared exactly, lowercased. Widening this set is a
 #: governance change, not a maintenance one: ``tests/test_bundled_model_gate.py`` pins the set
 #: member-for-member so adding an entry reds until the pin is edited in the same reviewable
 #: commit.
 PERMITTED_LICENCES: frozenset[str] = frozenset({"apache-2.0", "mit"})
 
-#: Where the owner's sign-off record lives, relative to the repository root — inside the
+#: Where the sign-off record lives, relative to the repository root — inside the
 #: bundled-chat app that reads it, because that is the only location every install carries. It
 #: was once under ``docs/`` with a symlink into the app, and the container image, which copies
 #: only ``src/``, shipped the link without its target. A RELATIVE path on purpose: this module
@@ -280,8 +280,8 @@ def licence_decision(raw: str) -> LicenceDecision:
         permitted=False,
         reason=(
             f"licence {raw.strip()!r} is NOT on the permitted allowlist {permitted} — refused. "
-            "Only a genuinely OSI-permissive licence may be redistributed in the wheel "
-            "(an owner ruling); a custom, community, non-commercial, research-only or "
+            "Only a genuinely OSI-permissive licence may be redistributed in the wheel; "
+            "a custom, community, non-commercial, research-only or "
             "'open'-in-name-only licence is not one, whatever the model card calls it. If this "
             "IS one of the permitted licences, declare its SPDX identifier exactly — this rail "
             "does not match prose, because a matcher loose enough to accept prose accepts a "
@@ -303,8 +303,7 @@ def size_decision(measured_bytes: int, budget_bytes: int) -> SizeDecision:
     Three refusals, not one:
 
     * **over budget** — the case the gate is named for.
-    * **a zero measurement** — a gate that passes when nothing shipped is the vacuity OU-14's
-      escalation found in three of its four clauses.
+    * **a zero measurement** — a gate that passes when nothing shipped is vacuous.
     * **an undeclared budget** — a ceiling of zero cannot admit anything. The owner sets the
       number; an unset number is not permission.
     """
@@ -488,7 +487,7 @@ def gate_wheel(wheel: Path, *, max_bytes: int = MAX_WHEEL_BYTES) -> BundleGateRe
     """The release decision: this wheel carries no model weight and is not bloated.
 
     Two assertions, one gate, because they are two symptoms of one regression. The default
-    chat model is fetched at runtime (owner decision — see the module docstring), so a
+    chat model is fetched at runtime (see the module docstring), so a
     weight-shaped member in the wheel means ``package-data`` grew a glob it should not have;
     and the first thing that goes wrong when it does is the wheel crossing PyPI's 100 MiB
     per-file limit, where the failure surfaces as a rejected upload of an already-tagged

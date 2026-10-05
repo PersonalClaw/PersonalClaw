@@ -6,12 +6,12 @@ import {
   type ChatStep,
 } from './replayFold'
 
-// Event-trace replay regression (FE side + Success Criterion #3).
+// Event-trace replay regression (FE side).
 //
 // These feed recorded chat/run traces through the SAME pure folds the live UI uses. The
-// load-bearing test is `catches a re-introduced K44 duplicate`: a trace that a CORRECT
+// load-bearing test catches a re-introduced duplicate answer: a trace that a CORRECT
 // coalescer collapses to one text segment. We prove the healthy fold does so (0 adjacent
-// duplicates) AND that a K44-shaped mis-drive (a flush that pushes instead of replacing,
+// duplicates) AND that an answer-rendered-twice mis-drive (a flush that pushes instead of replacing,
 // modeled by a spurious release of the text run) produces the duplicate the metric catches —
 // so a regression is caught by replay, not only by a hand-written unit test.
 
@@ -33,7 +33,7 @@ describe('replayChat — happy path', () => {
   })
 })
 
-// ── history-overlap-guard: activity preamble stays above the answer (K42) ──────
+// ── history-overlap-guard: activity preamble stays above the answer ────────────
 
 const WITH_ACTIVITY: ChatStep[] = [
   { kind: 'flush', text: 'Answer' },
@@ -41,7 +41,7 @@ const WITH_ACTIVITY: ChatStep[] = [
   { kind: 'flush', text: 'Answer complete.' },
 ]
 
-describe('replayChat — activity insertion (K42)', () => {
+describe('replayChat — activity insertion', () => {
   it('inserts the activity BEFORE the active text run so the flush replaces in place', () => {
     const { segs } = replayChat(WITH_ACTIVITY)
     // Order: activity preamble, then the single (replaced) text run — no duplicate.
@@ -52,24 +52,24 @@ describe('replayChat — activity insertion (K42)', () => {
   })
 })
 
-// ── the K44 regression proof ──────────────────────────────────────────────────
+// ── the duplicate-answer regression proof ─────────────────────────────────────
 
-describe('replayChat — K44 duplicate detection', () => {
+describe('replayChat — duplicate-answer detection', () => {
   it('a correct coalescer produces zero adjacent duplicate text segments', () => {
     const { segs } = replayChat(HAPPY_PATH)
     expect(adjacentDuplicateTextCount(segs)).toBe(0)
   })
 
-  it('catches the K44 signature when a boundary wrongly splits a continuing run', () => {
-    // A K44-shaped mis-drive: a spurious boundary mid-stream resets coalescing, so the
+  it('catches the answer-rendered-twice signature when a boundary wrongly splits a continuing run', () => {
+    // The mis-drive: a spurious boundary mid-stream resets coalescing, so the
     // next flush PUSHES a new segment instead of replacing — the "answer rendered twice"
     // shape. Replay surfaces it as an adjacent duplicate the metric flags.
-    const K44_TRACE: ChatStep[] = [
+    const DOUBLED_TRACE: ChatStep[] = [
       { kind: 'flush', text: 'The answer is 42.' },
       { kind: 'boundary' }, // spurious reset (the bug) — no real tool/approval happened
       { kind: 'flush', text: 'The answer is 42.' },
     ]
-    const { segs } = replayChat(K44_TRACE)
+    const { segs } = replayChat(DOUBLED_TRACE)
     expect(adjacentDuplicateTextCount(segs)).toBe(1)
   })
 })

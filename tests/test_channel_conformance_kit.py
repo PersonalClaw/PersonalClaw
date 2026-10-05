@@ -468,7 +468,7 @@ def test_inbound_transport_routing_through_the_door_passes_fencing(tmp_path, mon
     mod_path = tmp_path / "conformance_door_transport.py"
     mod_path.write_text(
         textwrap.dedent('''
-            """A transport on the guarded door — the EA-7 target shape."""
+            """A transport on the guarded door — the target shape."""
 
             from personalclaw.channel_transports.base import (
                 ChannelCapabilities,
@@ -525,7 +525,7 @@ def test_fencing_clause_is_skipped_for_outbound_only_transports():
     assert_channel_contract(GoodTransport())
 
 
-# ── §C3 delivery obligations ────────────────────────────────────────────────
+# ── delivery obligations ────────────────────────────────────────────────────
 
 
 class _FakeBackend:
@@ -665,7 +665,7 @@ def test_throttle_clause_refuses_to_pass_vacuously_without_a_counter():
 
 
 def test_non_streaming_channel_must_return_empty_stream_ts():
-    """The MUST-NOT half of §C3 (email): edits=False ⇒ start_stream returns ""."""
+    """The MUST-NOT half of clause 8 (email): edits=False ⇒ start_stream returns ""."""
 
     class NoEdits(GoodTransport):
         @property
@@ -985,8 +985,8 @@ def test_a_wait_that_swallows_its_cancellation_fails():
 
 _CHANNEL_PROVIDER = {"type": "channel", "implementation": "fixture_runtime.transport:create"}
 _INBOX_PROVIDER = {"type": "inbox", "implementation": "fixture_runtime.source:create"}
-#: the arm. Generically named, like every other fixture here — the plan's acceptance criterion ends
-#: "core contains no vendor names", and a test fixture is a tracked file like any other.
+#: the arm. Generically named, like every other fixture here — core contains no vendor names,
+#: and a test fixture is a tracked file like any other.
 _TRIGGER_SOURCE_PROVIDER = {
     "type": "trigger_source",
     "implementation": "fixture_runtime.trigger_source:create",
@@ -1063,15 +1063,15 @@ def test_channel_only_app_warns_about_BOTH_missing_seams_SEPARATELY(tmp_path, mo
     assert "no_inbox_source_reason" not in trigger[0], "the arms must not cross-reference"
     # The trigger arm must say the seam is available, not that it is coming: the whole 0/4
     # window happened because the prose said "once that seam exists" after it existed.
-    assert "WF2AUT-8" in trigger[0]
+    assert "seam is LIVE" in trigger[0]
     assert "once that seam exists" not in trigger[0]
 
 
 def test_a_channel_plus_inbox_app_still_warns_about_the_TRIGGER_SOURCE_arm(tmp_path, monkeypatch):
-    """🔴 The regression this arm exists for: the CE-8-era slack-channel shape.
+    """🔴 The regression this arm exists for: the original slack-channel shape.
 
-    `channel` + `inbox` was "full vendor completeness" when CE-8 shipped, and this clause
-    went silent on it — so the trigger-source obligation sat at 0/4 with the kit reporting
+    `channel` + `inbox` was "full vendor completeness" when this clause shipped, and the
+    clause went silent on it — so the trigger-source obligation sat at 0/4 with the kit reporting
     nothing wrong. Exactly ONE advisory now, and it is the trigger one.
     """
     provider = _transport_in_app_bundle(

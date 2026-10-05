@@ -1,4 +1,4 @@
-"""Node registry + use-case model resolution for the ingestion engine (#30).
+"""Node registry + use-case model resolution for the ingestion engine.
 
 Nodes register under ``(node_type, backend)`` (mirrors OpenForge's
 ``register_backend``). A model-backed node resolves its provider through a

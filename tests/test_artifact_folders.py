@@ -319,7 +319,7 @@ def test_folder_filter_is_present_vs_absent(prov, store):
 
 
 def test_folder_id_tolerant_load_defaults_to_unfiled(prov):
-    """A meta.json written before PEP-6 has no folder_id key: it loads as unfiled."""
+    """A meta.json written before folders existed has no folder_id key: it loads as unfiled."""
     art = _make(prov, "Legacy")
     meta = prov.root / art.slug / "meta.json"
     data = json.loads(meta.read_text())

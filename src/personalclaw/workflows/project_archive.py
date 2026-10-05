@@ -1,4 +1,4 @@
-"""Project archive I/O: the ZIP writer and extractor around ``project_export``'s planning (C9).
+"""Project archive I/O: the ZIP writer and extractor around ``project_export``'s planning.
 
 ``project_export`` is the DECISION layer — what travels, what it hashes to, what an import may
 accept. It deliberately takes file CONTENTS rather than a directory so the exclusion and digest
@@ -173,7 +173,7 @@ def collect_project(
 
 
 def _vault_secret_names(project_id: str) -> list[str]:
-    """The project's vault key NAMES, for the manifest's presence flags (EI-10).
+    """The project's vault key NAMES, for the manifest's presence flags.
 
     Tolerant by design: an unreadable credential store must not make a project unexportable. It
     does mean the manifest under-reports which credentials the far side needs, so the failure is

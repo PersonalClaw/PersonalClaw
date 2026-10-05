@@ -1,6 +1,6 @@
-"""The versioned Loop-1 scenario library (EVALUATION-SUBSTRATE amendment E1).
+"""The versioned Loop-1 scenario library.
 
-Before ES-2 the four scenarios were packaged data read straight off the install
+The four scenarios used to be packaged data read straight off the install
 tree (``eval/scenarios/*.json``): unversioned, unhashable as a set, and not
 user-extensible. They now live in TWO places with distinct jobs:
 
@@ -64,8 +64,9 @@ MANIFEST_NAME = "scenario_library.json"
 # Scenario file suffixes the library recognizes, in resolution order.
 SCENARIO_SUFFIXES = (".json", ".yaml", ".yml")
 
-# A scenario that declares no fixture home runs over this one. ``empty`` is the
-# only fixture the wheel ships today (``personalclaw/tests_fixtures/empty``).
+# A scenario that declares no fixture home runs over this one: the bare home
+# (``personalclaw/tests_fixtures/empty``). The wheel ships two more a scenario can name,
+# ``demo-home`` and ``six-month-home``.
 DEFAULT_FIXTURE_HOME = "empty"
 
 
@@ -157,7 +158,7 @@ def origin_of(path: Path, data: dict) -> str:
 def tiers_of(data: dict) -> list[str]:
     """The tiers a scenario declares, normalized to a list (empty when it declares none).
 
-    ES-6's Loop-2 gate subset is opted into with ``"tiers": ["gate"]``. Read by INSPECTING the
+    The Loop-2 gate subset is opted into with ``"tiers": ["gate"]``. Read by INSPECTING the
     scenario, like :func:`origin_of` — a side list of gate scenario names would be a second
     place the truth lives, and the one that goes stale is always the list.
     """
@@ -277,7 +278,7 @@ def resolve_fixture_home(path: str | Path) -> str:
 
     An unknown fixture name is an error here, in the PARENT, before a child is
     spawned: a run over "whatever home happened to be there" is exactly the
-    unpinned result this atom exists to make impossible.
+    unpinned result a pinned fixture home exists to make impossible.
     """
     name = fixture_home_of(_read_scenario_data(path))
     from personalclaw.seed import SeedError, _resolve_fixture  # noqa: PLC0415 - cycle-free

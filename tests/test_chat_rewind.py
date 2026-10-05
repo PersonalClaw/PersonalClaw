@@ -165,7 +165,7 @@ class TestRewind:
     async def test_editing_an_earlier_turn_without_the_flag_still_keeps_the_later_turns(
         self, tmp_path, monkeypatch
     ):
-        """The day-56b defect (`s24E`): the inline editor sent NO `rewind` for a middle
+        """The defect this pins: the inline editor sent NO `rewind` for a middle
         turn, the server answered `{"rewound": 0}`, and the later turn was gone from disk
         with no trail. An edit that has later user turns after it must retain them and
         reset the provider whatever the client sent."""

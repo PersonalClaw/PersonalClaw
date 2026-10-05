@@ -1,9 +1,9 @@
 """The run side's two ledger rails are reachable, and absent is not zero.
 
-The plan names the seam this file rails:
+The seam this file rails:
 
     **The ledger rails.** The findings rail and the verdict/ROI rail are PROJECTIONS over the
-    `PP-5` ledger, which already carries `step_completed`, `judge_verdict`, `breaker_trip` and
+    ledger, which already carries `step_completed`, `judge_verdict`, `breaker_trip` and
     `watcher_reaped` for both nouns.
 
 Measured on `origin/main` before this change, the run side answered none of it.
@@ -49,10 +49,10 @@ from personalclaw.workflows.introspection import (
     verdict_rail,
 )
 
-#: The four kinds the ledger-rails clause names, quoted above. Pinned here rather than read out
-#: of `RAIL_PRODUCERS` so the plan's list and the code's table are two independent statements — a
+#: The four kinds the seam description names, quoted above. Pinned here rather than read out
+#: of `RAIL_PRODUCERS` so the stated list and the code's table are two independent statements — a
 #: kind dropped from the table reds this instead of silently shrinking the rail's own scope.
-PLAN_RAIL_KINDS = ("step_completed", "judge_verdict", "breaker_trip", "watcher_reaped")
+NAMED_RAIL_KINDS = ("step_completed", "judge_verdict", "breaker_trip", "watcher_reaped")
 
 _SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "personalclaw"
 
@@ -111,7 +111,7 @@ _RUN_VERDICT = {
 }
 
 #: A LOOP-shaped `step_completed`, exactly as `loop/journal.py::cycle` writes it. The whole point of
-#: PP-16 is that these rows will one day flow through the run-side projection.
+#: making a Loop a WorkflowRun is that these rows will one day flow through the run-side projection.
 _LOOP_STEP = {
     "cycle": 3,
     "node_id": "cycle",
@@ -121,18 +121,18 @@ _LOOP_STEP = {
 }
 
 
-# ── reachability: the four kinds the plan names ──
+# ── reachability: the four named kinds ──
 
 
-def test_every_plan_named_rail_kind_has_a_row_in_the_producer_table(run_home):
-    """The plan's four kinds and the code's table are the same set, in both directions.
+def test_every_named_rail_kind_has_a_row_in_the_producer_table(run_home):
+    """The four named kinds and the code's table are the same set, in both directions.
 
-    A kind in the plan with no table row is a rail that silently does not exist; a table row naming
-    a kind the plan does not is scope this seam did not agree to.
+    A named kind with no table row is a rail that silently does not exist; a table row naming
+    a kind the list does not is scope this seam did not agree to.
     """
-    assert set(PLAN_RAIL_KINDS) == set(RAIL_PRODUCERS), (
-        "the ledger-rails clause names "
-        f"{sorted(PLAN_RAIL_KINDS)} but RAIL_PRODUCERS covers {sorted(RAIL_PRODUCERS)}"
+    assert set(NAMED_RAIL_KINDS) == set(RAIL_PRODUCERS), (
+        "the ledger-rails seam names "
+        f"{sorted(NAMED_RAIL_KINDS)} but RAIL_PRODUCERS covers {sorted(RAIL_PRODUCERS)}"
     )
 
 
@@ -223,7 +223,7 @@ def test_the_route_is_registered_and_answers_the_service_read(run_home):
 def test_a_loop_shaped_step_reads_absent_not_zero_for_money(run_home):
     """A loop-shaped `step_completed` carries NO cost or token key, and the rail says so.
 
-    This is the retirement-critical case and the reason `_carried` exists. PP-16 makes a Loop a
+    This is the retirement-critical case and the reason `_carried` exists. A Loop is becoming a
     WorkflowRun, so loop-shaped rows will flow through this exact projection. Loop money lives in
     `usage/turns.jsonl` (`loop.manager.loop_spend` reads it there) and never on the ledger row — so
     a rail defaulting the missing key to zero would report "$0.00, 0 tokens" for work that really
@@ -523,7 +523,7 @@ def test_the_producer_table_matches_the_engines_real_emitters(run_home):
 def test_the_loop_side_is_the_only_breaker_writer(run_home):
     """The measurement behind `breaker_trip`'s PRODUCER_NONE row, pinned.
 
-    Recorded as a rail rather than a comment because the plan's own clause asserts the ledger
+    Recorded as a rail rather than a comment because the seam description asserts the ledger
     "already carries ... `breaker_trip` ... for both nouns", and it does not. If a run-side breaker
     ever lands, the test above reds; if the LOOP one is removed, this reds — so the asymmetry can
     never quietly become symmetric in either direction.
@@ -537,7 +537,7 @@ def test_the_loop_side_is_the_only_breaker_writer(run_home):
 def test_every_rail_field_is_projected_from_a_kind_the_rail_declares(run_home):
     """No rail reads a kind outside `RAIL_PRODUCERS` — the seam's scope, pinned.
 
-    This seam is the ledger-rails third of the seam 4, explicitly not the plan-walkthrough or
+    This seam is the ledger-rails third of a larger seam, explicitly not the plan-walkthrough or
     intake thirds. A rail quietly projecting a fifth kind would be scope creep this file cannot
     otherwise catch.
     """
@@ -598,7 +598,7 @@ def test_the_rails_agree_with_the_ledgers_own_step_aggregate(run_home):
 def test_the_rails_project_the_same_kinds_the_loop_rails_do(run_home, monkeypatch, tmp_path):
     """One ledger, two nouns: the run rails read exactly the kinds the LOOP rails read.
 
-    The change's clause is "one ledger". If the run-side findings rail read a different kind than
+    The change's promise is "one ledger". If the run-side findings rail read a different kind than
     `loop/files.py::get_findings`, the retirement would be a rename of two different things.
 
     BEHAVIOURAL, because a substring version of this was measured to be vacuous: repointing
@@ -609,7 +609,7 @@ def test_the_rails_project_the_same_kinds_the_loop_rails_do(run_home, monkeypatc
     from personalclaw.loop import files as loop_files
     from personalclaw.loop.journal import LoopJournal
 
-    # The isolation seam PP-16 seam 4b established. A loop id is eight hex chars
+    # The loop-ledger isolation seam. A loop id is eight hex chars
     # (`files._LOOP_ID_RE`); anything else resolves to no dir at all and every read returns [].
     monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path / "loophome")
     loop_id = "abcd1234"

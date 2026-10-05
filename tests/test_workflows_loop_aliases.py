@@ -211,7 +211,7 @@ def test_the_alias_manifest_is_json_serializable():
     assert json.loads(json.dumps(alias_manifest()))
 
 
-# ── mid-run steering (R14) ──
+# ── mid-run steering ──
 
 
 @pytest.fixture

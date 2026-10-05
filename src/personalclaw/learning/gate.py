@@ -56,8 +56,8 @@ class Cadence(str, Enum):
     SESSION_END = "session_end"
     #: On a workflow run reaching a terminal state — the run-outcome learner.
     RUN_END = "run_end"
-    #: On an external agent's turn observed through the `/capture/v1` proxy
-    #: (EXTERNAL-ACCESS §7.2). Unlike the three above, this cadence observes a
+    #: On an external agent's turn observed through the `/capture/v1` proxy.
+    #: Unlike the three above, this cadence observes a
     #: conversation PClaw did not conduct, so its content arrives already inside
     #: `fence_untrusted(source="capture:<client_id>")` — `capture_hygiene`'s rule
     #: ("content inside a fence is invisible to direct capture cadences; it may
@@ -297,8 +297,8 @@ def record_denial(decision: GateDecision, *, detail: str = "") -> bool:
     "the gate denied it — recorded so a config-off period is legible". Neither
     half was wired: nothing in production wrote ``FLUSH_SKIPPED``, so a denial
     left no trace and a permanently-off gate looked identical to a healthy pass
-    that simply found nothing. This closes that loop (LEARNING-FLYWHEEL §3.2 —
-    every negative decision writes a row carrying its typed reason).
+    that simply found nothing. This closes that loop: every negative decision
+    writes a row carrying its typed reason.
 
     Deliberately a SEPARATE function rather than a write inside
     :meth:`LearningGate.decide`: ``decide`` is documented as pure with respect to

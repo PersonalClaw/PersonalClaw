@@ -1,6 +1,6 @@
-"""(LEARN-R17): trajectory-variance tier migration — agentic ↔ fixed.
+"""Trajectory-variance tier migration — agentic ↔ fixed.
 
-This is the clause the plan recorded BLOCKED three times, on two absent inputs that now exist. The
+This producer was blocked three times, on two absent inputs that now exist. The
 suite pins the producer against the SHAPE of that former block:
 
 * tier is DERIVED from spec STRUCTURE (never a `WorkflowDef` field — that would collide):
@@ -155,8 +155,8 @@ def test_low_variance_agentic_distills():
 
 
 def test_a_flaky_agentic_template_is_not_distilled():
-    """Freezing a failing agentic path into a rigid one bakes the failure in — §3.5 distills what
-    already WORKS, so the failure ceiling must hold even at zero path variance."""
+    """Freezing a failing agentic path into a rigid one bakes the failure in — the migration
+    distills what already WORKS, so the failure ceiling must hold even at zero path variance."""
     runs = [("same-path", True)] * 3 + [("same-path", False)] * 3  # 50% failure, one path
     assert tm.tier_migration("flaky", tm.TIER_AGENTIC, runs) is None
 
@@ -233,7 +233,7 @@ def test_a_rejected_migration_is_not_refiled(home):
 
 
 def test_capture_drives_the_tier_migration_producer(svc, home):
-    """The clause that matters most: a producer nothing calls is the defect this step closes. Seed a
+    """The check that matters most: a producer nothing calls is the defect closed here. Seed a
     low-variance agentic template's siblings and drive the REAL terminal path end to end."""
     runs = [_run("distillable") for _ in range(6)]
     for run in runs:

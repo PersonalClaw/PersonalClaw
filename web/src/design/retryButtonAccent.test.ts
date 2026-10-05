@@ -45,8 +45,8 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // selected state is a solid `--color-primary` fill with `on-primary` ink and passes; the failure is an
 // option carrying its own `tone`, drawn as a 20% tint of that tone behind the tone itself — the
 // registry-tone spelling, on an INTERACTIVE control. It needs a tinted BACKGROUND, and a container fill
-// has no hover shade in the token set; inventing one is a redesign, which is exactly why cycle 146 held
-// `ui/Button` and the cockpit back. Here the background stays transparent and only the ink moves, so
+// has no hover shade in the token set; inventing one is a redesign, which is exactly why `accentChip.test.ts`
+// holds `ui/Button` and the cockpit back. Here the background stays transparent and only the ink moves, so
 // there is nothing to invent. Recorded so the next pass does not read the two as one job.
 //
 // 🪤 NOT IN SCOPE, and named so it is not mistaken for a complete sweep of className colours: three

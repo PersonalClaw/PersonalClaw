@@ -52,7 +52,7 @@ def _install_app(root, name, *, module_file="", module_body="", cli=None, enable
 
 
 def test_setup_step_runs_and_receives_context(_isolate):
-    # P5: an app with cli.setup runs; its run(ctx) can save a credential + read it back.
+    # An app with cli.setup runs; its run(ctx) can save a credential + read it back.
     _install_app(
         _isolate,
         "cfg-app",
@@ -72,7 +72,7 @@ def test_setup_step_runs_and_receives_context(_isolate):
 
 
 def test_setup_step_that_raises_does_not_abort(_isolate, capsys):
-    # P6: a raising step prints a warning and setup continues to the next app.
+    # A raising step prints a warning and setup continues to the next app.
     _install_app(
         _isolate,
         "a-bad",
@@ -94,7 +94,7 @@ def test_setup_step_that_raises_does_not_abort(_isolate, capsys):
 
 
 def test_setup_only_app_filter(_isolate, capsys):
-    # P7: --app <name> runs only that app's step.
+    # --app <name> runs only that app's step.
     _install_app(
         _isolate,
         "one",
@@ -133,7 +133,7 @@ def test_setup_disabled_app_skipped(_isolate, capsys):
 
 
 def test_doctor_probe_renders_lines(_isolate, capsys):
-    # P8: a probe returning DoctorLines renders a per-app section; a fail line is an issue.
+    # A probe returning DoctorLines renders a per-app section; a fail line is an issue.
     _install_app(
         _isolate,
         "probe-app",
@@ -153,7 +153,7 @@ def test_doctor_probe_renders_lines(_isolate, capsys):
 
 
 def test_doctor_probe_timeout_does_not_hang(_isolate, capsys, monkeypatch):
-    # P9: a hung probe becomes a single fail line within the timeout — never hangs.
+    # A hung probe becomes a single fail line within the timeout — never hangs.
     # The timeout is shrunk through monkeypatch so the next test in the worker gets the real one
     # back, and the hung probe waits on a file this test creates at its end, so its thread is
     # gone before the test is: a probe that slept on held a thread into the tests after it.
@@ -216,7 +216,7 @@ def test_malformed_cli_ref_is_a_warning_not_a_crash(_isolate, capsys):
     assert "❌ bad-ref: setup step unavailable" in capsys.readouterr().err
 
 
-# ── an app's step imports its own package (#124) ────────────────────────────────
+# ── an app's step imports its own package (PersonalClawApps #124) ───────────────
 
 
 def _install_packaged_app(root, name, *, step_file, step_body, cli):

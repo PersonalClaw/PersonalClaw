@@ -1,4 +1,4 @@
-"""The `artifact-update` action provider (Slice 9b).
+"""The `artifact-update` action provider.
 
 What it exists for: a dashboard-style template generates a skeleton once and refreshes it every
 run by re-binding `{{nodes.x.output}}` slots. Without this the only way to write the artifact
@@ -70,7 +70,7 @@ def _store():
 
 class TestRegistration:
     def test_it_is_in_BOTH_registration_points(self, provider) -> None:
-        """The two-step the plan warns about: a provider in the registry but not in
+        """The two-step hazard: a provider in the registry but not in
         `ALLOWED_HOOK_PROVIDERS` validates on a trigger, saves, and then fails at run time — and
         the reverse is a name the UI offers that dispatches to nothing."""
         from personalclaw.validation import ALLOWED_HOOK_PROVIDERS

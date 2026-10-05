@@ -11,10 +11,9 @@ learned lately" in four groups:
   design: a proposal from five weeks ago is *more* interesting, not less).
 * **facts** — preference facets and lessons touched inside the window.
 
-Where it renders: the task row wanted this registered with the digest
+Where it renders: its natural home is the digest
 builder. **That builder does not exist** — there is no digest-section registry in
-the tree — so the same block renders on the skills page header instead, which the
-task row and the change's acceptance criteria both name as the sanctioned fallback. When a
+the tree — so the same block renders on the skills page header instead. When a
 digest builder does arrive, it consumes THIS function; the block is not reimplemented
 there. One owner, one mechanism.
 
@@ -28,7 +27,7 @@ Two deliberate properties:
   count would under-report as soon as a group got busy, so the two are separate
   fields and the count is never derived from the truncated list.
 
-The LV-4 identity report composes the long-horizon view over these
+The identity report composes the long-horizon view over these
 same seams; it reads this gather rather than re-deriving it.
 """
 
@@ -50,7 +49,7 @@ _MAX_NAMES = 8
 #: the full text stays readable on its own management surface (Memory → Studio).
 _MAX_NAME_LEN = 80
 
-#: Window bounds. 7 = the weekly digest cadence the plan's S2(c) names.
+#: Window bounds. 7 = the weekly digest cadence.
 DEFAULT_WINDOW_DAYS = 7
 MIN_WINDOW_DAYS = 1
 MAX_WINDOW_DAYS = 90

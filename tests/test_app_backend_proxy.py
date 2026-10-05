@@ -1,4 +1,4 @@
-"""App-backend inbound proxy-signature authentication (PHF-3 / SH2.1–2.4).
+"""App-backend inbound proxy-signature authentication.
 
 The boundary under test is FAIL-CLOSED: an app backend binds on loopback with no auth
 of its own, so the ONLY thing proving a request came from the gateway proxy is the
@@ -34,7 +34,7 @@ _SECRET = "a" * 64
 
 
 # --------------------------------------------------------------------------- #
-# Secret minting (SH2.1)
+# Secret minting
 # --------------------------------------------------------------------------- #
 def test_mint_app_secret_is_0600_hex(tmp_path, monkeypatch):
     monkeypatch.setattr(app_secret, "app_dir", lambda name: tmp_path / name)
@@ -96,7 +96,7 @@ def test_secret_value_never_logged_by_mint(tmp_path, monkeypatch, caplog):
 
 
 # --------------------------------------------------------------------------- #
-# Middleware verification (SH2.2) — a fake app backend with one signed route.
+# Middleware verification — a fake app backend with one signed route.
 # --------------------------------------------------------------------------- #
 def _make_backend(secret: str | None = _SECRET) -> web.Application:
     async def echo(request: web.Request) -> web.Response:
@@ -245,7 +245,7 @@ def test_signing_string_is_canonical():
 
 
 # --------------------------------------------------------------------------- #
-# End-to-end (SH2.1+SH2.2 composed): real proxy → real subprocess backend that
+# End-to-end (minting + verification composed): real proxy → real subprocess backend that
 # installs the verifying middleware. Proves the signer and verifier agree across
 # the process boundary, and that a DIRECT (unsigned) hit to the backend port is
 # refused — the whole point of the boundary.
@@ -341,7 +341,7 @@ async def test_end_to_end_proxy_signed_and_direct_refused(tmp_path, monkeypatch)
 
 
 # ---------------------------------------------------------------------------
-# Failure copy (AUD-A12): what the proxy answers when the app backend fails.
+# Failure copy: what the proxy answers when the app backend fails.
 #
 # The raw aiohttp text ("Cannot connect to host 127.0.0.1:41733 ssl:default
 # [...]") used to travel to the app UI verbatim — appSdk's fetch helper

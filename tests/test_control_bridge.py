@@ -75,8 +75,8 @@ def _you():
 
 class TestTheCatalogueDescribesItself:
     def test_every_declared_action_is_present(self):
-        """The v1 registry §4 names, exactly. A missing one is a client that cannot do
-        what the plan says it can; an extra one is an unreviewed capability."""
+        """The v1 registry's names, exactly. A missing one is a client that cannot do
+        what the bridge promises; an extra one is an unreviewed capability."""
         assert [a.name for a in bridge.actions()] == [
             "open_cockpit",
             "read_transcript",
@@ -146,7 +146,7 @@ class TestAdmission:
     @pytest.mark.asyncio
     async def test_a_disabled_surface_404s_without_reading_the_body(self, monkeypatch):
         """404 not 403: an off surface must not confirm its own existence to a prober.
-        The plan's wording, enforced by `admission_problem`."""
+        Enforced by `admission_problem`."""
         monkeypatch.setattr(bridge, "admission_problem", lambda _s: ("disabled: off", 404))
         resp = await bridge.handle_actions(_request(_State()))
         assert resp.status == 404
@@ -1137,7 +1137,7 @@ def test_every_refusal_goes_through_the_shared_wire_emitter():
 
 
 def test_write_actions_call_the_dashboards_own_services_not_a_second_path():
-    """§4: "no parallel mutation paths". Pinned at the source level because a second
+    """No parallel mutation paths. Pinned at the source level because a second
     implementation would pass every behavioural test in this file while drifting from
     whatever validation the real handler gained."""
     import pathlib

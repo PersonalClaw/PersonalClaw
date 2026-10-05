@@ -623,8 +623,8 @@ export const Markdown = memo(function Markdown({ children, className, inline, wi
   messageTs?: string
   /** still streaming → render an unclosed trailing `<widget>` progressively. */
   streaming?: boolean
-  /** episodic memory manifest for THIS turn — resolves `[Memory N]` citation chips
-   *  (MEMORY-GRAPH-AND-VAULT §5.4). Absent → tokens render as plain text. */
+  /** episodic memory manifest for THIS turn — resolves `[Memory N]` citation chips.
+   *  Absent → tokens render as plain text. */
   citations?: MemoryCitation[]
 }) {
   // Defensive: callers occasionally pass agent/tool-authored content that isn't

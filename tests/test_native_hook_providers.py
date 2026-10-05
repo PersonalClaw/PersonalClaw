@@ -195,7 +195,7 @@ def test_create_task_success_calls_registry(monkeypatch):
 def test_create_task_honors_assignee_due_labels(monkeypatch):
     """The executor passes through assignee/due/labels — these must be honored
     (they were readable in code but unconfigurable via the manifest schema until
-    bug #21)."""
+    it declared them)."""
     captured = {}
 
     async def fake_create(provider_name="native", **fields):
@@ -223,7 +223,7 @@ def test_create_task_honors_assignee_due_labels(monkeypatch):
 
 
 def test_create_task_manifest_schema_exposes_every_honored_field():
-    """Anti-drift guard (bug #13 / #21 class): every optional config field the
+    """Anti-drift guard: every optional config field the
     create-task executor HONORS must be declared in its manifest settingsSchema,
     or that field is silently unconfigurable via the hook config UI. This locks the
     schema↔executor contract so a future executor field can't drift unexposed.
@@ -293,8 +293,8 @@ def test_hook_provider_allowlist_includes_all_action_providers():
     a schedule trigger can (the UI offers them; the backend must not reject them).
     Regression for the hardcoded allowlist that omitted them.
 
-    `run-workflow` is absent both places while WORKFLOWS-V2 rebuilds (Phase 1 deleted
-    the provider; Slice 3 re-adds provider + allowlist entry together). The
+    `run-workflow` left both places while workflows were rebuilt and came back to both
+    in one change, provider + allowlist entry together. The
     registered-minus-allowed check below is what actually holds the invariant — it
     catches a provider in one set and not the other, which is the real bug."""
     from personalclaw.action_providers.registry import (
@@ -307,7 +307,7 @@ def test_hook_provider_allowlist_includes_all_action_providers():
     registered = set(list_action_providers())
     missing = registered - set(ALLOWED_HOOK_PROVIDERS)
     assert not missing, f"action providers not accepted by lifecycle triggers: {missing}"
-    # Explicitly pin the T1 provider (T2's run-workflow returns).
+    # Explicitly pin the run-prompt provider.
     assert {"run-prompt"} <= set(ALLOWED_HOOK_PROVIDERS)
     # And the converse: nothing may sit in the allowlist without being registered,
     # or a trigger validates, saves, and then fails at dispatch time.

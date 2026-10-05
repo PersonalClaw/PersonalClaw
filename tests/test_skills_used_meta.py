@@ -4,7 +4,7 @@ run/loop panel's "used N skills" chip and the learned-chip tap-target need.
 Both ride surfaces the frontend already receives, so the change's "zero new WS/SSE
 channels" clause holds by construction rather than by promise:
 
-* **T2.1** ``meta["skills_used"]`` on the turn's USER message — the message each skill was
+* ``meta["skills_used"]`` on the turn's USER message — the message each skill was
   attached to, which every turn has — plus the same list on an ``activity_event`` of kind
   ``skills`` the moment the turn is put together. It used to ride the assistant message whose
   text settled, so a turn that only called tools, or was stopped before it said a word, never
@@ -12,12 +12,12 @@ channels" clause holds by construction rather than by promise:
   REFUSED skill was NAMED to the agent but none of its content loaded, which is the same
   reading ``SkillAllocation.loaded`` takes for the turn-time use counter. Counting a
   refusal as a use would make the chip claim work the model never saw.
-* **T2.2** an ``origin`` discriminator on the existing ``activity_event
+* an ``origin`` discriminator on the existing ``activity_event
   {kind: "learned"}``. All three captures in ``chat_runner`` emitted an identical
   payload, so a tap on the chip could not be routed to the surface that approves or
   edits THAT artifact. ``kind`` stays ``"learned"`` because live consumers key on it.
 
-The last test is the acceptance rail for the "no new channel" clause: it pins the whole
+The last test is the rail for the "no new channel" clause: it pins the whole
 set of WS event names ``chat_runner`` broadcasts.
 """
 
@@ -136,7 +136,7 @@ def _skills_events(state) -> list[dict]:
     ]
 
 
-# ── T2.1 ──────────────────────────────────────────────────────────────────────────
+# ── skills_used on the turn's USER message ────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -312,7 +312,7 @@ def test_after_turn_review_origins(monkeypatch, facet, lesson, worthwhile, expec
     monkeypatch.setattr(atr, "is_correction_signal", lambda *_a, **_k: True)
     monkeypatch.setattr(atr, "record_procedural_outcomes", lambda *_a, **_k: None)
     monkeypatch.setattr("personalclaw.memory_service.service_for", lambda _m: object())
-    # §3.2 writes a denial row for the not-worthwhile turn; the row is not under test and
+    # A denial row is written for the not-worthwhile turn; the row is not under test and
     # its writer would reach for a real store.
     monkeypatch.setattr(learning, "record_denial", lambda *_a, **_k: None)
 
@@ -445,9 +445,9 @@ def test_the_three_origins_are_distinct_and_closed():
 
 # ── The change's "zero new WS/SSE channels" clause ────────────────────────────────
 
-#: Every WS event name ``chat_runner`` broadcasts, pinned. Verified to cover 51/51
-#: ``broadcast_ws(`` call sites in the module, so a miss here is a real new channel and
-#: not a regex that stopped matching. Both contracts above are additive payload on names
+#: Every WS event name ``chat_runner`` broadcasts, pinned. The vacuity floor below holds the
+#: regex to every ``broadcast_ws(`` call site in the module, so a miss here is a real new
+#: channel and not a regex that stopped matching. Both contracts above are additive payload on names
 #: ALREADY in this set (``meta`` on ``chat_segment``'s message; a key on
 #: ``activity_event``), so landing them must leave it byte-for-byte unchanged.
 #:
@@ -463,7 +463,9 @@ def test_the_three_origins_are_distinct_and_closed():
 #: left too, with the requeue of the steers a finished turn did not take, which moved into
 #: ``running_turn.end_steers``: the turn still sends it, from there. ``question_card`` left the
 #: same way: an agent's question to its owner is put through ``owner_questions``, which sends the
-#: card and its ``question_resolved``, so the chat runner sends neither.
+#: card and its ``question_resolved``, so the chat runner sends neither. ``heartbeat`` left
+#: because nothing read it: no client dispatches on it, and the socket's keep-alive is
+#: aiohttp's own ping (``tests/test_no_frame_or_flag_is_left_without_a_reader.py``).
 _BASELINE_WS_EVENTS = {
     "activity_event",
     "chat_chunk",
@@ -474,7 +476,6 @@ _BASELINE_WS_EVENTS = {
     "chat_thinking",
     "chat_user_message",
     "chat_variant_switch",
-    "heartbeat",
     "queue_pop",
     "session_agent_switch",
     "session_clear",
@@ -501,7 +502,7 @@ def test_no_new_ws_channel_was_introduced():
         "before trusting it"
     )
     assert set(found) == _BASELINE_WS_EVENTS
-    # Neither LV-2 contract may mint a channel named after itself.
+    # Neither data contract may mint a channel named after itself.
     assert not [n for n in set(found) if "skill" in n or "learn" in n]
 
 

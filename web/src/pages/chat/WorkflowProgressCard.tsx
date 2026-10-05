@@ -205,7 +205,7 @@ function RunProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
   const live = !!vm && vm.live
   useWorkflowStream(refObj.runId, live, {
     onSnapshot: (snap) => { latest.current++; setVm(foldSnapshot(snap)) },
-    // Folded, not refetched: the fold is the whole point of Slice 8a, and a refetch per
+    // Folded, not refetched: the fold is the whole point of the stream, and a refetch per
     // event would make a 20-node fan-out 20 round-trips.
     onLifecycle: (event, data) => setVm((prev) => (prev ? foldEvent(prev, event, data) : prev)),
   })
@@ -277,7 +277,7 @@ function RunProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
           <span data-type="caption" className="shrink-0 text-on-surface-low tabular-nums">
             {vm.doneCount}/{vm.totalCount}
           </span>
-          {/* Cache-origin (WF2-A1) as a COUNT, which is the shape this surface can carry. The card
+          {/* Cache-origin as a COUNT, which is the shape this surface can carry. The card
               renders one node — the active one — and an active node is by definition never a cache
               hit, so a per-row chip here would be dead code. The count answers the question the
               flag exists for ("did my edit re-run anything?") at the run level, which is the level

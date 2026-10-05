@@ -1,4 +1,4 @@
-"""PT3 — user tool disable: persistence + enforcement + core-lock guard."""
+"""User tool disable: persistence + enforcement + core-lock guard."""
 
 from __future__ import annotations
 
@@ -110,7 +110,7 @@ async def test_runtime_excludes_disabled_tool(home, monkeypatch):
     assert "drop_me" not in rt._tool_index  # AND uncallable
 
 
-# ── UT4: provider-level disable ──
+# ── Provider-level disable ──
 
 
 def test_disable_whole_provider_roundtrips(home):

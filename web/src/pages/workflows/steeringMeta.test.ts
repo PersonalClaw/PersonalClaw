@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { canSteerComment, judgeComment, steerTextFromComment } from './steeringMeta'
 
-// ── Judge-comment triage + steering text (LOOPS-EVOLUTION R14 / criterion 8) ──
+// ── Judge-comment triage + steering text ────────────────────────────────────
 //
 // Pure tests over the triage decisions: which node carries a judge comment worth acting on,
 // and what an "accept" sends to the worker. Accepting a comment POSTs to `/steer`, which the

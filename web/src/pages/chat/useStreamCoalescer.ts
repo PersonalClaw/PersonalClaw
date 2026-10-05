@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { runtime } from '../../design/runtime'
 
-/** rAF stream coalescer (P15) — batches WS `chat_chunk` appends into ONE flush per
+/** rAF stream coalescer — batches WS `chat_chunk` appends into ONE flush per
  *  animation frame, with an adaptive reveal cursor that drains the backlog smoothly
  *  (low-pass token-rate estimate → clamped per-frame budget) so streaming reads as a
  *  steady write instead of a stuttery per-chunk state storm.
@@ -160,7 +160,7 @@ export interface StreamCoalescer {
   /** END this text run at a boundary: land whatever is still buffered into the run's own
    *  segment, then CLEAR the buffer so the next `push` opens a fresh one.
    *
-   *  🔴 The clear is the whole point (K44 / issue #548). A drain-only flush left the finished
+   *  🔴 The clear is the whole point (issue #548). A drain-only flush left the finished
    *  run's text in `pending`, so the NEXT boundary flush — a `tool_call` opening the next turn,
    *  say — re-emitted the previous turn's entire answer into the new turn's bubble. Callers
    *  used to defer the clearing to a "break" flag consulted in ONE branch of six, which is a

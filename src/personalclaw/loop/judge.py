@@ -18,7 +18,7 @@ already uses) but with its own done-ness + marginal-value rubric.
 
 **The verdict object is the contract's, not this module's.** There used to be a
 private ``CycleVerdict`` here — a third vocabulary over one decision, alongside the two
-`WF2LOO-13` already merged. It is DELETED: `assess_cycle` returns a
+already merged into the contract. It is DELETED: `assess_cycle` returns a
 :class:`~personalclaw.workflows.judge_contract.JudgeVerdict`, the boolean ``done`` above is
 projected onto the closed enum by the contract's single `verdict_for_cycle`, and the asymmetric
 skeptic merge lives with the fields it merges (`judge_contract.adjudicate`). The loop's own
@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 
 def judge_use_case() -> str:
-    """The model axis every loop judge rides — NOT the worker's ``loops`` axis (WF2LOO-17).
+    """The model axis every loop judge rides — NOT the worker's ``loops`` axis.
 
     Reads ``loops.judge_use_case`` (default ``reasoning``). This is what makes the
     judge a genuinely *third-party* check: independent session, independent prompt,
@@ -88,7 +88,7 @@ async def _observe_ground_truth(
     deliverables: list[str],
     fallback_dirs: list[str] | None = None,
 ) -> str:
-    """Independently observe ground truth for the judge (Slice C / O-E2): run the goal's
+    """Independently observe ground truth for the judge: run the goal's
     verify command and read the exit code, and read any named deliverable file's real
     content — rather than trusting the worker's narration. Returns a block to inject into
     the judge prompt (labeled supervisor-observed), or "" when there's nothing runnable/
@@ -98,7 +98,7 @@ async def _observe_ground_truth(
     own dir) — the worker may write the deliverable to the loop dir when no workspace is bound,
     exactly as the watchdog's deliverable-graduation resolves it (workspace-first, else loop dir).
     Searching only ``workspace`` made the skeptic wrongly conclude 'no proof the file exists'
-    for an unbound open-ended loop whose REPORT.md lived in the loop dir (found live, V6)."""
+    for an unbound open-ended loop whose REPORT.md lived in the loop dir (found live)."""
     import os
 
     parts: list[str] = []
@@ -170,7 +170,7 @@ _OBSERVED_FILE_RE = re.compile(r"^Read `(.+?)`:$", re.M)
 def evidence_refs_from_observation(observed: str) -> list[str]:
     """The ``evidence_refs`` a loop cycle can honestly cite, derived from the observation block.
 
-    This is the loop side of the contract's proof requirement (WF2LOO-16). It PARSES what
+    This is the loop side of the contract's proof requirement. It PARSES what
     :func:`_observe_ground_truth` returned rather than re-deriving refs from ``verify_command``
     /``deliverables``, and that choice is the whole guarantee: a ref built from the inputs would
     claim an observation that may not have happened — the command can be missing, the file
@@ -200,7 +200,7 @@ def _build_prompt(
     cycle = finding.get("cycle", "?")
     # Same canonical extraction the ratchet uses, so both score identical text.
     evidence = finding_content(finding)
-    # Slice C: append the supervisor's own observation (ran the command / read the file)
+    # Append the supervisor's own observation (ran the command / read the file)
     # so the judge scores ground truth, not just the worker's narration.
     if observed:
         evidence = f"{evidence}{observed}"
@@ -246,7 +246,7 @@ async def assess_cycle(
     check than the worker's model, which rides the separate 'loops' axis), matching
     the ratchet's existing judge wiring.
 
-    Slice C (O-E2): when ``verify_command`` and/or ``deliverables`` are supplied, the
+    When ``verify_command`` and/or ``deliverables`` are supplied, the
     judge INDEPENDENTLY observes ground truth — it runs the command + reads the named
     artifact files itself — and weighs that over the worker's reported finding. Absent
     those, it stays transcript-only (unchanged behavior for goals with no runnable/
@@ -324,7 +324,7 @@ async def assess_cycle_skeptic(
     deliverables: list[str] | None = None,
     fallback_dirs: list[str] | None = None,
 ) -> JudgeVerdict | None:
-    """A second, adversarial judge (P4) — same third-party independence as
+    """A second, adversarial judge — same third-party independence as
     :func:`assess_cycle`, but prompted to REFUTE a claimed completion/regression: it
     defaults to *not done* / *not regressed* unless the evidence is undeniable. Used to
     cross-check a high-stakes primary verdict via :func:`adjudicate`. Same ground-truth

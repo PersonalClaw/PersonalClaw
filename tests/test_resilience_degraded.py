@@ -298,7 +298,7 @@ def _flip(monkeypatch, available: dict):
 
 
 def test_recovery_fires_the_contracts_drain(home, monkeypatch):
-    """The call site. §5.1: the unavailable→available flip is what fires the drain.
+    """The call site: the unavailable→available flip is what fires the drain.
 
     Without this, every drain below is a callable nothing ever calls — the shape of an
     inert control. The live state object is handed through, because the knowledge drain
@@ -392,8 +392,8 @@ def _recover(monkeypatch, contract) -> "_RecordingState":
 
 
 def test_the_recovery_notification_reports_what_was_REENRICHED(home, monkeypatch):
-    """criterion #3's last clause ("a recovery notification summarizes what was
-    re-enriched"). `backlog` is measured BEFORE the drain runs, so a recovery that just
+    """A recovery notification summarizes what was
+    re-enriched. `backlog` is measured BEFORE the drain runs, so a recovery that just
     cleared the queue must not announce that queue as still pending."""
 
     async def _drain(state=None) -> int:
@@ -438,7 +438,7 @@ def test_a_drain_that_moved_nothing_still_reports_the_STANDING_backlog(home, mon
     assert "5 item(s) awaiting re-enrichment" in body and "re-enriched" not in body
 
 
-# ── memory_extraction: the LEARN-R19 staging drain ───────────────────────────
+# ── memory_extraction: the staging drain ─────────────────────────────────────
 
 
 def _stage(home, contents):
@@ -503,7 +503,7 @@ def test_the_memory_backlog_probe_counts_past_the_page_limit(home):
     assert degraded._memory_staging_backlog() == degraded.DRAIN_BATCH + 7
 
 
-# ── knowledge_ingest: the KNOW-R17 heuristic tier's re-extraction ────────────
+# ── knowledge_ingest: the heuristic tier's re-extraction ─────────────────────
 
 
 class _RecordingQueue:
@@ -591,7 +591,7 @@ def test_the_knowledge_drain_moves_nothing_without_a_live_queue(tmp_path, monkey
 
 
 def test_the_synthesis_drain_queues_one_recompile_per_stale_synthesis(home, monkeypatch):
-    """criterion #3, the full re-enrichment flow: the evidence landed with no model, the
+    """The full re-enrichment flow: the evidence landed with no model, the
     compiled section above it fell behind, and the recovery queues a PROPOSED recompile —
     never an in-place rewrite of a document the reader may already have acted on."""
     from personalclaw.learning import proposals

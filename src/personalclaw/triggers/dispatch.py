@@ -1,15 +1,14 @@
-"""Dispatch: inbox + wakeup, and the event-bus delivery contract
-(S64).
+"""Dispatch: inbox + wakeup, and the event-bus delivery contract.
 
 The scheduler never executes directly. A fired trigger enqueues a typed
 payload plus a wakeup signal;
 a dispatcher claims and drives it. Crash-safety falls out of that shape — the payload survives an
 executor crash because it is in the queue, not in a coroutine.
 
-**The bug this session fixed, reproduced before it was written.** The retired data-event engine's
+**The bug this module fixes, reproduced before it was written.** The retired data-event engine's
 `_schedule_fire` recorded the fire and then did `asyncio.get_running_loop()`; with no loop (a sync
 CLI memory write) it `return`ed. Measured on a real store: `fire_count` became 1 and **the action
-was dropped with nothing anywhere recording that it did not run** — the silent drop §1.3 bans, in
+was dropped with nothing anywhere recording that it did not run** — a silent drop, in
 shipped code. The spool here is the fix: an event raised in a process with no gateway router (the
 CLI, the `mcp-core` server an agent's memory tools run in) is written to disk, and the gateway's
 next tick re-emits it to its router.
@@ -76,7 +75,7 @@ class DeliveryStatus(str, Enum):
 
 
 class WakeKind(str, Enum):
-    """Two wakeup kinds with DIFFERENT drop semantics — the distinction §3.2 turns on.
+    """Two wakeup kinds with DIFFERENT drop semantics — the distinction this module turns on.
 
     `WAKE` is droppable: if the session is already running, the inbox will be drained by the run in
     flight, so skipping is the natural implementation of `overlap: skip` (and exactly what autonudge
@@ -120,7 +119,7 @@ class Envelope:
     payload: dict[str, Any] = field(default_factory=dict)
     emitted_at: float = 0.0
     #: Set when this event was produced BY a trigger's own run — the cycle guard reads it so a run's
-    #: lifecycle events cannot re-match the trigger that started it (decision 5's spawned_by skip).
+    #: lifecycle events cannot re-match the trigger that started it (the spawned_by skip).
     spawned_by: str = ""
 
     @property
@@ -222,7 +221,7 @@ class Cursor:
 class DrainAction(str, Enum):
     """What the drain does with the event at the cursor.
 
-    Every member has a PRODUCER and a branch in `triggers.loop._drain_spool` (WF2AUT-13), and
+    Every member has a PRODUCER and a branch in `triggers.loop._drain_spool`, and
     that function's dispatch carries a raising tail so a member added here without a branch
     fails loudly instead of inheriting another's behaviour.
 
@@ -261,7 +260,7 @@ def drain_decision(
     on one unreachable provider
       would stop every other automation, which is worse than one loudly-dropped event.
 
-    Exhaustive over the closed enum with a RAISING tail (WF2AUT-13). The transient rules used to
+    Exhaustive over the closed enum with a RAISING tail. The transient rules used to
     be the *fallthrough*, which meant an unknown handling string — a typo, or a `Handling` member
     added without a rule here — silently inherited "retry five times then drop". A new member must
     declare its own cursor behaviour, because inheriting the wrong one of these three is either
@@ -357,7 +356,7 @@ def spool_path() -> Path:
     Under `config_dir()`, resolved per call rather than at import: a
     module-level path binds to whatever
     home was set when the module first loaded, which is how a test writes into the real
-    `~/.personalclaw` (this program has paid for that once already).
+    `~/.personalclaw` (that has happened once already).
     """
     from personalclaw.config.loader import config_dir
 
@@ -430,7 +429,7 @@ def clear_spool(*, handled: int, path: Path | None = None) -> None:
     drain was running would be lost
     by an unconditional truncate, and that window is exactly when a busy machine spools most.
 
-    ⚠️ **PREFIX ACK ONLY, and that constrains the drain** (WF2AUT-13). This can express "ack the
+    ⚠️ **PREFIX ACK ONLY, and that constrains the drain**. This can express "ack the
     first N" and nothing else — there is no "keep line 2, ack lines 1 and 3". So `DrainAction.HOLD`
     is necessarily HEAD-OF-LINE: the drain acks the prefix it consumed, stops at the first envelope
     it must hold, and leaves that envelope plus everything after it for the next tick. Extending

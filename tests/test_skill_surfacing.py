@@ -1,4 +1,4 @@
-"""Semantic skill surfacing at turn time (skill-semantic-surfacing, #26)."""
+"""Semantic skill surfacing at turn time."""
 
 from __future__ import annotations
 

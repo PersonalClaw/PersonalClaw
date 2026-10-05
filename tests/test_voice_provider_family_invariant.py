@@ -1,8 +1,8 @@
-"""Success Criterion 10 — the voice surface adds no provider family.
+"""The voice surface adds no provider family.
 
 The whole voice-profile/binding/migration/cloning surface is a set of ENTITIES and an
 HTTP surface, not a new app-provider type and not a new hook action. This is the
-capstone's byte-identical assertion: snapshot the three provider-family collections,
+byte-identical assertion: snapshot the three provider-family collections,
 drive the full voice matrix across BOTH engines, snapshot again, and require every
 collection to be byte-for-byte unchanged.
 
@@ -89,7 +89,7 @@ def _wav(path, seconds=1.2, rate=16000):
 
 
 async def _exercise_the_whole_voice_matrix(home):
-    """Every voice mutation the capstone spans — profile CRUD × lock × consent × both
+    """Every voice mutation the surface spans — profile CRUD × lock × consent × both
     engines × per-surface bindings × migration — with zero model spend."""
     from personalclaw.tts.registry import route_synthesis
     from personalclaw.voice import bindings as vb

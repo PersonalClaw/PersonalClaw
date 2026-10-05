@@ -1,6 +1,6 @@
 """Golden-file proof that the ledger machinery writes the same bytes it always did.
 
-PP-4 moves append/redact/stamp/spill and the kind registry out of `workflows/journal.py` into a
+Append/redact/stamp/spill and the kind registry moved out of `workflows/journal.py` into a
 `personalclaw/ledger/` package. "Pure extraction" is a claim a passing test suite cannot settle:
 the suite asserts the properties someone thought to assert, and the whole risk of moving a writer
 is the property nobody wrote down — a key order, a rounding, a stub field, which kinds mirror to
@@ -359,8 +359,8 @@ def test_the_ledger_package_does_not_import_the_workflow_engine():
     """The seam guarantee, as a rail rather than a convention.
 
     `personalclaw.ledger` exists so a SECOND producer can carry a ledger. The moment anything under
-    it imports a PRODUCER — `personalclaw.workflows` (the first) or `personalclaw.loop` (the second,
-    PP-5) — that stops being true: a loop emitter would have to pull the engine in to journal a
+    it imports a PRODUCER — `personalclaw.workflows` (the first) or `personalclaw.loop` (the
+    second) — that stops being true: a loop emitter would have to pull the engine in to journal a
     cycle, which is the dependency direction the extraction exists to reverse. Both directions are
     banned so the primitive stays below every producer. Checked statically (an AST scan, not an
     import probe) because a lazy function-local import is exactly how this would creep back in and

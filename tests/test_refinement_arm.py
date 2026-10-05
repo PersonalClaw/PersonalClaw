@@ -1,4 +1,4 @@
-"""The S3 refinement arm: stumble detector → refine proposal → diff → versioned accept.
+"""The refinement arm: stumble detector → refine proposal → diff → versioned accept.
 
 The arm is a CLASSIFIER in front of the existing proposal queue, so the negatives are tested as
 hard as the positives: every "fires on" case below has a paired "and does not fire when …" that
@@ -61,7 +61,7 @@ def _load(name: str = SKILL) -> str | None:
     return SkillsLoader(install_builtins=False).load_skill(name)
 
 
-# ── T3.1 the classifier: one test per trigger, each paired with its negative ──────────────
+# ── The classifier: one test per trigger, each paired with its negative ───────────────────
 
 
 def test_correction_fires_and_the_same_turn_without_a_skill_does_not():
@@ -175,7 +175,7 @@ def test_the_arm_never_calls_a_model():
         assert forbidden not in src, f"{forbidden} reached the model-free refinement arm"
 
 
-# ── T3.2 the proposal + its diff ──────────────────────────────────────────────────────────
+# ── The proposal + its diff ───────────────────────────────────────────────────────────────
 
 
 def _propose(home, *, now=NOW, user_message="No, use uv instead of pip."):
@@ -284,7 +284,7 @@ def test_a_vanished_skill_proposes_nothing(home):
     assert proposals.list_pending() == []
 
 
-# ── T3.3 versioned acceptance ─────────────────────────────────────────────────────────────
+# ── Versioned acceptance ──────────────────────────────────────────────────────────────────
 
 
 def test_two_accepted_refinements_are_distinguishable_by_version(home):
@@ -490,15 +490,15 @@ def test_the_call_site_is_silent_when_nothing_was_loaded(home):
     assert state.sent == []
 
 
-# ── V3: the full arc ──────────────────────────────────────────────────────────────────────
+# ── The full arc ──────────────────────────────────────────────────────────────────────────
 
 
-def test_v3_arc_flawed_skill_stumble_refine_approve_rerun(home):
+def test_full_arc_flawed_skill_stumble_refine_approve_rerun(home):
     """flawed skill → stumble → refine proposal → approve → the re-run loads the fix.
 
     Inspected between every step, and the base file is compared byte-for-byte at the end: the
     whole arc must leave ``SKILL.md`` exactly as it was found (propose-don't-write, and
-    The immutable base).
+    the immutable base).
     """
     from personalclaw.dashboard import chat_runner
 

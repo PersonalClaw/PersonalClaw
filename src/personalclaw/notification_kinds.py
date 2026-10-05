@@ -35,7 +35,7 @@ rules matrix and was filtered as severity 1 at delivery. One declaration, one an
 
 **Every default_mode is ``immediate``, deliberately.** ``badge`` is the interesting new
 capability — persist without interrupting — and heartbeats, loop progress and
-signal-retirement notices are all obvious candidates for it. But this plan replaces the
+signal-retirement notices are all obvious candidates for it. But the registry replaces the
 delivery path outright with no gate to hide behind, so its safety property is that a user
 with no rules file sees *exactly* what they see today, and today every emitter that passes
 the global gate produces a toast. Shipping opinionated `badge` defaults would silently
@@ -54,7 +54,7 @@ from typing import Literal
 
 logger = logging.getLogger(__name__)
 
-#: Delivery modes a rule may select (C2). ``badge`` persists without a toast — the
+#: Delivery modes a rule may select. ``badge`` persists without a toast — the
 #: "I want it in the list but don't interrupt me" mode the old global gate had no way to
 #: express (it could only deliver or drop entirely).
 Mode = Literal["never", "badge", "immediate", "digest"]
@@ -86,7 +86,7 @@ class NotificationKind:
     default_mode: Mode = "immediate"
     default_severity: int = SEV_INFO
     #: True when this kind carries a durable record rather than only a transient delivery: an
-    #: inbox item (the attention kinds folded in from Session 2 onward), or the card the Triggers
+    #: inbox item (the attention kinds), or the card the Triggers
     #: page's restart review keeps (`cron/run_review`).
     attention: bool = False
     #: True when this kind's payload asserts a checkable claim, so a rule MAY opt into a
@@ -139,7 +139,7 @@ def register(k: NotificationKind) -> None:
 def unregister(source: str, kind: str) -> bool:
     """Drop a dynamically registered kind. Returns True when one was removed.
 
-    Only the app-contributed kinds (INU-7) use this: an app's proposal kind must not
+    Only the app-contributed kinds use this: an app's proposal kind must not
     outlive the app that declared it, or a disabled app leaves a phantom kind in the rules
     UI and in ``resolve_kind`` — the same phantom-source failure ``deregister()`` exists to
     prevent on the provider seam. The built-in kinds are registered once at import and
@@ -240,8 +240,8 @@ def label_for_wire(flat: str) -> str:
 
 
 # ── Registrations ───────────────────────────────────────────────────────────
-# Built from an AST inventory of every `.notify(...)` call site in src/; the
-# inventory table is in the plan's execution log. The flat `kind` string each site
+# Built from an AST inventory of every `.notify(...)` call site in src/.
+# The flat `kind` string each site
 # passes today is preserved as the wire value via _LEGACY_FLAT below, so the persisted
 # log and the frontend's display map keep working unchanged.
 
@@ -471,7 +471,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         SEV_INFO,
         owner="personalclaw.feedback",
     ),
-    # ── Attention kinds (S2+) ────────────────────────────────────────────
+    # ── Attention kinds ──────────────────────────────────────────────────
     # These carry a durable inbox item, so `attention=True`. They have NO legacy flat
     # string — nothing emitted them before `emit_attention_item` existed — which is why
     # they may carry their honest severity rather than inheriting a historical rank
@@ -632,7 +632,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         attention=True,
         owner="personalclaw.inbox",
     ),
-    # approval — the phone milestone. Registered so the rules
+    # approval — what phone push exists for. Registered so the rules
     # matrix carries a row for "a run is blocked waiting on me", which is the one
     # notification whose latency directly caps how autonomous the system can be, and so a
     # user can send THAT to the phone without sending everything else.
@@ -711,7 +711,7 @@ _KINDS: tuple[NotificationKind, ...] = (
 #:
 #: Two entries have NO backend emitter and are here deliberately: the frontend's display
 #: map (`web/src/pages/notifications/notificationMeta.ts`) has rows for `schedule` and
-#: `loop`, which no `.notify()` call ever passes — pre-existing drift found by the T1.1
+#: `loop`, which no `.notify()` call ever passes — pre-existing drift found by the call-site
 #: inventory. They map to their nearest real registration so a notification persisted by
 #: an older build still resolves.
 _LEGACY_FLAT: dict[str, tuple[str, str]] = {
@@ -733,7 +733,7 @@ _LEGACY_FLAT: dict[str, tuple[str, str]] = {
     GENERIC_KIND: (GENERIC_SOURCE, GENERIC_KIND),
 }
 
-#: Wire strings introduced BY kinds registered after the legacy set — the attention kinds (S2+),
+#: Wire strings introduced BY kinds registered after the legacy set — the attention kinds,
 #: `usage_recap`/`approval`, and (issue #341/#415) the TYPED kinds whose emitter
 #: used to pass a generic severity string. Kept separate from the legacy map above because the two
 #: answer different questions.

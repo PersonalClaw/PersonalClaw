@@ -714,7 +714,7 @@ def _reject_leaked_paths(root: Path, needle: str) -> None:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Regenerate the six-month-home fixture (RET-1).")
+    ap = argparse.ArgumentParser(description="Regenerate the six-month-home fixture.")
     ap.add_argument(
         "--check",
         action="store_true",

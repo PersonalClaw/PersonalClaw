@@ -105,7 +105,7 @@ _EPHEMERAL_SECRET: bytes | None = None
 
 
 def _secret() -> bytes:
-    """The HMAC signing key — persistent across restarts (REMOTE-USER-AUTH S1).
+    """The HMAC signing key — persistent across restarts.
 
     This used to be `os.urandom(32)` at module scope, so **every gateway restart invalidated
     every token**: on a local box you re-ran `personalclaw token`, and off-network you were
@@ -165,7 +165,7 @@ class TokenStateManager:
     "is this session live?" without a file read, and it has no limit of its own beyond a
     backstop. How many sessions of each kind may be signed in is decided in ONE place, over
     the store (``session_store.POOL_CAPS``) — it used to be decided here, as five sessions
-    in total, which is how a script's sixth token signed the owner's phone out (ledger 255).
+    in total, which is how a script's sixth token signed the owner's phone out.
 
     Threading model: This class uses threading.Lock (not asyncio.Lock) because
     token operations are called from both async contexts (aiohttp middleware)
@@ -202,7 +202,7 @@ class TokenStateManager:
         Deny-by-default: rejects if the nonce is live in neither the in-memory cache nor the
         durable store.
 
-        **The durable fallback is what makes a persisted signing key useful** (S1). With the
+        **The durable fallback is what makes a persisted signing key useful**. With the
         key alone, a token minted before a restart would verify its signature and then be
         rejected here as "no active sessions" — the user would still be logged out, just with
         a more confusing reason. A signature check without a live session record is not
@@ -398,8 +398,8 @@ _BYPASS_EXACT.add("/api/logout")
 # Exempting it here does not make it open — inbound/mcp_http.py refuses every
 # request that fails enablement, peer, or token checks, GET as well as POST.
 _BYPASS_EXACT.add("/mcp")
-# The Dialect-5 capture proxy authenticates ITSELF for exactly the same reason
-# (EXTERNAL-ACCESS §7.1): each route runs `capture_proxy._admit` — surface enablement,
+# The Dialect-5 capture proxy authenticates ITSELF for exactly the same reason:
+# each route runs `capture_proxy._admit` — surface enablement,
 # then an unconditional loopback rail, then a constant-time bearer check against the
 # capture surface token or a registered per-client token — before it reads a body. The
 # external agent pointing `OPENAI_BASE_URL` here presents that bearer in `Authorization`
@@ -697,7 +697,7 @@ def mint_session(
     Recording the session enforces its kind's limit, and every session that limit signs out
     is dropped from memory and written to the SEL as a sign-out, naming the reason. Every
     sign-in but an app token's is written to the SEL too (an app token only narrows a session
-    that already signed in; one row per app request was the log flood of ledger 67).
+    that already signed in; one row per app request flooded the log).
     Persistence is best-effort — a token whose row could not be written still works for this
     process's lifetime, which is strictly better than refusing to issue one — and a caller for
     which it is not (pairing) reads ``persisted``.
@@ -834,7 +834,7 @@ def app_session_token(user_id: str, app: str) -> tuple[str, float]:
     Its three consumers — the app SDK's mount (``POST /api/apps/{name}/token``), the reverse
     proxy in front of an app's backend, and an agent's call to an app route — each used to
     mint a FRESH token, the proxy on every request. Every mint is a session, so an app page
-    making a handful of backend calls signed the owner's other devices out (ledger 255); with
+    making a handful of backend calls signed the owner's other devices out; with
     a limit per app it would instead push out the app's OWN earlier tokens, including the one
     its SDK holds. One live token per user and app, reused while it has more than half its
     hour left, is the same identity and the same narrowing without either.
@@ -879,7 +879,7 @@ def _session_deadline(claims: dict[str, Any]) -> float:
     :data:`MAX_SESSION_TTL_SECS` after its ``iat``.
 
     The second half is what ends a token minted with a longer lifetime before the 90-day limit
-    existed (ledger 285) — a year-long ``/api/token/local`` token, say — 90 days after it was
+    existed — a year-long ``/api/token/local`` token, say — 90 days after it was
     issued, rather than honouring it for the rest of its year.
     """
     end = float(claims.get("session_exp", claims.get("exp", 0)) or 0)
@@ -1396,7 +1396,7 @@ def _select_request_credentials(request: Any, port: int) -> _Credentials:
       that one code on purpose, with no signed-out sentence: it says nothing about which
       failure it was. The browser carriers (the link and the cookie) get the sentence.
 
-    Layered app identity (the untrusted-app sandbox, P1) then applies unchanged: an app's SDK
+    Layered app identity (the untrusted-app sandbox) then applies unchanged: an app's SDK
     sends the owner cookie PLUS its own app-scoped token — in the Bearer header (fetch) or as
     ``?app_token=`` (the ``/api/ws`` handshake, which cannot set headers) — and the token's
     ``app`` claim is adopted only when it validates for the SAME user, so it can only narrow
@@ -1455,7 +1455,7 @@ def presented_session_nonce(request: Any, port: int) -> str:
     same shape of hole the ``app`` claim had before none-mode learned to adopt it: pairing
     succeeds, ``GET /api/devices`` lists the device, and then ``POST /api/browse/connector``
     answers ``browse_connector_unpaired`` with that device's own cookie, because
-    ``_paired_device`` has no nonce to look up. ``/api/ws``'s origin-less upgrade (CA-7) reads
+    ``_paired_device`` has no nonce to look up. ``/api/ws``'s origin-less upgrade reads
     the same key and fails closed for the same reason.
 
     Naming the session cannot WIDEN either path — a caller these modes admit already holds
@@ -1717,7 +1717,7 @@ def retire_startup_links() -> int:
 def revoke_all_sessions() -> None:
     """Sign every session out, everywhere (``personalclaw logout``; also test isolation).
 
-    **Ends them in the DURABLE store too, not just memory** (S1). This is the security half of
+    **Ends them in the DURABLE store too, not just memory**. This is the security half of
     persisting sessions: with only the in-memory clear, a revoked token would be rejected
     until the next restart and then accepted again, because `is_nonce_valid` would find its
     nonce still recorded on disk. "Revoke" that un-revokes itself on reboot is worse than no
@@ -1782,7 +1782,7 @@ def ended_notice(nonce: str) -> SignedOutNotice | None:
 
 
 def secure_cookies() -> bool:
-    """Whether session cookies should carry ``Secure`` (REMOTE-USER-AUTH T4.1).
+    """Whether session cookies should carry ``Secure``.
 
     True only when the operator has declared an **https** public URL. Deliberately NOT the
     default: `Secure` makes a cookie undeliverable over plain http, which is how essentially
@@ -1943,7 +1943,7 @@ def token_auth_middleware(
         IP as the TCP remote, not the actual client, so a forwarded header is the only way to
         recover the real one — and the real one is what IP binding binds to.
 
-        **REMOTE-USER-AUTH T4.1 tightens who may set it.** Once the operator declares this
+        **An exposed instance tightens who may set it.** Once the operator declares this
         instance internet-exposed (`dashboard.public_url`), only a peer listed in
         `dashboard.trusted_proxies` is believed. Before that change the rule was the shape of
         the TCP remote — "starts with 10./172.1x/192.168." — which is the classic mistake: on
@@ -1988,7 +1988,7 @@ def token_auth_middleware(
         ``session_nonce`` says WHICH session authorized the request, so a handler can ask what
         kind of client is on the other end without re-deriving it from the raw credential. Only
         the nonce travels — it is the registry handle, and the token stays in this middleware.
-        Consumed by the ``/api/ws`` origin check (CA-7): a paired device session is the one
+        Consumed by the ``/api/ws`` origin check: a paired device session is the one
         thing that can vouch for an origin-less upgrade.
 
         The client is noted here too (:func:`note_session_client`) — where it was seen from and
@@ -2497,7 +2497,7 @@ class _SuccessTally:
     reconstructed — is about security EVENTS. A cookie-authenticated request is the same
     session presenting the same credential again, not
     a new event — and a row for each one was 94% of the log: one idle Home tab made 428 requests
-    in 3 minutes and the log grew ~5 MB an hour (measured, day 8).
+    in 3 minutes and the log grew ~5 MB an hour (measured).
 
     So a failure is written as it happens (`_log_auth`), and so is the FIRST success of an
     identity in a window — the who/when evidence is immediate. The rest of that window's

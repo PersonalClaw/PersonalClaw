@@ -1,6 +1,6 @@
 """Tests for the evidence bundle mechanics and the optional fix-branch stage.
 
-Covers the five things the change's own criterion and the plan's Success Criteria #7/#8 turn on:
+Covers the five things the evidence bundle and the fix branch turn on:
 manifest hashing computed from bytes, the bundle registering as exactly ONE Artifact, the
 required-kinds completion gate blocking on a missing kind and passing when complete, ffmpeg-absent
 degradation staying typed rather than crashing, and the fix branch being created only when enabled
@@ -43,7 +43,7 @@ def bundle(tmp_path: Path) -> Path:
     return tmp_path
 
 
-# ── manifest hashing (Criterion #7: "under one SHA256'd manifest") ──────────────
+# ── manifest hashing ("under one SHA256'd manifest") ────────────────────────────
 
 
 def test_manifest_hashes_are_computed_from_the_bytes_on_disk(bundle: Path) -> None:
@@ -82,7 +82,7 @@ def test_write_manifest_roundtrips(bundle: Path) -> None:
     assert loaded.kinds() == manifest.kinds()
 
 
-# ── ffmpeg-absent graceful degradation (Criterion: "never a crash") ─────────────
+# ── ffmpeg-absent graceful degradation ("never a crash") ────────────────────────
 
 
 def test_ffmpeg_absent_degrades_typed_and_writes_no_file(bundle: Path, monkeypatch) -> None:
@@ -198,7 +198,7 @@ def test_probe_uses_a_none_sentinel_not_a_zero_time() -> None:
     ev.reset_probe_cache()
 
 
-# ── required-kinds completion gate (Criterion #7) ───────────────────────────────
+# ── required-kinds completion gate ──────────────────────────────────────────────
 
 
 def test_gate_passes_when_the_required_kinds_are_present(bundle: Path) -> None:
@@ -231,7 +231,7 @@ def test_gate_honours_a_configured_required_kind(bundle: Path) -> None:
     assert result.missing == [ev.KIND_GIF]
 
 
-# ── single-Artifact registration (Criterion #7: "a single Artifact") ────────────
+# ── single-Artifact registration ("a single Artifact") ──────────────────────────
 
 
 class _FakeProvider:
@@ -279,7 +279,7 @@ def test_stored_companion_names_are_content_addressed(bundle: Path, monkeypatch)
         assert _MEDIA_NAME_RE.fullmatch(filename), f"{filename!r} is not a content-addressed name"
 
 
-# ── optional fix branch (Criterion #8) ──────────────────────────────────────────
+# ── optional fix branch ─────────────────────────────────────────────────────────
 
 
 @pytest.fixture()

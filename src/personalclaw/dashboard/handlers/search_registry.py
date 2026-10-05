@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 
 def _sel_log(op: str, outcome: str, resources: str, request: web.Request, error: str = "") -> None:
-    """Audit a search-binding mutation (#45). Best-effort."""
+    """Audit a search-binding mutation. Best-effort."""
     try:
         from personalclaw.sel import sel as _s
 
@@ -154,7 +154,7 @@ async def api_search_active_set(request: web.Request) -> web.Response:
 
     # Reject a binding to a provider that isn't registered — fail-fast rather than
     # silently stranding the use-case on a dead provider name (same footgun as the
-    # model active-model setter, bug #16). An empty list (clear → fall back to the
+    # model active-model setter). An empty list (clear → fall back to the
     # general binding) is always allowed.
     if providers:
         name = str(providers[0])
@@ -177,7 +177,7 @@ async def api_search_active_set(request: web.Request) -> web.Response:
 
     set_active_search_provider(use_case, str(providers[0]) if providers else "")
     bound = load_active_search_providers().get(use_case, [])
-    # Audit the search-binding change (#45).
+    # Audit the search-binding change.
     _sel_log("search.active_set", "ok", f"{use_case}={','.join(bound) or '(cleared)'}", request)
     return web.json_response(
         {

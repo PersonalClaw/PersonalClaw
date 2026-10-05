@@ -110,7 +110,7 @@ async def _scheduled_check() -> None:
 
 
 async def update_status(*, asked: bool, at_start: bool = False) -> dict[str, object]:
-    """The update status, after the one check this caller may run (contract C2).
+    """The update status, after the one check this caller may run.
 
     Every update check comes here: the gateway's start (*at_start*), the status poll's schedule,
     a page showing the status (``GET /api/update/check``) and the owner's Check now (``POST
@@ -497,10 +497,10 @@ def _installer_missing() -> str:
 
 
 async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.Response:
-    """Upgrade a pip/uv/pipx install in place, then graceful re-exec (T4.3).
+    """Upgrade a pip/uv/pipx install in place, then graceful re-exec.
 
     Runs ``<installer> install -U personalclaw==<resolve_wheel_target(channel,pin)>``
-    — the release the ``updates`` channel/pin selects (RUM-6), NOT a blind
+    — the release the ``updates`` channel/pin selects, NOT a blind
     ``releases/latest``. A pin installs exactly that version; ``stable``/``beta``
     resolve their channel's newest release; the git-only ``nightly`` channel has no
     published wheel and rides ``stable``. When a pin matches no release the apply
@@ -959,7 +959,7 @@ async def _advance_checkout(
 
 def _live_auth_mode(request: web.Request) -> str:
     """The running gateway's resolved auth mode (e.g. 'none' / 'local_token'), read
-    from ``app['auth_cfg']``, for preserving across a re-exec (#46). Empty string if
+    from ``app['auth_cfg']``, for preserving across a re-exec. Empty string if
     unavailable — the restart then inherits the env as-is (prior behavior)."""
     try:
         auth_cfg = request.app.get("auth_cfg")
@@ -983,7 +983,7 @@ async def _graceful_reexec(state: DashboardState | None, *, auth_mode: str = "")
     the new image (``GatewayOrchestrator._finish``) — the new image keeps this PID.
 
     *auth_mode* is the LIVE ``AuthConfig.mode`` (an AuthMode str-enum: 'none' / 'local_token' / …)
-    the caller read from ``request.app['auth_cfg']``, pinned into the new image's environment (#46)
+    the caller read from ``request.app['auth_cfg']``, pinned into the new image's environment
     so a Restart re-applies code without ever changing whether auth is on or off. *state* is
     ``None`` on a gateway with no dashboard, where there is nobody to tell.
 
@@ -1017,7 +1017,7 @@ async def api_restart(request: web.Request) -> web.Response:
 
     logger.info("Manual gateway restart requested via /api/system/restart")
     state.push_update_progress("restarting", "Restarting gateway…")
-    # Preserve the live auth mode across the re-exec (#46) — read it here where the
+    # Preserve the live auth mode across the re-exec — read it here where the
     # aiohttp app (and its resolved auth_cfg) is in scope.
     _auth_mode = _live_auth_mode(request)
 

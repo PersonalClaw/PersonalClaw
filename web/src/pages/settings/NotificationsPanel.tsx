@@ -25,7 +25,7 @@ export function NotificationsPanel() {
   // 🔴 NOT `.catch(() => null)`. A substituted null is indistinguishable from "still loading" to the gate
   // below, so a failed read left this panel shimmering FOREVER with nothing said — measured on
   // `#/settings/notifications` with the GET at 500: 0 controls, one `aria-busy` skeleton, no alert. Same
-  // shape cycle 117 found on the inbox panel and cycle 124 on three config panels.
+  // shape found earlier on the inbox panel and on three config panels.
   const { data: settingsData, error: loadErr, refresh } = useQuery(
     'settings:notification-settings', () => api.notificationSettings(), { persist: true },
   )

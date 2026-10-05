@@ -3,7 +3,7 @@ import { act, render, within } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-// ── SH-10 · the Security panel says WHICH denylist is in force, and whether it drifted ──────
+// ── The Security panel says WHICH denylist is in force, and whether it drifted ──────
 //
 // `/api/security/denied-commands` used to return two bare arrays, so the panel could show 112
 // patterns without being able to say where they came from, whether they still matched what

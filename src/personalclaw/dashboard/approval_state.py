@@ -274,7 +274,7 @@ class DashboardApprovalState:
     get_or_create_session: Callable[..., _ChatSession]
 
     def approval_window_secs(self) -> float:
-        """How long an approval waits for an answer: ``agent.approval_timeout_minutes`` (F-33).
+        """How long an approval waits for an answer: ``agent.approval_timeout_minutes``.
 
         ONE window for every approval that waits — a chat's, a subagent's, an MCP server's
         question (which its own call ceiling cuts shorter). There used to be a second, five-minute
@@ -643,7 +643,7 @@ class DashboardApprovalState:
         self.broadcast_ws("approval", entry)
         self._push_approval(entry["id"])
         self._raise_approval_row(entry)
-        # `ApprovalRequest` (AUTO crit 5): declared, selectable in the hook UI. Emitted alongside
+        # `ApprovalRequest`: declared, selectable in the hook UI. Emitted alongside
         # the WS broadcast — the same moment the user is asked — so a hook can mirror the prompt
         # to another channel while the future is still pending.
         #
@@ -1071,7 +1071,7 @@ class DashboardApprovalState:
         return True
 
     def _push_approval(self, approval_id: str) -> None:
-        """Wake the phone for a pending approval — MOBILE-COMPANION `MC-5`'s milestone.
+        """Wake the phone for a pending approval.
 
         **Only the approval id travels.** Not the tool, not its arguments, not the session.
         The phone opens ``#/companion?approval=<id>`` and re-fetches the card from
@@ -1079,7 +1079,7 @@ class DashboardApprovalState:
         enters a push service. This is the whole reason the payload contract is asserted in
         :mod:`personalclaw.push` rather than left to each caller.
 
-        Routed through plan 42's rules rather than pushed unconditionally: the user owns
+        Routed through the notification rules rather than pushed unconditionally: the user owns
         "does a blocked run reach my phone", and ``approval/requested`` is a real row in the
         rules matrix (it ships with ``push`` among its default targets). A ``never`` mode or
         a targets list without ``push`` silences this and nothing else.

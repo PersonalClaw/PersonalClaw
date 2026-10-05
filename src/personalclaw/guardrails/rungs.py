@@ -1,5 +1,4 @@
-"""Rung ROUTING — what each earned-autonomy rung actually does at a dispatch seam
-(AUTONOMY-GUARDRAILS §5.2).
+"""Rung ROUTING — what each earned-autonomy rung actually does at a dispatch seam.
 
 :mod:`~personalclaw.guardrails.autonomy` is the decision layer: it holds the ladder, the
 declarations, the grants and the derived track record. It shipped with **no call sites**,
@@ -373,7 +372,7 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
     # the security event log and rebuilds search indexes.
     #
     # `autonomous` at the floor because the table's own rule forces it: the engine has run
-    # unattended on every tick since PR2-5 (as `HeartbeatService._maybe_remediate`), so a lower
+    # unattended on every tick (as `HeartbeatService._maybe_remediate`), so a lower
     # floor would not harden anything — it would stop the maintenance a live install depends on.
     # The lesson cited at the top of this table, `enforcing a dead control is an outage`, is exactly
     # this case. The ceiling is the same rung and `leaves_machine` is False: every job it runs
@@ -390,9 +389,9 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
     # today's behaviour, because a lower floor would stop a user's existing automations.
     # `inbox-op` runs nothing today — it is new in this commit — so there are no automations to
     # stop, and the floor can be the one the behaviour deserves rather than the one history
-    # forces. `auto_with_undo` is that rung: PROACTIVE-ASSISTANT §1.6 bound 4 requires every
-    # auto-executed inbox operation to keep a handle the user can click, and this floor is what
-    # routes it through `ROUTE_EXECUTE_WITH_UNDO` so the handle is persisted and the user told.
+    # forces. `auto_with_undo` is that rung: every auto-executed inbox operation must keep a
+    # handle the user can click, and this floor is what routes it through
+    # `ROUTE_EXECUTE_WITH_UNDO` so the handle is persisted and the user told.
     #
     # The CEILING is the same rung, which is the load-bearing half: `autonomous` would let an
     # accumulated track record eventually take the undo offer AWAY, and "archived 40 things
@@ -446,7 +445,7 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
     #     applying it to the PROVIDER would withhold every browse dispatch at every trigger
     #     seam before the change that could promote it exists, which is a shipped-and-inert
     #     capability wearing a control's clothes.
-    #   * ceiling equals the floor because widening it needs the reversal half BA-6 owns; a
+    #   * ceiling equals the floor because widening it needs the reversal half first; a
     #     ceiling of `auto_with_undo` above a provider that cannot undo would route a form
     #     submission to "executes, then keeps a handle" and keep no handle.
     # Workflow ACTION NODES are unaffected — `workflows.engine.dispatch_action` does not
@@ -521,7 +520,7 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
 # its declaration is the whole control: an AI-drafted reply is written and shown, never
 # sent, and its `one_tap` ceiling plus `leaves_machine` mean no accumulated track record
 # can ever propose sending one by itself. The send affordance that turns an earned
-# `one_tap` into a card — and the approval verdict that would be its evidence — is AG-8.
+# `one_tap` into a card — and the approval verdict that would be its evidence — is separate work.
 _AFFORDANCE_SPECS: tuple[ActionTypeSpec, ...] = (
     ActionTypeSpec(
         key="inbox.reply_draft",
@@ -545,8 +544,8 @@ _AFFORDANCE_SPECS: tuple[ActionTypeSpec, ...] = (
 #: panel and :mod:`personalclaw.computer_use.policy` cannot spell it two ways.
 COMPUTER_USE_DRIVE = "computer_use.drive"
 
-# Driving the operator's own desktop through the OS accessibility layer (DESKTOP-COMPUTER-USE
-# §3.4, `DCU-5`). No `providers`: nothing dispatches this through the action-provider registry
+# Driving the operator's own desktop through the OS accessibility layer. No `providers`:
+# nothing dispatches this through the action-provider registry
 # — it is a TOOL surface, called from `computer_use.service.computer_dispatch` — so it is named
 # directly, exactly as the affordances above are.
 #
@@ -750,7 +749,7 @@ def announce_withheld(
     """Raise the durable row for an action the ladder withheld. Returns the item id.
 
     ``draft_only`` files a proposal ("here is what it would have done"); ``one_tap`` files
-    an agent request ("decide"). Both carry the action-type key in ``refs`` so AG-8's card
+    an agent request ("decide"). Both carry the action-type key in ``refs`` so a held-action card
     and the ladder panel can find every held action of one type.
 
     Deduped per action type by default: a trigger that matches every thirty seconds must

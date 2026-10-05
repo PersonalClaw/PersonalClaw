@@ -208,7 +208,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   // View surfaces are URL-backed (push, Back closes; refresh/deep-link reopens):
   // ?nudge=1 (the nudge drawer), ?report=1 (report modal), ?prompt=1 (prompt-card
   // expander). The nudge COMPOSE DRAFT (nudgeText) stays local — a composer draft has
-  // no shareable meaning (canonical §3), so only the drawer's open-state is in the URL.
+  // no shareable meaning, so only the drawer's open-state is in the URL.
   const [nudgeOpen, setNudgeOpen] = useQueryFlag(q, sq, 'nudge')
   const [reportOpen, setReportOpen] = useQueryFlag(q, sq, 'report')
   const [promptOpen, setPromptOpen] = useQueryFlag(q, sq, 'prompt')
@@ -228,13 +228,13 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   // The done-ness judge failed on a recent cycle — surfaced so the user
   // knows quality assessment is degraded, not silently never-completing.
   // Transient lifecycle flags folded through the SHARED, unit-tested foldReducer
-  // (P16) — one place computes judge-degraded/gate/stall from lifecycle events, so
+  // — one place computes judge-degraded/gate/stall from lifecycle events, so
   // this cockpit can't drift from the reducer's contract.
   const [runFlags, setRunFlags] = useState<RunFlags>(emptyRunFlags)
   const judgeDegraded = runFlags.judgeDegraded
   const [linkCopied, setLinkCopied] = useState(false)
   // The containing Project's name — for a clickable pill linking back to the Project,
-  // mirroring the Code cockpit (C397). Resolve project_id (explicit user scope) OR
+  // mirroring the Code cockpit. Resolve project_id (explicit user scope) OR
   // tasks_project_id (the auto-provisioned backing project a project-less loop gets):
   // a loop launched without choosing a project still lives under a project via
   // tasks_project_id, so the chip must show it — gating on project_id alone hid it.
@@ -254,7 +254,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   // had one, so worker events never matched and the live activity stream was
   // always empty.
   //
-  // Matched via `belongsToLoop` rather than a raw `===`, which is the R10c
+  // Matched via `belongsToLoop` rather than a raw `===`, which is the
   // coexistence fix: once a loop runs as a workflow template its worker streams
   // under a run-scoped colon key (`run:<id>` / `workflow:run:<id>`), and a strict
   // equality against `loop-<id>` matches none of them — the SILENT event-drop this
@@ -626,7 +626,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
     </span>
   )
 
-  // ── Dedicated status bar (item 14) — a full-width row BELOW the header carrying
+  // ── Dedicated status bar — a full-width row BELOW the header carrying
   // the live execution status: phase trail (or cycle counter), elapsed, the
   // containing project + bound workspace, and the run metadata pills hoisted out
   // of the prompt card. The title sub-line keeps only the status dot + label; this
@@ -749,14 +749,14 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
         }
       />
 
-      {/* Dedicated execution status bar (item 14) — directly below the header. */}
+      {/* Dedicated execution status bar — directly below the header. */}
       {statusBar}
 
       <div className="flex-1 min-h-0 flex">
        {/* main column (body); narrows when the Details rail opens */}
        <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
         <div className="shrink-0 px-2xl pt-m pb-m flex flex-col gap-m" style={{ marginInline: 'auto', width: '100%', maxWidth: W }}>
-          {/* Prompt bar (item 14) — a second, expandable status bar: COLLAPSED shows
+          {/* Prompt bar — a second, expandable status bar: COLLAPSED shows
               the first line of the prompt; EXPANDED reveals the full goal markdown +
               sub-goals. Run metadata now lives in the status bar above, so this row is
               purely the prompt. */}

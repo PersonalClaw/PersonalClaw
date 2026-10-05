@@ -5,7 +5,7 @@ import { Table, THead, Th, Td } from '../../ui/Table'
 import { api, isSwitchedOff, type SwitchedOffView, type FieldMetricsRow } from '../../lib/api'
 import { EvalsOff } from './EvalsOff'
 
-/** The lab-vs-field table (EVALUATION-SUBSTRATE amendment E3 / ES-9).
+/** The lab-vs-field table.
  *
  *  One row per subject answers "lab says better — is it?": lab score (Loop 1, pinned) |
  *  gate status (Loop 2) | field trend (Loop 3, the user's own 👍/👎, edit-before-approve

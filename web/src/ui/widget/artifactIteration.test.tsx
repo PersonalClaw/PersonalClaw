@@ -13,7 +13,7 @@
  *     that wrote the rail's own state would pass a weaker test and be wrong.
  *   · **Two marked elements produce ONE correction directive**, routed either to the
  *     host's own target (a design loop's guidance channel) or, by default, through the
- *     widget bridge's C32 refresh-injection path.
+ *     widget bridge's living-view refresh-injection path.
  *
  *  jsdom caveat inherited from widgetWire.test.tsx: jsdom's postMessage does not
  *  populate `event.source`, so child→parent messages are constructed directly WITH
@@ -286,7 +286,7 @@ describe('annotate mode — two marked elements, ONE correction', () => {
     expect(screen.getByRole('button', { name: /Mark elements/i })).toBeTruthy()
   })
 
-  it('with no host target, routes through the widget bridge with the C32 refresh suffix', async () => {
+  it('with no host target, routes through the widget bridge with the living-view refresh suffix', async () => {
     const published: string[] = []
     const record = (e: Event) => { published.push(String((e as CustomEvent).detail?.text)) }
     window.addEventListener('ne:widget-action', record as EventListener)

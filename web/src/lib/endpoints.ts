@@ -12,7 +12,7 @@
  *      `wc.loadURL(localGatewayUrl)` and `connectMode`'s `navigateToEndpoint` does the same for a
  *      paired gateway's origin — either way the shell loads the dashboard *from that gateway's own
  *      origin*. A registry of N gateways has nowhere to live in a bundle that is itself one of the N.
- *      (Since `CA-8` the shell holds TWO url variables, not one: `localGatewayUrl`
+ *      (The shell holds TWO url variables, not one: `localGatewayUrl`
  *      (`desktop/main.js:367`, resolved from the spawned gateway's READY line) and `activeUrl`, what
  *      the WebView is actually pointed at. Every credential-bearing call is bound to the first;
  *      only the second ever becomes a gateway this shell did not spawn.)
@@ -40,7 +40,7 @@
 /** `local` = a gateway this shell spawned and controls the lifecycle of; `remote` = anything else. */
 export type EndpointKind = 'local' | 'remote'
 
-/** One saved gateway. Shape fixed by the owner amendment: `{id, label, base_url, kind,
+/** One saved gateway, in a fixed shape: `{id, label, base_url, kind,
  *  device_session_ref}`. `snake_case` on `base_url`/`device_session_ref` is deliberate — these
  *  rows are persisted JSON and mirror the wire/config naming, not a TS convention. */
 export interface CompanionEndpoint {
@@ -373,8 +373,8 @@ export const WS_PATH = '/api/ws'
  * shell that gets `undefined` can say "this endpoint is misconfigured" on that row. Coercing it
  * would produce a socket that dials somewhere unintended, which is strictly worse than a refusal.
  *
- * 🪤 A SUBPATH `base_url` IS ALSO A BROKEN ROW, and it used to be the one that failed SILENTLY
- * (RUA-7). The gateway serves its socket at the ORIGIN ROOT: there is no base-path mode, and the
+ * 🪤 A SUBPATH `base_url` IS ALSO A BROKEN ROW, and it used to be the one that failed SILENTLY.
+ * The gateway serves its socket at the ORIGIN ROOT: there is no base-path mode, and the
  * PWA manifest scope and service-worker scope are among seven root-origin assumptions that depend
  * on it. `https://h/claw` nonetheless parsed fine, so this took `.host` and DISCARDED `/claw`,
  * returning `wss://h/api/ws` — a URL for a DIFFERENT origin path than the owner configured, which

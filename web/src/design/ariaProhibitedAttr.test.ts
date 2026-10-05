@@ -20,9 +20,9 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // a new invention: `role="status"` for a busy/loading region, `role="group"` for a labelled
 // container of controls, `role="img"` for a graphic whose label is its only text.
 //
-// 🪤 WHY THIS HID FROM FIVE CYCLES OF axe RUNS. A loading skeleton exists only while a fetch
+// 🪤 WHY THIS HID FROM FIVE ROUNDS OF axe RUNS. A loading skeleton exists only while a fetch
 // is in flight. Measured on `settings/providers`: the violation is present at a 600ms settle
-// and GONE by 1000ms. Cycle 50's gate waits ~1400ms, so it saw this as an intermittent
+// and GONE by 1000ms. The axe gate waits ~1400ms, so it saw this as an intermittent
 // failure and I attributed it to parallel-worker load. It is a real defect in a state that
 // axe only catches if it happens to look early enough — which is exactly why a SOURCE rail
 // is the right instrument for this family, not a DOM probe.
@@ -35,7 +35,7 @@ const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !
  *
  *  Scanning to the first `>` does NOT work on JSX — an attribute value like
  *  `onClick={() => f()}` contains one, so the tag would be truncated mid-attribute and a
- *  later `role=` missed (this produced five false positives in cycle 47). Track `{}` depth
+ *  later `role=` missed (this once produced five false positives). Track `{}` depth
  *  and only accept a `>` at depth 0. */
 function genericTags(): Array<{ file: string; line: number; tag: string }> {
   const out: Array<{ file: string; line: number; tag: string }> = []

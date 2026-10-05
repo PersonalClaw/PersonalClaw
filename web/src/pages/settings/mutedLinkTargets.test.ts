@@ -4,8 +4,8 @@ import { join } from 'node:path'
 
 // ── The last three under-24 controls in settings, and the sibling that settled the question ──
 //
-// Cycle 126 left these three deferred as an OWNER CALL: they are hand-rolled MUTED buttons, and
-// `TextLink` renders coral, so converging them looked like a colour ruling. **The code answered it — and
+// These three were left deferred as a design call: they are hand-rolled MUTED buttons, and
+// `TextLink` renders coral, so converging them looked like a colour decision. **The code answered it — and
 // answered it differently for each half.**
 //
 // 🔑 `#/settings/voice` ALREADY SHIPS THE ANSWER TWO LINES UP. The same row renders a `TextLink` for the
@@ -36,7 +36,7 @@ import { join } from 'node:path'
 //
 // Evidence: the voice crop moves **3.38% dark / 3.44% light** in a 223×10 box — that is the second link's
 // text recolouring, nothing else. The design page capture is **0% at both themes with the control in
-// frame** (its top is y≈764 in a 900px viewport, checked rather than assumed per cycle 125), because
+// frame** (its top is y≈764 in a 900px viewport, checked rather than assumed), because
 // `py-1 -my-1` grows the border box and returns every pixel to the layout.
 
 const SRC = join(process.cwd(), 'src')
@@ -46,7 +46,7 @@ const codeOf = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/
 
 describe('the voice row converges on the link it already had', () => {
   it('the Providers link is a TextLink now', () => {
-    // 🔑 RE-POINTED, NOT RELAXED (cycle 615). This asserted the prop string up to its closing `>`, so
+    // 🔑 RE-POINTED, NOT RELAXED. This asserted the prop string up to its closing `>`, so
     // adding the `ink` prop the canvas ground requires broke a match whose INTENT — the hand-rolled
     // twin became the primitive, with the same job/size/icon — was untouched. It now pins each prop
     // independently AND the ink, so it checks strictly more than the literal ever did.

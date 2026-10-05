@@ -1,4 +1,4 @@
-"""§7 routed-context provider — the pure assembler + the marker-fenced adapters,
+"""Routed-context provider — the pure assembler + the marker-fenced adapters,
 plus the two live endpoints (``GET /api/context`` and the regenerate POST).
 
 The assembler tests pin the three invariants the soul guardrail cares about:
@@ -67,7 +67,7 @@ def test_render_orders_rules_top_and_catalog_bottom():
 
 
 def test_memory_and_knowledge_headings_are_distinct():
-    # success-criterion 8: memory-derived and knowledge-derived never share a heading.
+    # Memory-derived and knowledge-derived never share a heading.
     assert cr.MEMORY_HEADING != cr.KNOWLEDGE_HEADING
     body = _routed().render()
     assert body.count(cr.MEMORY_HEADING) == 1

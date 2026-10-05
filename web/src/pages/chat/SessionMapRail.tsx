@@ -7,14 +7,14 @@ import { SessionMapCard, sessionMapMarkName } from './SessionMapCard'
 import { currentMarkRange, useVisibleTurns } from './sessionMapRegion'
 import { physics } from '../../design/motion'
 
-/** SESSION MAP RAIL — the markers (changes SSM-4/5/6/7/8).
+/** SESSION MAP RAIL — the markers.
  *
  *  A vertical rail that indexes the transcript: ONE MARKER PER USER MESSAGE (`sessionMapEntries`),
  *  stacked on a constant pitch in the transcript's left gutter, fixed while the transcript scrolls.
  *
- *  ── THE DESIGN, AS THE OWNER RULED IT ──────────────────────────────────────────
+ *  ── THE DESIGN ─────────────────────────────────────────────────────────────────
  *
- *  The owner described a reference app's rail and ruled on each property; these are the rules, and
+ *  The rail follows a reference app's, property by property; these are the rules, and
  *  each one replaced something the previous form did:
  *
  *   1. A MARKER IS A USER MESSAGE. Assistant replies and their tool calls are not markers: a reply
@@ -87,7 +87,7 @@ import { physics } from '../../design/motion'
  *
  *  🔑 REVEAL: A CURSOR KEY OPENS THE CARD, PASSIVE FOCUS DOES NOT. A sighted keyboard user
  *  arrowing down a rail with no card is navigating blind — the card is the answer to "what is this
- *  one?", so §A.6 has the first Arrow reveal a marker rather than step past it. But SSM-6's
+ *  one?", so the first Arrow reveals a marker rather than stepping past it. But the
  *  Tab-through rule still has to hold. The discriminator is INTENT, not focus: a cursor key sets
  *  `reveal` immediately before it moves focus, and the receiving marker's `onFocus` CONSUMES that
  *  one-shot flag. Tab never sets it, so Tab still opens nothing.
@@ -117,7 +117,7 @@ import { physics } from '../../design/motion'
  *
  *  · THE PRESSABLE AREA IS THE WHOLE ROW, the rows are flush, and a row is 32×24. Every pixel of
  *    the rail belongs to some marker, and each marker is now a 24×24-or-larger target, which is
- *    WCAG 2.2 SC 2.5.8's minimum — the owner listed "precise pointer movement required" among the
+ *    WCAG 2.2 SC 2.5.8's minimum — "precise pointer movement required" is among the
  *    reference's frictions. The previous 10px pitch did not meet it (neither did Codex's); with one
  *    marker per user message instead of one per event there are few enough rows to afford the
  *    height, and the rail still scrolls itself once a long session outgrows the gutter.
@@ -168,11 +168,11 @@ const CLOSE_DELAY_MS = 120
 const PAGE_STEP = 5
 
 /** The ONE resting length, as a fraction of the 24px line: every marker idles at 12px, whatever
- *  it indexes and whether or not it is on screen (owner rule 2). Half is what leaves the pointed-at
+ *  it indexes and whether or not it is on screen (design rule 2). Half is what leaves the pointed-at
  *  marker room to read as expanded — it doubles — without the resting column reading as dots. */
 export const MARK_REST_SCALE = 0.5
 
-/** The pointed-at marker's length: the full line (owner rule 4). */
+/** The pointed-at marker's length: the full line (design rule 4). */
 export const MARK_EXPANDED_SCALE = 1
 
 /** The rail fades its own top and bottom edge so an overflowing marker list ends in a gradient
@@ -267,9 +267,9 @@ function SessionMapRailBody({ entries, turnNodes, scrollRef, onJumpTo }: Session
   const jump = (index: number) => {
     onJumpTo(entries[index].visibleIndex)
     // The one thing focus does NOT announce. The marker's own `aria-label` already names the cursor
-    // position on every move, so repeating it here would be the double-speak §A.6 forbids; what a
-    // screen-reader user cannot otherwise tell is whether the TRANSCRIPT moved, because focus stays
-    // on the rail.
+    // position on every move, so repeating it here would be the double-speak the announcement
+    // policy forbids; what a screen-reader user cannot otherwise tell is whether the TRANSCRIPT
+    // moved, because focus stays on the rail.
     setAnnouncement(`Jumped to message ${index + 1} of ${entries.length}`)
   }
 
@@ -308,7 +308,7 @@ function SessionMapRailBody({ entries, turnNodes, scrollRef, onJumpTo }: Session
         setAnnouncement('')
       }}
       // `ml-4` is the clearance that keeps this rail's pressable band off `ui/NavRail`'s splitter
-      // band — load-bearing, measured, and deliberately NOT a density-scaled token. See SSM-8.
+      // band — load-bearing, measured, and deliberately NOT a density-scaled token.
       // `items-center`: the marker list is as tall as it needs to be, capped at the gutter's
       // height, and sits in the middle of it rather than stretching.
       className="relative ml-4 flex h-full w-8 shrink-0 items-center"

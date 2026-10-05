@@ -376,7 +376,7 @@ describe('exactly one AudioContext, and only from a user gesture', () => {
 // ── The cue set is closed, and quiet ────────────────────────────────────────
 
 describe('the cue set is closed', () => {
-  it('has exactly the three cue POINTS the plan names', async () => {
+  it('has exactly the three cue POINTS the module names', async () => {
     const m = await load()
     // A caller cannot invent `playCue('ka-ching')` — the point is a closed union, so
     // that is a type error; this pins the runtime side of the same claim. The three
@@ -387,7 +387,7 @@ describe('the cue set is closed', () => {
   it('registers a recipe for every point, plus the two personality voices', async () => {
     const m = await load()
     // Every point must have a recipe of its own name (that is what `cueVoice` falls
-    // back to), and the extra members are the identity voices PT-5 added.
+    // back to), and the extra members are the personalities' identity voices.
     for (const point of m.CUE_POINTS) expect(m.CUES[point], point).toBeDefined()
     expect(Object.keys(m.CUES).sort()).toEqual([
       'approval_needed', 'coin_blip', 'error', 'terminal_bell', 'turn_complete',
@@ -482,8 +482,8 @@ describe('a personality can re-voice a cue point', () => {
   it('refuses an INHERITED voice name — the prototype-chain hole, closed', async () => {
     const m = await audible()
     // `Object.hasOwn`, not `CUES[v] ?? …`: a plain index finds `'constructor'` on the
-    // prototype, so this would hand `synth` the `Object` constructor as a recipe. PT-3
-    // measured exactly this live in both personality registries.
+    // prototype, so this would hand `synth` the `Object` constructor as a recipe. This was
+    // measured live in both personality registries.
     for (const inherited of ['constructor', 'toString', 'hasOwnProperty', '__proto__', 'valueOf']) {
       m.setCueVoices({ error: inherited } as never)
       expect(m.cueVoice('error'), inherited).toBe('error')

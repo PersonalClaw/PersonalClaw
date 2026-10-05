@@ -1,7 +1,7 @@
 # The clean-machine walkthroughs, on runners instead of a VM.
 #
 # WHY A WORKFLOW AND NOT A VM. The four walkthroughs are defined as
-# "clean-VM / never-seen-the-project" runs, and the change was marked OWNER-ONLY on the
+# "clean-VM / never-seen-the-project" runs, and they were left to a person, on the
 # reasoning that only a human with a spare machine could do them. Three of the four do not
 # need a human — they need a machine that has never seen this project, which is precisely
 # what a fresh runner is. Actions beats a VM on every axis that matters here:
@@ -10,12 +10,11 @@
 #   * a bare `ubuntu:24.04` container step is genuinely Node-absent, which V1 requires and
 #     a developer's own machine almost never is;
 #   * `macos-latest` exists, so V4's desktop arm runs on a real Mac;
-#   * the run log IS the evidence, and the acceptance criterion asks for exactly that
-#     ("recorded in the Execution log") — a pasted terminal transcript is weaker;
+#   * the run log IS the evidence — a pasted terminal transcript is weaker;
 #   * it costs nothing on a public repo, and there is no instance anyone can forget to
 #     terminate.
 #
-# V2 IS DELIBERATELY ABSENT AND MUST STAY ABSENT. Its acceptance is "getting-started
+# V2 IS DELIBERATELY ABSENT AND MUST STAY ABSENT. Its bar is "getting-started
 # followed verbatim by a first-time reader" — that is a property of a PERSON, not of a
 # machine, and no runner can be a first-time reader. Adding a job that runs the commands in
 # the doc would produce a green check that asserts something nobody claimed: that the
@@ -29,7 +28,7 @@
 # look identical on the board, and that confusion is how this project has previously believed
 # something was verified when nothing had been measured.
 
-name: Clean-machine walkthroughs (DIST-11)
+name: Clean-machine walkthroughs
 
 on:
   # SCHEDULED, because this file's own opening argument is that a runner is clean BY
@@ -340,7 +339,7 @@ jobs:
             echo "::warning::the reverse-proxy leg only. Recorded, not silently passed."
           fi
 
-      - name: STATE SURVIVES down/up — the clause that actually matters
+      - name: STATE SURVIVES down/up — the check that actually matters
         run: |
           set -euo pipefail
           # Write a marker through the running stack, cycle the stack, read it back. A
@@ -478,10 +477,10 @@ jobs:
     # Measured 3s; it writes a step summary and nothing else.
     timeout-minutes: 10
     steps:
-      - name: Summarise for the Execution log
+      - name: Summarise the walkthrough results
         run: |
           {
-            echo "## DIST-11 clean-machine walkthroughs"
+            echo "## Clean-machine walkthroughs"
             echo
             echo "| walkthrough | result |"
             echo "|---|---|"

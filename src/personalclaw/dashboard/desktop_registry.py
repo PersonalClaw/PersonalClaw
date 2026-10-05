@@ -1,4 +1,4 @@
-"""Desktop shell registry — the gateway's half of the capability bridge (DC-2 C2).
+"""Desktop shell registry — the gateway's half of the capability bridge.
 
 The Electron shell owns the only truthful view of the host's native capability
 state (macOS TCC status, whether a tray is available, whether a hotkey chord

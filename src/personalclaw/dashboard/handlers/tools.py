@@ -54,7 +54,7 @@ def _as_its_work(request: web.Request) -> Iterator[None]:
 
 
 def _audit_toggle(request: web.Request, op: str, ok: bool, resources: str, error: str = "") -> None:
-    """Audit a tool/provider enable-disable toggle (#45) — it changes the agent's
+    """Audit a tool/provider enable-disable toggle — it changes the agent's
     available capability surface, a security-relevant state change. Best-effort."""
     try:
         _sel().log_api_access(
@@ -206,7 +206,7 @@ async def api_tools_list(request: web.Request) -> web.Response:
                 # effective risk from it. A tool that declares nothing reads 'caution', as it
                 # does at every gate: only a declared read is shown as one.
                 "risk_level": getattr(risk_level, "value", risk_level) or "caution",
-                # PT3/UT4: user enable/disable state. A locked tool is always enabled and
+                # User enable/disable state. A locked tool is always enabled and
                 # not user-toggleable. `disabled` is true if the tool is off individually
                 # OR its whole provider is off; `providerDisabled` distinguishes the two
                 # so the UI can show "off because the provider is off".
@@ -496,7 +496,7 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
         {"dry_run": True} if bool_field(body, "dry_run", default=False) else {}
     )
 
-    # Untrusted-app sandbox (P3): an app-identified caller may invoke a tool only if
+    # Untrusted-app sandbox: an app-identified caller may invoke a tool only if
     # it declares it in permissions.mcpTools. Owner/internal callers (no app identity)
     # are unaffected. This gates the direct /api/tools/invoke path an app backend uses.
     app_name = request.get("app", "")
@@ -855,8 +855,8 @@ async def api_providers_toggle(request: web.Request) -> web.Response:
 async def api_tools_savings(request: web.Request) -> web.Response:
     """GET /api/tools/savings — the TokenJuice savings (counterfactual) summary.
 
-    Read-only aggregate from ``~/.personalclaw/tokenjuice_savings.json`` (Context Economy
-    §1.3): estimated tokens saved by output projection, the top compressor, and a
+    Read-only aggregate from ``~/.personalclaw/tokenjuice_savings.json``:
+    estimated tokens saved by output projection, the top compressor, and a
     per-compressor breakdown. Tokens are estimated (``chars/4``, flagged ``estimated``) —
     this is the *savings* ledger, not authoritative spend metering. Never raises (an
     absent/corrupt file returns an empty summary)."""
@@ -866,7 +866,7 @@ async def api_tools_savings(request: web.Request) -> web.Response:
 
 
 async def api_tool_groups(request: web.Request) -> web.Response:
-    """GET /api/tools/groups — the tool-GROUP partition (Context Economy §5).
+    """GET /api/tools/groups — the tool-GROUP partition.
 
     Groups are *derived* from the registered tool providers, so this reports the
     same partition the native runtime assembles: one entry per group with its tool

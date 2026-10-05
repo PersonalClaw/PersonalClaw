@@ -1,7 +1,7 @@
 """The schedule half: the clock job, the cadence, and what ``off`` actually stops.
 
 `tests/test_identity_report.py` covers the composition and delivery half. This file covers
-the three clauses that were left `todo`, and each one is written against the failure it exists to
+the three behaviours that were unbuilt, and each one is written against the failure it exists to
 catch rather than against the code that implements it:
 
 1. **"compressed-clock fixture fires the job."** The proof is that the report is *PRODUCED*, not
@@ -229,7 +229,7 @@ def _report_rows(home: Path) -> list:
 class TestOneVocabulary:
     """`off` is a MEMBER of the cadence, not a sibling bool, and the word list has one home.
 
-    The plan's §T2.5 named two fields (`identity_report_enabled` AND a cadence). One is shipped,
+    Two fields were proposed (`identity_report_enabled` AND a cadence). One is shipped,
     deliberately: two switches for one concern make `enabled=true, cadence=off` and
     `enabled=false, cadence=weekly` contradictions a reconciler must invent a precedence for,
     and one of the two is then always a control that silently does nothing.
@@ -397,7 +397,7 @@ class TestTheTriggerConverges:
 
     def test_reconcile_preserves_spec_keys_it_does_not_own(self, home, store):
         """`timezone`/`skip_dates` are the quietly-losable keys a cadence edit drops when it
-        replaces the spec wholesale — contract §1.3 and S101 each paid for this once."""
+        replaces the spec wholesale — earlier changes paid for this twice."""
         P.reconcile_identity_report_trigger(store)
         t = store.get(P.IDENTITY_REPORT_TRIGGER_ID).trigger
         t.spec = {**t.spec, "timezone": "Europe/Berlin", "skip_dates": ["2026-12-25"]}
@@ -431,7 +431,7 @@ class TestTheTriggerConverges:
         Matched as a CALL through the AST, not as a substring: the name also appears in the
         `from ... import` line beside it, so a `toContain`-style scan stays green when the call
         is commented out and only the import survives. Measured — the first version of this
-        assertion did exactly that under M1.
+        assertion did exactly that.
         """
         import ast
         import inspect
@@ -480,7 +480,7 @@ class TestTheJobFires:
     async def test_firing_it_through_the_real_dispatch_writes_the_artifact_and_the_inbox_row(
         self, home, artifacts, store, tmp_path, monkeypatch
     ):
-        """The end-to-end clause, through `GatewayOrchestrator._fire_store_trigger`.
+        """The end-to-end leg, through `GatewayOrchestrator._fire_store_trigger`.
 
         That is the ONE dispatch every store-backed fire passes through — it resolves the
         provider out of the registry, screens the payload, applies the denylist and routes the
@@ -634,7 +634,7 @@ class TestOffDisablesCleanly:
             raise AssertionError("`off` composed the report anyway")
 
         # Not just "no output" — the gather itself must not run. A cadence that composed and
-        # then dropped the result is the inert control this clause exists to refuse.
+        # then dropped the result is the inert control this test exists to refuse.
         monkeypatch.setattr(LR, "compose_identity_report", _boom)
 
         result = await P.IdentityReportActionProvider().execute({}, ActionContext(event="t"))

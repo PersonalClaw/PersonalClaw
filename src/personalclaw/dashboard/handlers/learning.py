@@ -5,21 +5,21 @@ GET    /api/learning/proposals/{id}       one proposal, full record
 POST   /api/learning/proposals/{id}/accept   install (human reviewers only)
 DELETE /api/learning/proposals/{id}       reject (human reviewers only)
 GET    /api/learning/staging/week         the week-at-a-glance capture panel
-GET    /api/learning/health               the flywheel observability panel (LEARN-R14b)
+GET    /api/learning/health               the flywheel observability panel
 GET    /api/learning/summary              the learning summary block
 GET    /api/learning/identity-report      the periodic identity report, deterministic
 POST   /api/learning/identity-report      compose + narrate + persist the artifact + surface it
 
-The plan's success criterion 1 says "One Proposal Inbox SHOWS all six proposal kinds with
+The requirement this module serves: "One Proposal Inbox SHOWS all six proposal kinds with
 provenance,
 evidence manifests, and risk-tier metadata; accept installs, reject dismisses — and the model cannot
-accept its own proposals under any trust mode". Everything behind that sentence shipped in S75/S76
+accept its own proposals under any trust mode". Everything behind that sentence shipped earlier
 and
-had no HTTP surface, so the criterion was unmet for want of a route: `inbox.build_view` and
+had no HTTP surface, so the requirement was unmet for want of a route: `inbox.build_view` and
 `StagingStore.week` both return fully-serialized shapes, and this module wires them.
 
-**The actor is load-bearing.** S75 measured that `proposals.accept()` knew nothing about who
-was calling it, and put `require_human` inside it. A route that omitted the actor would default to
+**The actor is load-bearing.** `proposals.accept()` once knew nothing about who
+was calling it, so `require_human` sits inside it. A route that omitted the actor would default to
 `user` and hand every caller — including an app-scoped token — the reviewer's authority. So the
 actor is
 DERIVED from the request rather than accepted from the body: a caller that could name itself `user`
@@ -65,12 +65,12 @@ def _enabled() -> bool:
 
 
 def _actor(request: web.Request) -> str:
-    """Who is making this request, for S75's accept gate.
+    """Who is making this request, for the accept gate.
 
     DERIVED, never read from the body. An app-scoped token is an `agent`: an installed app acting
-    through the API is exactly the "worker whose self-report needs checking" case §7 names, and
+    through the API is exactly the "worker whose self-report needs checking" case, and
     letting
-    one accept its own proposals would reproduce the hole S75 closed one layer up.
+    one accept its own proposals would reproduce the hole the gate closed one layer up.
 
     A dashboard session is `user` — that is a human at the UI, which is the only actor the gate
     permits. Anything unrecognized returns `""`, which `require_human` denies rather than assuming
@@ -114,7 +114,7 @@ async def _apply_accepted_template_diff(prop) -> dict:
     """Apply an accepted ``template_diff`` to its target and save it as a NEW version.
 
     The refiner FILES typed ops and never applies them; accepting is the human installing, so
-    THIS is where the diff lands (§3.1 "Accept → new template VERSION"). The ops ride the change
+    THIS is where the diff lands, as a new template VERSION. The ops ride the change
     manifest's ``targeted_fix`` (the same field the inbox reads to stamp a risk tier); they are
     applied to a deep copy via ``mutations.apply_batch`` and, only if the batch is clean, saved
     as a new version (``service.save_accepted_diff``), which refuses a diff that would let a step
@@ -164,7 +164,7 @@ def _tier_for(prop) -> str:
 
     Only a `template_diff` carries typed ops to derive a tier from, so anything else is left
     unscored
-    rather than stamped with a meaningless one — S75's projection defaults those to `review`, and a
+    rather than stamped with a meaningless one — the inbox defaults those to `review`, and a
     fabricated `low` would hand a lesson bulk-accept eligibility nobody computed.
     """
     from personalclaw.learning.refiner import risk_tier
@@ -236,7 +236,7 @@ def _skill_proposals_pending() -> int:
     paths behind one list. It reports a count so the empty state can stop saying "Nothing to
     review" while skill proposals sit one page away.
 
-    Bridging the stores properly belongs to Learning-Visibility S4 — and that ALREADY LANDED:
+    Bridging the stores properly has ALREADY LANDED elsewhere:
     `learning_report._gather_proposals` reads this same store for the identity report. Which is
     what made the bug worse than filed: measured with one pending proposal, the identity report
     on this page counts it while the panel above says there is nothing to review. Two panels,
@@ -273,13 +273,13 @@ async def api_learning_proposal(request: web.Request) -> web.Response:
 async def api_learning_proposal_accept(request: web.Request) -> web.Response:
     """POST /api/learning/proposals/{id}/accept — install it.
 
-    The actor is derived from the request and passed through to `proposals.accept`, which runs S75's
+    The actor is derived from the request and passed through to `proposals.accept`, which runs
     `require_human`. A refusal is **403 with the gate's reason**, not a generic error: a reviewer
     who
     hits this needs to know an agent-scoped token cannot accept, and a bare 500 would send them
     looking for a bug.
 
-    There is deliberately no `?force=` or trust override. §7: "under ANY trust mode".
+    There is deliberately no `?force=` or trust override: the gate holds under ANY trust mode.
 
     A kind nothing can install yet is **409 with the reason**, and no decision is recorded — the
     proposal is still pending afterwards. Measured before this existed: accepting a `retirement`,
@@ -323,7 +323,7 @@ async def api_learning_proposal_accept(request: web.Request) -> web.Response:
 async def api_learning_proposal_reject(request: web.Request) -> web.Response:
     """DELETE /api/learning/proposals/{id} — dismiss it, and REMEMBER the decision.
 
-    Gated on the same actor for the reason S75 recorded: an agent that could reject would clear its
+    Gated on the same actor for this reason: an agent that could reject would clear its
     own
     bad proposals before a human read them, and the rejection exemplars the flywheel learns from
     would
@@ -388,7 +388,7 @@ def _precision_from_events(days: int) -> tuple[float | None, int, int]:
     **This read used to come from `usage.UsageStore`**, on the stated grounds that the per-arm
     report "needs a `surfacing_events` table that nothing writes yet" while "the surfaced/used
     counters, by contrast, have a live writer per session flush". The first half was true and is
-    now fixed — LEARN-R4's table exists and `allocate_skills` writes it. The second half was
+    now fixed — the table exists and `allocate_skills` writes it. The second half was
     NOT true: `UsageStore.record` has no production caller at all, so this function returned
     `(None, 0, 0)` on every box, and the panel's surfacing row rendered the empty state the old
     docstring was written to avoid. Reading the table that is actually written is the fix.
@@ -416,7 +416,7 @@ def _precision_from_events(days: int) -> tuple[float | None, int, int]:
 
 
 def _judge_calibration() -> dict:
-    """MAE buckets + false-pass rate over recent run ledgers (LEARN-R10d)."""
+    """MAE buckets + false-pass rate over recent run ledgers."""
     from personalclaw.workflows import journal as journal_mod
     from personalclaw.workflows import judge_calibration as jc
     from personalclaw.workflows import store as run_store
@@ -454,11 +454,11 @@ def _judge_calibration() -> dict:
 
 
 async def api_learning_health(request: web.Request) -> web.Response:
-    """GET /api/learning/health — the flywheel observability panel (LEARN-R14b).
+    """GET /api/learning/health — the flywheel observability panel.
 
-    Everything here already had a live writer and no reader. The four additions §6.2
-    names — the 0-100 composite with the 50-80% utilization band, R10d's judge MAE
-    buckets, R16's attribution verdict history, R19e's per-op cost aggregates — were
+    Everything here already had a live writer and no reader. The four additions this panel
+    shows — the 0-100 composite with the 50-80% utilization band, the judge MAE
+    buckets, the attribution verdict history, the per-op cost aggregates — were
     each computed or recorded somewhere and rendered nowhere.
 
     Every section degrades to a stated "unmeasured" rather than a zero. A panel that
@@ -541,7 +541,7 @@ async def api_learning_health(request: web.Request) -> web.Response:
 def _audit(request: web.Request, operation: str, outcome: str, resources: str) -> None:
     """SEL-audit a review action.
 
-    §3 requires an audit of accepts, and `proposals.accept` already logs one. This adds the HTTP
+    Accepts must be audited, and `proposals.accept` already logs one. This adds the HTTP
     caller's identity, which that layer cannot see — "who accepted this" is the question an audit
     trail
     exists to answer, and the store only knows the actor CLASS.
@@ -561,15 +561,14 @@ def _audit(request: web.Request, operation: str, outcome: str, resources: str) -
 
 
 async def api_learning_summary(request: web.Request) -> web.Response:
-    """GET /api/learning/summary — the learning summary block (LV-3).
+    """GET /api/learning/summary — the learning summary block.
 
     `?days=` bounds the window (1-90, default 7). Four groups — new skills, refined
     skills, pending proposals, facts — each an exact `count` plus a bounded `names`
     sample. Read-only: composing the block writes to no learning store.
 
-    LV-3's task row asked for this to register with plan 42's digest builder. No such
-    builder exists in the tree, so the same block renders on the skills page header —
-    the fallback the task row and the atom's `done_when` both sanction. A digest
+    It was meant to register with a digest builder. No such
+    builder exists in the tree, so the same block renders on the skills page header. A digest
     builder, when it arrives, calls `compose_learning_summary` rather than
     reimplementing the gather.
 
@@ -724,7 +723,7 @@ def register_learning_routes(app: web.Application) -> None:
     """Register /api/learning/* — the Proposal Inbox and the staging panel.
 
     Literal paths register BEFORE `/{id}` so aiohttp does not capture `staging` as a proposal
-    id — the ordering landmine S67 and S70 each paid for once.
+    id — an ordering landmine that has bitten twice before.
     """
     app.router.add_get("/api/learning/staging/week", api_learning_staging_week)
     app.router.add_get("/api/learning/health", api_learning_health)

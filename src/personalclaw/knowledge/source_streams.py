@@ -22,7 +22,7 @@ at most a fenced title snippet, wrapped by the ONE core fence
 (:func:`personalclaw.security.fence_untrusted`) with ``source=f"source:{source_id}"``.
 A spool record is read back by digest synthesis, which is an LLM boundary — so the snippet is
 fenced at WRITE time rather than trusting every future reader to remember. The consequence is
-deliberate and load-bearing: **a fenced title is not matchable**, which is exactly §6.1's
+deliberate and load-bearing: **a fenced title is not matchable**, which is exactly the rule
 "payload content never participates in pattern matching". Saved queries therefore match the
 structural record (title/url/content as the provider emitted them), never this payload.
 """
@@ -54,7 +54,7 @@ STREAM_EVENTS: tuple[str, ...] = (
 )
 
 #: How much of an item's title rides the event payload, BEFORE fencing. A snippet, not the
-#: content: §6.1 keeps content in the store so an event can never become a content channel.
+#: content: content stays in the store so an event can never become a content channel.
 SNIPPET_CHARS = 200
 
 #: Trim threshold. The spool is interim, but "interim" has historically meant months, and an
@@ -79,9 +79,9 @@ def spool_path() -> Path:
 
 
 def fenced_snippet(text: str, source_id: str) -> str:
-    """A title snippet fenced as untrusted, for an event payload (§8).
+    """A title snippet fenced as untrusted, for an event payload.
 
-    Delegates to the ONE core fence with the plan's exact provenance shape
+    Delegates to the ONE core fence with the exact provenance shape
     (``source="source:<id>"``). Truncation happens BEFORE fencing: truncating after would cut
     the closing marker off a long title and hand the next reader an unterminated fence, which
     is a fence-break the caller performed on the fence's behalf.
@@ -219,7 +219,7 @@ class SourceEventSpool:
     ) -> list[dict[str, Any]]:
         """Records with ``seq > after_seq``, optionally filtered to some event names.
 
-        ``after_seq`` is the consumer's cursor — the exact shape the digest advances (§6.2)
+        ``after_seq`` is the consumer's cursor — the exact shape the digest advances
         and the shape the bus will inherit when it drains this file.
         """
         wanted = set(events) if events is not None else None

@@ -3,11 +3,11 @@
 One line per ATTEMPT (not per request) in ``~/.personalclaw/model_calls.jsonl`` —
 so a request that retried once and then fell back writes three lines sharing one
 ``audit_id``. This is harness mechanics (a file under the config dir), NOT a
-memory entry or knowledge item (§7 memory/knowledge boundary): nothing here
+memory entry or knowledge item (the memory/knowledge boundary): nothing here
 writes to ``memory.db`` / ``knowledge.db``.
 
 The file is append-mostly with a trim at 2× the line cap (the ``notifications.jsonl``
-pattern the plan cites): each write appends, and when the file crosses ``2 × cap``
+pattern): each write appends, and when the file crosses ``2 × cap``
 lines it is rewritten to the last ``cap`` lines. Trimming at 2× rather than every
 write keeps the hot background path append-only in the common case.
 """
@@ -47,7 +47,7 @@ def _audit_path() -> Path:
 #: (``reasoning|background|loops|orchestration``) and FOUR unrelated subsystems share
 #: ``background``, so "a background attempt failed" named no subsystem: an expensive
 #: learning pass could be dead in production and no surface would say so. Measured on a
-#: skill-ladder pass that died as ``provider_error`` at 60,010 ms (ex-`K56`) — the
+#: skill-ladder pass that died as ``provider_error`` at 60,010 ms — the
 #: row was recorded, and nothing on it or in the log said which pass it was.
 #:
 #: 🔴 WHY CLOSED. An open string field answers "who asked" in six spellings within a year;
@@ -62,12 +62,12 @@ def _audit_path() -> Path:
 #: remote address — it names no subsystem and is not a column of this record.
 #: ``usage_ledger``'s ``source`` and ``routing.usage.PURPOSES`` are the TURN ledger's axes,
 #: one record removed from an attempt, and ``PURPOSES`` is deliberately coarse: every value
-#: below maps to its single ``background`` purpose, which is exactly the collapse `G47`
-#: reports. So none of the three could carry this without being redefined.
-#: `triage_gate` and `triage_propose` are the triage digest's two background passes
-#: (PROACTIVE-ASSISTANT §1.2/§1.3), and they are TWO values rather than one `triage`: the
-#: whole point of the gate is that it is the cheap call, so a spend audit that could not tell
-#: it apart from the proposal call could not answer whether the gate is earning its keep.
+#: below maps to its single ``background`` purpose, which is exactly the collapse described
+#: above. So none of the three could carry this without being redefined.
+#: `triage_gate` and `triage_propose` are the triage digest's two background passes, and they
+#: are TWO values rather than one `triage`: the whole point of the gate is that it is the cheap
+#: call, so a spend audit that could not tell it apart from the proposal call could not answer
+#: whether the gate is earning its keep.
 #: `knowledge` is the knowledge library's processing of an item (its pipeline's model nodes and
 #: its worker pool), which is also what a busy local model is busy with when a person waits
 #: behind it (``guardrails.local_queue.BUSY_WITH`` names every caller here in those words).
@@ -270,7 +270,7 @@ def _maybe_trim(path: Path) -> None:
 def read_recent(limit: int = 1000) -> list[dict]:
     """Return up to ``limit`` most-recent attempt rows (oldest→newest), parsed.
 
-    Powers the derived health view (§2.5). Malformed lines are skipped, not
+    Powers the derived health view. Malformed lines are skipped, not
     fatal — a partially-written tail must not blank the whole panel.
     """
     path = _audit_path()

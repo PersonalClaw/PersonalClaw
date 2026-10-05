@@ -1,7 +1,7 @@
 """WS dead-client cleanup for the dashboard broadcast paths.
 
-Renamed from ``test_ws_and_plan_memory`` when WF2LEA-4 deleted the plan-memory journal silo:
-the Learning Flywheel's RUN_END cadence absorbed run outcomes into the Run Ledger + proposal
+Renamed from ``test_ws_and_plan_memory`` when the plan-memory journal silo was deleted:
+the learning loop's RUN_END cadence absorbed run outcomes into the Run Ledger + proposal
 pipeline, so the ``append_plan_event`` rotation and ``load_plan_lessons`` cache these once also
 covered are gone. What remains — the WebSocket dead-client detection — is the subject that
 actually lived here.

@@ -1,4 +1,4 @@
-"""The full lifecycle, end to end, and the adversarial cases (Slice 11a).
+"""The full lifecycle, end to end, and the adversarial cases.
 
 Every other workflow test file exercises one seam. This one drives the whole thing the way a user
 does — create, run, edit mid-flight, rewind, run-from, fork, complete — because the interesting
@@ -608,8 +608,9 @@ class TestForkIsolation:
 
 class TestPerformance:
     def test_a_50_node_spec_schedules_under_100ms(self) -> None:
-        """The plan's acceptance criterion. The frontier is re-derived on EVERY tick, so its cost is
-        paid once per node completion — a slow frontier makes a large spec quadratically slow."""
+        """A 50-node spec schedules in under 100ms. The frontier is re-derived on EVERY tick, so
+        its cost is paid once per node completion — a slow frontier makes a large spec
+        quadratically slow."""
         import time
 
         from personalclaw.workflows.models import Node

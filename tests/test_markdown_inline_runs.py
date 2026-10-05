@@ -300,7 +300,7 @@ def test_no_measured_character_is_ever_dropped(src: str) -> None:
 _REPO = Path(__file__).resolve().parents[1]
 
 #: Every tree that SHIPS, the file types to read in it, and names that are genuinely present
-#: there. `docs/` and this file are excluded deliberately: the plan and the compatibility
+#: there. `docs/` and this file are excluded deliberately: prose and the compatibility
 #: table above MUST keep naming `_strip_inline` for the deletion to stay auditable.
 _SHIPPED_SOURCE = (
     (
@@ -394,7 +394,7 @@ def test_deck_titles_and_bodies_stay_plain_strings() -> None:
     deck = deck_from_markdown("# My **deck**\n\n## Slide *one*\n\n- a `b` c")
     assert deck.title == "My deck"
     assert deck.slides[0].title == "Slide one"
-    # DFE-8 replaced `Slide.body: list[str]` with `bullets: list[Bullet]` so a bullet can
+    # `Slide.body: list[str]` was replaced with `bullets: list[Bullet]` so a bullet can
     # carry its indent depth. The claim here is unchanged and is still the point of this
     # file: inline runs (**bold**, *em*, `code`) are FLATTENED to plain text on the way in.
     assert [b.text for b in deck.slides[0].bullets] == ["a b c"]

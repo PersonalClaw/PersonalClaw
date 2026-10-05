@@ -1,9 +1,9 @@
 """The disposition table, as code.
 
-§2 is a 17-row table saying what happens to every automation-adjacent surface in the codebase:
-ABSORBED, KEPT, or KEPT-and-gains-a-duty. It is the most consequential document in this plan — a
-surface absorbed by mistake loses its semantics, and a surface kept by mistake means two schedulers
-running at once.
+The unified trigger store came with a table saying what happens to every automation-adjacent
+surface in the codebase: ABSORBED, KEPT, or KEPT-and-gains-a-duty. It is the most consequential
+decision of the migration — a surface absorbed by mistake loses its semantics, and a surface kept
+by mistake means two schedulers running at once.
 
 It lives here as data rather than only in prose because a table in a markdown file cannot be checked
 against the tree. `missing_surfaces()` verifies every module the table
@@ -24,7 +24,7 @@ class Verdict(str, Enum):
 
     `KEPT_WITH_DUTY` is separate from `KEPT` because the two produce
     different work: a kept surface is
-    untouched, while one that gains a duty needs an edit in this program. Collapsing them lets a
+    untouched, while one that gains a duty needs an edit in the migration. Collapsing them lets a
     required emission (fs_watch publishing `FileChanged`, the inbox emitting `InboxItemIngested`)
     read as "nothing to do here".
     """
@@ -47,7 +47,7 @@ class Row:
     note: str = ""
 
 
-#: The table. Ordered as §2 orders it, so a reader can diff the two.
+#: The table.
 DISPOSITION: tuple[Row, ...] = (
     Row(
         surface="schedule.py machinery",
@@ -77,7 +77,7 @@ DISPOSITION: tuple[Row, ...] = (
             "JSONL caps 100/job + index",
             "last_run_status() reads history, not the volatile job field",
         ),
-        note="Becomes the ledger-only fire record, extended with §1.3's typed outcomes.",
+        note="Becomes the ledger-only fire record, extended with the typed outcomes.",
     ),
     Row(
         surface="hooks.py ScriptHooks",
@@ -88,7 +88,7 @@ DISPOSITION: tuple[Row, ...] = (
             "agent scoping via fire_for_ids",
             "__hook_depth cap folds into __wf_depth",
         ),
-        note="Only 7 of 15 events fire today; wiring the other 8 is §7 step 1.",
+        note="Only 7 of 15 events fired when this table was drawn; the other 8 needed wiring.",
     ),
     Row(
         surface="hooks.py HookManager (declarative rules)",
@@ -107,7 +107,7 @@ DISPOSITION: tuple[Row, ...] = (
         note="Its store, engine and dispatch are gone: event rows live in triggers.json (a legacy "
         "event_triggers.json is absorbed at boot), the gateway's router admits them through the "
         "tick's gate walk and fires them through the one store dispatch, and an event raised in "
-        "a process without the router spools (§3.3). The module that remains is the bus and the "
+        "a process without the router spools. The module that remains is the bus and the "
         "pattern grammar.",
     ),
     Row(
@@ -126,8 +126,8 @@ DISPOSITION: tuple[Row, ...] = (
             "stop-sentinel",
             "error_count deactivation",
         ),
-        note="ABSORBED LAST, as planned — landed with WF2AUT-11 half 2: the loop tick engine "
-        "rides kind:idle (spec.message routes the fire to the nudge deliverer) and "
+        note="ABSORBED LAST — landed once the loop tick engine "
+        "rode kind:idle (spec.message routes the fire to the nudge deliverer), and "
         "autonudge.py was deleted in the same change.",
     ),
     Row(
@@ -197,9 +197,9 @@ def absorbed() -> tuple[Row, ...]:
 
 
 def gains_a_duty() -> tuple[Row, ...]:
-    """Surfaces that are kept but need an edit in this program.
+    """Surfaces that are kept but need an edit in the migration.
 
-    The list a session-64 reader needs: these are the emissions the event bus depends on, and a kept
+    The list the event bus cares about: these are the emissions it depends on, and a kept
     surface that never gained its duty is a bus with no publishers.
     """
     return tuple(r for r in DISPOSITION if r.verdict is Verdict.KEPT_WITH_DUTY)

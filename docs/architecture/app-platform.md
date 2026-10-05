@@ -418,7 +418,7 @@ app cannot declare its own environment.
 The `storage` gate is enforced **after** the build: `PERSONALCLAW_APP_DATA_DIR`
 is popped when the app lacks the capability, so declaring that name in
 `sandbox.env_passthrough` cannot hand every storage-less backend a data dir and
-quietly undo sandbox P3.
+quietly undo the capability gate.
 
 ### The reverse proxy & token model
 
@@ -594,8 +594,8 @@ app never names a host CSS variable directly.
 every line against the host's own component registry (`ui/genui/registry.ts`). Authoring
 surface for the DSL is `library.prompt()`.
 
-**Contributing a component TYPE** is the separate reading APE-11 deferred, and AMBIENT-SURFACES
-AS-6 landed it under `generative-component` — a distinct declaration, because supplying a DSL
+**Contributing a component TYPE** is a separate reading, and it landed
+under `generative-component` — a distinct declaration, because supplying a DSL
 body and extending the component vocabulary are different trust edges and one must not grant
 the other. An app declares `ui.components` (a module whose `register(sdk, ctx)` export calls
 `sdk.registerComponent(ctx, def)`); the SHELL loads it for every enabled declaring app, so a

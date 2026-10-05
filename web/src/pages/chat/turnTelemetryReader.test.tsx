@@ -7,7 +7,7 @@ import type { ActivitySegment, Segment } from './chatTypes'
 
 // ── The FRONTEND reader of the per-turn cache telemetry ───────────────────────────────────
 //
-// The numbers half of PCS-7 is shipped and railed on the backend:
+// The numbers half is shipped and railed on the backend:
 // `tests/test_turn_complete_cache_telemetry.py` pins the composed sentence literal by literal,
 // `tests/test_stats_cache_hit_pct.py` pins the honest `None` on a zero denominator, and
 // `pricing.cache_savings_usd` returns `None` (never `0.0`) for an unpriced model.
@@ -95,7 +95,7 @@ describe('A — the telemetry row renders the turn line the backend composed', (
     expect(row).toContain('cache 84% hit (12,400 read / 1,200 written)')
     expect(row).toContain('saved $0.0231')
     // The two counts are never re-summed on the way out either: 12,400 + 1,200 = 13,600 was
-    // the pre-PCS-7 rendering, and a reader that re-derived a total would resurrect it.
+    // the old rendering, and a reader that re-derived a total would resurrect it.
     expect(row).not.toContain('13,600')
     // The whole sentence survives, not just the fragment this change added.
     expect(row).toContain(HEAD)

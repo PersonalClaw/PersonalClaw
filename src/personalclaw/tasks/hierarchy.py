@@ -72,8 +72,8 @@ def _now_iso() -> str:
 
 
 def _current_origin_harness() -> str:
-    """This home's stable `machine_id` — the origin stamped on a locally-minted project
-    (MULTI-TENANCY-ENTITY TSE2-2). REUSES `durability`'s per-machine key; never minted here, and
+    """This home's stable `machine_id` — the origin stamped on a locally-minted project.
+    REUSES `durability`'s per-machine key; never minted here, and
     never raises: an unreadable/unwritable home degrades to ``""`` (= "this harness's").
     """
     try:
@@ -195,7 +195,7 @@ class HierarchyStore:
         Three things, all safe to re-run:
         1. DELETE the orphaned legacy ``config/projects/*.json`` flat files — dead
            data from the pre-cutover Projects feature (vision/phases/steps), whose
-           reading code was removed in the Goal-Loop cutover. The new layout uses
+           reading code was removed in the goal-loop cutover. The new layout uses
            ``config/projects/<id>/project.json`` (a subdir per project), so these
            flat files at the projects root are unambiguously legacy.
         2. MOVE each live project from the old ``config/tasks/projects/<id>.json``

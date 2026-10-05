@@ -29,7 +29,7 @@ const TABS = [
   { key: 'defs', label: 'Definitions' },
 ]
 
-/** Workflows — the list surface (WORKFLOWS-V2 Slice 7b).
+/** Workflows — the list surface.
  *
  *  Runs are the DEFAULT tab, not definitions: a user coming here is far more often asking
  *  "what is happening / what needs me" than "what templates exist". Runs needing input sort
@@ -178,7 +178,7 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
     }
   }, [navigate])
 
-  // "Start from template" (LOOPS-EVOLUTION criterion 11): a user who knows what they want to
+  // "Start from template": a user who knows what they want to
   // DO ("fix a bug", "research a topic") should not have to already know that a coding job is
   // called `code-project` and a research one `deep-research`. Ask for the intent in
   // plain language, resolve it to a shipped template through the same alias table the cockpit
@@ -400,7 +400,7 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
             />
           ) : (
             // No bundled templates on this install, so there is nothing to offer as a card.
-            // The pre-PEP-2 state, kept verbatim: a preset grid with nothing in it would be
+            // The older empty state, kept verbatim: a preset grid with nothing in it would be
             // worse than the fact plus the browse path.
             <EmptyState
               icon={Workflow}

@@ -5,17 +5,16 @@ and it is exactly what :mod:`tests.test_api_manifest_drift` audits: a tool added
 without an entry here (or a route neither described nor excluded) fails the suite
 rather than becoming a silent, undocumented surface an agent has to guess at.
 
-Design (Astryx's ``JSON_SUPPORTED``/``RESPONSE_TYPES`` pattern): registries own
-name/description/schema; this map owns only what they can't express. Keep examples
+Design: registries own name/description/schema; this map owns only what they can't
+express. Keep examples
 FAITHFUL — the whole point of the manifest is that an agent never guesses a
 signature, so an example with an invented parameter is worse than none. Every
 key here is a real tool name and every ``args`` key is a real parameter of that
 tool (schema-checked by the drift test).
 
-``error_codes`` are intentionally empty until PLATFORM-LEGIBILITY §2 lands the
-``AgentError`` code registry; the drift test asserts any code listed here exists
-in that registry (vacuously true while all are empty), so §2 can populate them
-tool-by-tool without a shape change here.
+``error_codes`` are intentionally empty for now; the drift test asserts any code listed
+here exists in the ``AgentError`` code registry (vacuously true while all are empty), so
+codes can be added tool-by-tool without a shape change here.
 """
 
 from __future__ import annotations
@@ -27,7 +26,7 @@ from typing import Any
 # the regex stripped — ``{name}``. The live route walk (manifest.py) and the static
 # AST walk (the drift test) must compare in the SAME space, or a route whose source
 # carries a regex (``/apps/{name}/api/{tail:.*}``) matches the exclusion in one
-# rendering but not the other — the exact two-rendering divergence this slice exists
+# rendering but not the other — the exact two-rendering divergence this function exists
 # to prevent. Both sides normalize through this one function; MANIFEST_EXCLUDE keys
 # are stored already-canonical.
 _ROUTE_REGEX_SEG = re.compile(r"\{([^{}:]+):[^{}]+\}")
@@ -56,7 +55,7 @@ MANIFEST_EXCLUDE: dict[str, str] = {
     "/vendor": "static mount for the import-map vendor shims — UI transport",
     "/icons": "static mount for the PWA app icons the manifest declares — UI transport",
     "/manifest.webmanifest": (
-        "the PWA manifest (MOBILE-COMPANION T3.1) — a browser-consumed install "
+        "the PWA manifest — a browser-consumed install "
         "descriptor, UI transport, with nothing for an agent to call"
     ),
     "/sw.js": (
@@ -73,16 +72,16 @@ MANIFEST_EXCLUDE: dict[str, str] = {
     ),
     "/apps/{name}/ui/{tail}": "per-app UI asset serving — UI transport, not an API",
     "/apps/{name}/api/{tail}": (
-        "per-app backend reverse-proxy — reached via the app-route tools (§4), "
+        "per-app backend reverse-proxy — reached via the app-route tools, "
         "not called directly by agents"
     ),
     "/login": (
-        "the owner sign-in page (REMOTE-USER-AUTH C3) — a rendered HTML form for a "
+        "the owner sign-in page — a rendered HTML form for a "
         "HUMAN browser, UI transport. The agent-callable surface is POST "
         "/api/auth/login, which IS in the manifest"
     ),
     "/pair": (
-        "the joining device's redeem page (COMPANION-APPS C2) — a rendered HTML form "
+        "the joining device's redeem page — a rendered HTML form "
         "for a HUMAN browser that scanned the QR, UI transport. The agent-callable "
         "surface is POST /api/devices/pair/complete, which IS in the manifest"
     ),
@@ -106,7 +105,7 @@ def is_excluded_route(method: str, path: str) -> bool:
 #                the declared shape for that tool's success payload.
 # examples:      1-2 worked calls with FAITHFUL arg names (schema-checked). Each
 #                is {"summary": <what it does>, "args": {<real params>}}.
-# error_codes:   §2 AgentError codes this tool can return (empty).
+# error_codes:   AgentError codes this tool can return (empty).
 TOOL_META: dict[str, dict[str, Any]] = {
     # ── personalclaw-core (== mcp_core._list_tools) ──────────────────────────
     "skill_invoke": {
@@ -656,12 +655,12 @@ TOOL_META: dict[str, dict[str, Any]] = {
     },
     "workflow_start_draft": {
         "response_type": "workflow.run.started",
-        # Empty like every sibling: the workflow service's `WF_*` codes are not in the §2
+        # Empty like every sibling: the workflow service's `WF_*` codes are not in the
         # `errors.ERROR_CODES` registry, and `test_api_manifest_drift`'s
         # `test_declared_error_codes_exist` enforces that any code declared here is. The
         # refusals this tool can return
         # (`WF_RUN_NOT_FOUND`, `WF_RUN_NOT_PRELAUNCH`, `WF_NO_SUPERVISOR`) are documented on
-        # `service.start_draft_run` until §2 populates the registry tool-by-tool.
+        # `service.start_draft_run` until the registry is populated tool-by-tool.
         "error_codes": [],
         "examples": [
             {
@@ -1191,7 +1190,7 @@ TOOL_META: dict[str, dict[str, Any]] = {
                 },
             },
             {
-                "summary": "Wake a parked monitor run for its next check (WF2LOO-9)",
+                "summary": "Wake a parked monitor run for its next check",
                 "args": {
                     "name": "pr-4521-watch: next check",
                     "when": "in 30 minutes",

@@ -114,7 +114,7 @@ SHARED_DIR_ENV_PREFIX = "PERSONALCLAW_APP_SHARED_DIR_"
 
 def shared_dir_env_name(app_name: str) -> str:
     """Env var name mounting ``app_name``'s data dir into a CONSUMER granted read-only
-    shared-storage on it (APE-10).
+    shared-storage on it.
 
     Kebab app names are upper-snaked so the result is a valid POSIX env identifier
     (``note-keeper`` → ``PERSONALCLAW_APP_SHARED_DIR_NOTE_KEEPER``). Kebab names never
@@ -337,7 +337,7 @@ def _now_iso() -> str:
 
 def _read_installed(name: str) -> InstalledApp | None:
     """Read installed.json for an app, or None if not installed."""
-    # A path-escaping name (app_dir rejects it — #44) can't be an installed app;
+    # A path-escaping name (app_dir rejects it) can't be an installed app;
     # return None so lifecycle callers (incl. force_uninstall's rmtree pre-check)
     # treat it as "not installed" rather than surfacing the guard's ValueError.
     try:
