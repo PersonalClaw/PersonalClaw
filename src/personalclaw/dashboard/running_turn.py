@@ -3,6 +3,9 @@
 **A steer.** A message sent into a running turn reaches it only when the turn's runtime pulls
 it in (``SessionManager.set_steer_drains``). The composer offers Steer only while that is so,
 and says Queue otherwise, so its words are what the message does (:func:`set_steer_drains`).
+Every door sends one through :func:`steer`, and the runtime says when it takes one
+(``EVENT_STEER``): then, and only then, it is her row in the chat (:func:`take_steer`), where the
+turn took it. One the turn does not take runs next from the queue, and is written once, then.
 
 **A move.** The chat's agent, its agent CLI, its model and its reasoning effort each decide the
 runtime its turns run on, and changing one rebuilds that runtime. Between turns that is all a
@@ -47,6 +50,7 @@ from personalclaw.dashboard.chat_utils import (
     _redact_for_display,
     persisted_history_key,
 )
+from personalclaw.own_words import OWN_WORDS
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 
@@ -57,6 +61,16 @@ logger = logging.getLogger(__name__)
 
 #: The session fields that say which runtime a turn runs on, and the binding a page adopts.
 BINDING_FIELDS = ("agent", "model", "acp_provider", "acp_provider_agent", "reasoning_effort")
+
+#: The ``meta`` key of a row of hers the running turn took while it answered (a steer). Written only
+#: by :func:`take_steer`; a send's own meta never carries it (``chat_handlers`` drops it).
+STEERED = "steered"
+
+#: What the chat says when an agent CLI took a steer into its answer and then refused it: her row is
+#: in the chat already, so the message runs next as its own turn, without a second one.
+STEER_NOT_TAKEN_NOTICE = (
+    "The agent did not take your message into that answer, so it answers it next."
+)
 
 
 @dataclass
@@ -130,6 +144,66 @@ def set_steer_drains(
     return stranded
 
 
+def steer(
+    state: DashboardState,
+    session: _ChatSession,
+    message: str,
+    *,
+    ts: str = "",
+    own_words: str | None = None,
+    heard: bool = False,
+) -> bool:
+    """Send *message* into the turn running on *session*: True when that turn takes steers, so it
+    will (``SessionManager.add_steer``); False when the caller queues it instead.
+
+    What the send says of it is kept for her row, written when the turn takes it
+    (:func:`take_steer`): when she sent it (*ts*), the words of it she typed when it holds more
+    (*own_words*, ``own_words.OWN_WORDS``), and that it was dictated (*heard*)."""
+    if not state.sessions.add_steer(_history_key_for(session.key), message):
+        return False
+    meta: dict[str, Any] = {"input_origin": "voice"} if heard else {}
+    if own_words is not None:
+        meta[OWN_WORDS] = own_words
+    session._steers.append({"text": message.strip(), "ts": ts, "meta": meta})
+    return True
+
+
+def take_steer(state: DashboardState, session: _ChatSession, text: str) -> dict[str, Any]:
+    """Write the steer *text* the running turn has just taken (``EVENT_STEER``) as her row in the
+    chat, where it now is: after what the answer said before it, before what it says next. Returns
+    the row, which keeps the time she sent it and what her send said of its words (:func:`steer`).
+
+    The one place a steer becomes a row, whichever runtime took it. Every open page of the chat is
+    told (``chat_user_message`` with ``steer``), so it shows her message there too."""
+    sent = next((s for s in session._steers if not s.get("taken") and s["text"] == text), {})
+    sent["taken"] = True
+    meta = {**sent.get("meta", {}), STEERED: True}
+    session.append("user", text, "msg msg-u", ts=sent.get("ts", ""), meta=meta)
+    row = session.messages[-1]
+    shown, _ = redact_exfiltration_urls(text)
+    shown, _ = redact_credentials(shown)
+    state.broadcast_ws(
+        "chat_user_message",
+        {
+            "session": session.key,
+            "content": _redact_for_display(shown),
+            "ts": row["ts"],
+            "steer": True,
+        },
+    )
+    return row
+
+
+def _owed(sent: list[dict[str, Any]], text: str) -> dict[str, Any]:
+    """The record of the steer *text* a turn ended owing, taken off *sent*: one it never took,
+    else one it took (an agent CLI refused it after it was written), else none."""
+    for taken in (False, True):
+        for i, record in enumerate(sent):
+            if record["text"] == text and bool(record.get("taken")) is taken:
+                return sent.pop(i)
+    return {}
+
+
 def end_steers(
     state: DashboardState, session: _ChatSession, session_key: str, client: object
 ) -> None:
@@ -144,6 +218,9 @@ def end_steers(
     ``mid_turn_policy: steer`` promises on a runtime that cannot take one ("fall back to queue —
     never drop, never cancel"): the chat's drain takes it as the very next turn, and the
     ``queue_push`` echo puts it in the composer's queue strip, where it can be read and cancelled.
+    Each is written once: the drain writes one the turn never took, with the words her send kept
+    (:func:`steer`). One an agent took and then refused is her row already (:func:`take_steer`),
+    so it runs without a second one, and the chat says why (:data:`STEER_NOT_TAKEN_NOTICE`).
     """
     stranded = list(set_steer_drains(state, session, session_key, False))
     undelivered = getattr(client, "undelivered_steers", None)
@@ -152,12 +229,19 @@ def end_steers(
             stranded.extend(t for t in (undelivered() or []) if t)
         except Exception:
             logger.debug("undelivered steer read failed", exc_info=True)
+    sent, session._steers = session._steers, []
+    refused = False
     for text in stranded:
+        record = _owed(sent, text)
+        on_record = bool(record.get("taken"))
         try:
-            qid = session.queue_append(text)
+            qid = session.queue_append(
+                text, own_words=record.get("meta", {}).get(OWN_WORDS), on_record=on_record
+            )
         except Exception:
             logger.warning("failed to requeue an undelivered steer", exc_info=True)
             continue
+        refused = refused or on_record
         shown, _ = redact_exfiltration_urls(text)
         shown, _ = redact_credentials(shown)
         state.broadcast_ws(
@@ -167,6 +251,8 @@ def end_steers(
                 "content": _redact_for_display(shown),
                 "ts": datetime.now(timezone.utc).isoformat(),
                 "queue_id": qid,
+                # Which steer of hers it is, so the page's note that it is on its way goes.
+                "steer_ts": record.get("ts", ""),
             },
         )
         # WARNING, not info: the HTTP caller was already told `{"steered": true}`, so this is a
@@ -177,6 +263,12 @@ def end_steers(
             "steer was NOT delivered to the running turn — requeued for the next one "
             "(session=%s)",
             session_key,
+        )
+    if refused:
+        session.append("notice", STEER_NOT_TAKEN_NOTICE, "msg msg-notice")
+        state.broadcast_ws(
+            "chat_message",
+            {"session": session.key, "role": "notice", "content": STEER_NOT_TAKEN_NOTICE},
         )
 
 

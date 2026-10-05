@@ -306,20 +306,21 @@ def _runtime_with_steers(steers: list[str]):
 def test_drain_appends_pending_steers_as_user_input():
     rt = _runtime_with_steers(["stop at 5"])
 
-    assert rt._drain_steers_into_history() is True
+    # It returns what it took, which the loop says to the chat (`EVENT_STEER`).
+    assert rt._take_steers() == ["stop at 5"]
     assert len(rt._messages) == 1
     assert rt._messages[0]["role"] == "user"
     assert "stop at 5" in rt._messages[0]["content"]
     assert "[Steering" in rt._messages[0]["content"]  # labelled, not smuggled in
     # Drained once: a second call has nothing left and must not re-append.
-    assert rt._drain_steers_into_history() is False
+    assert rt._take_steers() == []
     assert len(rt._messages) == 1
 
 
 def test_drain_is_a_no_op_without_a_steer_source():
     rt = _runtime_with_steers([])
 
-    assert rt._drain_steers_into_history() is False
+    assert rt._take_steers() == []
     assert rt._messages == []
 
 
@@ -329,12 +330,12 @@ def test_drain_respects_the_per_turn_cap():
 
     rt = _runtime_with_steers([f"s{i}" for i in range(_MAX_STEERS_PER_TURN + 3)])
 
-    assert rt._drain_steers_into_history() is True
+    assert rt._take_steers() == [f"s{i}" for i in range(_MAX_STEERS_PER_TURN)]
     assert len(rt._messages) == _MAX_STEERS_PER_TURN
     assert rt._steers_injected == _MAX_STEERS_PER_TURN
-    # At the cap the drain reports False so the loop ends the turn normally.
+    # At the cap the drain takes nothing, so the loop ends the turn normally.
     rt._pull_steer = lambda: ["one more"]
-    assert rt._drain_steers_into_history() is False
+    assert rt._take_steers() == []
     assert len(rt._messages) == _MAX_STEERS_PER_TURN
 
 
@@ -345,7 +346,7 @@ def test_drain_respects_the_per_turn_cap():
 async def test_the_capped_overflow_is_retained_not_discarded():
     """The cap bounds DELIVERY, and used to also destroy the overflow.
 
-    ``_drain_steers_into_history`` pulls the session's whole steer deque and then broke
+    ``_take_steers`` pulls the session's whole steer deque and then broke
     at ``_MAX_STEERS_PER_TURN``, discarding text it had already removed from the only
     place holding it. Measured on the pre-fix code with the cap at 4 and 7 buffered:
     ``s4``/``s5``/``s6`` were in history, in the session deque and on the runtime —
@@ -376,7 +377,7 @@ async def test_the_capped_overflow_is_retained_not_discarded():
     rt = _runtime_with_steers([])
     rt._pull_steer = lambda: mgr.drain_steers("dashboard:c1")
 
-    assert rt._drain_steers_into_history() is True
+    assert rt._take_steers() == offered[:_MAX_STEERS_PER_TURN]
 
     # Half A — the capped number really is delivered into THIS turn's history.
     delivered = [m["content"].splitlines()[-1] for m in rt._messages]
@@ -393,7 +394,7 @@ async def test_the_capped_overflow_is_retained_not_discarded():
 
     # ...and stays owed: further boundaries in the same turn are already at the cap, so
     # the remainder must not be silently consumed by a later drain either.
-    assert rt._drain_steers_into_history() is False
+    assert rt._take_steers() == []
     assert len(rt._messages) == _MAX_STEERS_PER_TURN
     assert rt.undelivered_steers() == offered[_MAX_STEERS_PER_TURN:]
 
@@ -454,7 +455,7 @@ def test_drain_never_raises_when_the_source_does():
         raise RuntimeError("session went away")
 
     rt._pull_steer = _boom
-    assert rt._drain_steers_into_history() is False  # a broken pull ends the turn
+    assert rt._take_steers() == []  # a broken pull ends the turn
     assert rt._messages == []
 
 
@@ -471,7 +472,7 @@ def test_a_no_tool_turn_reaches_the_drain_before_returning():
     from personalclaw.agents.native.runtime import NativeAgentRuntime
 
     src = inspect.getsource(NativeAgentRuntime.stream)
-    drain_at = src.index("_drain_steers_into_history")
+    drain_at = src.index("_take_steers")
     stop_at = src.index("if not tool_calls or self._cancelled:")
     assert drain_at < stop_at, "the steer drain must precede the no-tool-call return"
 
@@ -630,6 +631,29 @@ async def test_the_tool_boundary_delivers_a_buffered_steer_to_the_cli():
     assert len(prompts) == 1
     assert prompts[0]["prompt"] == [{"type": "text", "text": "make it a haiku"}]
     assert undelivered == []  # delivered, so nothing is left owed
+
+
+@pytest.mark.asyncio
+async def test_the_tool_boundary_says_each_steer_it_writes():
+    """The chat writes a steer where the turn took it (``running_turn.take_steer``), so the
+    session says so in its stream, in her words, right after the tool frame whose boundary wrote
+    it. VACUITY: the same drive on a dialect that writes nothing says nothing."""
+    from personalclaw.acp.types import EVENT_STEER, EVENT_TOOL_CALL
+
+    async def _events(dialect) -> list[tuple[str, str]]:
+        sess, q, _sent = _acp_session(dialect)
+        pending = ["make it a haiku"]
+        sess.set_steer_source(lambda: [pending.pop()] if pending else [])
+        q.put_nowait(_tool_frame())
+        fut: "asyncio.Future" = asyncio.get_event_loop().create_future()
+        fut.set_result(JsonRpcMessage(id=10, result={"stopReason": "end_turn"}))
+        return [(e.kind, e.text) async for e in sess._dispatch_frames(10, fut, 5.0)]
+
+    said = await _events(_CapableDialect())
+    kinds = [kind for kind, _text in said]
+    assert (EVENT_STEER, "make it a haiku") in said
+    assert kinds.index(EVENT_STEER) > kinds.index(EVENT_TOOL_CALL)
+    assert EVENT_STEER not in [kind for kind, _text in await _events(_LyingDialect())]
 
 
 @pytest.mark.asyncio

@@ -46,6 +46,7 @@ EVENT_COMPACTION_STATUS = "compaction_status"
 EVENT_CLEAR_STATUS = "clear_status"
 EVENT_AGENT_SWITCHED = "agent_switched"
 EVENT_CARRIED_ON = "carried_on"
+EVENT_STEER = "steer"
 
 # ── ACP Protocol Methods ──
 

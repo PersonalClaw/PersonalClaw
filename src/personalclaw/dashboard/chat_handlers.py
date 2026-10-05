@@ -135,11 +135,13 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
                 client_ts = _raw_ts
             except (ValueError, TypeError):
                 client_ts = ""  # malformed → fall back to server-stamped ts
-        # Which of a row's words its sender typed, and the saved prompt that ran in their place,
-        # are said by the code that composes the row, never by the send: from a client they would
-        # let a message teach what it does not say, or show a prompt that never ran.
+        # Which of a row's words its sender typed, the saved prompt that ran in their place, and
+        # that a running turn took it as a steer, are said by the code that composes the row, never
+        # by the send: from a client they would let a message teach what it does not say, or show
+        # a prompt that never ran or a steer nobody sent.
         user_meta.pop(OWN_WORDS, None)
         user_meta.pop(RAN_PROMPT, None)
+        user_meta.pop(running_turn.STEERED, None)
         if not user_meta:
             user_meta = None
     # The words she typed or said, before the dictation note below is added to them.
@@ -270,10 +272,19 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         # request that doesn't state one. So the platform default is a floor, never
         # an override.
         mode = str(body.get("queue_mode") or _default_mid_turn_mode()).strip().lower()
+        # Her row is written when the turn takes it (`running_turn.take_steer`), with the time she
+        # sent it and what this send says of her words: heard or typed, and which she typed.
         if (
             message
             and mode == "steer"
-            and state.sessions.add_steer(_history_key_for(session.key), message)
+            and running_turn.steer(
+                state,
+                session,
+                message,
+                ts=client_ts,
+                own_words=_own_recorded,
+                heard=(user_meta or {}).get("input_origin") == "voice",
+            )
         ):
             _c, _ = redact_exfiltration_urls(message)
             _c, _ = redact_credentials(_c)

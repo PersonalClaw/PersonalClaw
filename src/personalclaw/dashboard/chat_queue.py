@@ -19,6 +19,10 @@ from personalclaw.turn_source import DASHBOARD_SOURCE, source_of
 #: ``asked_for_by``, which its turn runs as).
 ASKED_FOR_BY = "asked_for_by"
 
+#: The item key of a message whose row is in the chat already: a steer the running turn took that
+#: its agent then refused (``running_turn.end_steers``). It runs on its own, and adds no second row.
+ON_RECORD = "on_record"
+
 
 class ChatQueue:
     """The queue helpers of a chat session, over the session's own ``_queue``."""
@@ -36,6 +40,7 @@ class ChatQueue:
         own_words: str | None = None,
         source: Mapping[str, str] = DASHBOARD_SOURCE,
         asked_for_by: Mapping[str, str] | None = None,
+        on_record: bool = False,
     ) -> str:
         """Append a message to the queue. Returns the generated queue ID.
 
@@ -45,6 +50,7 @@ class ChatQueue:
         are the words of it its sender typed, when it holds more than them (``own_words``).
         ``source`` is where it came from (``turn_source``), which its row records when it runs.
         ``asked_for_by`` is who asked for the work it carries on (:data:`ASKED_FOR_BY`).
+        ``on_record`` says its row is in the chat already (:data:`ON_RECORD`).
         """
         qid = uuid.uuid4().hex[:12]
         item: dict[str, Any] = {"id": qid, "content": content, **source_of(source)}
@@ -56,6 +62,8 @@ class ChatQueue:
             item[OWN_WORDS] = own_words
         if asked_for_by:
             item[ASKED_FOR_BY] = dict(asked_for_by)
+        if on_record:
+            item[ON_RECORD] = True
         self._queue.append(item)
         return qid
 

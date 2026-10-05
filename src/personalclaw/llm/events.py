@@ -46,6 +46,11 @@ EVENT_AGENT_SWITCHED = "agent_switched"
 #: was asked to carry on without it (``acp/session.py``). ``title`` names the refused steps. Not a
 #: terminal event: what the agent does next streams after it, as the same turn. Only ACP sends it.
 EVENT_CARRIED_ON = "carried_on"
+#: The running turn took a message the user sent while it ran into the answer being written (a
+#: steer, ``SessionManager.add_steer``); ``text`` is that message. The chat writes it where it
+#: arrives, between what the answer said before it and after it (``running_turn.take_steer``).
+#: Not a terminal event. The native loop sends it, and so does an ACP session that writes one.
+EVENT_STEER = "steer"
 # The turn's model failed before it said anything and the next model in its chain answers
 # instead. ``text`` is the sentence that says so ("Ran on X instead of Y: …"), and it arrives
 # before anything that model streams. Only the native loop emits it, and only for a caller

@@ -106,6 +106,7 @@ def test_event_constants_parity():
         "EVENT_CLEAR_STATUS",
         "EVENT_AGENT_SWITCHED",
         "EVENT_CARRIED_ON",
+        "EVENT_STEER",
     ):
         assert getattr(at, name) == getattr(le, name), name
 

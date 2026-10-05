@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from personalclaw.llm.base import LLMEvent
 
 from personalclaw import task_modes
+from personalclaw.dashboard.chat_queue import ON_RECORD
 from personalclaw.dashboard.state import (
     CRON_NOTIFY_PREFIX,
     SUBAGENT_COMPLETION_PREFIX,
@@ -941,16 +942,19 @@ def _dequeue_next_message(session, merge_enabled: bool) -> tuple:
     """Drain the queue: merge non-cron messages or pop the first one.
 
     A retry (`_ChatSession.queue_retry`) always runs alone: it is the turn that just ended, sent
-    again, and merged it would become a new message carrying hers a second time.
+    again, and merged it would become a new message carrying hers a second time. So does a message
+    whose row is in the chat already (`chat_queue.ON_RECORD`), for the same reason.
     """
-    if session._queue and session._queue[0].get("retry"):
+    if session._queue and (session._queue[0].get("retry") or session._queue[0].get(ON_RECORD)):
         item = session.queue_pop(0)
         return item["content"], [item]
     if merge_enabled and len(session._queue) > 1:
         to_merge: list[dict] = []
         for item in list(session._queue):
-            if item["content"].startswith(CRON_NOTIFY_PREFIX) or item["content"].startswith(
-                SUBAGENT_COMPLETION_PREFIX
+            if (
+                item.get(ON_RECORD)
+                or item["content"].startswith(CRON_NOTIFY_PREFIX)
+                or item["content"].startswith(SUBAGENT_COMPLETION_PREFIX)
             ):
                 break
             to_merge.append(item)

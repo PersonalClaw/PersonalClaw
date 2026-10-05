@@ -514,8 +514,13 @@ chat, channel thread, loop worker, webhook, subagent).
   `streaming` entry however many chunks it arrives in (`stream_chunk`), settled
   in place into an `assistant` entry (`finish_stream`), and the end-of-turn
   marker goes to live readers only (`signal_done`). An approval is written once
-  it is decided. The save records `message_count` in the metadata line, which
-  `ConversationLog.list_sessions` serves as the chat list's count.
+  it is decided. A message sent into a running turn (a steer) is a `user` entry
+  once the turn takes it (`EVENT_STEER`, written by `running_turn.take_steer`):
+  the answer so far is settled first, so the entry sits between what the answer
+  said before it and after it, marked `meta.steered`; one the turn does not take
+  is written by the queue when it runs, once. The save records `message_count`
+  in the metadata line, which `ConversationLog.list_sessions` serves as the chat
+  list's count.
 - **Where each line came from is the line's own, and a save never writes one**
   (`turn_source.py`). A line records the thread it arrived on, who sent it there
   and, when a chat channel took it in, which channel (`source_thread`,

@@ -244,6 +244,7 @@ class _ChatSession(ChatQueue):
         "_stop_event_id",
         "_rebinding",
         "_takes_steers",
+        "_steers",
         "_dirty",
         "_stage_titles",
         "_stage_descriptions",
@@ -416,10 +417,11 @@ class _ChatSession(ChatQueue):
         self._stop_asked: bool = False  # see `_stop_state`
         self._stop_event_id: str | None = None  # transcript message id for in-flight stop
         # A change to what answers this chat that waits for the running turn to end
-        # (`running_turn.rebind`), and whether that turn takes a steer
-        # (`running_turn.set_steer_drains`).
+        # (`running_turn.rebind`), whether that turn takes a steer
+        # (`running_turn.set_steer_drains`), and the steers she sent it (`running_turn.steer`).
         self._rebinding: "Rebinding | None" = None
         self._takes_steers: bool = False
+        self._steers: list[dict[str, Any]] = []
         self._dirty: bool = False  # True when messages changed since last flush
         self._stage_titles: list[str] = []  # stage titles extracted from plan
         self._stage_descriptions: list[list[str]] = []  # bullet points per stage

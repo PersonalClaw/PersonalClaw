@@ -77,6 +77,7 @@ from personalclaw.llm.events import (
     EVENT_MODEL_SUBSTITUTION,
     EVENT_PERMISSION_REQUEST,
     EVENT_SPENT,
+    EVENT_STEER,
     EVENT_TEXT_CHUNK,
     EVENT_THINKING_CHUNK,
     EVENT_TOOL_CALL,
@@ -1263,9 +1264,10 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 #    called NO tools — plain prose, the most common shape — returned here
                 #    and the steer was silently discarded even though the API had already
                 #    answered {"steered": true}. Draining here keeps the turn alive for one
-                #    more inference so the steer lands inside the SAME answer, which is the
-                #    entire promise of steering.
-                if tool_calls == [] and not self._cancelled and self._drain_steers_into_history():
+                #    more inference so the steer lands inside the SAME answer.
+                if tool_calls == [] and not self._cancelled and (taken := self._take_steers()):
+                    for steer in taken:
+                        yield AgentEvent(kind=EVENT_STEER, text=steer)
                     continue
                 #    …or when the model ran tools this turn and has written nothing at all (or ran
                 #    out of output room first). It is asked once, with the results it already has;
@@ -1334,10 +1336,8 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 #     inference sees. Capped per turn so a flood can't extend one turn
                 #     forever. Steer mode only; followup/collect/interrupt are handled
                 #     by the runner before the turn even reaches the loop.
-                if self._drain_steers_into_history():
-                    yield AgentEvent(
-                        kind=EVENT_TEXT_CHUNK, text=""
-                    )  # keep stream warm; UI shows the steer via activity
+                for steer in self._take_steers():
+                    yield AgentEvent(kind=EVENT_STEER, text=steer)
                 # 4) REPEAT — re-infer with tool results now in context.
 
             # max_turns exhausted
@@ -2528,11 +2528,10 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         self._pull_steer = pull
         return pull is not None
 
-    def _drain_steers_into_history(self) -> bool:
-        """Append any pending steers to history as fresh user input.
-
-        Returns True if at least one steer was appended, which tells the loop to run
-        another inference so the steer affects the answer already in progress.
+    def _take_steers(self) -> list[str]:
+        """Append any pending steers to history as fresh user input, and return them: what
+        this turn took, in order. The loop says each (``EVENT_STEER``), for the chat to write it
+        where the turn took it, and runs another inference so it affects the answer in progress.
 
         Called at BOTH model boundaries — after a tool batch, and before a no-tool-call
         turn would end. The second call site is the one that matters in practice: most
@@ -2541,7 +2540,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         success.
 
         Capped by ``_MAX_STEERS_PER_TURN`` so a flood cannot extend one turn forever;
-        once the cap is hit this returns False and the turn ends normally.
+        once the cap is hit this returns nothing and the turn ends normally.
 
         The overflow is RETAINED on ``_steer_pending``, never dropped. The pull empties
         the session's buffer, so popping the whole deque and then breaking at the cap
@@ -2558,7 +2557,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 logger.debug("steer drain failed", exc_info=True)
                 pulled = []
             self._steer_pending.extend(s for s in (pulled or []) if s and s.strip())
-        appended = False
+        taken: list[str] = []
         while self._steer_pending and self._steers_injected < _MAX_STEERS_PER_TURN:
             s = self._steer_pending.pop(0)
             self._messages.append(
@@ -2568,8 +2567,8 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 }
             )
             self._steers_injected += 1
-            appended = True
-        return appended
+            taken.append(s)
+        return taken
 
     def undelivered_steers(self) -> list[str]:
         """Steers this turn owes the user: pulled from the session's buffer but never

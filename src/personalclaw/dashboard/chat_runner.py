@@ -50,7 +50,7 @@ from personalclaw.dashboard.chat_persistence import (
     prior_turns_transcript,
     save_session_to_history,
 )
-from personalclaw.dashboard.chat_queue import ASKED_FOR_BY
+from personalclaw.dashboard.chat_queue import ASKED_FOR_BY, ON_RECORD
 from personalclaw.dashboard.chat_session_map import (
     build_turn_telemetry,
     stamp_context_fed,
@@ -141,6 +141,7 @@ from personalclaw.llm.events import (
     COMPACTION_AUTOMATIC,
     EVENT_CARRIED_ON,
     EVENT_MODEL_SUBSTITUTION,
+    EVENT_STEER,
     TOOL_META_APPROVAL_WAIVED,
     TOOL_META_AUTO_DENIED,
     is_length_stop,
@@ -755,18 +756,27 @@ def _maybe_skill_ladder_review(
 
 
 def _learn_from_turn(
-    state, session, row, assistant_text: str, tool_calls: int, *, provider=None, asked_for_by=None
+    state,
+    session,
+    row,
+    assistant_text: str,
+    tool_calls: int,
+    *,
+    provider=None,
+    asked_for_by=None,
+    steers=(),
 ) -> None:
     """What the turn that just ended teaches, before the next one: best-effort and gated. Both
-    reviews read what she typed in *row*, the message that started it (``own_words``), never the
-    message the model was sent, and share ONE gate decision, as two copies of one rule drift. Her
-    words teach as hers wherever they sit, so the reviews run as asked for by whoever sent the
-    words they read (``turn_source.taught_by``) or the work the turn carries on: a row her queued
-    message and a friend's run as together still teaches her correction. What the turn did (its
-    tools' outcomes, the answer the ladder drafts from) teaches only when nobody else asked for any
-    of it (``memory_writes.asker``, the turn's own)."""
+    reviews read what she typed in *row*, the message that started it, and in *steers*, sent into
+    it as it ran (``own_words``, joined as her queued messages are), never the message the model
+    was sent, and share ONE gate decision, as two copies of one rule drift. Her words teach as hers
+    wherever they sit, so the reviews run as asked for by whoever sent the words they read
+    (``turn_source.taught_by``) or the work the turn carries on: a row her queued message and a
+    friend's run as together still teaches her correction. What the turn did (its tools' outcomes,
+    the answer the ladder drafts from) teaches only when nobody else asked for any of it
+    (``memory_writes.asker``, the turn's own)."""
     try:
-        typed = own_words(row)
+        typed = "\n\n".join(w for w in (own_words(r) for r in (row, *steers)) if w)
         its_work_teaches = not memory_writes.asker()
         words_from = (taught_by(row) if row is not None else {}) or dict(asked_for_by or {})
     except Exception:  # noqa: BLE001 - fail closed: whose words they are is unknown, so none teach
@@ -2447,6 +2457,7 @@ async def run_chat(
     # what followed the last tool call, so it cannot tell a turn that answered and then made one
     # closing call from a turn that never wrote a word (`turn_endings.unanswered_turn`).
     _turn_wrote_text = False
+    _steer_rows: list[dict[str, Any]] = []  # hers it took as it ran, which it learns from too
     last_heartbeat = time.time()
     in_tool_group = False
     _pending_tools: dict[str, str] = {}  # tool_call_id -> tool_name
@@ -3431,26 +3442,15 @@ async def run_chat(
         if regenerate_hint:
             full_message = f"[System: {regenerate_hint}]\n\n{full_message}"
 
-        # Queue-steering (#37): wire the native loop's steer source so mid-turn
-        # messages buffered on the session (steer mode) drain at the next model
-        # boundary. Native runtime only (the ACP CLIs don't expose the seam), so
-        # `set_steer_drains` records the capability for THIS turn — `add_steer`
-        # refuses without it rather than buffering into a deque nothing drains
-        # (PLATFORM-RESILIENCE S6.1/S6.2).
-        #
-        # NOTE the key: SessionManager registers under the NAMESPACED `session_key`
-        # (`dashboard:<id>`), not the bare `session.key`. Passing the bare key here
-        # made every lookup miss, which is why steering never reached any runtime.
-        #
-        # The flag tracks a WIRED DRAIN SOURCE, never a declared intention. That is
-        # the invariant that makes the silent drop impossible: `steer_drains` is True
-        # only where a callable now exists to pull the deque. Both runtimes now expose
-        # the seam — the native loop drains at its model boundaries, an ACP session at
-        # its TOOL boundaries — so the wiring gate is the seam's own ANSWER,
-        # not `hasattr`. An ACP dialect that does not declare `supports_mid_turn_prompt`
-        # refuses and returns False, and a False here still routes the message to the
-        # visible queue. Declaring capability is what arms the drain; a declaration with
-        # no armed drain must never mark this session steerable.
+        # Queue-steering (#37): wire the runtime's steer source, so a message sent into this turn
+        # (steer mode) reaches it at its next boundary: the native loop's model boundaries, an ACP
+        # session's tool boundaries. Keyed by the NAMESPACED `session_key` the SessionManager
+        # registers under (`dashboard:<id>`); the bare `session.key` missed every lookup.
+        # `set_steer_drains` records the seam's own ANSWER for THIS turn, never `hasattr` or a
+        # declared intention: `add_steer` refuses without an armed drain, so nothing is buffered
+        # where nothing pulls it, and an ACP dialect that does not declare
+        # `supports_mid_turn_prompt` refuses, which routes the message to the visible queue. What
+        # the runtime takes it says (`EVENT_STEER`), and the chat writes it below.
         _steerable = False
         if hasattr(client, "set_steer_source"):
             try:
@@ -4913,6 +4913,11 @@ async def run_chat(
                 state.broadcast_ws(
                     "chat_message", {"session": session.key, "role": "notice", "content": _carried}
                 )
+            elif event.kind == EVENT_STEER:  # her message, below what it said so far (take_steer)
+                if assistant_text:
+                    _flush_segment(state, session, assistant_text)
+                    assistant_text = ""
+                _steer_rows.append(running_turn.take_steer(state, session, event.text))
             elif event.kind == EVENT_AGENT_SWITCHED:
                 new_agent, _ = redact_credentials(event.text)
                 new_agent, _ = redact_exfiltration_urls(new_agent)
@@ -5294,6 +5299,7 @@ async def run_chat(
                 _turn_tool_call_count,
                 provider=client,
                 asked_for_by=asked_for_by,
+                steers=_steer_rows,
             )
         state.sessions.check_context_usage(session_key, client)
         # ``pct`` was read above (once, before the save) — ``None`` when the provider
@@ -5629,6 +5635,8 @@ async def run_chat(
                     asked_for_by=consumed[0].get(ASKED_FOR_BY),
                     _retry=True,
                 )
+            elif consumed[0].get(ON_RECORD):  # her steer an agent refused: its row is written
+                next_turn = run_chat(state, session, next_msg)
             else:
                 # Redact merged message before storing in session
                 next_msg, _ = redact_exfiltration_urls(next_msg)

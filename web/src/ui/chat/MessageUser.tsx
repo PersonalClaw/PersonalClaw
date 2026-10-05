@@ -1,7 +1,7 @@
 import { useId, useState, type ReactNode } from 'react'
 import { fvs, withWeight } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
-import { Sparkles, ChevronRight, ChevronDown, FileText } from 'lucide-react'
+import { Sparkles, ChevronRight, ChevronDown, FileText, CornerDownLeft } from 'lucide-react'
 import { messageEnter, spring } from '../../design/motion'
 import { MessageBody, type TurnPaste } from '../../pages/chat/PasteChip'
 import type { RanPrompt } from '../../pages/chat/chatTypes'
@@ -42,10 +42,12 @@ export function isLongUserMessage(text: string): boolean {
  *  collapsed so a one-line message sits snug. `fromComposer` makes the newest
  *  sent bubble travel up from the composer. `ranPrompt` is the saved prompt the message ran:
  *  the bubble keeps what she typed, and the prompt's text sits folded under it, labelled as the
- *  prompt's. */
-export function MessageUser({ children, fromComposer = false, onFileClick, pastes, optimized, ranPrompt, onExpand }: {
+ *  prompt's. `steered` says she sent it into the answer while it was being written, which took it
+ *  as it went: the answer above it goes on below it. */
+export function MessageUser({ children, fromComposer = false, onFileClick, pastes, optimized, ranPrompt, steered = false, onExpand }: {
   children: string; fromComposer?: boolean; onFileClick?: (path: string) => void; pastes?: TurnPaste[]; optimized?: string
   ranPrompt?: RanPrompt
+  steered?: boolean
   /** Called when the reader unfolds a long message — a decision to read it, which the host
    *  uses to stop following a turn that is still arriving below it. */
   onExpand?: () => void
@@ -84,6 +86,12 @@ export function MessageUser({ children, fromComposer = false, onFileClick, paste
               ? 'Show less'
               : `Show full message · ${lines > 1 ? `${lines.toLocaleString()} lines` : `${children.length.toLocaleString()} characters`}`}
           </button>
+        )}
+        {steered && (
+          <p data-type="caption" className="mt-s flex items-center gap-xs text-on-surface-low" style={fvs(500)}>
+            <CornerDownLeft size={12} className="shrink-0" aria-hidden />
+            Steered into the answer
+          </p>
         )}
         {ranPrompt && (
           <SentTextDisclosure text={ranPrompt.text} onFileClick={onFileClick}

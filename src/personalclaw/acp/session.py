@@ -37,6 +37,7 @@ from personalclaw.acp.types import (
     EVENT_CLEAR_STATUS,
     EVENT_COMPACTION_STATUS,
     EVENT_COMPLETE,
+    EVENT_STEER,
     EVENT_TEXT_CHUNK,
     EVENT_THINKING_CHUNK,
     METHOD_AGENT_SWITCHED,
@@ -422,13 +423,13 @@ class AcpSession:
 
         fut.add_done_callback(_on_done)
 
-    async def _deliver_steers_at_tool_boundary(self) -> int:
+    async def _deliver_steers_at_tool_boundary(self) -> list[str]:
         """Write every pending steer to the CLI as the dialect's mid-turn request.
 
         THE delivery path PR2-10 exists to build. Called from :meth:`_dispatch_frames` at a
         tool boundary — the point mid-turn where the agent is between decisions, so an
         extra prompt can still change the answer being written rather than arriving after
-        it. Returns how many steers were written.
+        it. Returns the steers written, in order.
 
         Failure is retained, never swallowed: text stays on ``_steer_pending`` when the
         dialect builds no frame, when the cap is reached, or when the write raises, so the
@@ -444,9 +445,7 @@ class AcpSession:
                 logger.debug("session %s: steer pull failed", self.session_id, exc_info=True)
                 pulled = []
             self._steer_pending.extend(t for t in (pulled or []) if t and t.strip())
-        if not self._steer_pending:
-            return 0
-        delivered = 0
+        delivered: list[str] = []
         while self._steer_pending and self._steers_delivered < _MAX_STEERS_PER_TURN:
             text = self._steer_pending[0]
             req = self._dialect.mid_turn_prompt_request(session_id=self.session_id, text=text)
@@ -470,7 +469,7 @@ class AcpSession:
             self._watch_steer_reply(rid, fut)
             self._steer_pending.pop(0)
             self._steers_delivered += 1
-            delivered += 1
+            delivered.append(text)
             logger.info(
                 "session %s: delivered a mid-turn steer via %s", self.session_id, req.method
             )
@@ -1087,8 +1086,10 @@ class AcpSession:
                         # is between decisions, so a steer written now can still change the
                         # answer being written. Everything else in this loop is text already
                         # committed to the transcript. No-op unless a drain source is armed,
-                        # which only a dialect declaring `supports_mid_turn_prompt` can do.
-                        await self._deliver_steers_at_tool_boundary()
+                        # which only a dialect declaring `supports_mid_turn_prompt` can do. Each
+                        # steer written is said, for the chat to write it where the turn took it.
+                        for steer in await self._deliver_steers_at_tool_boundary():
+                            yield AcpEvent(kind=EVENT_STEER, text=steer)
                 elif action == "metadata":
                     pct = translate.extract_context_pct(msg)
                     if pct is not None:

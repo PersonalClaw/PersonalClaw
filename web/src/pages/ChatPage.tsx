@@ -1026,12 +1026,13 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // shown above the composer; the backend dispatches them one-by-one as each turn
   // finishes. Driven by the queue_push / queue_pop / queue_cancel WS events.
   const [queued, setQueued] = useState<{ id: string; content: string }[]>([])
-  // Messages the server confirmed it STEERED into the running turn. Distinct
-  // from `queued`: a steered message has no queue id and nothing to cancel — it is
-  // already inside the answer being written. Shown so a steer isn't invisible (the
-  // backend's "Steering: …" activity_event is deliberately filtered as status noise),
-  // and cleared when the turn ends since it belongs to that turn.
-  const [steered, setSteered] = useState<string[]>([])
+  // Messages the server confirmed it will STEER into the running turn, until the turn takes
+  // each: then it is her bubble in the transcript, where the turn took it (the `steer` flavour
+  // of `chat_user_message`), and its line here goes. Distinct from `queued`: a steered message
+  // has no queue id and nothing to cancel. Keyed by the stamp it was sent with, which the
+  // gateway's row and frames carry; one the turn ends without taking is queued (`queue_push`
+  // names it by `steer_ts`), and whatever is left goes when the turn ends.
+  const [steered, setSteered] = useState<{ text: string; ts: string }[]>([])
   // Async subagents (fire-and-forget) spawned this turn — live cards driven by
   // the subagent_spawn / subagent_tool / subagent_done WS events. Their final
   // output posts to the transcript as a "[Subagent completion event]" message
@@ -1739,6 +1740,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       case 'queue_push': {
         const id = String(d.queue_id ?? ''); const content = String(d.content ?? '')
         if (id) setQueued((prev) => (prev.some((q) => q.id === id) ? prev : [...prev, { id, content }]))
+        // A steer the turn ended without taking, queued to run next: it is in the strip now.
+        if (d.steer_ts) setSteered((prev) => prev.filter((s) => s.ts !== d.steer_ts))
         break
       }
       case 'queue_pop':
@@ -1812,6 +1815,16 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         // already on screen, and dropping the text run here would cut the answer that snapshot
         // resumed in two.
         if (d.ts && adoptedUserTs.current.has(String(d.ts))) break
+        // Her steer, which the running turn has just taken: her bubble goes here, below what the
+        // answer said so far (settled by the `chat_segment` before this frame), and the answer
+        // goes on below it. Nothing ends or starts: it is the same turn, and it is running.
+        if (d.steer) {
+          endTextRun()
+          setSteered((prev) => prev.filter((s) => s.ts !== d.ts))
+          setTurns((prev) => [...prev, { ...userTurn(content, d.ts ? String(d.ts) : undefined), steered: true }])
+          markStreaming(true)
+          break
+        }
         // The reply before this queued message is finished: read it out if it is owed.
         replyFinished(sessionRef.current, { last: false })
         dropTextRun()
@@ -2383,7 +2396,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         .then((s) => api.sendChat(t, s, { client_ts: steerTs }, takesSteersRef.current ? 'steer' : 'followup').then((r) => [s, r] as const))
         .then(([s, r]) => {
           setInput((cur) => (cur === t ? '' : cur))
-          if (r?.steered) { setSteered((prev) => [...prev, t]); return }
+          if (r?.steered) { setSteered((prev) => [...prev, { text: t, ts: steerTs }]); return }
           // Queued or dispatched fresh, it gets a reply of its own; a steer does not. Owed in the
           // session it was sent to: a queued answer names none, and this chat may have closed.
           oweSpokenReply(r?.session || s)
@@ -3521,19 +3534,19 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           <Repeat size={12} className="shrink-0" /> Optimized — revert to original
         </Button>
       )}
-      {/* Steered messages — already injected into the answer being written, so
-          unlike a queued item there is nothing to cancel or reorder. Rendered so a
-          steer is visible: the backend broadcasts a "Steering: …" activity_event, but
-          activity_event drops `kind === 'status'` as thinking-indicator noise, which
-          left a successful steer with no UI at all. */}
+      {/* Steered messages on their way into the answer being written: the turn takes each
+          at its next step, and it then moves into the transcript as her bubble. Unlike a
+          queued item there is nothing to cancel or reorder. Rendered so a steer is visible
+          before then: the backend broadcasts a "Steering: …" activity_event, but
+          activity_event drops `kind === 'status'` as thinking-indicator noise. */}
       {steered.length > 0 && (
         <div className="mb-2 flex flex-col gap-1" aria-live="polite">
-          {steered.map((s, i) => (
-            <div key={`${i}-${s.slice(0, 24)}`}
+          {steered.map((s) => (
+            <div key={s.ts}
               className="flex items-start gap-1.5 text-[0.75rem] text-on-surface-var">
               <CornerDownLeft size={12} className="mt-0.5 shrink-0" aria-hidden />
               <span className="min-w-0 flex-1 truncate">
-                Steered into this answer: {s}
+                Steering into this answer: {s.text}
               </span>
             </div>
           ))}
@@ -3933,7 +3946,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                               failure={editFailure} onSubmit={(v) => editResend(i, v)} />
                           ) : (
                             <div className="group/msg">
-                              <MessageUser fromComposer={isLast} onFileClick={setOpenFile} pastes={turn.pastes} optimized={turn.optimized} ranPrompt={turn.ranPrompt}
+                              <MessageUser fromComposer={isLast} onFileClick={setOpenFile} pastes={turn.pastes} optimized={turn.optimized} ranPrompt={turn.ranPrompt} steered={turn.steered}
                                 onExpand={() => { followTurnRef.current = false }}>{turnTextOf(turn)}</MessageUser>
                               {turn.files && turn.files.length > 0 && <TurnAttachments paths={turn.files} delivery={turn.imageDelivery} onOpenFile={setOpenFile} />}
                               {turn.rewound && turn.rewound.length > 0 && (

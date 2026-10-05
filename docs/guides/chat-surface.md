@@ -148,9 +148,14 @@ which is how re-planning halfway through a task works.
 **Where:** the stacked cards below the composer while a turn is running.
 
 While a turn runs, the composer's button says what a message you type will do. **Steer** sends
-it into the running answer, which reads it at its next step. **Queue** runs it after the answer
-finishes. Steer is offered only while the running turn can take a message in: PersonalClaw's
-own agent can, and an agent CLI that cannot be handed a message mid-turn is offered Queue.
+it into the running answer, which reads it at its next step. Until then a line above the
+composer says it is on its way; once the answer takes it, it is your message in the chat, where
+it went in, marked *Steered into the answer*, with the answer going on below it. It stays there
+after a reload, and what PersonalClaw learns from your chat reads it as yours. A steer the answer
+ends without taking runs next, from the queue, and still shows once. **Queue** runs it after the
+answer finishes. Steer is offered only while the running turn can take a message in:
+PersonalClaw's own agent can, and an agent CLI that cannot be handed a message mid-turn is
+offered Queue.
 
 A queued message waits in the stacked cards — the current answer finishes, then yours runs.
 Each queued card has three controls: **Cancel** (drop it, text comes back to the composer),
