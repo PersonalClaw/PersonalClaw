@@ -38,6 +38,7 @@ from personalclaw.context_headroom import HeadroomState, resolve_window
 from personalclaw.dashboard import (
     chat_questions,
     chat_refusals,
+    headless_run,
     running_turn,
     turn_deadline,
     turn_endings,
@@ -5697,6 +5698,8 @@ async def run_chat(
             task.add_done_callback(state._background_tasks.discard)
         else:
             session._stopping = False
+            # A headless run's Trust ends with its turn, before anyone is told the turn has ended.
+            headless_run.end_the_runs_trust(state, session, why="its turn ended")
             # Only send "done" when queue is empty — keeps SSE reader alive
             session.signal_done()
             # Committed before the task is cleared: any session detail that reports the session

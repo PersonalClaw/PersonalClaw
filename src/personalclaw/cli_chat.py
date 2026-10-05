@@ -27,7 +27,6 @@ from __future__ import annotations
 import asyncio
 import sys
 import time
-import urllib.parse
 from typing import Any
 
 from personalclaw import cli_run, home_gateway
@@ -54,9 +53,6 @@ _ENDED = {
 _ANSWER_IT = (
     "Answer it in PersonalClaw (the dashboard or your phone) or on your paired chat channel."
 )
-
-#: How long a turn stopped with Ctrl-C is followed until the gateway says it has ended.
-_STOP_WAIT_SECS = 30.0
 
 #: How old the chat's token may be when a request starts: a quarter of an hour short of the hour
 #: ``run``'s token lasts (``cli_run._TOKEN_TTL``). A chat can stay open all day.
@@ -206,16 +202,11 @@ async def _converse(sign_in: _SignIn, turn: _Turn, message: str) -> None:
             if task is not None:
                 task.uncancel()
             turn.note("Stopping the turn.")
-            quoted = urllib.parse.quote(turn.session_key, safe="")
             # The turn may have run longer than the token it was posted with lasts.
             fresh = cli_run.owner_headers(await asyncio.to_thread(sign_in.token))
-            async with http.post(
-                f"http://127.0.0.1:{port}/api/chat/sessions/{quoted}/stop", json={}, headers=fresh
-            ) as resp:
-                if resp.status != 200:
-                    raise RunError(f"the gateway did not stop the turn: HTTP {resp.status}")
+            await cli_run._ask_to_stop(http, port, turn.session_key, headers=fresh)
             try:
-                await cli_run._read_turn(ws, turn, _STOP_WAIT_SECS)
+                await cli_run._read_turn(ws, turn, cli_run._STOP_WAIT_SECS)
             except RunError:
                 turn.note(
                     "The gateway is still stopping the turn; the chat in the dashboard shows "

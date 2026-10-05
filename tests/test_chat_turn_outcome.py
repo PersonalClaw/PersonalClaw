@@ -10,7 +10,7 @@ a stop in progress, the turn's error flag. So it says so, in three places that m
 * session detail serves the same fact as ``last_turn_outcome``, committed before the frame goes
   out, so a tab that missed the frame (a reconnect's re-read, the stall reconciler) reads the
   answer the frame carried;
-* the Stop answer says whether it ``stopped`` a turn.
+* the Stop answer says whether it ``stopped`` a turn, and whether the chat's ``trust`` stands.
 
 A turn that is still running sends no ``chat_done`` at all. The deferred-compaction path sent one
 mid-turn and then waited up to 120 s for the compaction, so the page settled and announced a
@@ -307,7 +307,7 @@ async def _press_stop(state: DashboardState, *, running: bool, query: str = "") 
 @pytest.mark.parametrize("stop_outcome", ["soft", "hard"])
 async def test_the_stop_answer_says_it_stopped_a_running_turn(tmp_path, stop_outcome):
     state = _stop_state(tmp_path, stop_outcome)
-    assert await _press_stop(state, running=True) == {"ok": True, "stopped": True}
+    assert await _press_stop(state, running=True) == {"ok": True, "stopped": True, "trust": False}
 
 
 @pytest.mark.asyncio
@@ -315,7 +315,7 @@ async def test_a_forced_stop_answer_says_it_stopped(tmp_path):
     state = _stop_state(tmp_path, "hard")
     state.get_or_create_session("s1")._stop_state = "soft_pending"
     body = await _press_stop(state, running=True, query="?force=true")
-    assert body == {"ok": True, "stopped": True}
+    assert body == {"ok": True, "stopped": True, "trust": False}
 
 
 @pytest.mark.asyncio
@@ -323,13 +323,13 @@ async def test_the_stop_answer_says_nothing_stopped_when_the_runtime_had_no_turn
     """The runtime answered that no turn was in flight: this press stopped nothing, so a client
     must not announce a stop. The turn's own terminal frame says how it really ended."""
     state = _stop_state(tmp_path, "idle")
-    assert await _press_stop(state, running=True) == {"ok": True, "stopped": False}
+    assert await _press_stop(state, running=True) == {"ok": True, "stopped": False, "trust": False}
 
 
 @pytest.mark.asyncio
 async def test_the_stop_answer_says_nothing_stopped_for_an_idle_chat(tmp_path):
     state = _stop_state(tmp_path, "soft")
-    assert await _press_stop(state, running=False) == {"ok": True, "stopped": False}
+    assert await _press_stop(state, running=False) == {"ok": True, "stopped": False, "trust": False}
     state.sessions.stop_turn.assert_not_awaited()
 
 

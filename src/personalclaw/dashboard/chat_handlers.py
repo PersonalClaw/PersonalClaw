@@ -18,7 +18,7 @@ from personalclaw import approval_answer, approval_grants, session_keys
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig, default_workspace_dir, resolve_session_workspace
-from personalclaw.dashboard import running_turn
+from personalclaw.dashboard import headless_run, running_turn
 from personalclaw.dashboard.approval_state import (
     SESSION_APPROVAL_ACTIONS,
     _mark_permission_resolved,
@@ -1238,16 +1238,20 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
     First press: soft cancel (cooperative). Second press (?force=true):
     hard kill. Inserts a stop_event message into the session transcript.
 
-    Answers ``{"ok": true, "stopped": <bool>}``: whether THIS press stopped a turn. ``false``
-    when nothing was running, when a stop was already under way, and when the runtime had no
-    turn in flight — a client must not announce a stop then; the turn's own ``chat_done`` says
-    how it ended.
+    Answers ``{"ok": true, "stopped": <bool>, "trust": <bool>}``: whether THIS press stopped a
+    turn, and whether the chat's Trust still stands. ``stopped`` is ``false`` when nothing was
+    running, when a stop was already under way, and when the runtime had no turn in flight — a
+    client must not announce a stop then; the turn's own ``chat_done`` says how it ended.
+
+    A headless run's chat keeps no Trust past a stop: it is withdrawn first, before the runtime is
+    asked to stop, so no call is approved on it while the turn winds down (``headless_run``).
     """
     state: DashboardState = request.app["state"]
     name = request.match_info["session"]
     session = state._sessions.get(name)
     if not session:
         return web.json_response({"error": "not found"}, status=404)
+    headless_run.end_the_runs_trust(state, session, why="its turn was stopped")
     force = request.query.get("force", "").lower() == "true"
 
     # Force path: already soft_pending, user pressed again
@@ -1276,13 +1280,15 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
             outcome="hard",
             metadata={"session": name, "force": True},
         )
-        return web.json_response({"ok": True, "stopped": forced in ("soft", "hard")})
+        return web.json_response(
+            {"ok": True, "stopped": forced in ("soft", "hard"), "trust": session._trust}
+        )
 
     # Already stopping or not running — no-op
     if session._stop_state != "idle" or not session.running:
         if not session.running:
             logger.info("Stop: session %s not running, ignoring", name)
-        return web.json_response({"ok": True, "stopped": False})
+        return web.json_response({"ok": True, "stopped": False, "trust": session._trust})
 
     # First press: soft stop
     session._stop_state = "soft_pending"
@@ -1342,7 +1348,9 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
         outcome=outcome,
         metadata={"session": name, "force": False},
     )
-    return web.json_response({"ok": True, "stopped": outcome in ("soft", "hard")})
+    return web.json_response(
+        {"ok": True, "stopped": outcome in ("soft", "hard"), "trust": session._trust}
+    )
 
 
 async def api_chat_screen_state(request: web.Request) -> web.Response:

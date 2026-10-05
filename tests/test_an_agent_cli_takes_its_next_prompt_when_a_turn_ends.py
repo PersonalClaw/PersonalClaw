@@ -296,6 +296,7 @@ async def test_after_a_stop_her_next_message_reaches_the_same_agent_cli(chat, ke
         assert json.loads((await api_chat_session_stop(request)).body) == {
             "ok": True,
             "stopped": True,
+            "trust": False,
         }
         await _turn_ends(task)
         assert w.outcomes()[-1:] == [TURN_STOPPED]

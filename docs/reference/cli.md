@@ -177,18 +177,20 @@ unattended (see the safety posture below): nobody is there to answer an approval
 | Flag | Effect |
 |---|---|
 | `-p, --prompt TEXT` | **Required.** The prompt for this turn. An empty or whitespace-only value is refused (exit 2). |
-| `--format {plain,json,streaming-json}` | `plain` (default) = final text only, pipes cleanly; `json` = one `{result, session, turns, tool_calls, tokens, duration_ms}` document; `streaming-json` = NDJSON of the `chat_chunk`/`tool_call`/`chat_done` WS frames the dashboard consumes; the final `chat_done` carries `outcome` (`complete`, `stopped` or `error`). |
+| `--format {plain,json,streaming-json}` | `plain` (default) = final text only, pipes cleanly; `json` = one `{result, session, outcome, turns, tool_calls, tokens, duration_ms}` document; `streaming-json` = NDJSON of the `chat_chunk`/`tool_call`/`chat_done` WS frames the dashboard consumes. `outcome` (and the final `chat_done`'s) says how the turn ended: `complete`, `stopped`, `error` or `interrupted` (the gateway restarted or shut down); the JSON document's says `timed_out`, `cancelled` or `connection_lost` when the run ended the turn itself ([below](#when-a-run-ends-before-its-turn)). |
 | `--agent NAME` | Agent to run the turn as (default: the configured default agent). |
 | `--model NAME` | Model override for this turn. |
 | `--session KEY` | Continue a **named persistent** session (`inbound:cli:<key>`). Omitted = a fresh stateless one-shot per invocation. |
 | `--cwd DIR` | Working directory for the turn's tools. |
 | `--allow` | Grant write/execute tools, and approve the run's calls without asking. **Default is read-only.** |
-| `--timeout SECS` | Ceiling on the turn (default 600). |
+| `--timeout SECS` | Ceiling on the turn (default 600). When it passes, `run` stops the turn in the gateway before it exits. |
 | `--port PORT` | Port of this home's gateway (default: the port it recorded when it started; `PERSONALCLAW_PORT` names one too). A gateway there that is not this home's is refused. |
 
 Exit code is `0` when the turn completed, `1` when it ended with an error, was stopped before
-it finished, the transport failed, or `--allow` could not grant the run's writes (the operator's
-approval ceiling refuses it), and `2` on a refused invocation (a blank prompt). The code
+it finished, ran past its `--timeout`, the transport failed, or `--allow` could not grant the
+run's writes (the operator's approval ceiling refuses it), and `2` on a refused invocation (a
+blank prompt). A run that Ctrl+C, SIGTERM or a closed terminal ended exits as that signal ends
+a program (130 for Ctrl+C, 143 for SIGTERM), so a script running it stops too. The code
 follows how the gateway says the turn ended, not the
 error rows along the way: a transient failure the gateway retried and then finished exits `0`.
 
@@ -208,7 +210,9 @@ it resolves through the `HEADLESS` safety profile by construction.
   that change things, and Trust on the run's own chat approves them, because a headless turn
   has nobody to ask. Trust for one chat answers that chat's approvals only. The operator's
   approval ceiling bounds it like any grant: under `approval: ask` the run stops before its
-  turn, saying why.
+  turn, saying why. The Trust is the run's, for its turn: the gateway ends it when that turn
+  ends or is stopped, so a helper's report the run did not wait for, or the next run of the same
+  `--session`, gets none of it, and a call it asks about is declined.
 * **The posture is always announced on stderr**, for both modes, so stdout stays
   pipeable and a script is self-documenting about what it asked for.
 * **An agent CLI is held the same way, for the calls it asks about.** The turn tells the
@@ -221,6 +225,21 @@ it resolves through the `HEADLESS` safety profile by construction.
 * Spend is attributed to the SpendMeter run scope `cli`, under the `HEADLESS` profile's
   budget (your configured per-day ceiling).
 
+### When a run ends before its turn
+
+The turn runs in the gateway, not in the command, so a run that stops waiting for it stops it
+there first, as Stop does in the dashboard: when its `--timeout` passes, on Ctrl+C, SIGTERM (a CI
+job cancelled, a `timeout` wrapper) or its terminal closing, and when its connection to the
+gateway closes. The gateway ends the run's Trust before it asks the turn to stop, so no call is
+approved on it while the turn winds down, and the run follows the turn until the gateway says it
+has ended. stderr says what ended the run and what the gateway did; the JSON document's
+`outcome` is `timed_out`, `cancelled` or `connection_lost`, and its `result` is what the turn
+said before it stopped. A second Ctrl+C stops the waiting at once.
+
+When the gateway cannot be told (it has gone away), `run` says so, with the command that starts
+it again. A turn still running in a gateway nothing reaches keeps going to its end, and the
+run's Trust ends with it.
+
 ### Gateway lifecycle
 
 `run` probes `/api/healthz` on the resolved port. If a gateway is already running it
@@ -232,8 +251,8 @@ it by pid on exit.
 ### CI smoke test
 
 ```bash
-# One turn, machine-readable, fails the job on a failed turn.
-personalclaw run -p 'Reply with exactly: OK' --format json | jq -er '.result'
+# One turn, machine-readable, fails the job on a turn that did not complete.
+personalclaw run -p 'Reply with exactly: OK' --format json | jq -er 'select(.outcome == "complete") | .result'
 ```
 
 A ready-made script and GitHub Action live at `scripts/ci_smoke_run.sh` and

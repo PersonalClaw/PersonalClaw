@@ -378,7 +378,7 @@ async def test_a_stop_while_an_approval_waits_ends_the_turn_stopped(
         answer = json.loads((await api_chat_session_stop(request)).body)
         await _turn_ends(task)
 
-        assert answer == {"ok": True, "stopped": True}
+        assert answer == {"ok": True, "stopped": True, "trust": False}
         assert w.outcomes()[-1:] == [TURN_STOPPED]
         assert w.errors() == [], "a Stop she pressed ended in an error notice"
         # The pending request was answered the way the protocol asks of a cancelled turn.
@@ -422,7 +422,7 @@ async def test_a_stop_the_agent_ignores_kills_it_and_starts_nothing_in_its_place
         answer = json.loads((await api_chat_session_stop(request)).body)
         await _turn_ends(task)
 
-        assert answer == {"ok": True, "stopped": True}
+        assert answer == {"ok": True, "stopped": True, "trust": False}
         assert w.outcomes()[-1:] == [TURN_STOPPED]
         assert w.errors() == [], "a Stop she pressed ended in an error notice"
         assert not w.session._queue, "the stopped message was queued to run again"

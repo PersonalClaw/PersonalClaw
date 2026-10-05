@@ -35,9 +35,17 @@ Safety posture (fail-CLOSED, and the reason this module exists at all):
   run's own chat approves it (:func:`grant_writes`). A headless turn has nobody to ask, so
   without the second a call that asks for approval is declined, and ``--allow`` ran nothing
   it promised. Trust is a grant, so the operator ceiling bounds it: under ``approval: ask`` the
-  run is refused, saying why, rather than started with a grant that does not hold.
+  run is refused, saying why, rather than started with a grant that does not hold. It is the
+  run's, for the run's turn: the gateway ends it when that turn ends or is stopped
+  (``dashboard.headless_run``), so a helper's report the run did not wait for, or the next run
+  of a named session, gets none of it.
 * Without ``--allow`` the run's chat is not trusted: a tool that declares it only reads runs,
   since a read asks nobody, and a call that would ask is declined.
+* The turn works in the gateway, not in this process, so a run that stops waiting for it (its
+  ``--timeout`` passes, a stop signal reaches it, its connection to the gateway closes) stops
+  the turn there before it exits, as Stop does in the dashboard, and says what ended the run
+  and what the gateway did (:func:`_consume`). The gateway ends the run's Trust before it asks
+  the turn to stop, so no call is approved on it while the turn winds down.
 * An agent CLI is held the same way: an unattended turn tells it its asking mode, so every call
   it asks about meets the task mode before anything could approve it, and the unattended
   fail-fast declines, with its reason, what nothing approves. A call its own settings let it run
@@ -50,14 +58,17 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import math
 import os
 import secrets
+import signal
 import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from typing import TYPE_CHECKING, Any
 
 from personalclaw import home_gateway, session_keys
@@ -85,14 +96,50 @@ _DEFAULT_TURN_TIMEOUT_SECS = 600.0
 #: TTL for the token minted for one CLI invocation, in the token endpoint's own grammar. Short on
 #: purpose: a headless run is seconds-to-minutes, and a token that outlives its run is a live
 #: credential for nothing. (It counts against the TOKEN limit only, so however many runs there
-#: are, none of them can sign the operator's browser or phone out — ledger 255.) It was the bare
+#: are, none of them can sign the operator's browser or phone out.) It was the bare
 #: number ``3600``, which is not a duration the endpoint reads, so every run was quietly minted
-#: the endpoint's default lifetime instead — and the endpoint now refuses it.
+#: the endpoint's default lifetime instead — and the endpoint now refuses it. A run that may last
+#: longer gets a token that lasts as long as it may (:func:`_token_ttl`).
 _TOKEN_TTL = "1h"
+
+#: How long a run follows a turn it stopped until the gateway says it has ended (``chat`` too).
+_STOP_WAIT_SECS = 30.0
+
+#: How long a run waits for the gateway to answer its stop. The gateway answers once the turn's
+#: runtime has acknowledged the stop, which it waits up to a minute for (its soft-stop budget)
+#: before it ends the runtime instead.
+_STOP_ANSWER_SECS = 90.0
+
+#: How a run that ended its turn itself says it ended, as its JSON report's ``outcome``, beside the
+#: four a ``chat_done`` says (``complete``, ``stopped``, ``error``, ``interrupted``): its
+#: ``--timeout`` passed, a stop signal reached it, or its connection to the gateway closed.
+TIMED_OUT = "timed_out"
+CANCELLED = "cancelled"
+CONNECTION_LOST = "connection_lost"
+
+#: The signals that end a run before its turn has ended, and how the run says each: Ctrl-C, a
+#: stop sent to the command (a CI job cancelled, a ``timeout`` wrapper's), its terminal closing.
+_STOP_SIGNALS: dict[int, str] = {
+    signal.SIGINT: "it was interrupted (Ctrl-C)",
+    signal.SIGTERM: "it was told to stop (SIGTERM)",
+    **({signal.SIGHUP: "its terminal closed (SIGHUP)"} if hasattr(signal, "SIGHUP") else {}),
+}
 
 
 class RunError(Exception):
     """A headless run could not be set up or completed. Message is user-facing."""
+
+
+class TurnTimedOut(RunError):
+    """The time a run gave its turn passed before the turn ended."""
+
+
+class TurnConnectionLost(RunError):
+    """The socket a turn streams on closed before the turn ended."""
+
+
+class GatewayGone(RunError):
+    """Nothing answered on the gateway's port: it has gone away."""
 
 
 # ── Gateway discovery / bootstrap ────────────────────────────────────────────────
@@ -114,6 +161,18 @@ def mint_local_token(gateway: home_gateway.HomeGateway, *, ttl: str = _TOKEN_TTL
     if not token:
         raise RunError(f"this home's gateway on port {gateway.port} returned an empty token.")
     return token
+
+
+def _token_ttl(timeout: float) -> str:
+    """How long the token of a run given *timeout* seconds lasts: :data:`_TOKEN_TTL`, or as long
+    as the run may last when that is longer, so the stop it sends once its timeout passes still
+    signs in. Never longer than the longest lifetime the gateway signs a token for."""
+    from personalclaw.auth.lifetimes import MAX_LIFETIME_SECS, lifetime_seconds
+
+    lasts = timeout + _STOP_ANSWER_SECS + _STOP_WAIT_SECS
+    if lasts <= (lifetime_seconds(_TOKEN_TTL) or 0):
+        return _TOKEN_TTL
+    return f"{min(math.ceil(lasts / 60), MAX_LIFETIME_SECS // 60)}m"
 
 
 def start_transient_gateway() -> tuple[int, str, subprocess.Popen]:
@@ -417,19 +476,22 @@ async def _read_turn(
     ws: aiohttp.ClientWebSocketResponse, collector: _Collector, timeout: float | None
 ) -> None:
     """Feed the turn's frames to *collector* until its ``chat_done``. ``timeout`` ``None`` waits
-    for as long as the gateway runs the turn: it is the gateway that says when a turn ends."""
+    for as long as the gateway runs the turn: it is the gateway that says when a turn ends.
+
+    Raises :class:`TurnTimedOut` once *timeout* passes and :class:`TurnConnectionLost` when the
+    socket closes first. Either way the turn may still be running in the gateway."""
     import aiohttp
 
-    late = f"turn did not finish within {timeout:.0f}s" if timeout is not None else ""
+    late = f"the turn did not finish within {timeout:.0f}s" if timeout is not None else ""
     deadline = None if timeout is None else time.monotonic() + timeout
     while not collector.done:
         remaining = None if deadline is None else deadline - time.monotonic()
         if remaining is not None and remaining <= 0:
-            raise RunError(late)
+            raise TurnTimedOut(late)
         try:
             msg = await asyncio.wait_for(ws.receive(), timeout=remaining)
         except TimeoutError as exc:
-            raise RunError(late) from exc
+            raise TurnTimedOut(late) from exc
         if msg.type is aiohttp.WSMsgType.TEXT:
             with contextlib.suppress(ValueError):
                 envelope = json.loads(msg.data)
@@ -440,15 +502,194 @@ async def _read_turn(
             aiohttp.WSMsgType.CLOSE,
             aiohttp.WSMsgType.ERROR,
         ):
-            raise RunError("gateway closed the websocket before the turn finished")
+            raise TurnConnectionLost("gateway closed the websocket before the turn finished")
+
+
+async def _ask_to_stop(
+    http: aiohttp.ClientSession,
+    port: int,
+    session_key: str,
+    *,
+    headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Ask the gateway to stop the turn of chat *session_key*, as Stop does in the dashboard, and
+    return its answer: ``stopped``, whether this stopped a turn, and ``trust``, whether the chat's
+    Trust still stands. *headers* sign the request in when the session's own no longer do.
+
+    Raises :class:`GatewayGone` when nothing answers on the gateway's port, and
+    :class:`RunError` when the gateway does not stop the turn or does not answer in time.
+    """
+    import aiohttp
+
+    quoted = urllib.parse.quote(session_key, safe="")
+    try:
+        async with http.post(
+            f"http://127.0.0.1:{port}/api/chat/sessions/{quoted}/stop",
+            json={},
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=_STOP_ANSWER_SECS),
+        ) as resp:
+            if resp.status != 200:
+                detail = (await resp.text())[:300]
+                raise RunError(f"the gateway did not stop the turn: HTTP {resp.status} {detail}")
+            answer = await resp.json(content_type=None)
+    except TimeoutError as exc:
+        raise RunError(
+            f"the gateway did not answer the stop within {_STOP_ANSWER_SECS:.0f}s"
+        ) from exc
+    except (aiohttp.ClientConnectionError, OSError) as exc:
+        raise GatewayGone(f"nothing answers on port {port} ({exc})") from exc
+    except (aiohttp.ClientError, ValueError) as exc:
+        raise RunError(f"the gateway's answer to the stop could not be read: {exc}") from exc
+    return answer if isinstance(answer, dict) else {}
+
+
+class _Ending:
+    """How a run ended its turn itself, when it did: why, and what the gateway did about it.
+
+    The first stop signal ends the run: it cancels the wait for the turn's frames (:attr:`reading`)
+    and the run stops the turn, sends that stop whatever comes next, and follows the stopped turn
+    to its end. A later signal gives up on all of it (:attr:`forced`): the command was asked twice.
+    A turn that ended in the gateway before the run stopped it stays the gateway's to say.
+    """
+
+    def __init__(self) -> None:
+        #: :data:`TIMED_OUT`, :data:`CANCELLED` or :data:`CONNECTION_LOST` once the run is ending
+        #: the turn itself; "" while the turn runs, and for one that ended in the gateway.
+        self.why = ""
+        #: Whether the run is ending the turn (or a stop signal asked it to), and the first stop
+        #: signal the command got, 0 for none.
+        self.stopping = False
+        self.signum = 0
+        #: The gateway's answer to the stop (:func:`_ask_to_stop`); None when it gave none.
+        self.answer: dict[str, Any] | None = None
+        #: Why the gateway could not be told, and whether nothing answered on its port at all.
+        self.failed = ""
+        self.gone = False
+        #: Whether the turn's ``chat_done`` arrived after the stop.
+        self.ended = False
+        #: Whether a later signal gave up waiting.
+        self.forced = False
+        self.reading: asyncio.Future[None] | None = None
+        self.main: asyncio.Future[None] | None = None
+
+    def on_signal(self, signum: int) -> None:
+        if self.stopping:
+            self.signum = self.signum or signum
+            self.forced = True
+            if self.main is not None:
+                self.main.cancel()
+            return
+        self.stopping, self.signum = True, signum
+        if self.reading is not None:
+            self.reading.cancel()
+
+    def stop(self, why: str) -> None:
+        """The run ends the turn itself, for *why*: a later stop signal gives up waiting."""
+        self.why, self.stopping = why, True
+
+
+@contextlib.contextmanager
+def _taking_stop_signals(handler: Callable[[int], None]) -> Iterator[None]:
+    """Hand each stop signal to *handler* while the run's loop runs, and give it back as it was.
+
+    A signal the command was started ignoring (``nohup``, a job started in the background) stays
+    ignored. Where the loop cannot take a signal (off the main thread) none is taken."""
+    loop = asyncio.get_running_loop()
+    taken: list[tuple[int, Any]] = []
+    for signum in _STOP_SIGNALS:
+        before = signal.getsignal(signum)
+        if before == signal.SIG_IGN:
+            continue
+        try:
+            loop.add_signal_handler(signum, handler, signum)
+        except (NotImplementedError, RuntimeError, ValueError):
+            continue
+        taken.append((signum, before))
+    try:
+        yield
+    finally:
+        for signum, before in taken:
+            loop.remove_signal_handler(signum)
+            if before is not None:
+                signal.signal(signum, before)
 
 
 async def _consume(
     port: int, token: str, collector: _Collector, prompt: str, timeout: float
+) -> _Ending | None:
+    """Post the turn and consume its frames until ``chat_done``, within *timeout* seconds.
+
+    The turn works in the gateway, so a run that stops waiting for it first (its timeout passes,
+    a stop signal reaches it, its connection closes) stops it there before it returns, and returns
+    how it ended (:class:`_Ending`). None when the turn ended in the gateway on its own terms.
+    """
+    ending = _Ending()
+    with _taking_stop_signals(ending.on_signal):
+        ending.main = asyncio.ensure_future(
+            _run_the_turn(port, token, collector, prompt, timeout, ending)
+        )
+        try:
+            await ending.main
+        except asyncio.CancelledError:
+            if not ending.forced:
+                raise
+    return ending if ending.why else None
+
+
+async def _run_the_turn(
+    port: int, token: str, collector: _Collector, prompt: str, timeout: float, ending: _Ending
 ) -> None:
-    """Post the turn and consume its frames until ``chat_done``, within *timeout* seconds."""
-    async with _turn_socket(port, token, collector.session_key, prompt) as (_http, ws):
-        await _read_turn(ws, collector, timeout)
+    """Post the turn and read it until its ``chat_done``; stop it in the gateway when the run
+    stops waiting for it first (:func:`_stop`)."""
+    import aiohttp
+
+    async with _turn_socket(port, token, collector.session_key, prompt) as (http, ws):
+        if ending.stopping:  # a stop signal came while the turn was being posted
+            ending.stop(CANCELLED)
+        else:
+            ending.reading = asyncio.ensure_future(_read_turn(ws, collector, timeout))
+            try:
+                await ending.reading
+                return
+            except asyncio.CancelledError:
+                here = asyncio.current_task()
+                if not ending.stopping or (here is not None and here.cancelling()):
+                    raise
+                ending.stop(CANCELLED)
+            except TurnTimedOut:
+                ending.stop(TIMED_OUT)
+            except (TurnConnectionLost, aiohttp.ClientError):
+                ending.stop(CONNECTION_LOST)
+            finally:
+                ending.reading = None
+        await _stop(http, port, collector, ws, ending)
+
+
+async def _stop(
+    http: aiohttp.ClientSession,
+    port: int,
+    collector: _Collector,
+    ws: aiohttp.ClientWebSocketResponse,
+    ending: _Ending,
+) -> None:
+    """Stop the turn the run has stopped waiting for, and follow it to its end while its socket is
+    open. The gateway ends the Trust the run gave its chat before it asks the turn to stop."""
+    import aiohttp
+
+    try:
+        ending.answer = await _ask_to_stop(http, port, collector.session_key)
+    except GatewayGone as exc:
+        ending.failed, ending.gone = str(exc), True
+        return
+    except RunError as exc:
+        ending.failed = str(exc)
+        return
+    if ending.why == CONNECTION_LOST or ws.closed:
+        return
+    with contextlib.suppress(RunError, aiohttp.ClientError):
+        await _read_turn(ws, collector, _STOP_WAIT_SECS)
+    ending.ended = collector.done
 
 
 def _token_total(session_key: str) -> int:
@@ -502,6 +743,8 @@ def _run_one(args) -> int:
     agent_cli = agent_cli_of(getattr(args, "agent", "") or "") if task_mode == "ask" else ""
     print(grant_notice(session_key, task_mode, agent_cli=agent_cli), file=sys.stderr, flush=True)
 
+    timeout = float(getattr(args, "timeout", 0) or _DEFAULT_TURN_TIMEOUT_SECS)
+    gateway: home_gateway.HomeGateway | None = None
     transient: subprocess.Popen | None = None
     started = time.monotonic()
     try:
@@ -517,7 +760,7 @@ def _run_one(args) -> int:
         except home_gateway.GatewayError as exc:
             raise RunError(str(exc)) from exc
         else:
-            port, token = gateway.port, mint_local_token(gateway)
+            port, token = gateway.port, mint_local_token(gateway, ttl=_token_ttl(timeout))
 
         _api(
             port,
@@ -541,8 +784,6 @@ def _run_one(args) -> int:
         # and a headless run then wrote a file to disk while announcing "read-only" on
         # stderr — a read-only promise that denied nothing.
         _api(port, token, "/api/chat/task-mode", {"mode": task_mode, "session": session_key})
-        if task_mode == "agent":
-            grant_writes(port, token, session_key)
         cwd = getattr(args, "cwd", "") or ""
         if cwd:
             _api(
@@ -551,10 +792,13 @@ def _run_one(args) -> int:
                 f"/api/chat/sessions/{session_key}/workspace-dir",
                 {"workspace_dir": str(os.path.abspath(os.path.expanduser(cwd)))},
             )
+        # The write grant last, just before the turn it is for, so a setup that fails leaves it
+        # standing nowhere.
+        if task_mode == "agent":
+            grant_writes(port, token, session_key)
 
         collector = _Collector(session_key, fmt)
-        timeout = float(getattr(args, "timeout", 0) or _DEFAULT_TURN_TIMEOUT_SECS)
-        asyncio.run(_consume(port, token, collector, prompt, timeout))
+        ending = asyncio.run(_consume(port, token, collector, prompt, timeout))
     except RunError as exc:
         print(f"personalclaw run: {exc}", file=sys.stderr)
         return 1
@@ -562,13 +806,15 @@ def _run_one(args) -> int:
         _shutdown_transient(transient)
 
     duration_ms = int((time.monotonic() - started) * 1000)
-    ok = collector.outcome == "complete"
+    outcome = ending.why if ending is not None else collector.outcome
+    ok = outcome == "complete"
     if fmt == "json":
         print(
             json.dumps(
                 {
                     "result": collector.result_text(),
                     "session": session_key,
+                    "outcome": outcome,
                     "turns": 1,
                     "tool_calls": [
                         {"name": t["name"], "ok": t["ok"]} for t in collector.tool_calls
@@ -585,6 +831,18 @@ def _run_one(args) -> int:
             print(text)
     # streaming-json already wrote its NDJSON as frames arrived.
 
+    if ending is not None:
+        said = _how_the_run_ended(
+            ending,
+            timeout=timeout,
+            allow=task_mode == "agent",
+            gateway=gateway,
+            transient=transient is not None,
+        )
+        for line in said:
+            print(f"personalclaw run: {line}", file=sys.stderr)
+        # A stop signal's exit is the one the shell reads for that signal (`_run` ends with it).
+        return 128 + ending.signum if ending.signum else 1
     if collector.outcome == "stopped":
         print("personalclaw run: the turn was stopped before it finished", file=sys.stderr)
     elif collector.outcome == "interrupted":
@@ -597,6 +855,73 @@ def _run_one(args) -> int:
     return 0 if ok else 1
 
 
+def _how_the_run_ended(
+    ending: _Ending,
+    *,
+    timeout: float,
+    allow: bool,
+    gateway: home_gateway.HomeGateway | None,
+    transient: bool,
+) -> list[str]:
+    """What a run that ended its turn itself says: what ended it, then what the gateway did with
+    the stop, and what became of the run's write grant when it has one."""
+    if ending.why == TIMED_OUT:
+        why = f"the turn did not finish within {timeout:.0f}s."
+    elif ending.why == CANCELLED:
+        why = f"{_STOP_SIGNALS.get(ending.signum, 'it was stopped')} before the turn finished."
+    else:
+        why = "the connection to the gateway closed before the turn finished."
+    answer = ending.answer
+    if answer is not None:
+        if answer.get("stopped") is True:
+            done = "stopped the turn in the gateway."
+            if not ending.ended:
+                done = (
+                    "stopped the turn in the gateway, which is still ending it: the chat in the "
+                    "dashboard shows when it has."
+                )
+        elif ending.ended:
+            done = "the turn has ended in the gateway."
+        else:
+            done = (
+                "the gateway is already ending the turn: the chat in the dashboard shows when it "
+                "has."
+            )
+        if not allow:
+            return [why, done]
+        trust = (
+            "this run's write grant has ended."
+            if answer.get("trust") is False
+            else "this run's write grant still stands in the gateway."
+        )
+        return [why, done, trust]
+    if ending.forced:
+        done = "stopped waiting for the gateway at a second signal."
+    elif ending.gone:
+        done = (
+            f"the gateway could not be told to stop the turn: "
+            f"{gateway.gone() if gateway is not None else ending.failed}"
+        )
+    else:
+        done = f"the gateway did not stop the turn: {ending.failed}"
+    if transient:
+        after = ["the gateway this run started is shut down with it, and the turn with it."]
+    elif allow:
+        after = ["if the turn still runs there, this run's write grant ends when the turn does."]
+    else:
+        after = []
+    return [why, done, *after]
+
+
 def _run(args) -> None:
     """``personalclaw run`` entry point — dispatched from ``cli.main``."""
-    raise SystemExit(_run_one(args))
+    code = _run_one(args)
+    signum = code - 128
+    if signum in _STOP_SIGNALS:
+        # A stop signal ended the run, which stopped its turn first. It now ends as that signal
+        # ends a program, so the shell or the job that sent it reads the exit it always read.
+        sys.stdout.flush()
+        sys.stderr.flush()
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+    raise SystemExit(code)

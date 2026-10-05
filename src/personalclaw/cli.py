@@ -438,7 +438,7 @@ The posture is announced on stderr, so stdout stays pipeable.
         "--timeout",
         type=float,
         default=0.0,
-        help="Seconds to wait for the turn (default 600)",
+        help="Ceiling on the turn in seconds (default 600); past it, run stops the turn in the gateway",  # noqa: E501
     )
     run_parser.add_argument(
         "--port",

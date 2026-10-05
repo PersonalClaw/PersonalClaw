@@ -571,6 +571,103 @@ def test_a_clean_turn_exits_zero(monkeypatch, capsys):
     assert isinstance(doc["duration_ms"], int)
 
 
+@pytest.mark.parametrize("ended", [TURN_COMPLETE, TURN_STOPPED, TURN_ERROR, TURN_INTERRUPTED])
+def test_the_json_report_names_how_the_turn_ended(ended, monkeypatch, capsys):
+    """The exit code says whether the turn completed; the report says how it ended, in the words
+    its ``chat_done`` says it in."""
+    _a_gateway_of_this_home_runs(monkeypatch)
+    monkeypatch.setattr(cli_run, "_api", lambda *a, **k: {})
+
+    async def _ends(port, token, collector, prompt, timeout):
+        collector.feed(
+            {"type": "chat_done", "data": {"session": collector.session_key, "outcome": ended}}
+        )
+
+    monkeypatch.setattr(cli_run, "_consume", _ends)
+    code = cli_run._run_one(_args(prompt="hi", fmt="json"))
+
+    assert json.loads(capsys.readouterr().out)["outcome"] == ended
+    assert code == (0 if ended == TURN_COMPLETE else 1)
+
+
+def _the_command_ends(exit_code: int, tmp_path: Path) -> int:
+    """How a process running ``personalclaw run`` ends when its run returned *exit_code*: its
+    return code as the parent reads it (minus the signal number when a signal ended it)."""
+    import os
+    import subprocess
+    import sys
+
+    program = (
+        "from personalclaw import cli_run\n"
+        f"cli_run._run_one = lambda args: {exit_code}\n"
+        "cli_run._run(None)\n"
+    )
+    env = {**os.environ, "HOME": str(tmp_path), "PERSONALCLAW_HOME": str(tmp_path / "home")}
+    return subprocess.run([sys.executable, "-c", program], env=env, timeout=60).returncode
+
+
+@pytest.mark.parametrize("signame", ["SIGINT", "SIGTERM"])
+def test_a_run_a_stop_signal_ended_exits_as_that_signal_ends_a_program(signame, tmp_path):
+    """The run stops its turn first, then ends as the signal asked, so the shell or the script
+    that ran it reads that signal's ending and stops too, rather than going on to its next line."""
+    import signal as _signal
+
+    signum = int(getattr(_signal, signame))
+    assert _the_command_ends(128 + signum, tmp_path) == -signum
+
+
+def test_a_run_no_signal_ended_exits_with_its_code(tmp_path):
+    """VACUITY: any other exit is the code itself."""
+    assert _the_command_ends(1, tmp_path) == 1
+
+
+def test_a_runs_token_lasts_as_long_as_the_run_may(monkeypatch):
+    """The stop a run sends once its timeout passes signs in with the token the run was minted:
+    a run that may last longer than an hour gets one that lasts that long, and no longer than the
+    gateway signs any."""
+    from personalclaw.auth.lifetimes import MAX_LIFETIME_SECS, lifetime_seconds
+
+    assert cli_run._token_ttl(600) == cli_run._TOKEN_TTL
+    lasts = lifetime_seconds(cli_run._token_ttl(7200)) or 0
+    assert lasts >= 7200 + cli_run._STOP_ANSWER_SECS + cli_run._STOP_WAIT_SECS
+    assert lasts < 7200 + 3600
+    assert lifetime_seconds(cli_run._token_ttl(10 * MAX_LIFETIME_SECS)) == MAX_LIFETIME_SECS
+
+    minted: list[str] = []
+    monkeypatch.setattr(
+        home_gateway,
+        "reach",
+        lambda port=None: home_gateway.HomeGateway(
+            home=Path("/home/user/.personalclaw"), port=1, pid=0
+        ),
+    )
+    monkeypatch.setattr(
+        cli_run, "mint_local_token", lambda gateway, *, ttl: minted.append(ttl) or "tok"
+    )
+    monkeypatch.setattr(cli_run, "_api", lambda *a, **k: {})
+    monkeypatch.setattr(cli_run, "_consume", _raise_after_setup)
+    args = _args()
+    args.timeout = 7200.0
+    cli_run._run_one(args)
+    assert minted == [cli_run._token_ttl(7200)]
+
+
+def test_the_write_grant_is_given_last_just_before_the_turn(monkeypatch, tmp_path):
+    """A setup step that fails after the grant would leave it standing on a chat no turn ran in,
+    so the grant is the last thing set before the turn is posted."""
+    calls = _capture_api(monkeypatch)
+    _a_gateway_of_this_home_runs(monkeypatch)
+    monkeypatch.setattr(cli_run, "_consume", _raise_after_setup)
+    args = _args(allow=True)
+    args.cwd = str(tmp_path)
+
+    cli_run._run_one(args)
+
+    paths = [path for path, _body in calls]
+    assert paths[-1] == "/api/chat/mode", paths
+    assert any(path.endswith("/workspace-dir") for path in paths), paths
+
+
 # ── The posture is always announced ──────────────────────────────────────────────
 
 
