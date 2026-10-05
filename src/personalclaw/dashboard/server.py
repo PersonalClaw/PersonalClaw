@@ -421,22 +421,21 @@ async def _ownership_denial(request: web.Request, app_name: str, route: str) -> 
     reason the route table exists at all — the ownership check used to be copied into a dozen
     handlers, keyed on an origin tag an app could share by its name, and missing from thirty more —
     and so that a refused request loads nothing: the creator is read without rehydrating the
-    conversation, and another app's settings are never opened.
+    conversation, and another app's settings are never opened. So is a field of the body that is
+    the owner's (``permissions.OwnerOnlyField``), refused whatever its value.
 
-    A body target reads the JSON body through ``json_object_body``, and aiohttp keeps the bytes,
-    so the handler reads the same body after. An empty body names nothing, so an optional target
-    passes. A body that is not a JSON object raises ``RequestValidationError``, which
+    The body is read through ``json_object_body``, and aiohttp keeps the bytes, so the handler
+    reads the same body after. An empty body names nothing, so an optional target passes. A body
+    that is not a JSON object raises ``RequestValidationError``, which
     :func:`app_permission_middleware` answers: it runs outside ``request_boundary``.
     """
     from personalclaw.apps.permissions import AppMay, route_authz
     from personalclaw.request_validation import json_object_body
 
     authz = route_authz(request.method, route)
-    if not isinstance(authz, AppMay) or not authz.owns:
+    if not isinstance(authz, AppMay) or not (authz.owns or authz.owner_only_fields):
         return ""
-    body: dict = {}
-    if any(target.in_body for target in authz.owns):
-        body = await json_object_body(request)
+    body = await json_object_body(request) if authz.reads_body else {}
     state = request.app.get("state")
     for target in authz.owns:
         named = body.get(target.field) if target.in_body else request.match_info.get(target.field)
@@ -462,7 +461,7 @@ async def _ownership_denial(request: web.Request, app_name: str, route: str) -> 
                 f"{shown!r} is not a conversation this app started — an app reaches only the "
                 "conversations it started"
             )
-    return ""
+    return authz.owner_only_field_refusal(body)
 
 
 # ── What the gateway's internal credential opens ──────────────────────────────────────────────

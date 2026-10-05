@@ -182,6 +182,9 @@ async def api_project_context_regenerate(request: web.Request) -> web.Response:
     Renders the marker-fenced PClaw block into the project's workspace_dir adapter
     files, replace-in-place. Refuses (403) when ``legibility.context_adapters`` is
     off, and (400) when the project binds no workspace_dir. Every write is SEL-audited.
+
+    No app reaches this, whatever its manifest declares (``apps/permissions.ROUTE_AUTHZ``): an
+    agent CLI working in the folder follows these files as its instructions.
     """
     from personalclaw.config.loader import AppConfig
     from personalclaw.loop.validation import workspace_write_target_errors

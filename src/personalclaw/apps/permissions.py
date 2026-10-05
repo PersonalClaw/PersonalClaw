@@ -74,8 +74,9 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from personalclaw.apps.agent_tiers import AGENT_READ, AGENT_TEXT, AGENT_TOOLS, agent_tier_covers
 from personalclaw.apps.manifest import Permissions
@@ -481,6 +482,21 @@ class OwnedTarget:
 
 
 @dataclass(frozen=True)
+class OwnerOnlyField:
+    """A field of a route's JSON body that no app writes, and the capability writing it is (shown in
+    the refusal, as an :class:`OwnerOnly` row's is).
+
+    For a route whose request mixes an app's business with the owner's: an app makes a project
+    under a name, and the brief, instructions and folder that every session in the project is
+    given or works in are the owner's. An app's request that names the field is refused before the
+    handler runs, whatever its value, so a refused app learns nothing from how the value would
+    have been read."""
+
+    field: str
+    capability: str
+
+
+@dataclass(frozen=True)
 class AppMay:
     """A route an app reaches when it declared the path in ``permissions.api``, and why that is
     safe — what the handler screens, or why the route grants nothing.
@@ -490,6 +506,10 @@ class AppMay:
     the gateway refuses the request before the handler runs
     (``dashboard/server.py::app_permission_middleware``). A conversation that is yours, another
     app's, or none at all gets the same refusal, so the answer confirms nothing.
+
+    ``owner_only_fields`` names the parts of the body that are the owner's
+    (:class:`OwnerOnlyField`): the gateway refuses an app's request that names one, in that field's
+    words, and the rest of the route stays the app's.
 
     ``agent_work`` names the agent tier a route's work needs (``agent_tiers.AGENT_TIERS``), or is
     ``""`` for a route that runs no model. A turn, a side question, a revised plan or a generated
@@ -501,6 +521,21 @@ class AppMay:
     reason: str
     owns: tuple[OwnedTarget, ...] = ()
     agent_work: str = ""
+    owner_only_fields: tuple[OwnerOnlyField, ...] = ()
+
+    @property
+    def reads_body(self) -> bool:
+        """Whether deciding an app's request reads its JSON body: a target named there, or a field
+        in it that is the owner's."""
+        return bool(self.owner_only_fields) or any(target.in_body for target in self.owns)
+
+    def owner_only_field_refusal(self, body: Mapping[str, Any]) -> str:
+        """Why an app may not send *body* here (the first field in it that is the owner's, in that
+        field's words), or ``""``."""
+        for owned in self.owner_only_fields:
+            if owned.field in body:
+                return owner_only_refusal(owned.capability)
+        return ""
 
 
 #: The verbs that write. A read under a security family is governed by the ordinary allowlist,
@@ -604,6 +639,18 @@ READ_METHODS: frozenset[str] = frozenset({"GET", "HEAD"})
 #: declares in ``permissions.mcpTools``; one you granted the always-on viewer still reads what
 #: every session receives. Hiding a Discover tip, and bringing the hidden ones back, enable and
 #: configure nothing and stay an app's to call.
+#:
+#: **And so is the rest of what a project gives its sessions.** A project's brief is put before
+#: every chat and loop in it as the project's goal, and an agent that loads the project's context
+#: (``get_context``) is given the brief and the instructions as its rules, unfenced, the way your
+#: own words are. Its folder is where those sessions work, read and run commands, and an agent CLI
+#: working there follows the instruction files it finds in it. An app that wrote any of them would
+#: be writing what those sessions are told. An app may still make a project under a name (the
+#: shipped ``minutes`` files a meeting's action items under one), and the gateway refuses the
+#: brief, the instructions or the folder in that request (``AppMay.owner_only_fields``). Every
+#: other write is yours: changing, deleting or importing a project, the default project, a claim
+#: on its Work board, and writing PersonalClaw's block into the instruction files in its folder.
+#: The reads stay the allowlist's: an app you granted your projects still reads them.
 SECURITY_ROUTE_FAMILIES: dict[str, str] = {
     "/api/mcp": "MCP servers — commands the gateway launches",
     "/api/apps": "installing and switching on app code",
@@ -654,6 +701,10 @@ SECURITY_ROUTE_FAMILIES: dict[str, str] = {
     "/api/tools": "your tools — which of them your agents may call, and running one",
     "/api/legibility": (
         "what every session is given, a project's overview among it, and the Discover tips"
+    ),
+    "/api/projects": (
+        "your projects — the brief and instructions their sessions are given, and the folder "
+        "those sessions work in"
     ),
 }
 
@@ -811,6 +862,25 @@ _WRITES_TERM = (
 _TEACHES_CORRECTION = (
     "teaching a correction — one that applies automatically replaces its word with its text "
     "every time you dictate, and teaching the same one twice turns that on"
+)
+#: What a project gives its sessions, by the field of a create that writes it. An app names the
+#: project it makes; these are yours.
+_A_PROJECTS_SESSIONS_ARE_GIVEN = (
+    OwnerOnlyField(
+        "brief",
+        "writing a project's brief — every chat and loop in the project is given it as the "
+        "project's goal",
+    ),
+    OwnerOnlyField(
+        "agent_instructions_template",
+        "writing a project's instructions — an agent that loads the project's context is given "
+        "them as its rules",
+    ),
+    OwnerOnlyField(
+        "workspace_dir",
+        "choosing the folder a project's sessions work in — they read, write and run commands "
+        "there, and an agent CLI follows the instruction files it finds there",
+    ),
 )
 
 #: Per-route authorization for the WRITE routes in :data:`SECURITY_ROUTE_FAMILIES`, and the READ
@@ -1107,6 +1177,38 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     ),
     "DELETE /api/legibility/discover/dismiss": AppMay(
         "brings back the Discover tips you hid; it enables and configures nothing"
+    ),
+    # ── your projects (their reads stay the allowlist's) ──
+    "POST /api/projects": AppMay(
+        "makes a project under the name it is sent; the brief, the instructions and the folder its "
+        "sessions are given or work in are refused to an app",
+        owner_only_fields=_A_PROJECTS_SESSIONS_ARE_GIVEN,
+    ),
+    "PUT /api/projects/{project_id}": OwnerOnly(
+        "changing one of your projects — its brief and instructions, which its sessions are given, "
+        "the folder they work in, its name, and whether it is archived"
+    ),
+    "DELETE /api/projects/{project_id}": OwnerOnly(
+        "deleting one of your projects — its task lists and tasks go with it, and, when forced, "
+        "the loops working in it"
+    ),
+    "POST /api/projects/import": OwnerOnly(
+        "importing a project from an archive — its brief, instructions and overview come with it, "
+        "and the project's sessions are given them"
+    ),
+    "PUT /api/projects/settings": OwnerOnly(
+        "choosing the project your new tasks and loops start in"
+    ),
+    "POST /api/projects/{project_id}/work/claim": OwnerOnly(
+        "claiming a run or task on a project's Work board — it is held for whoever the claim "
+        "names, and nobody else can claim it until the claim lapses"
+    ),
+    "POST /api/projects/{project_id}/work/release": OwnerOnly(
+        "releasing a claim on a row of a project's Work board"
+    ),
+    "POST /api/projects/{project_id}/context-adapters/regenerate": OwnerOnly(
+        "writing PersonalClaw's block into the instruction files in a project's folder — "
+        "CLAUDE.md, AGENTS.md and .cursorrules, which an agent CLI working there follows"
     ),
     # ── packs ──
     "POST /api/packs/bundled/{name}/install": OwnerOnly(_INSTALLS_PACK),
@@ -1702,6 +1804,12 @@ def owner_only_api_reason(path: str, *, method: str = "", route: str = "") -> st
     return ""
 
 
+def owner_only_refusal(capability: str) -> str:
+    """The refusal of a capability no app holds, in the words every such refusal uses: a route
+    that is the owner's, or a field of a request that is (:class:`OwnerOnlyField`)."""
+    return f"owner-only capability, not grantable to an app: {capability}"
+
+
 def route_authz(method: str, route: str) -> OwnerOnly | AppMay | None:
     """The :data:`ROUTE_AUTHZ` row for *method* on the canonical *route*, or ``None``.
 
@@ -1928,7 +2036,7 @@ def app_request_denial(app_name: str, path: str, *, method: str = "", route: str
     # who reads the wrong reason adds `/api/ws/terminal` to the manifest and files a bug.
     owner_only = owner_only_api_reason(path, method=method, route=route)
     if owner_only:
-        return f"owner-only capability, not grantable to an app: {owner_only}"
+        return owner_only_refusal(owner_only)
     undeclared = undeclared_security_route(method, route)
     if undeclared:
         return undeclared

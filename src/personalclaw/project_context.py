@@ -1,21 +1,16 @@
-"""Project living context — the overview, the wayfinder ledgers, and the injected block.
+"""Project living context — the overview and the wayfinder ledgers.
 
 `projects.py` resolves which project work binds to. This module owns what a project KNOWS: the
-living overview the engine revises as runs complete, the three wayfinder ledgers, and the context
-block every session inside the project sees.
+living overview the engine revises as runs complete, and the three wayfinder ledgers. A chat in the
+project is given both (``dashboard/chat_utils._project_context_preamble``).
 
-Two distinctions the plan draws normatively, held here as separate files and separate functions:
+**Overview is current state; the ledger is history**, held here as separate files and separate
+functions. `context/overview.md` is revised in place — what the project now knows. The decisions
+ledger is append-only — what was settled and when. Collapsing them would mean either losing the
+history or making the current state something a reader has to reconstruct from a log.
 
-* **Overview is current state; the ledger is history.** `context/overview.md` is revised in place —
-  what the project now knows. The decisions ledger is append-only — what was settled and when.
-  Collapsing them would mean either losing the history or making the current state something a
-  reader has to reconstruct from a log.
-* **Brief is what/why; instructions are how.** The brief is user-authored and stable; the
-  instructions are operating procedure. An agent that cannot tell the goal from the procedure will
-  follow the procedure past the point where the goal is met.
-
-Everything is best-effort by construction. This feeds a **context builder**, and the never-break-a-
-turn contract applies: a corrupt overview file must cost the block, never the user's message.
+Everything is best-effort by construction. A chat's preamble reads it, and the never-break-a-turn
+contract applies: a corrupt overview file must cost the overview, never the user's message.
 
 What a project knows is put before every session inside it, so the work of an Incognito or Temporary
 chat writes none of it: :func:`write_overview` and :func:`append_ledger` refuse it first
@@ -30,7 +25,7 @@ from typing import Any
 
 from personalclaw import lasting_work
 from personalclaw.atomic_write import atomic_write
-from personalclaw.workflows.containers import LEDGERS, ledger_entry, project_block
+from personalclaw.workflows.containers import LEDGERS, ledger_entry
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +51,7 @@ MAX_LEDGER_LINE = 400
 
 
 def inlined_context_files(project_id: str) -> frozenset[str]:
-    """Filenames whose content the project block ACTUALLY inlined for this project.
+    """Filenames whose content the chat preamble ACTUALLY inlined for this project.
 
     Exists so the chat preamble's context-dir listing can exclude them. Measured on a live project:
     the overview and all three ledgers appeared both as inlined text and in a "read any for
@@ -192,34 +187,6 @@ def read_ledger(project_id: str, kind: str) -> list[str]:
         logger.debug("ledger read failed for %s/%s", project_id, kind, exc_info=True)
         return []
     return [line[2:].strip() for line in text.splitlines() if line.startswith("- ")]
-
-
-def context_block(project_id: str) -> str:
-    """The project block for any session inside the project.
-
-    Used by BOTH stage sessions and ordinary chat sessions whose `project_id` matches — one block,
-    one composer. Two composers would drift, and an agent seeing a different project description in
-    chat than in a run is an agent whose answers cannot be reconciled.
-
-    Swallows everything and returns "" on any failure, per the never-break-a-turn contract at the
-    `context.build_message` seam this feeds.
-    """
-    if not project_id:
-        return ""
-    try:
-        from personalclaw.tasks.hierarchy import HierarchyStore
-
-        project = HierarchyStore().get_project(project_id)
-        if project is None:
-            return ""
-        return project_block(
-            brief=str(getattr(project, "brief", "") or ""),
-            overview=read_overview(project_id),
-            instructions=str(getattr(project, "agent_instructions_template", "") or ""),
-        )
-    except Exception:
-        logger.debug("project context block skipped for %s", project_id, exc_info=True)
-        return ""
 
 
 def handoff_snapshot(project_id: str) -> dict[str, Any]:

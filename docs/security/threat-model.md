@@ -242,6 +242,21 @@ says what that means.
   is `AppMay`, its handler running only a tool the app's manifest declares in
   `permissions.mcpTools`; hiding a Discover tip and bringing the hidden ones back are `AppMay`,
   since they enable and configure nothing; the reads stay the allowlist's.
+- **What a project gives its sessions is yours.** Its brief is put before every chat and loop
+  in it as the project's goal, and an agent that loads the project's context (`get_context`) is
+  given the brief and the instructions as its rules, unfenced; its folder is where those
+  sessions work, read and run commands, and an agent CLI there follows the instruction files it
+  finds. An app that wrote any of them would be writing what those sessions are told.
+  `/api/projects` is a `SECURITY_ROUTE_FAMILIES` root: `POST /api/projects` is `AppMay`, so an
+  app still makes a project under a name, and its `owner_only_fields` refuse an app's request
+  that names the brief, the instructions or the folder, whatever the value, before the handler
+  runs; every other write is a `ROUTE_AUTHZ` `OwnerOnly` row (changing, deleting or importing a
+  project, the default project, a Work-board claim and its release, and writing PersonalClaw's
+  block into the instruction files in its folder); the reads stay the allowlist's. A chat in
+  the project is given the overview and the ledgers kept in the project's own folder in the
+  home, so that folder is no explorer root for an app, as a loop's is not
+  (`file_roots.dashboard_roots`): no explorer write and no file-backed artifact of an app
+  reaches them.
 - **A new route fails closed.** Every write route under a family that decides what runs
   as you, whether it asks first, or who may reach you (`SECURITY_ROUTE_FAMILIES`), and every
   read under your conversation families, your notification log, your providers, your models
@@ -777,7 +792,7 @@ deliberate, disclosed gap — see [limitations.md](limitations.md)). A row may c
 
 | ASI category | Control | Code citation (`file:path`) | Status |
 |---|---|---|---|
-| **ASI01** Agent goal / instruction manipulation | Untrusted-content fencing, approval modes, and data-not-instructions framing on recalled memory; an app token cannot write your agents, skills, prompts, routing notes or project overviews, or post into your chats, rooms or inbox answers | `security.py::fence_untrusted`; `dashboard/handlers/memory.py` (recall framing); `apps/permissions.py` (`ROUTE_AUTHZ`, `OWNER_ONLY_API_PATHS["/api/onboarding/import"]`, `OWNER_ONLY_API_PATHS["/api/send-message"]`) | enforced |
+| **ASI01** Agent goal / instruction manipulation | Untrusted-content fencing, approval modes, and data-not-instructions framing on recalled memory; an app token cannot write your agents, skills, prompts, routing notes, or a project's overview, brief, instructions or folder, or post into your chats, rooms or inbox answers | `security.py::fence_untrusted`; `dashboard/handlers/memory.py` (recall framing); `apps/permissions.py` (`ROUTE_AUTHZ`, `OWNER_ONLY_API_PATHS["/api/onboarding/import"]`, `OWNER_ONLY_API_PATHS["/api/send-message"]`) | enforced |
 | **ASI02** Tool misuse | Command deny/suspicious patterns, task-mode gating, OS child sandbox | `security.py` (`BUILTIN_DENIED_COMMAND_PATTERNS`, `SUSPICIOUS_BASH_PATTERNS`); `task_modes.py`; `sandbox.py` | enforced |
 | **ASI03** Identity & privilege abuse | App-scoped tokens, reverse-proxy credential stripping, permission middleware (holds even in `none` mode), an owner-only registry plus per-route declarations that refuse an undeclared write, settings scoped to the fields a manifest declares, conversations held to the app that started them (reads and socket frames included) and run under its own `agent` grant, notifications held to the app that raised them, each provider held to its own app, your model providers, model bindings, first-run setup, Doctor fixes and maintenance, updates and tool switches the owner's | `dashboard/handlers/apps.py::api_app_proxy`; `dashboard/token_auth.py`; `dashboard/server.py` (`_dev_user_middleware`, `app_permission_middleware`, `_ownership_denial`); `apps/permissions.py` (`OWNER_ONLY_API_PATHS`, `ROUTE_AUTHZ`, `undeclared_security_route`, `app_conversation_auto_approves`); `dashboard/ws_state.py` (`frame_subject`, `_own_notifications`); `dashboard/state.py::notification_reaches` | enforced |
 | **ASI04** Supply-chain & dependency risk | Quarantine → scan → consent → install; `dangerous` verdict terminal; scanned-tree == installed-tree (tooling left out of both, nothing skipped in what remains, an unreadable file disclosed); staging never follows a link out of the bundle; a registry listing names a public `https://` repo, checked again at every connection its fetch makes | `apps/app_manager.py::install`; `apps/staging.py`; `supply_chain.py` (`SkillScanner`, `Verdict`, `never_installed`); `apps/catalog.py::listing_repo_refusal`; `net/git.py::run_git_guarded` | enforced |

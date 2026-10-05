@@ -174,7 +174,11 @@ async def api_projects_list(request: web.Request) -> web.Response:
 
 
 async def api_projects_create(request: web.Request) -> web.Response:
-    """POST /api/projects"""
+    """POST /api/projects
+
+    An app reaches this with a name, and with nothing the project's sessions are given: its brief,
+    instructions or folder in the body is refused before the handler runs, whatever the app's
+    manifest declares (``apps/permissions.ROUTE_AUTHZ``, ``owner_only_fields``)."""
     body = await json_object_body(request)
     name = require_string(body, "name")
     store = _store()
@@ -710,7 +714,11 @@ async def api_projects_update(request: web.Request) -> web.Response:
 
     A body carrying ``agent_instructions_template`` replaces that whole text, so it names the
     revision the read reported for it (``revisions.agent_instructions_template``) in
-    ``If-Match``; a stale one is refused with ``409 stale_write`` and nothing is written."""
+    ``If-Match``; a stale one is refused with ``409 stale_write`` and nothing is written.
+
+    No app reaches this, whatever its manifest declares (``apps/permissions.ROUTE_AUTHZ``): the
+    brief and instructions are what the project's sessions are given, and the folder is where they
+    work."""
     body = await json_object_body(request)
     rejected = _unwritable_field(body, _PROJECT_UPDATABLE)
     if rejected is not None:
@@ -1191,6 +1199,10 @@ async def api_projects_import(request: web.Request) -> web.Response:
 
     A name collision takes an `imported-N` slot; the existing project is the one thing an import
     must not damage.
+
+    No app reaches this, whatever its manifest declares (``apps/permissions.ROUTE_AUTHZ``): the
+    brief, instructions and overview an archive carries are what the new project's sessions are
+    given.
     """
     from personalclaw.config.loader import config_dir
     from personalclaw.workflows import project_archive as pa

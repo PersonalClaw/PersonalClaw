@@ -18,11 +18,12 @@ project by precedence: ``repeatable`` → the Repeatable project; an explicit
 ``project_id``; a ``project_name`` (find-or-create); else the Personal project.
 
 The work of an Incognito or Temporary chat makes or changes no project and no task list: each is
-kept after the chat, and a project's brief and instructions are put before every chat and loop in
-it (``project_context.context_block``), so :meth:`HierarchyStore.create_project`,
-``update_project``, ``create_task_list`` and ``update_task_list`` refuse it first
-(``lasting_work``). Reading, deleting, and seeding the protected defaults, which carry nothing of
-any chat, are unchanged.
+kept after the chat, a project's brief is put before every chat and loop in it
+(``dashboard/chat_utils._project_context_preamble``, ``loop/manager._project_brief_block``), and
+an agent that loads the project's context is given its brief and instructions as its rules
+(``legibility/context_router``), so :meth:`HierarchyStore.create_project`, ``update_project``,
+``create_task_list`` and ``update_task_list`` refuse it first (``lasting_work``). Reading,
+deleting, and seeding the protected defaults, which carry nothing of any chat, are unchanged.
 """
 
 from __future__ import annotations
@@ -53,6 +54,14 @@ def config_dir() -> Path:
     import-time binding captures whatever the name pointed at on first use (#2443).
     """
     return config_loader.config_dir()
+
+
+def projects_root() -> Path:
+    """The folder every project's own folder lives in: its record, its context and its worktrees.
+
+    At the home's root rather than under ``tasks/``: a project is a top-level entity, not a
+    sub-concern of the task system. Resolved, never created; the store makes it when it writes."""
+    return config_dir() / "projects"
 
 
 logger = logging.getLogger(__name__)
@@ -126,9 +135,7 @@ class HierarchyStore:
         return config_dir() / "tasks"
 
     def _projects_dir(self) -> Path:
-        # Projects live at the config root (not under tasks/) — they're a top-level
-        # entity owning context + worktrees, not a sub-concern of the task system.
-        d = config_dir() / "projects"
+        d = projects_root()
         d.mkdir(parents=True, exist_ok=True)
         return d
 

@@ -158,38 +158,6 @@ def test_an_unknown_project_ledger_read_is_empty():
     assert pctx.read_ledger("p-nope", "decisions") == []
 
 
-# ── the injected block ──
-
-
-def test_the_block_carries_brief_and_overview_together(project):
-    from personalclaw.tasks.hierarchy import HierarchyStore
-
-    HierarchyStore().update_project(project, brief="rework the ingest path")
-    pctx.write_overview(project, "batching is done")
-    block = pctx.context_block(project)
-    assert "rework the ingest path" in block
-    assert "batching is done" in block
-
-
-def test_the_block_is_empty_for_a_project_with_nothing_set(project):
-    assert pctx.context_block(project) == ""
-
-
-def test_the_block_is_empty_for_an_unknown_project():
-    assert pctx.context_block("p-nope") == ""
-
-
-def test_the_block_never_raises(monkeypatch):
-    """It feeds `context.build_message`, where the never-break-a-turn contract applies: a corrupt
-    overview must cost the block, never the user's message."""
-
-    def explode(_):
-        raise RuntimeError("store is broken")
-
-    monkeypatch.setattr("personalclaw.tasks.hierarchy.HierarchyStore.get_project", explode)
-    assert pctx.context_block("p-1") == ""
-
-
 # ── the handoff snapshot ──
 
 

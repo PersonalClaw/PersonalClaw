@@ -306,10 +306,12 @@ class _Gateway:
         app_token: str = "",
         as_backend: bool = False,
         headers: dict[str, str] | None = None,
+        form: Any = None,
     ) -> tuple[int, str]:
         """One request: yours (your cookie), or an app's with *app_token* — beside your cookie as
         its SDK sends it, or, *as_backend*, as the only credential, the way its backend does.
-        *headers* ride along either way (the ``If-Match`` a whole-document write names)."""
+        *headers* ride along either way (the ``If-Match`` a whole-document write names), and *form*
+        is sent in place of a JSON body (an upload)."""
         headers = dict(headers or {})
         params: dict[str, str] = {}
         if app_token and as_backend:
@@ -321,6 +323,8 @@ class _Gateway:
         kwargs: dict[str, Any] = {"headers": headers, "params": params}
         if body is not None:
             kwargs["json"] = body
+        if form is not None:
+            kwargs["data"] = form
         resp = await self.client.request(method, path, **kwargs)
         return resp.status, await resp.text()
 

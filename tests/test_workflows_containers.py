@@ -37,7 +37,6 @@ from personalclaw.workflows.containers import (
     collect_sections,
     group_board,
     ledger_entry,
-    project_block,
     release,
     sweep_decision,
 )
@@ -402,29 +401,6 @@ def test_a_plain_list_source_is_accepted():
 
 def test_no_sources_is_complete_rather_than_an_error():
     assert collect_sections({})[1] is Completeness.COMPLETE
-
-
-# ── the project block ──
-
-
-def test_the_three_fields_stay_DISTINGUISHABLE():
-    """Brief is what/why, overview is current state, instructions are procedure. An agent that
-    cannot tell the goal from the current state treats a finished sub-goal as still open."""
-    block = project_block(brief="ship the thing", overview="auth is done", instructions="use uv")
-    assert block.index("BRIEF") < block.index("OVERVIEW") < block.index("INSTRUCTIONS")
-    assert "current state" in block
-
-
-def test_an_empty_project_produces_NO_block():
-    """An empty labelled block reads as "this project has no goal", which is a claim about the
-    project rather than about the data."""
-    assert project_block(brief="", overview="", instructions="") == ""
-
-
-def test_a_partially_filled_project_omits_the_empty_labels():
-    block = project_block(brief="ship it", overview="", instructions="")
-    assert "BRIEF" in block
-    assert "OVERVIEW" not in block
 
 
 # ── the wayfinder ledgers ──

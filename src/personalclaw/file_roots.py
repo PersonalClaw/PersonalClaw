@@ -70,8 +70,10 @@ def dashboard_roots() -> list[tuple[str, str]]:
     deliverable). For a request the gateway scoped to an app (``permissions.request_app``), a
     root that CONTAINS the home, such as a loop or project workspace bound to ``~``, is left out
     as well, and so is every loop's own folder: it holds the brief the loop's worker reads every
-    cycle, and steering a loop is the owner's. The realpath checks in :func:`admit` refuse a
-    symlink or ``..`` back out of a root.
+    cycle, and steering a loop is the owner's. So is every project's own folder, its context
+    among it: a chat in the project is given the overview and the ledgers kept there, and what a
+    project's sessions are given is the owner's to write. The realpath checks in :func:`admit`
+    refuse a symlink or ``..`` back out of a root.
     """
     roots = all_dashboard_roots()
     from personalclaw.apps.permissions import request_app
@@ -80,13 +82,16 @@ def dashboard_roots() -> list[tuple[str, str]]:
         return roots
     from personalclaw.config.loader import config_dir
     from personalclaw.loop.files import loops_root
+    from personalclaw.tasks.hierarchy import projects_root
 
     home = os.path.realpath(str(config_dir()))
-    loops = os.path.realpath(str(loops_root()))
+    owners_folders = tuple(
+        os.path.realpath(str(root())) + os.sep for root in (loops_root, projects_root)
+    )
     return [
         (label, r)
         for label, r in roots
-        if not (home == r or home.startswith(r + os.sep) or r.startswith(loops + os.sep))
+        if not (home == r or home.startswith(r + os.sep) or r.startswith(owners_folders))
     ]
 
 

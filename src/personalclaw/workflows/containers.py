@@ -514,29 +514,6 @@ def collect_sections(
     return sections, (Completeness.PARTIAL if failures else Completeness.COMPLETE)
 
 
-def project_block(brief: str, overview: str, instructions: str) -> str:
-    """The project context block injected into EVERY session inside the project.
-
-    Three fields in a fixed order, each labelled. Merging them into one blob would lose the
-    distinction the plan draws: the brief is the what/why (stable), the overview is current state
-    (revised in place), and the instructions are operating procedure. An agent that cannot tell the
-    goal from the current state will treat a finished sub-goal as still open.
-
-    Returns "" when nothing is set — an empty labelled block reads as "this project has no goal",
-    which is a claim about the project rather than about the data.
-    """
-    parts: list[str] = []
-    if (brief or "").strip():
-        parts.append("PROJECT BRIEF (the goal and scope of this effort):\n" + brief.strip())
-    if (overview or "").strip():
-        parts.append(
-            "PROJECT OVERVIEW (current state — what the project now knows):\n" + overview.strip()
-        )
-    if (instructions or "").strip():
-        parts.append("PROJECT INSTRUCTIONS (how to operate here):\n" + instructions.strip())
-    return "\n\n".join(parts)
-
-
 #: The three wayfinder ledgers, and what each is FOR. Named here rather than in a UI label so the
 #: promotion test travels with the mechanism: the fog bucket exists so "not yet a task" work has a
 #: home, and its promotion test is whether the question can now be stated precisely.

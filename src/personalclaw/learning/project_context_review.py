@@ -1,7 +1,7 @@
 """Self-updating project context, reviewed and gated (LEARN E1.4).
 
-`project_context.py` owns what a project KNOWS — the living overview, the wayfinder ledgers,
-the operating instructions the block injects. This module is the propose-half of the pattern
+`project_context.py` owns what a project KNOWS — the living overview and the wayfinder ledgers;
+the project record holds its operating instructions. This module is the propose-half of the pattern
 the plan names in §(c): you ask the assistant to review a conversation, it proposes updates to
 the project's **instructions**, **files**, and **skills** with a reason per item, and *nothing
 is written until you accept*.
@@ -11,7 +11,7 @@ shared human-gated queue (`learning.proposals`) and installs nothing at review t
 `project_*` kinds map to the three real sinks a human accept then writes to:
 
 * ``project_instruction`` → appended to the project's ``agent_instructions_template`` (the "how"
-  the block renders as instructions);
+  an agent that loads the project's context is given as its rules);
 * ``project_file`` → an inlined context file under the project's ``context/`` dir;
 * ``project_skill`` → a new skill via the existing ``SkillsLoader.create_skill`` rail (no new
   store — the plan's E1.3 was explicit that a second skill path is out of scope).

@@ -131,10 +131,16 @@ sync or delete one of your agents (its system prompt, tools, skills, model or ap
 mode), write an agent definition or make one of them your agent, install, write, accept
 or remove a skill, write a prompt or a snippet, change which system prompt your chats,
 unattended runs and judges start from, launch a prompt template (which starts a goal
-loop), rewrite the routing notes your orchestrator reads, or write a project's overview,
-which every session in the project is given as what the project now knows. It may still read
-those, check a skill's integrity, decline a proposed skill, and hide a Discover tip or bring
-the hidden ones back. An app ships its skills in its
+loop), rewrite the routing notes your orchestrator reads, or write what a project gives the
+sessions in it: its overview (what the project now knows), its brief (the project's goal, given
+to every chat and loop in it), its instructions (the rules an agent that loads the project's
+context is given), or the folder its sessions work in, whose instruction files an agent CLI there
+follows. The rest of a project's writes are yours as well: an app may not change, delete or
+import a project, choose your default project, claim a row of its Work board, or write
+PersonalClaw's block into the instruction files in its folder, and a project an app makes has no
+brief, instructions or folder until you give it them. It may still read those, make a project
+under a name, check a skill's integrity, decline a proposed skill, and hide a Discover tip or
+bring the hidden ones back. An app ships its skills in its
 manifest, which install consent lists by name, and runs agent work through its own
 `agent` permission, at the tier it declares (`text`, `read` or `tools`). A lesson is memory that
 every agent is handed as a rule, so `/api/lessons` needs the `memory` grant, the same as
@@ -217,8 +223,10 @@ Every other setting is the app's only if its manifest names it in `permissions.c
 the list install consent shows: `GET /api/config/personalclaw` hands an app those fields
 and nothing else, and a write to any other answers `403 config_field_not_declared`.
 Every such refusal leaves a Security Event Log row naming the app and the field. The file
-explorer shows an app no folder that holds your PersonalClaw home, and refuses an app
-the same way: `403`, with a row naming the app and the path it asked for.
+explorer shows an app no folder that holds your PersonalClaw home, nor a loop's or a
+project's own folder inside it (a chat in a project is given the overview and the ledgers
+kept in its folder), and refuses an app the same way: `403`, with a row naming the app and
+the path it asked for.
 
 **What this means for you:** treat an installed app's `network: true` as a stated
 intent you are consenting to, the same way you would trust any program you choose

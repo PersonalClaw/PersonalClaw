@@ -207,6 +207,10 @@ def test_the_route_census_is_not_vacuous() -> None:
     assert ("POST", "/api/tools/toggle") in routes
     assert ("POST", "/api/tools/provider-toggle") in routes
     assert ("PUT", "/api/legibility/always-on/doc") in routes
+    # And so are a project's: its brief, instructions and folder, and the instruction files in it.
+    assert ("POST", "/api/projects") in routes
+    assert ("PUT", "/api/projects/{project_id}") in routes
+    assert ("POST", "/api/projects/{project_id}/context-adapters/regenerate") in routes
 
 
 def test_the_read_census_is_not_vacuous() -> None:
@@ -288,6 +292,9 @@ def test_every_route_declaration_is_real_and_says_why() -> None:
         assert isinstance(authz, (OwnerOnly, AppMay)), key
         text = authz.capability if isinstance(authz, OwnerOnly) else authz.reason
         assert text.strip(), f"{key}: a declaration must say what it grants or why it is safe"
+        # A field of the body that is the owner's is refused in its own words, so it has some.
+        for owned in authz.owner_only_fields if isinstance(authz, AppMay) else ():
+            assert owned.field and owned.capability.strip(), f"{key}: {owned}"
 
 
 @pytest.mark.parametrize("family", sorted(SECURITY_ROUTE_FAMILIES))
