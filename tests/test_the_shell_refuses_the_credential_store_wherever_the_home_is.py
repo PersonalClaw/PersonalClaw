@@ -293,7 +293,8 @@ async def test_a_chat_tells_the_hook_the_folder_its_agent_cli_runs_in(tmp_path):
 
     calls = builder.hooks.on_tool_call.call_args_list
     assert calls, "the hook was asked about the call"
-    assert {call.kwargs.get("cwd") for call in calls} == {project.resolve()}
+    # The hook takes the folder as a path or a string (`cwd: str | os.PathLike[str]`).
+    assert {Path(call.kwargs.get("cwd")).resolve() for call in calls} == {project.resolve()}
 
 
 # ── the OS sandbox's masks ─────────────────────────────────────────────────────────────────────
