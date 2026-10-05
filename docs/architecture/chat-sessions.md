@@ -518,7 +518,16 @@ chat, channel thread, loop worker, webhook, subagent).
   once the turn takes it (`EVENT_STEER`, written by `running_turn.take_steer`):
   the answer so far is settled first, so the entry sits between what the answer
   said before it and after it, marked `meta.steered`; one the turn does not take
-  is written by the queue when it runs, once. The save records `message_count`
+  is written by the queue when it runs, once. However her message comes in (a
+  send, a steer, a queued send, an edit or a rewind), the page sends each block
+  she pasted in place of its `[Paste #N]` marker and the blocks beside it
+  (`asSent` in `web/src/pages/chat/pasteBlocks.ts`; `meta.pastes`,
+  `own_words.PASTES`): her entry keeps them, a
+  queued item carries them to the row it runs as (numbered again when queued
+  messages merge), and every frame that tells a page of her message carries them,
+  so her bubble shows each as its chip live and read back. A send that carries a
+  block and still holds its marker is refused (`paste_not_expanded`): the model
+  would read the marker and never what was pasted. The save records `message_count`
   in the metadata line, which `ConversationLog.list_sessions` serves as the chat
   list's count.
 - **Where each line came from is the line's own, and a save never writes one**

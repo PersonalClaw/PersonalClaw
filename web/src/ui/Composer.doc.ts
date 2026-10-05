@@ -31,6 +31,7 @@ const doc: UiDoc = {
     { name: 'onOptimize', description: 'Optimizes the current draft via the prompt optimizer (host swaps `value`); also bound to ⌘↵.' },
     { name: 'optimizing', description: 'True while an optimize round-trip is in flight → spinner + disabled optimize button.' },
     { name: 'history', description: 'Prior user messages oldest→newest, for ↑/↓ history recall in an empty draft.' },
+    { name: 'onRecall', description: 'Called as ↑/↓ brings back history[index]; returns the text to show for it. A host that keeps the blocks pasted into a message restores them here, renumbering markers that would meet a block the draft holds.' },
     { name: 'onTranscribe', description: 'Transcribes a recorded audio blob to text — required (with controls.mic) to enable voice input.' },
     { name: 'onMicError', description: 'Reports a voice-input failure (mic blocked / no STT) so the host can surface it.' },
     { name: 'handsFree', description: 'Hands-free voice loop config (phrase lists + mute-while-speaking) — with onHandsFreeSubmit it adds the hands-free toggle beside the mic.' },

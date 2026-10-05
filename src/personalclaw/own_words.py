@@ -40,15 +40,55 @@ OWN_WORDS = "own_words"
 #: labelled as the prompt's, and it is never part of :func:`own_words`.
 RAN_PROMPT = "ran_prompt"
 
+#: The ``meta`` key of the blocks a person pasted into a message: ``[{"seq", "lines", "content"}]``.
+#: The composer sends each block in the message's text where its ``[Paste #N]`` marker stood in the
+#: draft, and the blocks beside it, whichever way the message is sent: a send, a steer, a queued
+#: send, an edit or a rewind. The message's row keeps them, so the chat shows each block as its
+#: chip again, and learning reads them as material, never as her words.
+PASTES = "pastes"
 
-def pasted_blocks(meta: object) -> list[str]:
-    """The blocks a send pasted, as the composer sent them (``meta.pastes[].content``)."""
-    pastes = meta.get("pastes") if isinstance(meta, Mapping) else None
+
+def paste_marker(seq: int) -> str:
+    """The marker the composer shows in a draft where block *seq* was pasted."""
+    return f"[Paste #{seq}]"
+
+
+def pastes_of(meta: object) -> list[dict[str, Any]]:
+    """The blocks a send pasted, as the composer sent them (:data:`PASTES`): each with its text,
+    and its number and line count when it gives them. An entry with no text is no block."""
+    pastes = meta.get(PASTES) if isinstance(meta, Mapping) else None
     if not isinstance(pastes, list):
         return []
     return [
-        p["content"] for p in pastes if isinstance(p, dict) and isinstance(p.get("content"), str)
+        {
+            "content": p["content"],
+            **{
+                k: p[k]
+                for k in ("seq", "lines")
+                if isinstance(p.get(k), int) and not isinstance(p.get(k), bool)
+            },
+        }
+        for p in pastes
+        if isinstance(p, Mapping) and isinstance(p.get("content"), str)
     ]
+
+
+def pasted_blocks(meta: object) -> list[str]:
+    """The text of each block a send pasted (:func:`pastes_of`)."""
+    return [p["content"] for p in pastes_of(meta)]
+
+
+def left_as_marker(message: str, pastes: Sequence[Mapping[str, Any]]) -> int | None:
+    """The number of a block in *pastes* whose marker *message* holds in its place, or ``None``.
+
+    The composer sends each block in place of its marker, so a message that still holds one would
+    reach the model as ``[Paste #N]`` alone and never as what was pasted there. A marker with no
+    block beside it is words someone typed, and is not asked about."""
+    for p in pastes:
+        seq = p.get("seq")
+        if isinstance(seq, int) and paste_marker(seq) in message and p["content"] not in message:
+            return seq
+    return None
 
 
 def typed_text(message: str, pasted: Sequence[str] = ()) -> str:

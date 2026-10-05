@@ -158,8 +158,9 @@ PersonalClaw's own agent can, and an agent CLI that cannot be handed a message m
 offered Queue.
 
 A queued message waits in the stacked cards — the current answer finishes, then yours runs.
-Each queued card has three controls: **Cancel** (drop it, text comes back to the composer),
-**Edit** (same, but reopened for changes), and **Interrupt now**.
+Each queued card has three controls: **Cancel** (drop it), **Edit** (take it back into the
+composer to change it, with what you pasted into it, after anything you are writing there), and
+**Interrupt now**.
 
 **Interrupt now** stops the running turn *cooperatively* and starts that queued message next.
 It is not the Stop button: Stop cancels the turn and clears the queue, while Interrupt keeps
@@ -364,6 +365,13 @@ same chip and same removal as a file you dragged in, and it reaches the model th
 attached image does (below). A screenshot already on your clipboard needs no menu: paste it
 into the composer (⌘V / Ctrl+V) and it attaches the same way. A paste that carries text as
 well — cells copied from a spreadsheet bring a picture of themselves along — pastes the text.
+
+A long text paste (four lines or more, or a few hundred characters) becomes a card above the
+composer and a **[Paste #N]** marker where it landed, so your message stays readable while you
+write it. However the message then goes (sent, steered into a running answer, queued, brought
+back with ↑ or out of the queue, edited, rewound) the agent reads what you pasted in the marker's
+place, and your message shows it as a chip you can open, after a reload too. **Copy** on your
+message copies it with the pasted text.
 
 A file still uploading shows its progress above the composer, and until it is in, Send is off
 and says which file it is waiting for; Enter says the same. The message then goes with the

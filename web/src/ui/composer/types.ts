@@ -79,6 +79,10 @@ export interface ComposerProps {
   optimizing?: boolean
   /** Prior user messages, oldest→newest, for ↑/↓ history recall in an empty draft. */
   history?: string[]
+  /** ↑/↓ is bringing back `history[index]`: the text to show for it. A host that keeps more of a
+   *  message than its text (the blocks pasted into it) restores that here, and may renumber its
+   *  markers so they meet nothing the draft already holds. Absent → the entry's text as it is. */
+  onRecall?: (index: number) => string
   /** Transcribe a recorded audio blob to text (host inserts it into the draft).
    *  `opts.duplex` marks a hands-free capture so the host can ask the backend to
    *  filter the assistant's own speech back out. */

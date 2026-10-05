@@ -8,11 +8,17 @@ from aiohttp import web
 
 from personalclaw.artifacts import retakes
 from personalclaw.dashboard import repeated_steps
-from personalclaw.dashboard.chat_persistence import _TURN_DISPATCH_ROLES, save_session_to_history
+from personalclaw.dashboard.chat_persistence import (
+    _TURN_DISPATCH_ROLES,
+    _redact_meta,
+    save_session_to_history,
+)
 from personalclaw.dashboard.chat_runner import run_chat
 from personalclaw.dashboard.chat_utils import _history_key_for, take_in_the_users_links
 from personalclaw.dashboard.state import DashboardState, _ChatSession
+from personalclaw.http_errors import json_error
 from personalclaw.mcp_artifacts import images_made_in
+from personalclaw.own_words import PASTES, left_as_marker, pastes_of
 from personalclaw.request_validation import bool_field, json_object_body, string_field
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
@@ -288,6 +294,13 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
     content = (body.get("content") or "").strip()
     if not content:
         return web.json_response({"error": "content is required"}, status=400)
+    # The blocks she pasted into it (`own_words.PASTES`), which the page sends in their markers'
+    # place and beside it, as every send does: her row keeps them, so her bubble shows each as its
+    # chip. One whose marker the message still holds is refused, as a send's is
+    # (`chat_handlers.api_chat`): the agent would read the marker and never what she pasted.
+    pastes = pastes_of(body)
+    if (unsent := left_as_marker(content, pastes)) is not None:
+        return json_error("paste_not_expanded", status=400, error_extra={"paste": unsent})
 
     async with session._lock:
         if session.running:
@@ -389,7 +402,13 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
                 _resend_ts = client_ts
             except (ValueError, TypeError):
                 _resend_ts = ""
-        session.append("user", _bc, "msg msg-u", ts=_resend_ts)
+        session.append(
+            "user",
+            _bc,
+            "msg msg-u",
+            ts=_resend_ts,
+            meta=_redact_meta({PASTES: pastes}) if pastes else None,
+        )
         take_in_the_users_links(request.get("app", ""), session.key, _bc)
         if rewind and carried_rewound:
             session.messages[-1]["rewound"] = carried_rewound

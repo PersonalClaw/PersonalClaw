@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { hydrateTurns, turnText, type HistMsg } from './chatTypes'
-import { expandPasteMarkers, markerFor, type PasteBlock } from './pasteBlocks'
+import { asSent, markerFor, type PasteBlock } from './pasteBlocks'
+import type { TurnPaste } from './PasteChip'
 
 /** #380 — two identical pastes in one message must survive a reload as two chips.
  *
- *  The send path EXPANDS each `[Paste #N]` marker to its block (the model sees the real
- *  text); the reload path re-collapses using `meta.pastes`. That re-collapse used to be
+ *  The send path EXPANDS each `[Paste #N]` marker to its block (`asSent`: the model sees the
+ *  real text); the reload path re-collapses using `meta.pastes`. That re-collapse used to be
  *  `out.split(p.content).join(marker)` — a GLOBAL replace — so with two blocks of
  *  identical content the first pass rewrote BOTH occurrences to "[Paste #1]" and the
  *  second pass found nothing left. `PasteChip` then dropped the unresolvable marker, so
@@ -19,13 +20,19 @@ const block = (seq: number, content: string): PasteBlock => ({
 })
 
 /** The reload path, end to end: what the bubble renders for a persisted user message. */
-function reloaded(stored: string, blocks: PasteBlock[]): string {
+function reloaded(stored: string, blocks: TurnPaste[]): string {
   const messages: HistMsg[] = [{
     role: 'user',
     content: stored,
     meta: { pastes: blocks.map(({ seq, lines, content }) => ({ seq, lines, content })) },
   }]
   return turnText(hydrateTurns(messages)[0])
+}
+
+/** A draft sent as the page sends it, and read back as its row keeps it. */
+function sentAndReloaded(draft: string, blocks: PasteBlock[]): string {
+  const sent = asSent(draft, blocks)
+  return reloaded(sent.text, sent.pastes)
 }
 
 const CODE = 'def a():\n    return 1\n\n# end\n'
@@ -35,21 +42,20 @@ describe('re-collapsing a reloaded message round-trips', () => {
   it('two IDENTICAL pastes come back as two distinct chips', () => {
     const blocks = [block(1, CODE), block(2, CODE)]
     const draft = `before ${markerFor(1)} middle ${markerFor(2)} after`
-    const stored = expandPasteMarkers(draft, blocks)
     // The bug, pinned: this used to be "before [Paste #1] middle [Paste #1] after".
-    expect(reloaded(stored, blocks)).toBe(draft)
+    expect(sentAndReloaded(draft, blocks)).toBe(draft)
   })
 
   it('three identical pastes each keep their own seq', () => {
     const blocks = [block(1, CODE), block(2, CODE), block(3, CODE)]
     const draft = `${markerFor(1)}|${markerFor(2)}|${markerFor(3)}`
-    expect(reloaded(expandPasteMarkers(draft, blocks), blocks)).toBe(draft)
+    expect(sentAndReloaded(draft, blocks)).toBe(draft)
   })
 
   it('distinct pastes still round-trip — the control', () => {
     const blocks = [block(1, CODE), block(2, OTHER)]
     const draft = `a ${markerFor(1)} b ${markerFor(2)} c`
-    expect(reloaded(expandPasteMarkers(draft, blocks), blocks)).toBe(draft)
+    expect(sentAndReloaded(draft, blocks)).toBe(draft)
   })
 
   it('a block whose content CONTAINS another block still round-trips (the longest-first pass)', () => {
@@ -60,12 +66,12 @@ describe('re-collapsing a reloaded message round-trips', () => {
     const outer = `def a():\n    ${inner}`
     const blocks = [block(1, inner), block(2, outer)]
     const draft = `${markerFor(2)} then ${markerFor(1)}`
-    expect(reloaded(expandPasteMarkers(draft, blocks), blocks)).toBe(draft)
+    expect(sentAndReloaded(draft, blocks)).toBe(draft)
   })
 
   it('emits exactly one marker per block — never a duplicate label', () => {
     const blocks = [block(1, CODE), block(2, CODE)]
-    const out = reloaded(expandPasteMarkers(`x ${markerFor(1)} y ${markerFor(2)}`, blocks), blocks)
+    const out = sentAndReloaded(`x ${markerFor(1)} y ${markerFor(2)}`, blocks)
     expect(out.match(/\[Paste #1\]/g) ?? []).toHaveLength(1)
     expect(out.match(/\[Paste #2\]/g) ?? []).toHaveLength(1)
   })

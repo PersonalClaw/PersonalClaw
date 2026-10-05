@@ -333,6 +333,14 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "Running this turn again may repeat steps it finished that changed something, so nothing "
         "was run."
     ),
+    # ── what she pasted (dashboard/chat_handlers.py, dashboard/chat_regenerate.py) ──
+    # 400: a message that carries a pasted block (`own_words.PASTES`) still holds the block's
+    # `[Paste #N]` marker where the composer puts the pasted text, so the agent would read the
+    # marker and never what was pasted. `error.paste` is the block's number.
+    "paste_not_expanded": (
+        "The message holds a pasted block's marker where the pasted text belongs, so the agent "
+        "would never see what was pasted. Send it with the pasted text in place of the marker."
+    ),
     # ── chat plan mode (dashboard/chat_plan.py) ──
     "session_not_found": "No such chat session.",
     "plan_session_missing": "The session has no plan in progress.",

@@ -51,7 +51,7 @@ from personalclaw.dashboard.chat_persistence import (
     prior_turns_transcript,
     save_session_to_history,
 )
-from personalclaw.dashboard.chat_queue import ASKED_FOR_BY, ON_RECORD
+from personalclaw.dashboard.chat_queue import ASKED_FOR_BY, ON_RECORD, queued_pastes
 from personalclaw.dashboard.chat_session_map import (
     build_turn_telemetry,
     stamp_context_fed,
@@ -158,6 +158,7 @@ from personalclaw.llm_helpers import (
 from personalclaw.loop import posture as loop_posture
 from personalclaw.own_words import (
     OWN_WORDS,
+    PASTES,
     own_words,
     queued_words,
     record_prompt_run,
@@ -5634,6 +5635,9 @@ async def run_chat(
                 # And which of the row's words their senders typed (`queued_words`).
                 if (_queued_own := queued_words(consumed)) is not None:
                     queued_meta[OWN_WORDS] = _queued_own
+                # And the blocks pasted into them, which the row shows as their chips.
+                if _pasted := queued_pastes(consumed):
+                    queued_meta[PASTES] = _pasted
                 # Messages from different places record no source of their own, so the row says
                 # whose each one was: who asked for its turn (`turn_source.asked_by`).
                 _queued_source = shared_source(consumed)
@@ -5664,6 +5668,7 @@ async def run_chat(
                             "session": session.key,
                             "content": _disp,
                             "ts": session.messages[-1].get("ts", ""),
+                            **({PASTES: _pasted} if _pasted else {}),
                         },
                     )
 

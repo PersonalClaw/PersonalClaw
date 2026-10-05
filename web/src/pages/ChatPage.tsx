@@ -74,11 +74,12 @@ import { ChatActivityPanel } from './chat/ChatActivityPanel'
 import { AssistantActions, UserActions } from './chat/MessageActions'
 import { askToRepeat } from './chat/repeatedSteps'
 import { parseOptions, parseSwitchToAgent } from './chat/parseAssistant'
-import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, expandPasteMarkers, pruneBlocks } from './chat/pasteBlocks'
+import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, pruneBlocks, asSent, takeIn } from './chat/pasteBlocks'
+import type { TurnPaste } from './chat/PasteChip'
 import { sessionTemplatePatch } from './chat/sessionTemplate'
 import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
-import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type QuestionSegment, type ActivitySegment, type ThinkingSegment, type ErrorSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, failedStepCount, unaskedStepCount, foldStepLine, noteOf, LEDGER_ACTIVITY_KINDS, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, imageDeliveryOf, noticeSegment, ranPromptOf, replyCutOf, type ReplyCut } from './chat/chatTypes'
+import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type QuestionSegment, type ActivitySegment, type ThinkingSegment, type ErrorSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, failedStepCount, unaskedStepCount, foldStepLine, noteOf, LEDGER_ACTIVITY_KINDS, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, imageDeliveryOf, noticeSegment, ranPromptOf, replyCutOf, type ReplyCut, pastesOf, shownText } from './chat/chatTypes'
 import { isImagePath } from './chat/imageAttachments'
 import { AttachmentChips, TurnAttachments } from './chat/AttachmentChips'
 import { applyApprovalFrame, applyApprovalResolved, applyToolCallFrame, applyToolResultFrame } from './chat/liveToolFrames'
@@ -973,7 +974,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const uploadHold = uploads.length === 0 ? ''
     : uploads.length === 1 ? `Wait for ${uploads[0].name} to finish uploading${uploadCancellable ? ', or cancel it' : ''}.`
     : `Wait for ${uploads.length} files to finish uploading${uploadCancellable ? ', or cancel them' : ''}.`
-  const [promptHistory, setPromptHistory] = useState<string[]>([])
+  // Her earlier messages for ↑/↓ recall, each with the blocks she pasted into it, which come back
+  // to the composer with it (`recallPrompt`).
+  const [promptHistory, setPromptHistory] = useState<RecalledPrompt[]>([])
+  const historyTexts = useMemo(() => promptHistory.map((h) => h.text), [promptHistory])
   // `undefined` until the backend reports a measurement (it sends `pct: null` when it
   // has none) — an unmeasured context must show no percentage, not 0%.
   const [contextPct, setContextPct] = useState<number | undefined>(undefined)
@@ -1024,8 +1028,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const [resultBody, setResultBody] = useState<{ content: string; length: number } | null>(null)
   // Messages typed while a turn is streaming are QUEUED server-side (FIFO) and
   // shown above the composer; the backend dispatches them one-by-one as each turn
-  // finishes. Driven by the queue_push / queue_pop / queue_cancel WS events.
-  const [queued, setQueued] = useState<{ id: string; content: string }[]>([])
+  // finishes. Driven by the queue_push / queue_pop / queue_cancel WS events. Each keeps the blocks
+  // she pasted into it: the strip shows them as their markers, and Edit gives them back.
+  const [queued, setQueued] = useState<QueuedMessage[]>([])
   // Messages the server confirmed it will STEER into the running turn, until the turn takes
   // each: then it is her bubble in the transcript, where the turn took it (the `steer` flavour
   // of `chat_user_message`), and its line here goes. Distinct from `queued`: a steered message
@@ -1292,14 +1297,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         writeCachedDetail(sessionId, d)
         // rehydrate any still-pending queued messages (mid-stream FIFO) so a reload
         // mid-queue shows them again above the composer.
-        setQueued(Array.isArray(d.queue) ? d.queue.filter((q) => q && q.id).map((q) => ({ id: q.id, content: q.content })) : [])
+        setQueued(Array.isArray(d.queue) ? d.queue.filter((q) => q && q.id).map((q) => queuedMessage(q.id, q.content, q.pastes)) : [])
         // Seed ↑/↓ prompt-history from the conversation's existing user turns, so
         // recall works immediately on a revisited chat (not only after sending a
         // new message this render). Oldest→newest, deduped against repeats.
-        setPromptHistory(hydrateTurns(d.messages || []).reduce<string[]>((acc, t) => {
+        setPromptHistory(hydrateTurns(d.messages || []).reduce<RecalledPrompt[]>((acc, t) => {
           if (t.role !== 'user') return acc
           const txt = turnText(t).trim()
-          if (txt && acc[acc.length - 1] !== txt) acc.push(txt)
+          if (txt) withPrompt(acc, { text: txt, pastes: t.pastes ?? [] })
           return acc
         }, []).slice(-50))
         setTitle(d.title || '')
@@ -1738,8 +1743,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // Visible message queue (mid-stream sends). The server owns the FIFO; these
       // events keep the strip above the composer in sync.
       case 'queue_push': {
-        const id = String(d.queue_id ?? ''); const content = String(d.content ?? '')
-        if (id) setQueued((prev) => (prev.some((q) => q.id === id) ? prev : [...prev, { id, content }]))
+        const id = String(d.queue_id ?? '')
+        if (id) setQueued((prev) => (prev.some((q) => q.id === id) ? prev : [...prev, queuedMessage(id, String(d.content ?? ''), d.pastes)]))
         // A steer the turn ended without taking, queued to run next: it is in the strip now.
         if (d.steer_ts) setSteered((prev) => prev.filter((s) => s.ts !== d.steer_ts))
         break
@@ -1815,13 +1820,16 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         // already on screen, and dropping the text run here would cut the answer that snapshot
         // resumed in two.
         if (d.ts && adoptedUserTs.current.has(String(d.ts))) break
+        // Her bubble shows each block she pasted as its chip, as the chat does read back.
+        const pastes = pastesOf(d.pastes)
+        const sentTurn = userTurn(shownText(content, pastes), d.ts ? String(d.ts) : undefined, pastes)
         // Her steer, which the running turn has just taken: her bubble goes here, below what the
         // answer said so far (settled by the `chat_segment` before this frame), and the answer
         // goes on below it. Nothing ends or starts: it is the same turn, and it is running.
         if (d.steer) {
           endTextRun()
           setSteered((prev) => prev.filter((s) => s.ts !== d.ts))
-          setTurns((prev) => [...prev, { ...userTurn(content, d.ts ? String(d.ts) : undefined), steered: true }])
+          setTurns((prev) => [...prev, { ...sentTurn, steered: true }])
           markStreaming(true)
           break
         }
@@ -1830,7 +1838,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         dropTextRun()
         setFollowups([])  // a new turn is starting (queued drain) — clear stale chips
         setFollowupsNeed('')
-        setTurns((prev) => [...prev, userTurn(content, d.ts ? String(d.ts) : undefined)])
+        setTurns((prev) => [...prev, sentTurn])
         // The gateway sends this only as it STARTS the turn, so the turn is running whatever
         // this page believed a moment ago. After a Stop the composer has already settled, and a
         // message queued behind the stopping turn starts next ("Session reset — processing next
@@ -2335,6 +2343,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // /optimize), use it; otherwise the Sparkles preview path leaves the optimized
     // text in the input with `preOptimize` holding what the user first typed.
     const original = opts?.original ?? (preOptimize !== null && preOptimize.trim() !== t ? preOptimize.trim() : undefined)
+    // Her message as it leaves the page, whichever way it goes from here (a steer, a queued send,
+    // a send): `llmText` holds each block she pasted in place of its marker, which is what the
+    // agent reads and her row keeps, and `turnPastes` are the blocks, which her row keeps beside it
+    // so her bubble shows each as its chip (`asSent`). Her bubble keeps the markers she wrote.
+    const { text: llmText, pastes: turnPastes } = asSent(t, pasteBlocks)
     // Mid-run send → ask for what the composer's mid-stream button said: STEER (inject into
     // the answer being written) on a turn that takes one, QUEUE on a turn that does not. The
     // label follows the gateway's word for the running turn (`takesSteers`), so the request
@@ -2392,8 +2405,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // Stamped for the same reason the normal send path stamps one: the server stores
       // the ts we send, and Edit & resend locates a message by it.
       const steerTs = new Date().toISOString()
+      const meta = turnPastes.length ? { client_ts: steerTs, pastes: turnPastes } : { client_ts: steerTs }
       ensureSession()
-        .then((s) => api.sendChat(t, s, { client_ts: steerTs }, takesSteersRef.current ? 'steer' : 'followup').then((r) => [s, r] as const))
+        .then((s) => api.sendChat(llmText, s, meta, takesSteersRef.current ? 'steer' : 'followup').then((r) => [s, r] as const))
         .then(([s, r]) => {
           setInput((cur) => (cur === t ? '' : cur))
           if (r?.steered) { setSteered((prev) => [...prev, { text: t, ts: steerTs }]); return }
@@ -2404,7 +2418,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           // Dispatched as a fresh turn. Render exactly what the normal send path would:
           // the user's bubble, then arm streaming so its reply has somewhere to land.
           followNewTurn()
-          setTurns((prev) => [...prev, userTurn(t, steerTs)])
+          setTurns((prev) => [...prev, userTurn(t, steerTs, turnPastes.length ? turnPastes : undefined)])
           markStreaming(true)
           dropTextRun()
         })
@@ -2420,15 +2434,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       notice.showError(uploadHold, 'upload')
       return
     }
-    // The bubble keeps the prompt as typed (paste markers shown as chips); the
-    // MODEL receives the markers expanded to the full pasted content.
-    const blocks = pasteBlocks
-    const llmText = expandPasteMarkers(t, blocks)
     // meta.files = @-mentioned workspace files + uploaded attachments (B0).
     const files = [...mentionedFiles, ...attachedPaths]
-    // keep the paste blocks on the turn so the bubble renders [Paste #N] as
-    // inspectable chips (only those still referenced in the sent text).
-    const turnPastes = pruneBlocks(t, blocks).map((b) => ({ seq: b.seq, lines: b.lines, content: b.content }))
     // Stamp a client ts and pass it to the backend so it stores the SAME ts on the
     // user message. The server otherwise skips broadcasting the user echo ("FE adds
     // optimistically"), leaving a live turn's ts undefined until a reload — which
@@ -2446,7 +2453,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     setTurns((prev) => [...prev, userTurn(uiLabel ?? original ?? t, clientTs, turnPastes.length ? turnPastes : undefined, files, original ? t : undefined)])
     // A widget action is not something the user TYPED, so it never joins ↑-history —
     // replaying a machine payload as a prompt is not an affordance anyone wants.
-    if (!uiLabel) setPromptHistory((prev) => { const h = original ?? t; return (prev[prev.length - 1] === h ? prev : [...prev, h]).slice(-50) })
+    if (!uiLabel) setPromptHistory((prev) => { const h = original ?? t; return withPrompt([...prev], { text: h, pastes: pruneBlocks(h, pasteBlocks).map(({ seq, lines, content }) => ({ seq, lines, content })) }).slice(-50) })
     const knowledgeIds = mentionedKnowledge.map((k) => k.id)
     const artifactSlugs = mentionedArtifacts.map((a) => a.slug)
     // dropTextRun: a fresh send must open a NEW coalesced text run. A follow-up in an
@@ -2692,6 +2699,16 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     setPasteBlocks((prev) => prev.filter((b) => b.seq !== seq))
     setInput((prev) => prev.replace(markerFor(seq), '').replace(/  +/g, ' '))
   }
+  // A message she sent comes back to the composer (↑/↓, or Edit on a queued one) with the blocks
+  // she pasted into it, as their cards, numbered so none shares a marker with a block the composer
+  // holds (`takeIn`). Sending it again then sends what she pasted, not its marker. Returns the
+  // message's text as the composer now holds it.
+  function takeBack(text: string, pastes: readonly TurnPaste[]): string {
+    const back = takeIn(text, pastes, pasteBlocks)
+    if (back.blocks.length) setPasteBlocks((prev) => [...prev, ...back.blocks])
+    return back.text
+  }
+  const recallPrompt = (index: number) => takeBack(promptHistory[index].text, promptHistory[index].pastes)
 
   async function stop() {
     stoppedTurnRef.current = true
@@ -2812,6 +2829,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     const t = content.trim()
     if (!t) return
     const turn = turns[turnIndex]
+    // Her message as it leaves the page again: each block she pasted into it in place of its
+    // marker, and the blocks beside it (`asSent`), as every send has. The page shows her message
+    // with the markers, so the editor and Rewind to here both hold them.
+    const sent = asSent(t, turn?.pastes ?? [])
     // Locate the message by the ORIGINAL turn's ts (backend truncates from there),
     // and stamp the re-added turn with a FRESH ts that the backend also stores —
     // so an immediate SECOND edit-resend still has a matching ts (the backend
@@ -2838,8 +2859,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // runs only on her yes, sent back as `confirmed`, and a No leaves the page as it was.
     const again = !!turn && t === turnText(turn)
     const landed = await replaceTurns(
-      (s) => api.editResend(s, t, turn?.ts, turnIndex, newTs, asRewind, { again, confirm: confirmed }),
-      (prev) => [...prev.slice(0, turnIndex), userTurn(t, newTs)],
+      (s) => api.editResend(s, sent.text, turn?.ts, turnIndex, newTs, asRewind, { again, confirm: confirmed }, sent.pastes),
+      (prev) => [...prev.slice(0, turnIndex), userTurn(t, newTs, sent.pastes.length ? sent.pastes : undefined)],
       (e) => {
         if (askToRepeat(e, (yes) => editResend(turnIndex, content, rewind, yes))) return
         if (fromEditor) setEditFailure(failureSentence(what, e)); else reportActionFailure(what)(e)
@@ -3556,12 +3577,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           each turn finishes; each can be cancelled while still pending. */}
       <QueueStack items={queued} canInterrupt={streaming}
         onCancel={(id) => { setQueued((prev) => prev.filter((q) => q.id !== id)); const s = sessionRef.current; if (s) api.cancelQueued(s, id).catch(reportActionFailure('cancel that queued message')) }}
-        onEdit={(id, content) => {
+        onEdit={(q) => {
           // Honest "edit": there's no queue-edit endpoint, so cancel the pending item
           // and drop its text back in the composer for the user to revise + resend
-          // (avoids a fake in-place edit that would silently re-queue at the back).
-          setQueued((prev) => prev.filter((q) => q.id !== id)); const s = sessionRef.current; if (s) api.cancelQueued(s, id).catch(reportActionFailure('cancel that queued message'))
-          setInput((cur) => (cur.trim() ? cur : content))
+          // (avoids a fake in-place edit that would silently re-queue at the back). It comes back
+          // with what she pasted into it, and after the draft she is writing, if any: the
+          // message leaves the queue, so nothing of it may be lost on the way to the composer.
+          setQueued((prev) => prev.filter((x) => x.id !== q.id)); const s = sessionRef.current; if (s) api.cancelQueued(s, q.id).catch(reportActionFailure('cancel that queued message'))
+          const back = takeBack(q.content, q.pastes ?? [])
+          setInput((cur) => (cur.trim() ? `${cur.trimEnd()}\n\n${back}` : back))
         }}
         onInterrupt={(id) => {
           // Interrupt-now: soft-stop the running turn and run THIS queued message
@@ -3674,7 +3698,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           )}
           onMentionFile={onMentionFile} onMentionKnowledge={onMentionKnowledge} onLargePaste={onLargePaste}
           openModelSignal={openModelSignal} openAgentSignal={openAgentSignal} openReasoningSignal={openReasoningSignal}
-          onOptimize={optimize} optimizing={optimizing} history={promptHistory}
+          onOptimize={optimize} optimizing={optimizing} history={historyTexts} onRecall={recallPrompt}
           onTranscribe={transcribe} onMicError={(msg) => notice.showError(msg, 'voice-input')} canQueue canSteer={takesSteers} sendHeldReason={uploadHold} contextPct={contextPct} contextWindow={contextWindow}
           handsFree={{ confirmationPhrases: voiceCfg.confirmation_phrases, exitPhrases: voiceCfg.exit_phrases, speaking: speakingTurn !== null, muteWhileSpeaking: voiceCfg.duplex_mute_enabled }}
           onHandsFreeSubmit={(t) => void send(t, { inputOrigin: 'voice' })}
@@ -3952,7 +3976,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                               {turn.rewound && turn.rewound.length > 0 && (
                                 <RewindDivider snapshots={turn.rewound} canFork={memoryMode === 'persistent'} onFork={(si) => forkRewound(i, si)} />
                               )}
-                              {!streaming && <UserActions text={turnTextOf(turn)} canFork={memoryMode === 'persistent'}
+                              {!streaming && <UserActions text={asSent(turnTextOf(turn), turn.pastes ?? []).text} canFork={memoryMode === 'persistent'}
                                 canRewind={!isLast} onRewind={() => rewindTo(i)} ts={stampOf(turn)}
                                 onEdit={() => { setEditFailure(null); setEditingTurn(i) }} onFork={() => forkAt(i)} />}
                             </div>
@@ -4313,6 +4337,27 @@ function KnowledgeChips({ items, onRemove }: { items: { id: string; name: string
   )
 }
 
+/** A message waiting in the chat's queue, as the strip shows it: her words with each block she
+ *  pasted into it as its marker (`content`), and the blocks, which Edit gives back with it. */
+interface QueuedMessage { id: string; content: string; pastes?: TurnPaste[] }
+
+/** A queued message as the gateway tells it (a `queue_push` frame, a read of the chat). */
+function queuedMessage(id: string, content: string, raw: unknown): QueuedMessage {
+  const pastes = pastesOf(raw)
+  return { id, content: shownText(content, pastes), ...(pastes ? { pastes } : {}) }
+}
+
+/** One of her earlier messages for ↑/↓ recall: its text as she wrote it, and the blocks she
+ *  pasted into it, which come back to the composer with it. */
+interface RecalledPrompt { text: string; pastes: TurnPaste[] }
+
+/** *list* with *entry* last: a message sent again as it was is one entry, not two. */
+function withPrompt(list: RecalledPrompt[], entry: RecalledPrompt): RecalledPrompt[] {
+  const last = list[list.length - 1]
+  if (!last || last.text !== entry.text || JSON.stringify(last.pastes) !== JSON.stringify(entry.pastes)) list.push(entry)
+  return list
+}
+
 /** The mid-stream message queue, shown directly above the composer. Each item is
  *  a message the user sent while a turn was streaming; the backend dispatches them
  *  FIFO as turns finish. A pending item can be cancelled (removes it server-side).
@@ -4328,9 +4373,9 @@ function KnowledgeChips({ items, onRemove }: { items: { id: string; name: string
  *  item; Edit cancels it AND drops its text back into the composer to resend (no
  *  false "in-place edit" that would silently move it to the back of the FIFO). */
 function QueueStack({ items, onCancel, onEdit, onInterrupt, canInterrupt = false }: {
-  items: { id: string; content: string }[]
+  items: QueuedMessage[]
   onCancel: (id: string) => void
-  onEdit: (id: string, content: string) => void
+  onEdit: (q: QueuedMessage) => void
   onInterrupt?: (id: string) => void
   canInterrupt?: boolean  // a turn is running → "Interrupt now" can promote + soft-stop
 }) {
@@ -4353,7 +4398,7 @@ function QueueStack({ items, onCancel, onEdit, onInterrupt, canInterrupt = false
     </button>
   )
 
-  const card = (q: { id: string; content: string }, i: number, depth: number) => (
+  const card = (q: QueuedMessage, i: number, depth: number) => (
     <motion.div key={q.id} layout
       initial={reduce ? false : { opacity: 0, y: 8 }}
       animate={stacked
@@ -4372,7 +4417,7 @@ function QueueStack({ items, onCancel, onEdit, onInterrupt, canInterrupt = false
             <IconButton icon={PlayCircle} label="Interrupt now — stop the current turn and run this next" onClick={() => onInterrupt(q.id)} size={20} iconSize={13}
               className="opacity-0 transition-opacity hover:text-primary group-hover/q:opacity-100 focus-within:opacity-100" />
           )}
-          <IconButton icon={Pencil} label="Edit queued message" onClick={() => onEdit(q.id, q.content)} size={20} iconSize={12}
+          <IconButton icon={Pencil} label="Edit queued message" onClick={() => onEdit(q)} size={20} iconSize={12}
             className="opacity-0 transition-opacity hover:text-primary group-hover/q:opacity-100 focus-within:opacity-100" />
           <IconButton icon={X} label="Cancel queued message" onClick={() => onCancel(q.id)} size={20} iconSize={13}
             tone="danger" />

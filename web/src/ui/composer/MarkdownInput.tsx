@@ -54,6 +54,8 @@ interface Props {
   onFocusChange?: (focused: boolean) => void
   onOptimize?: () => void
   history?: string[]
+  /** the text to show for `history[index]` as ↑/↓ brings it back (see `ComposerProps.onRecall`). */
+  onRecall?: (index: number) => string
   onMentionFile?: (file: { path: string; name: string }) => void
   /** notified when a knowledge-library item is @-mentioned (host records the id). */
   onMentionKnowledge?: (item: { id: string; name: string }) => void
@@ -81,7 +83,7 @@ interface Props {
  *  file picker, large-paste interception, and pasted images as attachments. */
 export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function MarkdownInput({
   value, onChange, onSend, canSend, placeholder, maxHeight, minHeight,
-  onFocusChange, onOptimize, history, onMentionFile, onMentionKnowledge, mentionProject, slashCommands, onLargePaste, onPasteFiles, mobile,
+  onFocusChange, onOptimize, history, onRecall, onMentionFile, onMentionKnowledge, mentionProject, slashCommands, onLargePaste, onPasteFiles, mobile,
   sendOnEnter,
 }, ref) {
   const hostRef = useRef<HTMLDivElement>(null)
@@ -130,8 +132,8 @@ export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function Mar
   const reportMentionCursor = useCallback((index: number | null) => reportCursor('mention', index), [reportCursor])
   const reportSlashCursor = useCallback((index: number | null) => reportCursor('slash', index), [reportCursor])
   // Latest props for the (static) CM extensions to read without rebuilding.
-  const cb = useRef({ value, onChange, onSend, canSend, onOptimize, history, onLargePaste, onPasteFiles, onMentionFile, onMentionKnowledge, slashCommands, mobile, sendOnEnter })
-  cb.current = { value, onChange, onSend, canSend, onOptimize, history, onLargePaste, onPasteFiles, onMentionFile, onMentionKnowledge, slashCommands, mobile, sendOnEnter }
+  const cb = useRef({ value, onChange, onSend, canSend, onOptimize, history, onRecall, onLargePaste, onPasteFiles, onMentionFile, onMentionKnowledge, slashCommands, mobile, sendOnEnter })
+  cb.current = { value, onChange, onSend, canSend, onOptimize, history, onRecall, onLargePaste, onPasteFiles, onMentionFile, onMentionKnowledge, slashCommands, mobile, sendOnEnter }
 
   const [mention, setMention] = useState<{ query: string; at: number } | null>(null)
   const [slash, setSlash] = useState<{ query: string } | null>(null)
@@ -262,15 +264,17 @@ export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function Mar
     const atStart = head === 0 && anchor === 0
     const atEnd = head === len && anchor === len
     const cur = view.state.doc.toString()
+    // The entry as the host gives it back (`onRecall`), else its text as it is.
+    const recalled = (i: number) => cb.current.onRecall?.(i) ?? hist[i]
     if (dir === 'up' && (histIdx.current !== -1 || (atStart && !cur.trim()))) {
       if (histIdx.current === -1) draftBeforeHist.current = cur
       histIdx.current = histIdx.current === -1 ? hist.length - 1 : Math.max(0, histIdx.current - 1)
-      setHistDoc(view, hist[histIdx.current])
+      setHistDoc(view, recalled(histIdx.current))
       return true
     }
     if (dir === 'down' && histIdx.current !== -1 && atEnd) {
       histIdx.current += 1
-      setHistDoc(view, histIdx.current >= hist.length ? (histIdx.current = -1, draftBeforeHist.current) : hist[histIdx.current])
+      setHistDoc(view, histIdx.current >= hist.length ? (histIdx.current = -1, draftBeforeHist.current) : recalled(histIdx.current))
       return true
     }
     return false

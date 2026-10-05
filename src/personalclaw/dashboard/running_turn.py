@@ -38,19 +38,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.config.loader import AppConfig, resolve_session_workspace
 from personalclaw.dashboard import repeated_steps, turn_endings
+from personalclaw.dashboard.chat_queue import shown
 from personalclaw.dashboard.chat_utils import (
     _history_key_for,
     _redact_for_display,
     persisted_history_key,
 )
-from personalclaw.own_words import OWN_WORDS
+from personalclaw.own_words import OWN_WORDS, PASTES
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 
@@ -152,18 +153,23 @@ def steer(
     ts: str = "",
     own_words: str | None = None,
     heard: bool = False,
+    pastes: Sequence[Mapping[str, Any]] = (),
 ) -> bool:
     """Send *message* into the turn running on *session*: True when that turn takes steers, so it
     will (``SessionManager.add_steer``); False when the caller queues it instead.
 
     What the send says of it is kept for her row, written when the turn takes it
     (:func:`take_steer`): when she sent it (*ts*), the words of it she typed when it holds more
-    (*own_words*, ``own_words.OWN_WORDS``), and that it was dictated (*heard*)."""
+    (*own_words*, ``own_words.OWN_WORDS``), that it was dictated (*heard*), and the blocks she
+    pasted into it (*pastes*, ``own_words.PASTES``), which the message holds in their markers'
+    place and her row shows as their chips."""
     if not state.sessions.add_steer(_history_key_for(session.key), message):
         return False
     meta: dict[str, Any] = {"input_origin": "voice"} if heard else {}
     if own_words is not None:
         meta[OWN_WORDS] = own_words
+    if pastes:
+        meta[PASTES] = [dict(p) for p in pastes]
     session._steers.append({"text": message.strip(), "ts": ts, "meta": meta})
     return True
 
@@ -180,15 +186,17 @@ def take_steer(state: DashboardState, session: _ChatSession, text: str) -> dict[
     meta = {**sent.get("meta", {}), STEERED: True}
     session.append("user", text, "msg msg-u", ts=sent.get("ts", ""), meta=meta)
     row = session.messages[-1]
-    shown, _ = redact_exfiltration_urls(text)
-    shown, _ = redact_credentials(shown)
+    words, _ = redact_exfiltration_urls(text)
+    words, _ = redact_credentials(words)
     state.broadcast_ws(
         "chat_user_message",
         {
             "session": session.key,
-            "content": _redact_for_display(shown),
+            "content": _redact_for_display(words),
             "ts": row["ts"],
             "steer": True,
+            # The blocks she pasted into it, so her bubble shows each as its chip, as on a reload.
+            **({PASTES: meta[PASTES]} if meta.get(PASTES) else {}),
         },
     )
     return row
@@ -234,21 +242,23 @@ def end_steers(
     for text in stranded:
         record = _owed(sent, text)
         on_record = bool(record.get("taken"))
+        said = record.get("meta", {})
         try:
             qid = session.queue_append(
-                text, own_words=record.get("meta", {}).get(OWN_WORDS), on_record=on_record
+                text,
+                own_words=said.get(OWN_WORDS),
+                on_record=on_record,
+                pastes=said.get(PASTES) or (),
             )
         except Exception:
             logger.warning("failed to requeue an undelivered steer", exc_info=True)
             continue
         refused = refused or on_record
-        shown, _ = redact_exfiltration_urls(text)
-        shown, _ = redact_credentials(shown)
         state.broadcast_ws(
             "queue_push",
             {
                 "session": session.key,
-                "content": _redact_for_display(shown),
+                **shown(session.queued(qid)),
                 "ts": datetime.now(timezone.utc).isoformat(),
                 "queue_id": qid,
                 # Which steer of hers it is, so the page's note that it is on its way goes.

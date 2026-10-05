@@ -30,7 +30,7 @@ export function Composer({
   value, onChange, onSend, streaming, processing, onStop, placeholder = 'Ask anything',
   controls = DEFAULT_CONTROLS, data, selection, onSelect, onAttach, onOpenPrompts, plusMenuExtra, onFocusChange,
   mentionProject, onMentionFile, onMentionKnowledge, onLargePaste,
-  onOptimize, optimizing, history, onTranscribe, onMicError, canQueue, canSteer, contextPct, contextWindow, minChars = 1,
+  onOptimize, optimizing, history, onRecall, onTranscribe, onMicError, canQueue, canSteer, contextPct, contextWindow, minChars = 1,
   openModelSignal, openAgentSignal, openReasoningSignal, handsFree, onHandsFreeSubmit, screenShare,
   naturalVoice, sendHeldReason, hostPills,
 }: ComposerProps) {
@@ -357,7 +357,7 @@ export function Composer({
             placeholder={placeholder ?? 'Ask anything'}
             minHeight={restH} maxHeight={MAX_MAX_H}
             onFocusChange={setFocus}
-            onOptimize={onOptimize} history={history}
+            onOptimize={onOptimize} history={history} onRecall={onRecall}
             onMentionFile={onMentionFile} onMentionKnowledge={onMentionKnowledge} mentionProject={mentionProject}
             slashCommands={!!controls.slash}
             onLargePaste={onLargePaste}

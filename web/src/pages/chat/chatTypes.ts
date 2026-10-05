@@ -10,6 +10,8 @@ import { turnErrorText } from './turnError'
 import type { ImageDelivery } from './imageAttachments'
 import type { AgentQuestion, QuestionAnswer } from '../../lib/api'
 import { questionSegmentOf } from './questionFrames'
+import { markerFor } from './pasteBlocks'
+import type { TurnPaste } from './PasteChip'
 
 export interface TextSegment { kind: 'text'; text: string }
 
@@ -554,11 +556,28 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
 
 export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; blast_radius?: unknown; grant_agent?: string; reach?: string; deny_effect?: string; asked_for?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; ran_prompt?: { name?: unknown; text?: unknown }; steered?: boolean; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string }; context_fed?: { kind?: string; text?: string }; learned?: LearnedRecord[]; ungated?: string; note?: string; about_call?: string; question?: unknown } }
 
+/** The blocks a sent message of hers carries (`meta.pastes` on its row, `pastes` on a frame that
+ *  tells a page of it), or undefined when it carries none. */
+export function pastesOf(raw: unknown): TurnPaste[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const pastes = raw.filter((p): p is TurnPaste =>
+    !!p && typeof p === 'object' && typeof p.seq === 'number' && typeof p.content === 'string')
+    .map((p) => ({ seq: p.seq, lines: typeof p.lines === 'number' ? p.lines : p.content.split('\n').length, content: p.content }))
+  return pastes.length ? pastes : undefined
+}
+
+/** Her message as the chat shows it: the text she sent, with each block it carries back in place
+ *  as its `[Paste #N]` chip. The same live (a steer the turn took, a queued message as it waits
+ *  and as it runs) and read back. */
+export function shownText(content: string, pastes: TurnPaste[] | undefined): string {
+  return pastes?.length ? recollapsePastes(content, pastes) : content
+}
+
 /** Re-collapse a persisted user message: the stored content has paste markers
  *  expanded to full text (the model saw that), but meta.pastes lets us swap each
  *  block's content back to `[Paste #N]` so the bubble renders inspectable chips
  *  on reload (matching the live-send experience). */
-function recollapsePastes(content: string, pastes: { seq: number; lines: number; content: string }[]): string {
+function recollapsePastes(content: string, pastes: TurnPaste[]): string {
   let out = content
   // Longest content first so a block that CONTAINS another doesn't mis-replace; ties
   // broken by ascending seq so two blocks of identical content claim their occurrences
@@ -574,11 +593,10 @@ function recollapsePastes(content: string, pastes: { seq: number; lines: number;
     // duplicates as well as for nesting.
     const at = out.indexOf(p.content)
     if (at === -1) continue
-    out = out.slice(0, at) + markerForSeq(p.seq) + out.slice(at + p.content.length)
+    out = out.slice(0, at) + markerFor(p.seq) + out.slice(at + p.content.length)
   }
   return out
 }
-const markerForSeq = (seq: number) => `[Paste #${seq}]`
 
 /** The sentence a line the gateway wrote about a call carries for its card (`meta.note`), or
  *  nothing: a line without one is how an approval ended, or one written before notes were. */
@@ -685,7 +703,7 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       // live page showed.
       if (joinedSkills) lastAssistant()
       // re-collapse expanded pastes → markers so chips render on reload.
-      const pastes = m.meta?.pastes
+      const pastes = pastesOf(m.meta?.pastes)
       // An optimized turn persisted the OPTIMIZED text as content (the model saw
       // it); meta.original is what the user typed. Show the original as primary,
       // the optimized in the collapsed section — same as the live send.
@@ -696,9 +714,9 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       // transcript must not render raw JSON on either the live or the reload path.
       const uiLabel = m.meta?.ui_label
       const primary = uiLabel ?? original ?? m.content
-      const display = pastes?.length ? recollapsePastes(primary, pastes) : primary
+      const display = shownText(primary, pastes)
       const files = Array.isArray(m.meta?.files) ? m.meta!.files : undefined
-      const ut = userTurn(display, m.ts, pastes?.length ? pastes : undefined, files, original ? m.content : undefined)
+      const ut = userTurn(display, m.ts, pastes, files, original ? m.content : undefined)
       // Rewind tails retained on this user turn → drive the divider
       // chip + read-only disclosure. Tolerant: absent on pre-rewind sessions.
       if (Array.isArray(m.rewound) && m.rewound.length) ut.rewound = m.rewound

@@ -7,6 +7,7 @@ import logging
 import os
 import time
 import uuid
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,7 @@ from personalclaw.dashboard.chat_persistence import (
     save_session_to_history,
     session_key_exists,
 )
+from personalclaw.dashboard.chat_queue import shown
 from personalclaw.dashboard.chat_runner import TURN_STOPPED, run_chat, started_by_app
 from personalclaw.dashboard.chat_title import title_needs_model
 from personalclaw.dashboard.chat_utils import (
@@ -51,7 +53,15 @@ from personalclaw.dashboard.chat_utils import (
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.history import CREATED_BY_APP_META_KEY
 from personalclaw.http_errors import json_error
-from personalclaw.own_words import OWN_WORDS, RAN_PROMPT, pasted_blocks, typed_text
+from personalclaw.own_words import (
+    OWN_WORDS,
+    PASTES,
+    RAN_PROMPT,
+    left_as_marker,
+    pasted_blocks,
+    pastes_of,
+    typed_text,
+)
 from personalclaw.request_validation import bool_field, json_object_body
 
 # The `room:` session-key prefix, imported rather than spelled out: the filter below and the
@@ -142,8 +152,18 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         user_meta.pop(OWN_WORDS, None)
         user_meta.pop(RAN_PROMPT, None)
         user_meta.pop(running_turn.STEERED, None)
+        # The blocks she pasted, as many as are whole (`own_words.pastes_of`).
+        if _blocks := pastes_of(user_meta):
+            user_meta[PASTES] = _blocks
+        else:
+            user_meta.pop(PASTES, None)
         if not user_meta:
             user_meta = None
+    # The composer sends each block she pasted in the message, where its marker stood in her draft.
+    # A message that still holds a block's marker in its place would reach the model as the marker
+    # alone and never as what she pasted, so it is refused before anything is kept or run.
+    if (_unsent := left_as_marker(message, pastes_of(user_meta))) is not None:
+        return json_error("paste_not_expanded", status=400, error_extra={"paste": _unsent})
     # The words she typed or said, before the dictation note below is added to them.
     said = message
     # A dictated turn is honest about where it came from.
@@ -245,6 +265,9 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     # The pasted blocks as the message holds them — read before the redaction below rewrites
     # the meta copy — so routing and learning can tell what was typed from what was pasted.
     _pasted = pasted_blocks(user_meta)
+    # And as her row keeps them, masked as the meta of a message sent between turns is, for a
+    # message that steers the running turn or waits in its queue: her bubble shows each as its chip.
+    _kept_pastes = _redact_meta({PASTES: pastes_of(user_meta)})[PASTES]
     # Her own words, recorded on the turn's row only when the message holds more than them (a
     # pasted block, the dictation note): what every learning path reads of it (``own_words``).
     _own = typed_text(said, _pasted)
@@ -259,7 +282,9 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         # + a debounce guard (a burst produces ONE cancel + the last message). Returns
         # a response when it handled the message; None to fall through to steer/queue.
         if message:
-            _cr = await _maybe_cancel_and_replace(state, session, message, _own_recorded)
+            _cr = await _maybe_cancel_and_replace(
+                state, session, message, _own_recorded, pastes=_kept_pastes
+            )
             if _cr is not None:
                 return _cr
         # Mid-run handling (#37) — 4 modes:
@@ -284,6 +309,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
                 ts=client_ts,
                 own_words=_own_recorded,
                 heard=(user_meta or {}).get("input_origin") == "voice",
+                pastes=_kept_pastes,
             )
         ):
             _c, _ = redact_exfiltration_urls(message)
@@ -299,15 +325,12 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
             return web.json_response({"ok": True, "steered": True})
         # followup / collect / steer-when-not-native → queue as before.
         if message:
-            qid = session.queue_append(message, own_words=_own_recorded)
-            _c, _ = redact_exfiltration_urls(message)
-            _c, _ = redact_credentials(_c)
-            _redacted = _redact_for_display(_c)
+            qid = session.queue_append(message, own_words=_own_recorded, pastes=_kept_pastes)
             state.broadcast_ws(
                 "queue_push",
                 {
                     "session": session.key,
-                    "content": _redacted,
+                    **shown(session.queued(qid)),
                     "ts": datetime.now(timezone.utc).isoformat(),
                     "queue_id": qid,
                 },
@@ -455,7 +478,12 @@ def _default_mid_turn_mode() -> str:
 
 
 async def _maybe_cancel_and_replace(
-    state: "DashboardState", session: "_ChatSession", message: str, own_words: str | None
+    state: "DashboardState",
+    session: "_ChatSession",
+    message: str,
+    own_words: str | None,
+    *,
+    pastes: Sequence[Mapping[str, Any]] = (),
 ) -> "web.Response | None":
     """Cancel-and-replace decision for a follow-up sent mid-turn (PLATFORM-RESILIENCE
     §6.3). Returns a JSON response when it HANDLED the message (cancelled the in-flight
@@ -468,7 +496,8 @@ async def _maybe_cancel_and_replace(
     broken check never blocks a message.
 
     ``own_words`` are the words of the message its sender typed when it holds more than them
-    (``None`` when it is all theirs), queued with it as the queue path queues them.
+    (``None`` when it is all theirs), and ``pastes`` the blocks she pasted into it
+    (``own_words.PASTES``), queued with it as the queue path queues them.
     """
     import time as _time
 
@@ -503,7 +532,7 @@ async def _maybe_cancel_and_replace(
         outcome = await state.sessions.stop_turn(
             _history_key_for(session.key), force=False, preserve_queue=True
         )
-        qid = session.queue_append(message, own_words=own_words)
+        qid = session.queue_append(message, own_words=own_words, pastes=pastes)
         # The superseded turn was stopped by the message that replaced it.
         state.broadcast_ws(
             "chat_done",
@@ -1001,10 +1030,7 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             # opened after the turn draws the same ring; null until a turn has said anything.
             "context_usage": session.context_usage,
             "messages": prepared,
-            "queue": [
-                {"id": q["id"], "content": _redact_for_display(q["content"])}
-                for q in session._queue
-            ],
+            "queue": [{"id": q["id"], **shown(q)} for q in session._queue],
             "total": total,
             "has_more": has_more,
             # Where a live answer resumes: a client continuing the in-flight `streaming`
@@ -2322,10 +2348,7 @@ async def api_chat_session_resume(request: web.Request) -> web.Response:
                 "ok": True,
                 "key": existing.key,
                 "messages": prepared,
-                "queue": [
-                    {"id": q["id"], "content": _redact_for_display(q["content"])}
-                    for q in existing._queue
-                ],
+                "queue": [{"id": q["id"], **shown(q)} for q in existing._queue],
                 "total": total,
                 "has_more": total > 200,
                 "memory_mode": existing.memory_mode,
@@ -2400,10 +2423,7 @@ async def api_chat_session_resume(request: web.Request) -> web.Response:
             "ok": True,
             "key": session.key,
             "messages": _prepare_messages(recent, session.running),
-            "queue": [
-                {"id": q["id"], "content": _redact_for_display(q["content"])}
-                for q in session._queue
-            ],
+            "queue": [{"id": q["id"], **shown(q)} for q in session._queue],
             "total": total,
             "has_more": total > len(recent),
             "memory_mode": session.memory_mode,

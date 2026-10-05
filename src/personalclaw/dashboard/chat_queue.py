@@ -8,10 +8,11 @@ Items are dicts: ``id`` and ``content``, and what else the message carries when 
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
-from personalclaw.own_words import OWN_WORDS
+from personalclaw.own_words import OWN_WORDS, PASTES
+from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.turn_source import DASHBOARD_SOURCE, source_of
 
 #: The item key of who asked for the work a queued message carries on, when someone other than
@@ -41,6 +42,7 @@ class ChatQueue:
         source: Mapping[str, str] = DASHBOARD_SOURCE,
         asked_for_by: Mapping[str, str] | None = None,
         on_record: bool = False,
+        pastes: Sequence[Mapping[str, Any]] = (),
     ) -> str:
         """Append a message to the queue. Returns the generated queue ID.
 
@@ -51,6 +53,7 @@ class ChatQueue:
         ``source`` is where it came from (``turn_source``), which its row records when it runs.
         ``asked_for_by`` is who asked for the work it carries on (:data:`ASKED_FOR_BY`).
         ``on_record`` says its row is in the chat already (:data:`ON_RECORD`).
+        ``pastes`` are the blocks pasted into it (``own_words.PASTES``), which its row keeps.
         """
         qid = uuid.uuid4().hex[:12]
         item: dict[str, Any] = {"id": qid, "content": content, **source_of(source)}
@@ -60,6 +63,8 @@ class ChatQueue:
             item["files"] = list(files)
         if own_words is not None:
             item[OWN_WORDS] = own_words
+        if pastes:
+            item[PASTES] = [dict(p) for p in pastes]
         if asked_for_by:
             item[ASKED_FOR_BY] = dict(asked_for_by)
         if on_record:
@@ -102,6 +107,13 @@ class ChatQueue:
         """Pop a queue item by index. Returns {"id": ..., "content": ...}."""
         return self._queue.pop(index)
 
+    def queued(self, queue_id: str) -> dict[str, Any]:
+        """The queued message *queue_id*, which is waiting (``KeyError`` when it is not)."""
+        for item in self._queue:
+            if item["id"] == queue_id:
+                return item
+        raise KeyError(queue_id)
+
     def queue_remove_by_id(self, queue_id: str) -> str | None:
         """Remove a queue item by ID. Returns the content or None if not found."""
         for i, item in enumerate(self._queue):
@@ -127,3 +139,25 @@ class ChatQueue:
     def queue_depth(self) -> int:
         """Number of prompts currently queued behind the active turn."""
         return len(self._queue)
+
+
+def shown(item: Mapping[str, Any]) -> dict[str, Any]:
+    """A queued message as a page is told it, in a ``queue_push`` frame or a read of the chat: its
+    words with what could leak masked, as in every message a page is sent, and the blocks pasted
+    into it (``own_words.PASTES``), so the queue shows each as its chip and gives it back to the
+    composer with the message."""
+    words, _ = redact_exfiltration_urls(str(item.get("content") or ""))
+    words, _ = redact_credentials(words)
+    pastes = item.get(PASTES)
+    return {"content": words, **({PASTES: [dict(p) for p in pastes]} if pastes else {})}
+
+
+def queued_pastes(items: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """The blocks pasted into *items*, messages taken off a chat's queue to run as one turn, for
+    the row that turn starts with. Each message numbers its own blocks from one, so blocks merged
+    from two messages are numbered again, in order: each is then its own chip."""
+    blocks = [dict(p) for item in items for p in item.get(PASTES) or ()]
+    if len(items) > 1:
+        for n, block in enumerate(blocks, start=1):
+            block["seq"] = n
+    return blocks
