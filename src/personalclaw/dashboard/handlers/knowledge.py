@@ -1712,8 +1712,8 @@ async def ingest_file(request: web.Request) -> web.Response:
     # Per-filetype cap from the shared upload policy (video 2 GB, audio 1 GB, image
     # 200 MB, …) — the browser mime disambiguates .webm/.ogg for the right category.
     from personalclaw.knowledge.file_items import store_file_item
-    from personalclaw.uploads import check_upload
     from personalclaw.uploads.content_scan import ContentRefused, scan_upload
+    from personalclaw.uploads.policy import check_upload
     from personalclaw.uploads.spool import Spool
     from personalclaw.uploads.store import UploadError
 

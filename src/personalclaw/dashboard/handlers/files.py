@@ -818,11 +818,11 @@ def _write_file_restricted(path: Path, data: bytes) -> None:
 def _upload_check(filename: str, mime: str | None = None, *, size: int | None = None):
     """Category + per-filetype size gate via the shared upload policy.
 
-    Returns an :class:`personalclaw.uploads.UploadCheck` — ``ok`` accepts, else
+    Returns an :class:`personalclaw.uploads.policy.UploadCheck` — ``ok`` accepts, else
     ``reason``/``status`` drive the rejection. All recognized types (and unknown
     ones, capped as ``other``) are accepted up to their category limit; the size
     gate — not an extension allowlist — is the policy."""
-    from personalclaw.uploads import check_upload
+    from personalclaw.uploads.policy import check_upload
 
     return check_upload(filename, mime, size=size)
 

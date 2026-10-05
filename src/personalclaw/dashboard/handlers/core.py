@@ -346,7 +346,7 @@ async def api_stt_transcribe(request: web.Request) -> web.Response:
     # NOT a large-audio-file upload (those go through Files/Knowledge and get the
     # ffmpeg-segmented STT path). Cap it well below the audio-upload category via
     # the shared policy's per-surface override so a runaway mic blob can't fill disk.
-    from personalclaw.uploads import check_upload
+    from personalclaw.uploads.policy import check_upload
     from personalclaw.uploads.spool import Spool
 
     _stt_cap = _STT_MIC_CAP_BYTES

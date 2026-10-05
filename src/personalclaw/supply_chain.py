@@ -13,9 +13,13 @@ reserved for high-confidence malice (exfil-to-remote, destructive-root,
 obfuscated-exec) so a calculated ``warning`` stays overridable but outright
 malware never is.
 
-Reuses ``history._SENSITIVE_TOOL_PATTERNS`` (the credential/secret path set) so
+Reuses ``credential_locations.CREDENTIAL_LOCATIONS`` (the credential/secret path set) so
 "reads ~/.aws" detection has one source of truth. Not a sandbox — static
 inspection only; it reduces risk, it does not contain execution.
+
+The upload content scan imports this module in a child process for every scan
+(``uploads.scan_child``), so what it imports is paid for by every Knowledge write,
+upload and artifact save: keep its imports to what the scan reads.
 
 The DANGEROUS band is additionally scoped by EXECUTION REACHABILITY (issues #2526,
 #2625) — the "Execution reachability" section below states the rule in full. In short: a
@@ -41,7 +45,7 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 # One source of truth for "touches a credential/secret path" (IMDS, ~/.aws, …).
-from personalclaw.history import _SENSITIVE_TOOL_PATTERNS
+from personalclaw.credential_locations import CREDENTIAL_LOCATIONS
 
 # Artifact-signature state carried on every report. signing.py imports nothing
 # from here, so this is a one-way edge.
@@ -421,7 +425,7 @@ def rule_gloss(rule: str) -> str:
 
 def _sensitive_path_pattern() -> "re.Pattern[str]":
     """A regex matching any credential/secret path from the shared set."""
-    alts = "|".join(re.escape(p) for p in _SENSITIVE_TOOL_PATTERNS)
+    alts = "|".join(re.escape(p) for p in CREDENTIAL_LOCATIONS)
     return re.compile(alts)
 
 

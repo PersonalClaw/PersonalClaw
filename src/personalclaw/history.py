@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 from personalclaw.atomic_write import atomic_write
 from personalclaw.concurrency import single_flight
 from personalclaw.config import loader as config_loader
+from personalclaw.credential_locations import CREDENTIAL_LOCATIONS
 from personalclaw.guardrails.incident import incident_active
 from personalclaw.instants import as_instant, utc_iso, utc_now_iso
 from personalclaw.security import (
@@ -1263,26 +1264,6 @@ def listed_title(log: ConversationLog, key: str) -> str:
 # Kept at module level so they're trivially unit-testable without
 # instantiating HistoryConsolidator.
 
-# Canonical tool titles that indicate a read targeting a sensitive path.
-# Supplements is_sensitive_path() and is_sensitive_bash_command() which
-# handle the actual runtime blocking — this is a second-layer defense
-# that refuses to extract a skill if the session tried to access a
-# sensitive path, even when the attempt was denied at hook time.
-_SENSITIVE_TOOL_PATTERNS: tuple[str, ...] = (
-    ".aws/",
-    ".ssh/",
-    ".gnupg/",
-    ".gpg/",
-    ".docker/config",
-    ".kube/config",
-    ".npmrc",
-    ".pypirc",
-    ".netrc",
-    ".git-credentials",
-    ".personalclaw/.env",
-    "169.254.169.254",  # IMDS
-)
-
 
 def consolidation_line(m: dict) -> str:
     """One transcript row as consolidation reads it.
@@ -1346,7 +1327,12 @@ def _count_tool_call_messages(messages: list[dict]) -> int:
 
 
 def _session_touched_sensitive(messages: list[dict]) -> bool:
-    """Return True if any tool call in the session referenced a sensitive path.
+    """Return True if any tool call in the session named a credential location
+    (``credential_locations``).
+
+    A second layer behind ``security.is_sensitive_path()`` and ``is_sensitive_bash_command()``,
+    which refuse the read itself: no skill is extracted from a session that tried to reach one,
+    even when the attempt was denied at hook time.
 
     Checks both recording schemas:
     - Channel-pipeline schema: substring match over each entry in ``msg["tools"]`` list.
@@ -1363,7 +1349,7 @@ def _session_touched_sensitive(messages: list[dict]) -> bool:
                 if not isinstance(tool, str):
                     continue
                 lower = tool.lower()
-                for pattern in _SENSITIVE_TOOL_PATTERNS:
+                for pattern in CREDENTIAL_LOCATIONS:
                     if pattern in lower:
                         return True
         # Dashboard schema: role="tool" with tool info in content
@@ -1371,7 +1357,7 @@ def _session_touched_sensitive(messages: list[dict]) -> bool:
             content = msg.get("content", "")
             if isinstance(content, str):
                 lower = content.lower()
-                for pattern in _SENSITIVE_TOOL_PATTERNS:
+                for pattern in CREDENTIAL_LOCATIONS:
                     if pattern in lower:
                         return True
     return False

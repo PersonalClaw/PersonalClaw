@@ -75,8 +75,10 @@ event loop, where on a 512 MB upload it stopped every other request for up to 0.
   worker thread (on a busy disk one write of the next chunk took 0.1 s);
 - a complete assembles the parts, and the item's file is moved (a copy across disks), hashed and
   thumbnailed, in worker threads; file reads and writes and the hash leave the interpreter lock;
-- the content scan (below) runs in a child process (`personalclaw content-scan`,
-  `uploads/content_scan.py`), because its parse holds the lock;
+- the content scan (below) runs in a child process (`uploads/scan_child.py`, started by
+  `uploads/content_scan.py`), because its parse holds the lock; the child imports the scanner and
+  nothing else of the package, since every upload, Knowledge write and artifact save waits for its
+  start;
 - what the file becomes is decided on the loop: the duplicate check and the insert, with nothing
   awaited between them, so two uploads of the same bytes still make one item.
 

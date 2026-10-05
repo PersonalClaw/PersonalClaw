@@ -313,8 +313,8 @@ async def _check(path: Path, *, surface: str) -> _Checked:
     store; then the kinds the library takes (``media.classify``) and the size the upload policy
     allows each; then the content scan of a private copy of its bytes (``scan_upload``). The file
     at *path* is neither moved nor changed: the copy is what is scanned and kept."""
-    from personalclaw.uploads import check_upload
     from personalclaw.uploads.content_scan import ContentRefused, nothing_made, scan_upload
+    from personalclaw.uploads.policy import check_upload
 
     name = path.name
     size = path.lstat().st_size

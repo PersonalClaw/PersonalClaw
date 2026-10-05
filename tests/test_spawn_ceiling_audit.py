@@ -233,9 +233,9 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "providers/availability.py::AvailabilityBoard._probe::asyncio.create_subprocess_exec": (
         "host-fact: provider availability probe child"
     ),
-    # Upload content scan — the gateway's OWN CLI (`personalclaw content-scan`), argv fixed; the
-    # finished upload's window is its stdin and a verdict its one line out. It exists to keep the
-    # scan's parse, which holds the interpreter lock, out of the gateway process.
+    # Upload content scan — the gateway's OWN child module (`uploads/scan_child.py`), argv fixed;
+    # the finished upload's window is its stdin and a verdict its one line out. It exists to keep
+    # the scan's parse, which holds the interpreter lock, out of the gateway process.
     "uploads/content_scan.py::_ask_child::asyncio.create_subprocess_exec": (
         "host-fact: upload content scan child"
     ),

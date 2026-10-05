@@ -30,7 +30,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw.http_errors import HTTP_ERROR_CODES
 from personalclaw.sel import sel
-from personalclaw.uploads import content_scan
+from personalclaw.uploads import content_scan, scan_child
 from personalclaw.uploads.content_scan import (
     REFUSED_CODE,
     SCAN_WINDOW,
@@ -448,7 +448,7 @@ def test_a_larger_file_gets_its_first_and_last_256_kb(size, tmp_path):
 
     assert read_window(path) == expected
     assert window_of(data) == expected
-    assert len(expected) == content_scan.MAX_WINDOW_BYTES
+    assert len(expected) == scan_child.MAX_WINDOW_BYTES, "the most the scan's child reads"
 
 
 def _text(size: int) -> bytes:
@@ -583,11 +583,11 @@ def test_content_the_scanner_raises_on_gets_no_answer(monkeypatch, capsys):
     def raises(_window: bytes) -> bool:
         raise RecursionError("the scanner could not finish")
 
-    monkeypatch.setattr(content_scan, "is_dangerous", raises)
+    monkeypatch.setattr(scan_child, "is_dangerous", raises)
     monkeypatch.setattr(sys, "stdin", SimpleNamespace(buffer=io.BytesIO(CLEAN_TEXT)))
 
     with pytest.raises(RecursionError):
-        content_scan.main()
+        scan_child.main()
 
     assert capsys.readouterr().out == "", "no answer, so no pass"
 

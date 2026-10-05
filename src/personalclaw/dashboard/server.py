@@ -41,7 +41,7 @@ def _single_post_ceiling() -> int:
     threshold) + every non-upload endpoint, so their ceiling tracks the threshold
     + multipart overhead — kept deliberately tight. Large media uploads go through
     the resumable protocol on the dedicated 2 GB upload sub-app, never these apps."""
-    from personalclaw.uploads import single_post_threshold
+    from personalclaw.uploads.policy import single_post_threshold
 
     return single_post_threshold() + 16 * 1024 * 1024  # threshold + multipart overhead
 

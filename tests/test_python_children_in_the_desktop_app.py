@@ -49,6 +49,7 @@ _CLASSIFIED: dict[str, str] = {
     "sandbox.py::spawn_shim_argv": "module",
     "computer_use/service.py::_driver_argv": "module",
     "evals/runner.py::_spawn_cell": "module",
+    "uploads/content_scan.py::scan_argv": "module",
     "_installer.py::_pip": (
         "interpreter: pip, run as a module of this interpreter's environment; refused there"
     ),
@@ -252,11 +253,12 @@ class TestTheEntryRunsOnlyDeclaredModules:
 
 
 def _frozen_entry(
-    tmp_path: Path, *args: str, env: dict[str, str] | None = None
+    tmp_path: Path, *args: str, env: dict[str, str] | None = None, stdin: str = ""
 ) -> subprocess.CompletedProcess[str]:
     """Run the package's entry script as the frozen bundle runs it: as ``__main__``, in a process
-    that reads as frozen, with ``sys.executable`` first on its command line and *args* after it.
-    A scratch home, and the shim's own environment otherwise, so nothing reaches the real one."""
+    that reads as frozen, with ``sys.executable`` first on its command line and *args* after it,
+    and *stdin* on its standard input. A scratch home, and the shim's own environment otherwise,
+    so nothing reaches the real one."""
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
     code = (
@@ -273,6 +275,7 @@ def _frozen_entry(
     }
     return subprocess.run(
         [sys.executable, "-c", code, *args],
+        input=stdin,
         capture_output=True,
         text=True,
         timeout=120,
@@ -294,6 +297,18 @@ def test_the_frozen_entry_runs_the_ceiling_shim_like_python_dash_m(tmp_path):
         "the child ran",
     )
     assert (done.returncode, done.stdout) == (0, "the child ran\n"), done.stderr
+
+
+def test_the_frozen_entry_runs_the_content_scan_child_like_python_dash_m(tmp_path):
+    """Every upload, Knowledge write and artifact save waits for a scan's child: in the desktop
+    app it is the bundle running the scan's module, and it answers the verdict on its stdout."""
+    done = _frozen_entry(
+        tmp_path,
+        "-m",
+        "personalclaw.uploads.scan_child",
+        stdin="Shopping list for Saturday: eggs, flour, apples.\n",
+    )
+    assert (done.returncode, done.stdout) == (0, '{"dangerous": false}\n'), done.stderr
 
 
 def test_what_the_shim_runs_gets_the_environment_it_was_given(tmp_path):
@@ -395,11 +410,6 @@ class TestEveryCliChildStartsInTheBundle:
         from personalclaw.providers import availability
 
         assert _accepted(availability.probe_argv(["some-app"]), frozen) == "availability-probe"
-
-    def test_the_upload_content_scan(self, frozen):
-        from personalclaw.uploads import content_scan
-
-        assert _accepted(content_scan.scan_argv(), frozen) == "content-scan"
 
     def test_personalclaw_restarts_detached_gateway(self, frozen, tmp_path, monkeypatch):
         """🔴 ``personalclaw restart`` with no service spawned ``<bundle> -m personalclaw``."""

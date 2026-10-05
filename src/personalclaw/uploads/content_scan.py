@@ -39,8 +39,9 @@ parses the window as Python, and one parse of a window that reads as Python (sou
 lines) holds the lock for about 0.1 s. In any thread of the gateway that stops the event loop, and
 every request with it, for as long (measured beside a 10 ms tick: a 512 KB window of code stopped
 it for 0.12 s from a worker thread, and for the whole 0.45 s scan on the loop itself; in a child,
-for nothing). So the gateway reads the window in a worker thread, starts its own CLI as
-``personalclaw content-scan``, hands it the window on stdin, and reads one JSON line back.
+for nothing). So the gateway reads the window in a worker thread, starts the scan's child
+(``uploads.scan_child``, which imports the scanner and nothing else of the package, since every
+scan waits for its start), hands it the window on stdin, and reads one JSON line back.
 
 What it answers. Refused content raises :class:`ContentRefused` 422 ``upload_content_refused``,
 the scanner's refusal. A window that cannot be read, a child that cannot start, does not answer
@@ -60,6 +61,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from personalclaw.uploads.scan_child import SCAN_WINDOW, WHOLE_FILE_BYTES
 from personalclaw.uploads.store import UploadError
 
 if TYPE_CHECKING:
@@ -67,21 +69,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: The hidden CLI subcommand the child runs (``cli.HIDDEN_COMMANDS``).
-CHILD_COMMAND = "content-scan"
+#: The module the child runs, one of the package's child modules (``_frozen_child.CHILD_MODULES``).
+CHILD_MODULE = "personalclaw.uploads.scan_child"
 
-#: The size of the scan's two windows, a file's first and its last: each is read unless it holds a
-#: NUL byte.
-SCAN_WINDOW = 256 * 1024
-
-#: The largest file the scan reads whole: twice the window, so a file is read whole or as its
-#: two windows, and no file has a range the scan skips while promising to read it.
-WHOLE_FILE_BYTES = 2 * SCAN_WINDOW
-
-#: The most the child reads on stdin: a whole file, or two windows and the line between them.
-MAX_WINDOW_BYTES = WHOLE_FILE_BYTES + 1
-
-#: How long the child may take, its start included (measured: about 1 s at most on a loaded host).
+#: How long the child may take, its start included (measured on a loaded host: 0.1 s for a note,
+#: 0.9 s at most for a whole 512 KB window of source code, whose parse is the slowest scan).
 SCAN_DEADLINE_SECS = 60.0
 
 REFUSED_CODE = "upload_content_refused"
@@ -205,29 +197,11 @@ def _text_of(head: bytes, tail: bytes, *, contiguous: bool) -> bytes | None:
     return read[0] if read else None
 
 
-def is_dangerous(window: bytes) -> bool:
-    """Whether either scanner surface refuses *window*. Runs in the child.
-
-    An uploaded file is untrusted content, so it gets both surfaces: ``script`` (the
-    destructive-script rules: a download piped to a shell, a decoded payload run, a recursive
-    delete) and ``manifest`` (prose injection and invisible characters). Scanning ``manifest``
-    alone let classic shell payloads through as clean."""
-    from personalclaw.supply_chain import SkillScanner, Verdict
-
-    text = window.decode("utf-8", errors="replace")
-    scanner = SkillScanner()
-    return any(
-        scanner.scan_text(text, surface=surface).verdict is Verdict.DANGEROUS
-        for surface in ("script", "manifest")
-    )
-
-
 def scan_argv() -> list[str]:
-    """The child's argv: this install's own CLI (``self_update.cli_argv``) running
-    :data:`CHILD_COMMAND`, never a console script on PATH, so the child is this install."""
-    from personalclaw.self_update import cli_argv
-
-    return [*cli_argv(), CHILD_COMMAND]
+    """The child's argv: this interpreter running :data:`CHILD_MODULE`, never a console script on
+    PATH, so the child is this install. In the desktop app the interpreter is the bundle, whose
+    entry runs the module as ``python -m`` does (``_frozen_child``)."""
+    return [sys.executable, "-m", CHILD_MODULE]
 
 
 async def scan_upload(upload: Path | bytes, category: str, *, surface: str) -> None:
@@ -357,14 +331,3 @@ async def _ask_child(window: bytes) -> dict[str, Any] | None:
         mask_child_output(err.decode("utf-8", "replace"), limit=600, tail=True),
     )
     return None
-
-
-def main() -> int:
-    """``personalclaw content-scan``: read a window on stdin, answer one JSON line on stdout.
-
-    Content the scanner raises on gets no answer: the exception ends the child, and the gateway
-    reads a child that ended without an answer as content it could not check."""
-    window = sys.stdin.buffer.read(MAX_WINDOW_BYTES)
-    sys.stdout.write(json.dumps({"dangerous": is_dangerous(window)}) + "\n")
-    sys.stdout.flush()
-    return 0

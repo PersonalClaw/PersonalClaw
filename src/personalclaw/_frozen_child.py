@@ -3,9 +3,10 @@
 Wherever PersonalClaw runs from an interpreter, the gateway starts some of its children as
 ``<interpreter> -m <module> …``: the resource-ceiling shim in front of every tool command, MCP
 server, app backend and worker it starts (``sandbox.spawn_shim_argv``), the computer-use driver
-(``computer_use.service``) and an evaluation cell (``evals.runner``). In the desktop app that
-interpreter is the frozen bundle's own executable, and its entry script is the CLI, so each of
-those commands reached the CLI's parser and was refused at once.
+(``computer_use.service``), an evaluation cell (``evals.runner``) and the content scan's child
+(``uploads.content_scan``). In the desktop app that interpreter is the frozen bundle's own
+executable, and its entry script is the CLI, so each of those commands reached the CLI's parser and
+was refused at once.
 
 So the bundle's entry script (``personalclaw/__main__.py``) asks :func:`child_module` before it
 starts the CLI. A frozen process whose command line is ``-m <module> …``, naming one of
@@ -22,9 +23,9 @@ hands the programs it runs the environment the gateway built for them, and a res
 image the way the desktop shell started the first.
 
 A pure-stdlib leaf, like the shim it serves: it runs before the rest of the package, on every
-spawn the shim fronts. Nothing imports the modules :data:`CHILD_MODULES` names, so the bundle
-carries each one because it is named here: ``scripts/backend_bundle_manifest.by_name_modules``
-carries every module the package's source names.
+spawn the shim fronts. Most of the modules :data:`CHILD_MODULES` names are imported by nothing, so
+the bundle carries each one because it is named here:
+``scripts/backend_bundle_manifest.by_name_modules`` carries every module the package's source names.
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ CHILD_MODULES: tuple[str, ...] = (
     "personalclaw._spawn_exec_shim",
     "personalclaw.computer_use.driver_host",
     "personalclaw.evals.child",
+    "personalclaw.uploads.scan_child",
 )
 
 

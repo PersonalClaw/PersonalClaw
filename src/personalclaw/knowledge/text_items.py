@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
 #: How many of a batch's scans run at once (:func:`refusals`). Each scan is a child process, and
 #: most of its time is the child's start, which runs side by side with the others' (measured: one
-#: took 0.77 s on a loaded host, six at once 0.88 s together).
+#: took 0.1 s on a loaded host, six at once 0.15 s together).
 SCANS_AT_ONCE = 8
 
 

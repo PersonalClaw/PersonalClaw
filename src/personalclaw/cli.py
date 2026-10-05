@@ -166,7 +166,7 @@ _PROVIDER_BOOTSTRAP_COMMANDS = frozenset(
 #: still listing the choice in the ``{chat,run,…}`` metavar. The result is the opposite of
 #: the intent: an internal sentinel on the first surface a CLI user reads, and the command
 #: advertised rather than hidden. Genuinely hiding one takes BOTH halves below.
-HIDDEN_COMMANDS = frozenset({"mcp-core", "availability-probe", "content-scan", "optimize-harness"})
+HIDDEN_COMMANDS = frozenset({"mcp-core", "availability-probe", "optimize-harness"})
 
 #: ``--port`` on every command that talks to this home's running gateway (``home_gateway.reach``).
 _HOME_GATEWAY_PORT_HELP = (
@@ -1407,10 +1407,6 @@ per-arm marginal contribution is the leave-one-out delta with an enable/hold ver
     probe_parser = _add_hidden_parser(sub, "availability-probe")
     probe_parser.add_argument("names", nargs="*")
 
-    # content-scan (spawned by the gateway to scan a stored upload's window out of process,
-    # where the scan's parse holds no lock the gateway needs — uploads/content_scan.py)
-    _add_hidden_parser(sub, "content-scan")
-
     # optimize-harness (one step of the bundled optimize-harness template, run by its bash steps
     # with the step's inputs in the PC_OPT_* environment — evals/optimize.py; never typed by a user)
     optimize_parser = _add_hidden_parser(sub, "optimize-harness")
@@ -1742,7 +1738,7 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # The gateway's availability-probe, content-scan and optimize-harness children answer before
+    # The gateway's availability-probe and optimize-harness children answer before
     # any of the setup below runs: that setup loads config and attaches a RotatingFileHandler to
     # the gateway's own gateway.log, and a child must not become a second writer rotating the
     # parent's log.
@@ -1750,10 +1746,6 @@ def main() -> None:
         from personalclaw.providers.availability_probe import main as _availability_probe
 
         sys.exit(_availability_probe(list(args.names)))
-    if args.command == "content-scan":
-        from personalclaw.uploads.content_scan import main as _content_scan
-
-        sys.exit(_content_scan())
     if args.command == "optimize-harness":
         from personalclaw.evals.optimize import main as _optimize_step
 
