@@ -961,7 +961,20 @@ class TestTemplateCallSites:
             invoked.add(parts[2])
         assert invoked, "extracted no subcommand names"
         assert invoked <= set(optimize.COMMANDS), invoked - set(optimize.COMMANDS)
-        assert {"preflight", "scope-check", "adjudicate", "file"} <= invoked
+        assert {"preflight", "experience", "scope-check", "adjudicate"} <= invoked
+
+    def test_the_winner_is_filed_by_a_step_in_the_gateway(self) -> None:
+        """Filing writes PersonalClaw's own stores in the home (the proposal queue, the Inbox, the
+        study registry), which a command in the sandbox may not lay out, so the filing step is the
+        gateway's ``optimize-file`` action, handed the search loop's own verdict, and no bash step
+        runs a subcommand that files."""
+        nodes = {n.get("id"): n for n in _nodes(_template_spec()["root"])}
+        config = nodes["file"]["config"]
+        assert config["provider"] == "optimize-file"
+        assert config["with"]["halt"] == "{{nodes.search.output.halt}}"
+        assert config["with"]["halt_detail"] == "{{nodes.search.output.halt_detail}}"
+        assert config["with"]["sandbox"] == "{{inputs.sandbox}}"
+        assert "file" not in optimize.COMMANDS
 
     def test_every_PC_OPT_env_key_the_template_sets_is_READ_by_the_module(self) -> None:
         """A key the template sets and the module ignores is an input silently dropped — which
@@ -1052,7 +1065,7 @@ class TestTemplateCallSites:
                 agents.add(str(cfg["agent"]))
             if cfg.get("provider"):
                 providers.add(str(cfg["provider"]))
-        assert providers == {"bash", "optimize-score"} and agents
+        assert providers == {"bash", "optimize-score", "optimize-file"} and agents
 
         for name in providers:
             assert get_action_provider(name) is not None, f"{name} is not registered"
@@ -1560,7 +1573,7 @@ class TestTheLedgerTheTemplateReads:
         optimize._cmd_adjudicate(
             {**payload, "score_record": _record(0.9), "fix_fingerprint": "a", "ops": ops}
         )
-        out = optimize.COMMANDS["file"](
+        out = optimize.file_step(
             {
                 **payload,
                 "halt": optimize.HaltReason.ITERATIONS_EXHAUSTED.value,
@@ -1570,6 +1583,60 @@ class TestTheLedgerTheTemplateReads:
         record = json.loads((sandbox / optimize.PREFLIGHT_FILE).read_text(encoding="utf-8"))
         assert out["filed"] is True and seen["ops"] == ops
         assert seen["run_ids"] == [c["harvest"]["run_id"] for c in record["cases"]]
+
+    def _adjudicated(self, live: Path, sandbox: Path) -> dict:
+        payload = _preflighted(live, sandbox)
+        ops = [{"op": "update_node", "node_id": "handoff", "fields": {"prompt": "y"}}]
+        optimize._cmd_adjudicate(
+            {**payload, "score_record": _record(0.9), "fix_fingerprint": "a", "ops": ops}
+        )
+        return {
+            "subject": payload["subject"],
+            "sandbox": payload["sandbox"],
+            "suite_threshold": payload["suite_threshold"],
+            "halt": optimize.HaltReason.ITERATIONS_EXHAUSTED.value,
+            "halt_detail": "it tried 1 candidates, the most its max_iterations allows",
+        }
+
+    def test_the_gateway_files_the_winner_through_the_optimize_file_action(
+        self, live: Path, sandbox: Path, isolated_home: Path
+    ) -> None:
+        """The template's filing step is the gateway's own action: it files the ledger's winner
+        as a pending proposal, and answers what the filing came to as the step's output."""
+        from personalclaw.action_providers.optimize_file_provider import (
+            OptimizeFileActionProvider,
+        )
+        from personalclaw.learning import proposals
+
+        result = asyncio.run(
+            OptimizeFileActionProvider().execute(self._adjudicated(live, sandbox), ctx=None)
+        )
+        out = json.loads(result.stdout)
+        assert result.success and out["filed"] is True, (result.error, out)
+        pending = proposals.list_pending(kind=proposals.Kind.TEMPLATE_DIFF.value)
+        assert [p.id for p in pending] == [out["proposal_id"]]
+
+        refused = asyncio.run(OptimizeFileActionProvider().execute({"halt": "x"}, ctx=None))
+        assert not refused.success and refused.failure_class == "user"
+        assert "sandbox" in refused.error
+
+    def test_a_search_a_temporary_chat_started_files_no_proposal(
+        self, live: Path, sandbox: Path, isolated_home: Path
+    ) -> None:
+        """The filing is the run's own work, so a run that keeps nothing, as the Temporary chat
+        that started it, files no proposal: the refusal reaches the engine, which ends the run
+        with it, and the queue stays empty."""
+        from personalclaw import lasting_work, memory_writes
+        from personalclaw.action_providers.optimize_file_provider import (
+            OptimizeFileActionProvider,
+        )
+        from personalclaw.learning import proposals
+
+        config = self._adjudicated(live, sandbox)
+        with memory_writes.as_work_of("dashboard:chat-temp-1", memory_mode="temporary"):
+            with pytest.raises(lasting_work.Refused):
+                asyncio.run(OptimizeFileActionProvider().execute(config, ctx=None))
+        assert proposals.list_pending(kind=proposals.Kind.TEMPLATE_DIFF.value) == []
 
     def test_the_in_process_search_writes_each_candidates_ops_into_its_ledger(
         self, live: Path, sandbox: Path

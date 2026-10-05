@@ -14,6 +14,7 @@ from contextlib import contextmanager
 
 import pytest
 
+from personalclaw import record_files
 from personalclaw.dashboard import session_export as se
 from personalclaw.dashboard import session_templates as st
 
@@ -136,7 +137,30 @@ def test_corrupt_store_reads_as_empty_not_an_exception(_isolated_home):
     path.write_text("{not json", encoding="utf-8")
     assert st.list_templates() == []
     assert st.get_template("anything") is None
-    # And it recovers: a save over a corrupt file works.
+
+
+def test_a_corrupt_store_is_never_written_over(_isolated_home):
+    """A save, an edit or a delete over a settings file that cannot be read is refused, writing
+    nothing: a change built on a read that saw none of it would replace every template the file
+    holds. A copy of the file is kept beside it, and once it is repaired or removed a save works.
+
+    🔴 Red before: an edit or a delete read the unreadable file as holding no template and
+    answered that the template was not found, where the template may be in the file."""
+    path = _isolated_home / "entity_settings" / "session_templates.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"weekly-review-1a2b3c4d": {"name": "Weekly review"}', encoding="utf-8")
+    before = path.read_bytes()
+
+    with pytest.raises(record_files.Unreadable):
+        st.save_template({"name": "recovered"})
+    with pytest.raises(record_files.Unreadable):
+        st.update_template("weekly-review-1a2b3c4d", {"name": "Weekly review, Friday"})
+    with pytest.raises(record_files.Unreadable):
+        st.delete_template("weekly-review-1a2b3c4d")
+    assert path.read_bytes() == before, "a refused change wrote over the file"
+    assert [p.read_bytes() for p in record_files.kept_copies(path)] == [before]
+
+    path.unlink()
     tid, err = st.save_template({"name": "recovered"})
     assert err == ""
     assert st.get_template(tid) is not None

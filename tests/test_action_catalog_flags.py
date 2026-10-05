@@ -28,8 +28,9 @@ SELF_QA = {"selfqa-triage", "selfqa-file-finding", "selfqa-evidence", "selfqa-co
 
 #: Every internal action: the Self-QA steps, the HEARTBEAT.md queue's pass, whose one trigger
 #: (`system:heartbeat-tasks`) is written by its reconciler, like the Self-QA loop's, and the
-#: optimize-harness search's scoring step, configured by its template from the search's own sandbox.
-INTERNAL = SELF_QA | {"heartbeat-tasks", "optimize-score"}
+#: optimize-harness search's scoring and filing steps, configured by its template from the search's
+#: own sandbox.
+INTERNAL = SELF_QA | {"heartbeat-tasks", "optimize-score", "optimize-file"}
 
 
 def _catalog() -> dict[str, dict]:

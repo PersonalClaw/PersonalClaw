@@ -1130,6 +1130,14 @@ def main():
             os.makedirs(OWNER_HOME, mode=0o700, exist_ok=True)
         except OSError:
             pass
+        # The memory folders fenced below are made first when they are missing: they are kept in
+        # the home's workspace, an entry at the top of the home, and once the home is fenced no
+        # entry can be added there, so a home with no workspace yet could fence none of them.
+        for target in dict.fromkeys(MEMORY_FOLDERS + MEMORY_HIDDEN):
+            try:
+                os.makedirs(target, mode=0o700, exist_ok=True)
+            except OSError as exc:
+                sys.exit(f"sandbox: could not fence memory: {{exc.strerror or exc}}")
         if os.path.isdir(OWNER_HOME) and not os.path.islink(OWNER_HOME):
             fenced = set()
             for name in OWNER_ONLY_NAMES:
@@ -1162,16 +1170,13 @@ def main():
                 sys.exit(f"sandbox: could not fence the home: errno {{ctypes.get_errno()}}")
 
         # Long-term memory, for a command started for work that may change none of it: each
-        # memory folder, made when it is missing, is bound onto itself read-only, so nothing in it
-        # is written, added or removed from in here, and as a mount point it stays where it is (the
-        # folder holding it is an entry at the top of the home, fixed above). For work that may
-        # read none of it, an empty folder of this launch's is bound over it read-only instead, so
-        # nothing in it is read either. One that cannot be fenced stops the command.
+        # memory folder (made above when it was missing) is bound onto itself read-only, so
+        # nothing in it is written, added or removed from in here, and as a mount point it stays
+        # where it is (the folder holding it is an entry at the top of the home, fixed above). For
+        # work that may read none of it, an empty folder of this launch's is bound over it
+        # read-only instead, so nothing in it is read either. One that cannot be fenced stops the
+        # command.
         for target in dict.fromkeys(MEMORY_FOLDERS + MEMORY_HIDDEN):
-            try:
-                os.makedirs(target, mode=0o700, exist_ok=True)
-            except OSError:
-                pass
             t = target.encode()
             source = tempfile.mkdtemp(dir=scratch).encode() if target in MEMORY_HIDDEN else t
             if (

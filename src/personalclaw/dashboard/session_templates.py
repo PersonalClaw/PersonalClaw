@@ -67,17 +67,22 @@ def _path() -> Path:
 
 
 def _load_raw() -> dict[str, Any]:
-    # A corrupt settings file must not break the chat page; an empty template list is a
-    # degraded surface, a 500 on session create is a broken product. The read keeps a copy of
-    # it and says so once, and no save writes over it (:func:`_save_raw`).
+    """The templates, for a read that only lists them. A corrupt settings file must not break the
+    chat page: an empty template list is a degraded surface, a 500 on session create is a broken
+    product. The read keeps a copy of it and says so once."""
     return record_files.read_or_none(_path(), dict) or {}
 
 
+def _load_for_write() -> dict[str, Any]:
+    """The templates a save, an edit or a delete is built on. Refused (``record_files.Unreadable``)
+    while the file there cannot be read, so nothing is written over it: a change built on a read
+    that saw none of it would replace every template it holds."""
+    return record_files.read(_path(), dict) or {}
+
+
 def _save_raw(data: dict[str, Any]) -> None:
-    """Write the templates. Refused (``record_files.Unreadable``), writing nothing, while the file
-    there cannot be read: *data* was built on a read that saw none of it (:func:`_load_raw`)."""
+    """Write the templates, *data* being what :func:`_load_for_write` read and the change made."""
     path = _path()
-    record_files.read(path, dict)
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
 
@@ -148,7 +153,7 @@ def save_template(fields: dict[str, Any]) -> tuple[str, str]:
     clean, err = validate(fields)
     if err:
         return "", err
-    data = _load_raw()
+    data = _load_for_write()
     if len(data) >= _MAX_TEMPLATES:
         return "", f"template limit reached ({_MAX_TEMPLATES}); delete one first"
     tid = _slug(clean["name"])
@@ -160,7 +165,7 @@ def save_template(fields: dict[str, Any]) -> tuple[str, str]:
 
 def update_template(template_id: str, fields: dict[str, Any]) -> str:
     """Replace a template's fields in place. Returns an error string ("" = ok)."""
-    data = _load_raw()
+    data = _load_for_write()
     existing = data.get(template_id)
     if not isinstance(existing, dict):
         return "not found"
@@ -177,7 +182,7 @@ def update_template(template_id: str, fields: dict[str, Any]) -> str:
 
 def delete_template(template_id: str) -> bool:
     """Remove a template. True when one was removed."""
-    data = _load_raw()
+    data = _load_for_write()
     if template_id not in data:
         return False
     del data[template_id]

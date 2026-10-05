@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -500,6 +501,47 @@ async def test_a_search_within_its_budget_whose_candidates_improve_files_its_win
     assert "passes-1" in second
     assert {kw["agent"] for kw in proposer.spawns} == {TEMPLATE_REFINER_AGENT_NAME}
     assert TEMPLATE_REFINER_TOOLS == ["refiner_evidence", "propose_template_diff"]
+
+
+@pytest.mark.anyio
+async def test_the_winner_is_filed_by_the_gateway_and_raised_in_the_inbox(
+    space: Path, monkeypatch
+) -> None:
+    """The run's filing step files the winner in the gateway itself: the proposal, the Inbox row
+    that raises it, and the study it pre-registers, in a home that has none of them yet.
+
+    🔴 Red before: a command the run's bash step started filed it, in the sandbox, and on Linux the
+    sandbox can neither add an entry at the top of the home nor replace a file there. A home with
+    no ``learning`` folder yet filed nothing ("Filing candidate 1 was refused: skip."), and on any
+    Linux home the proposal reached no Inbox row and pre-registered no study. The filing is watched
+    here where the gateway makes it, so this reds on every host."""
+    from personalclaw.inbox import InboxStore
+    from personalclaw.learning import proposals
+
+    filed_here: list[str] = []
+    enqueue = proposals.enqueue
+
+    def watched(**kw: Any):
+        verdict, prop = enqueue(**kw)
+        filed_here.append(getattr(prop, "id", ""))
+        return verdict, prop
+
+    monkeypatch.setattr(proposals, "enqueue", watched)
+    home = Path(os.environ["PERSONALCLAW_HOME"])
+    assert not (home / "learning").exists() and not (home / "evals").exists()
+
+    ctl, _proposer = await _run(
+        space, _inputs(space, max_iterations=2), [_proposal(3), _proposal(2)]
+    )
+
+    filed = _filed(ctl)
+    assert filed.get("filed") is True, (filed, _steps(ctl))
+    assert filed_here == [filed["proposal_id"]], "the winner was not filed by the gateway"
+    assert filed.get("study_id"), filed
+    inbox = InboxStore()
+    inbox.load()
+    rows = [i for i in inbox.pending() if i.refs.get("learning_proposal") == filed["proposal_id"]]
+    assert len(rows) == 1, [i.refs for i in inbox.pending()]
 
 
 # ── the preflight refuses a search it cannot run honestly ────────────────────

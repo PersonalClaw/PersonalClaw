@@ -264,6 +264,17 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
         ceiling=RUNG_AUTONOMOUS,
         providers=("optimize-score",),
     ),
+    # The optimize-harness search's filing step. Its own key, for its own governed behavior: it
+    # files ONE pending template-diff proposal and raises it in the Inbox, and applies nothing.
+    # The proposal IS the person's decision, so a rung that asks first would ask about asking;
+    # what it may put in front of her unattended is held by the write-capable fence in
+    # `triggers/screen.py`, and what it may file by the proposal queue's own gate.
+    ActionTypeSpec(
+        key="action.optimize_file",
+        floor=RUNG_AUTONOMOUS,
+        ceiling=RUNG_AUTONOMOUS,
+        providers=("optimize-file",),
+    ),
     # Its own key rather than sharing `action.create_task`'s: its
     # effect is registering an Artifact and — on a confirmed failure — opening a LOCAL git branch
     # (never pushed), which is a different governed behavior from filing a task row. Both effects

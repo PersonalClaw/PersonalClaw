@@ -426,6 +426,18 @@ def _ensure_default_providers_registered() -> None:
         )
 
         register_action_provider(OptimizeScoreActionProvider())
+    if "optimize-file" not in _providers:
+        # The bundled `optimize-harness` search's last step: it files the winner its ledger names
+        # as a proposal a person reviews. A step in the gateway rather than a bash step, as the
+        # scoring step is, because filing writes PersonalClaw's own stores in the home (the
+        # proposal queue, the Inbox row, the study it pre-registers), which a command in the
+        # sandbox may not lay out. Added to ALLOWED_HOOK_PROVIDERS, to `triggers/screen.py`'s
+        # write-capable set and to `guardrails/rungs.py`'s action table in the SAME commit.
+        from personalclaw.action_providers.optimize_file_provider import (
+            OptimizeFileActionProvider,
+        )
+
+        register_action_provider(OptimizeFileActionProvider())
     if "check-work" not in _providers:
         # The engine-native verification node — a thin wrapper
         # over the `check_work.derive_and_run` core the bundled skill and the SDLC

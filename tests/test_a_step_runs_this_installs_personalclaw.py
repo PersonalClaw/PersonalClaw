@@ -150,7 +150,7 @@ def test_this_installs_cli_answers_an_unknown_step_in_json(isolated_install) -> 
     assert done.returncode == 2, (done.stdout, done.stderr)
     answer = json.loads(done.stdout)
     assert answer["ok"] is False
-    assert answer["commands"] == ["adjudicate", "experience", "file", "preflight", "scope-check"]
+    assert answer["commands"] == ["adjudicate", "experience", "preflight", "scope-check"]
 
 
 def test_the_optimize_module_is_not_a_second_entry_point() -> None:

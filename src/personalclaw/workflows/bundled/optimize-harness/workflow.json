@@ -253,18 +253,14 @@
         "id": "file",
         "label": "File the winner as a proposal a human installs",
         "config": {
-          "provider": "bash",
-          "payload": {
-            "PC_OPT_SUBJECT": "{{inputs.target_template}}",
-            "PC_OPT_SANDBOX": "{{inputs.sandbox}}",
-            "PC_OPT_SUITE_THRESHOLD": "{{inputs.suite_threshold}}",
-            "PC_OPT_BEST_EVER": "{{nodes.preflight.output.best_ever}}",
-            "PC_OPT_HALT": "{{nodes.search.output.halt}}",
-            "PC_OPT_HALT_DETAIL": "{{nodes.search.output.halt_detail}}"
-          },
+          "provider": "optimize-file",
           "with": {
-            "command": "personalclaw optimize-harness file </dev/null",
-            "timeout": 120
+            "subject": "{{inputs.target_template}}",
+            "sandbox": "{{inputs.sandbox}}",
+            "suite_threshold": "{{inputs.suite_threshold}}",
+            "best_ever": "{{nodes.preflight.output.best_ever}}",
+            "halt": "{{nodes.search.output.halt}}",
+            "halt_detail": "{{nodes.search.output.halt_detail}}"
           }
         }
       }

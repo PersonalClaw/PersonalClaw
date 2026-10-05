@@ -581,6 +581,29 @@ def test_linux_a_private_chats_command_cannot_write_the_memory_folders(home):
         assert _launch(writes[0]).returncode == 0
 
 
+@pytest.mark.skipif(
+    not _linux_sandbox_works(), reason="needs the Linux namespace sandbox (user + mount namespaces)"
+)
+@pytest.mark.parametrize("mode", ["incognito", "temporary"])
+def test_linux_a_private_chats_command_runs_in_a_home_with_no_workspace_yet(home, mode):
+    """The memory folders a private chat's command is fenced from are made when the home has none
+    yet, and the command runs with them fenced.
+
+    🔴 Red before: the launcher made a missing memory folder only after the top of the home was
+    read-only, where no entry can be added, so with no workspace in the home it made none and
+    stopped every command of a private chat's work ("could not fence memory")."""
+    shutil.rmtree(_workspace(home))
+    ws = os.path.realpath(_workspace(home))
+    with memory_writes.derived_from(KEY, memory_mode=mode):
+        ran = _launch("true")
+        wrote = _launch(f'echo x > "{ws}/memory/preferences.md"')
+
+    assert ran.returncode == 0, ran.stderr
+    assert wrote.returncode != 0, wrote
+    assert (_workspace(home) / "memory").is_dir() and (_workspace(home) / "_ext").is_dir()
+    assert not (_workspace(home) / "memory" / "preferences.md").exists()
+
+
 # ── the owner's own save ────────────────────────────────────────────────────────────────────
 
 

@@ -616,6 +616,9 @@ WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
         # candidate against. It writes nothing, but unattended model spend earns the opt-in, as
         # it does for `best-of-n` directly above.
         "optimize-score",
+        # The optimize-harness filing step writes a durable proposal row and raises an Inbox
+        # item, as `knowledge-propose` does, and the same opt-in holds it.
+        "optimize-file",
         # The second-opinion handoff spawns a cataloged runner (or a subagent) one-shot
         # with write access to a real workspace — the strictest side of this table is the only
         # honest one for it. Note the disk re-diff that gates ACCEPTANCE is not a substitute for

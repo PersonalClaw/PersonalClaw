@@ -1311,11 +1311,11 @@ def file_winner(
 ) -> dict[str, Any]:
     """File the search's winner as a template-diff PROPOSAL. Applies NOTHING.
 
-    ONE filing for both drivers (:func:`propose_winner` for :func:`run_search`, the template's
-    ``file`` step), and no model is asked to do it: the winner, its ops, what it scored and why
-    the search stopped are all in the ledger, so filing costs nothing and happens whatever the
-    budget left, and what the proposal says about its score is the measurement rather than
-    anybody's account of it.
+    ONE filing for both drivers (:func:`propose_winner` for :func:`run_search`, :func:`file_step`
+    for the template's ``file`` step), and no model is asked to do it: the winner, its ops, what it
+    scored and why the search stopped are all in the ledger, so filing costs nothing and happens
+    whatever the budget left, and what the proposal says about its score is the measurement rather
+    than anybody's account of it.
 
     Routed through ``learning.refiner_tools.file_template_diff`` rather than through a
     second filing path of this module's own: that function already runs the frozen-field +
@@ -1408,8 +1408,6 @@ ENV_PAYLOAD_KEYS: dict[str, str] = {
     "PC_OPT_DIFF_TEXT": "diff_text",
     "PC_OPT_OPS": "ops",
     "PC_OPT_RATIONALE": "rationale",
-    "PC_OPT_HALT": "halt",
-    "PC_OPT_HALT_DETAIL": "halt_detail",
 }
 
 #: The same, for the fields that nest under ``stops`` — the three declared halt conditions
@@ -1777,12 +1775,17 @@ def _cmd_experience(payload: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "candidates": candidates, "winner": winner}
 
 
-def _cmd_file(payload: dict[str, Any]) -> dict[str, Any]:
+def file_step(payload: dict[str, Any]) -> dict[str, Any]:
     """The template's last step: file the search's winner, and say how the search ended.
 
-    The halt and its clause are the search loop's own last verdict (``PC_OPT_HALT``,
-    ``PC_OPT_HALT_DETAIL``); the winner and the evidence are read from the sandbox
-    (:func:`file_winner`).
+    Run IN the gateway by the ``optimize-file`` action, not in a child process, because filing
+    writes PersonalClaw's own stores in its home: the proposal queue, the Inbox row that raises the
+    proposal, and the study it pre-registers. A command a run starts runs in the sandbox, which may
+    not lay out the top of the home (on Linux it can neither add an entry there nor replace a file
+    there), so a filing made from one is lost in any home that lacks one of those stores.
+
+    The halt and its clause are the search loop's own last verdict (``halt``, ``halt_detail``);
+    the winner and the evidence are read from the sandbox (:func:`file_winner`).
     """
     sandbox = str(payload.get("sandbox") or "")
     if not sandbox:
@@ -1812,14 +1815,15 @@ def _cmd_file(payload: dict[str, Any]) -> dict[str, Any]:
 
 #: The subcommand table. The bundled ``optimize-harness`` template names these in its bash
 #: nodes, so ``tests/test_evals_optimize.py`` asserts the template's names against THIS
-#: dict — a renamed subcommand fails the template, not just this module. The scoring step is
-#: not here: it runs in the gateway (:func:`score_step`, the ``optimize-score`` action).
+#: dict — a renamed subcommand fails the template, not just this module. Each of them reads and
+#: writes only the search's own sandbox. The scoring and filing steps are not here: they run in
+#: the gateway (:func:`score_step`, the ``optimize-score`` action; :func:`file_step`, the
+#: ``optimize-file`` action).
 COMMANDS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "preflight": _cmd_preflight,
     "scope-check": _cmd_scope_check,
     "adjudicate": _cmd_adjudicate,
     "experience": _cmd_experience,
-    "file": _cmd_file,
 }
 
 

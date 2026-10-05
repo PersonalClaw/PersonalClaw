@@ -302,7 +302,12 @@ step is the one that calls models, so it is an action that runs in the gateway
 holds its `budget_usd` to what the run's own calls cost
 (`workflows.ownership.run_spend`), checked before every cycle and every scoring
 (`evals.optimize.budget_stop`). Its `file` step files the winner from the ledger, with
-the runs it was scored on as the proposal's evidence, and asks no model.
+the runs it was scored on as the proposal's evidence, and asks no model. It is an action
+that runs in the gateway too (`optimize-file`, `evals.optimize.file_step`): filing writes
+the proposal queue, the Inbox row that raises the proposal and the study it pre-registers,
+all in the home, and a `bash` step's command runs in the sandbox, which on Linux can neither
+add an entry at the top of the home nor replace a file there. In the gateway the filing is
+the run's own work, so a run that keeps nothing files no proposal.
 Nothing the package ships runs PersonalClaw through an interpreter found on `PATH`
 (`tests/test_bare_interpreter_census.py`).
 

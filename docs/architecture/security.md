@@ -661,10 +661,13 @@ wrote, `owner_grants.py`). An agent writes none of them, at three layers that ea
   is replaced, which every config save does — so an owner-only name is refused whether it exists or
   not, and however often it is replaced. The price, on Linux only: the shell cannot add, remove or
   rename an entry at the top of the home, and a top-level file PersonalClaw replaces while the shell
-  runs is read-only in that shell until it restarts. On both, the home and every folder above it
-  the owner could rename are pinned (a Seatbelt literal on the folder's own entry; a mount point on
-  Linux), so the home cannot be moved aside, edited there and moved back. This is the kernel
-  refusing, so it holds however the command spells the path.
+  runs is read-only in that shell until it restarts. So the launcher makes what it fences before it
+  fences the home (the memory folders a private chat's command may not change), and PersonalClaw's
+  own writes to the stores at the top of its home are made in the gateway, never by a command a run
+  starts (the optimize-harness search files its winner with the `optimize-file` action). On both,
+  the home and every folder above it the owner could rename are pinned (a Seatbelt literal on the
+  folder's own entry; a mount point on Linux), so the home cannot be moved aside, edited there and
+  moved back. This is the kernel refusing, so it holds however the command spells the path.
 - **The screen**: `HookManager.on_tool_call`, which every approval path consults before a card,
   an auto-approve pattern or an unattended default, and the native `bash` tool refuse a call that
   names one, with the reason. Defence in depth — a command can build the path out of pieces no

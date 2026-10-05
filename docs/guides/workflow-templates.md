@@ -311,7 +311,11 @@ The scoring step is an action that runs in the gateway (`optimize-score`) rather
 than a command in a `bash` step, and that is the general rule for any step whose
 spend a template must hold to a budget: a model step's calls, and those of an action
 that runs in the gateway, are booked to the run and shown on its page, while a model
-call made by a command that a `bash` step runs is not.
+call made by a command that a `bash` step runs is not. The filing step is one too
+(`optimize-file`), for the other general rule: a command a `bash` step runs is in the
+sandbox, which may not lay out the top of PersonalClaw's home (on Linux it can neither
+add an entry there nor replace a file there), so a step that files a proposal, raises
+an Inbox item or registers a study runs in the gateway.
 
 ## A run's caps: `defaults.budget`
 
