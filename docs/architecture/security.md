@@ -1713,6 +1713,10 @@ the task and project stores, the Inbox sink and the loop's spec and plan are
 written). A Temporary or Incognito chat's workflow runs, and every chat's batch,
 are its own: only that chat's work and you read them, another chat's agent reads
 one as not found, and no chat's turn is told of another's (`workflows/chat_runs.py`).
+So is what its work waits on in the Inbox, an ordinary chat's included (the approval its agent or
+a subagent of it asks for, a batch's ask, a question put to you, what its own run waits on):
+another chat's agent, a scheduled briefing and the Morning triage digest read none of it and count
+none of it, while you read all of it (`inbox_reach.py`).
 They end with the chat: the workflow supervisor stops each once its chat has
 ended (a Temporary chat's session, an Incognito chat's deletion) and deletes it
 with what it produced (`workflows/private_runs.py`).

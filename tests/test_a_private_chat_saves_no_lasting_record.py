@@ -33,7 +33,13 @@ from test_an_agent_clis_workflow_tools_reach_the_gateway import (  # noqa: F401 
     gateway,
 )
 
-from personalclaw import lasting_work, memory_writes, project_context, session_restrictions
+from personalclaw import (
+    lasting_work,
+    memory_writes,
+    project_context,
+    session_keys,
+    session_restrictions,
+)
 from personalclaw.agents.native.builtin_tools import NativeBuiltinToolProvider
 from personalclaw.agents.native.runtime import NativeAgentRuntime
 from personalclaw.agents.native.tools import InProcessMcpToolProvider
@@ -47,6 +53,7 @@ from personalclaw.loop import files as loop_files
 from personalclaw.loop import store as loop_store
 from personalclaw.planning import session as plan
 from personalclaw.skills import ephemeral
+from personalclaw.subagent_reach import reader_of_work
 from personalclaw.tasks import registry
 from personalclaw.tasks.hierarchy import HierarchyStore
 from personalclaw.workflows.failure_taxonomy import classify_exception
@@ -159,8 +166,10 @@ async def _tasks() -> list[Any]:
     return tasks
 
 
-def _inbox(gw: SimpleNamespace) -> list[str]:
-    items = native_source.open_inbox_items(state=gw.state) or []
+async def _inbox(gw: SimpleNamespace) -> list[str]:
+    """What your Inbox holds, every item: read as a tool you run from your own pages reads it."""
+    reader = reader_of_work(gw.state, session_keys.DASHBOARD_UI)
+    items = await native_source.open_inbox_items(reader) or []
     return [item.message for item in items]
 
 
@@ -291,7 +300,7 @@ async def test_an_incognito_chats_agent_saves_no_task_project_or_inbox_item(
     assert [(t.id, t.description) for t in await _tasks()] == [(yours, "")]
     assert not any(p.name == "Lake house" for p in HierarchyStore().list_projects())
     assert not any(tl.name == WORDS for tl in HierarchyStore().list_task_lists())
-    assert WORDS not in _inbox(gateway)
+    assert WORDS not in await _inbox(gateway)
 
 
 @pytest.mark.asyncio
@@ -315,7 +324,7 @@ async def test_an_ordinary_chats_agent_saves_tasks_projects_and_inbox_items(
     assert sorted(t.title for t in await _tasks()) == ["Book the band for the reunion", WORDS]
     [project] = [p for p in HierarchyStore().list_projects() if p.name == "Lake house"]
     assert project.agent_instructions_template == WORDS
-    assert WORDS in _inbox(gateway)
+    assert WORDS in await _inbox(gateway)
 
 
 # ── an agent CLI's tool server, and the gateway's tool route it can reach ───────────────────────
@@ -380,7 +389,7 @@ async def test_a_temporary_agent_clis_call_through_the_gateway_saves_no_task_or_
         assert answer["not_run"] == "refused_by_tool", answer
     assert await _tasks() == []
     assert not any(p.name == "Lake house" for p in HierarchyStore().list_projects())
-    assert WORDS not in _inbox(gateway)
+    assert WORDS not in await _inbox(gateway)
 
 
 # ── the gateway's routes ────────────────────────────────────────────────────────────────────────

@@ -146,7 +146,21 @@ def test_an_empty_inbox_says_so(tmp_path, monkeypatch) -> None:
     st._inbox_store = store
     monkeypatch.setattr(ns, "_dashboard_state", st)
     result = _run(BT.create_inbox_tools_provider().invoke("inbox_list", {}))
-    assert result.success and result.output == "Nothing is waiting in the Inbox."
+    # An agent's read says it is of what its conversation reads, in words that do not change with
+    # whether another conversation's items wait (`inbox_reach`).
+    assert result.success and result.output == (
+        "Nothing that this conversation reads is waiting in the Inbox; another conversation's own "
+        "items are read only in it."
+    )
+    # A tool you run from your own pages reads every item.
+    from personalclaw import mcp_core
+
+    token = mcp_core.set_current_session_key("dashboard:ui")
+    try:
+        yours = _run(BT.create_inbox_tools_provider().invoke("inbox_list", {}))
+    finally:
+        mcp_core.reset_current_session_key(token)
+    assert yours.success and yours.output == "Nothing is waiting in the Inbox."
 
 
 def test_an_unreachable_inbox_is_a_failure_not_an_empty_one(monkeypatch) -> None:

@@ -298,6 +298,18 @@ says what that means.
   turn is told of answer another chat's own run as no run at all, in the words an id that never
   existed does, with an audit row; the spec an inspect call echoes follows only a run its caller
   reads. Your own sign-in reads every one.
+- **A chat's requests in the Inbox are that chat's** (`inbox_reach.py`), by the same rule: an item
+  raised for a chat's work (the approval its agent or one of its subagents waits on, a batch's ask
+  naming each task, a question its agent put to you, the note a call of its left when nobody
+  answered, a proposal drawn from it, what one of its own runs waits on) is read by that chat's
+  work and by you. `inbox_list` gives any other caller its own chat's items and those about no chat
+  (your mail and channels, proposals, notices, what a run of yours waits on), and counts only
+  those, in words that do not change with what it left out, wherever it runs: a chat's agent, its
+  subagents and workflow steps, a scheduled run, and `POST /api/tools/invoke`, which a scheduled
+  script, an app and an agent CLI's tool server reach (that tool server has no Inbox tool of its
+  own). The Morning triage digest is no chat's work: a chat's item reaches neither its model nor
+  its run's record, which every agent's workflow tools read. An item whose chat cannot be told is
+  yours alone, and your Inbox page and a tool you run from your own pages read every one.
 - **The app's own code is outside all of this.** An app's provider module is imported
   into the gateway's process, its backend is a process under your account, each MCP
   server in its manifest is a command the gateway launches with the gateway's own

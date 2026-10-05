@@ -232,6 +232,15 @@ included, reads as not found, as an id that never existed does, and so does a su
 someone else started in a shared channel thread, to every chat but that thread. You see every
 chat's subagents on the Background agents page.
 
+What a chat's work waits on in your Inbox is that chat's too: the approval its agent or one of its
+subagents asks for, a batch's ask (which names each task), a question its agent put to you, the
+note a call of its left when nobody could answer, and what one of its own runs waits on. When an
+agent reads your Inbox (`inbox_list`, for a briefing), it reads its own chat's items and what is
+about no chat: your mail and channel messages, proposals, notices, and what a run of yours waits
+on. Another chat's items, a Temporary or an Incognito chat's included, are not in what it reads or
+in its count. A scheduled briefing and the Morning triage digest are no chat's work, so they read
+none of what your chats' work waits on. You see every item on the Inbox page.
+
 A batch saves no workflow. It runs as one workflow run, which holds its tasks, and is in none of
 your workflow definitions: no agent lists it, reads it, starts it again or deletes it by name. Its
 run is the chat's own, and so is every workflow run a Temporary or Incognito chat starts: only that

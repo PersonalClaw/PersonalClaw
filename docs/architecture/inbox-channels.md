@@ -140,6 +140,24 @@ against core protocols). Paths are relative to
   (`OPEN_STATUSES`), newest first, with what each is, who raised it, when, and its text, the
   sender and text fenced as untrusted data. It declares itself a read, so a read-only automation
   (a scheduled briefing) may call it, and it marks nothing seen. `post_to_inbox` is the write.
+  **An agent reads its own chat's items and those about no chat** (`inbox_reach.py`). An item
+  raised for a chat's work is that chat's: it names the session it was raised for (`refs.session`,
+  `refs.chat`), whose chat is the one at the top of that work (`subagent_reach`: a subagent's is
+  its chat's, a workflow step's the chat that started its run), or a run that is a chat's own
+  (`refs.workflow`, `refs.loop`; `workflows/chat_runs.py`: a batch, or a Temporary or Incognito
+  chat's run). The approval a chat's agent waits on is one, a batch's ask (naming each task) is
+  another, and so are a question its agent put to you, the note a call of its left when nobody
+  answered and a proposal drawn from it. Every other item is about no chat: a message from a
+  source, an agent's post (`post_to_inbox`, which no Temporary or Incognito chat's work makes), a
+  proposal or notice of no chat's, what a run of yours waits on, your own note. A caller who is not
+  you reads and counts only those and its own chat's, in words that do not change with what it
+  left out ("that this conversation reads"), wherever `inbox_list` runs (a chat's agent, its
+  subagents and steps, a scheduled run, `POST /api/tools/invoke` for a scheduled script, an app or
+  an agent CLI's tool server); an item whose chat cannot be told is yours alone. The **Morning
+  triage** digest is no chat's work, so its Inbox lane collects only what is about no chat, and a
+  carried proposal about a chat's item drops out: what it collects reaches its model and its run's
+  record, a run of yours that every agent's workflow tools read. Your Inbox page and a tool you
+  run from your own pages read every item.
 - **Sources** — `inbox_providers/` ships native push + filesystem sources;
   the seam is entry-point discoverable (`provider_registry.py`) and apps
   contribute their own. A **channel app is expected to register one**: the

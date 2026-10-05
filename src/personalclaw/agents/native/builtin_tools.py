@@ -31,7 +31,7 @@ from personalclaw.agents.native.decision_tool_defs import decision_tool_definiti
 from personalclaw.agents.native.inbox_tool_defs import (
     INBOX_LIST_DEFAULT,
     INBOX_LIST_MAX,
-    inbox_item_text,
+    inbox_list_text,
     inbox_tool_definitions,
 )
 from personalclaw.agents.native.knowledge_tool_defs import knowledge_tool_definitions
@@ -1779,20 +1779,18 @@ class NativeBuiltinToolProvider(ToolProvider):
             limit = INBOX_LIST_DEFAULT
         limit = max(1, min(limit, INBOX_LIST_MAX))
         kind = str(a.get("kind", "") or "").strip().lower()
-        from personalclaw.inbox_providers.native_source import open_inbox_items
+        from personalclaw.inbox_providers.native_source import get_dashboard_state, open_inbox_items
+        from personalclaw.subagent_reach import reader_of_work
 
+        # As the work the call is for (`inbox_reach`): its own chat's items and those about no
+        # chat; a tool you run from your own pages reads every one.
+        reader = reader_of_work(get_dashboard_state(), self._session_key)
         # On the loop, not in an executor: taking in another writer's rows changes the store.
-        items = open_inbox_items(kind=kind)
+        items = await open_inbox_items(reader, kind=kind)
         if items is None:
             return ToolResult(success=False, error="the Inbox cannot be read from this run")
-        if not items:
-            return ToolResult(success=True, output="Nothing is waiting in the Inbox.")
-        shown = items[:limit]
-        noun = "item" if len(items) == 1 else "items"
-        count = f"{len(items)}" if len(shown) == len(items) else f"{len(shown)} of {len(items)}"
-        lines = [f"{count} open {noun} in the Inbox, newest first:"]
-        lines.extend(inbox_item_text(n, item) for n, item in enumerate(shown, 1))
-        return _ok_capped("\n\n".join(lines), session_key=self._session_key)
+        text = inbox_list_text(items, limit, everyone=reader.everyone)
+        return _ok_capped(text, session_key=self._session_key)
 
     async def _t_knowledge_search(self, a: dict) -> ToolResult:
         query = str(a.get("query", "")).strip()

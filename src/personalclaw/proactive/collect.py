@@ -6,7 +6,8 @@ Three lanes, three functions, one rule each about what "accumulated" means:
   items already excluded by the store's own filters. Read from `InboxStore.items` rather than
   re-polling a source: the gate deliberately runs at DIGEST time over STORED items, because
   `evaluate_alert` fires once at ingestion and never re-evaluates. Re-polling here would be a
-  second ingestion path with a second set of alert semantics.
+  second ingestion path with a second set of alert semantics. Only rows about no chat: the digest
+  is no chat's work (`inbox_reach`), so a chat's own row reaches neither its model nor its run.
 * **channel** — a `channel:` session whose last turn is not the assistant's. That is the
   cheapest honest reading of "unresolved": the machine has the ball. Sessions the user has
   since answered themselves fall out with no bookkeeping.
@@ -36,7 +37,7 @@ collector only sees its own lane and numbering is a property of the set (see `ma
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from personalclaw.inbox import OPEN_STATUSES
 from personalclaw.proactive.manifest import (
@@ -49,6 +50,9 @@ from personalclaw.proactive.manifest import (
     SOURCE_RUN,
     CollectedItem,
 )
+
+if TYPE_CHECKING:
+    from personalclaw.subagent_reach import Reader
 
 logger = logging.getLogger(__name__)
 
@@ -78,9 +82,25 @@ def _clip(text: str) -> str:
     return flat[:DETAIL_CHARS]
 
 
-def _inbox_item(item: Any) -> CollectedItem | None:
-    """One Inbox row as the lane collects it, or None when it no longer wants attention."""
+def _digest_reads(state: Any) -> Reader:
+    """Who the digest reads the Inbox as: no chat's work (``inbox_reach``), so it reads what is
+    about no chat. What it collects goes to its model and into its run's record, a run of yours,
+    which every agent's workflow tools read (``workflows.chat_runs``), so a chat's own row (its
+    approvals, the questions its work put to you, what its own runs wait on), a Temporary or
+    Incognito chat's above all, reaches neither."""
+    from personalclaw.subagent_reach import reader_of_work
+
+    return reader_of_work(state, "")
+
+
+def _inbox_item(item: Any, reader: Reader) -> CollectedItem | None:
+    """One Inbox row as the lane collects it, or None when it no longer wants attention or is a
+    row *reader* does not read (:func:`_digest_reads`)."""
+    from personalclaw import inbox_reach
+
     if str(getattr(item, "status", "")) not in ATTENTION_STATUSES:
+        return None
+    if not inbox_reach.reads(reader, item):
         return None
     channel_name = str(getattr(item, "channel_name", "") or "")
     return CollectedItem(
@@ -98,8 +118,9 @@ def _inbox_item(item: Any) -> CollectedItem | None:
     )
 
 
-def collect_inbox(store: Any, *, since_ts: float = 0.0) -> list[CollectedItem]:
-    """Inbox rows still wanting attention, newest-first within the window.
+def collect_inbox(store: Any, *, since_ts: float = 0.0, state: Any = None) -> list[CollectedItem]:
+    """Inbox rows still wanting attention that are about no chat (:func:`_digest_reads`, over the
+    gateway's dashboard *state*), newest-first within the window.
 
     `since_ts` is an epoch float compared against `created_at`; `0.0` means "everything still
     pending", which is the right default for a FIRST digest — a fresh install with a
@@ -111,12 +132,13 @@ def collect_inbox(store: Any, *, since_ts: float = 0.0) -> list[CollectedItem]:
     except Exception:  # noqa: BLE001 - a lane that cannot be read contributes nothing
         logger.warning("triage: inbox lane unreadable", exc_info=True)
         return []
+    reader = _digest_reads(state)
     for item in items:
         try:
             created = float(getattr(item, "created_at", 0.0) or 0.0)
             if since_ts and created and created < since_ts:
                 continue
-            collected = _inbox_item(item)
+            collected = _inbox_item(item, reader)
             if collected is not None:
                 out.append(collected)
         except Exception:  # noqa: BLE001 - one bad row must not lose the lane
@@ -295,7 +317,7 @@ def current_item(
     source: str, source_id: str, *, inbox_store: Any = None, state: Any = None
 ) -> CollectedItem | None:
     """*source_id* as its lane collects it now, whatever the window, or None when it no longer
-    wants your attention: dealt with, answered, or gone.
+    wants your attention: dealt with, answered, or gone, or an Inbox row the digest does not read.
 
     Raises :class:`LaneUnreadable` when its lane cannot be read here (an absent handle, a read
     that fails, a lane this module does not have): a caller must not take not knowing for "gone".
@@ -303,7 +325,7 @@ def current_item(
     try:
         if source == SOURCE_INBOX and inbox_store is not None:
             row = dict(getattr(inbox_store, "items", {}) or {}).get(source_id)
-            return _inbox_item(row) if row is not None else None
+            return _inbox_item(row, _digest_reads(state)) if row is not None else None
         if source == SOURCE_CHANNEL and state is not None:
             session = dict(getattr(state, "_sessions", {}) or {}).get(source_id)
             return _channel_item(source_id, session) if session is not None else None
@@ -328,7 +350,7 @@ def collect_all(
     """The union of the three lanes. A `None` handle means that lane is simply absent."""
     items: list[CollectedItem] = []
     if inbox_store is not None:
-        items.extend(collect_inbox(inbox_store, since_ts=since_ts))
+        items.extend(collect_inbox(inbox_store, since_ts=since_ts, state=state))
     if state is not None:
         items.extend(collect_channels(state, since_ts=since_ts))
     if include_runs:

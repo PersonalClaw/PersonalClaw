@@ -27,7 +27,8 @@ Another chat's helper reads as not found, in the words an id that never existed 
 answer does not say that it exists.
 
 The same rule answers which of a chat's own workflow runs a call reads (``workflows.chat_runs``):
-a batch is that chat's helpers, run as one workflow.
+a batch is that chat's helpers, run as one workflow. It answers which of the Inbox's items a call
+reads too (``inbox_reach``): an item raised for a chat's work is that chat's.
 """
 
 from __future__ import annotations
@@ -84,7 +85,9 @@ class Reader:
         return chat_of(self.state, self.work)
 
     def reads(self, parent_session_key: str) -> bool:
-        """Whether this reads the helper started for the session *parent_session_key*."""
+        """Whether this reads what was made for the work *parent_session_key* names: the helper
+        started for that session, a run started for it (``workflows.chat_runs``), an Inbox item
+        raised for it (``inbox_reach``)."""
         if self.everyone:
             return True
         if not self.chat:
@@ -103,7 +106,8 @@ def reader_of_work(state: Any, work: str) -> Reader:
     """Who reads as the work *work* names, for a read made inside PersonalClaw with no request to
     prove whose it is: the built-in agent's tools, which its runtime binds to its chat's session,
     and the context a chat's turn is built with. Your own pages (``dashboard:ui``, a tool you run
-    there) read every one; any other work reads its own chat's, and work naming none reads none."""
+    there) read every one; any other work reads its own chat's, and work naming none reads none of
+    any chat's (the Morning triage digest reads the Inbox as such work: ``inbox_reach``)."""
     return Reader(state, work=work, everyone=work == _YOUR_PAGES)
 
 

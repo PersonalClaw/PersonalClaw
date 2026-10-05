@@ -401,6 +401,10 @@ chat, channel thread, loop worker, webhook, subagent).
   send naming one that is not running here forgets it and answers 404. While
   it runs its transcript is written like any chat's (a reload keeps it); no
   snapshot or shard export copies it (`chat_traces.kept_by_temporary_chats`).
+  What a chat's work waits on in the Inbox is the chat's own too, as every
+  chat's is: its approvals, its batch's ask, a question its agent put to you and
+  what its own runs wait on are read by its own work and by you, and by no other
+  chat's agent or digest (`inbox_reach.py`).
   The workflow runs a temporary or incognito chat started are its own work:
   while it lives only its own work and you read them (`workflows/chat_runs.py`),
   and they end with it, and so do the runs they started in turn, a subworkflow's

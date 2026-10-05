@@ -21,11 +21,12 @@ written (``lasting_work``).
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import time
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from personalclaw import attachments, lasting_work
 from personalclaw.attachments import Attachment
@@ -37,6 +38,9 @@ from personalclaw.inbox import (
     ItemKind,
     ItemStatus,
 )
+
+if TYPE_CHECKING:
+    from personalclaw.subagent_reach import Reader
 
 logger = logging.getLogger(__name__)
 
@@ -192,26 +196,31 @@ def hold_from_someone_new(
     return item
 
 
-def open_inbox_items(*, kind: str = "", state=None) -> list[InboxItem] | None:
-    """The Inbox rows still wanting the owner (``OPEN_STATUSES``), newest first, for an agent.
+async def open_inbox_items(reader: Reader, *, kind: str = "") -> list[InboxItem] | None:
+    """The Inbox rows still wanting the owner (``OPEN_STATUSES``) that *reader* reads, newest
+    first, for an agent: its own chat's and those about no chat (``inbox_reach``), every one for
+    you. *reader*'s state is the dashboard state whose Inbox it reads.
 
     ``None`` when no dashboard state is wired, which is "the Inbox could not be read", never an
     empty Inbox. Reads only: it takes in what another writer put in the file first (as the
-    Inbox's own list does), and marks nothing seen. ``kind`` narrows to one item kind. Called on
-    the loop that owns the store, as the Inbox's routes are: taking in another writer's rows
-    changes the store, and nothing changes it off that loop.
+    Inbox's own list does), and marks nothing seen. ``kind`` narrows to one item kind. The store
+    is read on the loop that owns it, as the Inbox's routes read it: taking in another writer's
+    rows changes the store, and nothing changes it off that loop. Whose chat each row is for is
+    told off the loop, since the walk to it reads records.
     """
-    st = state or _dashboard_state
-    if st is None:
+    from personalclaw import inbox_reach
+
+    if reader.state is None:
         return None
-    store = _store_from_state(st)
+    store = _store_from_state(reader.state)
     store.refresh()
     items = [
         i
         for i in store.open_items()
         if not kind or str(getattr(i.item_kind, "value", i.item_kind) or "message") == kind
     ]
-    return sorted(items, key=lambda i: float(i.created_at or 0.0), reverse=True)
+    shown = await asyncio.to_thread(inbox_reach.readable, reader, items)
+    return sorted(shown, key=lambda i: float(i.created_at or 0.0), reverse=True)
 
 
 def post_to_inbox(
