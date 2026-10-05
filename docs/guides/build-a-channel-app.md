@@ -123,8 +123,9 @@ relays without core, is yours to mask (`personalclaw.sdk.channel.redact`).
 Render `request_approval`'s prompt from `personalclaw.sdk.channel.approval_brief_for(event)`: the
 tool, its arguments (`input`), the purpose the runner gave, the `summary` line (what the call can
 touch, and its risk) and, when the brief has one, the `reach` line under it: a shell command that
-reaches a host off the owner's allowed hosts, or one its command does not name, is asked about
-whatever a grant says, and `reach` says so. That is what the dashboard's approval card shows (its
+reaches a host off the owner's allowed hosts, or one its command does not name, or that deletes
+the owner's home folder, the filesystem root or the folder the conversation runs in, is asked
+about whatever a grant says, and `reach` says so. That is what the dashboard's approval card shows (its
 chips, and the line under them), and a prompt showing less asks the owner to approve a call they
 cannot see. Tag it with `source`, where the call came
 from in the words the dashboard names it by (`loop “Fix the README”`, `workflow “deep-research” ·
@@ -184,8 +185,9 @@ owner can neither see nor revoke.
 - **Offer the chat's answers.** Read the brief for your own turn's call with
   `approval_brief_for(event, chat=<the session key the turn runs under>)` when the prompt is in that
   conversation. It then offers what the chat's approval card offers for the call: `Allow for this
-  chat` (`key` `trust`) where the card would (never for a call that may destroy something or that
-  reaches a host off the allowed hosts, and only under a ceiling that lets a chat's Trust stand), and
+  chat` (`key` `trust`) where the card would (never for a call that may destroy something, that
+  reaches a host off the allowed hosts or that deletes a protected folder, and only under a ceiling
+  that lets a chat's Trust stand), and
   only while a chat the owner sees can hold it. Offer it nowhere you would not want the owner to
   trust the whole conversation, and add no trust answer of your own.
 - **Hand core the answer pressed.** Before you approve the call, pass the pressed answer's `key` to
@@ -205,9 +207,11 @@ owner can neither see nor revoke.
   without asking, by the decision the chat's own runner makes: an operator's pattern in the hook
   settings (`hook_pattern`), what the call's tool declares (`declared_read`, `work_asks`), the
   chat's Trust reads, Trust or YOLO (`trust_reads`, `trust`, `yolo`), each grant held to the
-  allowed hosts and the operator ceiling. `""` means the call must be asked. Approve no call on an
-  answer of your own, such as a hook pattern you match yourself, the spawn setting, or an approval
-  mode your turn carries: none of those is held to the ceiling or the allowed hosts. Read it per
+  allowed hosts, to the protected folders (a delete of the owner's home folder, the filesystem root
+  or the folder the conversation's runtime works in always asks) and to the operator ceiling. `""`
+  means the call must be asked. Approve no call on an answer of your own, such as a hook pattern you
+  match yourself, the spawn setting, or an approval mode your turn carries: none of those is held to
+  the ceiling, the allowed hosts or the protected folders. Read it per
   call and remember nothing: a pattern the owner removes, or the chat switched to Normal, makes
   your next call ask.
 - **Write your turns through `save_conversation_turn`, and name the conversation with the log's

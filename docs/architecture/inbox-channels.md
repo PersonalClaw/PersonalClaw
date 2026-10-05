@@ -430,7 +430,8 @@ over in the brief (`DashboardApprovalState.channel_answers`, the vocabulary and 
 `channel_delivery.chat_answers`): Allow once and Deny, and Allow for this chat, the card's "This
 chat", when the prompt is asked in the chat that is asking (the chat's own channel, in that chat),
 the call may not destroy anything (`task_modes.MAY_DESTROY`, where the card withholds its standing
-answers too), it reaches no host off the allowed hosts, and the operator ceiling lets a chat's
+answers too), it reaches no host off the allowed hosts and deletes no protected folder, and the
+operator ceiling lets a chat's
 Trust stand. Everywhere else, like Home and the Inbox, it answers the call alone. A press of Allow
 for this chat decides through `decide_session_approval` with `trust`, exactly as the card's does:
 that chat is trusted, its header shows it, its next calls run without asking, and no other chat
@@ -460,7 +461,9 @@ decides" level), what the call's tool declares (`declared_read`, or `work_asks` 
 starts a subagent, whose start asks, or starts on the spawn setting under the ceiling where the
 start is decided), then the chat's Trust reads, Trust and YOLO, none of which reaches a conversation
 an app started. Each grant is held to the runner's rules (`approval_grants.stands_for_call`: no
-grant answers a call that reaches a host off the allowed hosts, and the operator ceiling bounds
+grant answers a call that reaches a host off the allowed hosts or deletes the owner's home folder,
+the filesystem root or the folder the conversation runs in (`run_bounds.session_folder`), and the
+operator ceiling bounds
 each, a refusal audited as `approval.grant_refused`), and nothing answers a call the hook chain
 refuses, read on the command that would run as well as on its title. So a pattern the owner removes,
 or a Trust switched off in the dashboard, makes the next call ask, and a call nobody approves is

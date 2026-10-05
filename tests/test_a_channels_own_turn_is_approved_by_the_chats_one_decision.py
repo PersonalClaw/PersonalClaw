@@ -155,12 +155,30 @@ def test_nothing_approves_a_call_the_hook_chain_refuses(state, settings):
     chat's Trust, YOLO and a pattern naming the call answer nothing for a command it refuses."""
     assert answer_in_chat(THREAD, "trust", channel=CHANNEL) is True
     assert chat_grant(THREAD, _call("ls build")) == "trust", "the control: the Trust answers"
-    assert chat_grant(THREAD, _call("rm -rf /")) == ""
+    assert chat_grant(THREAD, _call("mkfs.ext4 /dev/sda1")) == ""
 
     trust_mode.enable_yolo(ttl_secs=60)
     settings(patterns=("bash",))
     assert chat_grant(THREAD, _call("ls build")) == "hook_pattern"
-    assert chat_grant(THREAD, _call("rm -rf /")) == ""
+    assert chat_grant(THREAD, _call("mkfs.ext4 /dev/sda1")) == ""
+
+
+def test_no_grant_answers_a_delete_of_the_folder_the_conversation_runs_in(state, settings):
+    """A delete of the folder the conversation's runtime works in, of the owner's home folder or
+    of the filesystem root is put to the owner on the channel's prompt, whatever the chat's
+    Trust, YOLO or a pattern would say; an ordinary delete is the chat's Trust to answer."""
+    from personalclaw.run_bounds import session_folder
+
+    folder = session_folder(THREAD)
+    assert answer_in_chat(THREAD, "trust", channel=CHANNEL) is True
+    assert chat_grant(THREAD, _call("rm -rf build")) == "trust", "the control: the Trust answers"
+    for command in ("rm -rf .", f"rm -fr {folder}/", "rm -r -f ~", "rm -rf /*"):
+        assert chat_grant(THREAD, _call(command)) == "", command
+
+    trust_mode.enable_yolo(ttl_secs=60)
+    settings(patterns=("bash",))
+    assert chat_grant(THREAD, _call("rm -rf build")) == "hook_pattern"
+    assert chat_grant(THREAD, _call("rm -rf ./")) == ""
 
 
 # ── What a call declares ──────────────────────────────────────────────────────────────────

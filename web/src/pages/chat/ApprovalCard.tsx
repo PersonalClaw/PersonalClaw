@@ -87,7 +87,7 @@ type Action = 'approved' | 'rejected' | 'trust' | 'trust_agent'
  *  alternative, and it is the worse of the two by a distance.
  */
 /** What no standing grant covers (`run_bounds`): said with every promise of "without asking". */
-const STILL_ASKS = 'A command that reaches a host off your allowed hosts still asks.'
+const STILL_ASKS = 'A command that reaches a host off your allowed hosts, or that deletes your home folder, the filesystem root or the working folder, still asks.'
 
 const REMEMBER_SCOPES = [
   {
@@ -176,7 +176,8 @@ function wordsFor(scope: (typeof REMEMBER_SCOPES)[number], words: ScopeWords) {
  *  external tools must not be harder to answer than `bash`.
  *
  *  `alone`: no standing grant would answer the next call like it, so none is offered — a call
- *  that reaches a host off the allowed hosts, and one someone else asked for. */
+ *  that reaches a host off the allowed hosts or deletes a protected folder, and one someone else
+ *  asked for. */
 function offeredScopes(risk: ApprovalSegment['risk'], widened: boolean, alone: boolean) {
   if (alone) return [REMEMBER_SCOPES[0]]
   if (mayDestroy(risk) && !widened) return [REMEMBER_SCOPES[0]]
@@ -258,8 +259,9 @@ export function ApprovalCard({
   // Resolve against what is actually OFFERED, not the whole vocabulary. That is what makes
   // un-ticking the unlock fall back to Allow-once instead of leaving a withdrawn standing
   // grant selected — a scope the user can no longer see must not be the one Allow posts.
-  // A call reaching a host off the allowed hosts is asked about whatever a grant says, so no
-  // standing grant is offered for it: one would promise a "without asking" it cannot keep.
+  // A call reaching a host off the allowed hosts, or deleting a protected folder, is asked about
+  // whatever a grant says, so no standing grant is offered for it: one would promise a "without
+  // asking" it cannot keep.
   // So is a call someone else asked for: none of her standing grants would answer the next one.
   const offered = answers === 'once'
     ? [REMEMBER_SCOPES[0]]

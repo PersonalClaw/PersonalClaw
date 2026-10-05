@@ -41,24 +41,30 @@ class CheckRefused(Exception):
     check that "could not be determined". The message names the rule."""
 
 
-def held(cmd: str) -> "DenyDecision":
-    """The action denylist's answer for *cmd* as a check (``guardrails.denylist.check_command``).
+def held(cmd: str, *, cwd: str) -> "DenyDecision":
+    """The action denylist's answer for *cmd* as a check run in the folder *cwd* (``""``: the
+    gateway's own) (``guardrails.denylist.check_command``).
 
     A check is work nobody answers, whatever started its loop or its run: it runs between a
     worker's cycles or a run's steps with nobody approving it. So it is judged as unattended work,
     and among the action denylist's rules a check that would stop, restart, update or reinstall the
     PersonalClaw it runs in is refused (``guardrails.self_destruct``), as a trigger's fire or a
-    workflow step saying it is. The shell denylist is left to the caller, which asks it next in
-    the words every command path gives its refusal (``security.denied_command``)."""
+    workflow step saying it is, and so is one that would delete the owner's home folder, the
+    filesystem root or *cwd* (``protected_folders``). The shell denylist is left to the caller,
+    which asks it next in the words every command path gives its refusal
+    (``security.denied_command``)."""
     from personalclaw.guardrails.denylist import check_command
     from personalclaw.guardrails.policy import unattended_dispatch_key
 
-    return check_command((cmd or "").strip(), session_key=unattended_dispatch_key("loop_gate"))
+    return check_command(
+        (cmd or "").strip(), session_key=unattended_dispatch_key("loop_gate"), cwd=cwd
+    )
 
 
-def refusal(cmd: str) -> str:
-    """Why *cmd* is refused as a check, or "": by the action denylist (:func:`held`), then by the
-    shell denylist (``security.denied_command``), the order the action denylist asks its own.
+def refusal(cmd: str, *, cwd: str) -> str:
+    """Why *cmd*, run as a check in the folder *cwd*, is refused, or "": by the action denylist
+    (:func:`held`), then by the shell denylist (``security.denied_command``), the order the action
+    denylist asks its own.
 
     :func:`run_verify_command` asks both before running anything; a caller that records how a
     check went (a loop's pause, a stage's gate row, a workflow node's failure) asks this too, so
@@ -68,7 +74,7 @@ def refusal(cmd: str) -> str:
     cmd = (cmd or "").strip()
     if not cmd:
         return ""
-    if (decision := held(cmd)).blocked:
+    if (decision := held(cmd, cwd=cwd)).blocked:
         return decision.refusal()
     denied = denied_command(cmd)
     return denied.refusal() if denied is not None else ""
@@ -159,7 +165,7 @@ async def run_verify_command(
     from personalclaw.command_audit import audit_command_refusal
     from personalclaw.security import audit_bash_command, denied_command
 
-    if (decision := held(cmd)).blocked:
+    if (decision := held(cmd, cwd=cwd or "")).blocked:
         audit_command_refusal(cmd, decision, source="loop_gate", operation=label)
         report.not_run = decision.refusal().rstrip(".")
         return None
@@ -167,7 +173,7 @@ async def run_verify_command(
         audit_command_refusal(cmd, denied, source="loop_gate", operation=label)
         report.not_run = f"the shell denylist refused it ({denied.why()})"
         return None
-    danger = audit_bash_command(cmd)
+    danger = audit_bash_command(cmd, cwd=cwd or "")
     if danger:
         logger.warning("loop gate: refusing to run %s command — %s", label, danger)
         report.not_run = f"the safety screen refused it ({danger})"

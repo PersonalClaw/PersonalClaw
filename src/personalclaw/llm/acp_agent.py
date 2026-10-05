@@ -825,6 +825,12 @@ class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentP
         # subprocess's cwd; keep it in sync with the provider-level view.
         self._client._work_dir = self._cwd
 
+    @property
+    def workspace(self) -> str:
+        """The folder the agent CLI was started in, where its commands run: the protocol client's,
+        which an unbound session takes from the configured workspace."""
+        return str(self._client._work_dir)
+
     def set_session_key(self, session_key: str, channel_id: str | None = None) -> None:
         """Rebind this provider to a different logical session.
 

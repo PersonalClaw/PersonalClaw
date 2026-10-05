@@ -106,7 +106,7 @@ async def _observe_ground_truth(
     if cmd:
         from personalclaw.loop.gates import refusal, run_verify_command
 
-        if refused := refusal(cmd):
+        if refused := refusal(cmd, cwd=workspace or ""):
             # Refused, not "could not run": the judge is told no check result exists and why.
             parts.append(f"Did not run `{cmd}`: {refused}")
         else:

@@ -94,14 +94,16 @@ class ApprovalAnswer:
 ALLOW_ONCE = ApprovalAnswer("approved", "Allow once", "approved", "APPROVE")
 #: Approve this call, and every later one in the same chat, until the owner changes it back: the
 #: dashboard card's "This chat", the chat's Trust. Offered only by a prompt asked in that chat. A
-#: command reaching a host off the allowed hosts is asked about past it (``run_bounds``).
+#: command reaching a host off the allowed hosts, or deleting the owner's home folder, the
+#: filesystem root or the working folder, is asked about past it (``run_bounds``).
 ALLOW_FOR_THIS_CHAT = ApprovalAnswer(
     "trust",
     "Allow for this chat",
     "approved",
     "TRUST",
     "Every tool in this chat runs without asking, until you change it back. "
-    "A command that reaches a host off your allowed hosts still asks.",
+    "A command that reaches a host off your allowed hosts, or that deletes your home folder, the "
+    "filesystem root or the working folder, still asks.",
 )
 #: Refuse this call. Nothing is remembered.
 DENY = ApprovalAnswer("rejected", "Deny", "rejected", "DENY")
@@ -123,9 +125,10 @@ def chat_answers(*, risk: str, reach: str) -> tuple[ApprovalAnswer, ...]:
       ``task_modes.MAY_DESTROY``): the card withholds its standing answers on such a call until
       the owner unlocks them, and a prompt has no unlock, so it offers what the card offers before
       one;
-    * it has no *reach*, the line saying it reaches a host off the allowed hosts: such a call is
-      asked about whatever a grant says (``run_bounds``), so the card offers no standing answer
-      for it, and Allow for this chat would promise a "without asking" it never gets;
+    * it has no *reach*, the line saying it reaches a host off the allowed hosts or deletes one of
+      the owner's protected folders: such a call is asked about whatever a grant says
+      (``run_bounds``), so the card offers no standing answer for it, and Allow for this chat would
+      promise a "without asking" it never gets;
     * the operator ceiling lets a chat's Trust stand, as the card's own route asks before it grants
       it (``approval_grants.stands``): an answer that would be refused is not offered.
 

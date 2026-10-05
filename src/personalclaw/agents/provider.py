@@ -257,6 +257,14 @@ class AgentProvider(ABC):
 
     def set_workspace(self, path: Path) -> None: ...
 
+    @property
+    def workspace(self) -> str:
+        """The folder this session's turns run in, the one its commands start in and read a
+        relative path from: the one it was started in or :meth:`set_workspace` gave it, which a
+        runtime keeps as ``_cwd``; ``""`` when it was given none."""
+        folder = getattr(self, "_cwd", None)
+        return str(folder) if folder else ""
+
     def set_session_key(self, session_key: str, channel_id: str | None = None) -> None: ...
 
     def set_channel(self, channel_id: str | None) -> None: ...

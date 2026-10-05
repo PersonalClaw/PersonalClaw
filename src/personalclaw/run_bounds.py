@@ -1,6 +1,7 @@
-"""Where a run's calls reach without a person saying yes: the allowed hosts and its own folders.
+"""Where a run's calls reach without a person saying yes: the allowed hosts, its own folders, and
+never the owner's protected folders.
 
-Two bounds, read from one reading of each call (:mod:`personalclaw.command_effects` for a shell
+Three bounds, read from one reading of each call (:mod:`personalclaw.command_effects` for a shell
 command, the path a native file tool is given):
 
 * **The network.** A shell command that reaches the network is held to the egress allow-list
@@ -18,6 +19,11 @@ command, the path a native file tool is given):
   (:func:`scratch_dir`, which its shell gets as ``TMPDIR``). A native file write elsewhere is
   refused, and so is a shell command whose write facet names a path elsewhere, or a path this
   reading cannot name. An attended run is asked about each of its writes as before.
+* **The protected folders.** A shell command that would delete the owner's home folder, the
+  filesystem root or the folder the call runs in (a folder holding one, or everything inside one,
+  included), or that deletes a path this reading cannot name, is put to a person whatever would
+  otherwise have answered for it, as a call past the allowed hosts is; an unattended run is
+  refused it (:mod:`personalclaw.protected_folders`).
 
 What a program does that its command line does not say (a script's own ``open``, a tool's own
 configuration naming another registry) is outside any reading of the text: the OS sandbox and
@@ -33,12 +39,14 @@ import os
 import stat
 import tempfile
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from personalclaw import protected_folders
 from personalclaw.command_effects import DEVICES, CommandEffects, command_effects
 from personalclaw.file_scope import PATH_TOOLS
+from personalclaw.protected_folders import NOTHING, ProtectedDelete
 from personalclaw.shell_syntax import LEADING_VARIABLES
 
 logger = logging.getLogger(__name__)
@@ -219,6 +227,8 @@ class Reach:
     paths: tuple[str, ...] = ()
     #: It writes a path it does not name.
     unnamed_path: bool = False
+    #: What it would delete of the owner's protected folders.
+    deletes: ProtectedDelete = NOTHING
 
     @property
     def network(self) -> bool:
@@ -228,8 +238,14 @@ class Reach:
     def writes(self) -> bool:
         return bool(self.paths) or self.unnamed_path
 
+    @property
+    def asks(self) -> bool:
+        """It is put to a person whatever grant stands: past the allowed hosts, or a delete of a
+        protected folder."""
+        return self.network or bool(self.deletes)
+
     def __bool__(self) -> bool:
-        return self.network or self.writes
+        return self.network or self.writes or bool(self.deletes)
 
 
 NOWHERE = Reach()
@@ -267,27 +283,36 @@ def call_reach(
     tool_input: object,
     *,
     session_key: str,
-    cwd: str = "",
+    cwd: str,
     within: Sequence[str] | None = None,
     scratch: str = "",
+    tmpdir: str | None = None,
 ) -> Reach:
-    """Where one tool call reaches past its run's bounds.
+    """Where one tool call reaches past its run's bounds, run in the folder *cwd*.
 
     The network half is asked of every shell call (:func:`personalclaw.task_modes.shell_command`
-    says whether a call is one). The writes half only when *within* names the run's folders,
-    which is how a caller says the run is unattended: of a shell command's write facet, and of a
-    native file write's path."""
-    from personalclaw.task_modes import declared_level, shell_command
+    says whether a call is one), and so is the protected folders' half, of the command the call
+    runs (:func:`~personalclaw.task_modes.shell_call_command`, which reads a command that arrived
+    only in the call's title too), whose shell has *tmpdir* as ``TMPDIR`` (``None``: this
+    process's). The writes half only when *within* names the run's folders, which is how a caller
+    says the run is unattended: of a shell command's write facet, and of a native file write's
+    path."""
+    from personalclaw.task_modes import declared_level, shell_call_command, shell_command
 
+    runs = shell_call_command(title, tool_kind, tool_input, declared)
+    deletes = protected_folders.protected_delete(runs, cwd=cwd, tmpdir=tmpdir) if runs else NOTHING
     command = shell_command(title, tool_kind, tool_input, declared)
     if command:
-        return effects_reach(
+        reach = effects_reach(
             command_effects(command),
             policy=shell_egress_policy(session_key),
             cwd=cwd,
             within=within,
             scratch=scratch,
         )
+        return replace(reach, deletes=deletes)
+    if deletes:
+        return Reach(deletes=deletes)
     arg = FILE_WRITES.get(title)
     if within is None or arg is None or not declared_level(declared):
         return NOWHERE
@@ -326,7 +351,8 @@ def tool_call_reach(
 ) -> tuple[Reach, tuple[str, ...]]:
     """:func:`call_reach` for a native runtime's call, and the folders an unattended run's writes
     are held to. *roots* (the run's folders, read only for a call that can write) is given for an
-    unattended run and ``None`` for an attended one, whose writes are asked about."""
+    unattended run and ``None`` for an attended one, whose writes are asked about. The run's
+    shell has *scratch* as ``TMPDIR`` when it has one (``shell_env``)."""
     from personalclaw.task_modes import shell_command
 
     if tool_name not in FILE_WRITES and not shell_command(tool_name, "", tool_input, declared):
@@ -341,6 +367,7 @@ def tool_call_reach(
         cwd=cwd,
         within=within,
         scratch=scratch,
+        tmpdir=scratch or None,
     )
     return reach, within or ()
 
@@ -420,7 +447,11 @@ def past_bounds(reach: Reach, within: Sequence[str] = ()) -> str:
     """Why an unattended run is refused the call, in a clause: what it reaches past its bounds.
 
     What the call's card says; :func:`refusal` tells the model the same and what it can do."""
-    reasons = [network_sentence(reach), writes_sentence(reach, within)]
+    reasons = [
+        network_sentence(reach),
+        writes_sentence(reach, within),
+        protected_folders.clause(reach.deletes),
+    ]
     return (
         "this run is unattended, so nobody is here to allow a call past its bounds: "
         + "; ".join(r for r in reasons if r)
@@ -446,6 +477,11 @@ def refusal(
             + (f"; scratch files go in {scratch}" if scratch else "")
             + (", the folder `mktemp -d` makes" if scratch and shell_tmpdir else "")
         )
+    if reach.deletes:
+        steps.append(
+            f"leave {protected_folders.ALWAYS_ASKS} alone, and name in the command each path a "
+            "delete removes"
+        )
     return (
         past_bounds(reach, within)
         + ". To go on, "
@@ -455,53 +491,71 @@ def refusal(
 
 
 def ask_note(reach: Reach) -> str:
-    """The line an attended run's card shows for a call that reaches past the allowed hosts:
-    why it asks, though a standing grant would have answered any other call."""
+    """The line an attended run's card shows for a call put to a person past every grant (one
+    that reaches past the allowed hosts, or that deletes a protected folder): why it asks, though
+    a standing grant would have answered any other call."""
+    notes = []
     sentence = network_sentence(reach)
-    if not sentence:
-        return ""
-    return (
-        sentence[0].upper()
-        + sentence[1:]
-        + ". A command that reaches a host off that list, or one it does not name, is always "
-        "asked about, whatever this chat or its agent allows."
-    )
+    if sentence:
+        notes.append(
+            sentence[0].upper()
+            + sentence[1:]
+            + ". A command that reaches a host off that list, or one it does not name, is always "
+            "asked about, whatever this chat or its agent allows."
+        )
+    if reach.deletes:
+        notes.append(
+            protected_folders.sentence(reach.deletes)
+            + f" A command that deletes {protected_folders.ALWAYS_ASKS} is always asked about, "
+            "whatever this chat or its agent allows."
+        )
+    return " ".join(notes)
 
 
 def reach_note(
-    declared: object, title: str, tool_kind: str, tool_input: object, session_key: str = ""
+    declared: object,
+    title: str,
+    tool_kind: str,
+    tool_input: object,
+    session_key: str,
+    *,
+    cwd: str,
 ) -> str:
-    """The card's line (:func:`ask_note`) for a call put to a person, ``""`` when it reaches no
-    host past the allowed hosts. A display line, so a reading that fails says nothing."""
+    """The card's line (:func:`ask_note`) for a call put to a person, run in the folder *cwd*;
+    ``""`` when nothing puts it past every grant. A display line, so a reading that fails says
+    nothing."""
     try:
-        reach = call_reach(declared, title, tool_kind, tool_input, session_key=session_key)
+        reach = call_reach(declared, title, tool_kind, tool_input, session_key=session_key, cwd=cwd)
     except Exception:  # noqa: BLE001 - the card still shows the call and its risk
         logger.warning("run bounds: could not read where an asked call reaches", exc_info=True)
         return ""
     return ask_note(reach)
 
 
-def _event_reach(event: Any, session_key: str) -> Reach:
+def _event_reach(event: Any, session_key: str, cwd: str) -> Reach:
     return call_reach(
         getattr(event, "risk_level", "") or "",
         str(getattr(event, "title", "") or ""),
         str(getattr(event, "tool_kind", "") or ""),
         getattr(event, "tool_input", ""),
         session_key=session_key,
+        cwd=cwd,
     )
 
 
-def off_list(event: Any, session_key: str = "") -> bool:
-    """Whether a call put to an approval gate (a permission request) reaches a host off the
-    allowed hosts, or one its command does not name: no grant answers it, so a person must."""
-    return _event_reach(event, session_key).network
+def put_to_a_person(event: Any, *, session_key: str, cwd: str) -> bool:
+    """Whether a call put to an approval gate (a permission request), run in the folder *cwd*,
+    must be answered by a person whatever grant stands: it reaches a host off the allowed hosts,
+    or one its command does not name, or it deletes one of the owner's protected folders, or a path
+    its command does not name (:mod:`personalclaw.protected_folders`). No grant answers it."""
+    return _event_reach(event, session_key, cwd).asks
 
 
-def screen(hooks: Any, event: Any, session_key: str, cwd: str | None = None) -> tuple[Any, bool]:
-    """The hook chain's verdict on a call put to an approval gate
-    (:func:`~personalclaw.acp.permission_authority.screen_tool_call`), and whether the call
-    reaches a host off the allowed hosts (:func:`off_list`). Such a call is put to a person past
-    every grant, so a hook's auto-approve does not answer it (it stays an allow); a refusal does."""
+def screen(hooks: Any, event: Any, session_key: str, cwd: str) -> tuple[Any, bool]:
+    """The hook chain's verdict on a call put to an approval gate, run in the folder *cwd*
+    (:func:`~personalclaw.acp.permission_authority.screen_tool_call`), and whether the call is put
+    to a person past every grant (:func:`put_to_a_person`). A hook's auto-approve does not answer
+    such a call (it stays an allow); a refusal does."""
     from personalclaw.acp.permission_authority import screen_tool_call
     from personalclaw.hooks import TOOL_AUTO_APPROVE
 
@@ -513,20 +567,21 @@ def screen(hooks: Any, event: Any, session_key: str, cwd: str | None = None) -> 
         tool_kind=str(getattr(event, "tool_kind", "") or ""),
         declared=getattr(event, "risk_level", "") or "",
     )
-    reaches = off_list(event, session_key)
-    if reaches and verdict.action == TOOL_AUTO_APPROVE:
+    asks = put_to_a_person(event, session_key=session_key, cwd=cwd)
+    if asks and verdict.action == TOOL_AUTO_APPROVE:
         verdict = type(verdict).allow()
-    return verdict, reaches
+    return verdict, asks
 
 
-def event_note(event: Any, session_key: str = "") -> str:
-    """:func:`reach_note` for a permission request."""
+def event_note(event: Any, session_key: str, *, cwd: str) -> str:
+    """:func:`reach_note` for a permission request, run in the folder *cwd*."""
     return reach_note(
         getattr(event, "risk_level", "") or "",
         str(getattr(event, "title", "") or ""),
         str(getattr(event, "tool_kind", "") or ""),
         getattr(event, "tool_input", ""),
         session_key,
+        cwd=cwd,
     )
 
 
@@ -603,6 +658,31 @@ def native_check(runtime: Any, tool_name: str, args: Any) -> NativeCheck:
     return NativeCheck(reach, unattended, tool_name, session_key, tuple(within), scratch)
 
 
+def runtime_folder(provider: Any) -> str:
+    """The folder *provider*'s turns run in, its commands' folder (``AgentProvider.workspace``),
+    else the workspace, where a session given no folder of its own runs."""
+    folder = getattr(provider, "workspace", "")
+    if isinstance(folder, str) and folder:
+        return folder
+    from personalclaw.config.loader import workspace_root
+
+    return str(workspace_root())
+
+
+def session_folder(session_key: str) -> str:
+    """The folder the turns of the session *session_key* run in: the folder its runtime was started
+    in, as the gateway's sessions hold it (:func:`runtime_folder`), else the workspace. For a gate
+    that holds the session's key and not its runtime, such as a conversation a channel runs
+    itself."""
+    from personalclaw.inbox_providers.native_source import get_dashboard_state
+
+    state = get_dashboard_state()
+    sessions = getattr(state, "sessions", None) if state is not None else None
+    getter = getattr(sessions, "get_provider", None)
+    provider = getter(session_key) if callable(getter) and session_key else None
+    return runtime_folder(provider)
+
+
 def runtime_scratch(runtime: Any) -> str:
     """An unattended native runtime's own temporary folder (:func:`scratch_dir`, made once and
     kept on the runtime); ``""`` for an attended one, whose shell keeps the owner's."""
@@ -657,7 +737,7 @@ __all__ = [
     "effects_reach",
     "event_note",
     "native_check",
-    "off_list",
+    "put_to_a_person",
     "attended",
     "network_sentence",
     "outside",
@@ -665,7 +745,9 @@ __all__ = [
     "places",
     "reach_note",
     "refusal",
+    "runtime_folder",
     "runtime_scratch",
+    "session_folder",
     "scratch_dir",
     "screen",
     "shell_env",

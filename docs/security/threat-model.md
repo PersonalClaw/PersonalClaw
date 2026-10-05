@@ -388,9 +388,11 @@ Content and requests arriving from outside the owner's trust boundary:
 - **A channel's own turn runs a call unasked only on core's answer** (`chat_trust.chat_grant`). A
   channel app that runs a conversation itself (Slack's threads) asks core, at each call, who
   approves it without asking: the decision a chat makes for a call put to its gate, with every
-  grant held to the allowed hosts and to the operator ceiling (`approval_grants.stands_for_call`).
-  Under `{"approval": {"value": "ask"}}` an operator's hook pattern, the chat's Trust and YOLO
-  approve nothing there, a command reaching a host off the allowed hosts is always asked about,
+  grant held to the allowed hosts, to the protected folders and to the operator ceiling
+  (`approval_grants.stands_for_call`). Under `{"approval": {"value": "ask"}}` an operator's hook
+  pattern, the chat's Trust and YOLO approve nothing there, a command reaching a host off the
+  allowed hosts, or deleting the owner's home folder, the filesystem root or the folder the
+  conversation runs in, is always asked about,
   and no grant answers a call the hook chain refuses: the channel refuses that call itself, before
   it asks core or anyone (`screen_tool_call`, read on the command that would run), and then one
   the operator's blocking hooks refuse, bound to the agent the conversation runs as, at the step

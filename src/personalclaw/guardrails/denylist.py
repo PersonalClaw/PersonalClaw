@@ -14,7 +14,10 @@ a loop's check and a workflow's verify gate, a workflow's setup and teardown ste
 effect's teardown, and the agent's bash tool in a session nobody is in. Each records a
 refusal the way it records every refusal of a command it was about to run
 (``command_audit``, or the tool call's own audit row), and
-``tests/test_every_command_path_asks_the_denylist.py`` fails a new one that skips it.
+``tests/test_every_command_path_asks_the_denylist.py`` fails a new one that skips it. Among
+those rules, such work may not delete the owner's home folder, the filesystem root or the
+folder it runs in (``personalclaw.protected_folders``): a person must say yes to that, and
+nobody is there to.
 
 A refusal quotes the path or the command it refused as it was written: a dispatch that fills each
 ``{{secret:NAME}}`` in before the check (a trigger's fire, whoever asked for it, a workflow step,
@@ -215,15 +218,20 @@ def check_action(
     *,
     shell_denylist: bool = True,
     written: object = None,
+    cwd: str = "",
 ) -> DenyDecision:
     """Check one action-provider execution against the composed denylist.
 
     Order (first match wins): built-in sensitive-path check on any path-carrying
     config value → operator ``autonomy_denylist`` path globs (unioned with the
     session's SafetyProfile ``denylist_extra``) → the host-lifecycle self-destruct
-    guard on an unattended run (WF2AUT-14) → built-in + operator denied-command
-    patterns against any command string. Returns an ``allowed`` decision when
-    nothing matches.
+    guard on an unattended run (WF2AUT-14) → a delete of a protected folder on an unattended
+    run → built-in + operator denied-command patterns against any command string. Returns an
+    ``allowed`` decision when nothing matches.
+
+    A command runs in the folder *cwd*, ``""`` being this process's own, where an action's command
+    runs (``BashActionProvider`` starts its shell with no folder of its own): an unattended run is
+    refused a delete of that folder.
 
     ``session_key`` identifies the run so its SafetyProfile can layer extra path
     globs onto the operator denylist. Every named profile ships
@@ -347,6 +355,14 @@ def check_action(
                 matched=f"self_destruct:{effect.kind}",
             )
 
+    # 3b. A DELETE OF A PROTECTED FOLDER on an unattended run: the owner's home folder, the
+    # filesystem root or the folder the command runs in, read on the command as its shell reads it
+    # (`protected_folders`). A person must answer such a delete whatever grant stands, and nobody
+    # is here to, so it is refused, in words that name the folder.
+    for cmd, _said in commands:
+        if (gone := unattended_protected_delete(cmd, session_key, cwd=cwd)) is not None:
+            return gone
+
     # 4. The shell denylist, through the one check every command path asks
     # (`security.denied_command`), so action dispatch and the bash tool cannot drift apart. The
     # reason is a clause, like every reason above: each seam words the refusal around it.
@@ -362,8 +378,11 @@ def check_action(
     return DenyDecision()
 
 
-def check_command(command: str, *, session_key: str, written: str | None = None) -> DenyDecision:
-    """:func:`check_action` for a command a command path is about to run, under *session_key*, the
+def check_command(
+    command: str, *, session_key: str, cwd: str = "", written: str | None = None
+) -> DenyDecision:
+    """:func:`check_action` for a command a command path is about to run in the folder *cwd*
+    (``""``: this process's own, where a command given no folder runs), under *session_key*, the
     identity its work is judged by: every rule before the shell denylist, which the path asks
     itself next, in the words every command path gives its refusal (``security.denied_command``).
     *written* is the command as it was written, for a path that filled its ``{{secret:NAME}}`` in
@@ -375,6 +394,38 @@ def check_command(command: str, *, session_key: str, written: str | None = None)
         session_key=session_key,
         shell_denylist=False,
         written=None if written is None else {"command": written},
+        cwd=cwd,
+    )
+
+
+def unattended_protected_delete(command: str, session_key: str, *, cwd: str) -> DenyDecision | None:
+    """The refusal of *command* on an UNATTENDED run when it would delete the owner's home folder,
+    the filesystem root or the folder *cwd* it runs in (``protected_folders``), or a path it does
+    not name; None when it may proceed, or when a person is watching, whom the approval gate puts
+    such a call to (``run_bounds``).
+
+    Unattendedness is :func:`personalclaw.guardrails.policy.is_unattended_session`, as for the
+    self-destruct guard, and an EMPTY key is unattended here too: a caller that cannot say who is
+    running a command has not shown that a person is there to answer for it."""
+    if not (command or "").strip():
+        return None
+    from personalclaw import protected_folders
+    from personalclaw.guardrails.policy import is_unattended_session
+
+    if session_key.strip() and not is_unattended_session(session_key):
+        return None
+    found = protected_folders.protected_delete(command, cwd=cwd)
+    if not found:
+        return None
+    kinds = ",".join(found.kinds) or "unnamed"
+    return DenyDecision(
+        blocked=True,
+        verdict="block",
+        reason=(
+            f"{protected_folders.clause(found)}, and nobody is here to allow it: a delete of "
+            f"{protected_folders.ALWAYS_ASKS} always asks a person"
+        ),
+        matched=f"protected_folder:{kinds}",
     )
 
 

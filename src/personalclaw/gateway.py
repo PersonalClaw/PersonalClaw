@@ -653,16 +653,19 @@ class GatewayOrchestrator:
             # grants answers it (`approval_grants`, rule 4), and every surface it is asked on names
             # them.
             someone = _asked_for_call(request_id)
+            # The folder the call's command runs in: the asking agent's own.
+            folder = self._asking_folder(request_id, asked_in)
 
             # A standing grant approves without asking — read NOW, not from the config the gateway
             # started with (`approval_grants`, rule 1), and only if the operator ceiling lets it
             # stand (rule 2). What approved it is what the caller's audit row says (rule 3), and
             # the Inbox note a previous unanswered ask of the same call left is settled.
-            # Never for a command that reaches a host off the allowed hosts (`run_bounds`): it is
+            # Never for a command that reaches a host off the allowed hosts, nor one that deletes
+            # the owner's home folder, the filesystem root or that folder (`run_bounds`): it is
             # put to a person whatever grant stands.
             grant, grant_row = (
                 ("", None)
-                if run_bounds.off_list(event, asked_in)
+                if run_bounds.put_to_a_person(event, session_key=asked_in, cwd=folder)
                 else self._relay_grant(
                     source,
                     event,
@@ -730,6 +733,7 @@ class GatewayOrchestrator:
                                 tool_purpose=event.tool_purpose,
                                 session=asked_in,
                                 trigger=asked_by,
+                                cwd=folder,
                                 # This channel is already asking: the registry must not ask
                                 # a channel a second time.
                                 asked_on_channel=True,
@@ -763,7 +767,7 @@ class GatewayOrchestrator:
                     # `tool_meta` key and changes no argument — a channel that ignores
                     # it prompts exactly as before. The dashboard stays the rich
                     # surface; this is data, not rendering.
-                    attach_approval_brief(event, asked_by=someone)
+                    attach_approval_brief(event, asked_by=someone, cwd=folder)
                     try:
                         approved = await asker.request_approval(
                             event,
@@ -814,6 +818,7 @@ class GatewayOrchestrator:
                     tool_purpose=event.tool_purpose,
                     session=asked_in,
                     trigger=asked_by,
+                    cwd=folder,
                     risk_level=event.risk_level,
                     tool_kind=event.tool_kind,
                     annotations=getattr(event, "annotations", None),
@@ -827,6 +832,19 @@ class GatewayOrchestrator:
             return ToolDecision(False, "rejected", approval_grants.NO_SURFACE)
 
         return _approve
+
+    def _asking_folder(self, request_id: str, asked_in: str) -> str:
+        """The folder the command of the call *request_id* runs in: the folder of the agent that
+        asks it (the one it was started in, or its runtime's), else that of the session it is
+        asked in (``run_bounds.session_folder``)."""
+        mgr = getattr(self, "subagent_mgr", None)
+        asker = mgr.get(approval_subagent_id(request_id)) if mgr else None
+        if asker is None:
+            return run_bounds.session_folder(asked_in)
+        given = getattr(asker, "cwd", "")
+        if isinstance(given, str) and given:
+            return given
+        return run_bounds.session_folder(session_keys.SUBAGENT.key(asker.id))
 
     def _relay_grant(
         self,

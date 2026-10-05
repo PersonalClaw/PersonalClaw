@@ -449,14 +449,15 @@ class EvalRunner:
         (``pre_tool_hooks``): a hook that blocks the call or fails to run refuses it. The
         allowlist approves without asking anyone, so it is a grant, held to the rules every grant
         is (`approval_grants.stands_for_call`): it answers no call that reaches a host off the
-        allowed hosts, which an evaluation has nobody to ask about and so refuses, and the
-        operator ceiling bounds it (`approval_grants`, rule 2). The row names what decided (rule
-        3), and is written after the answer took effect, as every decision row is.
+        allowed hosts or deletes one of the owner's protected folders, which an evaluation has
+        nobody to ask about and so refuses, and the operator ceiling bounds it
+        (`approval_grants`, rule 2). The row names what decided (rule 3), and is written after the
+        answer took effect, as every decision row is.
         """
         from personalclaw import approval_grants, pre_tool_hooks
         from personalclaw.acp.permission_authority import screen_tool_call
         from personalclaw.hooks import TOOL_DENY
-        from personalclaw.run_bounds import off_list
+        from personalclaw.run_bounds import put_to_a_person, runtime_folder
 
         title = str(event.title or "")
         screened = screen_tool_call(None, title, event.tool_input)
@@ -479,10 +480,15 @@ class EvalRunner:
                 )
                 return
             reason, decided_by = self._allowlist_refusal(event), approval_grants.EVAL_SAFE_TOOLS
+        folder = runtime_folder(provider)
         if not reason and not approval_grants.stands_for_call(
-            approval_grants.EVAL_SAFE_TOOLS, session_key=session_key, event=event
+            approval_grants.EVAL_SAFE_TOOLS, session_key=session_key, event=event, cwd=folder
         ):
-            reason = "run_bounds" if off_list(event, session_key) else "refused_by_ceiling"
+            reason = (
+                "run_bounds"
+                if put_to_a_person(event, session_key=session_key, cwd=folder)
+                else "refused_by_ceiling"
+            )
             decided_by = approval_grants.NOBODY
         if reason:
             logger.warning("Refused tool in eval (%s): %s", reason, log_title(title))

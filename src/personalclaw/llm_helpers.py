@@ -391,11 +391,12 @@ async def _resolve_permission(
             on_refused(event, tool_result.reason or "a hook refused it")
         return False
 
-    # A command reaching a host off the allowed hosts is answered by a person or not at all
+    # A command reaching a host off the allowed hosts, or deleting the owner's home folder, the
+    # filesystem root or the folder the turn runs in, is answered by a person or not at all
     # (`run_bounds`): no hook pattern and no policy approves it.
-    from personalclaw.run_bounds import off_list
+    from personalclaw.run_bounds import put_to_a_person, runtime_folder
 
-    reaches_off_list = off_list(event, session_key)
+    to_a_person = put_to_a_person(event, session_key=session_key, cwd=runtime_folder(provider))
     if policy == ToolApprovalPolicy.REJECT_ALL:
         await provider.reject_tool(event.request_id)
         _log(
@@ -403,7 +404,7 @@ async def _resolve_permission(
         )
         return False
 
-    if reaches_off_list and on_tool_approval is None:
+    if to_a_person and on_tool_approval is None:
         await provider.reject_tool(event.request_id)
         _log("denied", metadata={"reason": "run_bounds", "decided_by": "run_bounds"})
         return False
@@ -420,7 +421,7 @@ async def _resolve_permission(
 
     if policy == ToolApprovalPolicy.HOOK_BASED and hooks is not None:
         if (
-            not reaches_off_list
+            not to_a_person
             and tool_result.action == TOOL_AUTO_APPROVE
             and approval_grants.stands(
                 approval_grants.HOOK_PATTERN,

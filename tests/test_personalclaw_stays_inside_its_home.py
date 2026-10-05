@@ -101,6 +101,8 @@ ALLOWED: dict[tuple[str, str], str] = {
     ("agent.py", "_apply_user_agent_hooks"): "a guard: a configured hooks folder must sit in HOME",
     ("command_paths.py", "named_paths"): "a guard: reads ~ and $HOME in a command as a shell does",
     ("run_bounds.py", "_expand_leading"): "a guard: reads $HOME in a path a command writes",
+    ("protected_folders.py", "home_folders"): "a guard: the home folder a delete always asks about",
+    ("protected_folders.py", "_expanded"): "a guard: reads ~ and $HOME in a path a delete removes",
     ("home_paths.py", "home"): "writes a path in the home from ~, as the agent and owner read it",
     ("acp/cli_resolve.py", "_node_manager_bin_globs"): "finds an agent CLI the owner installed",
     ("env.py", "augmented_path"): "finds MCP server binaries the owner installed",

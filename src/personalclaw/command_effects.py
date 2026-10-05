@@ -20,6 +20,10 @@ disagree:
   For the write facet, the paths it names (a redirect's file, ``-o``'s value, ``mkdir``'s,
   ``cp``'s and ``mv``'s targets), or that it names none. What a run may reach without a person
   saying yes is held to those (:mod:`personalclaw.run_bounds`).
+* **What does it delete?** For a delete program (``rm``, ``rmdir``, ``unlink``, ``find -delete``
+  and a ``find`` that runs one), each path it removes, as spelled, a glob included, or that it
+  removes one this reading cannot name. Whether that is the owner's home folder, the filesystem
+  root or the folder the command runs in is :mod:`personalclaw.protected_folders`'s question.
 
 Two shell idioms are neutral, because neither changes anything: sending stderr to ``/dev/null``
 (``2>/dev/null``) or into stdout (``2>&1``), and a leading ``cd <folder> &&`` (or ``;``). Every
@@ -39,8 +43,9 @@ and a program whose operands are positional (``uniq IN OUT``) accepts none.
 
 A program named by a path (``/usr/bin/curl``) may be any file of that name, so it is never a
 read; what its name is known to do still holds. A program another one starts (``env``,
-``timeout``, ``nice``, ``nohup``, ``sudo``, ``bash -c '…'``) is read as well: it is never a read,
-and what it is known to do holds too. A variable set for a program (``HTTPS_PROXY=… curl``), or a
+``timeout``, ``nice``, ``nohup``, ``sudo``, ``bash -c '…'``, and the command ``eval`` runs) is read
+as well: it is never a read, and what it is known to do holds too. A variable set for a program
+(``HTTPS_PROXY=… curl``), or a
 command before it that changes the shell's own state (``export``, ``source``, ``eval``), can send
 it elsewhere than its words say, so the hosts and paths it names are then not the only ones it
 may reach or write; the locale, the terminal's settings and shell options
@@ -63,9 +68,22 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from urllib.parse import urlsplit
 
+from personalclaw.command_operands import _scan, _Scan, _tail, _value_words
 from personalclaw.shell_syntax import Redirect, Simple, Word, lex, simple_commands
 
 # ── What a command does ──────────────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class Removal:
+    """One path a delete removes, with everything inside it, as the command spells it before its
+    shell expands it: the home shorthand and the home and temporary-folder variables as written,
+    and a relative path from the folder the command starts in. ``glob_at`` is where the first
+    character its shell expands as a glob is (:attr:`~personalclaw.shell_syntax.Word.glob_at`), or
+    -1: a glob removes every path its expansion can be."""
+
+    path: str
+    glob_at: int = -1
 
 
 @dataclass(frozen=True)
@@ -81,6 +99,11 @@ class CommandEffects:
     the command spells it (a relative one is from the folder the command starts in), and whether
     some write names no path this reading can read. ``network`` always comes with a host or
     ``host_unread``, and ``writes`` with a target or ``target_unread``.
+
+    ``removes`` and ``removes_unread`` say what the delete programs in it remove (:class:`Removal`),
+    and whether one removes a path this reading cannot name (one built from a variable, or one
+    ``xargs`` hands it). A delete that ``targets`` names only the folder of (``git clean``) removes
+    nothing here.
     """
 
     writes: bool = False
@@ -91,6 +114,8 @@ class CommandEffects:
     host_unread: bool = False
     targets: frozenset[str] = frozenset()
     target_unread: bool = False
+    removes: frozenset[Removal] = frozenset()
+    removes_unread: bool = False
 
     @property
     def reads_only(self) -> bool:
@@ -106,6 +131,8 @@ class CommandEffects:
             host_unread=self.host_unread or other.host_unread,
             targets=self.targets | other.targets,
             target_unread=self.target_unread or other.target_unread,
+            removes=self.removes | other.removes,
+            removes_unread=self.removes_unread or other.removes_unread,
         )
 
 
@@ -159,20 +186,45 @@ def argv_effects(argv: Sequence[str]) -> CommandEffects:
 _MAX_DEPTH = 4
 
 
+#: The programs whose whole work is removing what they are given.
+_REMOVERS = frozenset({"rm", "rmdir", "unlink"})
+#: Where a line this reader cannot split is cut into the words its delete programs are looked for
+#: in: blanks, the shell's operators and grouping, and the start of an expansion. Quotes and
+#: backslashes are dropped first, so a quoted or escaped program name is still its name.
+_LOOSE_BREAKS = re.compile(r"[\s;&|()<>{}`$,]+")
+
+
+def _names_a_delete(command: str) -> bool:
+    """Whether *command*, a line this reader cannot split into commands, names a delete program
+    among its words (:data:`_REMOVERS`, or ``find`` with ``-delete``): it may then remove anything,
+    since what the reading cannot split it cannot say it leaves alone."""
+    words = [w for w in _LOOSE_BREAKS.split(re.sub(r"[\\'\"]", "", command)) if w]
+    names = {w.rsplit("/", 1)[-1] for w in words}
+    return bool(names & _REMOVERS) or ("find" in names and "-delete" in words)
+
+
+def _unsplit(command: str) -> CommandEffects:
+    """What a line this reader cannot split into commands establishes: nothing, but that a delete
+    program it names removes a path this reading cannot name."""
+    return _UNREAD | CommandEffects(removes_unread=_names_a_delete(command))
+
+
 def _text_effects(command: str, depth: int) -> CommandEffects:
-    if depth > _MAX_DEPTH or not isinstance(command, str) or not command.strip():
+    if not isinstance(command, str) or not command.strip():
         return _UNREAD
+    if depth > _MAX_DEPTH:
+        return _unsplit(command)
     tokens = lex(command)
     if tokens is None:
-        return _UNREAD
+        return _unsplit(command)
     simple = simple_commands(tokens)
     if not simple:
-        return _UNREAD
+        return _unsplit(command)
     effects = _READ
-    base = ""
+    base, base_glob = "", -1
     if len(simple) > 1 and _is_leading_cd(simple[0]):
         effects = _redirects_effect(simple[0])
-        base = simple[0].words[1].text
+        base, base_glob = simple[0].words[1].text, simple[0].words[1].glob_at
         simple = simple[1:]
     # A `cd` past the leading one moves the shell somewhere this reading does not follow (which
     # branch of `||` ran, a pipeline's subshell), so a relative path after it names no place. A
@@ -182,7 +234,9 @@ def _text_effects(command: str, depth: int) -> CommandEffects:
     lost = False
     relayed = False
     for one in simple:
-        effects = effects | _under(_simple_effects(one, depth, relayed=relayed), base, lost=lost)
+        effects = effects | _under(
+            _simple_effects(one, depth, relayed=relayed), base, lost=lost, base_glob=base_glob
+        )
         name = one.words[0].text if one.words else ""
         runs = _runs_code(one)
         lost = lost or name in _MOVES or runs
@@ -308,11 +362,14 @@ def _relayed(effects: CommandEffects) -> CommandEffects:
     )
 
 
-def _under(effects: CommandEffects, base: str, *, lost: bool = False) -> CommandEffects:
-    """*effects* with each relative target read from folder *base* (``""``: where it starts).
+def _under(
+    effects: CommandEffects, base: str, *, lost: bool = False, base_glob: int = -1
+) -> CommandEffects:
+    """*effects* with each relative target and removal read from folder *base* (``""``: where it
+    starts). *base_glob* is where the first glob character of *base* is, or -1.
 
     With *lost*, the folder is not known, so a relative target names no place."""
-    if not effects.targets or (not base and not lost):
+    if not (effects.targets or effects.removes) or (not base and not lost):
         return effects
     targets: set[str] = set()
     unread = effects.target_unread
@@ -323,7 +380,25 @@ def _under(effects: CommandEffects, base: str, *, lost: bool = False) -> Command
             unread = True
         else:
             targets.add(posixpath.join(base, target))
-    return replace(effects, targets=frozenset(targets), target_unread=unread)
+    removes: set[Removal] = set()
+    removes_unread = effects.removes_unread
+    for removal in effects.removes:
+        if removal.path.startswith(("/", "~", "$")):
+            removes.add(removal)
+        elif lost:
+            removes_unread = True
+        else:
+            joined = posixpath.join(base, removal.path)
+            shifted = removal.glob_at + len(joined) - len(removal.path)
+            at = base_glob if base_glob >= 0 else (shifted if removal.glob_at >= 0 else -1)
+            removes.add(Removal(joined, at))
+    return replace(
+        effects,
+        targets=frozenset(targets),
+        target_unread=unread,
+        removes=frozenset(removes),
+        removes_unread=removes_unread,
+    )
 
 
 #: The files a write to which is no write: where output goes to be thrown away or shown.
@@ -957,18 +1032,25 @@ def _find(args: list[Word]) -> CommandEffects:
                 effects = effects | _UNREAD
             i += 1
         elif text == "-delete":
-            # What it deletes is found under the folders it starts from (none: where it runs).
+            # What it deletes is found under the folders it starts from (none: where it runs), and
+            # each of those is found first: it removes them with everything in them.
             if any(w.opaque or w.glob_at >= 0 for w in starts):
                 effects = effects | _DELETES
             else:
                 effects = effects | _deletes_in(*(w.text for w in starts or [Word(".")]))
+            effects = effects | _removal_of(*(starts or [Word(".")]))
         elif text in _FIND_WRITES:
             effects = effects | _target_of(args[i] if i < len(args) else None)
             i += _FIND_WRITES[text]
         elif text in _FIND_RUNS:
             effects = effects | _UNREAD
+            runs = i
             while i < len(args) and args[i].text not in (";", "+"):
                 i += 1
+            # The program it runs is handed every path it finds, the folders it starts from first:
+            # one that deletes (`-exec rm -rf {} +`) removes each of them.
+            if runs < i and _program_effects(list(args[runs:i]), 1).deletes:
+                effects = effects | _removal_of(*(starts or [Word(".")]))
             i += 1
         else:
             return effects | _UNREAD
@@ -1566,100 +1648,6 @@ def _git(args: list[Word]) -> CommandEffects:
         effects = _GIT_DESCRIBED.get(sub, _UNREAD)
     effects = _under(extra | effects, base)
     return _relayed(effects) if elsewhere else effects
-
-
-# ── Reading a command line for its operands ──────────────────────────────────────────────────────
-# The programs below are never a read, so their options are not checked against read-only forms:
-# a command line is read only for which words are its operands and what the options that matter
-# are given, which is what says where the program reaches.
-
-
-@dataclass
-class _Scan:
-    """A command line read for its operands and the values of the options that matter.
-
-    ``unknown``: it holds an option this reading does not know, so which words are operands is
-    not known for certain (that option may take the next word as its value)."""
-
-    operands: list[Word]
-    values: dict[str, list[Word]]
-    seen: set[str]
-    unknown: bool = False
-
-
-def _tail(word: Word, start: int) -> Word:
-    """The part of *word* from index *start*, as a word of its own."""
-    at = word.glob_at - start if word.glob_at >= start else -1
-    if start and word.leading:
-        return Word(word.text[start:], at, True)  # the variable it began with is cut off
-    return Word(word.text[start:], at, word.opaque, word.leading)
-
-
-def _scan(
-    args: Sequence[Word],
-    *,
-    flags: str = "",
-    valued: str = "",
-    long_flags: frozenset[str] = frozenset(),
-    long_valued: frozenset[str] = frozenset(),
-    unknown_short_is_flag: bool = False,
-    stop_at_operand: bool = False,
-) -> _Scan:
-    """Read *args*: every ``-`` word before ``--`` is an option, wherever it is (or, with
-    *stop_at_operand*, until the first operand: a program another one starts begins there)."""
-    operands: list[Word] = []
-    values: dict[str, list[Word]] = {}
-    seen: set[str] = set()
-    unknown = False
-    i = 0
-    while i < len(args):
-        word = args[i]
-        text = word.text
-        i += 1
-        if text == "--":
-            operands.extend(args[i:])
-            break
-        if text == "-" or not text.startswith("-"):
-            operands.append(word)
-            if stop_at_operand:
-                operands.extend(args[i:])
-                break
-            continue
-        if text.startswith("--"):
-            name, eq, _value = text.partition("=")
-            seen.add(name)
-            if eq:
-                values.setdefault(name, []).append(_tail(word, len(name) + 1))
-                if name not in long_valued and name not in long_flags:
-                    unknown = True
-            elif name in long_valued:
-                if i < len(args):
-                    values.setdefault(name, []).append(args[i])
-                    i += 1
-                else:
-                    unknown = True
-            elif name not in long_flags:
-                unknown = True
-            continue
-        for j, letter in enumerate(text[1:], start=1):
-            option = f"-{letter}"
-            seen.add(option)
-            if letter in valued:
-                if j + 1 < len(text):
-                    values.setdefault(option, []).append(_tail(word, j + 1))
-                elif i < len(args):
-                    values.setdefault(option, []).append(args[i])
-                    i += 1
-                else:
-                    unknown = True
-                break
-            if letter not in flags and not unknown_short_is_flag:
-                unknown = True
-    return _Scan(operands, values, seen, unknown)
-
-
-def _value_words(scan: _Scan, options: Iterable[str]) -> list[Word]:
-    return [word for option in options for word in scan.values.get(option, [])]
 
 
 # ── Where a word reaches ─────────────────────────────────────────────────────────────────────────
@@ -2316,13 +2304,22 @@ def _python(args: list[Word]) -> CommandEffects:
 # ── Programs that write the paths they are given ─────────────────────────────────────────────────
 
 
+def _removal_of(*words: Word) -> CommandEffects:
+    """The removal of each of *words*, with everything inside it (:class:`Removal`), or of a path
+    this reading cannot name for a word whose text it does not know."""
+    removes = frozenset(Removal(w.text, w.glob_at) for w in words if w.text and not w.opaque)
+    unread = any(w.opaque or not w.text for w in words)
+    return CommandEffects(removes=removes, removes_unread=unread)
+
+
 def _deletes_of(word: Word) -> CommandEffects:
     found = _target_of(word)
     if found.target_unread:
-        return _DELETES
-    return (
+        return _DELETES | _removal_of(word)
+    deleted = (
         CommandEffects(writes=True, deletes=True, targets=found.targets) if found.writes else found
     )
+    return deleted | _removal_of(word)
 
 
 def _each_operand(
@@ -2404,10 +2401,11 @@ _Starter = Callable[[list[Word], int], CommandEffects]
 
 
 def _started(
-    args: list[Word], depth: int, *, base: str = "", relays: bool = False
+    args: list[Word], depth: int, *, base: Word | None = None, relays: bool = False
 ) -> CommandEffects:
     """What the program a starter starts does: *args* are its words, past any ``NAME=value`` it
-    is given (*relays*: one the starter gave it already may send it elsewhere)."""
+    is given (*relays*: one the starter gave it already may send it elsewhere), in the folder
+    *base* when the starter moves into one (``env -C``)."""
     k, given = _assignments(args)
     if k >= len(args):
         return _UNREAD
@@ -2416,12 +2414,12 @@ def _started(
         inner = _relayed(inner)
     if k:
         inner = inner | _UNREAD
-    return _under(inner, base) if base else inner
+    return _under(inner, base.text, base_glob=base.glob_at) if base and base.text else inner
 
 
 def _env(args: list[Word], depth: int) -> CommandEffects:
     i = 0
-    base = ""
+    base: Word | None = None
     relays = False
     while i < len(args):
         word = args[i]
@@ -2437,10 +2435,10 @@ def _env(args: list[Word], depth: int) -> CommandEffects:
         elif t in ("-C", "--chdir") and i + 1 < len(args):
             if args[i + 1].opaque:
                 return _UNREAD
-            base = args[i + 1].text
+            base = args[i + 1]
             i += 2
         elif t.startswith("--chdir="):
-            base = t.split("=", 1)[1]
+            base = _tail(word, len("--chdir="))
             i += 1
         elif t == "--":
             i += 1
@@ -2511,8 +2509,8 @@ def _starter(
 
 
 def _xargs(args: list[Word], depth: int) -> CommandEffects:
-    """``xargs`` adds words it reads from its input to what it starts, so where that writes or
-    reaches is not named here."""
+    """``xargs`` adds words it reads from its input to what it starts, so where that writes,
+    deletes or reaches is not named here."""
     start = _skip_options(
         args,
         valued="naLsPIEd",
@@ -2521,9 +2519,32 @@ def _xargs(args: list[Word], depth: int) -> CommandEffects:
     inner = _started(args[start:], depth) if start is not None else _UNREAD
     if inner.writes:
         inner = replace(inner, target_unread=True)
+    if inner.deletes:
+        inner = replace(inner, removes_unread=True)
     if inner.network:
         inner = replace(inner, host_unread=True)
     return inner
+
+
+def _eval(args: list[Word], depth: int) -> CommandEffects:
+    """``eval`` joins its words with spaces and runs the result as a command of its shell."""
+    if not args:
+        return _UNREAD
+    line = " ".join(w.text for w in args)
+    if any(w.opaque for w in args):
+        return _built(line, depth)
+    return _text_effects(line, depth + 1)
+
+
+def _built(line: str, depth: int) -> CommandEffects:
+    """What a command a shell is handed with a variable's value already in it establishes
+    (``sh -c "rm -rf $X"``, ``eval "$X"``, the value put in by the shell that starts it): nothing,
+    since the value may hold any words, but the paths its delete programs remove as *line* spells
+    them (a leading ``$HOME`` is the home folder) and, when it names a delete program, that it may
+    remove a path this reading cannot name."""
+    named = _text_effects(line, depth + 1)
+    unread = named.removes_unread or _names_a_delete(line)
+    return _UNREAD | CommandEffects(removes=named.removes, removes_unread=unread)
 
 
 def _shell(args: list[Word], depth: int) -> CommandEffects:
@@ -2534,7 +2555,7 @@ def _shell(args: list[Word], depth: int) -> CommandEffects:
         word = args[i]
         t = word.text
         if word.opaque:
-            return _UNREAD
+            return _built(" ".join(w.text for w in args[i:]), depth)
         if t == "--":
             i += 1
             break
@@ -2549,8 +2570,10 @@ def _shell(args: list[Word], depth: int) -> CommandEffects:
                 i += 1
             continue
         break
-    if not given or i >= len(args) or args[i].opaque:
+    if not given or i >= len(args):
         return _UNREAD  # a script, or what it reads from its input
+    if args[i].opaque:
+        return _built(args[i].text, depth)
     return _text_effects(args[i].text, depth + 1)
 
 
@@ -2566,6 +2589,7 @@ _STARTERS: dict[str, _Starter] = {
     "sudo": _starter(valued="ugCDhprtTU", describes=frozenset({"-e", "-l", "-v", "-k", "-K"})),
     "doas": _starter(valued="uC"),
     "xargs": _xargs,
+    "eval": _eval,
     **dict.fromkeys(("sh", "bash", "zsh", "dash", "ksh"), _shell),
 }
 

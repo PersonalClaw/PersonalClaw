@@ -430,7 +430,13 @@ def _refused_stage_check(loop: Loop, phase: dict, stage: str) -> str:
     declares exit criteria runs its checks (`_stage_gate_passed`), so only one can be refused."""
     if not any(str(c).strip() for c in (phase.get("exit_criteria") or [])):
         return ""
-    return next((why for _, cmd in _stage_commands(loop, stage) if (why := gates.refusal(cmd))), "")
+    from personalclaw.loop.loop import effective_dir
+
+    where = effective_dir(loop) or ""
+    return next(
+        (why for _, cmd in _stage_commands(loop, stage) if (why := gates.refusal(cmd, cwd=where))),
+        "",
+    )
 
 
 class CodeKind(LoopKindStrategy):
@@ -522,7 +528,7 @@ class CodeKind(LoopKindStrategy):
         for key, label in (("verify_command", "Verify"), ("test_command", "Test")):
             cmd = str(cfg.get(key) or "").strip()
             if cmd:
-                danger = audit_bash_command(cmd)
+                danger = audit_bash_command(cmd, cwd=str(config.get("workspace_dir") or ""))
                 if (denied := denied_command(cmd)) is not None:
                     errors.append(f"{label} command rejected — {denied.why()}.")
                 elif danger:
@@ -2317,7 +2323,7 @@ class CodeKind(LoopKindStrategy):
             str(cfg.get("verify_command", "")).strip(),
             str(cfg.get("test_command", "")).strip(),
         ):
-            if refused := gates.refusal(cmd):
+            if refused := gates.refusal(cmd, cwd=ws or ""):
                 gates.pause_for_refusal(loop.id, refused, ctx.publish)
                 return False
             if cmd:

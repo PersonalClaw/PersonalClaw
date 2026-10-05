@@ -14,8 +14,8 @@ The brief also carries the call itself: the tool, its arguments and the purpose 
 runner gave, each MASKED with :func:`~personalclaw.security.redact_field` — the mask the
 dashboard's pending-approval entry applies to the same three strings — plus the one
 ``summary`` line (what the call can touch, and its risk) and, for a call that reaches a host
-off the allowed hosts, the ``reach`` line saying so (the card's line under its chips). A
-channel renders its prompt
+off the allowed hosts or deletes one of the owner's protected folders, the ``reach`` line
+saying so (the card's line under its chips). A channel renders its prompt
 from these alone (:func:`approval_brief_for`), so every channel shows what the
 dashboard's card shows and none has a masking pass of its own to get wrong. Three channels
 used to show the tool's name and nothing else, and people approved a call they could not
@@ -68,7 +68,7 @@ from personalclaw import chat_trust
 from personalclaw.approval_grants import asked_for_line
 from personalclaw.channel_delivery import ONE_CALL_ANSWERS, ApprovalAnswer, chat_answers
 from personalclaw.command_effects import CommandEffects
-from personalclaw.run_bounds import reach_note
+from personalclaw.run_bounds import reach_note, session_folder
 from personalclaw.security import redact_field
 from personalclaw.task_modes import read_call, resolve_effective_risk, tool_input_to_str
 
@@ -408,15 +408,21 @@ def _brief(
 
 
 def compose_approval_brief(
-    event: Any, *, chat: str = "", asked_by: Mapping[str, str] | None = None
+    event: Any,
+    *,
+    chat: str = "",
+    asked_by: Mapping[str, str] | None = None,
+    cwd: str | None = None,
 ) -> dict[str, Any] | None:
     """Compose the brief for one approval event, or ``None`` when it has no identity.
 
-    *chat* is the conversation a channel's own turn raised it in, given when the prompt is shown
-    in that conversation (:func:`approval_brief_for`); without it the prompt answers this call
-    alone. *asked_by* is who asked for the work the call is made in when the owner did not, by
-    default the work running now's (``memory_writes.asker``): the brief names them, and its
-    prompt answers this call alone, since none of her standing grants would answer the next.
+    *cwd* is the folder the call runs in, which its ``reach`` line is read against: by default the
+    folder *chat*'s turns run in (``run_bounds.session_folder``). *chat* is the conversation a
+    channel's own turn raised it in, given when the prompt is shown in that conversation
+    (:func:`approval_brief_for`); without it the prompt answers this call alone.
+    *asked_by* is who asked for the work the call is made in when the owner did not, by default
+    the work running now's (``memory_writes.asker``): the brief names them, and its prompt answers
+    this call alone, since none of her standing grants would answer the next.
 
     Reads only fields the event already carries, and takes its classification from
     ``task_modes`` rather than re-deriving it: one :func:`~personalclaw.task_modes.read_call`
@@ -441,7 +447,10 @@ def compose_approval_brief(
     tool_kind = str(getattr(event, "tool_kind", "") or "")
     tool_input = getattr(event, "tool_input", "")
     reading = read_call(getattr(event, "risk_level", ""), tool, tool_kind, tool_input)
-    reach = reach_note(getattr(event, "risk_level", ""), tool, tool_kind, tool_input, chat)
+    folder = session_folder(chat) if cwd is None else cwd
+    reach = reach_note(
+        getattr(event, "risk_level", ""), tool, tool_kind, tool_input, chat, cwd=folder
+    )
     if asked_by is None:
         from personalclaw import memory_writes
 
@@ -509,7 +518,8 @@ def approval_brief_for(event: Any, *, chat: str = "") -> dict[str, Any] | None:
     from the event itself when the channel's own turn raised the approval. Either way every
     string in it is masked: ``tool``, ``input`` (the arguments, as the dashboard's card shows
     them), ``purpose`` and ``summary`` (what the call can touch, and its risk), ``reach``
-    when the call reaches a host off the allowed hosts (a line of its own, under the summary), and
+    when the call reaches a host off the allowed hosts or deletes one of the owner's protected
+    folders (a line of its own, under the summary), and
     ``asked_for`` when someone other than the owner asked for the turn the call is made in, naming
     them (a line of its own too). A channel prints those and masks nothing of its own, and offers
     the ``answers`` it carries (``ChannelDelivery.request_approval``): in a turn someone else asked
@@ -521,7 +531,8 @@ def approval_brief_for(event: Any, *, chat: str = "") -> dict[str, Any] | None:
     (``channel_delivery.chat_answers``), while a chat the owner sees can hold its Trust
     (``chat_trust.can_trust``); the channel hands the answer pressed to
     ``chat_trust.answer_in_chat``. Without it, a prompt for the channel's own turn answers the
-    call alone. A brief core stamped is core's, and *chat* changes nothing in it.
+    call alone. A brief core stamped is core's, and *chat* changes nothing in it. A brief composed
+    here reads the call against the folder the conversation runs in (``run_bounds.session_folder``).
 
     A stamped brief that lacks one of those four strings, or answers a prompt can offer, is not
     used: the prompt it made would show less than the call, or offer nothing to press, so the
@@ -556,9 +567,10 @@ def _offers_answers(answers: object) -> bool:
 
 
 def attach_approval_brief(
-    event: Any, *, asked_by: Mapping[str, str] | None = None
+    event: Any, *, asked_by: Mapping[str, str] | None = None, cwd: str | None = None
 ) -> dict[str, Any] | None:
-    """Stamp the brief onto ``event.tool_meta`` as additive meta; return it (or ``None``).
+    """Stamp the brief onto ``event.tool_meta`` as additive meta; return it (or ``None``). *cwd*
+    is the folder the call runs in (:func:`compose_approval_brief`).
 
     ADDITIVE is the whole contract. The call's arguments do not change, no field is
     replaced, and every pre-existing ``tool_meta`` key survives — a channel that never
@@ -570,7 +582,7 @@ def attach_approval_brief(
     stamped and ``None`` is returned: the channel prompts as before and the dashboard
     remains the rich surface either way.
     """
-    brief = compose_approval_brief(event, asked_by=asked_by)
+    brief = compose_approval_brief(event, asked_by=asked_by, cwd=cwd)
     if brief is None:
         return None
     meta = getattr(event, "tool_meta", None)

@@ -175,7 +175,8 @@ async def test_a_prompt_in_the_chat_that_asks_offers_allow_for_this_chat(tmp_pat
             "ends": "approved",
             "word": "TRUST",
             "promise": "Every tool in this chat runs without asking, until you change it back. "
-            "A command that reaches a host off your allowed hosts still asks.",
+            "A command that reaches a host off your allowed hosts, or that deletes your home "
+            "folder, the filesystem root or the working folder, still asks.",
         },
         {"key": "rejected", "label": "Deny", "ends": "rejected", "word": "DENY", "promise": ""},
     ]

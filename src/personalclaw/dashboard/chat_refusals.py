@@ -15,8 +15,9 @@ and the Inbox (where a person looks in the morning) has a note.
   request nothing could resolve. So it can only ever turn a two-hour park into an immediate
   denial, never a denial into an approval.
 * **A call past its run's bounds** (:mod:`personalclaw.run_bounds`): a shell command reaching a
-  host off the allowed hosts, or writing outside the folders the run works in. Asked before any
-  grant, since an unattended loop's grant would otherwise answer it.
+  host off the allowed hosts, writing outside the folders the run works in, or deleting the
+  owner's home folder, the filesystem root or the run's working folder. Asked before any grant,
+  since an unattended loop's grant would otherwise answer it.
 """
 
 from __future__ import annotations

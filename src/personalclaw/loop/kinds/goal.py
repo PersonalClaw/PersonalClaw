@@ -172,7 +172,7 @@ class GoalKind(LoopKindStrategy):
                 "it can't self-complete until one is set."
             )
         if verify_command:
-            danger = audit_bash_command(verify_command)
+            danger = audit_bash_command(verify_command, cwd=str(config.get("workspace_dir") or ""))
             if (denied := denied_command(verify_command)) is not None:
                 errors.append(f"Verify command rejected — {denied.why()}.")
             elif danger:

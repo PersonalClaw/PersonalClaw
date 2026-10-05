@@ -409,7 +409,9 @@ async def run_step(
     # an agent's included, and runs with nobody answering it, so among the first one's rules a
     # step that would stop or replace the PersonalClaw its run lives in is refused, as the run's
     # action steps are (`engine.dispatch_action`).
-    held = check_command(command or "", session_key=unattended_dispatch_key(f"workflow:{run_id}"))
+    held = check_command(
+        command or "", session_key=unattended_dispatch_key(f"workflow:{run_id}"), cwd=str(cwd)
+    )
     if held.blocked:
         audit_command_refusal(command, held, source="workflow", operation="step")
         return False, held.refusal()

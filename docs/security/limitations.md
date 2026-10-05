@@ -890,7 +890,7 @@ and keep approvals on for work that might reach for it.
 
 ## 16. Where a shell command or an app's program reaches is read from its command line
 
-The agent's shell, and every program an app's code starts, is held to two bounds read from the
+The agent's shell, and every program an app's code starts, is held to bounds read from the
 command it runs (`run_bounds`, `apps/launch_egress.py`):
 
 - **The network.** A command that reaches the network is checked by the hosts it names: a URL's
@@ -909,6 +909,16 @@ command it runs (`run_bounds`, `apps/launch_egress.py`):
   and its own temporary folder (its shell's `TMPDIR`, where `mktemp -d` makes one). A native file
   write, or a shell command's redirect, `-o`, `mkdir`, `cp`, `mv` or `rm` target outside them is
   refused.
+- **The protected folders.** A shell command that would delete your home folder, the filesystem
+  root or the folder the call runs in, a folder holding one, or everything in one, always asks you,
+  whatever Trust, YOLO, Trust reads, a chat's grant, an auto-approve pattern or the Approval mode
+  would have said, and the card says which folder ("This would delete your home folder"). Any
+  spelling the reading reads counts: `~`, `$HOME`, `.`, `..`, a trailing slash, flags in any order,
+  a glob, `sudo`, `sh -c` and the rest. A delete whose path it cannot read (a variable, the paths
+  `xargs` hands one, a line it cannot split or a `sh -c` command built from a variable that names
+  `rm`) asks too. An unattended run, a bash action and an app's lifecycle hook (`onInstall`,
+  `onUpdate` and the rest) are refused it, with the folder named. Any other delete follows the
+  normal rules.
 
 What the reading does not see:
 
@@ -917,7 +927,13 @@ What the reading does not see:
   for where to go. A script the command runs (`python probe.py`) reaches and writes what it likes.
 - **A command it cannot read.** A command substitution, a subshell, a background job, or a program
   the reading does not know (a script, `make`) establishes nothing it reaches or writes, so neither
-  bound holds it: the run's approval mode decides it, as it decides any other call.
+  the network nor the writes bound holds it: the run's approval mode decides it, as it decides any
+  other call. Only a delete is held when it cannot be read, and only by name: such a line that names
+  `rm`, `rmdir`, `unlink` or `find … -delete` asks you.
+- **What a program deletes itself.** A script (`python cleanup.py`), an interpreter's own call
+  (`shutil.rmtree`) or a tool whose configuration names what it removes deletes what its command
+  line does not say; `rsync --delete` and `git clean` remove what is inside a folder, not the folder,
+  and are not read as removing it.
 - **An agent CLI that does not ask.** An agent CLI an unattended run starts runs its own tools without
   asking PersonalClaw, so they are not read (§1, §11).
 - **An app's own code.** An app's provider runs inside the gateway, so its own Python reaches the

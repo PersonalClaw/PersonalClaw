@@ -4257,11 +4257,14 @@ async def run_chat(
                 # anything could approve or ask about it. An operator's auto-approve pattern is
                 # decided on the command a shell call runs, never on that title. The verdict and
                 # its reason go to the transcript and to the model as the call's result.
+                # The folder the call's command runs in, the chat's working folder: a delete of it,
+                # of the home folder or of the filesystem root is put to a person past every grant.
+                _call_folder = str(_file_change_base(session))
                 tool_result = acp_permission_authority.screen_tool_call(
                     state.context_builder.hooks if state.context_builder else None,
                     event.title,
                     event.tool_input,
-                    cwd=_file_change_base(session),
+                    cwd=_call_folder,
                     tool_kind=event.tool_kind,
                     declared=getattr(event, "risk_level", "") or "",
                 )
@@ -4354,6 +4357,7 @@ async def run_chat(
                         approval_grants.HOOK_PATTERN,
                         session_key=session_key,
                         event=event,
+                        cwd=_call_folder,
                         level=approval_grants.LEVEL_HOOK,
                     )
                 ):
@@ -4422,7 +4426,10 @@ async def run_chat(
                     and not yolo_active
                     and effective_risk == "safe"
                     and approval_grants.stands_for_call(
-                        approval_grants.TRUST_READS, session_key=session_key, event=event
+                        approval_grants.TRUST_READS,
+                        session_key=session_key,
+                        event=event,
+                        cwd=_call_folder,
                     )
                 ):
                     _unasked_by = approval_grants.TRUST_READS
@@ -4473,7 +4480,7 @@ async def run_chat(
                 # lets that grant stand. In a turn someone else asked for it is asked below.
                 _standing = state.standing_grant(session)
                 if _standing and approval_grants.stands_for_call(
-                    _standing, session_key=session_key, event=event
+                    _standing, session_key=session_key, event=event, cwd=_call_folder
                 ):
                     await _let_through(event)
                     _tool_title = _broadcast_auto_tool(state, session, event)
@@ -4623,7 +4630,9 @@ async def run_chat(
                 # answer may reach: the card withholds the standing-grant scopes on a
                 # destructive call until the user widens them deliberately.
                 perm_meta["risk"] = effective_risk
-                perm_meta["reach"] = _reach_note = run_bounds.event_note(event, session_key)
+                perm_meta["reach"] = _reach_note = run_bounds.event_note(
+                    event, session_key, cwd=_call_folder
+                )
                 # Who asked for this turn, when it was not you: the card names them, offers your
                 # answer for this call alone, and every row of the ask says who it was
                 # (`approval_grants`, rule 4).

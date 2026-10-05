@@ -1,4 +1,5 @@
-"""A Trust or YOLO switch leaves a call to a host off the allowed hosts asking.
+"""A Trust or YOLO switch leaves a call to a host off the allowed hosts asking, and a delete of a
+protected folder.
 
 Switching a chat to Trust, or YOLO on, answers the pending approvals the switch covers: the chat's
 own, and the ones its agents asked on its behalf. One of them may be asked only because its command
@@ -7,8 +8,9 @@ about, whatever this chat or its agent allows", because no grant answers it (``r
 switch approved it anyway, as if the grant it turns on answered it.
 
 Now a call asked for that reason keeps asking until the owner answers it, and every other call the
-switch covers is answered by it as before. The dashboard state, its routes and the allowed hosts are
-real, in a scratch home.
+switch covers is answered by it as before. So does a delete of the chat's working folder, the home
+folder or the filesystem root, which no grant answers either. The dashboard state, its routes and
+the allowed hosts are real, in a scratch home; nothing asked about is ever run.
 """
 
 from __future__ import annotations
@@ -49,9 +51,12 @@ def state(tmp_path):
     return state
 
 
-async def _asked_in_the_chat(state, chat, request_id: str, command: str) -> asyncio.Future:
-    """A shell call the chat's runner put to its owner, listed as the runner lists it: its card
-    names a host off the allowed hosts when the command reaches one (``run_bounds.event_note``)."""
+async def _asked_in_the_chat(
+    state, chat, request_id: str, command: str, folder: str = "/srv/chat-1"
+) -> asyncio.Future:
+    """A shell call the chat's runner put to its owner, run in *folder*, listed as the runner lists
+    it: its card names a host off the allowed hosts when the command reaches one, and a protected
+    folder it would delete (``run_bounds.event_note``)."""
     call = SimpleNamespace(
         title="bash", tool_kind="", risk_level="", tool_input={"command": command}
     )
@@ -68,16 +73,24 @@ async def _asked_in_the_chat(state, chat, request_id: str, command: str) -> asyn
         is_read_only=False,
         blast_radius=None,
         grant_agent="",
-        reach=run_bounds.event_note(call, CHAT),
+        reach=run_bounds.event_note(call, CHAT, cwd=folder),
     )
     return fut
 
 
-def _asked_behind_the_chat(state, approval_id: str, command: str) -> asyncio.Future:
-    """A call one of the chat's agents asked on its behalf, through the gateway's relay."""
+def _asked_behind_the_chat(
+    state, approval_id: str, command: str, folder: str = "/srv/chat-1"
+) -> asyncio.Future:
+    """A call one of the chat's agents asked on its behalf, through the gateway's relay, run in
+    *folder*."""
     return asyncio.ensure_future(
         state.request_approval(
-            approval_id, "subagent", "bash", tool_input={"command": command}, session=CHAT
+            approval_id,
+            "subagent",
+            "bash",
+            tool_input={"command": command},
+            session=CHAT,
+            cwd=folder,
         )
     )
 
@@ -108,3 +121,30 @@ async def test_a_switch_answers_what_it_covers_but_not_a_call_off_the_allowed_ho
     assert state.resolve_approval("sub-off", True, by=YOU), "the owner's own answer answers it"
     assert await asyncio.wait_for(behind_off, timeout=5) is True
     off_list.set_result("rejected")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["trust", "yolo"])
+async def test_a_switch_leaves_a_delete_of_the_chats_folder_asking(state, tmp_path, mode):
+    folder = tmp_path / "work"
+    folder.mkdir()
+    chat = state.get_or_create_session(CHAT)
+    deletes = await _asked_in_the_chat(state, chat, "req-del", "rm -fr ./", str(folder))
+    listed = await _asked_in_the_chat(state, chat, "req-on", "touch notes/today.md", str(folder))
+    behind_deletes = _asked_behind_the_chat(state, "sub-del", f"rm -rf {folder}/", str(folder))
+    await asyncio.sleep(0.05)
+    assert "This would delete the working folder" in (
+        state._pending_approvals[chat_approval_id(CHAT, "req-del")]["reach"]
+    )
+
+    async with TestClient(TestServer(_make_app(state))) as client:
+        switched = await client.post("/api/chat/mode", json={"mode": mode, "session": CHAT})
+        assert switched.status == 200, await switched.text()
+
+    assert listed.done() and listed.result() == "approved", "the switch answers what it covers"
+    assert not deletes.done(), "the switch approved a delete of the chat's working folder"
+    assert not behind_deletes.done(), "the switch approved an agent's delete of that folder"
+
+    assert state.resolve_approval("sub-del", False, by=YOU), "the owner's own answer answers it"
+    assert await asyncio.wait_for(behind_deletes, timeout=5) is False
+    deletes.set_result("rejected")

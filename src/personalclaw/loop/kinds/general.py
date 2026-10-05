@@ -42,7 +42,7 @@ class GeneralKind(LoopKindStrategy):
         if cmd:
             if (denied := denied_command(cmd)) is not None:
                 return [f"Verify command rejected — {denied.why()}."], []
-            danger = audit_bash_command(cmd)
+            danger = audit_bash_command(cmd, cwd=str(config.get("workspace_dir") or ""))
             if danger:
                 return [f"Verify command rejected — {danger}."], []
         return [], []

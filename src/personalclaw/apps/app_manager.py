@@ -300,15 +300,24 @@ def _run_hook(cmd: str, *, cwd: Path, timeout: int, env_name: str) -> None:
     """
     if not cmd.strip():
         return
+    from personalclaw import protected_folders
     from personalclaw.apps import app_python
     from personalclaw.command_audit import audit_command_refusal
     from personalclaw.security import denied_command
 
     # The shell denylist every command path asks: a hook is a command the app's author wrote, and
-    # one the owner's rules refuse fails the operation with the rule, before anything runs.
+    # one the owner's rules refuse fails the operation with the rule, before anything runs. So
+    # does one that would delete the owner's home folder, the filesystem root or the app's own
+    # folder it runs in, which always needs a person's yes and has nobody here to give it.
     if (denied := denied_command(cmd)) is not None:
         audit_command_refusal(cmd, denied, source="apps", operation=f"{env_name} hook")
         raise AppLifecycleError(f"{env_name} hook refused. {denied.refusal()}")
+    if found := protected_folders.protected_delete(cmd, cwd=str(cwd)):
+        said = protected_folders.refusal(found, where=f"an app's {env_name} hook")
+        audit_command_refusal(
+            cmd, said, source="apps", operation=f"{env_name} hook", control="protected_folder"
+        )
+        raise AppLifecycleError(f"{env_name} hook refused. {said}")
     try:
         proc = subprocess.run(  # noqa: S602 — intentional: vetted third-party setup hook
             cmd,

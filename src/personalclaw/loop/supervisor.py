@@ -119,7 +119,7 @@ async def _verify_command_signal(
     else:
         # Refused by the shell denylist is not "could not run": no later cycle changes it, and the
         # watchdog pauses the loop with the rule (`refused_check`).
-        outcome = "refused" if refusal(command) else "not_run"
+        outcome = "refused" if refusal(command, cwd=where or "") else "not_run"
     check = {
         "command": command,
         "dir": where,
@@ -437,8 +437,9 @@ def refused_check(loop: Loop, policy: SupervisorPolicy) -> str:
     if spec.signal != DONE_VERIFY_COMMAND:
         return ""
     from personalclaw.loop.gates import refusal
+    from personalclaw.loop.loop import effective_dir
 
-    return refusal(_command(loop, spec))
+    return refusal(_command(loop, spec), cwd=effective_dir(loop) or "")
 
 
 def budget_stop_is_genuine(policy: SupervisorPolicy) -> bool:

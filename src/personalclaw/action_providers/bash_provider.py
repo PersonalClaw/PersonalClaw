@@ -148,14 +148,22 @@ def own_cli_function() -> str:
 
 def config_problem(config: dict[str, Any]) -> str:
     """Why a bash action's command could never run, asked when it is SAVED (the Triggers page and
-    the chat's and the CLI's door alike); "" when it may. The shell denylist refuses its text, so
-    every run would refuse it, and the owner would be asked to allow an automation that never runs.
-    What a run is handed (a secret it names, a payload value it runs) is judged as it runs."""
+    the chat's and the CLI's door alike); "" when it may. The shell denylist refuses its text, or
+    it would delete the owner's home folder, the filesystem root or the folder it runs in
+    (``protected_folders``), so every run would refuse it, and the owner would be asked to allow an
+    automation that never runs. What a run is handed (a secret it names, a payload value it runs)
+    is judged as it runs."""
+    from personalclaw import protected_folders
     from personalclaw.security import denied_command
 
     command = str((config or {}).get("command") or "").strip()
     denied = denied_command(command) if command else None
-    return f"Its command would never run: {denied.why()}." if denied is not None else ""
+    if denied is not None:
+        return f"Its command would never run: {denied.why()}."
+    found = protected_folders.protected_delete(command, cwd=os.getcwd()) if command else None
+    if found:
+        return f"Its command would never run: {protected_folders.clause(found)}."
+    return ""
 
 
 def _refused(
@@ -218,9 +226,11 @@ class BashActionProvider(ActionProvider):
         #
         # Then the shell denylist every command path asks (`security.denied_command`), here
         # whoever started the action: a schedule, a hook, Run now, a webhook, a workflow node, an
-        # approved proposal. Both judge what will RUN: the command, and a payload value it runs
-        # as a command (`_run_values`).
-        from personalclaw import security
+        # approved proposal. And a delete of the owner's home folder, the filesystem root or the
+        # folder it runs in (`protected_folders`), which always needs a person's yes and has
+        # nobody here to give it. All judge what will RUN: the command, and a payload value it
+        # runs as a command (`_run_values`).
+        from personalclaw import protected_folders, security
 
         payload_env = _payload_env(ctx)
         for text in (command, *_run_values(command, payload_env)):
@@ -229,6 +239,9 @@ class BashActionProvider(ActionProvider):
                 return _refused(command, refusal, ctx, control="sensitive_path")
             if (denied := security.denied_command(text)) is not None:
                 return _refused(command, denied, ctx)
+            if found := protected_folders.protected_delete(text, cwd=os.getcwd()):
+                said = protected_folders.refusal(found, where="a bash action")
+                return _refused(command, said, ctx, control="protected_folder")
 
         # 🔴 The action's OWN bound wins over the caller's default, matching `run-script`
         # (which has always read `action_config["timeout"]` and preferred it). Measured on the

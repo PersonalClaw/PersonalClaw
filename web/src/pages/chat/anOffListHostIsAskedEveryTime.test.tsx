@@ -30,7 +30,7 @@ describe('an approval for a host off the allowed hosts', () => {
     expect(screen.getAllByRole('radio')).toHaveLength(3)
     expect(container.textContent).not.toContain('which is not on Allowed hosts')
     fireEvent.click(screen.getByRole('radio', { name: 'This chat' }))
-    expect(container.textContent).toContain('A command that reaches a host off your allowed hosts still asks.')
+    expect(container.textContent).toContain('A command that reaches a host off your allowed hosts, or that deletes your home folder, the filesystem root or the working folder, still asks.')
   })
 
   it('carries the reach from a registry row to the card', () => {

@@ -481,7 +481,9 @@ every path.
 `check_action` refuses, first match wins: every action while the security config cannot
 be read; a path that names a credential file; a path outside the ceiling's `paths`; a path the operator's `security.autonomy_denylist` names
 (its `needs_human` verdict also notifies you); a command that would stop, restart,
-update or reinstall the gateway running it (`guardrails/self_destruct.py`); and a
+update or reinstall the gateway running it (`guardrails/self_destruct.py`); a command that
+would delete your home folder, the filesystem root or the folder it runs in
+(`guardrails.denylist.unattended_protected_delete`, below); and a
 command the shell denylist refuses. The fourth is classified by the command's effect
 rather than its text: it reads through variables, wrappers (`sudo`, `env`, `nohup`,
 `sh -c`) and paths to the program that would run, and refuses `personalclaw stop`,
@@ -1329,6 +1331,23 @@ starts do not, so what they reach is read from the command they run
   it works in and the ones it was given) and its own temporary folder (`scratch_dir`, its shell's
   `TMPDIR`). A native file write or a shell command's write facet outside them is refused; a write
   whose path the command does not name is too.
+- **Protected folders.** A shell command that would delete your home folder, the filesystem root
+  or the folder the call runs in (a chat's working folder, the folder a channel's conversation, a
+  subagent or a run works in), a folder that holds one, or everything inside one, is put to a
+  person past every grant, exactly as a call past the allowed hosts is, and refused in an
+  unattended run (`protected_folders.py`). It is decided on the command, never its text:
+  `command_effects` names what each delete removes (`rm`, `rmdir`, `unlink`, `find -delete`, a
+  `find` that runs one, through `sudo`, `env`, `sh -c`, `eval`, `xargs` and a leading `cd`), and
+  each removed path is resolved as the shell and the kernel would resolve it (the home shorthand
+  and variable expanded, a relative path read from the call's folder, `.`, `..`, repeated and
+  trailing slashes normalised, links followed, letter case ignored; a glob removes every path it
+  can expand to). A delete whose path the reading cannot name (a variable it does not know, the
+  paths `xargs` hands one, a line it cannot split or a `sh -c` command built from a variable that
+  names a delete program) is put to a person too. The card's `reach` line names the folder ("This
+  would delete your home folder"), and the refusal does. Paths with nobody to ask refuse such a
+  command too: the action denylist for every unattended command path
+  (`unattended_protected_delete`), a bash action and an app's lifecycle hook. Any other delete
+  follows the normal rules.
 - **Apps.** `apps/launch_egress.py` reads every launch an app's code makes, at Python's own audit
   event for it, so whatever helper started it: each host its command line names gets an
   `egress_launch` row naming the app and the program, and a host neither the manifest declares for

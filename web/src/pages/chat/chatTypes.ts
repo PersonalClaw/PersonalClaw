@@ -79,8 +79,9 @@ export interface ApprovalSegment {
   // only safe direction for a promise, and over-claiming it is the bug this field fixes.
   grantAgent?: string
   // Why this call is asked about though a standing grant answers any other: it reaches a host
-  // off the allowed hosts (`run_bounds.ask_note`). A grant never covers such a call, so the card
-  // offers none. Absent on every other call.
+  // off the allowed hosts, or deletes the home folder, the filesystem root or the working folder
+  // (`run_bounds.ask_note`). A grant never covers such a call, so the card offers none. Absent on
+  // every other call.
   reach?: string
   // Asked by work this chat started (a subagent, a batch), not by its own turn: the frame names
   // a `source`. Only the approvals queue holds such an ask, so its card answers there, by the

@@ -24,7 +24,7 @@ from personalclaw.approval_brief import RISK_LABELS, derive_blast_radius
 from personalclaw.channel_delivery import APPROVAL_ENDINGS
 from personalclaw.config import loader as config_loader
 from personalclaw.constants import DASHBOARD_SESSION_PREFIX, dashboard_history_key
-from personalclaw.run_bounds import reach_note
+from personalclaw.run_bounds import reach_note, session_folder
 from personalclaw.security import redact_field
 from personalclaw.sel import sel
 from personalclaw.task_modes import read_call, tool_input_to_str
@@ -320,6 +320,7 @@ class DashboardApprovalState:
         tool_purpose: str = "",
         session: str = "",
         trigger: str = "",
+        cwd: str | None = None,
         asked_on_channel: bool = False,
         risk_level: str = "",
         tool_kind: str = "",
@@ -328,6 +329,11 @@ class DashboardApprovalState:
         asked_for: str = "",
     ) -> bool:
         """Request interactive approval. Returns True if approved, False if rejected/timeout.
+
+        ``cwd`` is the folder the call's command runs in, which its ``reach`` line is read against
+        (a delete of the owner's home folder, the filesystem root or that folder asks past every
+        grant, ``run_bounds``): by default the folder of the session it is asked in
+        (``run_bounds.session_folder``), for an asker whose own folder is that session's.
 
         ``answered_alone`` is an ask only a decision on it answers: a Trust or YOLO switch, which
         answers every pending approval it covers (``chat_handlers.api_chat_mode``), leaves it
@@ -412,7 +418,14 @@ class DashboardApprovalState:
             # own tool, an MCP server's question) has no risk anybody established, and "" says
             # exactly that.
             risk=reading.risk if risk_level or reading.effects is not None else "",
-            reach=reach_note(risk_level, tool, tool_kind, tool_input, session),
+            reach=reach_note(
+                risk_level,
+                tool,
+                tool_kind,
+                tool_input,
+                session,
+                cwd=session_folder(session) if cwd is None else cwd,
+            ),
             asked_for=asked_for,
         )
         if answered_alone:
@@ -460,8 +473,9 @@ class DashboardApprovalState:
         """Whether only a decision on *approval_id* answers it: a Trust or YOLO switch, which
         answers every pending approval it covers (``chat_handlers.api_chat_mode``), leaves it
         asking. One its asker marked so (``request_approval``'s ``answered_alone``), a call
-        asked because it reaches a host off the allowed hosts, which no grant answers
-        (``run_bounds``): its entry's ``reach`` says so, as its card does; and a call in work
+        asked because it reaches a host off the allowed hosts or deletes one of the owner's
+        protected folders, which no grant answers (``run_bounds``): its entry's ``reach`` says so,
+        as its card does; and a call in work
         someone other than the owner asked for, which none of her switches answers
         (``approval_grants``, rule 4): its entry's ``asked_for`` says so."""
         if approval_id in self.__dict__.get("_answered_alone", set()):
@@ -560,7 +574,8 @@ class DashboardApprovalState:
         ``trigger`` is known only to a trigger's run, and its name
         is read once, here, so the ask and its note name it the same way. ``reach`` says why a
         call is asked about though a grant would answer any other: it reaches a host off the
-        allowed hosts (``run_bounds.ask_note``). ``asked_by`` is the
+        allowed hosts, or deletes one of the owner's protected folders (``run_bounds.ask_note``).
+        ``asked_by`` is the
         principal that raised it, which may never answer it (``approval_answer``, rule 2).
         ``source_label`` is where it came from in words
         (:func:`~personalclaw.approval_source.approval_source_label`), and ``whose_work`` whose

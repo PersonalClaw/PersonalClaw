@@ -1556,7 +1556,10 @@ class NativeBuiltinToolProvider(ToolProvider):
         if stored := store_named_in(command, cwd=self._cwd):
             said = security.redact_known_values(stored, handed)
             return _refused_by("bash", "own_store", said, said)
-        if (held := check_command(command, session_key=self._session_key, written=written)).blocked:
+        held = check_command(
+            command, session_key=self._session_key, cwd=str(self._cwd), written=written
+        )
+        if held.blocked:
             said = security.redact_known_values(held.refusal(), handed)
             return _refused_by("bash", "action_denylist", said, held.matched)
         # Long-term memory, which work that may change none of it does not (`memory_named_in`).

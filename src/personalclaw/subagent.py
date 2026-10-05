@@ -2311,10 +2311,14 @@ class SubagentManager:
                         )
                         continue
                     # Shell checks see the command that would RUN, not only the CLI's title, and a
-                    # host off the allowed hosts is put to a person past every grant
-                    # (`run_bounds.screen`).
-                    tool_result, off_list = run_bounds.screen(
-                        self._ctx_builder.hooks, event, session_key, info.cwd or None
+                    # host off the allowed hosts, or a delete of the owner's home folder, the
+                    # filesystem root or the folder the agent works in, is put to a person past
+                    # every grant (`run_bounds.screen`).
+                    tool_result, to_a_person = run_bounds.screen(
+                        self._ctx_builder.hooks,
+                        event,
+                        session_key,
+                        run_bounds.runtime_folder(client),
                     )
                     if tool_result.action == TOOL_DENY:
                         tier.refused(
@@ -2382,7 +2386,7 @@ class SubagentManager:
                         continue
                     # A standing grant, read at THIS call (it may have been revoked since the agent
                     # started) and bounded by the ceiling.
-                    grant = "" if off_list else self._grant_now(info, audit=True)
+                    grant = "" if to_a_person else self._grant_now(info, audit=True)
                     if grant:
                         await approve(
                             decided_by=grant,

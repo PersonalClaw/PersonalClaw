@@ -5806,7 +5806,8 @@ export interface PendingApproval {
   blast_radius?: unknown
   grant_agent: string
   /** Why it is asked though a standing grant answers any other call: it reaches a host off the
-   *  allowed hosts (`run_bounds.ask_note`); "" for every other call. */
+   *  allowed hosts, or deletes the home folder, the filesystem root or the working folder
+   *  (`run_bounds.ask_note`); "" for every other call. */
   reach?: string
   /** What a Deny does when it does more than decline the call — an agent CLI that can refuse it
    *  only by ending its turn (`turn_endings.deny_effect`) — said on the card before it is pressed;

@@ -330,7 +330,7 @@ async def run_verify_block(block: dict[str, Any], *, default_cwd: str = "") -> b
         # that would stop or replace the PersonalClaw it runs in) or by the shell denylist,
         # asked in that order. The node fails with the rule, never as a check that "could not be
         # determined" and certainly never as a pass.
-        if (decision := held(command)).blocked:
+        if (decision := held(command, cwd=cwd)).blocked:
             raise CheckRefused(decision.refusal())
         if (denied := denied_command(command)) is not None:
             raise CheckRefused(f"refused before it ran: {denied.why()}")

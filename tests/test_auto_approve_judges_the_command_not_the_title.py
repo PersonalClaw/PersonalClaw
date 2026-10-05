@@ -146,14 +146,14 @@ def _event(title, tool_input, *, kind="", risk=""):
     )
 
 
-def test_a_subagents_screen_decides_on_the_command():
+def test_a_subagents_screen_decides_on_the_command(tmp_path):
     from personalclaw.run_bounds import screen
 
     hooks = HookManager(HooksConfig(auto_approve_tools=["ls*"]))
     chained = _event("`ls -la`", {"command": CHAIN}, kind="execute")
     plain = _event("`ls -la`", {"command": "ls -la"}, kind="execute")
-    assert screen(hooks, chained, "dashboard:c1")[0].action != TOOL_AUTO_APPROVE
-    assert screen(hooks, plain, "dashboard:c1")[0].action == TOOL_AUTO_APPROVE
+    assert screen(hooks, chained, "dashboard:c1", str(tmp_path))[0].action != TOOL_AUTO_APPROVE
+    assert screen(hooks, plain, "dashboard:c1", str(tmp_path))[0].action == TOOL_AUTO_APPROVE
 
 
 @pytest.mark.asyncio

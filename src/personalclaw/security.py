@@ -1812,10 +1812,10 @@ SUSPICIOUS_BASH_PATTERNS: list[str] = [
     "| sh",
     "| python",
     "| perl",
-    # NB: recursive-force `rm` of a critical path is handled by _RM_RF_RE below —
-    # a precise, anchored matcher. Plain substrings like "rm -rf /" are deliberately
-    # NOT listed: they substring-matched legitimate targeted deletes (rm -rf /tmp/x,
-    # rm -rf ~/.cache/build) → false blocks, while still missing rm -rf $HOME / `.`.
+    # NB: a delete of the home folder, the filesystem root or the folder a command runs in is
+    # read on the command itself (`protected_folders`), in `audit_bash_command` below. No text
+    # pattern stands in for it: one refused targeted deletes (rm -rf /tmp/x) and missed the
+    # spellings it was for (rm -fr ~, rm -rf $HOME, rm -rf .).
     "find * -delete",
     "find * -exec rm",
     "find * -exec shred",
@@ -1862,30 +1862,6 @@ SUSPICIOUS_BASH_PATTERNS: list[str] = [
     "wget --post-file",
     "nc * < ",
 ]
-
-# A recursive-force `rm` whose target is catastrophic — home, the cwd/parent (which
-# for a Code worker IS the workspace), root, or a glob/expansion. The literal-glob
-# list above can't express "target is EXACTLY '.' (not './build')", so this is a
-# properly-anchored regex: any -r/-f/-R/--recursive/--force flag ordering, then a
-# target of  ~  ~/  /  /*  .  ./  ..  ../  *  $HOME  ${HOME}  "$HOME"  $PWD … —
-# while a NAMED target (rm -rf ./build, rm -rf node_modules, rm -rf /tmp/scratch)
-# stays clean. Trailing-context ($|/|"|') keeps `~/safe/path` from matching the `~`.
-_RM_RF_RE = re.compile(
-    r"""\brm\s+                       # rm
-        (?:-[a-z]*[rf][a-z]*\s+|--(?:recursive|force)\s+)+   # ≥1 flag incl r or f
-        ['"]?                         # optional opening quote on the target
-        (?:                           # — a catastrophic target, whole-token —
-            /\*?                      #   /  or  /*   (root, or everything under it)
-          | ~/?                       #   ~  or  ~/   (home)
-          | \.{1,2}/?                 #   .  ..  ./  ../  (cwd / parent)
-          | \*                        #   a bare glob in cwd
-          | \$\{?(?:HOME|PWD)\}?/?    #   $HOME / ${HOME} / $PWD (optional trailing /)
-        )
-        (?=['"]?(?:$|\s|;|&|\|))      # target ENDS here — a real path (./build,
-                                      # ~/.cache/x, /tmp/y) has more segments → no match
-    """,
-    re.IGNORECASE | re.VERBOSE,
-)
 
 
 # ── Bash denied-command regexes ──
@@ -2578,11 +2554,16 @@ def classify_denial(kind: str, reason: str, tool_name: str = "") -> tuple[bool, 
     )
 
 
-def audit_bash_command(command: str) -> str | None:
-    """Check a bash command against suspicious patterns.
+def audit_bash_command(command: str, *, cwd: str = "") -> str | None:
+    """Check a bash command against suspicious patterns, and for a delete of the owner's home
+    folder, the filesystem root or the folder *cwd* it runs in (``""``: this process's own).
 
     Returns warning string, or None if clean.
-    Patterns with ``*`` are matched as globs via fnmatch.
+    Patterns with ``*`` are matched as globs via fnmatch. The delete is read on the command as its
+    shell reads it (:mod:`personalclaw.protected_folders`): one it names, or one whose path it
+    cannot name in a line it can split, is flagged. A line the reader cannot split says nothing
+    here, since prose does not split either (a gate that runs the command refuses it,
+    ``guardrails.denylist.unattended_protected_delete``).
     """
     lower = command.lower()
     for pattern in SUSPICIOUS_BASH_PATTERNS:
@@ -2592,10 +2573,12 @@ def audit_bash_command(command: str) -> str | None:
                 return f"Suspicious command detected: matches '{pattern}'"
         elif pat in lower:
             return f"Suspicious command detected: matches '{pattern}'"
-    # Catastrophic recursive deletes the literal list can't anchor (rm -rf $HOME,
-    # rm -rf ., rm -rf .., flag-order variants like rm -fr / rm -r -f).
-    if _RM_RF_RE.search(command):
-        return "Suspicious command detected: recursive force-delete of a critical path"
+    from personalclaw import protected_folders
+    from personalclaw.shell_syntax import lex
+
+    found = protected_folders.protected_delete(command, cwd=cwd)
+    if found.hits or (found.unread and lex(command) is not None):
+        return f"Suspicious command detected: {protected_folders.clause(found)}"
     return None
 
 

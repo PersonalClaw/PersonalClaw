@@ -326,22 +326,25 @@ def stands_for_call(
     *,
     session_key: str,
     event: object,
+    cwd: str,
     level: str = LEVEL_AUTO,
     asked_by: Mapping[str, str] | None = None,
 ) -> bool:
     """Whether *grant* may approve one call, the one *event* asks about in the session
-    *session_key*, without asking anyone: :func:`stands_for_work`, for that call.
+    *session_key*, run in the folder *cwd*, without asking anyone: :func:`stands_for_work`, for
+    that call.
 
-    No grant answers a call that reaches a host off the allowed hosts (``run_bounds``): that one is
-    put to a person. A refused grant falls through to what comes next: the call asks, or on an
+    No grant answers a call that reaches a host off the allowed hosts, nor one that deletes the
+    owner's home folder, the filesystem root or *cwd* (``run_bounds.put_to_a_person``): that one
+    is put to a person. A refused grant falls through to what comes next: the call asks, or on an
     unattended turn is declined because nobody can answer it. What a chat's runner asks of an
     operator's hook pattern and of its Trust, YOLO and Trust reads, and what a channel running a
     conversation itself asks of the same grants (``chat_trust.chat_grant``).
     """
-    from personalclaw.run_bounds import off_list
+    from personalclaw.run_bounds import put_to_a_person
     from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
-    if off_list(event, session_key):
+    if put_to_a_person(event, session_key=session_key, cwd=cwd):
         return False
     title, _ = redact_exfiltration_urls(str(getattr(event, "title", "") or ""))
     title, _ = redact_credentials(title)

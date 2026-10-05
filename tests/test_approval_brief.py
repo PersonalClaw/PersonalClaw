@@ -208,7 +208,8 @@ class TestCallSiteCarriesTheBrief:
         kwargs = gateway.dashboard_state.request_approval.call_args.kwargs
         assert APPROVAL_BRIEF_META_KEY not in kwargs
         # The tool's server labels travel with it, so the registry's radius can show them, and
-        # so does who asked for the work when the owner did not, so its card can name them.
+        # so does who asked for the work when the owner did not, so its card can name them, and
+        # the folder the call runs in, so its card can say when it would delete that folder.
         assert set(kwargs) == {
             "tool_input",
             "tool_purpose",
@@ -218,6 +219,7 @@ class TestCallSiteCarriesTheBrief:
             "tool_kind",
             "annotations",
             "asked_for",
+            "cwd",
         }
         assert kwargs["asked_for"] == "", "her own background work names nobody"
 

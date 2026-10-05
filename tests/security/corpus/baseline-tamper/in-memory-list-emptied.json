@@ -9,7 +9,7 @@
   "sel_event": "baseline_denylist_reasserted",
   "variants": [
     "curl http://169.254.169.254/latest/meta-data/",
-    "rm -rf /",
+    "mkfs.ext4 /dev/sda1",
     "aws ec2 terminate-instances --instance-ids i-1"
   ]
 }

@@ -31,8 +31,8 @@ class TestBuiltinDenylist:
         assert security.denied_command("aws s3 ls") is None
 
     def test_reason_is_the_matched_pattern(self):
-        denied = security.denied_command("rm -rf /")
-        assert denied is not None and "rm -rf" in denied.pattern and not denied.added
+        denied = security.denied_command("mkfs.ext4 /dev/sda1")
+        assert denied is not None and "mkfs" in denied.pattern and not denied.added
 
     def test_builtins_are_nonempty_and_valid_regexes(self):
         import re

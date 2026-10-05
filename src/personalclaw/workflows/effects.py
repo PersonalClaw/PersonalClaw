@@ -270,7 +270,8 @@ async def run_teardown(
     # nobody answering it, so among the first one's rules a teardown that would stop or replace
     # the PersonalClaw its run lives in is refused. A refused teardown is a failed one: the redo
     # it guards stays blocked (`effect_boundary`), so no second resource lands on a live first.
-    held = check_command(command, session_key=unattended_dispatch_key("workflow:teardown"))
+    # It starts in the gateway's own folder (`cwd=""`), which it may not delete either.
+    held = check_command(command, session_key=unattended_dispatch_key("workflow:teardown"), cwd="")
     if held.blocked:
         audit_command_refusal(command, held, source="workflow", operation="teardown")
         return False, held.refusal()

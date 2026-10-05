@@ -253,7 +253,12 @@ async def test_the_same_call_in_an_attended_run_asks_and_names_the_host(tmp_path
     from personalclaw import run_bounds
 
     reach = run_bounds.call_reach(
-        asks[0].risk_level, asks[0].title, "", asks[0].tool_input, session_key="dashboard:x"
+        asks[0].risk_level,
+        asks[0].title,
+        "",
+        asks[0].tool_input,
+        session_key="dashboard:x",
+        cwd=str(tmp_path / "worktree"),
     )
     note = run_bounds.ask_note(reach)
     assert UNLISTED in note and "Allowed hosts" in note
