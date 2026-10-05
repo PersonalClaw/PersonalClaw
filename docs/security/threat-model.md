@@ -291,6 +291,13 @@ says what that means.
   the gateway holds a subagent, for the folder a restart leaves of one, and for the report kept in
   its chat. Another chat's subagent reads as not found, in the words an id that never existed does;
   a call whose chat cannot be known reads none. Your own sign-in reads every one.
+- **A chat's own workflow runs are that chat's** (`workflows/chat_runs.py`), by the same rule: a
+  batch (which saves no workflow definition, so nothing lists, reads, starts or deletes it by name)
+  and every run a Temporary or Incognito chat starts. A native agent's workflow tools, the run
+  routes the tool server an agent CLI calls, the runs list, the store's repair and the runs a chat's
+  turn is told of answer another chat's own run as no run at all, in the words an id that never
+  existed does, with an audit row; the spec an inspect call echoes follows only a run its caller
+  reads. Your own sign-in reads every one.
 - **The app's own code is outside all of this.** An app's provider module is imported
   into the gateway's process, its backend is a process under your account, each MCP
   server in its manifest is a command the gateway launches with the gateway's own
@@ -768,7 +775,8 @@ Data leaving the running system:
   skill drafted or kept, no proposal filed for review, no task, task list or
   project made or changed on the Tasks page, no Inbox item posted, no loop's spec
   or plan changed; and a Temporary chat's workflow runs are stopped and deleted
-  once it has ended (`workflows/temporary_runs.py`). Whether
+  once it has ended, an Incognito chat's once it is deleted
+  (`workflows/private_runs.py`). Whether
   work may read memory at all is one answer, `memory_reads.reach_of`: a
   Temporary chat's work reads none (its subagents, theirs, and the steps of a run
   it started included), and neither does an app's (a conversation it started, an

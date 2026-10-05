@@ -55,6 +55,10 @@ SPEC = {
 }
 
 
+#: The chat whose turn the block is built for: every run here is yours, so it reads each one.
+CHAT = "dashboard:chat-1-1700000000"
+
+
 def _run(status: RunStatus, name: str = "ctx", **kw) -> WorkflowRun:
     run = store.create(WorkflowRun(id="", workflow_name=name, status=status, **kw))
     store.write_spec(run.id, SPEC)
@@ -68,17 +72,17 @@ class TestActiveWorkflowsBlock:
     def test_no_runs_means_no_block(self) -> None:
         """Silence when there is nothing to say — an empty header would be noise in every
         single turn."""
-        assert CB.active_workflows_block() == ""
+        assert CB.active_workflows_block(session_key=CHAT) == ""
 
     def test_a_running_run_is_surfaced_with_its_id(self) -> None:
         run = _run(RunStatus.RUNNING)
-        block = CB.active_workflows_block()
+        block = CB.active_workflows_block(session_key=CHAT)
         assert "[ACTIVE WORKFLOWS" in block
         assert run.id in block and "running" in block
 
     def test_a_terminal_run_is_not_surfaced(self) -> None:
         _run(RunStatus.COMPLETE)
-        assert CB.active_workflows_block() == ""
+        assert CB.active_workflows_block(session_key=CHAT) == ""
 
     def test_a_needs_input_run_shows_what_it_is_asking(self) -> None:
         """Telling the user a run needs them without saying what it wants is worse than
@@ -87,21 +91,21 @@ class TestActiveWorkflowsBlock:
             RunStatus.NEEDS_INPUT,
             attention={"kind": "approval", "prompt": "Deploy to prod?"},
         )
-        block = CB.active_workflows_block()
+        block = CB.active_workflows_block(session_key=CHAT)
         assert "waiting on you" in block and "Deploy to prod?" in block
 
     def test_needs_input_sorts_before_running(self) -> None:
         """Ordered by urgency, not recency: the actionable run comes first."""
         _run(RunStatus.RUNNING, name="just-running")
         _run(RunStatus.NEEDS_INPUT, name="needs-me")
-        block = CB.active_workflows_block()
+        block = CB.active_workflows_block(session_key=CHAT)
         assert block.index("needs-me") < block.index("just-running")
 
     def test_the_run_count_is_capped_with_a_remainder(self) -> None:
         """A user with forty runs must not lose their own message to a listing."""
         for i in range(CB.MAX_RUNS_IN_BLOCK + 3):
             _run(RunStatus.RUNNING, name=f"wf-{i}")
-        block = CB.active_workflows_block()
+        block = CB.active_workflows_block(session_key=CHAT)
         assert "and 3 more" in block
 
     def test_the_block_is_length_capped(self) -> None:
@@ -111,13 +115,13 @@ class TestActiveWorkflowsBlock:
                 name=f"wf-{i}",
                 attention={"prompt": "x" * 400},
             )
-        assert len(CB.active_workflows_block()) <= CB.MAX_BLOCK_CHARS + 40
+        assert len(CB.active_workflows_block(session_key=CHAT)) <= CB.MAX_BLOCK_CHARS + 40
 
     def test_it_tells_the_model_which_tools_to_use(self) -> None:
         """A block that says a run needs input without naming the tool leaves the model
         guessing at the API."""
         _run(RunStatus.NEEDS_INPUT)
-        block = CB.active_workflows_block()
+        block = CB.active_workflows_block(session_key=CHAT)
         assert "workflow_status" in block and "workflow_resume" in block
 
     def test_a_broken_store_returns_empty_not_an_exception(self, monkeypatch) -> None:
@@ -127,7 +131,7 @@ class TestActiveWorkflowsBlock:
             raise RuntimeError("db gone")
 
         monkeypatch.setattr("personalclaw.workflows.store.active_runs", boom)
-        assert CB.active_workflows_block() == ""
+        assert CB.active_workflows_block(session_key=CHAT) == ""
 
     def test_a_corrupt_attention_payload_does_not_raise(self, monkeypatch) -> None:
         run = _run(RunStatus.NEEDS_INPUT)
@@ -135,7 +139,7 @@ class TestActiveWorkflowsBlock:
         raw = store.get(run.id)
         raw.attention = "not-a-dict"  # type: ignore[assignment]
         store.save(raw)
-        block = CB.active_workflows_block()
+        block = CB.active_workflows_block(session_key=CHAT)
         assert run.id in block  # rendered, just without an ask
 
 

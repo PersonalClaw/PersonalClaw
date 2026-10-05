@@ -272,10 +272,13 @@ async def test_it_starts_only_after_you_allow_it(gateway):
 
     assert len(gateway.supervisor.launched) == 1
     run, spec = gateway.supervisor.launched[0]
-    # The definition she allowed: the task that changes things carries the write grant.
-    saved = gateway.provider.saved[run.workflow_name]
-    grants = {c["id"]: c["config"].get("capability") for c in saved["root"]["children"]}
+    # What runs is what she allowed: the task that changes things carries the write grant, in the
+    # spec the run holds, and no workflow is saved for it.
+    held = store.read_spec(run.id)
+    assert held == spec
+    grants = {c["id"]: c["config"].get("capability") for c in held["root"]["children"]}
     assert sorted(grants.values()) == ["mutating", "research"], grants
+    assert gateway.provider.saved == {}, "the batch was saved as a workflow"
     # It is the chat's batch: a subagent batch, started from this chat.
     stored = store.get(run.id)
     assert stored is not None

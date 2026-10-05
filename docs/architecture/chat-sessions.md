@@ -401,16 +401,20 @@ chat, channel thread, loop worker, webhook, subagent).
   send naming one that is not running here forgets it and answers 404. While
   it runs its transcript is written like any chat's (a reload keeps it); no
   snapshot or shard export copies it (`chat_traces.kept_by_temporary_chats`).
-  The workflow runs a temporary chat started are its own work and end with it,
-  and so do the runs they started in turn, a subworkflow's or a `run-workflow`
-  step's, each one more run of the same tree (`root_run_id`)
-  (`workflows/temporary_runs.py`): on each poll the workflow supervisor stops a
+  The workflow runs a temporary or incognito chat started are its own work:
+  while it lives only its own work and you read them (`workflows/chat_runs.py`),
+  and they end with it, and so do the runs they started in turn, a subworkflow's
+  or a `run-workflow` step's, each one more run of the same tree (`root_run_id`)
+  (`workflows/private_runs.py`): on each poll the workflow supervisor stops a
   run whose tree's chat has ended, through a controller so it closes what it
   holds, then, once every run of the tree has ended, deletes each with what it
-  produced (`service.delete_run`). A tree's chat has ended when its root run was
-  started before this gateway was, or when the chat at the top of the work the
-  root was started for is a dashboard chat the gateway no longer holds. An
-  incognito chat's runs are kept, as its transcript is.
+  produced (`service.delete_run`), and ends a batch of the chat's still waiting
+  for its ask (`batch_start.end_records_of_ended_chats`). A temporary chat has
+  ended when its root run was started before this gateway was, or when the chat
+  at the top of the work the root was started for is a dashboard chat the
+  gateway no longer holds. An incognito chat's runs are kept, as its transcript
+  is, until it is deleted: a dashboard chat the gateway no longer holds whose
+  transcript is gone too (`private_runs._transcript_kept`).
 - **`session_workspace.py` / `session_pid.py`** — per-session working
   directory resolution and process-id tracking.
 

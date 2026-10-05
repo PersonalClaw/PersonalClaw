@@ -25,6 +25,9 @@ all three (:func:`reader_of`, :meth:`Reader.reads`):
 
 Another chat's helper reads as not found, in the words an id that never existed reads in, so the
 answer does not say that it exists.
+
+The same rule answers which of a chat's own workflow runs a call reads (``workflows.chat_runs``):
+a batch is that chat's helpers, run as one workflow.
 """
 
 from __future__ import annotations
@@ -94,6 +97,14 @@ class Reader:
     def of(self, helpers: Iterable[SubagentInfo]) -> list[SubagentInfo]:
         """The helpers of *helpers* this reads, in their order."""
         return [info for info in helpers if self.reads(info.parent_session_key)]
+
+
+def reader_of_work(state: Any, work: str) -> Reader:
+    """Who reads as the work *work* names, for a read made inside PersonalClaw with no request to
+    prove whose it is: the built-in agent's tools, which its runtime binds to its chat's session,
+    and the context a chat's turn is built with. Your own pages (``dashboard:ui``, a tool you run
+    there) read every one; any other work reads its own chat's, and work naming none reads none."""
+    return Reader(state, work=work, everyone=work == _YOUR_PAGES)
 
 
 def reader_of(request: Any, state: Any) -> Reader:

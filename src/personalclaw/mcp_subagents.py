@@ -62,8 +62,8 @@ def _to_leaf(text: str, spec: dict[str, Any], agent: str) -> LeafTask:
 
 def _batch_def_name() -> str:
     """A name no other batch has: the millisecond it was started in, which two batches started at
-    once share, and a random part, so neither saves its definition over the other's. Minted per
-    call, within `models.valid_name` (lowercase, digits, hyphens: it becomes a directory)."""
+    once share, and a random part, so neither's run or record is taken for the other's. Minted per
+    call, within `models.valid_name` (lowercase, digits, hyphens: it names a file)."""
     return f"subagent-batch-{int(time.time() * 1000)}-{secrets.token_hex(3)}"
 
 
@@ -151,11 +151,12 @@ def _run_compiled_batch(
 ) -> str:
     """Compile `tasks[]` into one run and hand it to the gateway to start (`workflows.batch_start`).
 
-    The persistence that makes the widget survive a restart is NOT a new store: the compiled spec
-    is saved as a workflow definition and the run row references it by `workflow_name`, so a
-    restarted gateway reloads both from disk and the widget rebuilds from the run record — the same
-    path every other workflow run already uses. Per-branch retry is likewise the existing
-    `run-from` route over the compiled node ids.
+    The persistence that makes the widget survive a restart is NOT a new store: the run's own
+    record holds the compiled spec, as every run holds what it runs, so a restarted gateway adopts
+    it from disk and the widget rebuilds from the run record — the same path every other workflow
+    run already uses. No workflow definition is saved: the tasks are this conversation's, its run
+    is its own (`workflows.chat_runs`), and no other conversation lists, reads or starts it.
+    Per-branch retry is likewise the existing `run-from` route over the compiled node ids.
 
     The gateway decides the batch's start once, for all its tasks, and this call asks nobody
     itself: a batch that only reads starts on the grant that starts this conversation's subagents,

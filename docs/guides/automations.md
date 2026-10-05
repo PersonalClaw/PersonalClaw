@@ -304,9 +304,9 @@ workflow, I want to see what changed before Friday's run uses it."*
 An automation whose action is **Run workflow** runs the version of the workflow you allowed: Allow
 (the create dialog, the switch, the editor) records the version the workflow is at then, and says
 which. When you save a newer version yourself, in the workflow's editor, the automation runs it,
-since that save is your yes. A newer version saved any other way — an agent's `workflow_author`, a
-chat's batch, an accepted refiner proposal, a prompt card, another machine's sync or a restore — is
-not used: the automation keeps running the version you allowed.
+since that save is your yes. A newer version saved any other way — an agent's `workflow_author`, an
+accepted refiner proposal, a prompt card, another machine's sync or a restore — is not used: the
+automation keeps running the version you allowed.
 
 The automation's panel on the **Triggers** page then says it runs vN and that vM is newer, with who
 saved each version since, and the row is badged *vM waits for you*. **Use vM** asks first, naming

@@ -37,8 +37,10 @@ MAX_ECHO_CHARS = 6_000
 MAX_RUNS_IN_BLOCK = 5
 
 
-def active_workflows_block(*, project_id: str = "") -> str:
-    """The `[ACTIVE WORKFLOWS]` block, or "" when there is nothing to say.
+def active_workflows_block(*, session_key: str, project_id: str = "") -> str:
+    """The `[ACTIVE WORKFLOWS]` block for the turn of the chat *session_key* names, or "" when
+    there is nothing to say: the runs in flight that chat reads (``chat_runs``), so another chat's
+    own runs, a batch or a Temporary or Incognito chat's, are not among them.
 
     Ordered by urgency, not recency: a run WAITING on a human comes first, because that is
     the one the user can act on. A merely-running run is informational.
@@ -46,10 +48,14 @@ def active_workflows_block(*, project_id: str = "") -> str:
     Never raises. See the module docstring.
     """
     try:
-        from personalclaw.workflows import store
+        from personalclaw.action_providers.services import get_action_services
+        from personalclaw.subagent_reach import reader_of_work
+        from personalclaw.workflows import chat_runs, store
         from personalclaw.workflows.models import RunStatus
 
-        runs = store.active_runs()
+        services = get_action_services()
+        reader = reader_of_work(services.state if services is not None else None, session_key)
+        runs = [run for run in store.active_runs() if chat_runs.reads(reader, run)]
     except Exception:
         logger.debug("active-workflows block skipped (store unavailable)", exc_info=True)
         return ""

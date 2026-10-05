@@ -26,8 +26,10 @@ with a live controller is never reaped.
 
 **Sticky cancel.** A CANCEL file is honoured even for a run with no controller.
 
-**A Temporary chat's runs end with it.** A run a Temporary chat started is stopped once the chat
-has ended, then deleted with what it produced (`temporary_runs`), as the chat's transcript is.
+**A Temporary or Incognito chat's runs end with it.** A run such a chat started is stopped once the
+chat has ended (a Temporary chat's session, an Incognito chat's deletion), then deleted with what
+it produced (`private_runs`), as the chat's transcript is; so is a batch of the chat's still waiting
+for its ask, its ask with it (`batch_start.end_records_of_ended_chats`).
 
 **Overlap-queue drain.** A start held back by `on_overlap: queue` is a durable DRAFT row
 with a marker, so it outlives the process that queued it. The poll drains it once nothing
@@ -49,7 +51,7 @@ from typing import Any
 
 from personalclaw import concurrency, shutdown_event
 from personalclaw.cancellation import cancel_and_wait
-from personalclaw.workflows import containers, overlap, run_finish, store, temporary_runs
+from personalclaw.workflows import containers, overlap, private_runs, run_finish, store
 from personalclaw.workflows.coalescer import EventCoalescer
 from personalclaw.workflows.controller import _ROOT_TO_RUN, EngineServices, RunController
 from personalclaw.workflows.models import (
@@ -405,8 +407,9 @@ class WorkflowWatchdog:
         # adoption takes it on again — a stopped loop's batch resumed after a restart, provisioned
         # its workspace again and asked for the same approvals anew.
         self._end_runs_whose_loop_ended()
-        self._end_runs_whose_temporary_chat_ended()
-        await self._remove_runs_whose_temporary_chat_ended()
+        self._end_runs_whose_private_chat_ended()
+        await self._remove_runs_whose_private_chat_ended()
+        self._end_batches_whose_private_chat_ended()
 
         swept: set[str] = set()
         if not self._swept:
@@ -488,39 +491,40 @@ class WorkflowWatchdog:
             asked += 1
         return asked
 
-    def _end_runs_whose_temporary_chat_ended(self) -> int:
-        """Stop every run, live or still a draft, whose Temporary chat has ended
-        (`temporary_runs.to_stop`), saying so. Returns how many.
+    def _end_runs_whose_private_chat_ended(self) -> int:
+        """Stop every run, live or still a draft, whose Temporary or Incognito chat has ended
+        (`private_runs.to_stop`), saying why (`private_runs.ended_because`). Returns how many.
 
         Through `service.cancel_run`, so a draft ends at once and a launched run is ended by a
         controller, through `_finish`, which closes what it holds: by its own on its next step, or
         by one the adoption below starts for it (`_honor_cancel`), before the boot sweep or an
         adoption could drive it again. Deleted once it has ended
-        (:meth:`_remove_runs_whose_temporary_chat_ended`).
+        (:meth:`_remove_runs_whose_private_chat_ended`).
         """
         from personalclaw.workflows import service
 
         asked = 0
-        for run in temporary_runs.to_stop(self._state):
+        for run in private_runs.to_stop(self._state):
             if store.cancel_requested(run.id):
                 continue
+            why = private_runs.ended_because(run)
             try:
-                service.cancel_run(run.id, supervisor=self, reason=temporary_runs.ENDED)
+                service.cancel_run(run.id, supervisor=self, reason=why)
             except Exception:  # noqa: BLE001 - one run that will not stop must not stop the poll
                 logger.warning("could not stop workflow run %s", run.id, exc_info=True)
                 continue
-            logger.info("workflow run %s: stopping it, because %s", run.id, temporary_runs.ENDED)
+            logger.info("workflow run %s: stopping it, because %s", run.id, why)
             asked += 1
         return asked
 
-    async def _remove_runs_whose_temporary_chat_ended(self) -> int:
-        """Delete every ended run whose Temporary chat has ended, with what it produced
-        (`temporary_runs.to_remove`, through `service.delete_run`, which tears its workspace down
-        first and expires its Inbox rows). Returns how many."""
+    async def _remove_runs_whose_private_chat_ended(self) -> int:
+        """Delete every ended run whose Temporary or Incognito chat has ended, with what it
+        produced (`private_runs.to_remove`, through `service.delete_run`, which tears its workspace
+        down first and expires its Inbox rows). Returns how many."""
         from personalclaw.workflows import service
 
         removed = 0
-        for run in temporary_runs.to_remove(self._state):
+        for run in private_runs.to_remove(self._state):
             try:
                 deleted = await service.delete_run(run.id, supervisor=self)
             except Exception:  # noqa: BLE001 - asked again on the next poll
@@ -530,11 +534,24 @@ class WorkflowWatchdog:
                 removed += 1
         if removed:
             logger.info(
-                "removed %d workflow run(s) whose Temporary chat ended: their records and what "
-                "they produced are deleted",
+                "removed %d workflow run(s) whose Temporary or Incognito chat ended: their records "
+                "and what they produced are deleted",
                 removed,
             )
         return removed
+
+    def _end_batches_whose_private_chat_ended(self) -> int:
+        """End every batch of a Temporary or Incognito chat that has ended and that has no run
+        yet (`batch_start.end_records_of_ended_chats`): its record, with the chat's tasks, is
+        deleted, and its ask, if it still waits, is cancelled on every surface. Returns how
+        many."""
+        from personalclaw.workflows import batch_start
+
+        try:
+            return batch_start.end_records_of_ended_chats(self._state)
+        except Exception:  # noqa: BLE001 - asked again on the next poll
+            logger.warning("could not end the batches of an ended chat", exc_info=True)
+            return 0
 
     async def _boot_sweep(self) -> set[str]:
         """Decide the fate of every crash-survivor ISOLATED run, ONCE, before adoption.

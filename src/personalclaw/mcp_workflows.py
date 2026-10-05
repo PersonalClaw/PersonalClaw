@@ -37,17 +37,21 @@ import inspect
 import json
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from personalclaw import approval_answer
 from personalclaw.safety_flags import confirm_granted, yes_or_no
 from personalclaw.tool_providers.base import ToolFailure, tool_failure
 from personalclaw.validation import decode_json_text
+from personalclaw.workflows import chat_runs
 from personalclaw.workflows import grill_protocol as grill_mod
 from personalclaw.workflows import intent as intent_mod
 from personalclaw.workflows import rigor as rigor_mod
 from personalclaw.workflows import service, template_pipeline, versions
 from personalclaw.workflows.context_block import needs_staging, staged_spec_echo
+
+if TYPE_CHECKING:
+    from personalclaw.subagent_reach import Reader
 
 logger = logging.getLogger(__name__)
 
@@ -603,6 +607,14 @@ _CHANGES = {
 }
 
 
+def _reader() -> Reader:
+    """Who the call being made now reads as (``subagent_reach.reader_of_work``): the session it
+    runs as (:func:`_current_session_id`), over the gateway's live chats where it runs there."""
+    from personalclaw.subagent_reach import reader_of_work
+
+    return reader_of_work(_gateway_service("state"), _current_session_id())
+
+
 def _chat_mode_refusal(name: str, run_id: str) -> ToolFailure | None:
     """The refusal of the tool call *name* (for the run *run_id*) that the session it runs as may
     not make (`restricted_calls`), or None. A start names no run, as the route's does not."""
@@ -749,8 +761,11 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     which diverges from disk the moment anything else touches the run.
     """
     out = _dispatch(name, args or {})
-    if needs_staging(name):
-        echo = staged_spec_echo(str((args or {}).get("run_id", "") or ""))
+    run_id = str((args or {}).get("run_id", "") or "")
+    # Only of a run the call reads (`chat_runs`), in either process: another chat's own run is no
+    # run to it, here as in the answer it was given.
+    if needs_staging(name) and chat_runs.reads_id(_reader(), run_id):
+        echo = staged_spec_echo(run_id)
         if echo:
             combined = f"{out}\n\n{echo}"
             # Formatting a ``ToolFailure`` yields a plain ``str``, which would silently
@@ -823,6 +838,10 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
 
         return call_through_the_gateway(name, args)
 
+    if run_id and chat_runs.hidden(_reader(), run_id, operation=name):
+        # Another chat's own run (`chat_runs`) is no run to this call, before anything else is
+        # asked of it: answered as an id that never existed is.
+        return _fmt(service._run_not_found(run_id))
     denied = _chat_mode_refusal(name, run_id)
     if denied is not None:
         return denied
@@ -990,10 +1009,12 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
         )
 
     if name in ("workflow_audit", "workflow_repair"):
+        reader = _reader()
+        only = None if reader.everyone else chat_runs.live_runs_read(reader)
         return _fmt(
             _on_engine(
                 lambda supervisor: service.audit(
-                    dry_run=name == "workflow_audit", supervisor=supervisor
+                    dry_run=name == "workflow_audit", supervisor=supervisor, only=only
                 )
             )
         )

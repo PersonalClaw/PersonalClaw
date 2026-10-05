@@ -36,6 +36,7 @@ from personalclaw.workflows import (
     automation_version,
     blocks,
     declines,
+    definition_check,
 )
 from personalclaw.workflows import defs as defs_mod
 from personalclaw.workflows import (
@@ -47,11 +48,9 @@ from personalclaw.workflows import (
     macros,
     models,
     mutations,
-    provisioning,
     run_budget,
     secrets,
     store,
-    template_lint,
 )
 from personalclaw.workflows.failure_taxonomy import with_breaker_window
 from personalclaw.workflows.models import (
@@ -75,7 +74,7 @@ from personalclaw.workflows.models import (
     valid_name,
     walk,
 )
-from personalclaw.workflows.validator import Issue, validate_spec
+from personalclaw.workflows.validator import Issue
 from personalclaw.workflows.versions import AGENT, PUBLISH
 
 logger = logging.getLogger(__name__)
@@ -414,128 +413,23 @@ async def author_def(
     from before anything is validated or written (`secrets.reinject_secrets`), and a flag nothing
     can restore is refused at its step rather than written to disk as a field.
     """
-    if not valid_name(name):
-        return _service_failure(
-            "WF_DEF_NAME_INVALID",
-            f"{name!r} is not a valid name — use lowercase letters, digits and hyphens "
-            "(it becomes a directory)",
-        )
-    # A read-only provider's names are RESERVED. Saving over one used to succeed and then be
-    # ignored: the def list showed the name twice (bundled + user) while `get_def` and every
-    # run-start returned the FIRST provider in sort order — `bundled` — so a user who "edited" a
-    # bundled template saw their save succeed, saw their copy in the list, and ran the original
-    # (issue 764). Split-brain, with the UI reporting the half that was not used.
-    #
-    # Refused rather than resolved in the user's favour, because `bundled_defs` already decided
-    # this: templates are served FROM THE PACKAGE so that `pip install --upgrade` ships new ones
-    # with no reconciliation. A user def shadowing a bundled name reintroduces exactly the "did
-    # the user edit it?" question that design avoided, and an upgrade's improved template would
-    # sit masked behind a stale copy with nothing to say so.
-    #
-    # Checked BEFORE validation so a dry run reports it too — the point of `save=False` is to
-    # learn what is wrong before committing, and the name is the cheapest thing to fix.
-    reserved_by = await _reserved_name_provider(name)
-    if reserved_by:
-        return _service_failure(
-            "WF_DEF_NAME_RESERVED",
-            f"{name!r} is the name of a read-only {reserved_by} template. Save your version "
-            "under a different name — a copy under your own name is never touched by an "
-            "upgrade, while a shadow of a bundled name would be ignored at run time.",
-            provider=reserved_by,
-        )
-    spec = {
-        "name": name,
-        "description": description,
-        "root": root or {},
-        "inputs": inputs or {},
-        "tags": tags or [],
-    }
-    if isinstance(workspace, dict) and workspace:
-        # The `workspace:` declaration, carried through authoring so it reaches the persisted
-        # def. This dict is an allowlist and the parameter did not exist: an author (including
-        # `compile_batch`) could declare a workspace and have it silently dropped here, leaving a
-        # run-start applier reading a key nothing ever wrote — the same config-round-trip failure
-        # a field with a read path and no write path always is.
-        spec[provisioning.WORKSPACE_KEY] = dict(workspace)
-    if isinstance(runtime_hints, dict) and runtime_hints:
-        spec["runtime_hints"] = dict(runtime_hints)
-    if isinstance(defaults, dict) and defaults:
-        spec["defaults"] = dict(defaults)
-    if on_overlap:
-        spec["on_overlap"] = str(on_overlap)
-    # BEFORE `metadata` is coerced below: a presence flag inside it has to be restored while it is
-    # still where the read put it, and `DefMetadata.from_dict` would drop an unknown key outright.
-    if metadata:
-        spec["metadata"] = dict(metadata)
-    source = await _reinject_source(based_on or name, version=based_on_version)
-    spec = secrets.reinject_secrets(spec, source)
-    # An agent reads a definition through the model boundary, masked, so a string it hands back
-    # can carry a `[REDACTED: …]` marker where the definition holds a value: each keeps it.
-    from personalclaw.security import MASK_CONFLICT, MaskConflict, keep_masked_values
-
-    try:
-        spec = keep_masked_values(spec, source)
-    except MaskConflict:
-        return _service_failure("WF_DEF_MASK_CONFLICT", MASK_CONFLICT, repromptable=True)
-    hidden_lost = secrets.unmatched_flags(spec)
-    if spec.get("metadata"):
-        # Through `DefMetadata.from_dict` and back out, so the tolerant per-field coercion (unknown
-        # `surface_mode` → `off`, negative `cadence_days` → 0) applies to the WRITE and not only to
-        # the read. Coercing on read alone would store a value the next reader silently
-        # reinterprets.
-        spec["metadata"] = models.DefMetadata.from_dict(spec["metadata"]).to_dict()
-    root = spec["root"] if isinstance(spec.get("root"), dict) else root
-
-    # Macros expand HERE, before validation and before the write — so what is stored, what is
-    # validated and what the engine runs are the same core nodes. Expanding at run time
-    # instead would mean the journal, the resume cache and the rewind cascade all had to know
-    # macros exist, and a user could never hand-edit the expansion to graduate from the
-    # pattern (their edit would be regenerated over).
-    try:
-        spec = macros.expand_spec(spec)
-        # Blocks AFTER macros, not before: a macro emits block references (the judge panel cites
-        # the Finding record), and resolving first would leave those unresolved in the output.
-        spec = blocks.resolve_spec(spec)
-    except (macros.MacroError, blocks.BlockError) as exc:
-        return _service_failure("WF_DEF_MACRO_INVALID", str(exc), repromptable=True)
-    # The EXPANDED root is what gets written, so the stored spec, the validated spec and the
-    # spec the engine runs are the same tree.
-    expanded_root = spec.get("root")
-    root = expanded_root if isinstance(expanded_root, dict) else root
-
-    inline = secrets.find_inline_secrets(spec)
-    if inline:
-        # Refused, never merely warned: once saved, the value is on disk and every later
-        # defence is damage control.
-        return _service_failure(
-            "WF_DEF_INLINE_SECRET",
-            "the spec contains literal credentials — use {{secret:KEY}} instead",
-            findings=[f.to_dict() for f in inline],
-        )
-
-    result = validate_spec(spec, strict=strict)
-    if hidden_lost:
-        # Reported as validation issues, at the step, in the validator's own path grammar, so a
-        # dry run shows them and a client pins them where the rest of a spec's problems go.
-        result.issues.extend(
-            _hidden_value_issue(where, node_id, field, source=based_on or name)
-            for where, node_id, field in hidden_lost
-        )
-        result.levels = []
-    body = {
-        "valid": result.ok,
-        "issues": [i.to_dict() for i in result.issues],
-        "levels": result.levels,
-        # Conventions ADVICE, attached and never fatal. A user's own half-finished
-        # workflow is theirs to leave rough, so the lint informs rather than refuses — but an
-        # author who never sees it cannot follow a convention they were not told about. The
-        # bundled library is held to lint-clean by test instead.
-        "lint": template_lint.lint_template(spec).to_dict(),
-    }
-    if not result.ok:
-        return _service_failure(
-            "WF_DEF_INVALID", "the spec did not validate", **body, repromptable=True
-        )
+    spec, body = await definition_check.checked_spec(
+        name=name,
+        root=root,
+        description=description,
+        inputs=inputs,
+        tags=tags,
+        metadata=metadata,
+        strict=strict,
+        workspace=workspace,
+        runtime_hints=runtime_hints,
+        defaults=defaults,
+        on_overlap=on_overlap,
+        based_on=based_on,
+        based_on_version=based_on_version,
+    )
+    if spec is None:
+        return body
     if not save:
         asks = await _loosenings(spec)
         if asks:
@@ -749,6 +643,7 @@ async def start_run(
     extra: dict[str, Any] | None = None,
     budget: RunBudget | None = None,
     held_to_its_work: bool = True,
+    definition: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Instantiate a def and start driving it.
 
@@ -776,6 +671,10 @@ async def start_run(
 
     ``budget`` is the caps this start sets for its run (a loop's dollar limit), each one it sets
     in place of the cap its definition declares (`defaults.budget`) and the rest as declared.
+
+    ``definition`` is the definition to run when it is saved nowhere (a batch's tasks,
+    ``definition_check.run_once_def``): the run holds it, and no list, read or start of a
+    definition by *name* finds it.
     """
     from personalclaw.workflows.effects import START_DEDUPE
     from personalclaw.workflows.supervisor_policy import OVERRIDABLE_POLICY_KEYS
@@ -799,15 +698,17 @@ async def start_run(
         if existing:
             return _ok(run_id=existing, deduped=True, status=_status_of(existing))
 
-    found = await get_def(name)
-    if not found.get("ok"):
-        return found
-    # The STORED def, not the stripped read: a run needs the real credential bindings.
-    definition = await _raw_def(name)
     if definition is None:
-        return _service_failure("WF_DEF_NOT_FOUND", f"no workflow definition named {name!r}")
-
-    spec = definition if isinstance(definition, dict) else definition.to_dict()
+        found = await get_def(name)
+        if not found.get("ok"):
+            return found
+        # The STORED def, not the stripped read: a run needs the real credential bindings.
+        stored = await _raw_def(name)
+        if stored is None:
+            return _service_failure("WF_DEF_NOT_FOUND", f"no workflow definition named {name!r}")
+        spec = stored if isinstance(stored, dict) else stored.to_dict()
+    else:
+        spec = dict(definition)
     key = session_key if held_to_its_work else ""  # a batch runs the agent's own tasks
     held = await automation_version.held_start(name, spec, key, getattr(supervisor, "state", None))
     if held.refused:
@@ -2388,10 +2289,14 @@ async def start_draft_run(
     return _ok(run_id=run.id, status=RunStatus.RUNNING.value, started=True)
 
 
-def audit(*, dry_run: bool = True, supervisor: Any = None) -> dict[str, Any]:
+def audit(
+    *, dry_run: bool = True, supervisor: Any = None, only: frozenset[str] | None = None
+) -> dict[str, Any]:
+    """Diagnose the run store, and heal it unless *dry_run*: over the live runs its caller reads
+    (*only*, their ids: ``chat_runs.live_runs_read``), or every live run for you."""
     from personalclaw.workflows.audit import audit as do_audit
 
-    return _ok(**do_audit(dry_run=dry_run, supervisor=supervisor).to_dict())
+    return _ok(**do_audit(dry_run=dry_run, supervisor=supervisor, only=only).to_dict())
 
 
 # ── manifest ─────────────────────────────────────────────────────────────────

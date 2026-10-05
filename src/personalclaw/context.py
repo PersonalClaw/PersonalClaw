@@ -2178,8 +2178,9 @@ class ContextBuilder:
 
             # Unfiltered by project deliberately: `resolve_project_id` AUTO-CREATES a
             # project when none resolves, and a read-only context block must not have
-            # side effects. A run in flight is worth surfacing regardless of project.
-            wf_block = active_workflows_block()
+            # side effects. A run in flight is worth surfacing regardless of project, when this
+            # chat reads it: another chat's own run is that chat's (`workflows.chat_runs`).
+            wf_block = active_workflows_block(session_key=session_key or "")
             if wf_block:
                 parts.add(wf_block, name="active workflows")
                 logger.info("Injected [ACTIVE WORKFLOWS] block (%d chars)", len(wf_block))

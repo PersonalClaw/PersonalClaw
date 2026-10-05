@@ -2314,7 +2314,14 @@ export interface WorkflowRunSummary {
   /** Why a `running` run is doing nothing while incident mode holds it, as its detail says
    *  (`WorkflowRunDetailData.held`); empty otherwise. */
   held?: string
+  /** Whose chat's own run it is (`chat_runs.whose`), `null` for a run of yours. */
+  chat?: WorkflowRunChat | null
 }
+/** The chat a chat's own run belongs to: a batch of its subagents, or any run a Temporary or
+ *  Incognito chat started. Only that chat's agent and you read it. `mode` is the mode its chat
+ *  keeps (`temporary`, `incognito`, `unreadable` when nothing could say, `''` for an ordinary
+ *  chat). */
+export interface WorkflowRunChat { session: string; mode: string; batch: boolean }
 /** A batch `subagent_run` started, before and after its one ask: waiting for its answer
  *  (`asking`), allowed and `starting`, `started` (its `run_id` is its record from then on), or
  *  `not_started`, with the `error` that says why. */

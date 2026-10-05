@@ -15,6 +15,7 @@ import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSo
 import { confirmDelete, promptForm, promptInput } from '../../ui/dialog'
 import { notify } from '../../app/appSdk'
 import { fmtElapsed, isTerminal, runLook } from './workflowMeta'
+import { chatRunMark } from './chatRunMark'
 import { stoppedAtBudget } from './attentionMeta'
 import { coerceInputs, inputFields, intentInput, startsWithoutInput } from './templateStart'
 import { preflightRemediations } from './preflightRemediation'
@@ -430,6 +431,8 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
               const look = runLook(r.status, r.held, stoppedAtBudget(r.status, r.attention))
               const Icon = look.icon
               const elapsed = fmtElapsed(r.elapsed_seconds)
+              // A chat's own run (a batch, or a Temporary or Incognito chat's) says whose it is.
+              const mark = chatRunMark(r.chat)
               // index=0 while windowed — see ui/WindowedList's ctx.windowed doc.
               return (
                 <ListRow key={r.id} index={listCtx.windowed ? 0 : i} onClick={() => navigate(`workflows/runs/${r.id}`)} label={`${r.workflow_name} — run ${r.id}`}>
@@ -441,6 +444,7 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
                         {look.label}{r.error_message ? ` · ${r.error_message}` : ''}
                       </div>
                     </div>
+                    {mark && <span data-type="caption" className="shrink-0 text-on-surface-low" title={mark.hint}>{mark.label}</span>}
                     {elapsed && <span data-type="caption" className="shrink-0 text-on-surface-low tabular-nums">{elapsed}</span>}
                     <span data-type="caption" className="shrink-0 font-mono text-on-surface-low">{r.id}</span>
                     {/* Terminal runs only. A live run's delete would race its own controller,

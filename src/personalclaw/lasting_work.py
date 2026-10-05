@@ -42,8 +42,8 @@ automation off or back on, and runs one now, a run held as the chat's own work
 (``trigger_runs._dispatch_store_action``). A workflow run or a subagent it starts keeps the chat's
 mode and stays on the chat's model (``workflows.restricted_calls``, ``memory_writes.hand_on``), and
 so does a General loop started through the loop door, which runs as a workflow. A run is the chat's
-own work, not work of its own, so a Temporary chat's runs end with it and are removed
-(``workflows.temporary_runs``).
+own work, not work of its own, so a Temporary chat's runs end with it and are removed, and an
+Incognito chat's once it is deleted (``workflows.private_runs``).
 
 **Work someone other than the owner asked for keeps who asked, for as long as it lasts.** A turn a
 colleague in a shared channel thread asked for, a correspondent's, a program's through the

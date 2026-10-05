@@ -2,9 +2,9 @@
 batch tells the conversation that started it how it ended.
 
 `mcp_subagents._run_compiled_batch` compiles two or more tasks into one workflow (`batch_compile`)
-and hands it here (``POST /api/workflows/batches``). Nothing is saved or run until the batch may
-start, and that is decided once, for all of its tasks. The call that asked for it asks nobody
-itself (`tool_providers.base.WORK_ASKS_META_KEY`), so a batch asks its owner once at most:
+and hands it here (``POST /api/workflows/batches``). Nothing runs until the batch may start, and
+that is decided once, for all of its tasks. The call that asked for it asks nobody itself
+(`tool_providers.base.WORK_ASKS_META_KEY`), so a batch asks its owner once at most:
 
 * **A batch that only reads** starts as a subagent its conversation started would: on the grant
   that starts that conversation's subagents without asking (its Trust, YOLO, the hook setting),
@@ -17,12 +17,19 @@ itself (`tool_providers.base.WORK_ASKS_META_KEY`), so a batch asks its owner onc
   itself, so no standing grant answers it; it is kept out of the answers a Trust or YOLO switch
   gives in bulk (``answered_alone``); and the registry takes an answer from the owner alone
   (`approval_answer`).
-* **What allowed it is what runs.** The definition is saved with the posture she was shown, and the
-  run is stamped with what allowed its start (:data:`CONSENT_KEY`), so its tasks start on that and
-  none asks again (`approval_grants.batch_allowed`, read by `SubagentManager._spawn_grant`).
-* **A Deny ends it declined**, and an ask nobody answers ends it unstarted: nothing is saved or
-  run, and the conversation that started it is told so (:func:`never_started`), as it is told how
-  a batch that ran ended (:func:`ending_of_run`).
+* **What allowed it is what runs.** Its run is started from the definition she was shown, with the
+  posture she was shown, and is stamped with what allowed its start (:data:`CONSENT_KEY`), so its
+  tasks start on that and none asks again (`approval_grants.batch_allowed`, read by
+  `SubagentManager._spawn_grant`).
+* **It is its chat's, and saves no workflow.** Its definition is checked as a save of it would be
+  and run once (`definition_check.run_once_def`): the run holds it, as every run holds what it
+  runs, and no list, read, start or delete of your workflows finds it. The run is its chat's own
+  (`workflows.chat_runs`), and a Temporary or Incognito chat's batch ends with the chat
+  (`workflows.private_runs`), its record and its waiting ask too
+  (:func:`end_records_of_ended_chats`).
+* **A Deny ends it declined**, and an ask nobody answers ends it unstarted: nothing is run, and the
+  conversation that started it is told so (:func:`never_started`), as it is told how a batch that
+  ran ended (:func:`ending_of_run`).
 * **Nobody to ask, nothing started.** Where nothing lets it start on its own, a session that runs
   without asking anyone (a loop started Unattended) and a gateway with nowhere to ask are refused,
   saying why: a grant that approves calls on its own is not consent to a batch's writes.
@@ -60,7 +67,7 @@ from personalclaw import lasting_work, memory_writes
 from personalclaw.apps import app_work
 from personalclaw.apps.app_work import AppWork
 from personalclaw.automation_posture import WHAT_IT_MAY_DO
-from personalclaw.workflows import owner_allow, service, store
+from personalclaw.workflows import definition_check, owner_allow, private_runs, service, store
 from personalclaw.workflows.models import (
     InstanceState,
     Node,
@@ -72,11 +79,11 @@ from personalclaw.workflows.models import (
     valid_name,
     walk,
 )
-from personalclaw.workflows.versions import AGENT
 
 if TYPE_CHECKING:
     from personalclaw.approval_grants import ToolDecision
     from personalclaw.subagent import SubagentInfo
+    from personalclaw.subagent_reach import Reader
 
 logger = logging.getLogger(__name__)
 
@@ -399,6 +406,9 @@ async def start(
         return service._service_failure(
             "WF_BATCH_NOBODY_TO_ASK", _nobody_sentence(asking.tasks, why)
         )
+    from personalclaw.workflows import ownership
+
+    mode = ownership.inherit_mode(session_key, state=state)
     _save_record(
         name,
         {
@@ -406,6 +416,9 @@ async def start(
             "session_key": session_key,
             "asked_at": time.time(),
             "tasks": len(asking.tasks),
+            # A Temporary or Incognito chat's batch ends with the chat
+            # (`end_records_of_ended_chats`).
+            **({ownership.RUN_MODE_KEY: mode.value} if mode in private_runs.ENDED else {}),
             **({app_work.RUN_KEY: work.to_dict()} if work is not None else {}),
             **({lasting_work.ASKED_BY: asked} if asked else {}),
             "start": {
@@ -436,34 +449,34 @@ def _starter(
     asked: dict[str, str],
     **fields: Any,
 ) -> Any:
-    """The save-and-start of one batch, given what allowed it (:data:`CONSENT_KEY`). An app's
-    batch's run records whose work it is as the batch was asked for (`app_work.stamp`), and one
-    someone other than the owner asked for records who did (*asked*, `lasting_work.ASKED_BY`), not
-    as its session reads when it starts: the turn that asked may have ended while it waited."""
+    """The start of one batch, given what allowed it (:data:`CONSENT_KEY`): its definition is
+    checked as a save of it would be and run once, saved nowhere (`definition_check.run_once_def`).
+    An app's batch's run records whose work it is as the batch was asked for (`app_work.stamp`),
+    and one someone other than the owner asked for records who did (*asked*,
+    `lasting_work.ASKED_BY`), not as its session reads when it starts: the turn that asked may have
+    ended while it waited."""
 
     async def _begin(consent: dict[str, Any]) -> dict[str, Any]:
         from personalclaw.approval_grants import YOU
 
-        saved = await service.author_def(
+        checked = await definition_check.run_once_def(
             name=name,
             root=root,
             description=str(fields["description"] or ""),
+            workspace=fields["workspace"] or None,
             # The compiled tree is machine-generated and lint-clean by construction; `strict` would
             # refuse it on a convention WARNING the compiler already approved.
             strict=False,
-            # The batch is the agent's, compiled from its tasks: her Allow below covers what they
-            # may change, not a version of a workflow an automation of hers runs.
-            saved_by=AGENT,
-            workspace=fields["workspace"] or None,
             # Her Allow of the ask that named each task and what it may change. A grant that
             # started a batch that only reads is no yes of hers, and that batch needs none: it
             # lets no step do more.
             owner_allowed=consent.get("by") == YOU,
         )
-        if not saved.get("ok"):
-            return saved
+        if not checked.get("ok"):
+            return checked
         return await service.start_run(
             name=name,
+            definition=checked["definition"],
             inputs=fields["inputs"] or None,
             mode="background",
             supervisor=supervisor,
@@ -647,18 +660,30 @@ def _drop_record(name: str) -> None:
         logger.warning("batch %s: could not drop its record", name, exc_info=True)
 
 
-def state_of(name: str) -> dict[str, Any]:
+def state_of(name: str, reader: Reader | None = None) -> dict[str, Any]:
     """How the batch *name* stands, for its card in the chat that started it: ``started`` with its
     ``run_id`` (its newest run, the one record of a batch that started), ``asking`` for its
-    answer, ``starting`` on it, or ``not_started`` with the ``error`` that says why."""
+    answer, ``starting`` on it, or ``not_started`` with the ``error`` that says why.
+
+    A batch is its chat's own (`chat_runs`): asked by *reader* (``subagent_reach``), another
+    chat's reads as a batch that never existed."""
+    from personalclaw.workflows import chat_runs
+
+    missing = service._service_failure("WF_BATCH_NOT_FOUND", f"no batch {name!r}")
     if not valid_name(name):
-        return service._service_failure("WF_BATCH_NOT_FOUND", f"no batch {name!r}")
+        return missing
     runs, _total = store.list_runs(workflow_name=name, limit=1)
     if runs:
+        if reader is not None and not chat_runs.reads(reader, runs[0]):
+            return missing
         return service._ok(batch=name, status=STARTED, run_id=runs[0].id)
     record = read_record(name)
     if record is None:
-        return service._service_failure("WF_BATCH_NOT_FOUND", f"no batch {name!r}")
+        return missing
+    if reader is not None and not (
+        reader.everyone or reader.reads(str(record.get("session_key") or ""))
+    ):
+        return missing
     return service._ok(
         batch=name,
         status=str(record.get("status") or ASKING),
@@ -718,21 +743,74 @@ def work_of(approval_id: str) -> AppWork | None:
     return app_work.of_record(read_record(name) if name else None)
 
 
+def _records() -> list[tuple[str, dict[str, Any]]]:
+    """Every batch recorded while it waits for its answer or once it ended before it started, as
+    ``(name, record)``, by name."""
+    folder = store.workflows_dir() / "batches"
+    found = []
+    for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+        record = read_record(path.stem)
+        if record is not None:
+            found.append((path.stem, record))
+    return found
+
+
+def _its_chat_ended(record: dict[str, Any], state: Any) -> bool:
+    """Whether the Temporary or Incognito chat the batch of *record* was started for has ended
+    (`private_runs.has_ended`); never for an ordinary chat's batch."""
+    from personalclaw.workflows.ownership import RUN_MODE_KEY, parse_mode
+
+    try:
+        since = float(record.get("asked_at") or 0.0)
+    except (TypeError, ValueError):
+        since = 0.0
+    return private_runs.has_ended(
+        state,
+        session_key=str(record.get("session_key") or ""),
+        mode=parse_mode(record.get(RUN_MODE_KEY)),
+        since=since,
+    )
+
+
+#: Why a batch's ask ended once its chat had ended, as every surface that listed the ask says it.
+_CHAT_ENDED = "its chat ended"
+
+
+def end_records_of_ended_chats(state: Any) -> int:
+    """End each batch a Temporary or Incognito chat started that has no run yet, once the chat has
+    ended: its record, with the tasks the chat asked for, is deleted, and then its ask, if one still
+    waits, is cancelled on every surface, so it can no longer be allowed. Its chat is gone, so
+    nobody is told. Returns how many. Asked on every poll of the workflow supervisor
+    (``watchdog``), beside the runs such a chat leaves (`private_runs`)."""
+    ended = 0
+    for name, record in _records():
+        if not _its_chat_ended(record, state):
+            continue
+        # The record goes first: the wait its cancelled ask wakes then finds none, so it records
+        # nothing again and tells nobody (`_ask_then_start`).
+        _drop_record(name)
+        cancel = getattr(state, "cancel_approval", None)
+        if callable(cancel):
+            cancel(ask_id(name), reason=_CHAT_ENDED)
+        ended += 1
+    return ended
+
+
 def resume(state: Any, supervisor: Any) -> int:
     """Ask again every batch a stopped gateway left waiting for its answer, as it was first asked;
     how many. One whose approval window has passed since it was asked ends unstarted, saying
     nobody answered in time, and its conversation hears so, as it would have. One allowed as the
-    gateway stopped is started already if its run exists, and asked again if not. A record of a
-    batch that never started is dropped once a week old. Run once the workflow supervisor is up."""
+    gateway stopped is started already if its run exists, and asked again if not. One whose
+    Temporary chat ended with that gateway, or whose Incognito chat was deleted, is asked nothing
+    and kept no more. A record of a batch that never started is dropped once a week old. Run once
+    the workflow supervisor is up."""
     from personalclaw.approval_grants import NOBODY, ToolDecision, approval_window_secs
     from personalclaw.subagent_ask import spawn_refusal
 
-    folder = store.workflows_dir() / "batches"
     asked = 0
-    for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
-        name = path.stem
-        record = read_record(name)
-        if record is None:
+    for name, record in _records():
+        if _its_chat_ended(record, state):
+            _drop_record(name)
             continue
         if record.get("status") == NOT_STARTED:
             if time.time() - float(record.get("ended_at") or 0.0) > _KEPT_SECS:

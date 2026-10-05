@@ -1710,9 +1710,12 @@ review, a task, a task list or a project on the Tasks page (its overview and
 ledgers included), an Inbox item, a change to a loop's spec or plan (refused, by
 the same rule and in the same words, where the skill drafts, the proposal queue,
 the task and project stores, the Inbox sink and the loop's spec and plan are
-written). A Temporary chat's workflow runs end with it: the workflow supervisor
-stops each once its chat has ended and deletes it with what it produced
-(`workflows/temporary_runs.py`).
+written). A Temporary or Incognito chat's workflow runs, and every chat's batch,
+are its own: only that chat's work and you read them, another chat's agent reads
+one as not found, and no chat's turn is told of another's (`workflows/chat_runs.py`).
+They end with the chat: the workflow supervisor stops each once its chat has
+ended (a Temporary chat's session, an Incognito chat's deletion) and deletes it
+with what it produced (`workflows/private_runs.py`).
 Every one of these reads a session's mode through one reader
 (`memory_writes.session_mode`): the live chat first, then the registry, the
 transcript and a workflow step's run. So work a chat starts on its first turn,

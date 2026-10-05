@@ -570,10 +570,15 @@ def test_a_status_read_says_which_step_waits_and_for_what(runs_home, monkeypatch
     nodes = {n["node_id"]: n for n in service.status(run.id)["nodes"]}
     assert nodes[first]["waiting_for"] == "its owner's answer on bash"
     assert nodes[second]["waiting_for"] == "its owner's Allow to start"
-    # And the agent's own read of the run, the tool, says the same.
-    from personalclaw import mcp_workflows
+    # And the read of the run by the agent of the chat that started it, the tool, its runtime
+    # naming that chat for the call, says the same.
+    from personalclaw import mcp_core, mcp_workflows
 
-    said = mcp_workflows._call_tool_inner("workflow_status", {"run_id": run.id})
+    token = mcp_core.set_current_session_key(f"dashboard:{CHAT}")
+    try:
+        said = mcp_workflows._call_tool_inner("workflow_status", {"run_id": run.id})
+    finally:
+        mcp_core.reset_current_session_key(token)
     assert "its owner's answer on bash" in said, said
 
 

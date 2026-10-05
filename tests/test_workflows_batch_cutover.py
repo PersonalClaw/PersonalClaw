@@ -7,7 +7,8 @@ branch. These tests hold the four seams that close that gap, and each is written
 property rather than the implementation:
 
 * **The cutover** — N>=2 compiles; N=1 stays a raw spawn.
-* **Restart survival** — the widget rebuilds FROM DISK. Asserted by re-reading persisted state with
+* **Restart survival** — the widget rebuilds FROM DISK, from the run's own record, which holds the
+  compiled spec (a batch saves no workflow definition). Asserted by re-reading persisted state with
   fresh objects, never by inspecting the live one: a live object proves the process still remembers,
   which is the thing a restart destroys.
 * **The lease** — a second execution is REFUSED. Asserted on the refusal, not on the presence of a
@@ -200,95 +201,129 @@ def test_a_LIST_ITEM_of_the_wrong_type_is_still_rejected():
 # ── clause 1: restart survival, proven FROM DISK ─────────────────────────────
 
 
+class _Launches:
+    """The workflow supervisor, as far as a start needs one: it records what it is asked to
+    drive."""
+
+    def __init__(self) -> None:
+        self.launched: list[tuple[object, dict]] = []
+
+    def controller(self, _run_id: str):
+        return None
+
+    async def launch(self, run, spec, *, depth: int = 0):
+        self.launched.append((run, spec))
+        return SimpleNamespace(run=run)
+
+
+def _started_batch(tmp_path, monkeypatch, *leaves: LeafTask, name: str) -> tuple[str, dict]:
+    """A compiled batch started as the gateway starts one (`batch_start`): its definition checked
+    and run once, saved nowhere. Returns the run's id and the compiled spec."""
+    import asyncio
+
+    from personalclaw.workflows import definition_check
+    from personalclaw.workflows import defs as defs_mod
+    from personalclaw.workflows import native_defs, service
+    from personalclaw.workflows.models import OriginKind
+
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.workflows.store.config_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        "personalclaw.providers.provider_bridge.can_resolve_use_case", lambda _use_case: True
+    )
+    monkeypatch.setattr(defs_mod, "_providers", {})
+    defs_mod.register_provider(native_defs.NativeWorkflowDefProvider())
+
+    result = batch_compile.compile_batch(list(leaves), run_name=name)
+    assert result.compiled and result.ok
+
+    async def _start() -> dict:
+        checked = await definition_check.run_once_def(
+            name=name,
+            root=result.spec["root"],
+            workspace=result.spec[batch_compile.WORKSPACE_KEY],
+            strict=False,
+        )
+        assert checked.get("ok"), checked
+        return await service.start_run(
+            name=name,
+            definition=checked["definition"],
+            supervisor=_Launches(),
+            origin_kind=OriginKind.SUBAGENT_TOOL,
+            session_key="dashboard:chat-1",
+            held_to_its_work=False,
+        )
+
+    started = asyncio.run(_start())
+    assert started.get("ok"), started
+    return str(started["run_id"]), result.spec
+
+
 def test_the_widget_rebuilds_FROM_DISK_after_a_restart(tmp_path, monkeypatch):
     """Restart survival, asserted the only way that means anything: throw the live objects away
     and rebuild from the file.
 
     A test that read the run back out of the in-memory store would prove the PROCESS still
-    remembers, which is exactly what a gateway restart destroys. So this writes through the real
-    store, clears every cached handle, and re-reads.
+    remembers, which is exactly what a gateway restart destroys. So this starts the batch through
+    the real store, clears every cached handle, and re-reads.
 
     Both halves are re-read from disk, and the SECOND one is the one that matters. The widget
-    survives because the compiled spec is persisted as a workflow DEFINITION and the run references
-    it by `workflow_name` — so the def is the artifact a restart has to recover. Taking the branch
-    ids from the in-memory `CompileResult` would pass even if def persistence were broken entirely,
-    because the compile result is still sitting in the process. The loop closed here is the real
-    one: run row → `workflow_name` → persisted spec → stable branch ids, which is what makes
-    per-branch retry provable ACROSS a restart rather than only within the process.
+    survives because the run's own record holds the compiled spec, the one every run is driven
+    from (`store.write_spec`), so the run is the artifact a restart has to recover; a batch saves
+    no workflow definition at all. Taking the branch ids from the in-memory `CompileResult` would
+    pass even if the run's spec were lost, because the compile result is still sitting in the
+    process. The loop closed here is the real one: run row → its persisted spec → stable branch
+    ids, which is what makes per-branch retry provable ACROSS a restart rather than only within the
+    process.
     """
-    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
-
-    import asyncio
     import importlib
 
-    from personalclaw.workflows import defs as defs_mod
     from personalclaw.workflows import native_defs
     from personalclaw.workflows import store as store_mod
 
-    store_mod = importlib.reload(store_mod)
-    monkeypatch.setattr(store_mod, "config_dir", lambda: tmp_path, raising=False)
-
-    from personalclaw.workflows.models import OriginKind, RunOrigin, RunStatus, WorkflowRun
-
-    result = batch_compile.compile_batch([leaf("cache"), leaf("queue")], run_name="batch-restart")
-    assert result.compiled and result.ok
-    compiled_ids = [c["id"] for c in result.spec["root"]["children"]]
-
-    provider = native_defs.NativeWorkflowDefProvider()
-    defs_mod.register_provider(provider)
-    asyncio.run(provider.save_def(**result.spec))
-
-    created = store_mod.create(
-        WorkflowRun(
-            id="",
-            workflow_name="batch-restart",
-            status=RunStatus.RUNNING,
-            origin=RunOrigin(kind=OriginKind.SUBAGENT_TOOL),
-        )
+    run_id, compiled = _started_batch(
+        tmp_path, monkeypatch, leaf("cache"), leaf("queue"), name="subagent-batch-restart"
     )
-    run_id = created.id
-    assert run_id
+    compiled_ids = [c["id"] for c in compiled["root"]["children"]]
 
     # The restart: drop every in-process handle to the run AND to the compiled spec.
-    del created
     store_mod = importlib.reload(store_mod)
     monkeypatch.setattr(store_mod, "config_dir", lambda: tmp_path, raising=False)
 
     reloaded = store_mod.get(run_id)
     assert reloaded is not None, "the run did not survive the restart"
-    assert reloaded.workflow_name == "batch-restart"
+    assert reloaded.workflow_name == "subagent-batch-restart"
 
-    # The SPEC half: fetch the def back by the name the surviving run row points at.
-    recovered = asyncio.run(native_defs.NativeWorkflowDefProvider().get_def(reloaded.workflow_name))
-    assert recovered is not None, "the run row points at a def that is not on disk"
-    persisted = recovered.to_dict()
+    # The SPEC half: the run's own record, read back from disk.
+    persisted = store_mod.read_spec(run_id)
+    assert persisted is not None, "the run holds no spec to be driven from after a restart"
     persisted_ids = [c["id"] for c in persisted["root"]["children"]]
     assert persisted_ids == compiled_ids, "the persisted branch ids drifted from the compiled ones"
     assert len(set(persisted_ids)) == 2
+    # And no definition was saved: nothing but the run names the batch.
+    assert not (native_defs.defs_root() / "subagent-batch-restart").exists()
 
 
 @pytest.mark.asyncio
-async def test_a_FAILED_save_never_starts_a_run(monkeypatch):
-    """A run row pointing at a def that was never saved is a widget that survives as a BROKEN row —
-    worse than not surviving, because the board shows recoverable work that cannot be recovered.
+async def test_a_batch_whose_definition_is_refused_never_starts_a_run(monkeypatch):
+    """A run row for a batch whose definition did not pass its check is a widget that survives as a
+    BROKEN row — worse than not surviving, because the board shows work that cannot run.
 
-    Two independent guards, and this asserts the first: the gateway's start of a batch
-    (`batch_start`) returns on a save error before it starts a run. The second is
-    `service.start_run`, which resolves the def via `_raw_def` and answers `WF_DEF_NOT_FOUND` — so
-    even a start that somehow raced a missing def is refused rather than minting an orphan row."""
-    from personalclaw.workflows import batch_start, service
+    The gateway's start of a batch (`batch_start`) returns on the check's refusal before it starts
+    a run, saying why."""
+    from personalclaw.workflows import batch_start, definition_check, service
 
     started: list[dict] = []
 
-    async def failed_save(**_fields):
-        return service._service_failure("WF_DEF_SAVE_FAILED", "disk full")
+    async def refused(**_fields):
+        return service._service_failure("WF_DEF_INVALID", "the spec did not validate")
 
     async def start_run(*_args, **fields):
         started.append(fields)
         return {"ok": True, "run_id": "should-not-happen"}
 
-    monkeypatch.setattr(service, "author_def", failed_save)
+    monkeypatch.setattr(definition_check, "run_once_def", refused)
     monkeypatch.setattr(service, "start_run", start_run)
 
     compiled = batch_compile.compile_batch([leaf("cache"), leaf("queue")])
@@ -304,8 +339,8 @@ async def test_a_FAILED_save_never_starts_a_run(monkeypatch):
         writes={},
         session_key="dashboard:chat-1",
     )
-    assert out.get("ok") is False and "disk full" in out["message"], out
-    assert started == [], "a run was started against an unsaved def"
+    assert out.get("ok") is False and "did not validate" in out["message"], out
+    assert started == [], "a run was started for a batch whose definition was refused"
 
 
 def test_every_branch_is_INDIVIDUALLY_ADDRESSABLE_for_retry():
@@ -339,41 +374,24 @@ def test_the_compiled_spec_declares_the_workspace_the_APPLIER_READS():
     assert [i.code for i in issues if i.fatal] == [], "a fatal issue REFUSES the run"
 
 
-def test_the_workspace_block_SURVIVES_persistence(tmp_path, monkeypatch):
+def test_the_workspace_block_SURVIVES_into_the_runs_spec(tmp_path, monkeypatch):
     """The second half of the same defect, and the one that made the first fix decoration.
 
-    `native_defs.save_def` builds its payload from an ALLOWLIST, and `service.author_def` builds its
-    spec from another one. A compiled batch declaring `workspace: {mode: scratch}`
-    round-tripped to a persisted def with NO block at all, so `declares_workspace` answered False at
-    run start — the declaration was correct at both ends and erased in the middle. The applier reads
-    the PERSISTED def, so persistence is where this has to be proven."""
-    import asyncio
+    `definition_check.checked_spec` builds a definition from an ALLOWLIST of fields. A compiled
+    batch declaring `workspace: {mode: scratch}` once came out of it with NO block at all, so
+    `declares_workspace` answered False at run start — the declaration was correct at both ends and
+    erased in the middle. The applier reads the spec the RUN holds (`store.read_spec`), so that is
+    where this has to be proven."""
+    from personalclaw.workflows import provisioning, store
 
-    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
-
-    from personalclaw.workflows import defs as defs_mod
-    from personalclaw.workflows import native_defs, provisioning, service
-
-    defs_mod.register_provider(native_defs.NativeWorkflowDefProvider())
-
-    result = batch_compile.compile_batch([leaf("cache"), leaf("queue")], run_name="batch-ws")
-    authored = asyncio.run(
-        service.author_def(
-            name="batch-ws",
-            root=result.spec["root"],
-            strict=False,
-            saved_by="owner",
-            workspace=result.spec[batch_compile.WORKSPACE_KEY],
-        )
+    run_id, _compiled = _started_batch(
+        tmp_path, monkeypatch, leaf("cache"), leaf("queue"), name="subagent-batch-ws"
     )
-    assert authored.get("ok"), authored
-
-    recovered = asyncio.run(native_defs.NativeWorkflowDefProvider().get_def("batch-ws"))
-    assert recovered is not None
+    held = store.read_spec(run_id)
+    assert held is not None
     assert (
-        provisioning.declares_workspace(recovered.to_dict()) is True
-    ), "the workspace block was dropped by the save allowlist — the applier will find nothing"
+        provisioning.declares_workspace(held) is True
+    ), "the workspace block was dropped on its way to the run — the applier will find nothing"
 
 
 def test_a_crash_surviving_batch_takes_the_SUSPENDED_path_not_adoption(tmp_path, monkeypatch):

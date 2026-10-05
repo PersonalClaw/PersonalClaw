@@ -24,10 +24,12 @@ Three conventions this file follows from the surrounding code:
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import time
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar, cast
 
 from aiohttp import web
 from aiohttp.multipart import BodyPartReader
@@ -45,9 +47,11 @@ from personalclaw.stale_write import (
     revision_of,
     stale_write_refusal,
 )
+from personalclaw.subagent_reach import reader_of
 from personalclaw.uploads.content_scan import ContentRefused, scan_upload
 from personalclaw.uploads.policy import category_for
 from personalclaw.workflows import (
+    chat_runs,
     incident_hold,
     journal,
     restricted_calls,
@@ -285,6 +289,28 @@ def _supervisor(request: web.Request) -> Any:
     """
     state = request.app.get("state")
     return getattr(state, "workflows", None) if state is not None else None
+
+
+_RunRoute = TypeVar("_RunRoute", bound=Callable[[web.Request], Awaitable[web.StreamResponse]])
+
+
+def _of_its_chat(handler: _RunRoute) -> _RunRoute:
+    """A route over one run (``{run_id}``) that answers only a caller who reads that run: you, or
+    the work of the chat a chat's own run is (`chat_runs`), as the request's sign-in proves it
+    (``subagent_reach.reader_of``). To any other caller another chat's run is no run at all,
+    answered as an id that never existed is, and the refused call is audited."""
+
+    @functools.wraps(handler)
+    async def _guarded(request: web.Request) -> web.StreamResponse:
+        reader = reader_of(request, request.app.get("state"))
+        if not reader.everyone:
+            run_id = request.match_info.get("run_id", "")
+            operation = f"{request.method} {request.path}"
+            if await asyncio.to_thread(chat_runs.hidden, reader, run_id, operation=operation):
+                return _reply(service._run_not_found(run_id))
+        return await handler(request)
+
+    return cast(_RunRoute, _guarded)
 
 
 # ── definitions ──────────────────────────────────────────────────────────────
@@ -888,6 +914,11 @@ def _owner_username() -> str:
         return ""
 
 
+#: How many runs a list read for a caller who is not you scans to page through the ones it reads:
+#: as many as the store's own retention sweep reads at once (`watchdog.prune_runs`).
+_EVERY_RUN = 10_000
+
+
 async def api_runs_list(request: web.Request) -> web.Response:
     """Paginated run list. Reads the store directly: this is a projection for a table, not
     an engine operation, and routing it through the service would add nothing."""
@@ -899,13 +930,24 @@ async def api_runs_list(request: web.Request) -> web.Response:
             {"error": {"code": "invalid_request", "message": "limit/offset must be integers"}},
             status=400,
         )
-    runs, total = store.list_runs(
+    listed = functools.partial(
+        store.list_runs,
         workflow_name=request.query.get("workflow", ""),
         status=request.query.get("status", ""),
         root_run_id=request.query.get("root_run_id", ""),
-        limit=limit,
-        offset=offset,
     )
+    reader = reader_of(request, request.app.get("state"))
+    if reader.everyone:
+        runs, total = listed(limit=limit, offset=offset)
+    else:
+        # A caller who is not you (an app's token) is listed, and paged through, the runs it reads:
+        # a chat's own run is that chat's (`chat_runs`), so it is in neither the page nor `total`.
+        def _readable() -> list[Any]:
+            every, _count = listed(limit=_EVERY_RUN)
+            return [run for run in every if chat_runs.reads(reader, run)]
+
+        readable = await asyncio.to_thread(_readable)
+        runs, total = readable[offset : offset + limit], len(readable)
     # `?mine=1` scopes the list to the owner's runs, the same filter the tasks list uses:
     # a foreign-authored run stays VISIBLE in the unfiltered history (its author rides in the row)
     # but is excluded from the owner's "my runs" count. `WorkflowRun.belongs_to` treats an
@@ -921,8 +963,13 @@ async def api_runs_list(request: web.Request) -> web.Response:
         {
             # `held`: why a running run is doing nothing while incident mode holds it, as the run's
             # own status says (`incident_hold.held_reason`), so the list reads Held, not Running.
+            # `chat`: whose chat's own run it is (`chat_runs.whose`), which the list marks it with.
             "runs": [
-                {**_shown(r.to_dict(), _RUN_TEXT), "held": incident_hold.held_reason(r.status)}
+                {
+                    **_shown(r.to_dict(), _RUN_TEXT),
+                    "held": incident_hold.held_reason(r.status),
+                    "chat": chat_runs.whose(r),
+                }
                 for r in runs
             ],
             "total": total,
@@ -1093,17 +1140,22 @@ async def api_batch_state(request: web.Request) -> web.Response:
     """GET /api/workflows/batches/{name} — where a `subagent_run` batch stands (`batch_start`).
 
     Waiting for its owner's answer, started (with its run), or ended before it started, saying
-    why (`batch_start.state_of`): what its card in the chat that started it reads."""
+    why (`batch_start.state_of`): what its card in the chat that started it reads. Another chat's
+    batch reads as one that never existed (`chat_runs`)."""
     from personalclaw.workflows import batch_start
 
-    return _reply(batch_start.state_of(request.match_info.get("name", "")))
+    reader = reader_of(request, request.app.get("state"))
+    name = request.match_info.get("name", "")
+    return _reply(await asyncio.to_thread(batch_start.state_of, name, reader))
 
 
+@_of_its_chat
 async def api_run_status(request: web.Request) -> web.Response:
     result = service.status(request.match_info.get("run_id", ""))
     return _reply(shown_status(result) if result.get("ok") else result)
 
 
+@_of_its_chat
 async def api_run_observe(request: web.Request) -> web.Response:
     """GET /api/workflows/runs/{run_id}/observe — watch a run for a bounded window, and answer what
     changed in it and its events from that window (`service.observe`, ``workflow_observe``'s read).
@@ -1121,6 +1173,7 @@ async def api_run_observe(request: web.Request) -> web.Response:
     return _reply(await service.observe(request.match_info.get("run_id", ""), duration_ms))
 
 
+@_of_its_chat
 async def api_run_delete(request: web.Request) -> web.Response:
     """Delete a terminal run and its artifacts, tearing its workspace down first.
 
@@ -1141,6 +1194,7 @@ async def api_run_delete(request: web.Request) -> web.Response:
     return _reply(result)
 
 
+@_of_its_chat
 async def api_run_workspace(request: web.Request) -> web.Response:
     """GET the run's workspace review: changed files + the two reintegration verbs (§4.1).
 
@@ -1163,6 +1217,7 @@ async def api_run_workspace(request: web.Request) -> web.Response:
 MAX_DROP_BYTES = 16 * 1024 * 1024
 
 
+@_of_its_chat
 async def api_run_drop_status(request: web.Request) -> web.Response:
     """GET the run's file-drop policy + what has been dropped (WORK-CONTAINERS §2.5).
 
@@ -1173,6 +1228,7 @@ async def api_run_drop_status(request: web.Request) -> web.Response:
     return _reply(service.drop_status(request.match_info.get("run_id", "")))
 
 
+@_of_its_chat
 async def api_run_drop(request: web.Request) -> web.Response:
     """POST multipart to the run's approval-gated file drop (WORK-CONTAINERS §2.5, R17).
 
@@ -1295,11 +1351,13 @@ async def api_run_drop(request: web.Request) -> web.Response:
     return _reply(service.drop_status(run_id) | {"accepted": accepted})
 
 
+@_of_its_chat
 async def api_run_outbox(request: web.Request) -> web.Response:
     """GET the run's published-artifact listing — the §2.5 outbox half of R17."""
     return _reply(service.outbox(request.match_info.get("run_id", "")))
 
 
+@_of_its_chat
 async def api_run_introspect(request: web.Request) -> web.Response:
     """The §6.4 nine-question introspection projection for one run (WORK-CONTAINERS R6).
 
@@ -1315,6 +1373,7 @@ async def api_run_introspect(request: web.Request) -> web.Response:
     return _reply(run_cockpit.introspect(request.match_info.get("run_id", "")))
 
 
+@_of_its_chat
 async def api_run_ledger_rails(request: web.Request) -> web.Response:
     """GET the run's two ledger rails — findings and verdict/ROI (PP-16 seam 4).
 
@@ -1334,6 +1393,7 @@ async def api_run_ledger_rails(request: web.Request) -> web.Response:
     return _reply(run_cockpit.ledger_rails(request.match_info.get("run_id", "")))
 
 
+@_of_its_chat
 async def api_run_deliverable(request: web.Request) -> web.Response:
     """GET the run's document deliverable + working log (PP-16 unit 1).
 
@@ -1359,6 +1419,7 @@ async def api_run_deliverable(request: web.Request) -> web.Response:
     return _reply(run_cockpit.run_deliverable(request.match_info.get("run_id", "")))
 
 
+@_of_its_chat
 async def api_run_output(request: web.Request) -> web.Response:
     """GET one node's output, masked the way the inspect drawer masks it.
 
@@ -1372,6 +1433,7 @@ async def api_run_output(request: web.Request) -> web.Response:
     return _reply(result)
 
 
+@_of_its_chat
 async def api_run_node_inspect(request: web.Request) -> web.Response:
     """The §5 reconstructability set for one node (WF2-A2), live while the run is.
 
@@ -1418,6 +1480,7 @@ async def api_run_node_inspect(request: web.Request) -> web.Response:
     return web.json_response(safe)
 
 
+@_of_its_chat
 async def api_run_edit(request: web.Request) -> web.Response:
     run_id = request.match_info.get("run_id", "")
     body = await json_object_body(request)
@@ -1459,6 +1522,7 @@ async def api_run_edit(request: web.Request) -> web.Response:
     return _reply(result)
 
 
+@_of_its_chat
 async def api_run_policy_overrides(request: web.Request) -> web.Response:
     """PUT the run's sparse SupervisorPolicy overlay (PP-16 seam 4f) — prelaunch only.
 
@@ -1540,6 +1604,7 @@ async def api_run_policy_overrides(request: web.Request) -> web.Response:
     return _reply(result)
 
 
+@_of_its_chat
 async def api_run_cancel(request: web.Request) -> web.Response:
     denied = _guard(request, "workflow_run_cancel", run_id=request.match_info.get("run_id", ""))
     if denied is not None:
@@ -1550,6 +1615,7 @@ async def api_run_cancel(request: web.Request) -> web.Response:
     return _reply(result)
 
 
+@_of_its_chat
 async def api_run_pause(request: web.Request) -> web.Response:
     denied = _guard(request, "workflow_run_pause", run_id=request.match_info.get("run_id", ""))
     if denied is not None:
@@ -1560,6 +1626,7 @@ async def api_run_pause(request: web.Request) -> web.Response:
     return _reply(result)
 
 
+@_of_its_chat
 async def api_run_steer(request: web.Request) -> web.Response:
     """POST a mid-run steering instruction (LOOPS-EVOLUTION R14).
 
@@ -1577,6 +1644,7 @@ async def api_run_steer(request: web.Request) -> web.Response:
     return _reply(result)
 
 
+@_of_its_chat
 async def api_run_review(request: web.Request) -> web.Response:
     """GET this run's review findings, anchored against its workspace diff as it is right now.
 
@@ -1587,6 +1655,7 @@ async def api_run_review(request: web.Request) -> web.Response:
     return _reply(await review_findings(request.match_info.get("run_id", "")))
 
 
+@_of_its_chat
 async def api_run_review_triage(request: web.Request) -> web.Response:
     """POST accept/reject decisions; dispatch the accepted subset to the originating worker.
 
@@ -1613,6 +1682,7 @@ async def api_run_review_triage(request: web.Request) -> web.Response:
     return _reply(result)
 
 
+@_of_its_chat
 async def api_run_steering(request: web.Request) -> web.Response:
     """GET what is queued but unconsumed — so the UI can show it as pending.
 
@@ -1625,6 +1695,7 @@ async def api_run_steering(request: web.Request) -> web.Response:
     return _reply(service.pending_steering(request.match_info.get("run_id", "")))
 
 
+@_of_its_chat
 async def api_run_resume(request: web.Request) -> web.Response:
     """Answer a gate, or clear a pause.
 
@@ -1656,6 +1727,7 @@ async def api_run_resume(request: web.Request) -> web.Response:
     return _reply(result)
 
 
+@_of_its_chat
 async def api_run_confirm(request: web.Request) -> web.Response:
     """Resolve a pending confirmation by verb — the seam the DagView's Approve/Deny binds to.
 
@@ -1685,10 +1757,12 @@ async def api_run_confirm(request: web.Request) -> web.Response:
     return _reply(result)
 
 
+@_of_its_chat
 async def api_run_rewind(request: web.Request) -> web.Response:
     return await _reentry(request, "workflow_run_rewind", service.rewind_run)
 
 
+@_of_its_chat
 async def api_run_from(request: web.Request) -> web.Response:
     return await _reentry(request, "workflow_run_from", service.run_from)
 
@@ -1716,6 +1790,7 @@ async def _reentry(request: web.Request, operation: str, fn: Any) -> web.Respons
     return _reply(result)
 
 
+@_of_its_chat
 async def api_run_fork(request: web.Request) -> web.Response:
     denied = _guard(request, "workflow_run_fork", run_id=request.match_info.get("run_id", ""))
     if denied is not None:
@@ -1732,6 +1807,7 @@ async def api_run_fork(request: web.Request) -> web.Response:
     return _reply(result, status=201 if result.get("ok") else 200)
 
 
+@_of_its_chat
 async def api_run_start_draft(request: web.Request) -> web.Response:
     """Start an existing DRAFT run — the launch a forked run had no verb for (#372).
 
@@ -1761,6 +1837,7 @@ async def api_run_start_draft(request: web.Request) -> web.Response:
     return _reply(result, status=202 if result.get("ok") else 200)
 
 
+@_of_its_chat
 async def api_run_continuations(request: web.Request) -> web.Response:
     """The pending resume tokens for a run — what a needs-input inbox renders.
 
@@ -1820,7 +1897,11 @@ async def api_audit(request: web.Request) -> web.Response:
         denied = _guard(request, "workflow_audit_heal")
         if denied is not None:
             return denied
-    result = service.audit(dry_run=dry_run, supervisor=_supervisor(request))
+    # Over the runs its caller reads (`chat_runs`, walked off the loop): another chat's own run is
+    # neither listed nor healed.
+    reader = reader_of(request, request.app.get("state"))
+    only = None if reader.everyone else await asyncio.to_thread(chat_runs.live_runs_read, reader)
+    result = service.audit(dry_run=dry_run, supervisor=_supervisor(request), only=only)
     if not dry_run:
         _audit(request, "workflow_audit_heal", "success")
     return _reply(result)
@@ -1833,6 +1914,7 @@ async def api_manifest(request: web.Request) -> web.Response:
 # ── per-run SSE ──────────────────────────────────────────────────────────────
 
 
+@_of_its_chat
 async def api_run_events(request: web.Request) -> web.Response | web.StreamResponse:
     """Per-run event stream, snapshot-then-subscribe.
 

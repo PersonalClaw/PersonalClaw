@@ -26,7 +26,7 @@ words its template is refused with when it is saved (``workflows.step_arguments`
 (``parent_run_id``, the tree's ``root_run_id``, and the step, ``spawned_by_node_id``) and keeps what
 that run keeps (``ownership.inherited_extra``), as a subworkflow node's child does: a run an
 Incognito or Temporary chat started starts only a run that keeps nothing as the chat does, on the
-chat's model, and a Temporary chat's ends with it (``workflows.temporary_runs``). A step whose run
+chat's model, and ends with the chat (``workflows.private_runs``). A step whose run
 cannot be read starts nothing, since what that run keeps cannot be said.
 
 **`outcome: "launched"`, not success.** A background run has only STARTED when this

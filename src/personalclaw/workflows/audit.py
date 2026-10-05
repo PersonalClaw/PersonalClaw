@@ -110,15 +110,21 @@ def audit(
     dry_run: bool = True,
     supervisor: Any = None,
     now: float = 0.0,
+    only: frozenset[str] | None = None,
 ) -> AuditReport:
     """Scan every live run; heal only when `dry_run` is False.
 
     `supervisor` is the watchdog, consulted so a run with a live controller is never
     healed underneath it — the controller is that run's only legitimate writer.
+
+    `only` is the ids of the runs the caller reads (``chat_runs.live_runs_read``) when it is not
+    you: a chat's own run is another chat's to neither list nor heal, so the scan passes over it.
     """
     clock = now or time.time()
     report = AuditReport(dry_run=dry_run)
     for run in store.active_runs():
+        if only is not None and run.id not in only:
+            continue
         report.runs_scanned += 1
         has_controller = _has_live_controller(supervisor, run.id)
         _audit_run(run, report, clock=clock, dry_run=dry_run, has_controller=has_controller)

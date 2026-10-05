@@ -232,6 +232,14 @@ included, reads as not found, as an id that never existed does, and so does a su
 someone else started in a shared channel thread, to every chat but that thread. You see every
 chat's subagents on the Background agents page.
 
+A batch saves no workflow. It runs as one workflow run, which holds its tasks, and is in none of
+your workflow definitions: no agent lists it, reads it, starts it again or deletes it by name. Its
+run is the chat's own, and so is every workflow run a Temporary or Incognito chat starts: only that
+chat's agent reads it (`workflow_status`, `workflow_output`, `workflow_observe`), works on it or is
+told it is running, and to any other chat's agent it reads as not found, as an id that never
+existed does. You see every chat's on the **Runs** tab of the Workflows page, each marked as its
+chat's: *Temporary chat's batch*, *Incognito chat's run*, *A chat's batch*.
+
 ### What a private chat leaves behind
 
 In a **Temporary** or **Incognito** chat the agent sets up no work that lasts after the chat: it
@@ -250,8 +258,9 @@ puts none of its steps on the Tasks page, and a run one of its steps starts keep
 keeps.
 
 A **Temporary** chat's workflow runs end with it: once the chat has ended, a run still working is
-stopped, and the run, any run it started, and what they produced are deleted. An **Incognito**
-chat's runs are kept, as its transcript is.
+stopped, and the run, any run it started, and what they produced are deleted. So does a batch of
+its still waiting for your Allow: its ask leaves your Inbox. An **Incognito** chat's runs are kept,
+as its transcript is, until you delete the chat: then they go the same way.
 
 ### Deleting a chat
 

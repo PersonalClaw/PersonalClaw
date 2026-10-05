@@ -38,7 +38,8 @@ deleted, and when cleanup evicts it as inactive:
 
 The workflow runs a Temporary chat started are its own work and end with it: the workflow
 supervisor stops each once the chat has ended and then deletes it with what it produced
-(``workflows.temporary_runs``), however the session ended.
+(``workflows.private_runs``), however the session ended. So do an Incognito chat's once it is
+deleted.
 
 What the owner kept elsewhere is hers and stays: a download, a file saved to Knowledge, an
 artifact. While the session runs, the transcript is written as any chat's is, so a reload keeps

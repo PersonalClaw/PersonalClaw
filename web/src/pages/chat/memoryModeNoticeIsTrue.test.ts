@@ -81,10 +81,11 @@ describe('a chat that is not persistent says what is kept', () => {
     expect(persistence).toMatch(/memory_mode == TEMPORARY:\s*\n\s*forget_temporary_chat\(/)
     expect(persistence).toMatch(/forget_ended_temporary_chats\(state\)/)
     expect(persistence.match(/if forget_if_ended\(state, /g)?.length ?? 0).toBeGreaterThanOrEqual(2)
-    // The workflow runs a Temporary chat started end with it: each poll of the workflow supervisor
-    // stops those whose chat ended and deletes the ones that have.
+    // The workflow runs a Temporary chat started end with it (an Incognito chat's, when it is
+    // deleted): each poll of the workflow supervisor stops those whose chat ended and deletes the
+    // ones that have.
     const watchdog = read(join(GATEWAY, 'workflows', 'watchdog.py'))
-    expect(watchdog).toMatch(/self\._end_runs_whose_temporary_chat_ended\(\)/)
-    expect(watchdog).toMatch(/await self\._remove_runs_whose_temporary_chat_ended\(\)/)
+    expect(watchdog).toMatch(/self\._end_runs_whose_private_chat_ended\(\)/)
+    expect(watchdog).toMatch(/await self\._remove_runs_whose_private_chat_ended\(\)/)
   })
 })

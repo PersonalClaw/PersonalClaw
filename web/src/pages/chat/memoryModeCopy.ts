@@ -22,7 +22,7 @@ import type { MemoryMode } from '../../lib/api'
  *  A Temporary chat's transcript lasts only while its session runs (a reload keeps it): when the gateway stops or
  *  restarts, however it stops, the transcript and the files attached to it are deleted and the
  *  chat never opens again (`dashboard/chat_forget.py`), and the workflow runs it started are
- *  stopped and deleted with what they produced (`workflows/temporary_runs.py`).
+ *  stopped and deleted with what they produced (`workflows/private_runs.py`).
  *  `memoryModeNoticeIsTrue.test.ts` holds these words to those facts. */
 export const MEMORY_MODES: { id: MemoryMode; label: string; hint: string }[] = [
   { id: 'persistent', label: 'Persistent', hint: 'Remember across sessions' },

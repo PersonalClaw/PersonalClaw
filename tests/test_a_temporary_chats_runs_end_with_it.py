@@ -37,7 +37,7 @@ from personalclaw import session_restrictions
 from personalclaw.cancellation import cancel_and_wait
 from personalclaw.dashboard.chat_forget import forget_temporary_chat
 from personalclaw.workflows import defs as defs_mod
-from personalclaw.workflows import ownership, store, temporary_runs
+from personalclaw.workflows import ownership, private_runs, store
 from personalclaw.workflows.models import OriginKind, RunOrigin, RunStatus, WorkflowRun
 
 #: An ordinary chat and an Incognito chat on the agent CLI, beside the Temporary one.
@@ -160,7 +160,8 @@ async def test_a_temporary_chats_live_run_is_stopped_then_removed_when_the_chat_
     ending = store.get(run_id).error_message
     await gw.supervisor._poll_once()
 
-    assert ending == f"Stopped because {temporary_runs.ENDED}.", ending
+    assert ending == "Stopped because its Temporary chat ended.", ending
+    assert private_runs.ENDED[ownership.MemoryMode.TEMPORARY] == "its Temporary chat ended"
     assert _gone(run_id)
 
 
