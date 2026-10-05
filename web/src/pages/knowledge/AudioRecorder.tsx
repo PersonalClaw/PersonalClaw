@@ -20,7 +20,7 @@ function pickMime(): string {
   return ''
 }
 
-/** In-browser microphone recorder (ported from OpenForge's audio create modal):
+/** In-browser microphone recorder:
  *  record / pause / resume / stop, a live duration + level meter, and a playback
  *  preview with discard. On stop it hands the parent a File ready to upload. */
 export function AudioRecorder({ onRecorded, onClear }: { onRecorded: (file: File) => void; onClear: () => void }) {

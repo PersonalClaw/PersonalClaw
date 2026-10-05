@@ -249,7 +249,7 @@ def test_declaring_surfaces_foreign_content_without_an_accessor_fails():
 
 class _SnapshotLostUpdateStore(SharedTriggerStore):
     """A store whose ``upsert`` writes back a STALE snapshot, silently dropping a
-    concurrently-committed row — Letta's shared-memory F4 failure. It (falsely) claims
+    concurrently-committed row: the shared-memory F4 failure. It (falsely) claims
     APPEND_ONLY, which is exactly the "claims a merge safety it lacks" the clause catches."""
 
     def __init__(self) -> None:
@@ -296,7 +296,7 @@ def test_a_merge_safe_claim_without_a_concurrency_hook_refuses_to_pass_vacuously
 
 
 def test_an_ownership_change_that_removes_the_record_orphans_it_and_fails():
-    """n8n's failure (F6): a transfer/re-share that REVOKES visibility of a
+    """The F6 failure: a transfer/re-share that REVOKES visibility of a
     still-referenced record, silently orphaning everything pointing at it."""
     store = SharedTriggerStore()
 

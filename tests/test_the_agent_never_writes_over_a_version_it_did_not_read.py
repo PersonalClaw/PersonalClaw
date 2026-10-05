@@ -389,7 +389,9 @@ def test_a_repeat_by_name_needs_the_base_and_makes_no_twin(store):
 
 def test_a_value_hidden_in_the_reading_is_kept_in_the_next_version(store):
     """The agent reads a document masked; a marker it writes back is the value it stood for."""
-    key = "sk-ant-api03-" + "a1B2c3D4e5F6g7H8i9J0" * 3
+    # The AWS documentation's example access key id: the mask knows it by its shape, and it is
+    # fake by construction.
+    key = "AKIAIOSFODNN7EXAMPLE"
     _tool("document_create", {"name": "Runbook", "markdown": f"# Runbook\n\nKey: {key}\n"})
     read = _tool("artifact_get", {"slug": "runbook"})
     assert key not in read and "[REDACTED" in read

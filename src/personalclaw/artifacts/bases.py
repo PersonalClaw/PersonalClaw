@@ -13,7 +13,8 @@ base it was built from:
   without a new version (a plain Save, a workflow's refresh) changes the body and keeps the number.
   A binary body's read is the URL of its version, so its base changes with every version, which
   is every write it takes.
-* :func:`parse_base` reads one back.
+* :func:`parse_base` reads one back, :func:`names_a_base` says whether a call names one at all, and
+  :func:`base_outcome` is how the audit log records a write refused for the base it names.
 
 The store compares a base under its lock (``update(expect_revision=…)`` for a text body,
 ``update_binary(expect_version=…)`` for a binary one), so nothing lands between the comparison and
@@ -44,6 +45,8 @@ __all__ = [
     "base_of",
     "kept_change",
     "newest_body_change",
+    "base_outcome",
+    "names_a_base",
     "parse_base",
 ]
 
@@ -84,6 +87,22 @@ def parse_base(raw: object) -> tuple[int, str] | None:
     if found is None:
         return None
     return int(found.group(1)), found.group(2)
+
+
+def names_a_base(raw: object) -> bool:
+    """Whether a call names a base at all: an absent or blank one names none."""
+    return raw is not None and bool(str(raw).strip())
+
+
+def base_outcome(raw: object) -> str:
+    """The audit outcome of a write refused for the base *raw* before the store was asked, in the
+    two words every whole-document write records (`stale_write.refusal_outcome`): a call that names
+    no base is refused for want of one, and a base other than the version the artifact holds now
+    (an older one, one that is not a base, a version it never had) is the stale refusal, as an
+    ``If-Match`` that is not the current revision is."""
+    from personalclaw.stale_write import OUTCOME_REVISION_REQUIRED, OUTCOME_STALE_WRITE
+
+    return OUTCOME_STALE_WRITE if names_a_base(raw) else OUTCOME_REVISION_REQUIRED
 
 
 @dataclass(frozen=True)

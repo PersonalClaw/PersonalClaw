@@ -3,8 +3,9 @@
 Compares a scenario's freshly-computed :class:`~harness.replay.Metrics` against checked-in
 baselines with two kinds of threshold:
 
-- **hard thresholds** (absolute ceilings, the ClawX-proven defaults): duplicate_event_rate
-  ≤ 0.005, order_violations = 0, reconnect_loss = 0, fanout ≤ 1.2 for single-key streams.
+- **hard thresholds** (absolute ceilings that hold whatever a baseline recorded):
+  duplicate_event_rate ≤ 0.005, order_violations = 0, reconnect_loss = 0, fanout ≤ 1.2 for
+  single-key streams.
   A stream that legitimately fans out to many keys overrides its fanout ceiling in the
   baseline file.
 - **relative drift tolerances** (latency p95 may grow at most +15% over the recorded
@@ -23,7 +24,8 @@ from pathlib import Path
 
 from harness.replay import Metrics, metrics_for_scenario
 
-# ClawX-proven hard defaults. A baseline entry may override any of these (with a rationale).
+# The ceilings a healthy event stream stays under. A baseline entry may override any of these (with
+# a rationale).
 DEFAULT_HARD = {
     "duplicate_event_rate_max": 0.005,
     "order_violation_count_max": 0,

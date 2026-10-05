@@ -52,8 +52,8 @@ def test_the_surfacing_fields_are_TYPED_not_stashed_in_extra():
 
 
 def test_a_new_def_defaults_to_OFF():
-    """OpenSquilla shipped auto-trigger-by-default and retreated to manual-first after pasted
-    content kept firing workflows. Explicit invocation always works regardless."""
+    """A def that triggers by default fires on pasted content, which holds every trigger phrase
+    anyone wrote, so a new one surfaces nothing. Explicit invocation always works regardless."""
     assert DefMetadata().surface_mode == "off"
 
 

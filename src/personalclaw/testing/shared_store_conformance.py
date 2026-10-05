@@ -7,8 +7,8 @@ team sharing built. Those seams each shipped their own idea of "handle a
 teammate's row safely" — ``Task.belongs_to`` on one side, ``triggers.ownership`` on
 the other — and research into comparable systems named the
 failure modes a *future* shared-store app would hit if it re-derived that discipline
-badly: Letta's shared-memory last-writer-wins-with-data-loss (F4), n8n's
-ownership-transfer-revokes-sharing orphan (F6), and the group_id/attribution scoping
+badly: a shared memory's last-writer-wins with data loss (F4), an ownership transfer that
+revokes sharing and orphans what still points at the record (F6), and the attribution-scoping
 bugs a "my items" counter hits when it forgets to exclude foreign rows (F3).
 
 ``assert_shared_store_contract`` is that discipline written down and executable. It
@@ -39,7 +39,7 @@ paid for. It asserts four obligations:
    Re-attributing a still-referenced record to a teammate MUST leave it VISIBLE in the
    listing view (so the reference is inspectable, not silently severed) while excluding it
    from the owner's counters. A listing that drops foreign rows silently orphans every
-   record that still points at one — n8n's transfer-revokes-sharing failure.
+   record that still points at one: the transfer-revokes-sharing failure.
 
 Non-cheatable by construction: a deliberately-unsafe provider (a counter that counts
 foreign rows, an accessor that hands raw teammate text to a prompt, a snapshot store that
@@ -396,8 +396,8 @@ def _assert_write_safety(case: SharedStoreCase) -> None:
             bool((case.lost_update_risk_doc or "").strip()),
             clause,
             "write_safety is LAST_WRITER_WINS but lost_update_risk_doc is empty — a "
-            "last-writer-wins store MUST document the lost-update risk (F4, the data loss "
-            "Letta has documented in its own shared memory). Silence here is the failure mode.",
+            "last-writer-wins store MUST document the lost-update risk (F4: when two writers "
+            "change one record, one of the writes is lost). Silence here is the failure mode.",
         )
         return
 
@@ -494,7 +494,7 @@ def _assert_no_silent_orphan(case: SharedStoreCase) -> None:
         clause,
         "after re-attributing a still-referenced record to a teammate it VANISHED from the "
         f"listing view (ids now {sorted(listing_ids)}). That silently orphans the record "
-        "still pointing at it — failure mode F6 (n8n's ownership-transfer revoking "
+        "still pointing at it — failure mode F6 (an ownership transfer that revokes "
         "sharing). A re-attributed record MUST stay VISIBLE so the reference is inspectable.",
     )
     owner_ids = {case.id_of(r) for r in case.owner_view(after, case.owner)}

@@ -250,7 +250,7 @@ def promote(
 
 def _refuse_if_bundled(target: Path) -> None:
     """Raise if ``target`` resolves under the package-bundled (read-only) skills
-    dir — mirrors OpenForge's ``_resolve_under_bundled`` guard."""
+    dir: those ship with the package, and nothing writes into them."""
     try:
         from personalclaw.skills.native import _bundled_root
 

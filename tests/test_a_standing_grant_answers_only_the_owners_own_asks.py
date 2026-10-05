@@ -467,7 +467,7 @@ def channel_state(tmp_path, monkeypatch):
     C.reset_ceiling()
     state = _make_state(tmp_path)
     state.push_sessions_update = MagicMock()
-    links_kept_in_a_session_map(state.sessions).set_channel_link(THREAD, THREAD, "C0TEAM0001")
+    links_kept_in_a_session_map(state.sessions).set_channel_link(THREAD, THREAD, CHANNEL)
     before = native_source.get_dashboard_state()
     native_source.set_dashboard_state(state)
     yield state

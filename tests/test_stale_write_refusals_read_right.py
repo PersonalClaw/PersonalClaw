@@ -15,7 +15,12 @@ its surfaces were wrong in ways a user and an operator could see:
   an operator reading "stale base" was told a concurrent edit happened when none did. Thirteen
   routes audit a refusal; each wrote its own words for it, and none could tell the two apart.
 
-Each route below is driven the way its page drives it, and the rows are read back from the log.
+The agent's artifact tools name their base as an argument instead of a header, and their rows keep
+the same two refusals apart: a call that names no base, and one whose base another write replaced,
+whether the tool found that itself or the store did under its lock.
+
+Each route below is driven the way its page drives it, each tool the way the agent calls it, and
+the rows are read back from the log.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ from pathlib import Path
 import pytest
 import test_stale_write as _config_harness
 import test_stale_write_settings_records as _settings_harness
+import test_the_agent_never_writes_over_a_version_it_did_not_read as _agent_harness
 from aiohttp.test_utils import TestClient, TestServer
 
 # The two harnesses whose routes these tests drive, and their fixtures re-exported by name.
@@ -40,6 +46,9 @@ _save_app_config = _settings_harness._save_app_config
 _models_client = _settings_harness._models_client
 _read_chain = _settings_harness._read_chain
 _save_chain = _settings_harness._save_chain
+store = _agent_harness.store
+_tool = _agent_harness._tool
+_base = _agent_harness._base
 
 _SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
@@ -180,6 +189,120 @@ class TestTheAuditLogTellsTheTwoRefusalsApart:
         refused = [r for r in _rows("models.active_set") if r["outcome"] != "ok"]
         _assert_told_apart(refused)
         assert all(r["resources"] == "chat" for r in refused), refused
+
+
+def _refused(tool: str) -> list[dict]:
+    """The rows the agent's *tool* wrote for the calls it refused, oldest first. The tool-call
+    layer writes one more row for every call, saying only whether it completed."""
+    return [r for r in _rows(tool) if r["outcome"].startswith("denied")]
+
+
+def _a_write_lands_first(store, monkeypatch, write) -> None:
+    """Another write lands after the tool found its base current and before the store takes its
+    lock: *write* runs, through the real store, the moment the agent's own write reaches it."""
+    landed: list[bool] = []
+    for method in ("update", "update_binary"):
+        real = getattr(store, method)
+
+        def racing(*args, _real=real, **kwargs):  # type: ignore[no-untyped-def]
+            if kwargs.get("actor") == "agent" and not landed:
+                landed.append(True)
+                write()
+            return _real(*args, **kwargs)
+
+        monkeypatch.setattr(store, method, racing)
+
+
+class TestTheAgentsArtifactWritesTellTheTwoRefusalsApart:
+    def test_an_artifact_update(self, store) -> None:
+        _tool("artifact_save", {"name": "Notes", "content": "first", "kind": "text"})
+        base = _base(_tool("artifact_get", {"slug": "notes"}))
+        assert "Nothing was written" in _tool("artifact_update", {"slug": "notes", "content": "x"})
+        store.update("notes", content="hers", actor="user")
+        stale = _tool("artifact_update", {"slug": "notes", "content": "x", "base": base})
+        assert "changed after you read it" in stale, stale
+        refused = _refused("artifact_update")
+        _assert_told_apart(refused)
+        assert all(r["error"] == "" for r in refused), refused
+
+    def test_an_artifact_save_on_its_slug(self, store) -> None:
+        _tool("artifact_save", {"name": "Notes", "content": "first", "kind": "text"})
+        base = _base(_tool("artifact_get", {"slug": "notes"}))
+        again = {"name": "Notes", "slug": "notes", "content": "x"}
+        assert "Nothing was written" in _tool("artifact_save", again)
+        store.update("notes", content="hers", actor="user")
+        stale = _tool("artifact_save", {**again, "base": base})
+        assert "changed after you read it" in stale, stale
+        refused = _refused("artifact_save")
+        _assert_told_apart(refused)
+        assert all(r["error"] == "" for r in refused), refused
+
+    def test_a_document_written_again(self, store) -> None:
+        from personalclaw.documents.from_markup import document_from_markdown
+        from personalclaw.documents.writers.docx_writer import render_docx
+
+        plan = {"name": "Plan", "markdown": "# Plan\n\nThe agent's draft.\n"}
+        _tool("document_create", plan)
+        base = _base(_tool("artifact_get", {"slug": "plan"}))
+        # The same name again, with no base: it would write the document's next version.
+        assert "Nothing was written" in _tool("document_create", plan)
+        hers = render_docx(document_from_markdown("# Plan\n\nThe owner's rewrite.\n"))
+        store.update_binary("plan", data=hers, actor="user", expect_version=1)
+        stale = _tool("document_create", {**plan, "slug": "plan", "base": base})
+        assert "changed after you read it" in stale, stale
+        refused = _refused("document_create")
+        _assert_told_apart(refused)
+        assert all(r["error"] == "" for r in refused), refused
+
+    def test_a_write_the_store_refuses_under_its_lock_is_the_stale_one(
+        self, store, monkeypatch
+    ) -> None:
+        """Each tool found its base current, and another write landed before the store's own
+        check: the store refuses the write, and the row says why, as it does for a stale base the
+        tool found itself, since the call did name its base."""
+        from personalclaw.documents.from_markup import document_from_markdown
+        from personalclaw.documents.writers.docx_writer import render_docx
+        from personalclaw.stale_write import OUTCOME_STALE_WRITE
+
+        _tool("artifact_save", {"name": "Notes", "content": "first", "kind": "text"})
+        _tool("artifact_save", {"name": "Brief", "content": "first", "kind": "text"})
+        _tool("document_create", {"name": "Plan", "markdown": "# Plan\n\nThe agent's draft.\n"})
+        bases = {s: _base(_tool("artifact_get", {"slug": s})) for s in ("notes", "brief", "plan")}
+        hers = render_docx(document_from_markdown("# Plan\n\nThe owner's rewrite.\n"))
+        calls = [
+            (
+                lambda: store.update("notes", content="hers", actor="user"),
+                "artifact_update",
+                {"slug": "notes", "content": "x", "base": bases["notes"]},
+            ),
+            (
+                lambda: store.update("brief", content="hers", actor="user"),
+                "artifact_save",
+                {"name": "Brief", "slug": "brief", "content": "x", "base": bases["brief"]},
+            ),
+            (
+                lambda: store.update_binary("plan", data=hers, actor="user", expect_version=1),
+                "document_create",
+                {
+                    "name": "Plan",
+                    "slug": "plan",
+                    "markdown": "# Plan\n\nv2\n",
+                    "base": bases["plan"],
+                },
+            ),
+        ]
+        for write, tool, args in calls:
+            with monkeypatch.context() as m:
+                _a_write_lands_first(store, m, write)
+                said = _tool(tool, args)
+            assert "nothing was written" in said.lower(), (tool, said)
+            refused = _refused(tool)
+            assert [(r["outcome"], r["error"]) for r in refused] == [(OUTCOME_STALE_WRITE, "")], (
+                tool,
+                refused,
+            )
+        assert store.get("notes").content == store.get("brief").content == "hers"
+        assert store.get("plan").version == 2
 
 
 def test_every_audited_refusal_records_which_refusal_it_was() -> None:

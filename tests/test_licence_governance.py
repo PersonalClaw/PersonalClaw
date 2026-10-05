@@ -889,9 +889,9 @@ def test_the_grant_rail_reaches_beyond_the_root_licence(tmp_path: Path) -> None:
 def test_the_rail_reds_on_a_fake_spdx_change(tmp_path: Path) -> None:
     """Clause 3, disjunct 1 — a deliberately introduced non-MIT SPDX identifier.
 
-    Three separate mutations, because a rail that catches one spelling and not the others is
-    the shape of the peers' actual moves: n8n went to a Sustainable-Use licence in its
-    manifest, Open WebUI rewrote the licence FILE.
+    Three separate mutations, because a rail that catches one spelling and not the others misses
+    how a licence actually changes: in a manifest's field, in a source file's header, or in the
+    licence FILE itself.
     """
     root = _minimal_tree(tmp_path)
 

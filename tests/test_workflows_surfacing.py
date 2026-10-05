@@ -1,8 +1,8 @@
 """Tests for SOP surfacing discipline.
 
-The governing precedent is somebody else's scar tissue: OpenSquilla shipped
-auto-trigger-by-default and retreated to manual-first after pasted content kept firing workflows. So
-the tests here are mostly about NOT firing, and the pasted-content case is tested directly.
+The governing failure: a def that triggers by default fires on pasted content, because a paste
+holds every trigger phrase anyone ever wrote. So the tests here are mostly about NOT firing, and
+the pasted-content case is tested directly.
 
 Two things were checked against real code rather than assumed:
 

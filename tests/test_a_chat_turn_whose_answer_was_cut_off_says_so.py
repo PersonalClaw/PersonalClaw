@@ -98,7 +98,7 @@ async def _gateway(tmp_path: Path, endpoint: ModelEndpoint, notes: _Notes):
 
     model = OpenAIProvider(
         model=MODEL,
-        credential=Credential(name="key", kind="api_key", secret="sk-test", source="env"),
+        credential=Credential(name="key", kind="api_key", secret="fake-key-test", source="env"),
         base_url=f"{endpoint.url}/v1",
     )
     runtime = NativeAgentRuntime(

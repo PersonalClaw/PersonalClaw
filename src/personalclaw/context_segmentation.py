@@ -9,7 +9,7 @@ by design (not accident):
 
   * **embedding-drift** — when an embed function is bound, adjacent user-turn
     embeddings whose cosine similarity drops below a threshold mark a topic
-    boundary (the `agent-zero` shape). Semantic, so a topic that spans many turns
+    boundary. Semantic, so a topic that spans many turns
     stays one segment.
   * **deterministic turn-count fallback** — when no embedder is bound, segment
     every N user turns. Coarser, never wrong, and the DESIGNED no-model tier.

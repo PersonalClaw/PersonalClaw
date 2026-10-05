@@ -48,7 +48,7 @@ from personalclaw.vector_memory import VectorMemoryStore
 
 #: A chat channel this test sets up, by its provider key, and a channel there the bot is in.
 PROVIDER = "teamchat"
-CHANNEL = "C0TEAM0001"
+CHANNEL = "C0EXAMPLE01"
 #: The owner's id on the channel, as its first contact stored it, and a colleague she allowed.
 OWNER = "U0MIRAOWNR"
 COLLEAGUE = "U0JONASCOL"

@@ -5,8 +5,8 @@ regression metrics that gate against checked-in baselines:
 
 - ``duplicate_event_rate`` — fraction of events that repeat a dedup key. For workflow
   events the key is ``key|type|seq`` (per the specified dedup key); where no ``seq``
-  exists, a per-type structural fingerprint (the ClawX fallback) so a genuine re-emit is
-  counted but distinct events are not.
+  exists, a per-type structural fingerprint of the payload, so a genuine re-emit is counted but
+  distinct events are not.
 - ``event_fanout_ratio`` — events / distinct keys (a proxy for over-broadcast).
 - ``order_violation_count`` — events whose ``seq`` goes backwards within a key.
 - ``reconnect_loss_count`` — gaps in an otherwise-contiguous ``seq`` sequence per key.
@@ -76,8 +76,8 @@ def load_scenario(trace_dir: str | Path) -> list[TraceEvent]:
 
 def _dedup_key(e: TraceEvent) -> str:
     """The dedup identity of an event. Uses ``seq`` when present (the key shape
-    ``key|type|seq``); otherwise a structural fingerprint over the JSON-serialized payload
-    (the ClawX fallback) so a true re-emit counts but two distinct same-type events don't.
+    ``key|type|seq``); otherwise a structural fingerprint over the JSON-serialized payload, so a
+    true re-emit counts but two distinct same-type events don't.
     """
     if e.seq is not None:
         return f"{e.key}|{e.type}|{e.seq}"

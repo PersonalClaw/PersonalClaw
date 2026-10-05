@@ -5,8 +5,8 @@ consumes the outputs of its upstream nodes and emits a :class:`NodeOutput`; an e
 may be **conditional** on an upstream node's ``classification`` (data-dependent
 branching) and the graph supports fan-out, fan-in, and adaptive re-extraction.
 
-This is PClaw's improvement over OpenForge's flat slot-list (which passed data via
-sidecar files): nodes here communicate through explicit typed outputs over real edges.
+Nodes communicate through explicit typed outputs over real edges, never a flat slot list
+that passes data through sidecar files.
 
 Graphs are **code-owned OO constructs** (per-type :class:`PipelineGraph` subclasses in
 ``graphs.py``) with their own lifecycles — NOT user-editable data. Users control only

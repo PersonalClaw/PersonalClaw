@@ -159,16 +159,20 @@ def _free_port() -> int:
 
 def test_chat_with_no_gateway_prints_the_fix_not_a_traceback(tmp_path) -> None:
     """The guide's first-chat command in a fresh home with no gateway running: there is nothing
-    to chat with, and it says so and names the guide's own command that starts one (§ "2. First
-    run"). The gateway's port is one nothing listens on, so a gateway this machine happens to run
-    on the default port cannot answer in the newcomer's place."""
+    to chat with, and it says so, naming the home and the port it asked, and names the guide's own
+    command that starts one (§ "2. First run"). The gateway's port is one nothing listens on, so a
+    gateway this machine happens to run on the default port cannot answer in the newcomer's
+    place."""
     port = _free_port()
     proc = _run_cli(["chat", "-m", "hello"], tmp_path, port=port)
 
     assert proc.returncode == 1, f"rc={proc.returncode}\n{proc.stdout}\n{proc.stderr}"
     assert "Traceback" not in proc.stderr, proc.stderr
     assert "asyncio" not in proc.stderr, proc.stderr
-    assert f"no gateway is running on port {port}" in proc.stderr, proc.stderr
+    assert f"No gateway is running for this home ({tmp_path})" in proc.stderr, proc.stderr
+    assert (
+        f"nothing listens on port {port}, which PERSONALCLAW_PORT names" in proc.stderr
+    ), proc.stderr
     assert "Start it with: personalclaw gateway" in proc.stderr, proc.stderr
 
 

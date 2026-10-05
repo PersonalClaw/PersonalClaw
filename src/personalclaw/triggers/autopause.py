@@ -49,8 +49,8 @@ FAILURE_BUDGET = 5
 
 #: How long a parked trigger waits before its next attempt, per episode. Deliberately a flat
 #: cooldown rather than escalating backoff: a row per attempt is not allowed, and an escalating
-#: schedule silently turns a 5-minute outage into an hour of not-running (the failure mode that
-#: made clawx delete their 3-state breaker).
+#: schedule silently turns a 5-minute outage into an hour of not-running, which is why an
+#: escalating three-state breaker is the wrong shape here.
 PARK_COOLDOWN_SECS = 300.0
 
 

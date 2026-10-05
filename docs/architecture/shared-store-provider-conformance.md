@@ -24,17 +24,17 @@ Paths are relative to `PersonalClaw/src/personalclaw/` unless noted.
 
 The clause numbers below map to the research findings (`F3`/`F4`/`F6`):
 
-- **F3 — attribution scoping.** Zep/Graphiti `group_id` namespacing and Letta's
-  block-level provenance: a "my items" counter that forgets to exclude a teammate's rows
-  over-counts, and foreign content that reaches a prompt untrusted is a prompt-injection
-  surface. PersonalClaw's answer is the shipped `belongs_to` predicate
+- **F3 — attribution scoping.** Shared stores scope records by a namespace or by per-block
+  provenance, and both meet the same two edges: a "my items" counter that forgets to exclude a
+  teammate's rows over-counts, and foreign content that reaches a prompt untrusted is a
+  prompt-injection surface. PersonalClaw's answer is the shipped `belongs_to` predicate
   (`Task.belongs_to`, `triggers.ownership.is_owner_authored`) plus `security.fence_untrusted`.
-- **F4 — concurrent-write data loss.** Letta's shared memory admits *last-writer-wins with
-  data loss*; its only concurrent-safe patterns are **append-only** and **designated-owner
-  + block-level `read_only`**. A shared store that silently does last-writer-wins while
-  presenting itself as merge-safe loses a teammate's write with no signal.
-- **F6 — ownership-transfer orphaning.** n8n's ownership transfer can *revoke sharing*,
-  silently orphaning a still-referenced record. A listing that drops foreign rows does the
+- **F4 — concurrent-write data loss.** A shared memory that two writers edit in place is
+  *last-writer-wins with data loss*; the only concurrent-safe patterns are **append-only** and
+  **designated-owner + block-level `read_only`**. A shared store that silently does
+  last-writer-wins while presenting itself as merge-safe loses a teammate's write with no signal.
+- **F6 — ownership-transfer orphaning.** An ownership transfer that also *revokes sharing*
+  silently orphans a still-referenced record. A listing that drops foreign rows does the
   same thing: everything still pointing at a re-attributed record dangles invisibly.
 
 ## The four obligations
@@ -76,22 +76,23 @@ A provider declares its concurrent-write semantic (`WriteSafety`):
 
 - **`APPEND_ONLY`** / **`DESIGNATED_OWNER`** — a *merge-safe* claim. The kit **proves** it:
   a concurrent writer's record committed out-of-band MUST still be present after the
-  provider commits its own change. A snapshot store that writes back a stale view (Letta's
-  F4) silently loses that record and **fails**. A merge-safe claim with no
+  provider commits its own change. A snapshot store that writes back a stale view (F4)
+  silently loses that record and **fails**. A merge-safe claim with no
   `commit_out_of_band` hook is refused rather than passed vacuously.
 - **`LAST_WRITER_WINS`** — legal, but the provider MUST **document** the lost-update risk
   (a non-empty `lost_update_risk_doc`). It MUST NOT claim a merge-safe semantic while
   silently being this one.
 
-This is the constraint the soul guardrail names: adopt the ownership conventions Letta
-proved safe; **do not** build a CRDT merge, and do not claim merge safety you lack.
+This is the constraint the soul guardrail names: adopt the ownership conventions proven safe
+for shared stores (append-only, a designated owner); **do not** build a CRDT merge, and do not
+claim merge safety you lack.
 
 ### 4. An ownership/sharing change cannot silently orphan a reference — `[orphan-on-reattribute]` (F6)
 
 Re-attributing a *still-referenced* record to a teammate MUST leave it **visible** in the
 listing view (so the dangling reference is inspectable, not silently severed) while
 excluding it from the owner's counters. A transfer that removes the record from the shared
-view — n8n's revoke-on-transfer — silently orphans every record still pointing at it and
+view (a revoke-on-transfer) silently orphans every record still pointing at it and
 **fails**. This is why the listing view keeps foreign rows (`triggers.provider.all_rows`,
 `list_triggers`) even though the arm path drops them.
 

@@ -8,6 +8,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+- **The security log says which refusal an agent's refused document write was: one that named no base, or one whose base another write had replaced**
+- **Docs, code comments and the shared-store kit's failure messages give the engineering reason for a behaviour instead of naming another product**
 - **Investigating a past automation run says the cadence and action it shows are the automation's current ones, which may have changed since that run**
 - **Code comments, docs, help text and test messages say the reason behind a behaviour instead of citing planning identifiers a reader cannot resolve**
 - **`.env.example` names only variables PersonalClaw reads or sets: it no longer offers `OLLAMA_HOST` (the Ollama address is the provider's Endpoint setting in Settings → Providers) or four gateway variables nothing sets**

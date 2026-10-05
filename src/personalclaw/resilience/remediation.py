@@ -1,7 +1,7 @@
 """Health-scored self-remediation engine.
 
-ONE background engine that replaces N independent maintenance crons, shaped on
-GBrain's ``doctor --remediate --target-score --max-usd``: compute a health score
+ONE background engine that replaces N independent maintenance crons, shaped as a remediation
+loop with a target score and a spending cap: compute a health score
 from **measured** deficits, build a dependency-ordered plan, execute step-by-step
 re-checking the score after each step, and stop at whichever comes first —
 ``target_score`` reached, ``max_cost_usd`` spent, or plan exhausted.

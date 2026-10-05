@@ -1,11 +1,10 @@
 """SOP surfacing discipline: modes, trigger phrases, one-source-two-wrappers.
 
 SOPs become workflow templates, and the templates keep surfacing — but surfacing gains
-discipline it did not have. The governing precedent is somebody else's
-scar tissue: **OpenSquilla shipped auto-trigger-by-default and retreated to manual-first
-after pasted content kept firing workflows.** So a new def is `off`, a migrated SOP is
-`passive`, and `suggest` — the mode that actually proposes running something — is earned per
-def rather than granted globally.
+discipline it did not have. The governing failure: **a def that triggers by default fires on
+pasted content, because a paste holds every trigger phrase anyone ever wrote.** So a new def is
+`off`, a migrated SOP is `passive`, and `suggest` — the mode that actually proposes running
+something — is earned per def rather than granted globally.
 
 Four properties, each failing in a chosen direction:
 
@@ -325,9 +324,8 @@ _PLANNING_MARKERS = (
     "explain how",
 )
 
-#: Markers of pasted or quoted content. This is the OpenSquilla failure verbatim: pasted
-#: content kept
-#: firing workflows, because a paste contains every trigger phrase somebody ever wrote.
+#: Markers of pasted or quoted content. Pasted content fires workflows, because a paste contains
+#: every trigger phrase somebody ever wrote.
 _PASTE_MARKERS = ("```", "> ", "Traceback (most recent call last)", "--- a/", "+++ b/")
 
 

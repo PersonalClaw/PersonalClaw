@@ -11,9 +11,9 @@ fixtures below ingested to ``processing_status='done'`` with ``processing_error=
 * ``tests/fixtures/unindexed_document.md`` ingested with ``embedder=None`` — zero rows in
   ``chunks``, no item vector, and still ``done``.
 
-That is AnythingLLM #6143 ("the embedding step silently writes nothing… RAG retrieval
-returns no sources, while the app reports success") reproduced in PersonalClaw, and
-PersonalClaw's own earlier finding that model-dependent write paths fail OPEN and silently.
+That is an embedding step that silently writes nothing, so retrieval returns no sources while
+the app reports success, and PersonalClaw's own earlier finding that model-dependent write paths
+fail OPEN and silently.
 
 **What this rail asserts, per fixture, all three required together:**
 

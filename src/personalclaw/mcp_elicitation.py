@@ -2,11 +2,11 @@
 boundary PersonalClaw already owns.
 
 The MCP spec's ``elicitation/create`` lets a *server* interrupt its own tool call to ask
-the human a question. Every peer with an MCP client at all (dify, open-webui, LibreChat)
-constructs its ``ClientSession`` with no callbacks, so all three advertise nothing and
-answer "not supported". The reason this is cheap for us and expensive for them is that we
-already ship a real confirmation boundary with a frontend — so this module is a ROUTE into
-:meth:`personalclaw.dashboard.state.DashboardState.request_approval`, not a new approval UI.
+the human a question. An MCP client commonly constructs its ``ClientSession`` with no
+callbacks, so it advertises nothing and answers "not supported". What makes this cheap here is
+that PersonalClaw already ships a real confirmation boundary with a frontend — so this module is
+a ROUTE into :meth:`personalclaw.dashboard.state.DashboardState.request_approval`, not a new
+approval UI.
 
 **Default deny, per server.** The grant is ``security.mcp_elicitation_servers``, an
 allowlist of server names that ships empty. It is consulted at ONE place, at session

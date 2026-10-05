@@ -92,8 +92,8 @@ def test_a_configured_value_SURVIVES_load():
 
 
 def test_the_new_def_default_is_OFF():
-    """OpenSquilla shipped auto-trigger-by-default and retreated to manual-first after pasted
-    content kept firing workflows. The default is the one that surfaces nothing."""
+    """A def that triggers by default fires on pasted content, which holds every trigger phrase
+    anyone wrote. The default is the one that surfaces nothing."""
     assert _load({}).workflows.surface_mode_default == "off"
 
 

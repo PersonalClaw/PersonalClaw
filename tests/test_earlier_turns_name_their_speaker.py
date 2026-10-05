@@ -39,7 +39,7 @@ from personalclaw.llm.events import EVENT_COMPLETE, EVENT_TEXT_CHUNK, AgentEvent
 from personalclaw.session import SessionManager
 
 PROVIDER = "teamchat"
-CHANNEL = "C0TEAM0001"
+CHANNEL = "C0EXAMPLE01"
 THREAD = "1790800000.000100"
 OWNER = "U0MIRAOWNR"
 COLLEAGUE = "U0JONASCOL"

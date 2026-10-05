@@ -59,7 +59,7 @@ MESSAGES = [{"role": "user", "content": "Write the Q3 note."}]
 
 
 def _credential() -> Credential:
-    return Credential(name="key", kind="api_key", secret="sk-test", source="env")
+    return Credential(name="key", kind="api_key", secret="fake-key-test", source="env")
 
 
 TEXT = text(FIRST_HALF)

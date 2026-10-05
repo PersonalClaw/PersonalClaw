@@ -15,8 +15,8 @@ decide whether a match is allowed to become a suggestion:
   already had.
 * **Requirements preflight.** A suggestion whose requirements are unmet fails AT SUGGESTION
   TIME naming the missing item, rather than dying mid-run.
-* **The reachability doctor.** The mirror failure of over-firing: a def nothing can reach. gbrain's
-  audit found 63 silently unreachable skills on its first run.
+* **The reachability doctor.** The mirror failure of over-firing: a def nothing can reach, which
+  nobody notices, since nothing ever shows it.
 
 Everything here is pure functions over records. The two on-disk touches (the cadence ledger and
 per-project dismissals) go through `store.config_dir()` so the dev home rail holds.
@@ -717,7 +717,7 @@ def apply_overlay(
 
 
 class Availability(str, Enum):
-    """The Leon-style three-state model.
+    """Three states short of available.
 
     Three states because they need three different remedies: INSTALLED-but-not-enabled is a toggle,
     ENABLED-but-not-available is a settings page, and NOT-INSTALLED is an install. Collapsing them
@@ -878,7 +878,7 @@ def doctor(
     """Every active def that nothing can reach.
 
     The mirror of over-firing, and the harder failure to notice: an over-firing def annoys the user
-    into fixing it, while an unreachable def is simply never seen again. gbrain's audit found 63.
+    into fixing it, while an unreachable def is simply never seen again.
 
     A def is reachable when ANY channel can produce it: a trigger phrase (semantic), a cadence, a
     pack membership, or an explicit index entry. Checking only `match_text` would report every

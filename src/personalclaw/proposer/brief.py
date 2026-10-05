@@ -1,10 +1,9 @@
 """The one-shot handoff brief.
 
-agentsystem's ``/handoff-codex`` packet, generalised: everything a fresh brain needs to make one
-useful attempt at a problem another brain got stuck on, and nothing it has to ask a follow-up
-question to get.
+A handoff packet, generalised: everything a fresh brain needs to make one useful attempt at a
+problem another brain got stuck on, and nothing it has to ask a follow-up question to get.
 
-Two properties the plan calls out explicitly:
+Two properties matter most:
 
 * **The diff is FRESH.** It is taken at brief-build time, not carried from whenever the run
   started — "stale diffs are worse than none", because a proposer reasoning off a diff that has

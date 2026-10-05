@@ -36,18 +36,23 @@ its reader could already see.
 
 A route that audits a refusal records which one it was, with :func:`refusal_outcome` — never
 words of its own. Each route used to write its own ("stale base", ``stale_write``, a bare
-``denied``), and none could tell the two refusals apart.
+``denied``), and none could tell the two refusals apart. The agent's artifact tools name their
+base as an argument rather than in a header, and keep the same two words for the same two
+refusals.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
+
+if TYPE_CHECKING:
+    from personalclaw.artifacts.models import ArtifactStaleWrite, ArtifactVersionConflict
 
 __all__ = [
     "OUTCOME_REVISION_REQUIRED",
@@ -131,7 +136,15 @@ def stale_write_refusal(request: web.Request, current: Any, *, what: str) -> web
     return None
 
 
-def refusal_outcome(refusal: web.Response) -> str:
-    """The audit outcome for a refusal :func:`stale_write_refusal` returned — which of the two it
-    was, read off the refusal itself, so a route cannot word it differently from the answer."""
-    return OUTCOME_REVISION_REQUIRED if refusal.status == 428 else OUTCOME_STALE_WRITE
+def refusal_outcome(refusal: web.Response | ArtifactStaleWrite | ArtifactVersionConflict) -> str:
+    """The audit outcome for a refusal — which of the two it was, read off the refusal itself, so a
+    writer cannot word it differently from the answer.
+
+    *refusal* is what :func:`stale_write_refusal` returned, a 428 when the write named no revision,
+    or what the artifact store raised when it refused a write under its own lock. The store raises
+    only for a write that named the revision or version it was based on and found another write had
+    replaced it since, so that is always the stale refusal.
+    """
+    if isinstance(refusal, web.Response):
+        return OUTCOME_REVISION_REQUIRED if refusal.status == 428 else OUTCOME_STALE_WRITE
+    return OUTCOME_STALE_WRITE

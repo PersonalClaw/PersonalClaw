@@ -941,9 +941,9 @@ class DefMetadata:
     # reason the block above records — `from_dict` drops what it does not name, so a field kept in
     # an open dict is a field the matcher reads as absent while the author believes it is set.
     #
-    #: The surfacing ladder (`off` | `passive` | `suggest`). `off` for a NEW def: OpenSquilla
-    #: shipped auto-trigger-by-default and retreated to manual-first after pasted content kept
-    #: firing workflows. Explicit `/workflow <name>` invocation always works regardless.
+    #: The surfacing ladder (`off` | `passive` | `suggest`). `off` for a NEW def: triggering by
+    #: default fires workflows on pasted content, which holds every trigger phrase anyone wrote,
+    #: so surfacing is chosen per def. Explicit `/workflow <name>` invocation always works.
     surface_mode: str = "off"
     #: Verbatim guidance injected in passive mode, between fence markers.
     agent_digest: str = ""

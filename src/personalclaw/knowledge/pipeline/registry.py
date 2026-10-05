@@ -1,7 +1,7 @@
 """Node registry + use-case model resolution for the ingestion engine.
 
-Nodes register under ``(node_type, backend)`` (mirrors OpenForge's
-``register_backend``). A model-backed node resolves its provider through a
+Nodes register under ``(node_type, backend)``, so one node type can have
+several backends. A model-backed node resolves its provider through a
 Settings>Models **use-case** at run-time — whatever model the user selected for
 that use-case is used (for image understanding with nothing selected, a chat model
 that takes images); if none serves, the node is skipped gracefully (never a hard

@@ -8,7 +8,7 @@ records as markdown + an FTS5 index (no vectors at all), so it works on a machin
 with no embedder, no FAISS, no numpy.
 
 It implements the SAME v2 ``MemoryProvider`` contract as the native store, so the
-service drives it identically and an external/Mem0/Letta provider would slot in
+service drives it identically and an external memory provider would slot in
 the same way. ``capabilities().vector`` is always False → ``vector_query`` returns
 [] and the service falls back to ``query`` + FTS, exactly like Knowledge degrades
 to FTS+graph.

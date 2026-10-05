@@ -1,10 +1,10 @@
 """No user-visible switch irreversibly deletes state.
 
-Grounds: Open WebUI's four-user / four-day cluster (#29069, #29095, #29153, #29193) in which
-toggling a model **off** did not hide it — it *permanently removed* it. Four different users
-hit the same defect within four days, which is the signature of a switch that looks like a
-view filter and is wired to a delete. The user's mental model of a toggle is "and I can put
-it back"; when that is false, the state is gone and no downgrade recovers it.
+Grounds: in a comparable app, toggling a model **off** did not hide it — it *permanently
+removed* it, and four different users hit that defect within four days, which is the
+signature of a switch that looks like a view filter and is wired to a delete. The user's mental
+model of a toggle is "and I can put it back"; when that is false, the state is gone and no
+downgrade recovers it.
 
 **The enumeration is machine-derived, and this is the whole design.** The toggle list comes
 from :data:`personalclaw.config.editable._EDITABLE_CONFIG` — the *actual object* the
@@ -20,7 +20,7 @@ drives ``False`` then ``True`` through the real ``PATCH /api/config/personalclaw
 then asserts that nothing a user can see got smaller: every knowledge item, memory key, memory
 file, loop, scheduled-run record, ``entity_settings`` file, configured provider, active model
 selection and pre-existing file in the home is still there. Asserting the stored boolean came
-back is the lazy version the change names, and it is worthless — it is exactly what Open WebUI's
+back is the lazy version the change names, and it is worthless — it is exactly what that
 toggle did correctly while destroying the row behind it.
 
 Deletion is the failure; addition is not. Every comparison is "the before set is still a
@@ -38,7 +38,7 @@ machine-derived enumeration is the derivation's own reach:
 * **Deletion that happens later.** The sweep flips the toggle and reads the state back. A
   service that acts on the changed value on its next tick, or at the next restart, does its
   deleting after this test has finished. This catches synchronous destruction on the write
-  path, which is where Open WebUI's was.
+  path, which is where that defect was.
 * **Non-bool destructive writes.** An ``enum`` or ``str_list`` field whose value change drops
   state is out of scope: the change is about toggles, and widening the sweep to 239 entries with
   no notion of a safe value for each would produce a rail nobody could keep green.
@@ -183,8 +183,8 @@ def observables(home: Path) -> dict[str, Any]:
 
     # The change's literal case: the model is still listed and still selectable. `providers` is
     # the inventory a listing is built from; `models.active` is the selection itself. Losing
-    # either is the Open WebUI failure, and both live in `config.json` — the same file the
-    # toggle writes, which is exactly why a toggle could take them out.
+    # either is the failure this file is grounded in, and both live in `config.json` — the same
+    # file the toggle writes, which is exactly why a toggle could take them out.
     providers = _read_config(home).get("providers")
     # Normalised to a list unconditionally. A missing key must read as "no providers", not as
     # `None`: the two are the same loss to a user, and a surface whose TYPE changes when the key
@@ -425,9 +425,8 @@ def assert_nothing_lost(
         f"toggling {key!r} off and back on did not restore what a user can see:\n"
         + "\n".join(f"  {f}" for f in failures)
         + "\n\nA toggle a user can flip must be reversible. Anything listed above is state the "
-        "user cannot get back by flipping the switch again — the defect that cost Open WebUI "
-        "four users in four days (#29069, #29095, #29153, #29193), where toggling a model OFF "
-        "removed it permanently instead of hiding it. If this switch is genuinely meant to "
+        "user cannot get back by flipping the switch again — the defect where toggling a model "
+        "OFF removed it permanently instead of hiding it. If this switch is genuinely meant to "
         "destroy state, it is not a toggle: it needs a confirmation and a named destructive "
         "action, not a checkbox."
     )
@@ -493,7 +492,7 @@ def test_the_derivation_tracks_the_write_path_it_claims_to() -> None:
 
 
 def test_the_rail_reds_on_a_toggle_that_deletes_the_row(seeded_home: Path) -> None:
-    """Open WebUI's exact defect, injected: flipping OFF removes the row for good.
+    """That defect, injected: flipping OFF removes the row for good.
 
     The destructive writer deletes knowledge items on the way OFF and writes the value on the
     way back ON — a toggle whose stored boolean round-trips perfectly while the state behind it
@@ -533,8 +532,8 @@ def test_the_rail_reds_on_a_toggle_that_unlists_the_model(seeded_home: Path) -> 
     behaviour for a removed provider and catastrophic as the side effect of a checkbox. The
     selection file on disk is untouched throughout; the model is simply no longer listed.
 
-    That is the closest thing in this codebase to Open WebUI's defect, and it is reachable
-    today by any toggle handler that decides to tidy up `providers` on its way off.
+    That is the closest thing in this codebase to the defect this file is grounded in, and it is
+    reachable today by any toggle handler that decides to tidy up `providers` on its way off.
     """
     baseline = observables(seeded_home)
     assert baseline["models.active"].get("chat"), "the probe model is not selected to begin with"

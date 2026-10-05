@@ -4265,7 +4265,7 @@ export interface WeekProjection {
 
 // Knowledge = a library of TYPED items (note/bookmark/media/docs) with extracted
 // content + AI insights. The typed-format enum, media/file fields, structured
-// insights, and provider attribution mirror the target vision (OpenForge-style);
+// insights, and provider attribution follow the target design;
 // the current PClaw backend persists a RAG subset (item_type string, title/
 // content/summary/tags + entities/graph), so the richer fields are
 // rendered ahead of the backend (SoonTag).

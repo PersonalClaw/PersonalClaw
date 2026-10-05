@@ -66,7 +66,7 @@ _FUNC_RE = re.compile(r"^([a-zA-Z_]\w*)\s*\((.*)\)$", re.DOTALL)
 # followed by a `::` type suffix. Group 1 = the bare name (what resolves at
 # render); group 2 = the raw suffix (parsed for the UI variable type).
 _TYPE_DECL_RE = re.compile(r"^([a-zA-Z_][\w.]*)\s*::\s*(.+)$")
-# Canonical UI type names + the legacy aliases OpenForge/PromptForge accept.
+# Canonical UI type names + the aliases other prompt-template formats write for them.
 _TYPE_ALIASES = {
     "string": "text",
     "str": "text",
@@ -246,7 +246,7 @@ def _fn_contains(coll: Any, item: Any) -> bool:
 
 
 def _fn_get(obj: Any, path: Any, fallback: Any = None) -> Any:
-    """Nested dot-path access with a fallback (OpenForge's get())."""
+    """Nested dot-path access with a fallback: ``get(obj, "a.b", default)``."""
     cur = obj
     for seg in str(path).split("."):
         if isinstance(cur, dict) and seg in cur:
@@ -819,8 +819,8 @@ def extract_inline_variables(content: str) -> list[PromptVariable]:
     """Auto-detect inline typed-variable declarations — ``{{ name::type }}`` /
     ``{{ name::select::[a, b] }}`` / ``{{ name::[a, b] }}`` — from raw content,
     in first-appearance order, deduped by name (first declaration wins). Lets the
-    authoring UI surface a variable + its type straight from the template text,
-    OpenForge/PromptForge-style. Bare ``{{ name }}`` with no ``::`` is NOT returned
+    authoring UI surface a variable + its type straight from the template text.
+    Bare ``{{ name }}`` with no ``::`` is NOT returned
     (those are declared explicitly via the prompt's ``variables`` list)."""
     out: list[PromptVariable] = []
     seen: set[str] = set()

@@ -3,7 +3,7 @@ import type { LucideIcon } from 'lucide-react'
 import type { KnowledgeItem, KnowledgeType } from '../../lib/api'
 import { epochSeconds } from '../../lib/epoch'
 
-// ── typed knowledge formats (mirrors the OpenForge vision enum) ──
+// ── typed knowledge formats ──
 export interface TypeMeta { key: KnowledgeType; label: string; icon: LucideIcon; tone: string; group: 'text' | 'link' | 'media' | 'document' }
 export const TYPES: TypeMeta[] = [
   { key: 'note', label: 'Note', icon: StickyNote, tone: 'var(--color-primary)', group: 'text' },
@@ -142,7 +142,7 @@ export function typeLabel(it: Pick<KnowledgeItem, 'type' | 'item_type' | 'mime_t
 }
 
 /** Normalize an item's insights blob to displayable {label, value} rows.
- *  OpenForge stores insights as a category-keyed dict; render whatever's there. */
+ *  Insights are a category-keyed dict; render whatever's there. */
 const _titleCase = (k: string) => k.replace(/[_-]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 
 export function insightRows(insights?: Record<string, unknown> | null): Array<{ label: string; value: string }> {

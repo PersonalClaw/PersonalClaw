@@ -14,7 +14,7 @@ from typing import Any, NamedTuple
 
 from personalclaw.artifacts import dedupe as artifact_dedupe
 from personalclaw.artifacts import retakes
-from personalclaw.artifacts.bases import base_for, parse_base
+from personalclaw.artifacts.bases import base_for, base_outcome, names_a_base, parse_base
 from personalclaw.artifacts.models import (
     ArtifactKindMismatch,
     ArtifactStaleWrite,
@@ -1172,7 +1172,7 @@ def _base_check(
     from personalclaw.artifacts.models import redacted
 
     name = redacted(art.name)
-    if raw_base is None or (isinstance(raw_base, str) and not raw_base.strip()):
+    if not names_a_base(raw_base):
         return (
             f"'{name}' (slug: {art.slug}) already exists, and this writes over its whole text, so "
             f"it takes the base of the version you read: call artifact_get with slug='{art.slug}', "
@@ -1338,6 +1338,7 @@ def _save_next_version(
     version whose base the call names. The name stays the artifact's own (the owner may have
     renamed it); a description, tags or collection the call names are set with it."""
     from personalclaw.artifacts.models import redacted
+    from personalclaw.stale_write import refusal_outcome
 
     refusal = _resave_kind_refusal(existing, args)
     if refusal:
@@ -1345,7 +1346,7 @@ def _save_next_version(
         return tool_failure(refusal)
     refusal, expected = _base_check(prov, existing, args.get("base"), sk, tool="artifact_save")
     if refusal:
-        _audit("denied", existing.slug, "base")
+        _audit(base_outcome(args.get("base")), existing.slug)
         return tool_failure(refusal)
     refused = _text_refusal(
         existing.kind, description=args.get("description") or "", content=content
@@ -1366,8 +1367,8 @@ def _save_next_version(
             session_id=sk,
             expect_revision=expected,
         )
-    except ArtifactStaleWrite:
-        _audit("denied", existing.slug, "stale base")
+    except ArtifactStaleWrite as stale:
+        _audit(refusal_outcome(stale), existing.slug)
         return tool_failure(_stale_now(prov, existing.slug, args.get("base"), sk))
     if upd is None:
         _audit("not_found", existing.slug)
@@ -1393,6 +1394,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     # was shown and sends back through artifact_update keeps every hidden value.
     from personalclaw.artifacts.models import redacted
     from personalclaw.sel import sel
+    from personalclaw.stale_write import refusal_outcome
 
     prov = registry.get_provider("native")
     if prov is None:
@@ -1542,7 +1544,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                     prov, target, args.get("base"), sk, tool="artifact_update"
                 )
                 if refusal:
-                    _audit("denied", target.slug, "base")
+                    _audit(base_outcome(args.get("base")), target.slug)
                     return tool_failure(refusal)
             if target is not None:
                 refused = _text_refusal(
@@ -1569,7 +1571,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                 _audit("denied", mismatch.slug, str(mismatch))
                 return tool_failure(_kind_refusal(mismatch.slug, mismatch.kind))
             except ArtifactStaleWrite as stale:
-                _audit("denied", stale.slug, "stale base")
+                _audit(refusal_outcome(stale), stale.slug)
                 return tool_failure(_stale_now(prov, stale.slug, args.get("base"), sk))
             if upd is None:
                 _audit("not_found", args["slug"])
@@ -2301,7 +2303,9 @@ def _document_target(
 ) -> tuple[Any, str, Any]:
     """``(target, refusal, expectation)``: the existing artifact a document tool's call writes the
     next version of (``None`` for a new one), the sentence the call is refused with (``""`` when
-    it may go ahead) and what the store compares under its lock (:func:`_base_check`).
+    it may go ahead) and what the store compares under its lock (:func:`_base_check`). A refusal
+    that comes with a target is about the base the call names, since the call writes over that
+    target's text; one without is about its slug or its format.
 
     An explicit slug names the target. Without one, an artifact of this format with the same name
     in this turn's project does, through the very ``prov.find_similar`` call ``artifact_save``
@@ -2345,7 +2349,7 @@ def _document_target(
                 None,
             )
         return None, "", None
-    if raw_base is None or not str(raw_base).strip():
+    if not names_a_base(raw_base):
         return (
             named,
             f"{_a(fmt).capitalize()} named '{redacted(named.name)}' already exists (slug: "
@@ -2420,6 +2424,7 @@ def _document_create(
     from personalclaw.documents import available_formats, get_writer
     from personalclaw.documents.from_markup import document_from_html, document_from_markdown
     from personalclaw.documents.model import SheetModel
+    from personalclaw.stale_write import refusal_outcome
     from personalclaw.web.extract import SanitizerUnavailable
 
     fmt = _document_format(name, args)
@@ -2436,7 +2441,10 @@ def _document_create(
     # before anything is rendered: a call refused here costs no rendering.
     named, refusal, expected = _document_target(prov, name, args, fmt, sk)
     if refusal:
-        _audit("denied", named.slug if named is not None else slug, "target")
+        if named is not None:  # a write over its text, refused for the base it names
+            _audit(base_outcome(args.get("base")), named.slug)
+        else:
+            _audit("denied", slug, "target")
         return tool_failure(refusal)
     target = named.slug if named is not None else ""
     if named is not None and is_binary_kind(fmt):
@@ -2592,8 +2600,8 @@ def _document_create(
                     session_id=sk,
                     expect_revision=expected,
                 )
-        except (ArtifactStaleWrite, ArtifactVersionConflict):
-            _audit("denied", target, "stale base")
+        except (ArtifactStaleWrite, ArtifactVersionConflict) as stale:
+            _audit(refusal_outcome(stale), target)
             return tool_failure(_stale_now(prov, target, args.get("base"), sk))
         if art is None:
             _audit("not_found", target)

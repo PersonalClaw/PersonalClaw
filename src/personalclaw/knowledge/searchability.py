@@ -13,9 +13,9 @@ did not land*. Measured on ``origin/main`` before this module existed:
   ``processing_status='done'`` with **zero rows** in ``chunks`` and no item vector — the
   whole semantic half of retrieval silently absent.
 
-Both are the AnythingLLM #6143 shape ("the embedding step silently writes nothing… RAG
-retrieval returns no sources, while the app reports success") and PersonalClaw's own
-finding that model-dependent write paths fail OPEN and silently.
+Both are one failure: the embedding step silently writes nothing, and retrieval returns no
+sources while the app reports success. It is also PersonalClaw's own finding that
+model-dependent write paths fail OPEN and silently.
 
 **The contract.** One vocabulary, in one file, read by all three surfaces so they can
 never disagree:

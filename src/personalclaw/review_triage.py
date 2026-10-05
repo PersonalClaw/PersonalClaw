@@ -8,7 +8,7 @@ module is that primitive. It owns four steps and no surface:
 
 1. **Parse** a review stage's output into canonical Finding records
    (`{severity, location, problem, why, recommended_fix, status}` — the canonical Finding,
-   already the prompt contract in `workflows/bundled/shared/finding-record.md`) plus agentsystem's
+   already the prompt contract in `workflows/bundled/shared/finding-record.md`) plus an
    `auto_fixable` flag. One contract; this module adds no second schema.
 2. **Anchor** each finding against the ACTUAL unified diff before anything renders it. This is the
    step the feature lives or dies on. A finding anchored to a line the diff does not contain is
@@ -170,7 +170,7 @@ class Finding:
 def _as_bool(value: Any) -> bool:
     """`auto_fixable` from a model is a bool, "true", or absent. Absent/unknown → False.
 
-    agentsystem's own wording for the flag is "when in doubt, false", so an unparseable value
+    The flag's own rule is "when in doubt, false", so an unparseable value
     resolves to the conservative side rather than to whatever `bool()` happens to say about a
     non-empty string like "no".
     """

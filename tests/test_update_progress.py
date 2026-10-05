@@ -22,6 +22,18 @@ def _make_state(monkeypatch, tmp_path) -> DashboardState:
     )
 
 
+async def _settled(state: DashboardState) -> None:
+    """Wait until the work a request handed to the background has finished.
+
+    Every update, restart and simulation the handlers start is a task the dashboard holds
+    (``state._background_tasks``), so this waits for exactly that work, however long a busy host
+    takes to run it. A fixed sleep only guessed how long that is, and on a loaded host the
+    assertions after it read the pipeline halfway through.
+    """
+    while state._background_tasks:
+        await asyncio.gather(*state._background_tasks)
+
+
 def _pin_updates(monkeypatch, upd, *, channel: str = "stable", pin: str = "") -> None:
     """Pin the `updates` channel/pin the git apply reads, hermetically —
     without reading (or creating) the real home. Only the `updates` block is
@@ -128,8 +140,7 @@ class TestUpdateEndpoints:
         data = json.loads(resp.body)
         assert data["status"] == "simulating"
 
-        # Let the background task run
-        await asyncio.sleep(0.2)
+        await _settled(state)
 
         assert "pulling" in steps_seen
         assert "installing" in steps_seen
@@ -166,7 +177,7 @@ class TestUpdateEndpoints:
         request.json = AsyncMock(return_value={"delay": 0.01, "fail_at": "building"})
 
         await api_update_simulate(request)
-        await asyncio.sleep(0.15)
+        await _settled(state)
 
         assert "pulling" in steps_seen
         assert "installing" in steps_seen
@@ -284,7 +295,7 @@ class TestUpdateEndpoints:
         assert resp.status == 200
         assert data["status"] == "restarting"
         # The background task runs the (mocked) re-exec.
-        await asyncio.sleep(0.05)
+        await _settled(state)
         assert reexec_called == [True]
 
     @pytest.mark.asyncio
@@ -403,7 +414,7 @@ class TestUpdateApplyPipeline:
         resp = await upd.api_update_apply(self._make_request(state))
         assert resp.status == 200
         assert json.loads(resp.body)["status"] == "updating"
-        await asyncio.sleep(0.05)
+        await _settled(state)
 
         assert steps_seen == ["pulling", "installing", "building", "restarting"]
         # The git kind rode the release TAG — never a pull or a reset.
@@ -475,7 +486,7 @@ class TestUpdateApplyPipeline:
 
         resp = await upd.api_update_apply(self._make_request(state))
         assert resp.status == 200
-        await asyncio.sleep(0.05)
+        await _settled(state)
 
         # The installer's own reason reaches the panel, not a bare label, and so does where that
         # left the checkout: back on the release it was on.
@@ -533,7 +544,7 @@ class TestUpdateApplyPipeline:
 
         resp = await upd.api_update_apply(request)
         assert resp.status == 200
-        await asyncio.sleep(0.05)
+        await _settled(state)
         # Restart-only path: 'restarting' fired, 'pulling' never did, and no
         # git subprocess (pull/status) ran.
         assert "restarting" in steps_seen
@@ -593,7 +604,7 @@ class TestUpdateApplyPipeline:
 
         resp = await upd.api_update_apply(self._make_request(state))
         data = json.loads(resp.body)
-        await asyncio.sleep(0.05)
+        await _settled(state)
 
         assert data.get("status") == "restarting", data
         assert data["detail"] == f"{note} — restarting…"
@@ -657,7 +668,7 @@ class TestUpdateApplyPipeline:
         resp = await upd.api_update_apply(self._make_request(state))
         assert resp.status == 200
         data = json.loads(resp.body)
-        await asyncio.sleep(0.05)
+        await _settled(state)
         fe_build.assert_not_awaited()
         assert upd._apply_in_flight is False
         return data, steps_seen, reexec_calls, commands

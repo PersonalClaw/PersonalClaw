@@ -1,6 +1,6 @@
 """Template macros — one-liner orchestration patterns that expand into core nodes.
 
-The engine deliberately has twelve node kinds and no more. Every pattern the ultracode
+The engine deliberately has twelve node kinds and no more. Every pattern an orchestration
 harness reaches for — a judge panel, adversarial verification, intent routing, a multi-modal
 research sweep — is a COMPOSITION of those kinds, not a new kind. That is the whole bet of
 orchestration as composition: adding `judge_panel` as a thirteenth node kind would

@@ -2,7 +2,7 @@
 
 PClaw's editable state lives on disk (config.json, agents/, skills/, lessons). When a
 file changes *out of band* (edited on disk, by another tool, by an agent), the UI
-should refresh — the OpenForge filesystem-as-truth loop. This generalizes the
+should refresh, because the file on disk is the truth. This generalizes the
 knowledge watcher (poll + content-hash; no `watchdog` dependency) over the editable
 config trees and broadcasts a per-file ``changed`` event on a per-resource SSE feed
 (transport doctrine), which the UI subscribes to.

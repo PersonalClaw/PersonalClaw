@@ -54,7 +54,7 @@ def config_dir() -> Path:
 
 
 class Tier(enum.IntEnum):
-    """Probe tiers (ClawX three-tier readiness, extended per-capability).
+    """Probe tiers: a three-step readiness ladder, then a tier of per-capability packs.
 
     Ordered so a lower tier gates the higher ones: if tier 2 (cheap RPC) fails,
     tier-3 capability packs are not run — the gateway itself is the problem.
@@ -1990,8 +1990,8 @@ async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
 
     🔴 WHY THIS EXISTS. Measured before this was fixed: an image-only PDF and a document ingested
     with no embedding provider both persisted ``processing_status='done'`` while part of
-    retrieval could not see either — the AnythingLLM #6143 shape, where the app reports
-    success and RAG returns no sources. The ingest runner now persists ``unsearchable`` + a
+    retrieval could not see either: the app reports success while retrieval returns no
+    sources. The ingest runner now persists ``unsearchable`` + a
     typed reason instead; this is the surface that makes those items VISIBLE rather than a
     status value in a table nobody opens.
 
