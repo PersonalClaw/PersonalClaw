@@ -41,6 +41,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from mcp_owner_allowed import confirmed
 
 from personalclaw import mcp_client, mcp_discovery
+from personalclaw.cancellation import settle
 from personalclaw.dashboard.handlers import mcp as mcp_handlers
 from personalclaw.dashboard.handlers import tools as tools_handlers
 from personalclaw.tool_providers import registry as tool_registry
@@ -144,9 +145,7 @@ async def _tools_page(monkeypatch) -> AsyncIterator[TestClient]:
 
 async def _settled(http: TestClient) -> None:
     """Every probe a write or a read started, finished."""
-    tasks = http.app["state"]._background_tasks
-    while tasks:
-        await asyncio.gather(*list(tasks), return_exceptions=True)
+    await settle(http.app["state"]._background_tasks)
 
 
 async def _row(http: TestClient, name: str) -> dict[str, Any]:

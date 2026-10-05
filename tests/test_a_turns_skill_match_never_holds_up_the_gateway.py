@@ -16,6 +16,7 @@ from __future__ import annotations
 import time
 
 import pytest
+from fakes import held_workers
 
 import personalclaw.skills.surfacing as surf
 from personalclaw.agents.native.tool_vectors import ToolVectors
@@ -105,13 +106,17 @@ def test_the_next_turn_matches_by_meaning_with_the_vectors_the_index_filled(serv
 def test_a_message_the_model_does_not_embed_in_time_is_matched_by_triggers_and_says_so(
     server, index, monkeypatch
 ):
-    """🔴 Red before: the turn waited for the model however long it took."""
+    """🔴 Red before: the turn waited for the model however long it took.
+
+    The embed the budget stopped waiting for runs on to its end, and records its call there, so it
+    is let finish before the test ends (``held_workers``)."""
     _surface("warm the index")
     assert index.drain(timeout=10)
     monkeypatch.setattr(surf, "QUERY_EMBED_BUDGET_SECS", 0.1, raising=False)
     server.secs = 1.5
 
-    rows, took = _surface("what did the three kitchen renovation quotes say", explain=True)
+    with held_workers():
+        rows, took = _surface("what did the three kitchen renovation quotes say", explain=True)
 
     assert took < 0.6, f"matching a turn's skills waited {took:.2f}s past a 0.1s budget"
     assert all(

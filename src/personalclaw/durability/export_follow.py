@@ -28,19 +28,17 @@ logger = logging.getLogger(__name__)
 
 #: How long a write that found the hourly export running waits to be exported again.
 RETRY_SECS = 2.0
-
-
-def _later(delay: float, work: Callable[[], object]) -> None:
-    timer = threading.Timer(delay, work)
-    timer.daemon = True
-    timer.start()
+#: How long a stop waits for a re-export that is already running before it carries on.
+STOP_WAIT_SECS = 5.0
 
 
 class ExportFollower:
     """Re-exports a followed store's shard as soon as a write to it lands.
 
     ``later(delay, work)`` runs *work* after *delay* seconds, off the writer's thread: the retry
-    after a busy export, and the catch-up :func:`install` asks for. A test passes one it drives.
+    after a busy export, and the catch-up :func:`install` asks for. A test passes one it drives;
+    otherwise each runs on a timer the follower holds until it has run, so :meth:`stop` can take
+    it back.
     """
 
     def __init__(
@@ -57,7 +55,7 @@ class ExportFollower:
         except OSError:
             self._root = self._home
         self._retry_secs = retry_secs
-        self._later = later or _later
+        self._later = later or self._on_a_timer
         self._followed = tuple(e for e in inv.shard_entries() if e.exported_on_write)
         #: The first part of each followed store's path: a write whose path holds none of them is
         #: passed over without a look at the disk.
@@ -65,6 +63,8 @@ class ExportFollower:
         self._lock = threading.Lock()
         self._pending: set[str] = set()
         self._retrying = False
+        self._timers: set[threading.Timer] = set()
+        self._stopped = threading.Event()
         #: How many re-exports ran, and how many times one waited for the hourly job.
         self.exports = 0
         self.retries = 0
@@ -131,7 +131,40 @@ class ExportFollower:
         self.exports += 1
         return pending
 
+    def stop(self) -> None:
+        """Stop: a re-export waiting for its time never runs, and one already running is waited
+        for, at most :data:`STOP_WAIT_SECS`. A gateway's stop uninstalls its follower, and a retry
+        the follower left waiting used to run after it, in whatever home was current by then."""
+        self._stopped.set()
+        with self._lock:
+            timers = list(self._timers)
+        for timer in timers:
+            timer.cancel()
+            if timer is not threading.current_thread():
+                timer.join(STOP_WAIT_SECS)
+
+    def _on_a_timer(self, delay: float, work: Callable[[], object]) -> None:
+        """Run *work* after *delay* seconds on a timer this follower holds until it has run."""
+        timer: threading.Timer
+
+        def run() -> None:
+            try:
+                work()
+            finally:
+                with self._lock:
+                    self._timers.discard(timer)
+
+        timer = threading.Timer(delay, run)
+        timer.daemon = True
+        with self._lock:
+            if self._stopped.is_set():
+                return
+            self._timers.add(timer)
+        timer.start()
+
     def _flush_quietly(self) -> None:
+        if self._stopped.is_set():
+            return
         try:
             self.flush()
         except Exception:  # noqa: BLE001 — off the writer's thread, with no caller to tell
@@ -173,7 +206,9 @@ def install(*, home: Path) -> ExportFollower:
 
 
 def uninstall() -> None:
-    """Stop following. Safe to call when nothing is installed."""
+    """Stop following: no write is followed from here on, and nothing the follower was waiting to
+    re-export runs after it (:meth:`ExportFollower.stop`). Safe to call when nothing is installed.
+    """
     global _installed
     from personalclaw.atomic_write import unregister_post_write_hook
 
@@ -181,3 +216,4 @@ def uninstall() -> None:
         follower, _installed = _installed, None
     if follower is not None:
         unregister_post_write_hook(follower.notify)
+        follower.stop()

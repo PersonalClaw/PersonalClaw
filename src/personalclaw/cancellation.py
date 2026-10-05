@@ -39,7 +39,7 @@ import os
 import signal
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
-from typing import Any, Iterable, Iterator
+from typing import Any, Collection, Iterable, Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -407,6 +407,21 @@ async def cancel_and_wait(
             ", ".join(sorted(_task_label(task) for task in left)),
         )
     return left
+
+
+async def settle(held: Collection[asyncio.Future[Any]]) -> None:
+    """Wait until every task in *held* has finished, one added to it while this waits included.
+
+    *held* is a collection its tasks leave by a done callback (``task.add_done_callback(
+    held.discard)``), the way the gateway holds the work it starts in the background. This waits
+    for the tasks, never for *held* to empty: a task that has just finished is still in it until
+    its callback runs, on the loop's next pass, and gathering only finished tasks returns without
+    giving the loop that pass (asyncio completes such a gather at once). A wait that looped until
+    *held* emptied never let the callbacks it waited for run, and spun forever. A task's error is
+    its own and is not raised here; the caller being cancelled while it waits is.
+    """
+    while pending := [task for task in held if not task.done()]:
+        await asyncio.gather(*pending, return_exceptions=True)
 
 
 #: How often :func:`wait_for_unpaused` reads its clock. Short, because a tick is also how it sees

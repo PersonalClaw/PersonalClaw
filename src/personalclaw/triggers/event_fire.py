@@ -36,6 +36,7 @@ import logging
 import time
 from typing import Any, Awaitable, Callable
 
+from personalclaw import cancellation
 from personalclaw.event_triggers import BusEvent, fire_payload
 
 logger = logging.getLogger(__name__)
@@ -116,11 +117,11 @@ class EventRouter:
     async def settle(self) -> None:
         """Wait until every event handed over so far — and every fire it started — has finished.
 
-        Shutdown awaits it, and so do the tests: a caller that asserts on a fire must first know the
-        fire is over, and polling for a side effect is how a slow run reads as a missing one.
+        The tests await it: a caller that asserts on a fire must first know the fire is over, and
+        polling for a side effect is how a slow run reads as a missing one. A stopping gateway
+        cancels what is still running instead (`GatewayOrchestrator._stop_event_triggers`).
         """
-        while self._pending:
-            await asyncio.gather(*list(self._pending), return_exceptions=True)
+        await cancellation.settle(self._pending)
 
     # ── the gateway's side ──
 

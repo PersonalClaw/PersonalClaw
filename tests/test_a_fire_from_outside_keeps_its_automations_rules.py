@@ -22,7 +22,6 @@ its row is a fire's and the streak pauses it. Run now is the owner's, and stays 
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +30,7 @@ import pytest
 from signed_in_gateway import Gateway, signed_in_gateway
 
 from personalclaw.action_providers.base import ActionResult
+from personalclaw.cancellation import settle
 from personalclaw.triggers.models import Trigger
 from personalclaw.triggers.store import TriggerStore
 
@@ -98,8 +98,7 @@ async def _sender(gw: Gateway) -> str:
 
 async def _settle(gw: Gateway) -> None:
     """Wait for every fire the gateway started to end, its claim given back."""
-    while gw.state._background_tasks:
-        await asyncio.gather(*list(gw.state._background_tasks), return_exceptions=True)
+    await settle(gw.state._background_tasks)
 
 
 async def _fire(gw: Gateway, token: str) -> tuple[int, Any]:

@@ -30,6 +30,7 @@ from personalclaw import channel_delivery
 from personalclaw import channel_inbound as ci
 from personalclaw import channel_transports
 from personalclaw import channel_trust as ct
+from personalclaw.cancellation import settle
 from personalclaw.channel_transports.base import ChannelMessage, ChannelTransportProvider
 from personalclaw.config.credentials import owner_id_credential, save_credential
 from personalclaw.config.loader import CRED_OWNER_ID, AppConfig
@@ -148,8 +149,7 @@ class _Gateway:
 
     async def settled(self) -> None:
         """Wait for what the gateway runs on its own: the door's turn, a note to a thread."""
-        while self.state._background_tasks:
-            await asyncio.wait_for(asyncio.gather(*set(self.state._background_tasks)), timeout=10)
+        await asyncio.wait_for(settle(self.state._background_tasks), timeout=10)
 
     async def message(
         self, provider: str, text: str, *, channel: str, thread: str, sender: str, answer: str = ""

@@ -60,6 +60,7 @@ from typing import Any, Awaitable, Callable
 
 from aiohttp import web
 
+from personalclaw import cancellation
 from personalclaw.http_errors import json_error
 from personalclaw.inbound import auth, tokens
 from personalclaw.inbound.audit import audit
@@ -528,11 +529,9 @@ def _schedule_record(**kwargs: Any) -> None:
 
 
 async def drain_recordings() -> None:
-    """Await every in-flight recording. For shutdown flush and for tests that assert a
-    record eventually landed without asserting *when* — the whole point being that the
-    response did not wait for it."""
-    while _pending:
-        await asyncio.gather(*tuple(_pending), return_exceptions=True)
+    """Await every in-flight recording. For tests that assert a record eventually landed
+    without asserting *when* — the whole point being that the response did not wait for it."""
+    await cancellation.settle(_pending)
 
 
 # ── Handlers ──────────────────────────────────────────────────────────────────

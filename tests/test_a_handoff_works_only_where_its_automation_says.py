@@ -16,7 +16,6 @@ only a workflow step's reads its run's folder, which the engine gives it.
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -30,6 +29,7 @@ import personalclaw.proposer.service as proposer
 from personalclaw.action_providers.base import WORKFLOW_STEP_EVENT, ActionContext
 from personalclaw.action_providers.check_work_provider import CheckWorkActionProvider
 from personalclaw.action_providers.second_opinion_provider import SecondOpinionActionProvider
+from personalclaw.cancellation import settle
 from personalclaw.hooks import ScriptHook, run_script_hook
 from personalclaw.triggers.models import Trigger
 from personalclaw.triggers.store import TriggerStore
@@ -137,8 +137,7 @@ async def _post_naming_a_folder(gw: Gateway) -> tuple[int, Any]:
             headers={"Authorization": f"Bearer {made['token']}"},
         )
         answer = resp.status, await resp.json(content_type=None)
-    while gw.state._background_tasks:
-        await asyncio.gather(*list(gw.state._background_tasks), return_exceptions=True)
+    await settle(gw.state._background_tasks)
     return answer
 
 

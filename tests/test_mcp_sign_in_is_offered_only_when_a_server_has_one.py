@@ -38,6 +38,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from mcp_owner_allowed import allow_configured
 
 from personalclaw import mcp_client, mcp_discovery
+from personalclaw.cancellation import settle
 from personalclaw.config import loader as config_loader
 from personalclaw.config.secret_refs import write_mcp_document
 from personalclaw.dashboard.handlers import mcp as mcp_handlers
@@ -217,9 +218,7 @@ async def test_a_sign_in_it_refuses_probes_it_again_so_the_card_says_why(
         assert resp.status == 409, await resp.text()
         refusal = (await resp.json())["error"]
         assert refusal["code"] == "mcp_sign_in_not_offered"
-        tasks = app["state"]._background_tasks
-        while tasks:
-            await asyncio.gather(*list(tasks), return_exceptions=True)
+        await settle(app["state"]._background_tasks)
         after = await row(http)
         assert after["status"] == "error" and "auth" not in after, after
         assert after["error"] == refusal["message"], "the card says what the refusal said"

@@ -21,6 +21,7 @@ from types import SimpleNamespace
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
+from fakes import held_workers
 
 from personalclaw.agents import routing
 from personalclaw.agents.native.tool_vectors import ToolVectors
@@ -138,14 +139,18 @@ async def test_a_health_check_answers_while_a_send_is_routed(server, gateway, in
 async def test_a_send_does_not_wait_past_the_budget_and_routes_by_hints(
     server, gateway, index, monkeypatch, caplog
 ):
-    """🔴 Red before: the send waited for the model however long it took."""
+    """🔴 Red before: the send waited for the model however long it took.
+
+    The embed the budget stopped waiting for runs on to its end, and records its call there, so it
+    is let finish before the test ends (``held_workers``)."""
     state, app = gateway
-    async with TestClient(TestServer(app)) as client:
-        await _warm(client, state, index)
-        monkeypatch.setattr(routing, "QUERY_EMBED_BUDGET_SECS", 0.2, raising=False)
-        server.secs = 2.0
-        with caplog.at_level(logging.INFO, logger="personalclaw.agents.routing"):
-            body, took = await _send(client, state, "chat-1", SAID)
+    with held_workers():
+        async with TestClient(TestServer(app)) as client:
+            await _warm(client, state, index)
+            monkeypatch.setattr(routing, "QUERY_EMBED_BUDGET_SECS", 0.2, raising=False)
+            server.secs = 2.0
+            with caplog.at_level(logging.INFO, logger="personalclaw.agents.routing"):
+                body, took = await _send(client, state, "chat-1", SAID)
 
     assert took < 0.8, f"the send answered in {took:.2f}s, past a 0.2s budget"
     suggestion = body["routing_suggestion"]

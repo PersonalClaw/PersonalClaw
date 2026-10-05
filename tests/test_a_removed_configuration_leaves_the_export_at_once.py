@@ -209,12 +209,11 @@ def test_the_next_sync_carries_the_removal_and_no_cycle_carries_the_token(home):
         assert not [k for k, data in published.items() if TOKEN.encode() in data]
 
 
-def test_the_durability_service_follows_configuration_writes_with_auto_backup(home, monkeypatch):
+def test_the_durability_service_follows_configuration_writes_with_auto_backup(home):
     from personalclaw.atomic_write import post_write_hooks
     from personalclaw.durability import export_follow
     from personalclaw.durability.service import DurabilityService
 
-    monkeypatch.setattr(export_follow, "_later", Later())
     service = DurabilityService()
     try:
         service._install_export_follower()
@@ -223,3 +222,34 @@ def test_the_durability_service_follows_configuration_writes_with_auto_backup(ho
     finally:
         service.stop()
     assert export_follow._installed is None
+
+
+def test_a_stopped_follower_leaves_no_re_export_waiting(home, monkeypatch):
+    """A write that finds the export busy is re-exported on a timer, ``RETRY_SECS`` later. The
+    gateway's stop uninstalls the follower, and a retry it left waiting used to run after the
+    stop, in whatever home was current by then (in the suite, another test's: its guard refused
+    it). Uninstalling takes the waiting re-export back."""
+    import threading
+
+    from personalclaw.concurrency import single_flight
+    from personalclaw.durability import export_follow
+
+    started: list[threading.Timer] = []
+
+    class _Recorded(threading.Timer):
+        def start(self) -> None:
+            started.append(self)
+            super().start()
+
+    monkeypatch.setattr(threading, "Timer", _Recorded)
+    try:
+        # The hourly export holds it from before the gateway starts following, so its catch-up
+        # and the write after it both find it busy, and the re-export waits for its timer.
+        with single_flight("durability:export") as holding:
+            assert holding, "premise: the export is held"
+            follower = export_follow.install(home=home)
+            follower.flush()
+        assert follower.retries >= 1 and started, "premise: a re-export waits on a timer"
+    finally:
+        export_follow.uninstall()
+    assert [timer for timer in started if timer.is_alive()] == [], "a re-export still waits"

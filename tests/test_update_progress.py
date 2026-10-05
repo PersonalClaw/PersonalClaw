@@ -10,6 +10,7 @@ from aiohttp import web
 
 from personalclaw import checkout_update
 from personalclaw import self_update as su
+from personalclaw.cancellation import settle
 from personalclaw.dashboard.state import DashboardState
 
 
@@ -30,8 +31,7 @@ async def _settled(state: DashboardState) -> None:
     takes to run it. A fixed sleep only guessed how long that is, and on a loaded host the
     assertions after it read the pipeline halfway through.
     """
-    while state._background_tasks:
-        await asyncio.gather(*state._background_tasks)
+    await settle(state._background_tasks)
 
 
 def _pin_updates(monkeypatch, upd, *, channel: str = "stable", pin: str = "") -> None:

@@ -32,6 +32,7 @@ from aiohttp.test_utils import make_mocked_request
 from signed_in_gateway import Gateway, signed_in_gateway
 
 from personalclaw.action_providers.base import ActionResult
+from personalclaw.cancellation import settle
 from personalclaw.dashboard.handlers import hooks as hooks_mod
 from personalclaw.triggers.models import Trigger
 from personalclaw.triggers.store import TriggerStore
@@ -96,8 +97,7 @@ async def _post(gw: Gateway, token: str, name: str | None = None) -> tuple[int, 
             gw.url(f"/api/triggers/{AUTOMATION}/fire"), data=b"build 214 passed", headers=headers
         )
         answer = resp.status, await resp.json(content_type=None)
-    while gw.state._background_tasks:
-        await asyncio.gather(*list(gw.state._background_tasks), return_exceptions=True)
+    await settle(gw.state._background_tasks)
     return answer
 
 

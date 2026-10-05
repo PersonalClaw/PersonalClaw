@@ -685,11 +685,22 @@ def _reset_trust_mode():
     ``personalclaw.trust_mode`` is a deliberate process singleton (one auto-approve
     posture per gateway). Tests that flip it must not leak into the next test, so we
     force it OFF before and after each test.
+
+    Its list of switch-off callbacks is put back as the test found it, too, and before the
+    closing switch-off, so no callback a finished test registered runs again. Every
+    ``DashboardState`` registers one (a gateway makes one state, for its whole life), and a
+    state a test made used to stay registered, and alive, for the rest of its worker: each
+    later switch-off ran every earlier test's callback over the sessions that test had left
+    in its state. One left a mock session, whose mock key the callback's session-key rule
+    (``constants.dashboard_key_from_file_form``) strips forever; the worker's memory grew
+    until the kernel killed it, or the test ran out of time.
     """
     import personalclaw.trust_mode as _tm
 
     _tm._TRUST.disable()
+    registered = list(_tm._TRUST._on_disable)
     yield
+    _tm._TRUST._on_disable[:] = registered
     _tm._TRUST.disable()
 
 
