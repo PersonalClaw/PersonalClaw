@@ -91,6 +91,10 @@ LOOP_MODE = "loop_mode"
 #: covers the start only; the agent's own calls ask as any agent's do
 #: (`triggers.grants.allows_its_agent`).
 TRIGGER = "trigger_grant"
+#: The owner allowed this heartbeat task (the Triggers page's Allow, or her own save of it in the
+#: Files editor): it runs with her agent's tools, with nobody watching (``heartbeat.consent``), and
+#: each call it makes is approved on that yes, once the deny-list and her blocking hooks let it.
+HEARTBEAT_TASK = "heartbeat_task"
 #: The owner's Settings → Agent defaults → Approval mode "Auto", for an agent no chat started. The
 #: mode ships asking, so this stands only once the owner has chosen it (:func:`setting_grant`).
 SETTING = "setting"

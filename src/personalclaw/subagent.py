@@ -21,7 +21,14 @@ from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol, TypeGuard
 
-from personalclaw import approval_grants, memory_writes, run_bounds, session_keys, subagent_waiting
+from personalclaw import (
+    approval_grants,
+    memory_writes,
+    pre_tool_hooks,
+    run_bounds,
+    session_keys,
+    subagent_waiting,
+)
 from personalclaw.approval_grants import ToolDecision, decision_of
 from personalclaw.cancellation import cancel_and_wait
 from personalclaw.config.loader import AppConfig
@@ -2265,6 +2272,13 @@ class SubagentManager:
                     if await counted(info, event, call_id):
                         info.result = result_text or "_Partial output._"
                         return
+                    # Every answer below is given on this call's own request, and audited once.
+                    approve = partial(
+                        self._approve_and_log, client, event.request_id, session_key, event
+                    )
+                    refuse = partial(
+                        self._reject_and_log, client, event.request_id, session_key, event
+                    )
                     # The spawn's TOOL GRANTS decide, and they are enforced HERE, at the
                     # tool-approval layer, BEFORE any auto-approve branch below can admit the call.
                     # Placement is load-bearing: an auto-fired research run resolves
@@ -2284,11 +2298,7 @@ class SubagentManager:
                     )
                     if _grant_deny:
                         tier.refused(call_id, event.title or "", _grant_deny, limit=True)
-                        await self._reject_and_log(
-                            client,
-                            event.request_id,
-                            session_key,
-                            event,
+                        await refuse(
                             decided_by="tool_grants",
                             error="tool_grants_deny",
                             metadata={
@@ -2311,15 +2321,35 @@ class SubagentManager:
                             call_id, event.title or "", tool_result.reason or "a hook blocked it"
                         )
                         control = tool_result.audit()
-                        await self._reject_and_log(
-                            client,
-                            event.request_id,
-                            session_key,
-                            event,
+                        await refuse(
                             decided_by=control.get("control", "hook_deny"),
                             error="hook_deny",
                             metadata={"subagent_id": info.id, **control},
                             refused=bool(control),
+                        )
+                        continue
+                    # The operator's blocking hooks, bound to the agent this one runs as, at the one
+                    # step every path asks them (`pre_tool_hooks`): before a grant below, or a
+                    # person, can approve the call. A hook that blocks it, or fails to run, refuses
+                    # it here. A call its own runtime asks about met them there.
+                    hooks_said = await pre_tool_hooks.on_request(
+                        event,
+                        agent=agent or None,
+                        store=self.hook_store,
+                        subagent_id=info.id,
+                        parent_session_key=info.parent_session_key,
+                    )
+                    if hooks_said.refused:
+                        tier.refused(call_id, event.title or "", hooks_said.note)
+                        await client.reject_tool(event.request_id)
+                        sel().log_tool_invocation(
+                            session_key=session_key,
+                            source="subagent",
+                            tool_name=event.title,
+                            tool_kind=event.tool_kind,
+                            request_id=event.request_id,
+                            tool_input=event.tool_input,
+                            **hooks_said.audit_row(subagent_id=info.id),
                         )
                         continue
                     # The operator's own hook pattern is a grant too, and "a hook decides" is a
@@ -2331,11 +2361,7 @@ class SubagentManager:
                         subject=_redact(event.title or "")[:80],
                         level=approval_grants.LEVEL_HOOK,
                     ):
-                        await self._approve_and_log(
-                            client,
-                            event.request_id,
-                            session_key,
-                            event,
+                        await approve(
                             decided_by=approval_grants.HOOK_PATTERN,
                             metadata={"subagent_id": info.id, "reason": "hook_auto_approve"},
                         )
@@ -2348,11 +2374,7 @@ class SubagentManager:
                     # call, so it is answered here, past the grants and hooks above, and never
                     # relayed to a person.
                     if unasked := approval_grants.declared_answer(event):
-                        await self._approve_and_log(
-                            client,
-                            event.request_id,
-                            session_key,
-                            event,
+                        await approve(
                             decided_by=unasked,
                             metadata={"subagent_id": info.id, "reason": unasked},
                         )
@@ -2362,11 +2384,7 @@ class SubagentManager:
                     # started) and bounded by the ceiling.
                     grant = "" if off_list else self._grant_now(info, audit=True)
                     if grant:
-                        await self._approve_and_log(
-                            client,
-                            event.request_id,
-                            session_key,
-                            event,
+                        await approve(
                             decided_by=grant,
                             metadata={"subagent_id": info.id, "reason": "parent_policy_auto"},
                         )
@@ -2394,22 +2412,14 @@ class SubagentManager:
                         tier.refused(
                             call_id, event.title or "", "nobody could approve it", limit=True
                         )
-                        await self._reject_and_log(
-                            client,
-                            event.request_id,
-                            session_key,
-                            event,
+                        await refuse(
                             decided_by="no_approval_mechanism",
                             metadata={"subagent_id": info.id, "reason": "no_policy_deny_default"},
                         )
                         continue
                     if not decision:
                         tier.declined(call_id, event, decision)
-                        await self._reject_and_log(
-                            client,
-                            event.request_id,
-                            session_key,
-                            event,
+                        await refuse(
                             decided_by=decision.decided_by,
                             unanswered=(
                                 decision.outcome
@@ -2419,11 +2429,7 @@ class SubagentManager:
                             metadata={"subagent_id": info.id},
                         )
                         continue
-                    await self._approve_and_log(
-                        client,
-                        event.request_id,
-                        session_key,
-                        event,
+                    await approve(
                         decided_by=decision.decided_by,
                         metadata={"subagent_id": info.id},
                     )

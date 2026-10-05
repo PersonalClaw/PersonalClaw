@@ -15,6 +15,7 @@ from personalclaw import (
     memory_locality,
     memory_reads,
     memory_writes,
+    pre_tool_hooks,
     run_bounds,
 )
 from personalclaw.acp import permission_authority as acp_permission_authority
@@ -119,7 +120,6 @@ from personalclaw.hooks import (
     HOOK_EVENT_AGENT_SPAWN,
     HOOK_EVENT_ERROR,
     HOOK_EVENT_POST_TOOL_USE,
-    HOOK_EVENT_PRE_TOOL_USE,
     HOOK_EVENT_SESSION_START,
     HOOK_EVENT_STOP,
     HOOK_EVENT_USER_PROMPT_SUBMIT,
@@ -2371,6 +2371,30 @@ async def run_chat(
             logger.debug("trigger-id resolution failed for session %s", session.key, exc_info=True)
             return []
 
+    def _show_hook_results(results: list[Any]) -> None:
+        """Each hook's result on the chat's activity line: the context it added, by its size, and
+        a block, in its words masked."""
+        for r in results:
+            if r.exit_code == 0 and r.stdout:
+                state.broadcast_ws(
+                    "activity_event",
+                    {
+                        "session": session.key,
+                        "kind": "hook",
+                        "text": f"Hook {r.hook_name}: injected {len(r.stdout)} chars",
+                    },
+                )
+            elif r.exit_code == 2:
+                state.broadcast_ws(
+                    "activity_event",
+                    {
+                        "session": session.key,
+                        "kind": "hook",
+                        "text": f"Hook {r.hook_name} BLOCKED: "
+                        + (mask_child_output(r.stderr, limit=100) if r.stderr else "denied"),
+                    },
+                )
+
     async def _fire(
         event: str,
         context: str = "",
@@ -2381,13 +2405,11 @@ async def run_chat(
         """Fire script hooks. Returns stdout texts from exit-0 hooks (for context injection).
 
         Agent-scoped — only the hooks the session's agent references fire,
-        via ``fire_for_ids``. There is no global firing path.
+        via ``fire_for_ids``. There is no global firing path. Never the pre-tool hooks: a call
+        meets those at the one step every path asks them (``pre_tool_hooks``).
         """
         injected: list[str] = []
         if state._hook_store is None:
-            if event == HOOK_EVENT_PRE_TOOL_USE:
-                injected.append("BLOCKED:system:hook store not initialized")
-                logger.error("Hook store not initialized for PRE_TOOL_USE - blocking tool")
             return injected
         try:
             results = await state._hook_store.fire_for_ids(
@@ -2404,14 +2426,6 @@ async def run_chat(
                     # Its size, never its text: what a hook prints is the context it adds to the
                     # turn, and a hook can print a credential it read. The log keeps neither.
                     logger.info("Hook %s injected %d chars", r.hook_name, len(r.stdout))
-                    state.broadcast_ws(
-                        "activity_event",
-                        {
-                            "session": session.key,
-                            "kind": "hook",
-                            "text": f"Hook {r.hook_name}: injected {len(r.stdout)} chars",
-                        },
-                    )
                 elif r.exit_code == 2:
                     injected.append(
                         f"BLOCKED:{r.hook_name}:{r.stderr[:200] if r.stderr else 'hook denied'}"
@@ -2421,22 +2435,11 @@ async def run_chat(
                         r.hook_name,
                         mask_child_output(r.stderr) if r.stderr else "exit 2",
                     )
-                    state.broadcast_ws(
-                        "activity_event",
-                        {
-                            "session": session.key,
-                            "kind": "hook",
-                            "text": f"Hook {r.hook_name} BLOCKED: "
-                            + (mask_child_output(r.stderr, limit=100) if r.stderr else "denied"),
-                        },
-                    )
                 elif r.exit_code not in (0, 2) and r.stderr:
                     # Non-zero, non-block: show warning
                     logger.warning("Hook %s warning: %s", r.hook_name, mask_child_output(r.stderr))
+            _show_hook_results(results)
         except Exception as exc:
-            if event == HOOK_EVENT_PRE_TOOL_USE:
-                logger.warning("Hook fire error during blocking event %s: %s", event, exc)
-                raise
             logger.warning("Hook fire error: %s", exc)
         return injected
 
@@ -4299,7 +4302,7 @@ async def run_chat(
                 ):
                     continue
                 try:
-                    validated_tool = _validate_tool_name(event.title, event.tool_kind)
+                    _validate_tool_name(event.title, event.tool_kind)
                 except ValueError as e:
                     await _refuse_call(event, why=f"invalid tool name: {e}")
                     note_refusal(session, event, f"its tool name is invalid ({e})")
@@ -4316,51 +4319,29 @@ async def run_chat(
                         metadata={"decided_by": "validation", **_offered},
                     )
                     continue
-                # The pre-tool hooks, once, before anything can approve the call or ask about it:
-                # an operator's pattern, what the call declares, Trust reads, Trust, YOLO or a
-                # person. The built-in runtime fires them at the same point, past its deny-list
-                # and task mode and before its approval (`_guard_and_invoke`). A hook that blocks
-                # the call, or that fails to run, refuses it here.
-                try:
-                    _parsed_input = json.loads(event.tool_input) if event.tool_input else None
-                except Exception:
-                    _parsed_input = None
-                try:
-                    pre_hook_results = await _fire(
-                        HOOK_EVENT_PRE_TOOL_USE,
-                        tool_name=validated_tool,
-                        tool_input=_parsed_input,
-                    )
-                except Exception as hook_exc:
-                    await _refuse_call(event, why=turn_endings.HOOK_FAILED, kind="hook")
-                    note_refusal(session, event, turn_endings.HOOK_FAILED)
+                # The operator's blocking hooks (`pre_tool_hooks`), once, before anything can
+                # approve the call or ask about it: an operator's pattern, what the call declares,
+                # Trust reads, Trust, YOLO or a person. Every path asks them at this step, the
+                # built-in runtime included, and a call it asks about met them there. A hook that
+                # blocks the call, or that fails to run, refuses it here.
+                _hooks_said = await pre_tool_hooks.on_request(
+                    event,
+                    agent=session.agent or None,
+                    store=state._hook_store,
+                    on_results=_show_hook_results,
+                )
+                if _hooks_said.refused:
+                    await _refuse_call(event, why=_hooks_said.refusal, kind="hook")
+                    note_refusal(session, event, _hooks_said.note)
                     sel().log_tool_invocation(
                         session_key=session_key,
                         agent=_agent_label(session),
                         source="dashboard",
                         tool_name=event.title,
                         tool_kind=event.tool_kind,
-                        outcome="hook_error",
                         request_id=event.request_id,
                         tool_input=event.tool_input,
-                        error=str(hook_exc),
-                        metadata={"decided_by": "hook", **_offered},
-                    )
-                    continue
-                if any(r.startswith("BLOCKED:") for r in pre_hook_results):
-                    _blk_reason = turn_endings.blocked_reason(pre_hook_results)
-                    await _refuse_call(event, why=_blk_reason, kind="hook")
-                    note_refusal(session, event, f"a pre-tool hook blocked it ({_blk_reason})")
-                    sel().log_tool_invocation(
-                        session_key=session_key,
-                        agent=_agent_label(session),
-                        source="dashboard",
-                        tool_name=event.title,
-                        tool_kind=event.tool_kind,
-                        outcome="hook_blocked",
-                        request_id=event.request_id,
-                        tool_input=event.tool_input,
-                        metadata={"decided_by": "hook", **_offered},
+                        **_hooks_said.audit_row(**_offered),
                     )
                     continue
                 # An operator's auto-approve pattern is a grant at the `hook_based` level: a

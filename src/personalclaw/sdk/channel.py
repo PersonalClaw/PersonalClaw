@@ -231,6 +231,16 @@ from personalclaw.memory_service import MemoryService, QueryVector
 # door records each message it hands a chat (`arrived_on`). While the turn runs, what its tools
 # would change of the owner's memory waits for her own word unless that source is the owner.
 from personalclaw.memory_writes import turn_asked_by
+
+# ── The operator's blocking hooks, before any approval ──
+# A channel that runs a conversation itself asks them about each call its turn asks about, past
+# the deny-list and before it approves the call or asks anyone (`ask_pre_tool_hooks(event,
+# agent=<the agent the conversation runs as>)`), at the step every path asks them. A hook that
+# blocks the call or fails to run refuses it, and the answer (`HooksSaid`) says it in
+# PersonalClaw's own words: `.refused`, `.note` for the thread, `.audit_row()` for the call's one
+# audit row.
+from personalclaw.pre_tool_hooks import HooksSaid
+from personalclaw.pre_tool_hooks import on_channel_request as ask_pre_tool_hooks
 from personalclaw.prompt_providers.runtime import render_use_case_prompt
 from personalclaw.providers.settings import ProviderSettings
 from personalclaw.providers.use_cases import (
@@ -361,6 +371,7 @@ __all__ = [
     "GatewayServices",
     "HOOK_REPLY",
     "HistoryConsolidator",
+    "HooksSaid",
     "LINK_WINDOW_SECS",
     "LLMEvent",
     "MAX_SESSION_TTL_SECS",
@@ -403,6 +414,7 @@ __all__ = [
     "approval_brief_for",
     "approval_window_secs",
     "arrived_on",
+    "ask_pre_tool_hooks",
     "assert_channel_contract",
     "atomic_write",
     "build_cancelled_turn_preamble",

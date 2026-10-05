@@ -331,3 +331,8 @@ class AgentEvent:
     #: before it lets a file change through, so a rewind can put it back. Empty from a backend
     #: whose own tools back their files up (the native loop's). Last, so no field moves.
     named_files: tuple[str, ...] = ()
+    #: On the native loop's PERMISSION_REQUEST: the call already met the operator's blocking hooks,
+    #: at the runtime's own step (``pre_tool_hooks``), so the host that answers it does not ask them
+    #: again. False from an agent CLI, whose calls meet them at the host's gate. Last, so no field
+    #: moves.
+    hooks_asked: bool = False

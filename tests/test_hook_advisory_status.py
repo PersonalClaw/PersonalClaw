@@ -7,8 +7,8 @@ and the out-of-workspace write it claimed to block landed on disk. Driven twice,
 `HOOKED`). Worse than inert: it reported success.
 
 `ActionResult.blocked` is a *request* ("PreToolUse exit_code 2 is a block signal"), and only
-`fire_for_ids` — whose two callers turn it into the `BLOCKED:` sentinel — converts that request
-into a refusal. So the status is written per FIRE, not per exit code.
+`fire_for_ids` — whose one pre-tool caller, `pre_tool_hooks`, turns it into the call's refusal —
+converts that request into a refusal. So the status is written per FIRE, not per exit code.
 
 The three states an operator must be able to tell apart from the trigger surface, each pinned
 below:
@@ -112,8 +112,8 @@ def test_stop_hook_exit_two_is_advisory_on_either_path(tmp_path):
 
 
 def test_gating_fire_records_blocked(tmp_path):
-    """`fire_for_ids` + a blocking event: `chat_runner._fire` / `provider_bridge.hook_fire` turn
-    this exit 2 into the `BLOCKED:` sentinel, so the block really happened."""
+    """`fire_for_ids` + a blocking event: the one step every path asks (`pre_tool_hooks`) turns
+    this exit 2 into the call's refusal, so the block really happened."""
     store, hook = _store(tmp_path)
     asyncio.run(store.fire_for_ids(HOOK_EVENT_PRE_TOOL_USE, [hook.id], tool_name="write_file"))
     assert hook.last_status == "blocked"
@@ -121,16 +121,22 @@ def test_gating_fire_records_blocked(tmp_path):
 
 def test_only_gating_callers_exist():
     """A census, not a style check: `enforced=True` is asserted by `fire_for_ids` on behalf of its
-    callers, so a caller that does NOT gate on exit 2 would make the status a lie again. Both
-    known call sites carry the `BLOCKED:` sentinel; a third one fails here and must prove it gates
-    (or use `fire()`)."""
+    callers, so a caller that does NOT gate on exit 2 would make the status a lie again.
+
+    The one blocking event, `PreToolUse`, is fired through `fire_for_ids` at one step
+    (`pre_tool_hooks`), whose exit 2 refuses the call. The chat runner fires the turn's other
+    lifecycle events through it, none of which can block, and never `PreToolUse`. A third caller
+    fails here and must prove it gates (or use `fire()`)."""
+    import ast
+
     root = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
     callers = {p for p in root.rglob("*.py") if ".fire_for_ids(" in p.read_text(encoding="utf-8")}
-    assert {p.name for p in callers} == {"chat_runner.py", "provider_bridge.py"}
-    for path in callers:
-        assert "BLOCKED:{r.hook_name}" in path.read_text(
-            encoding="utf-8"
-        ), f"{path.name} fires the gating seam but does not raise the BLOCKED sentinel"
+    assert {p.name for p in callers} == {"chat_runner.py", "pre_tool_hooks.py"}
+    step = (root / "pre_tool_hooks.py").read_text(encoding="utf-8")
+    assert "HOOK_EVENT_PRE_TOOL_USE" in step and "== _BLOCKS" in step, "the step must gate exit 2"
+    chat_runner = ast.parse((root / "dashboard" / "chat_runner.py").read_text(encoding="utf-8"))
+    names = {n.id for n in ast.walk(chat_runner) if isinstance(n, ast.Name)}
+    assert "HOOK_EVENT_PRE_TOOL_USE" not in names, "the chat runner fires the pre-tool hooks itself"
 
 
 # ── the trigger surface: what an operator reads ──

@@ -63,6 +63,15 @@ CHAT_TRUST = "chat-trust"
 #: has no ``screen_tool_call``, so an app that imports it does not load.
 TOOL_CALL_SCREEN = "tool-call-screen"
 
+#: A channel that runs a conversation itself asks the operator's blocking hooks about each call its
+#: turn asks about, past the deny-list and before it approves the call or asks anyone, at the step
+#: every path in core asks them: ``await ask_pre_tool_hooks(event, agent=<the agent the
+#: conversation runs as>)`` fires the ``PreToolUse`` hooks bound to that agent and answers whether
+#: the call is refused (``.refused``), why in core's words (``.note``) and its audit row's fields
+#: (``.audit_row()``). A hook that blocks the call or fails to run refuses it. A core without it has
+#: no ``ask_pre_tool_hooks``, so an app that imports it does not load.
+PRE_TOOL_HOOKS = "pre-tool-hooks"
+
 #: A chat's link to a channel thread names the channel the thread is on, and that is where the
 #: chat answers: ``link_channel(chat, thread, channel_id, provider=…)`` on the dashboard state a
 #: channel is handed links a chat there (moving it off any thread it was on; the owner's own DM it
@@ -136,6 +145,7 @@ CORE_FEATURES: frozenset[str] = frozenset(
         LINKS_NAME_THEIR_CHANNEL,
         MESSAGES_RUN_ONCE,
         PAIRED_OWNER,
+        PRE_TOOL_HOOKS,
         TOOL_CALL_SCREEN,
         TURNS_NAME_THEIR_CHANNEL,
         TURNS_NAME_WHO_ASKED,

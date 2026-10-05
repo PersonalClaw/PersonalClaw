@@ -52,6 +52,11 @@ channel app that claims its messages declares it.
 the channel (``forget_owner``), and answers the code that paired its owner in PersonalClaw's words
 (``CANNED_OWNER_PAIRED_REPLY``). A channel app that keeps only a paired owner declares it.
 
+``PRE_TOOL_HOOKS``: a channel that runs a conversation itself asks the operator's blocking hooks
+about each call past the deny-list and before it approves or asks about it
+(``personalclaw.sdk.channel.ask_pre_tool_hooks``), and refuses a call they refuse. A channel app
+that asks them declares it.
+
 ``TOOL_CALL_SCREEN``: a channel that runs a conversation itself asks the deny-list about each call
 before it approves or asks about it (``personalclaw.sdk.channel.screen_tool_call``), and refuses a
 call it refuses. A channel app that asks it declares it.
@@ -79,6 +84,7 @@ from personalclaw.apps.core_features import (
     LINKS_NAME_THEIR_CHANNEL,
     MESSAGES_RUN_ONCE,
     PAIRED_OWNER,
+    PRE_TOOL_HOOKS,
     TOOL_CALL_SCREEN,
     TURNS_NAME_THEIR_CHANNEL,
     TURNS_NAME_WHO_ASKED,
@@ -96,6 +102,7 @@ __all__ = [
     "LINKS_NAME_THEIR_CHANNEL",
     "MESSAGES_RUN_ONCE",
     "PAIRED_OWNER",
+    "PRE_TOOL_HOOKS",
     "TOOL_CALL_SCREEN",
     "TURNS_NAME_THEIR_CHANNEL",
     "TURNS_NAME_WHO_ASKED",

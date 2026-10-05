@@ -12,7 +12,6 @@ CLI is named by its runtime (``acp:<cli>``), as the image-input sentence names i
 from __future__ import annotations
 
 import inspect
-from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.acp.types import is_cancelled_stop
@@ -24,9 +23,8 @@ if TYPE_CHECKING:
 
 #: What the model is told of an approval that ended with no answer: nobody declined it.
 UNANSWERED = {"expired": "no one answered in time", "cancelled": "the turn was stopped"}
-#: ...of a call refused because the run is unattended, and because its pre-tool hook failed.
+#: ...and of a call refused because the run is unattended.
 UNATTENDED = "the run is unattended: no one to approve"
-HOOK_FAILED = "its pre-tool hook failed to run"
 
 
 async def refuse(
@@ -43,12 +41,6 @@ async def refuse(
         await client.refuse_tool(request_id, why, kind=kind or "policy")
     else:
         await client.reject_tool(request_id)
-
-
-def blocked_reason(hook_results: Iterable[str]) -> str:
-    """Why a pre-tool hook blocked a call: the text of its ``BLOCKED:`` line, else "policy hook"."""
-    line = next((r for r in hook_results if r.startswith("BLOCKED:")), "")
-    return line.removeprefix("BLOCKED:").strip() or "policy hook"
 
 
 def _sentence_case(agent: str) -> str:

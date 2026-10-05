@@ -1213,7 +1213,11 @@ trigger's panel with **Allow** (`GET /api/heartbeat/tasks`,
 `POST /api/heartbeat/tasks/allow`, which asks first and is owner-only). An edit
 to a task is a new task, and a finished task takes its yes with it. Not
 "read-only until allowed": a waiting task does not run at all, so what it would
-do is never the question — only the owner's yes is.
+do is never the question — only the owner's yes is. An allowed task's calls are
+approved on that yes (`approval_grants.HEARTBEAT_TASK`, which its audit rows
+name), held to the operator ceiling, once the deny-list and the blocking hooks
+bound to the owner's agent let them; an operator's pattern still approves what
+it names first.
 
 **A pass takes out only what it finished.** Its turns can take minutes, and the
 owner may save the file in the Files editor, or the agent write to it, while

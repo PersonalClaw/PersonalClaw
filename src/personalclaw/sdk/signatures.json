@@ -1352,6 +1352,29 @@
    }
   }
  },
+ "personalclaw.sdk.channel.HooksSaid": {
+  "bases": ["object"],
+  "init": {
+   "params": [
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "refusal"},
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "blocked"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "error"}
+   ],
+   "returns": "None"
+  },
+  "kind": "dataclass",
+  "members": {
+   "audit_row": {
+    "kind": "method",
+    "params": [
+     {"annotation": "Any", "kind": "var_keyword", "name": "metadata"}
+    ],
+    "returns": "dict[str, Any]"
+   },
+   "note": {"kind": "property", "returns": "str", "settable": false},
+   "refused": {"kind": "property", "returns": "bool", "settable": false}
+  }
+ },
  "personalclaw.sdk.channel.LINK_WINDOW_SECS": {"kind": "value", "type": "int", "value": "86400"},
  "personalclaw.sdk.channel.LLMEvent": {
   "bases": ["object"],
@@ -1391,7 +1414,8 @@
     {"annotation": "Any", "default": "None", "kind": "positional_or_keyword", "name": "charged"},
     {"annotation": "int", "default": "0", "kind": "positional_or_keyword", "name": "output_cap"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "work_asks"},
-    {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "named_files"}
+    {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "named_files"},
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "hooks_asked"}
    ],
    "returns": "None"
   },
@@ -3737,6 +3761,14 @@
   ],
   "returns": "dict[str, str]"
  },
+ "personalclaw.sdk.channel.ask_pre_tool_hooks": {
+  "kind": "async function",
+  "params": [
+   {"annotation": "Any", "kind": "positional_or_keyword", "name": "event"},
+   {"annotation": "str | None", "kind": "keyword_only", "name": "agent"}
+  ],
+  "returns": "HooksSaid"
+ },
  "personalclaw.sdk.channel.assert_channel_contract": {
   "kind": "function",
   "params": [
@@ -4919,13 +4951,14 @@
  "personalclaw.sdk.features.APPROVAL_ANSWERS": {"kind": "value", "type": "str", "value": "'approval-answers'"},
  "personalclaw.sdk.features.CHAT_TRUST": {"kind": "value", "type": "str", "value": "'chat-trust'"},
  "personalclaw.sdk.features.CLOSING_STREAMS": {"kind": "value", "type": "str", "value": "'closing-streams'"},
- "personalclaw.sdk.features.CORE_FEATURES": {"kind": "value", "type": "frozenset", "value": "frozenset({'approval-answers', 'chat-trust', 'closing-streams', 'cut-off-answers', 'digest-replies', 'guarded-download', 'links-name-their-channel', 'messages-run-once', 'paired-owner', 'tool-call-screen', 'turns-name-their-channel', 'turns-name-who-asked'})"},
+ "personalclaw.sdk.features.CORE_FEATURES": {"kind": "value", "type": "frozenset", "value": "frozenset({'approval-answers', 'chat-trust', 'closing-streams', 'cut-off-answers', 'digest-replies', 'guarded-download', 'links-name-their-channel', 'messages-run-once', 'paired-owner', 'pre-tool-hooks', 'tool-call-screen', 'turns-name-their-channel', 'turns-name-who-asked'})"},
  "personalclaw.sdk.features.CUT_OFF_ANSWERS": {"kind": "value", "type": "str", "value": "'cut-off-answers'"},
  "personalclaw.sdk.features.DIGEST_REPLIES": {"kind": "value", "type": "str", "value": "'digest-replies'"},
  "personalclaw.sdk.features.GUARDED_DOWNLOAD": {"kind": "value", "type": "str", "value": "'guarded-download'"},
  "personalclaw.sdk.features.LINKS_NAME_THEIR_CHANNEL": {"kind": "value", "type": "str", "value": "'links-name-their-channel'"},
  "personalclaw.sdk.features.MESSAGES_RUN_ONCE": {"kind": "value", "type": "str", "value": "'messages-run-once'"},
  "personalclaw.sdk.features.PAIRED_OWNER": {"kind": "value", "type": "str", "value": "'paired-owner'"},
+ "personalclaw.sdk.features.PRE_TOOL_HOOKS": {"kind": "value", "type": "str", "value": "'pre-tool-hooks'"},
  "personalclaw.sdk.features.TOOL_CALL_SCREEN": {"kind": "value", "type": "str", "value": "'tool-call-screen'"},
  "personalclaw.sdk.features.TURNS_NAME_THEIR_CHANNEL": {"kind": "value", "type": "str", "value": "'turns-name-their-channel'"},
  "personalclaw.sdk.features.TURNS_NAME_WHO_ASKED": {"kind": "value", "type": "str", "value": "'turns-name-who-asked'"},

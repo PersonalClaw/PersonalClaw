@@ -444,14 +444,16 @@ class EvalRunner:
 
         The deny-list comes first: a call the hook chain refuses, read on the command that would
         run as well as on its title (``acp.permission_authority.screen_tool_call``, from the hook
-        settings as they read now), is refused whatever the allowlist says. The allowlist
-        approves without asking anyone, so it is a grant, held to the rules every grant is
-        (`approval_grants.stands_for_call`): it answers no call that reaches a host off the
+        settings as they read now), is refused whatever the allowlist says. Then the operator's
+        blocking hooks, the default agent's, which the evaluation's turns run as
+        (``pre_tool_hooks``): a hook that blocks the call or fails to run refuses it. The
+        allowlist approves without asking anyone, so it is a grant, held to the rules every grant
+        is (`approval_grants.stands_for_call`): it answers no call that reaches a host off the
         allowed hosts, which an evaluation has nobody to ask about and so refuses, and the
         operator ceiling bounds it (`approval_grants`, rule 2). The row names what decided (rule
         3), and is written after the answer took effect, as every decision row is.
         """
-        from personalclaw import approval_grants
+        from personalclaw import approval_grants, pre_tool_hooks
         from personalclaw.acp.permission_authority import screen_tool_call
         from personalclaw.hooks import TOOL_DENY
         from personalclaw.run_bounds import off_list
@@ -462,6 +464,20 @@ class EvalRunner:
         if screened.action == TOOL_DENY:
             reason, decided_by = screened.reason, control.get("control", "hook_deny")
         else:
+            hooks_said = await pre_tool_hooks.on_request(event, agent=None)
+            if hooks_said.refused:
+                logger.warning("Refused tool in eval (%s): %s", hooks_said.note, log_title(title))
+                await provider.reject_tool(event.request_id)
+                sel().log_tool_invocation(
+                    session_key=session_key,
+                    source="eval_runner",
+                    tool_name=title,
+                    tool_kind=event.tool_kind,
+                    request_id=event.request_id,
+                    tool_input=event.tool_input,
+                    **hooks_said.audit_row(),
+                )
+                return
             reason, decided_by = self._allowlist_refusal(event), approval_grants.EVAL_SAFE_TOOLS
         if not reason and not approval_grants.stands_for_call(
             approval_grants.EVAL_SAFE_TOOLS, session_key=session_key, event=event

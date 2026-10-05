@@ -27,6 +27,7 @@ from personalclaw.sdk.features import (
     LINKS_NAME_THEIR_CHANNEL,
     MESSAGES_RUN_ONCE,
     PAIRED_OWNER,
+    PRE_TOOL_HOOKS,
     TOOL_CALL_SCREEN,
     TURNS_NAME_THEIR_CHANNEL,
     TURNS_NAME_WHO_ASKED,
@@ -45,6 +46,7 @@ OFFERED_ONCE = {
     "links-name-their-channel",
     "messages-run-once",
     "paired-owner",
+    "pre-tool-hooks",
     "tool-call-screen",
     "turns-name-their-channel",
     "turns-name-who-asked",
@@ -63,6 +65,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
         "LINKS_NAME_THEIR_CHANNEL",
         "MESSAGES_RUN_ONCE",
         "PAIRED_OWNER",
+        "PRE_TOOL_HOOKS",
         "TOOL_CALL_SCREEN",
         "TURNS_NAME_THEIR_CHANNEL",
         "TURNS_NAME_WHO_ASKED",
@@ -77,6 +80,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
     assert LINKS_NAME_THEIR_CHANNEL == "links-name-their-channel"
     assert MESSAGES_RUN_ONCE == "messages-run-once"
     assert PAIRED_OWNER == "paired-owner"
+    assert PRE_TOOL_HOOKS == "pre-tool-hooks"
     assert TOOL_CALL_SCREEN == "tool-call-screen"
     assert TURNS_NAME_THEIR_CHANNEL == "turns-name-their-channel"
     assert TURNS_NAME_WHO_ASKED == "turns-name-who-asked"
@@ -90,6 +94,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
         LINKS_NAME_THEIR_CHANNEL,
         MESSAGES_RUN_ONCE,
         PAIRED_OWNER,
+        PRE_TOOL_HOOKS,
         TOOL_CALL_SCREEN,
         TURNS_NAME_THEIR_CHANNEL,
         TURNS_NAME_WHO_ASKED,
@@ -280,6 +285,49 @@ def _tool_call_screen_holds() -> None:
         assert verdict.action == TOOL_DENY and "pcfixture-cloudctl" in verdict.reason
     ordinary = screen_tool_call(None, "Run command", json.dumps({"command": ["echo", "hello"]}))
     assert ordinary.action != TOOL_DENY
+
+
+def _pre_tool_hooks_hold() -> None:
+    """The step a channel asks refuses a call a blocking hook refuses, in the hook's own words,
+    refuses one whose hooks fail to run, and lets an ordinary call through to be approved or asked
+    about."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from personalclaw.hooks import HOOK_EVENT_PRE_TOOL_USE, ScriptHookResult
+    from personalclaw.llm.base import EVENT_PERMISSION_REQUEST, LLMEvent
+    from personalclaw.sdk.channel import HooksSaid, ask_pre_tool_hooks
+
+    event = LLMEvent(
+        kind=EVENT_PERMISSION_REQUEST,
+        title="fs_write",
+        request_id="r1",
+        tool_input='{"path": "notes.md"}',
+    )
+
+    def asked(*results: ScriptHookResult, raises: Exception | None = None) -> HooksSaid:
+        """What the step says of the call, with the gateway's hook store answering *results*."""
+        held = MagicMock()
+        held.fire_for_ids = AsyncMock(side_effect=raises, return_value=list(results))
+        with (
+            patch("personalclaw.pre_tool_hooks.bound_hook_ids", return_value=["h1"]),
+            patch("personalclaw.hooks._global_script_hook_store", held),
+        ):
+            return asyncio.run(ask_pre_tool_hooks(event, agent="keeper"))
+
+    blocks = ScriptHookResult(
+        hook_id="h1",
+        hook_name="no-writes",
+        event=HOOK_EVENT_PRE_TOOL_USE,
+        exit_code=2,
+        stderr="not today",
+    )
+    said = asked(blocks)
+    assert said.refused and said.note == "a pre-tool hook blocked it (no-writes:not today)"
+    assert said.audit_row()["outcome"] == "hook_blocked"
+    failed = asked(raises=RuntimeError("no store"))
+    assert failed.refused and failed.audit_row()["outcome"] == "hook_error"
+    assert not asked().refused
 
 
 def _turns_name_their_channel_holds() -> None:
@@ -612,6 +660,7 @@ WITNESSES = {
     LINKS_NAME_THEIR_CHANNEL: _links_name_their_channel_holds,
     MESSAGES_RUN_ONCE: _messages_run_once_hold,
     PAIRED_OWNER: _paired_owner_holds,
+    PRE_TOOL_HOOKS: _pre_tool_hooks_hold,
     TOOL_CALL_SCREEN: _tool_call_screen_holds,
     TURNS_NAME_THEIR_CHANNEL: _turns_name_their_channel_holds,
     TURNS_NAME_WHO_ASKED: _turns_name_who_asked_holds,

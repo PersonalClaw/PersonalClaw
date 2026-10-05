@@ -381,9 +381,22 @@ grants, is refused before its message is sent, and the owner is told why.
   permission frame's title, which can be shorter than the command. `*`, a class-wide pattern
   (`Running: *`) and a pattern that itself joins commands are matched as they are written, and
   a pattern naming the shell tool itself (`bash`, `Terminal`) approves every command of it. A
-  call that runs no shell command is matched on its tool's name. On both runtimes the pre-tool
-  hooks run before any pattern, grant or person can approve a call, past the deny list and the
-  task mode, and a hook that blocks it or fails to run refuses it there.
+  call that runs no shell command is matched on its tool's name.
+- **The operator's blocking hooks are asked first, on every path** (`pre_tool_hooks`). The
+  `PreToolUse` hooks bound to the agent a turn runs as (the default agent's, for a turn that
+  names none) are asked once about each call, at one step: past the deny list, the task mode and
+  a run's own bounds, grants and tier, before any pattern, grant or person can approve the call.
+  Every path that runs a call asks them there: the built-in runtime, for each call it makes; the
+  gate a chat, a subagent and an evaluation put an agent CLI's call to; the background helper
+  (a heartbeat task, a subagent's report, a room member's turn); and a channel app's own turn,
+  through `personalclaw.sdk.channel.ask_pre_tool_hooks`. A call the built-in runtime asks a host
+  about met them at its own step, so no host asks them again. A hook that blocks the call refuses
+  it in its own words, and so does a hook that fails to run: the agent's bindings cannot be read,
+  the store cannot fire its hooks, or a hook did not run to an exit of its own (its command could
+  not start, was refused its sandbox or timed out, its action was held or refused, its provider
+  failed). A hook that ran and exited with another code lets the call go on, as a non-blocking
+  error. A call no agent makes (Tools → Try it, a scheduled script's own tool call) has no bound
+  hooks to ask.
 - **Credential screen** — `is_sensitive_bash_command`, run by the native bash tool
   (before its deny list), a bash action and the ACP permission hook. It refuses a command
   that names a file only its owner reads (`SensitivePaths` without the `$HOME`
@@ -1021,7 +1034,8 @@ the ceiling did not bound.
   batch's tasks starting on what allowed that batch's start (`approval_grants.BATCH_ALLOWED`: her
   answer to its one ask, or, for a batch that only reads, the grant that starts its chat's
   subagents; an app's batch never starts on a grant of hers, `apps.app_work`),
-  the triage digest's auto-execution, a subagent's announce turn, an app's conversation, the
+  the triage digest's auto-execution, a heartbeat task's calls on the task's own Allow
+  (`approval_grants.HEARTBEAT_TASK`), a subagent's announce turn, an app's conversation, the
   agent CLI of an Unattended loop its owner let approve its own calls, a session policy that never
   asks, and the eval
   runner's allowlist of read-only tools. A channel app that runs a conversation itself (Slack's
@@ -1030,7 +1044,8 @@ the ceiling did not bound.
   the chat's Trust, Trust reads and YOLO), with each grant held to the allowed hosts and to this
   ceiling (`approval_grants.stands_for_call`). It keeps no pattern, setting or approval mode of
   its own that approves a call, refuses first a call the deny-list refuses (`screen_tool_call`),
-  and one nobody approves is asked on its own prompt. Under
+  then one the operator's blocking hooks refuse (`ask_pre_tool_hooks`), and one nobody approves
+  is asked on its own prompt. Under
   `{"approval": {"value": "ask"}}` none of them stands, and each refusal is audited
   (`approval.grant_refused`, naming the grant). A switch the owner presses (the chat's mode
   pill, a card's wider scope) is refused with `409 approval_grant_refused`, whose message names
@@ -1044,7 +1059,11 @@ the ceiling did not bound.
   subagent started outside a chat) asks in the Inbox before each call that needs approval. What
   approves one without asking is the consent given for that run: the step's own `approval_mode`,
   saved with the owner's yes; a Run prompt action, whose Allow says what its agent may do; a
-  workflow run's own unattended grant; the Mode its loop was started under. An app's scheduled
+  workflow run's own unattended grant; the Mode its loop was started under; a heartbeat task's
+  Allow. A background run under the `hook_based` policy with nobody to ask (a subagent's report in
+  a chat nobody watches) approves only what an operator's pattern names and what asks nobody
+  anywhere (a declared read, a start that asks you itself), and refuses the rest with its reason:
+  nothing approves a call because no hook named it. An app's scheduled
   job is none of these: its agent runs at the app's agent tier as the app's work, and asks for
   each call that needs approval (`apps/app_crons.start_job`). The setting reads as a grant in one place
   (`approval_grants.setting_grant`, held there by `tests/test_approval_setting_one_reader_rail.py`),

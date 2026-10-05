@@ -98,6 +98,7 @@ from personalclaw.llm.prompt_cache import (
     turn_note_message,
 )
 from personalclaw.llm.tool_use import uses_tools
+from personalclaw.pre_tool_hooks import HOOK_FAILED, HooksSaid
 from personalclaw.routing.rates import CallPrice, summed
 from personalclaw.safety_flags import yes_or_no
 from personalclaw.tool_providers.arguments import missing_arguments, missing_arguments_note
@@ -147,9 +148,9 @@ def _inference_failure_mode(exc: BaseException) -> FailureMode:
     return FailureMode.PROVIDER_ERROR
 
 
-# Hook fire callback: (event_title, tool_input) -> awaitable[list[str]] of
-# "BLOCKED:..." strings (non-empty ⇒ blocked). Mirrors chat_runner's fire shape.
-HookFire = Callable[[str, str | None], Awaitable[list[str]]]
+# The operator's blocking hooks on one call: (tool name, its arguments) -> what they said
+# (`pre_tool_hooks.on_tool`, which the bridge binds to the agent the runtime runs as).
+HookFire = Callable[[str, Any], Awaitable[HooksSaid]]
 
 # Cap mid-turn steer injections (#37) so a message flood can't extend one turn
 # forever — past this, further steers wait for the next turn.
@@ -1862,6 +1863,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                     proposes=tool_name in self._tool_proposes,
                     tells_owner=self._tells_owner(tool_name, args),
                     annotations=self._annotations_of(tool_name),
+                    hooks_asked=self._hook_fire is not None,
                 )
                 decision = await self._approval.wait(request_id, fut)
                 if self._cancelled:
@@ -2022,18 +2024,16 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 meta[TOOL_META_REFUSED_BY] = "tool_grants"
                 return observation
 
-        # PreToolUse hooks (blocking), before every approval — recoverable: adapt, don't repeat.
+        # The blocking hooks (`pre_tool_hooks`), before every approval: adapt, don't repeat.
         if self._hook_fire is not None:
             try:
-                injected = await self._hook_fire(tool_name, _short_json(args))
+                said = await self._hook_fire(tool_name, args)
             except Exception:  # noqa: BLE001 - a hook that cannot run refuses, as one that blocks
                 logger.warning("native: a pre-tool hook failed to run; refusing", exc_info=True)
-                injected = ["BLOCKED:its pre-tool hook failed to run"]
-            blocked = [s for s in (injected or []) if str(s).startswith("BLOCKED:")]
-            if blocked:
-                _reason = blocked[0].removeprefix("BLOCKED:").strip() or "policy hook"
+                said = HooksSaid(refusal=HOOK_FAILED)
+            if said.refused:
                 _, observation = security.classify_denial(
-                    security.DENY_KIND_HOOK, _reason, tool_name
+                    security.DENY_KIND_HOOK, said.refusal, tool_name
                 )
                 meta.update(_FAILED)
                 meta[TOOL_META_REFUSED_BY] = "hook"

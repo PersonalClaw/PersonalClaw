@@ -242,10 +242,10 @@ def hook_enforcement(event: str, *, enabled: bool, bound: bool) -> str:
 
     Two firing paths, one hook kind:
 
-    * :meth:`ScriptHookStore.fire_for_ids` — agent-scoped, reached from
-      ``chat_runner._fire`` and ``provider_bridge``'s native ``hook_fire``. Its ``BLOCKED:``
-      sentinel is what rejects a tool, and it fires **only** hook ids the session agent
-      references. ``hook_ids`` empty → fires nothing.
+    * :meth:`ScriptHookStore.fire_for_ids` — agent-scoped, reached for a tool call from the one
+      step every path that runs a call asks (``pre_tool_hooks``), whose refusal on an exit 2 is
+      what rejects a tool, and it fires **only** hook ids the session agent references.
+      ``hook_ids`` empty → fires nothing.
     * :func:`fire_tool_hooks` → :meth:`ScriptHookStore.fire` — global, informational. Reached
       from the ACP ``EVENT_TOOL_CALL`` seam, ``subagent`` and ``llm_helpers``, where the tool is
       already running. Its results are discarded, so exit 2 there changes nothing.
@@ -1365,13 +1365,18 @@ async def run_script_hook(
     # A provider that populated the envelope on a failed result surfaces its
     # WHAT/WHY/FIX text as the error (else the plain provider error string).
     error_text = result.agent_error.render() if result.agent_error is not None else result.error
+    # An action that failed before it exited of its own (its command could not start, was refused
+    # its sandbox or timed out, its provider failed) gave no answer, so it has no exit code: -1, as
+    # every fire above that did not run, never the 0 its result defaults to, which reads as a hook
+    # that exited cleanly and let the call go on (`pre_tool_hooks`).
+    answered = result.success or result.blocked or (result.exit_code or 0) > 0
     return ScriptHookResult(
         hook_id=hook.id,
         hook_name=hook.name,
         event=hook.event,
         stdout=taken.stdout,
         stderr=taken.stderr,
-        exit_code=result.exit_code if result.exit_code is not None else -1,
+        exit_code=result.exit_code if answered and result.exit_code is not None else -1,
         error=" ".join(text for text in (error_text, withheld) if text),
         duration_ms=result.duration_ms,
     )
@@ -1608,11 +1613,12 @@ class ScriptHookStore:
         ``subagent_id``/``parent_session_key``/``agent_role`` (E11-P3) attribute the
         fire to a subagent; additive optional payload fields, absent at top level.
 
-        **This is the gating seam, and that is why it passes ``enforced=True`` (G89).** Both of
-        its callers — ``chat_runner._fire`` and ``provider_bridge``'s ``hook_fire`` — turn an
-        exit-2 result into the ``BLOCKED:`` sentinel that rejects the tool, so a block recorded
-        from here really happened. A future caller that ignores the results would make the status
-        a lie again; ``test_hook_advisory_status`` pins the two that exist.
+        **This is the gating seam, and that is why it passes ``enforced=True`` (G89).** Its one
+        caller for a tool call, the step every path asks (``pre_tool_hooks``), turns an exit-2
+        result into the call's refusal, so a block recorded from here really happened; the chat
+        runner fires the turn's other lifecycle events through it, none of which can block. A
+        future caller that ignores the results would make the status a lie again;
+        ``test_hook_advisory_status`` pins the ones that exist.
         """
         if not hook_ids:
             return []

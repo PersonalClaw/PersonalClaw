@@ -17,7 +17,6 @@ a callable matching the factory signature::
     factory(session_key=None, agent=None, model_override=None, ...) -> ModelProvider
 """
 
-import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -643,11 +642,11 @@ def _agent_config(agent: str | None) -> tuple[Any, Any]:
     ``(config, profile)``. The profile is None for no agent (the default agent's chat) and for one
     config cannot name; both are None when config cannot be read.
 
-    Read ONCE per build: its pin decides which provider is resolved, its tool and skill lists what
-    its turns may use (the default agent's, for a chat that names none), and its triggers become
-    the runtime's hook callable. Its PROMPT is not read here: the system prompt reaches the model
-    through the turn's assembled context (``ContextBuilder.build_message``), the one place it is
-    resolved.
+    Read ONCE per build: its pin decides which provider is resolved, and its tool and skill lists
+    what its turns may use (the default agent's, for a chat that names none). Its PROMPT is not
+    read here: the system prompt reaches the model through the turn's assembled context
+    (``ContextBuilder.build_message``), the one place it is resolved. Nor are its hooks: they are
+    read at each call the runtime makes (``pre_tool_hooks``).
     """
     try:
         from personalclaw.config.loader import AppConfig
@@ -967,7 +966,6 @@ def _build_native_runtime(
     # skill list likewise, which the runtime holds for its skill tools.
     tools = agent_tools(agent, cfg)
     skills = agent_skills(agent, cfg)
-    hook_ids: list[str] = list(getattr(prof, "triggers", []) or []) if prof is not None else []
 
     cwd = _native_session_cwd(cwd)
     definition = AgentRuntimeDefinition(
@@ -979,37 +977,12 @@ def _build_native_runtime(
     )
     _cwd = Path(cwd) if cwd else None
 
-    # E3 agent-scoped triggers: the native loop's PreToolUse seam fires ONLY the
-    # lifecycle triggers this agent references (AgentProfile.triggers), never the
-    # global set. An agent with none (the seeded default) gets no callable → fires nothing.
-    hook_fire = None
-    if hook_ids:
+    # The operator's blocking hooks, asked at the runtime's own step for each call it makes
+    # (`pre_tool_hooks.on_tool`): those bound to the agent it runs as, the default agent for a chat
+    # that names none (as its tools are), read at each call, never the global set.
+    from personalclaw import pre_tool_hooks
 
-        async def hook_fire(tool_name: str, args_json: str | None) -> list[str]:  # noqa: F811
-            from personalclaw.hooks import HOOK_EVENT_PRE_TOOL_USE, get_global_hook_store
-
-            store = get_global_hook_store()
-            if store is None:
-                return []
-            try:
-                tool_input = json.loads(args_json) if args_json else None
-            except (ValueError, TypeError):
-                tool_input = None
-            results = await store.fire_for_ids(
-                HOOK_EVENT_PRE_TOOL_USE,
-                hook_ids,
-                tool_name=tool_name,
-                tool_input=tool_input,
-            )
-            # Mirror chat_runner._fire's contract: exit-2 → BLOCKED sentinel,
-            # exit-0 stdout → context injection.
-            out: list[str] = []
-            for r in results:
-                if r.exit_code == 2:
-                    out.append(f"BLOCKED:{r.hook_name}:{(r.stderr or 'hook denied')[:200]}")
-                elif r.exit_code == 0 and r.stdout:
-                    out.append(r.stdout)
-            return out
+    hook_fire = partial(pre_tool_hooks.on_tool, agent=agent)
 
     # Tool surface = the always-on PLATFORM provider (filesystem + shell + the
     # tool_result_get affordance, cwd-confined to THIS session) + EVERY registered

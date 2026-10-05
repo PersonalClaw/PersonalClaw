@@ -121,13 +121,15 @@ async def stream_and_collect(
             caller with nowhere to show the sentence keeps the failure, since another
             model's reply would read as the chosen one's.
         session_key: The session the turn runs in, and ``agent`` the agent it runs as: what
-            every audit row of the turn's calls names as who made them. ``""`` names none.
+            every audit row of the turn's calls names as who made them, and whose blocking hooks
+            each call meets (``pre_tool_hooks``). ``""`` names none: the default agent's hooks.
         on_ungated: For a turn on an agent CLI, told of each call the CLI ran without asking
             (``acp.ungated``): the caller says where it shows it, and answers whether the turn
             stops for it and the posture it judged that by (``acp.ungated.HostAnswer``). Every such
             call is audited as ``ungated`` whether or not a caller is told.
-        on_refused: Told of each asked call the deny-list refused, with the refusal's reason, for
-            a caller that shows its turn's refusals. Each is audited whether or not one is told.
+        on_refused: Told of each asked call the deny-list or a blocking hook refused, with the
+            refusal's reason, for a caller that shows its turn's refusals. Each is audited whether
+            or not one is told.
 
     Returns:
         The complete response text.
@@ -329,18 +331,27 @@ async def _resolve_permission(
 ) -> bool:
     """Resolve a tool permission request. Returns True if approved.
 
-    The deny-list comes first, whatever *policy* says: a call the hook chain refuses, read on the
-    command that would run as well as on its title (``screen_tool_call``, with *hooks*, or the
-    gateway's own when none is handed over), is refused before any policy approves it or anyone is
-    asked about it, and *on_refused* is told why. Only *hooks* themselves can auto-approve, and
-    only under ``hook_based``.
+    The refusals come first, in the order every gate asks them. The deny-list, whatever *policy*
+    says: a call the hook chain refuses, read on the command that would run as well as on its
+    title (``screen_tool_call``, with *hooks*, or the gateway's own when none is handed over).
+    Then a policy that lets nothing run (``reject_all``), and a call past the run's bounds with
+    nobody to ask. Then the operator's blocking hooks, bound to the agent *agent* the turn runs as
+    (``pre_tool_hooks``): a hook that blocks the call or fails to run refuses it, before anything
+    approves it or anyone is asked. *on_refused* is told of a refusal by the deny-list or a hook,
+    with its reason.
+
+    Then who approves it. Under ``hook_based``, an operator's pattern (*hooks*); a callback, when
+    one is given; and with nobody to ask, the run's own policy. ``auto_approve`` approves.
+    ``hook_based`` approves only what a hook decides, so a call no pattern approved is refused, as
+    an unattended chat refuses what nothing approves, unless it asks nobody anywhere (what its tool
+    declares: ``approval_grants.declared_answer``).
 
     Each decision is audited once, here, saying who decided it (``decided_by``). Both ways this
     approves without asking — a hook's auto-approve verdict and the run's own policy — are grants,
     so the operator ceiling bounds them (`approval_grants`, rule 2): under ``approval: ask`` a
     call with nobody to ask is declined, whatever policy the caller passed.
     """
-    from personalclaw import approval_grants
+    from personalclaw import approval_grants, pre_tool_hooks
     from personalclaw.acp.permission_authority import screen_tool_call
     from personalclaw.hooks import TOOL_AUTO_APPROVE, TOOL_DENY
     from personalclaw.sel import sel
@@ -392,6 +403,21 @@ async def _resolve_permission(
         )
         return False
 
+    if reaches_off_list and on_tool_approval is None:
+        await provider.reject_tool(event.request_id)
+        _log("denied", metadata={"reason": "run_bounds", "decided_by": "run_bounds"})
+        return False
+
+    # The operator's blocking hooks, at the one step every path asks them: before any pattern,
+    # callback or policy can approve the call. A call its own runtime asks about met them there.
+    hooks_said = await pre_tool_hooks.on_request(event, agent=agent or None)
+    if hooks_said.refused:
+        await provider.reject_tool(event.request_id)
+        _log(**hooks_said.audit_row())
+        if on_refused is not None:
+            on_refused(event, hooks_said.note)
+        return False
+
     if policy == ToolApprovalPolicy.HOOK_BASED and hooks is not None:
         if (
             not reaches_off_list
@@ -412,11 +438,6 @@ async def _resolve_permission(
                 },
             )
             return True
-
-    if reaches_off_list and on_tool_approval is None:
-        await provider.reject_tool(event.request_id)
-        _log("denied", metadata={"reason": "run_bounds", "decided_by": "run_bounds"})
-        return False
 
     # Interactive approval if callback provided
     if on_tool_approval:
@@ -439,8 +460,24 @@ async def _resolve_permission(
             _log("approved", metadata={"reason": "interactive", **decided})
         return True
 
-    # Nobody to ask: the run's own policy approves (AUTO_APPROVE, or HOOK_BASED for a call no hook
-    # named). A grant like any other, so an `ask` ceiling declines the call instead.
+    # Nobody to ask, and a hook decides: what no pattern approved is refused, as an unattended
+    # chat refuses what nothing approves, unless its tool declares that it asks nobody anywhere
+    # (it only reads, or what it starts asks the owner itself). Not a grant either way.
+    if policy == ToolApprovalPolicy.HOOK_BASED:
+        unasked = approval_grants.declared_answer(event)
+        if unasked:
+            await provider.approve_tool(event.request_id)
+            _log("auto_approved", metadata={"reason": unasked, "decided_by": unasked})
+            return True
+        await provider.reject_tool(event.request_id)
+        _log(
+            "denied",
+            metadata={"reason": "unattended_fail_fast", "decided_by": "unattended_no_one_to_ask"},
+        )
+        return False
+
+    # Nobody to ask: the run's own policy approves. A grant like any other, so an `ask` ceiling
+    # declines the call instead.
     if not approval_grants.stands(
         approval_grants.SESSION_POLICY, caller=caller, subject=f"policy={policy.value},{title}"
     ):

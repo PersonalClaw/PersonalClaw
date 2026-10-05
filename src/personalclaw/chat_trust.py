@@ -25,8 +25,9 @@ switches off there.
   the chat's Trust, Trust reads and YOLO, each grant held to the allowed hosts and the operator
   ceiling. The channel approves no call on an answer of its own: one this does not answer is
   asked. Before either, the channel refuses a call the deny-list refuses, as the chat's runner
-  does, through the same screen (``acp.permission_authority.screen_tool_call``): that call is
-  never approved and never asked about.
+  does, through the same screen (``acp.permission_authority.screen_tool_call``), and then a call
+  the operator's blocking hooks refuse, at the step every path asks them
+  (``pre_tool_hooks.on_request``): such a call is never approved and never asked about.
 
 This is core code below the HTTP surface, so the chat is reached through the gateway's dashboard
 state (``inbox_providers.native_source``). A gateway with no dashboard has no chat to show a trust
@@ -114,10 +115,10 @@ def chat_grant(session_key: str, event: Any) -> str:
     audits a refusal): none answers a call that reaches a host off the allowed hosts, none of hers
     answers a call someone else asked for, and the operator ceiling bounds every one. Nothing
     answers a call the hook chain refuses, read on the command that would run as well as on the
-    call's title, which need not carry it; the channel
-    refuses that call before it asks this (``screen_tool_call``), so ``""`` here means asked. The
-    settings and the chat are read at every call, so a pattern the owner removes, or the chat's
-    Trust switched off in the dashboard, makes the next call ask.
+    call's title, which need not carry it, or a call the operator's blocking hooks refuse; the
+    channel refuses those before it asks this (``screen_tool_call``, ``pre_tool_hooks``), so ``""``
+    here means asked. The settings and the chat are read at every call, so a pattern the owner
+    removes, or the chat's Trust switched off in the dashboard, makes the next call ask.
     """
     from personalclaw import approval_grants, trust_mode
     from personalclaw.hooks import TOOL_AUTO_APPROVE, TOOL_DENY

@@ -340,9 +340,9 @@ def injection_approval_policy(parent_key: str) -> "ToolApprovalPolicy":
     cron parent used to get. An INTERACTIVE parent (a dashboard chat) keeps AUTO_APPROVE — a human
     is present and chose to auto-approve.
 
-    Behaviour-preserving where it matters: an announce that calls no tool is unaffected, and under
-    HOOK_BASED the security hooks still auto-approve hook-neutral tools; only the dangerous tools
-    those hooks already deny elsewhere are now gated on an unattended announce turn.
+    An announce that calls no tool is unaffected. Under HOOK_BASED the operator's patterns approve
+    what they name, and nothing else runs but what asks nobody anywhere (what its tool declares):
+    nobody can be asked on such a turn (``llm_helpers._resolve_permission``).
 
     The interactive parent's AUTO_APPROVE is a grant like any other (`approval_grants`), which the
     operator ceiling bounds: refused, the announce takes what the ceiling does allow a turn nobody
@@ -2859,11 +2859,24 @@ class GatewayOrchestrator:
             # hardcoded: a `cron:` key classifies as unattended, so `profile_for_session`
             # resolves to HEADLESS and its approval ("hook_based") maps to
             # HOOK_BASED — the unattended heartbeat resolves through HEADLESS by
-            # construction (AUTONOMY-GUARDRAILS Success Criterion #7). This is
-            # behavior-preserving: HEADLESS.approval == the prior HOOK_BASED literal.
-            # HOOK_BASED keeps the security hooks; hook-neutral tools auto-approve
-            # (no interactive callback), never hanging on an unanswerable prompt.
+            # construction (AUTONOMY-GUARDRAILS Success Criterion #7). The deny-list and
+            # her blocking hooks come first, an operator's pattern approves what it names,
+            # and what neither answers is approved by the task's own Allow, never by a call
+            # no hook named: nobody is asked, and nothing waits on an unanswerable prompt.
             from personalclaw.guardrails.policy import approval_policy_for_session
+
+            async def _the_tasks_allow(event: LLMEvent) -> ToolDecision:
+                """The owner allowed this task to run with her agent's tools, with nobody
+                watching (`heartbeat.consent`): its calls are approved on that yes, held to
+                the operator ceiling."""
+                allowed = approval_grants.stands(
+                    approval_grants.HEARTBEAT_TASK,
+                    caller=session_key,
+                    subject=str(event.title or "")[:80],
+                )
+                if not allowed:
+                    return ToolDecision(False, "rejected", approval_grants.NOBODY)
+                return ToolDecision(True, "auto_approved", approval_grants.HEARTBEAT_TASK)
 
             _hb_model = getattr(getattr(client, "client", None), "_model", "") or ""
             ended: list[object] = []  # the turn's terminal event, which says how it stopped
@@ -2885,7 +2898,7 @@ class GatewayOrchestrator:
                 full_message,
                 approval_policy=approval_policy_for_session(session_key),
                 hooks=self.ctx_builder.hooks,
-                on_tool_approval=None,
+                on_tool_approval=_the_tasks_allow,
                 on_complete=_hb_usage,
             )
 
@@ -3880,6 +3893,9 @@ class GatewayOrchestrator:
                 # stays AUTO_APPROVE for an interactive one. See ``injection_approval_policy``.
                 _inject_policy = injection_approval_policy(parent_key)
                 _inject_hooks = self.ctx_builder.hooks if self.ctx_builder else None
+                # The turn runs in the parent's session, as its agent: that agent's blocking hooks
+                # are the ones its calls meet.
+                _inject_agent = self.sessions.get_agent(parent_key) if self.sessions else ""
                 for attempt in range(3):
                     try:
                         return await stream_and_collect(
@@ -3888,6 +3904,7 @@ class GatewayOrchestrator:
                             on_complete=_inject_usage,
                             approval_policy=_inject_policy,
                             hooks=_inject_hooks,
+                            agent=_inject_agent,
                         )
                     except PromptBusyExhaustedError:
                         # Provider is dead after exhausting prompt-busy retries.

@@ -319,7 +319,9 @@ def no_one_to_ask(approval: str) -> "ToolApprovalPolicy":
 
     * ``auto``       → AUTO_APPROVE.
     * ``hook_based`` → HOOK_BASED: the operator's hooks deny what they deny and approve what
-      they approve, and a call no hook names runs.
+      they approve, and a call they do not approve is refused, unless what its tool declares asks
+      nobody anywhere (``llm_helpers._resolve_permission``). A run that allows more says who:
+      a heartbeat task's calls are approved by the task's own Allow.
     * ``ask``        → REJECT_ALL. A person decides each call, and there is no person to ask,
       so nothing runs. Only the operator ceiling puts ``ask`` on such a run
       (``{"approval": {"value": "ask"}}``); this mapped it to HOOK_BASED, whose default
