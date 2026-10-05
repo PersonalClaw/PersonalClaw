@@ -1353,8 +1353,8 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         }
 
     def active_work_snapshot(self) -> dict[str, int]:
-        """Count in-flight work a restart/apply would interrupt: running (not-done)
-        background subagents + live chat sessions.
+        """Count in-flight work a restart/apply would interrupt: the background subagents it
+        cuts off (``subagent_waiting.cut_off``) + live chat sessions.
 
         The ONE place "is it safe to restart/apply now?" is answered — reused by the
         manual-restart confirm gate (``/api/system/restart?probe=1``) and the staged
@@ -1367,7 +1367,9 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         subs = getattr(self, "subagents", None)
         if subs is not None:
             try:
-                running_agents = sum(1 for a in subs.all_agents if not a.done)
+                from personalclaw.subagent_waiting import cut_off
+
+                running_agents = cut_off(subs.all_agents)
             except Exception:
                 running_agents = 0
         try:

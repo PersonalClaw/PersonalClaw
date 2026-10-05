@@ -1,7 +1,9 @@
 """Subagent persistence — disk I/O for agent folders.
 
 Each subagent gets a folder at ``~/.personalclaw/subagents/{id}/`` containing:
-- ``state.json``   — running state (task, PID, turns, last_tool)
+- ``state.json``   — its state (task, PID, turns, last_tool), and its ``status``: ``running``, or,
+  for a spawn still waiting to start, ``queued`` (for a free slot) or ``asking`` (for its owner's
+  Allow), with the ``request`` it is started again from after a restart (``subagent_waiting``)
 - ``result.txt``   — streamed result text
 - ``tombstone.json`` — written on abnormal exit only
 """
@@ -62,6 +64,15 @@ def _agent_dir(agent_id: str) -> Path:
 
 # ── create ───────────────────────────────────────────────────────────
 
+#: The ``status`` of an agent that has started.
+RUNNING = "running"
+#: The ``status`` of a spawn waiting for a free slot.
+QUEUED = "queued"
+#: The ``status`` of a spawn waiting for its owner to allow its start.
+ASKING = "asking"
+#: The statuses of a spawn that has not started yet.
+WAITING = (QUEUED, ASKING)
+
 
 def create_agent_folder(
     agent_id: str,
@@ -71,11 +82,15 @@ def create_agent_folder(
     parent_session: str = "",
     max_turns: int = 0,
     title: str = "",
+    status: str = RUNNING,
+    request: dict | None = None,
 ) -> Path:
     """Create ``~/.personalclaw/subagents/{id}/`` with ``state.json``.
 
     ``title`` is what the run is called (``SubagentInfo.title``), kept so a restart that finds it
-    left behind can name it as its completion would have."""
+    left behind can name it as its completion would have. ``status`` and ``request`` are a waiting
+    spawn's (``subagent_waiting``); the folder of one that starts is written again as ``running``,
+    with no ``request``."""
     d = _agent_dir(agent_id)
     d.mkdir(parents=True, exist_ok=True)
     state = {
@@ -86,12 +101,14 @@ def create_agent_folder(
         "parent_session": parent_session,
         "started": time.time(),
         "max_turns": max_turns,
-        "status": "running",
+        "status": status,
         "pid": None,
         "turns": 0,
         "last_tool": "",
         "updated_at": time.time(),
     }
+    if request is not None:
+        state["request"] = request
     _atomic_write(d / "state.json", state)
     return d
 
@@ -189,8 +206,8 @@ def delete_agent_folder(agent_id: str) -> None:
 # ── list orphans ─────────────────────────────────────────────────────
 
 
-def list_orphans() -> list[dict]:
-    """Return parsed state for all non-tombstoned agent folders."""
+def _untombstoned() -> list[dict]:
+    """Parsed state of every agent folder with no tombstone."""
     results: list[dict] = []
     try:
         dirs = sorted(_subagents_dir().iterdir())
@@ -209,6 +226,18 @@ def list_orphans() -> list[dict]:
     return results
 
 
+def list_orphans() -> list[dict]:
+    """Return parsed state for all non-tombstoned folders of agents that started: the ones a
+    previous run was running when it stopped."""
+    return [s for s in _untombstoned() if s.get("status") not in WAITING]
+
+
+def list_waiting() -> list[dict]:
+    """Return parsed state for all non-tombstoned folders of spawns that had not started: the ones
+    a previous run left waiting for a slot or for its owner's Allow (``subagent_waiting``)."""
+    return [s for s in _untombstoned() if s.get("status") in WAITING]
+
+
 #: The ``cause`` of a tombstone a restore writes (:func:`settle_restored`).
 RESTORED = "restored"
 
@@ -223,7 +252,8 @@ def settle_restored(home: Path) -> list[str]:
     agent did, and tells the owner the restart stopped it. For another machine's archive, the pid
     and its start time were recorded there, so the process they name here is one of this
     machine's own. A restore's own tombstone says where the agent went, and the start leaves the
-    folder alone.
+    folder alone. So does a spawn the archive held waiting to start, which the start would
+    otherwise start again: nothing a snapshot held starts until someone asks for it again.
 
     Reads and writes *home*'s own files, not the active home's: the restore names the home it
     wrote.

@@ -21,9 +21,8 @@ from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol, TypeGuard
 
-from personalclaw import approval_grants, memory_writes, run_bounds, session_keys
+from personalclaw import approval_grants, memory_writes, run_bounds, session_keys, subagent_waiting
 from personalclaw.approval_grants import ToolDecision, decision_of
-from personalclaw.auth.lifetimes import duration_words
 from personalclaw.cancellation import cancel_and_wait
 from personalclaw.config.loader import AppConfig
 from personalclaw.context import ContextBuilder
@@ -51,6 +50,8 @@ from personalclaw.stats import Stats
 from personalclaw.subagent_ask import spawn_ask, spawn_refusal
 from personalclaw.subagent_kill import sigkill_session
 from personalclaw.subagent_persistence import (
+    ASKING,
+    QUEUED,
     _agent_dir,
     create_agent_folder,
     delete_agent_folder,
@@ -71,6 +72,7 @@ from personalclaw.subagent_tier import (
     tier_for,
     without_tools,
 )
+from personalclaw.subagent_time_limit import REAPED, time_limit_stop, waiting_note
 from personalclaw.textfmt import extract_options
 from personalclaw.turn_streams import closing_stream
 from personalclaw.usage_ledger import spent_rows
@@ -268,50 +270,6 @@ def _timeout_context(info: "SubagentInfo", *, include_elapsed: bool = True) -> s
         elapsed = info.elapsed if info.elapsed > 0 else (time.time() - info.started)
         parts.append(f"elapsed: {int(elapsed)}s")
     return " | ".join(parts)
-
-
-#: How a time-limit stop the run itself reached opens (:func:`time_limit_stop`).
-_TIME_LIMIT = "Its time limit of "
-#: How the reaper's own kill of an agent past its limit opens (``_force_reap``).
-_REAPED = "Reaped after"
-#: The words a time-limit stop ends with when it ended a wait for the owner's answer
-#: (:func:`_waiting_note`), which :func:`ended_a_wait_for_the_owner` reads.
-_FOR_YOUR_ANSWER = " for your answer"
-
-
-def _waiting_note(asking: tuple[str, float] | None, now: float) -> str:
-    """The clause a time-limit stop adds when the agent was waiting for its owner to answer a
-    call: which call, and how long THAT ask had been open (*asking* is the call and when it was
-    asked, on the ``time.monotonic`` clock *now* reads).
-
-    The limit counts the agent's whole run, so naming only the limit blamed the owner for every
-    minute the agent spent working before it asked: a step that worked eighteen minutes and then
-    waited twelve read as thirty minutes of waiting for her."""
-    if not asking:
-        return ""
-    tool, asked_at = asking
-    waited = duration_words(max(0.0, now - asked_at))
-    return f" while its {_redact(tool)[:80]} call had been waiting {waited}{_FOR_YOUR_ANSWER}"
-
-
-def time_limit_stop(limit_secs: float, asking: tuple[str, float] | None, now: float) -> str:
-    """The error an agent ends with when its time limit runs out: the limit, and the ask it ended
-    when it ended one (:func:`_waiting_note`). Worded to read whole on its own (the background
-    agents list) and inside a step's ending ("“check” stopped: its time limit of …")."""
-    return f"{_TIME_LIMIT}{duration_words(limit_secs)} ran out{_waiting_note(asking, now)}"
-
-
-def ran_out_of_time(error: str) -> bool:
-    """Whether *error* is a time-limit stop: the run's own limit (:func:`time_limit_stop`) or the
-    reaper's kill past it."""
-    return str(error or "").startswith((_TIME_LIMIT, _REAPED))
-
-
-def ended_a_wait_for_the_owner(error: str) -> bool:
-    """Whether *error* is a time-limit stop that ended a wait for the owner's answer. What a reader
-    of how the agent ended (a workflow step's settlement) tells apart from a step that ran out of
-    time working, because the remedy differs: answer the ask next time, not raise the limit."""
-    return ran_out_of_time(error) and str(error).endswith(_FOR_YOUR_ANSWER)
 
 
 def check_memory_available(min_gb: float = 4.0, path: str = "/proc/meminfo") -> tuple[bool, float]:
@@ -692,7 +650,11 @@ class SubagentManager:
         # they can be polled/cancelled, and the FULL parameter set on the info itself
         # (approval_mode/model/silent/dry_run/parent_run) so a drained spawn keeps
         # them instead of silently dropping them and re-entering the interactive gate.
+        # Each is recorded too, so a restart keeps it (`subagent_waiting`).
         self._queue: list[SubagentInfo] = []
+        # Set once the gateway stops (`cancel_all`): nothing starts after it, so a spawn still
+        # queued waits, recorded, for the next start rather than starting into the shutdown.
+        self._stopping = False
         self._reaper_task: asyncio.Task | None = None  # type: ignore[type-arg]
         # The grant that last waived an ask in each running agent's runtime (`_policy_source`),
         # so the audit row of a call its runtime approved without asking names who decided.
@@ -1007,7 +969,7 @@ class SubagentManager:
         task = self._tasks.pop(agent_id, None)
         if task and not task.done():
             task.cancel()
-        self._run_started.pop(agent_id, None)
+        ran = self._run_started.pop(agent_id, None) is not None
         asking = self._asking_owner.pop(agent_id, None)
 
         if not info.done:
@@ -1023,12 +985,15 @@ class SubagentManager:
                     _timeout_context(info, include_elapsed=False),
                 )
             info.error = reason or (
-                f"{_REAPED} {int(elapsed)}s (exceeded {self._default_timeout}s deadline)"
-                f"{_waiting_note(asking, time.monotonic())}"
+                f"{REAPED} {int(elapsed)}s (exceeded {self._default_timeout}s deadline)"
+                f"{waiting_note(asking, time.monotonic())}"
             )
             self._dec_running(info)
             Stats().inc_subagent_failed()
-            self._write_tombstone(info, "reaped")
+            if ran:
+                self._write_tombstone(info, "reaped")
+            else:  # it was asking for its start: it leaves no record a restart could take back
+                subagent_waiting.forget(agent_id)
             self._note_child_outcome(info)
         info.reaped = True
         self._maybe_clear_fanout(_fanout_key(info))
@@ -1261,7 +1226,60 @@ class SubagentManager:
         """
         # --- Redact task once for all SubagentInfo storage (raw task kept for ACP agent prompt) ---
         _redacted_task = redact_credentials(redact_exfiltration_urls(task)[0])[0]
+        refused, resolved_cwd, agent = self._admission(
+            _redacted_task, parent_session_key, agent, cwd, parent_run, capability_class
+        )
+        if refused:
+            return SubagentInfo(
+                id=uuid.uuid4().hex[:8], task=_redacted_task, agent=agent, done=True, error=refused
+            )
 
+        # --- Build the addressable info up front: a queued spawn carries a
+        # REAL id and its full parameter set (approval_mode/model/silent/dry_run/
+        # parent_run), so it is pollable + cancellable and a drain never re-generates
+        # the id or drops a parameter. ---
+        info = SubagentInfo(
+            id=uuid.uuid4().hex[:8],
+            task=_redacted_task,
+            parent_session_key=parent_session_key,
+            agent=agent,
+            approval_mode=approval_mode or "",
+            capability_class=(capability_class or "").strip().lower(),
+            dry_run=dry_run,
+            silent=silent,
+            max_turns=max_turns,
+            model=model or "",
+            cwd=resolved_cwd,
+            parent_run=parent_run,
+            sandbox=sandbox or "none",
+            extra_env=dict(extra_env or {}),
+            trigger_id=trigger_id or "",
+            title=redact_credentials(redact_exfiltration_urls(title or "")[0])[0],
+            request_key=request_key or "",
+            approved_at=float(approved_at or 0.0) if request_key else 0.0,
+            may_read=tuple(may_read),
+            may_change=tuple(may_change),
+            app=app,
+            held_back=held_back or "",
+            project_id=project_id or "",
+            workflow_run=workflow_run or "",
+        )
+        info._raw_task = task  # masked by `redact_for_model` when the prompt is composed
+        return self._enter(info)
+
+    def _admission(
+        self,
+        task: str,
+        parent_session_key: str,
+        agent: str,
+        cwd: str,
+        parent_run: str,
+        capability_class: str | None,
+    ) -> tuple[str, str, str]:
+        """Whether a spawn may be taken in now: ``(why not, its folder, its agent)``, ``why not``
+        empty when it may. The limits a new spawn meets, and one a restart took back
+        (``subagent_waiting.take_back``), each refusal audited where it is made. *task* is its
+        masked task."""
         # --- Memory guard: refuse to spawn if system memory is critically low ---
         try:
             min_mem = AppConfig.load().agent.spawn_min_memory_gb
@@ -1279,20 +1297,13 @@ class SubagentManager:
                 source="subagent",
                 tool_name="subagent_run",
                 outcome="refused_low_memory",
-                metadata={
-                    "available_gb": avail_gb,
-                    "min_gb": min_mem,
-                    "task": _redacted_task[:120],
-                },
+                metadata={"available_gb": avail_gb, "min_gb": min_mem, "task": task[:120]},
             )
-            info = SubagentInfo(
-                id=uuid.uuid4().hex[:8],
-                task=_redacted_task,
-                agent=agent,
-                done=True,
-                error=f"spawn refused: only {avail_gb:.1f} GB memory available (need {min_mem:.0f} GB)",  # noqa: E501
+            return (
+                f"spawn refused: only {avail_gb:.1f} GB memory available (need {min_mem:.0f} GB)",
+                "",
+                agent,
             )
-            return info
 
         # --- Incident kill switch: refuse spawns during an incident ----------
         # A subagent is unattended work. Interactive chat is untouched; a spawn is
@@ -1307,15 +1318,12 @@ class SubagentManager:
                     source="subagent",
                     tool_name="subagent_run",
                     outcome="refused_incident",
-                    metadata={"task": _redacted_task[:120]},
+                    metadata={"task": task[:120]},
                 )
-                return SubagentInfo(
-                    id=uuid.uuid4().hex[:8],
-                    task=_redacted_task,
-                    agent=agent,
-                    done=True,
-                    error="spawn refused: incident mode active (resume with "
-                    "`personalclaw incident off`)",
+                return (
+                    "spawn refused: incident mode active (resume with `personalclaw incident off`)",
+                    "",
+                    agent,
                 )
         except Exception:
             logger.debug("subagent spawn incident check failed (fail-open)", exc_info=True)
@@ -1344,15 +1352,13 @@ class SubagentManager:
                     source="subagent",
                     tool_name="subagent_run",
                     outcome="refused_budget_unverified",
-                    metadata={"reason": str(_exc), "task": _redacted_task[:120]},
+                    metadata={"reason": str(_exc), "task": task[:120]},
                 )
-                return SubagentInfo(
-                    id=uuid.uuid4().hex[:8],
-                    task=_redacted_task,
-                    agent=agent,
-                    done=True,
-                    error=f"spawn refused: {_exc}, so nothing ran (fix "
-                    f"`guardrails.budgets` in config.json)",
+                return (
+                    f"spawn refused: {_exc}, so nothing ran (fix `guardrails.budgets` in "
+                    "config.json)",
+                    "",
+                    agent,
                 )
             if not _day_budget.is_unlimited:
                 # The token ceiling only: a spent dollar one refuses the spawn's calls that cost
@@ -1365,15 +1371,13 @@ class SubagentManager:
                         source="subagent",
                         tool_name="subagent_run",
                         outcome="refused_budget_exceeded",
-                        metadata={"reason": _reason, "task": _redacted_task[:120]},
+                        metadata={"reason": _reason, "task": task[:120]},
                     )
-                    return SubagentInfo(
-                        id=uuid.uuid4().hex[:8],
-                        task=_redacted_task,
-                        agent=agent,
-                        done=True,
-                        error=f"spawn refused: {_reason} (resets next day, or raise the "
-                        f"budget in Settings → Guardrails)",
+                    return (
+                        f"spawn refused: {_reason} (resets next day, or raise the budget in "
+                        "Settings → Guardrails)",
+                        "",
+                        agent,
                     )
         except Exception:
             logger.debug("subagent spawn budget check failed (fail-open)", exc_info=True)
@@ -1401,16 +1405,9 @@ class SubagentManager:
                     source="subagent",
                     tool_name="subagent_run",
                     outcome="rejected_invalid_cwd",
-                    metadata={"cwd": cwd[:200], "reason": cwd_err, "task": _redacted_task[:120]},
+                    metadata={"cwd": cwd[:200], "reason": cwd_err, "task": task[:120]},
                 )
-                info = SubagentInfo(
-                    id=uuid.uuid4().hex[:8],
-                    task=_redacted_task,
-                    agent=agent,
-                    done=True,
-                    error=f"spawn refused: {cwd_err}",
-                )
-                return info
+                return f"spawn refused: {cwd_err}", "", agent
 
         # --- Agent validation: an unknown agent is a TYPED error, never a
         # silent downgrade. Done BEFORE any queue slot so a bad name fails fast and a
@@ -1418,45 +1415,18 @@ class SubagentManager:
         if agent:
             agent, err = _validate_agent(agent)
             if err:
-                return SubagentInfo(
-                    id=uuid.uuid4().hex[:8], task=_redacted_task, agent="", done=True, error=err
-                )
-        agent = run_agent(capability_class, agent)
+                return err, "", ""
+        return "", resolved_cwd, run_agent(capability_class, agent)
 
-        # --- Build the addressable info up front: a queued spawn carries a
-        # REAL id and its full parameter set (approval_mode/model/silent/dry_run/
-        # parent_run), so it is pollable + cancellable and a drain never re-generates
-        # the id or drops a parameter. ---
-        agent_id: str = uuid.uuid4().hex[:8]
-        info = SubagentInfo(
-            id=agent_id,
-            task=_redacted_task,
-            parent_session_key=parent_session_key,
-            agent=agent,
-            approval_mode=approval_mode or "",
-            capability_class=(capability_class or "").strip().lower(),
-            dry_run=dry_run,
-            silent=silent,
-            max_turns=max_turns,
-            model=model or "",
-            cwd=resolved_cwd,
-            parent_run=parent_run,
-            sandbox=sandbox or "none",
-            extra_env=dict(extra_env or {}),
-            trigger_id=trigger_id or "",
-            title=redact_credentials(redact_exfiltration_urls(title or "")[0])[0],
-            request_key=request_key or "",
-            approved_at=float(approved_at or 0.0) if request_key else 0.0,
-            may_read=tuple(may_read),
-            may_change=tuple(may_change),
-            app=app,
-            held_back=held_back or "",
-            project_id=project_id or "",
-            workflow_run=workflow_run or "",
-        )
-        info._raw_task = task  # masked by `redact_for_model` when the prompt is composed
+    def _enter(self, info: SubagentInfo) -> SubagentInfo:
+        """*info*, taken in: its parent's marks handed on, its fan-out's stop, then a slot or its
+        place in the queue, recorded so a restart keeps it (``subagent_waiting``). A new spawn
+        comes in here, and so does one a restart took back (``subagent_waiting.take_back``)."""
+        agent_id = info.id
         # It keeps what its parent keeps, and reads what its parent reads.
-        memory_writes.hand_on(agent_work_id(agent_id), parent_session_key, reach=self.memory_reach)
+        memory_writes.hand_on(
+            agent_work_id(agent_id), info.parent_session_key, reach=self.memory_reach
+        )
 
         # --- Fan-out stop (C1.4 breaker / C1.5 run budget / kill-fan-out): a stopped
         # fan-out refuses further spawns with the recorded TYPED reason. ---
@@ -1466,7 +1436,7 @@ class SubagentManager:
             info.done = True
             info.error = f"spawn refused: {stop_reason}"
             sel().log_tool_invocation(
-                session_key=parent_session_key or "",
+                session_key=info.parent_session_key or "",
                 source="subagent",
                 tool_name="subagent_run",
                 outcome="refused_fanout_stopped",
@@ -1476,14 +1446,17 @@ class SubagentManager:
 
         # --- Capacity: queue when the GLOBAL cap OR this run's LANE cap is full. The
         # per-run lane reserves host headroom for other runs, so one wide
-        # fan-out cannot starve them even while global slots remain free. ---
+        # fan-out cannot starve them even while global slots remain free. Nothing
+        # starts while the gateway stops: the spawn waits for the next start. ---
         if (
-            self._running_count >= self._max_concurrent
+            self._stopping
+            or self._running_count >= self._max_concurrent
             or self._lane_count(fkey) >= self._run_lane_cap
         ):
             info.queued = True
             self._agents[agent_id] = info
             self._queue.append(info)
+            subagent_waiting.record(info, QUEUED)
             logger.info(
                 "Subagent %s queued (%d running, lane[%s]=%d, %d queued)",
                 agent_id,
@@ -1537,12 +1510,14 @@ class SubagentManager:
                 },
             )
         elif self._on_spawn_approval:
+            subagent_waiting.record(info, ASKING)
             self._tasks[agent_id] = asyncio.create_task(
                 self._spawn_with_approval(info), context=own
             )
         elif self._ctx_builder and self._ctx_builder.hooks:
             info.done = True
             info.error = "spawn rejected: no approval mechanism configured"
+            subagent_waiting.forget(agent_id)
             self._dec_running(info)
             self._drain_queue()
             sel().log_tool_invocation(
@@ -1560,6 +1535,7 @@ class SubagentManager:
         else:
             info.done = True
             info.error = "spawn rejected: no approval mechanism configured"
+            subagent_waiting.forget(agent_id)
             self._dec_running(info)
             self._drain_queue()
             sel().log_tool_invocation(
@@ -1766,9 +1742,10 @@ class SubagentManager:
         eligible one is tried, so a wide fan-out cannot monopolise the drain. The
         queued ``SubagentInfo`` (with its full parameter set, C1.2) is dispatched
         as-is via ``_dispatch_run`` — the id and every parameter survive the drain.
-        Staggers by 2 seconds to avoid CPU/memory spikes.
+        Staggers by 2 seconds to avoid CPU/memory spikes. Nothing is dispatched while the gateway
+        stops: what waits is kept for the next start (``subagent_waiting``).
         """
-        if not self._queue or self._running_count >= self._max_concurrent:
+        if self._stopping or not self._queue or self._running_count >= self._max_concurrent:
             return
         # Find the first queued spawn whose run-lane also has room.
         idx = next(
@@ -1791,6 +1768,7 @@ class SubagentManager:
         if stop_reason:
             info.done = True
             info.error = f"spawn refused: {stop_reason}"
+            subagent_waiting.forget(info.id)
             self._drain_queue()
             return
         logger.info("Draining queue: dispatching %s (%d left)", info.id, len(self._queue))
@@ -1818,6 +1796,7 @@ class SubagentManager:
             info.declined = (
                 decision.outcome == "rejected" and decision.decided_by == approval_grants.YOU
             )
+            subagent_waiting.forget(info.id)
             self._dec_running(info)
             self._drain_queue()
             self._tasks.pop(info.id, None)
@@ -2616,6 +2595,7 @@ class SubagentManager:
             info.queued = False
             info.done = True
             info.error = reason
+            subagent_waiting.forget(agent_id)
             return True
         await self._force_reap(agent_id, info, time.time() - info.started, reason=reason)
         return True
@@ -2687,7 +2667,9 @@ class SubagentManager:
 
     async def cancel_all(self) -> None:
         """Cancel all running subagents and wait a bounded time for their cleanup: one cancelled
-        while it starts its agent's process may never leave (``cancel_and_wait``)."""
+        while it starts its agent's process may never leave (``cancel_and_wait``). Nothing starts
+        after it: a spawn still waiting stays recorded for the next start (``subagent_waiting``)."""
+        self._stopping = True
         if self._reaper_task and not self._reaper_task.done():
             self._reaper_task.cancel()
             self._reaper_task = None

@@ -17,11 +17,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from personalclaw.subagent import (
-    SubagentManager,
-    ended_a_wait_for_the_owner,
-    time_limit_stop,
-)
+from personalclaw.subagent import SubagentManager
+from personalclaw.subagent_time_limit import ended_a_wait_for_the_owner, time_limit_stop
 
 #: Words that are the agent's own bookkeeping, never a person's sentence.
 COUNTERS = re.compile(r"\[turn|\bturn \d+/\d+|elapsed:|last tool:")

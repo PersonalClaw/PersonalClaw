@@ -62,8 +62,9 @@ one process that boots everything:
   (`autonudge.py`: reactive same-session self-prompting), inbox polling
   (`inbox_service.py`), background subagents (`subagent.py`; the note a person
   reads when one ends is named by its run and says what happened or why it failed,
-  and the same failure is told once an hour, `subagent_notes.py`), and MCP server
-  wiring.
+  and the same failure is told once an hour, `subagent_notes.py`; one waiting to
+  start, for a slot or for the owner's Allow, is recorded so a restart takes it back
+  or ends it saying why, `subagent_waiting.py`), and MCP server wiring.
 - **The dashboard server** — `dashboard/server.py`, an aiohttp app serving the
   REST API, WebSocket event fan-out, and the built SPA (see below).
 - **Channel transports** — the gateway names no channel vendor. It binds a

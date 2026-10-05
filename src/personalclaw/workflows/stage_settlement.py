@@ -301,9 +301,9 @@ def _subagent_failure(error: str, *, reaped: bool) -> Failure:
     the run's ending reads (`ending_sentence.step_cause`):
 
     * **a time limit that ended a wait for the owner's answer**
-      (`subagent.ended_a_wait_for_the_owner`) is answered on the next run: the step did nothing
-      wrong, and telling her to change it, or to read a transcript, sends her to fix what is not
-      broken;
+      (`subagent_time_limit.ended_a_wait_for_the_owner`) is answered on the next run: the step did
+      nothing wrong, and telling her to change it, or to read a transcript, sends her to fix what
+      is not broken;
     * **a time limit that ended work** (the run's own, or the reaper's kill past it) is a TIMEOUT
       whose limit, or the step's size, is the remedy;
     * **a model out of output room** before it answered (`subagent_tier.out_of_room_ending`): the
@@ -318,9 +318,9 @@ def _subagent_failure(error: str, *, reaped: bool) -> Failure:
     * anything else it reports is an execution fault. Filing that as TIMEOUT would tell the user to
       raise a limit that was never the problem.
     """
-    from personalclaw.subagent import ended_a_wait_for_the_owner, ran_out_of_time
     from personalclaw.subagent_ask import never_started
     from personalclaw.subagent_tier import couldnt_do_it, out_of_room_ending, without_tools_ending
+    from personalclaw.subagent_time_limit import ended_a_wait_for_the_owner, ran_out_of_time
 
     named = ""
     if ended_a_wait_for_the_owner(error):

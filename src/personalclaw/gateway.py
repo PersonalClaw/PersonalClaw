@@ -54,7 +54,7 @@ from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import CRED_OWNER_ID
 from personalclaw.constants import CHAT_TURN_TIMEOUT, DATA_WARNING
 from personalclaw.context import ContextBuilder
-from personalclaw.dashboard import start_dashboard, turn_deadline
+from personalclaw.dashboard import chat_persistence, start_dashboard, turn_deadline
 from personalclaw.dashboard.chat_runner import run_chat
 from personalclaw.dashboard.handlers import MAX_PROMPT_BYTES
 from personalclaw.dashboard.handlers.autonudge import render_nudge_message
@@ -2047,11 +2047,17 @@ class GatewayOrchestrator:
             )
 
     async def _settle_left_behind_agents(self) -> None:
-        """Stop and tombstone the background agents a previous run left, then tell the owner."""
+        """Stop and tombstone the background agents a previous run left, take back the ones it left
+        waiting to start (`subagent_waiting.take_back`), then tell the owner what became of each."""
         from personalclaw.subagent_orphans import announce_orphans, reconcile_orphans, tracked_by
+        from personalclaw.subagent_waiting import take_back
 
-        settled = await reconcile_orphans(tracked_by(self.subagent_mgr))
-        announce_orphans(self.dashboard_state, settled)
+        manager, state = self.subagent_mgr, self.dashboard_state
+        if manager is None:
+            return
+        settled = await reconcile_orphans(tracked_by(manager))
+        chats = functools.partial(chat_persistence.why_no_report_reaches, state) if state else None
+        announce_orphans(state, settled, take_back(manager, chats))
 
     def _surface_missed_review(self, report: dict[str, Any], cards: list[Any]) -> None:
         """Put the boot's review in front of the owner: ONE notice (`review.boot_notice`), read off

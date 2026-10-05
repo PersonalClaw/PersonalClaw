@@ -267,8 +267,9 @@ class TestSpawnCreatesFolder:
         assert not (agent_root / info.id).exists()
 
     @pytest.mark.asyncio
-    async def test_queued_spawn_no_folder(self, agent_root):
-        """Queued spawns should NOT get a folder until actually spawned."""
+    async def test_queued_spawn_is_recorded_as_waiting(self, agent_root):
+        """A queued spawn is recorded as waiting the moment it is queued, so a restart keeps it
+        (``subagent_waiting``); its folder becomes the running agent's when it starts."""
         from unittest.mock import AsyncMock, MagicMock, patch
 
         from personalclaw.subagent import SubagentManager
@@ -307,13 +308,17 @@ class TestSpawnCreatesFolder:
             assert info2 is not None
             assert info2.queued is True
             assert not info2.id.startswith("q")
-            # No folder WHILE queued — the folder is created on dispatch, not queue.
-            folders_while_queued = (
-                [f.name for f in agent_root.iterdir()] if agent_root.exists() else []
-            )
-            assert info2.id not in folders_while_queued
-            # Ensure info1's background task completes while patches are active
+            # Recorded WHILE queued, as waiting: the record a restart takes it back from.
+            waiting = json.loads((agent_root / info2.id / "state.json").read_text())
+            assert waiting["status"] == "queued"
+            assert waiting["request"]["prompt"] == "task2"
+            # Ensure info1's background task completes while patches are active; its slot goes
+            # to the queued spawn, whose folder is then the running agent's.
             await manager._tasks[info1.id]
+            if (started := manager._tasks.get(info2.id)) is not None:
+                await started
+            running = json.loads((agent_root / info2.id / "state.json").read_text())
+            assert running["status"] == "running" and "request" not in running
 
         await manager.flush_deliveries()  # coalesced delivery
 

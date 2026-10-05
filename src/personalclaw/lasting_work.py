@@ -63,8 +63,10 @@ asks it for each session along the chain of work it walks, and a turn of such a 
 message she sent, or that has none (a loop's cycle), runs as asked for by whoever the record names
 (``memory_writes.asked_for``). So what the work would change of her memory is held for her own word,
 or refused where nobody can be asked (``dashboard.memory_holds``), as in the turn itself, and its
-learning takes nothing. A subagent keeps who asked on its mark (``memory_writes.hand_on``), and the
-turn that hands its report back to its chat runs as asked for by them too (the gateway's delivery).
+learning takes nothing. A subagent keeps who asked on its mark (``memory_writes.hand_on``), and on
+its record while it waits to start, so a restart that takes it back marks it again
+(``subagent_waiting``); the turn that hands its report back to its chat runs as asked for by them
+too (the gateway's delivery).
 
 Two acts are refused on someone else's say-so instead, as for a private chat: an automation made or
 changed, since it is her own standing work, run later on her grants and her schedule; and a loop

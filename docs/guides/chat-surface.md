@@ -204,6 +204,19 @@ under Subagents in the chat's Activity panel by their step names. An ask still w
 PersonalClaw restarts is asked again, or, if its window passed meanwhile, the chat is told the
 batch never started.
 
+A subagent that has not started when PersonalClaw restarts, because it waits for a free slot (Max
+subagents in Settings → Agent defaults) or for your Allow, is kept. After the restart it waits for
+its slot again, in the order the agent asked for it, or asks you again with the same card: your
+approvals are read as they are then, as for a new subagent, so the restart starts nothing you had
+not allowed. One that can no longer run is ended, and told why where it reports, as any
+subagent's ending is: the agent it was to run on is gone, or the app it was for no longer runs agent
+work (an app's subagent also starts no wider than the app's tier is now). One whose chat was
+deleted, or whose asking turn ended with the restart (a subagent's own subagent, a workflow
+step's), is ended too, with nobody but you to tell. The notice after the restart names each one,
+beside the subagents the restart stopped while they ran, and one you cancelled stays cancelled. The
+restart's confirm counts only the subagents a restart cuts off: one waiting for a slot loses nothing
+to it.
+
 When a subagent finishes, its report comes back to the chat: whole, or, when it is long, shown to
 the agent in part with a way to read the rest. The whole report is kept in the chat, where the
 agent's `subagent_status` reads it again later, a restart included, until the chat is deleted or

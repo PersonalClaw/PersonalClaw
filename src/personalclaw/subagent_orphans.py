@@ -4,8 +4,10 @@ A subagent's folder outlives the process that ran it (``subagent_persistence``),
 the folders of the agents the old process was running are still there, with no tombstone and,
 sometimes, a process still alive. :func:`reconcile_orphans` settles each one once, at boot: a
 process that is still the one the agent started is killed, and every orphan is tombstoned with what
-can be recovered (its result, or nothing). :func:`announce_orphans` then tells the owner, in one
-notice, which agents the restart stopped and where any result was saved.
+can be recovered (its result, or nothing). The folders of the spawns it left waiting to start are
+not orphans: ``subagent_waiting.take_back`` takes each back, or ends it. :func:`announce_orphans`
+then tells the owner, in one notice, which agents the restart stopped and where any result was
+saved, and what became of each one that had not started.
 
 Split out of ``subagent.py`` along the seam it always had: this is a pass over what ANOTHER process
 left, and its one input from the running manager is which agents are its own (``tracked``). The
@@ -30,6 +32,7 @@ from personalclaw.subagent_persistence import (
     list_orphans,
     write_tombstone,
 )
+from personalclaw.subagent_waiting import ENDED, TakenBack, said
 
 logger = logging.getLogger(__name__)
 
@@ -169,40 +172,64 @@ async def reconcile_orphans(tracked: Container[str]) -> list[Orphan]:
     return settled
 
 
-def announce_orphans(state: Any, orphans: Sequence[Orphan]) -> None:
-    """Tell the owner, once, which background agents a restart stopped. Nothing when none did.
+def _title(stopped: int, kept: int, ended: int) -> str:
+    """What the restart did, in the notice's title: "A restart stopped 2 background agents, kept 3
+    that had not started and ended one that could not start"."""
+    clauses: list[str] = []
+    for verb, count, tail in (
+        ("stopped", stopped, ""),
+        ("kept", kept, " that had not started"),
+        ("ended", ended, " that could not start"),
+    ):
+        if not count:
+            continue
+        if clauses:
+            what = "one" if count == 1 else str(count)
+        else:
+            what = "a background agent" if count == 1 else f"{count} background agents"
+        clauses.append(f"{verb} {what}{tail}")
+    if len(clauses) > 1:
+        clauses[-2:] = [f"{clauses[-2]} and {clauses[-1]}"]
+    return "A restart " + ", ".join(clauses)
+
+
+def announce_orphans(
+    state: Any, orphans: Sequence[Orphan], taken_back: Sequence[TakenBack] = ()
+) -> None:
+    """Tell the owner, once, what a restart did to her background agents: which it stopped, and
+    what became of each one that had not started (``subagent_waiting``): kept waiting for a slot,
+    asking her again, started, or ended and why. Nothing when it did none of these.
 
     ONE notice for the whole pass, not one per agent: a restart during a wide fan-out would
     otherwise deliver a notification per child. Through the dashboard's one delivery choke point
     (`DashboardState.notify`), so the owner's own notification rules decide where else it goes.
     Never raises: the agents are already settled, and the notice is the part that can wait.
     """
-    if not orphans or state is None:
+    if not (orphans or taken_back) or state is None:
         return
     from personalclaw import notification_kinds
 
-    count = len(orphans)
-    title = (
-        "A restart stopped a background agent"
-        if count == 1
-        else f"A restart stopped {count} background agents"
-    )
+    ended = sum(1 for taken in taken_back if taken.now == ENDED)
+    title = _title(len(orphans), len(taken_back) - ended, ended)
     # One paragraph per agent and no markup: the notification list shows a body's first line as
     # plain text, and the detail renders the rest as markdown, so plain paragraphs read in both.
     lines = []
-    for orphan in orphans[:_NAMED_IN_NOTICE]:
+    for orphan in orphans:
         outcome = (
             f"its result so far is saved at {orphan.result_path}."
             if orphan.result_path
             else "it saved no result."
         )
         lines.append(f"{orphan.agent_id} — {orphan.name or 'no task recorded'}: {outcome}")
+    lines += [f"{t.agent_id} — {t.name or 'no task recorded'}: {said(t)}" for t in taken_back]
+    count = len(lines)
+    lines = lines[:_NAMED_IN_NOTICE]
     if count > _NAMED_IN_NOTICE:
         lines.append(f"…and {count - _NAMED_IN_NOTICE} more.")
     try:
         state.notify(notification_kinds.SUBAGENT, title, _redact("\n\n".join(lines)))
     except Exception:
-        logger.warning("could not tell the owner which agents a restart stopped", exc_info=True)
+        logger.warning("could not tell the owner what a restart did to its agents", exc_info=True)
 
 
 def is_pid_alive(pid: int) -> bool:

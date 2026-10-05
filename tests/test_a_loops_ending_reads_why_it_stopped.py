@@ -30,7 +30,7 @@ from typing import Any
 import pytest
 
 from personalclaw.loop.loop import LoopStatus, LoopStopReason
-from personalclaw.subagent import time_limit_stop
+from personalclaw.subagent_time_limit import time_limit_stop
 from personalclaw.workflows import loop_view, store
 from personalclaw.workflows.bundled_defs import read_template
 from personalclaw.workflows.controller import EngineServices, RunController

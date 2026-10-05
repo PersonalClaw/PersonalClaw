@@ -581,10 +581,12 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_UNION_BY_ID,
         help="subagent run records",
         # Each agent's running state — its task, its process id, its turns — on the machine that
-        # ran it. The start settles every folder with no tombstone as an agent the last gateway
-        # left running, and kills a live process under its recorded pid that started before the
-        # agent did: another machine's folder, merged in, names a process of this machine's that
-        # holds the same pid. A replace restore brings them back settled
+        # ran it, and each spawn's still waiting to start. The start settles every folder with no
+        # tombstone as an agent the last gateway left running, and kills a live process under its
+        # recorded pid that started before the agent did: another machine's folder, merged in,
+        # names a process of this machine's that holds the same pid. It starts a waiting spawn
+        # again, or asks for it again (`subagent_waiting`), work another machine's folder would
+        # repeat here. A replace restore brings them back settled
         # (`subagent_persistence.settle_restored`).
         machine_local=True,
         merged_in=False,

@@ -9,6 +9,7 @@ from personalclaw.agent import agents_dir
 from personalclaw.atomic_write import atomic_write
 from personalclaw.chat_traces import TEMPORARY
 from personalclaw.config.loader import AppConfig
+from personalclaw.constants import DASHBOARD_SESSION_PREFIX
 from personalclaw.dashboard.chat_forget import (
     forget_ended_temporary_chats,
     forget_if_ended,
@@ -731,6 +732,22 @@ def session_key_exists(state: DashboardState, name: str) -> bool:
     except Exception:  # noqa: BLE001 — an unreadable log must not refuse a live send
         logger.warning("session existence check failed for %s", name, exc_info=True)
         return True
+
+
+def why_no_report_reaches(state: DashboardState, key: str) -> str:
+    """Why the dashboard chat *key* names cannot be handed the report of a helper a restart took
+    back, or ``""`` when it can (``subagent_waiting.take_back``): no chat is kept under it any more
+    (:func:`session_key_exists`: it was deleted, or it was a Temporary chat, which ended with the
+    gateway that ran it). One kept but not open here is opened, so its report is handed to it; an
+    archived one stays closed, and its report reaches the owner as a notification. Any other key
+    (a channel's conversation) is answered where its report is delivered."""
+    if not key.startswith(DASHBOARD_SESSION_PREFIX):
+        return ""
+    name = key.removeprefix(DASHBOARD_SESSION_PREFIX)
+    if not session_key_exists(state, name):
+        return "its chat no longer exists"
+    _rehydrate_session_from_history(state, name)
+    return ""
 
 
 def restore_recent_sessions(
