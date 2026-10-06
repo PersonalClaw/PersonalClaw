@@ -300,9 +300,11 @@ NO_TOOLS_ACTIVITY_KIND = "no_tools"
 LOOP_WORK_APPS = frozenset({"loop", "loops"})
 
 
-def chat_model_axis(session: object) -> str:
+def chat_model_axis(session: object, *, folder: str | None = None) -> str:
     """The use case a person's chat resolves its model on when it picks none: ``code_tools`` for a
-    chat working in a folder of its own, else ``""`` (the Chat binding).
+    chat working in a folder of its own, else ``""`` (the Chat binding). *folder*, when given, is
+    the folder the chat is about to work in (a change waiting for its running turn to end,
+    ``running_turn.once_moved``), answered for in place of the one it works in now.
 
     Settings → Models offers Code & tools for the native agent turns that lean on tool use and code
     work, and the one thing a chat holds before its turn that says its work is in a folder of hers
@@ -316,8 +318,8 @@ def chat_model_axis(session: object) -> str:
     Empty, the Code & tools chain is the Chat chain (``use_cases.active_model_refs``). Like Chat it
     is a person's own turn, which the spend guard leaves alone (``provider_bridge.METERED_AXES``).
     """
-    folder = memory_locality.chat_folder(session)
-    return "code_tools" if folder and memory_locality.is_local_partition(folder) else ""
+    held = memory_locality.chat_folder(session) if folder is None else folder
+    return "code_tools" if held and memory_locality.is_local_partition(held) else ""
 
 
 def tools_said(state: object, session: object, client: object, *, said: str = "") -> str:

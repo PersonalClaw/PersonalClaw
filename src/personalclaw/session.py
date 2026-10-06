@@ -306,8 +306,10 @@ def _resolution_moved(provider: Any) -> bool:
 
 def _axis_moved(provider: Any, asked: dict[str, Any]) -> bool:
     """Whether the turn *asked* acquires a cached runtime for resolves its model on another use
-    case than the runtime was built on: a chat given a working directory of its own moves from the
-    Chat chain to Code & tools (``chat_utils.chat_model_axis``), and back when it is cleared.
+    case than the runtime was built on: a chat's folder that starts or stops being the workspace
+    (Settings moves the workspace) moves it between the Chat chain and Code & tools
+    (``chat_utils.chat_model_axis``). A change of the chat's own folder lets its runtime go before
+    any of this is asked (``running_turn.to_folder``).
 
     Asked of a native runtime only (``resolved_from``, ``provider_bridge.ResolutionBasis``), and
     only when the request names an axis; an agent CLI runs its own model and never moves.
@@ -316,6 +318,41 @@ def _axis_moved(provider: Any, asked: dict[str, Any]) -> bool:
     if basis is None or "model_axis" not in asked:
         return False
     return not basis.serves(str(asked.get("model_axis") or ""))
+
+
+def _mode_asked(asked: dict[str, Any]) -> str | None:
+    """The operating mode a request asks its agent CLI to be in (``acp_mode``: the task mode's
+    Plan, the agent's own mode), ``""`` for the CLI's default, or ``None`` when it names none."""
+    return str(asked.get("acp_mode") or "") if "acp_mode" in asked else None
+
+
+async def _hold_to_its_mode(sess: "_Session", asked: dict[str, Any]) -> None:
+    """Tell the agent CLI *sess* holds the operating mode the turn *asked* acquires it for, when it
+    is not the one last asked of it.
+
+    An agent CLI is told its mode when its session opens, and keeps it: a chat switched from Plan
+    back to Agent ran its next turn in the CLI's planning mode, where it changes nothing, and one
+    opened in Agent and switched to Plan was never put in it. So a reused runtime is told before
+    the turn's prompt goes out. Only when the request names a mode (a chat's turn does), and only
+    of a runtime that has one to be told (an agent CLI; the native runtime holds the task mode
+    itself, ``SessionManager.set_task_mode``). What the CLI is told never widens what it may do:
+    the host's task-mode gate and its permission clamp hold either way. A CLI that cannot be told
+    keeps the mode it has, and is asked again at the next turn.
+    """
+    mode = _mode_asked(asked)
+    if mode is None or mode == sess.asked_mode:
+        return
+    from personalclaw.agents.provider import AgentProvider
+
+    provider = sess.provider
+    if not isinstance(provider, AgentProvider) or not hasattr(provider, "set_mode"):
+        return
+    try:
+        await provider.set_mode(mode)
+    except Exception:  # noqa: BLE001 - the host gate holds the mode; the next turn asks again
+        logger.warning("could not tell the agent CLI its operating mode %r", mode, exc_info=True)
+        return
+    sess.asked_mode = mode
 
 
 def _rebuild_reason(sess: "_Session", asked: dict[str, Any]) -> str:
@@ -412,6 +449,10 @@ class _Session:
     # (:data:`_POSTURE_KEYS`): a runtime keeps both from when it was built, so a request naming
     # others gets a runtime built for them (:func:`_posture_moved`).
     built_posture: dict[str, bool] = field(default_factory=dict)
+    # The operating mode last asked of its agent CLI (:func:`_mode_asked`), by the request it was
+    # acquired for or a turn since; ``None`` while none has named one. A turn asking another tells
+    # the CLI before its prompt goes out (:func:`_hold_to_its_mode`).
+    asked_mode: str | None = None
 
 
 class SessionManager:
@@ -1098,6 +1139,11 @@ class SessionManager:
                 raise
             stale = _rebuild_reason(sess, extra_factory_kwargs)
             if not stale:
+                try:
+                    await _hold_to_its_mode(sess, extra_factory_kwargs)
+                except BaseException:
+                    sess.semaphore.release()
+                    raise
                 self._stopped_turns.discard(key)
                 return provider, was_new, False
             # The agent was edited while this runtime was cached, or what its model was resolved
@@ -1299,6 +1345,7 @@ class SessionManager:
                         approval_source=approval_source,
                         agent=agent or "",
                         built_posture=_built_posture(extra_factory_kwargs),
+                        asked_mode=_mode_asked(extra_factory_kwargs),
                     )
                     _push_approval_policy(provider, approval_policy, approval_source)
                     self._sessions[key] = sess

@@ -7,16 +7,19 @@ Every door sends one through :func:`steer`, and the runtime says when it takes o
 (``EVENT_STEER``): then, and only then, it is her row in the chat (:func:`take_steer`), where the
 turn took it. One the turn does not take runs next from the queue, and is written once, then.
 
-**A move.** The chat's agent, its agent CLI, its model and its reasoning effort each decide the
-runtime its turns run on, and changing one rebuilds that runtime. Between turns that is all a
-change does. During a turn it rebuilt the runtime under the turn, and the turn died with no word
-said: its approval card stayed answerable, a steer went to the queue, and her message was never
-answered.
+**A move.** The chat's agent, its agent CLI, its model, its reasoning effort and its working
+directory each decide the runtime its turns run on, and changing one rebuilds that runtime. The
+working directory is where the runtime's tools work: its shell starts there and a relative path
+is read and written there, and a runtime fixes it when it is built, as an agent CLI's process is
+started there. Between turns that is all a change does. During a turn it rebuilt the runtime
+under the turn, and the turn died with no word said: its approval card stayed answerable, a steer
+went to the queue, and her message was never answered.
 
-So every door that makes such a change (the routing chip, the composer's pickers, any API
-caller, a send that names an agent for a chat that has none, and an OpenAI-compatible request
-that names another agent for its session) comes through :func:`rebind`, under one rule. A door
-that names a saved agent says what changes with :func:`to_agent`. The change is hers, and it is
+So every door that makes such a change (the routing chip, the composer's pickers and its Working
+directory prompt, any API caller, a send that names an agent for a chat that has none, and an
+OpenAI-compatible request that names another agent for its session) comes through :func:`rebind`,
+under one rule. A door that names a saved agent says what changes with :func:`to_agent`, and one
+that names a folder with :func:`to_folder`. The change is hers, and it is
 about the message the chat is answering. The running turn ends as stopped: a pending approval is
 answered cancelled, as a Stop answers it, and its runtime is asked to stop. Her message is then
 answered again on the new runtime, as the same turn, and the chat says so where the conversation
@@ -61,7 +64,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 #: The session fields that say which runtime a turn runs on, and the binding a page adopts.
-BINDING_FIELDS = ("agent", "model", "acp_provider", "acp_provider_agent", "reasoning_effort")
+BINDING_FIELDS = (
+    "agent",
+    "model",
+    "acp_provider",
+    "acp_provider_agent",
+    "reasoning_effort",
+    "workspace_dir",
+)
 
 #: The ``meta`` key of a row of hers the running turn took while it answered (a steer). Written only
 #: by :func:`take_steer`; a send's own meta never carries it (``chat_handlers`` drops it).
@@ -121,6 +131,23 @@ def to_agent(session: _ChatSession, agent_name: str) -> Rebinding:
         },
         persisted={"agent": agent_name, "acp_provider": "", "acp_provider_agent": ""},
     )
+
+
+def to_folder(folder: str) -> Rebinding:
+    """The change that has a chat work in *folder*: its runtime's tools, its shell and the
+    relative paths they read and write, and the memory the folder keeps (``memory_locality``).
+    Persisted with it, so a restart before her next message does not put the chat back where it
+    was."""
+    return Rebinding(fields={"workspace_dir": folder}, persisted={"workspace_dir": folder})
+
+
+def once_moved(session: _ChatSession, name: str) -> Any:
+    """What the field *name* of *session* reads once the change waiting for its running turn to end
+    is made (:func:`apply_pending_move`): that change's value when it sets one, else the field's."""
+    change = session._rebinding
+    if change is not None and name in change.fields:
+        return change.fields[name]
+    return getattr(session, name)
 
 
 async def move_to_agent(state: DashboardState, session: _ChatSession, agent_name: str) -> bool:
@@ -397,7 +424,7 @@ async def apply_pending_move(
 
 def answering_label(session: _ChatSession, change: Rebinding) -> str:
     """What answers *session* once *change* is made, as the chat names it: the agent, and the
-    model or reasoning effort when the change set one."""
+    model, reasoning effort or folder when the change set one."""
     after = {name: getattr(session, name, "") or "" for name in BINDING_FIELDS}
     after.update({k: v for k, v in change.fields.items() if k in BINDING_FIELDS})
     if after["acp_provider"]:
@@ -414,7 +441,20 @@ def answering_label(session: _ChatSession, change: Rebinding) -> str:
         session.reasoning_effort or ""
     ):
         who = f"{who} at {after['reasoning_effort'] or 'its default'} reasoning effort"
+    if "workspace_dir" in change.fields and change.fields["workspace_dir"] != (
+        session.workspace_dir or ""
+    ):
+        who = f"{who} in {folder_label(after['workspace_dir'])}"
     return who
+
+
+def folder_label(folder: str) -> str:
+    """A chat's folder as the chat names it: its path, or "the workspace" for the one every chat
+    starts in (``config.loader.default_workspace_dir``)."""
+    from personalclaw.config.loader import default_workspace_dir
+
+    workspace = default_workspace_dir()
+    return "the workspace" if not folder or (workspace and folder == workspace) else folder
 
 
 def _set(session: _ChatSession, change: Rebinding) -> None:
@@ -434,11 +474,15 @@ def _announce(state: DashboardState, session: _ChatSession, change: Rebinding) -
                 "Failed to persist the binding of session %s", session.key, exc_info=True
             )
     state.push_sessions_update()
-    # Every open page of the chat shows what now answers it, whoever made the change.
+    # Every open page of the chat shows what now answers it, whoever made the change, and the
+    # Settings → Models chain its next turn on Auto takes, which its folder decides.
+    from personalclaw.dashboard.chat_runner import auto_chain_name  # circular: it imports this
+
     state.broadcast_ws(
         "session_binding",
         {
             "session": session.key,
             **{name: getattr(session, name, "") or "" for name in BINDING_FIELDS},
+            "auto_chain": auto_chain_name(session),
         },
     )

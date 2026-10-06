@@ -26,6 +26,11 @@ def _mock_state(session: _ChatSession | None = None) -> DashboardState:
     if session:
         state._sessions[session.key] = session
     state.push_sessions_update = MagicMock()
+    state.broadcast_ws = MagicMock()
+    state.conversation_log = None
+    # The chat's runtime, which a change of folder lets go (`running_turn.rebind`).
+    state.sessions = MagicMock()
+    state.sessions.reset = AsyncMock()
     state.file_indexes = MagicMock()
     state.file_indexes.acquire = AsyncMock()
     state.file_indexes.release = AsyncMock()
@@ -48,9 +53,14 @@ class TestChatSessionWorkspaceDir:
                 assert data["ok"] is True
                 assert data["workspace_dir"] == str(tmp_path)
                 assert session.workspace_dir == str(tmp_path)
+        # Its runtime, built in the folder it worked in, is let go for the next turn's.
+        state.sessions.reset.assert_awaited_once_with("dashboard:test")
 
     @pytest.mark.asyncio
     async def test_clear_workspace_dir(self, tmp_path):
+        """A clear puts the chat back in the workspace a new chat starts in."""
+        from personalclaw.config.loader import default_workspace_dir
+
         session = _ChatSession("test")
         session.workspace_dir = str(tmp_path)
         state = _mock_state(session)
@@ -60,7 +70,9 @@ class TestChatSessionWorkspaceDir:
                 json={"workspace_dir": ""},
             )
             assert resp.status == 200
-            assert session.workspace_dir == ""
+            assert (await resp.json())["workspace_dir"] == default_workspace_dir()
+            assert session.workspace_dir == default_workspace_dir()
+        state.sessions.reset.assert_awaited_once_with("dashboard:test")
 
     @pytest.mark.asyncio
     async def test_nonexistent_dir_returns_400(self):

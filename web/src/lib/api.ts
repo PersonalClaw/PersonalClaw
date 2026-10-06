@@ -8582,12 +8582,13 @@ export const api = {
   /** Silently prime the next turn with background context (no visible message, no turn). */
   briefSession: (key: string, content: string, source = 'user-brief') =>
     post<{ ok: boolean }>(`/api/chat/sessions/${encodeURIComponent(key)}/context`, { content, source, ephemeral: false }),
-  /** Set a live session's working directory (agent cwd + memory-partition scope). */
-  /** Set (or, with `''`, clear) a chat's working directory. `auto_chain` is the Settings → Models
-   *  chain its next turn on Auto runs on after the change: a folder of its own moves it to Code &
-   *  tools, while that chain binds a model. */
+  /** Set (or, with `''`, clear: back to the workspace) a chat's working directory, where its agent's
+   *  tools work from its next turn. `workspace_dir` is that folder, `auto_chain` the Settings →
+   *  Models chain its next turn on Auto runs on there (a folder of its own moves it to Code & tools,
+   *  while that chain binds a model), and `moved` that a turn was running: it ends, and the chat
+   *  says whether her message is answered again in the new folder. */
   setSessionWorkspaceDir: (key: string, workspace_dir: string) =>
-    post<{ ok: boolean; workspace_dir?: string; auto_chain?: string }>(`/api/chat/sessions/${encodeURIComponent(key)}/workspace-dir`, { workspace_dir }),
+    post<{ ok: boolean; workspace_dir?: string; auto_chain?: string; moved?: boolean }>(`/api/chat/sessions/${encodeURIComponent(key)}/workspace-dir`, { workspace_dir }),
 
   // ── Contextual prompt starters (background-computed from memory + recent activity) ──
   // Answers at once. `refreshing`: a new list is being written in the background, and every page
@@ -8981,6 +8982,9 @@ export const api = {
      *  Models page names it: "Code & tools" for a chat working in a folder of its own while that
      *  chain binds a model, else "Chat". The model pill's Auto says it. */
     auto_chain?: string
+    /** The folder the chat works in (its working directory), which its Working directory prompt
+     *  opens on. */
+    workspace_dir?: string
     /** Present only on a conversation an APP started (`AppStarted`). A turn in it runs under
      *  that app's permissions, whoever sends the message: your approval switches never reach it,
      *  and the app approves none of its calls, so each one that needs approval asks you. */

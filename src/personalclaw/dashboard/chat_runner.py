@@ -991,11 +991,11 @@ def refused_on_a_substitute(state: DashboardState, session: _ChatSession, client
     return True
 
 
-def model_axis_for(session: object) -> str:
+def model_axis_for(session: object, *, folder: str | None = None) -> str:
     """The axis a chat turn's inner model resolves on, which is also the axis the spend guard
     meters it on: ``loops`` for a loop's worker and planner, else the person's own chat axis
-    (:func:`chat_model_axis`): ``code_tools`` for a chat working in a folder of its own, ``""``
-    (the chat binding) for any other.
+    (:func:`chat_model_axis`, for *folder* when given): ``code_tools`` for a chat working in a
+    folder of its own, ``""`` (the chat binding) for any other.
 
     Keyed off ``_app`` (the loop code sets it, and it is persisted), NOT the session-key prefix.
     An explicit per-loop model still wins — it rides ``session.model`` beside the axis, as a
@@ -1006,18 +1006,19 @@ def model_axis_for(session: object) -> str:
     """
     if getattr(session, "_app", "") in LOOP_WORK_APPS:
         return "loops"
-    return chat_model_axis(session)
+    return chat_model_axis(session, folder=folder)
 
 
-def auto_chain_name(session: object) -> str:
+def auto_chain_name(session: object, *, folder: str | None = None) -> str:
     """The Settings → Models chain a turn of *session* runs on when no model is picked for it, as
     the Models page names it: "Code & tools" for a chat working in a folder of its own while that
     chain binds a model, "Chat" otherwise (an empty Code & tools is the Chat chain). What the
-    composer's model pill says its Auto runs on, before the turn starts."""
+    composer's model pill says its Auto runs on, before the turn starts. *folder*, when given, is
+    the folder the chat's next turn works in, when that is not the one it works in now."""
     from personalclaw.providers.provider_bridge import governing_axis
     from personalclaw.providers.use_cases import USE_CASE_NAMES, chain_owner
 
-    owner = chain_owner(governing_axis(model_axis_for(session)))
+    owner = chain_owner(governing_axis(model_axis_for(session, folder=folder)))
     return USE_CASE_NAMES.get(owner, owner)
 
 

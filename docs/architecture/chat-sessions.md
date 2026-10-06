@@ -738,9 +738,16 @@ chat, channel thread, loop worker, webhook, subagent).
    (`use_cases.chain_owner`). The axis is decided from the chat before its first
    request, never from what the turn says or does, so with Code & tools on one
    provider and Chat on another a turn over the chat's folder never reaches
-   Chat's. A cached runtime built on another axis (the working directory set or
-   cleared between two turns) is rebuilt at its next acquire
-   (`session._axis_moved`, `ResolutionBasis.serves`), and a side question asked
+   Chat's. A runtime fixes the folder its tools work in when it is built (the native
+   loop's tool context, an agent CLI's process and session), so setting or clearing
+   the working directory changes what the chat runs on the way a change of its
+   agent or model does (`running_turn.rebind`, `running_turn.to_folder`): between
+   turns its runtime is let go and the next turn's is built in the new folder, and
+   a turn running when it lands ends as stopped and her message is answered again
+   there. A clear puts the chat back in the workspace a new chat starts in. A
+   cached runtime built on another axis (the same folder starting or ceasing to be
+   the workspace) is rebuilt at its next acquire (`session._axis_moved`,
+   `ResolutionBasis.serves`), and a side question asked
    beside the chat acquires on the chat's axis too (`dashboard/side.py`). Both
    axes are a person's own turns, which the spend guard leaves alone. A model the
    composer picked for the session, then one the agent pins, come before the
@@ -886,8 +893,8 @@ a variant.
 **Running a turn again may repeat what the attempt did.** Five doors run a turn
 again: Retry on a failed turn and Regenerate on an answer (`regenerate`), Rewind
 to an earlier message and a resend of a message she did not change
-(`edit-resend`), and a move to another agent while the turn answered
-(`running_turn.say_moved`). Each replaces the attempt the turn made, and none
+(`edit-resend`), and a move to another agent, model or folder while the turn
+answered (`running_turn.say_moved`). Each replaces the attempt the turn made, and none
 hands the turn asked again the calls that attempt finished: the first four
 delete them, and a runtime built for a turn (after a restart, a rewind or a
 move) is given the chat's messages, never its calls. So every door asks through

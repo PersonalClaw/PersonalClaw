@@ -1056,6 +1056,8 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             # ("Code & tools" for a chat working in a folder of its own, else "Chat"), which the
             # model pill's Auto names before the turn starts (`chat_runner.auto_chain_name`).
             "auto_chain": auto_chain_name(session),
+            # The folder it works in, which the composer's Working directory prompt opens on.
+            "workspace_dir": session.workspace_dir or "",
             # session mode so the UI can show the right indicator when a session
             # is reopened.
             "mode": getattr(session, "mode", "") or "",
@@ -2178,7 +2180,15 @@ async def api_chat_session_workspace_dir(request: web.Request) -> web.Response:
     The working directory is the session's workspace: it is the agent's cwd and
     scopes the session's memory partition.
 
-    Clearing is an EXPLICIT ``{"workspace_dir": ""}``. A body that omits the key is
+    A runtime fixes the folder its tools work in when it is built (the native loop's tool context,
+    an agent CLI's process), so the change is made the way every change of what a chat runs on is
+    (``running_turn.rebind``): between turns its runtime is let go and the next turn's is built in
+    the new folder; during a turn, that turn ends as stopped and her message is answered again
+    there, which the answer's ``moved`` says. Naming the folder it already works in changes
+    nothing, so it keeps its runtime.
+
+    Clearing is an EXPLICIT ``{"workspace_dir": ""}``, and puts the chat back in the workspace
+    a new chat starts in (``api_chat_session_create``). A body that omits the key is
     refused rather than treated as a clear: measured, a
     request with a mistyped key (``{"dir": "/some/path"}``) answered
     ``{"ok": true, "workspace_dir": ""}`` and *unbound* the session's workspace. For
@@ -2205,9 +2215,9 @@ async def api_chat_session_workspace_dir(request: web.Request) -> web.Response:
     workspace_dir = body["workspace_dir"]
     if not isinstance(workspace_dir, str):
         return web.json_response({"error": "workspace_dir must be a string"}, status=400)
-    workspace_dir = workspace_dir.strip()
-    if workspace_dir:
-        workspace_dir = os.path.realpath(os.path.expanduser(workspace_dir))
+    named = workspace_dir.strip()
+    if named:
+        workspace_dir = os.path.realpath(os.path.expanduser(named))
         if not os.path.isdir(workspace_dir):
             return web.json_response({"error": "Not a directory"}, status=400)
         if is_sensitive_path(workspace_dir):
@@ -2219,8 +2229,14 @@ async def api_chat_session_workspace_dir(request: web.Request) -> web.Response:
                 error="sensitive path",
             )
             return web.json_response({"error": "Access denied"}, status=403)
-    session.workspace_dir = workspace_dir
-    logger.info("Session %s workspace_dir set to %r", name, workspace_dir)
+    else:
+        workspace_dir = default_workspace_dir()
+    # Against the folder it works in once a change already waiting for its running turn is made,
+    # so naming that folder again moves nothing, and naming the one it works in now undoes it.
+    moved = False
+    if workspace_dir != running_turn.once_moved(session, "workspace_dir"):
+        logger.info("Session %s workspace_dir set to %r", name, workspace_dir)
+        moved = await running_turn.rebind(state, session, running_turn.to_folder(workspace_dir))
     sel().log_api_access(
         caller=request.get("user", "dashboard"),
         operation="chat_session_workspace_dir",
@@ -2230,16 +2246,21 @@ async def api_chat_session_workspace_dir(request: web.Request) -> web.Response:
     # Track recent working directories — yours. An app's conversation works where the app (or you,
     # on its behalf) pointed it, and that folder is not one you chose to work in: filed among your
     # recents, it would be offered to your next chat as one of yours.
-    if workspace_dir and not session.created_by_app:
+    if named and not session.created_by_app:
         try:
             await asyncio.to_thread(_save_recent_project, workspace_dir)
         except Exception:
             logger.warning("Failed to save recent workspace dir", exc_info=True)
-    state.push_sessions_update()
     # A folder of its own moves the chat's next turn to Code & tools, and clearing it back to
-    # Chat: the composer's Auto says which from this answer (`chat_runner.auto_chain_name`).
+    # Chat: the composer's Auto says which from this answer (`chat_runner.auto_chain_name`), for
+    # the folder its next turn works in.
     return web.json_response(
-        {"ok": True, "workspace_dir": workspace_dir, "auto_chain": auto_chain_name(session)}
+        {
+            "ok": True,
+            "workspace_dir": workspace_dir,
+            "auto_chain": auto_chain_name(session, folder=workspace_dir),
+            "moved": moved,
+        }
     )
 
 

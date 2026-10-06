@@ -8,10 +8,10 @@ later Allow read "approved", then the tool "Error: cancelled", then "The reply s
 finished"; her first message was never answered.
 
 The rule now, for every door that changes what answers a chat (its agent, its agent CLI, its
-model, its reasoning effort): the running turn ends as stopped, its pending approval answered
-cancelled as a Stop answers it; her message is answered again on the new runtime as the same
-turn; and the chat says so where the conversation is. The composer offers Steer only while the
-running turn takes one.
+model, its reasoning effort, its working directory): the running turn ends as stopped, its
+pending approval answered cancelled as a Stop answers it; her message is answered again on the
+new runtime as the same turn; and the chat says so where the conversation is. The composer offers
+Steer only while the running turn takes one.
 
 Driven through the real chat runner, the real session manager, the real ACP client and the real
 handlers, against ``scripted_acp_agent.py`` over stdio: the runtime the chat starts on asks for
@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,7 @@ from personalclaw.dashboard.chat import (
     api_chat_session_detail,
     api_chat_session_model,
     api_chat_session_reasoning_effort,
+    api_chat_session_workspace_dir,
     run_chat,
 )
 from personalclaw.dashboard.chat_runner import TURN_CUT_SHORT_NOTICE
@@ -66,12 +68,17 @@ ASKED = "900"
 HER_MESSAGE = "sentry is lighting up for the carrier adapter again"
 
 
+#: The folder the working-directory door moves the chat to.
+ELSEWHERE = "elsewhere"
+
+
 def _moved_to(kwargs: dict[str, Any]) -> bool:
     """Whether the runtime being built is one of those the chat was moved to."""
     return (
         kwargs.get("agent") in ("oncall-triage", "reviewer")
         or kwargs.get("model_override") == "fast-model"
         or kwargs.get("reasoning_effort_override") == "high"
+        or Path(str(kwargs.get("cwd") or "")).name == ELSEWHERE
     )
 
 
@@ -86,9 +93,11 @@ class _World:
             if not str(session_key or "").startswith("dashboard:"):
                 raise RuntimeError(f"{session_key!r} does not run on the scripted agent")
             scenario = "answers" if _moved_to(kwargs) else "wait-for-stop"
+            # Started where the session manager says, as the bridge starts an agent CLI.
+            folder = kwargs.get("cwd")
             provider = AcpAgentProvider(
                 command=[sys.executable, str(AGENT), scenario, str(self.record(scenario)), "spec"],
-                cwd=tmp_path / "work",
+                cwd=Path(folder) if folder else tmp_path / "work",
                 dialect="codex",
                 runtime_id="acp:codex",
                 session_key=session_key,
@@ -180,6 +189,9 @@ async def world(tmp_path, monkeypatch):
     app.router.add_post(
         "/api/chat/sessions/{session}/reasoning-effort", api_chat_session_reasoning_effort
     )
+    app.router.add_post(
+        "/api/chat/sessions/{session}/workspace-dir", api_chat_session_workspace_dir
+    )
     app.router.add_get("/api/chat/sessions/{session}", api_chat_session_detail)
     client = TestClient(TestServer(app))
     await client.start_server()
@@ -258,6 +270,43 @@ async def test_a_change_mid_turn_ends_the_waiting_approval_and_answers_her_messa
     (binding,) = w.frames_of("session_binding")
     assert binding["session"] == CHAT and binding[attr] == value, binding
     # And the caller is told the running turn was moved.
+    assert answer["ok"] is True and answer["moved"] is True, answer
+
+
+@pytest.mark.asyncio
+async def test_a_folder_change_mid_turn_answers_her_message_in_the_new_folder(world):
+    """The working directory is a door like the others. 🔴 Red before: the change was written under
+    the running turn, which went on waiting in the folder she left, and her message was never
+    answered there."""
+    w = world
+    elsewhere = w.tmp / ELSEWHERE
+    elsewhere.mkdir()
+    folder = os.path.realpath(elsewhere)
+    w.start()
+    await w.asked()
+    aid = chat_approval_id(w.session.key, ASKED)
+
+    answer = await (
+        await w.client.post(
+            f"/api/chat/sessions/{CHAT}/workspace-dir", json={"workspace_dir": str(elsewhere)}
+        )
+    ).json()
+    await w.answered()
+
+    assert aid not in w.state._pending_approvals
+    assert [a["outcome"] for a in w.wire("wait-for-stop", "permission_answer")] == ["cancelled"]
+    notice = f"Moved to PersonalClaw in {folder} — it is answering your message."
+    assert w.rows("notice") == [notice]
+    (asked_again,) = w.prompts("answers")
+    assert HER_MESSAGE in asked_again
+    assert w.rows("assistant") == [PLAIN_ANSWER]
+    # The CLI she moved away from is gone, and the one answering was started in the new folder.
+    assert [scenario for scenario, _ in w.built] == ["wait-for-stop", "answers"]
+    assert not w.built[0][1].is_process_alive()
+    assert [s["cwd"] for s in w.wire("answers", "spawn")] == [folder]
+    assert w.session.workspace_dir == folder
+    (binding,) = w.frames_of("session_binding")
+    assert binding["workspace_dir"] == folder
     assert answer["ok"] is True and answer["moved"] is True, answer
 
 

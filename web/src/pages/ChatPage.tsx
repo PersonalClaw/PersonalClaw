@@ -30,6 +30,7 @@ import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
 import { ComposerNoticeLine, useComposerNotice } from '../ui/composer/ComposerNotice'
 import { useVoiceConfig } from './chat/voiceConfig'
 import { deliverableToOpenSession } from './chat/sessionDelivery'
+import { workingDirectoryPrompt, workingDirectoryToast } from './chat/workingDirectory'
 import { ModelWaits } from '../ui/ModelWaitNotice'
 import { joinsATurnStartedElsewhere } from './chat/joinTurn'
 import { MEMORY_MODES, MEMORY_MODE_NOTICE } from './chat/memoryModeCopy'
@@ -991,6 +992,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // chat working in a folder of its own, else "Chat"): the composer's Auto says it. From session
   // detail, and from the answer to setting the chat's working directory, which can move it.
   const [autoChain, setAutoChain] = useState('')
+  // The folder the chat works in, which its Working directory prompt opens on: from session detail,
+  // from the answer to setting it, and from `session_binding` when it moves.
+  const [workingDir, setWorkingDir] = useState('')
   const takeContextUsage = (u: { pct?: number | null; window?: number | null }) => {
     setContextPct(typeof u.pct === 'number' ? u.pct : undefined)
     if ('window' in u) setContextWindow(typeof u.window === 'number' ? u.window : null)
@@ -1209,6 +1213,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // What the ring was last told, so a chat opened after its turn draws the same ring.
     if (d.context_usage && !contextSaidLive.current) takeContextUsage(d.context_usage)
     setAutoChain(d.auto_chain ?? '')
+    setWorkingDir(d.workspace_dir ?? '')
   }
   // Read session detail with this chat's live frames HELD, adopt the snapshot, then replay every
   // frame since the read was issued on top of it — see snapshotReplay.ts for why that one rule
@@ -1613,6 +1618,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         }
         bindingToldRef.current = true
         setBindingNonce((n) => n + 1)
+        // Where it works and the chain its next turn on Auto takes, which its folder decides.
+        if (typeof d.workspace_dir === 'string') setWorkingDir(d.workspace_dir)
+        if (typeof d.auto_chain === 'string') setAutoChain(d.auto_chain)
         break
       // The agent cleared the conversation: the gateway emptied the transcript and says
       // "Conversation cleared." in it next (a `chat_message`), which is all a reload shows.
@@ -3371,22 +3379,22 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     catch (e) { setToast((e as Error).message || 'Failed to add context') }
     window.setTimeout(() => setToast(null), 2600)
   }
-  // Set the live session's working directory (agent cwd + memory-partition scope).
+  // Set the live session's working directory (agent cwd + memory-partition scope), or clear it.
   async function setWorkspaceDir() {
     const s = sessionRef.current
     if (!s) return
-    const dir = await promptInput({
-      title: 'Working directory', label: 'Absolute path for the agent’s working directory',
-      placeholder: '/Users/you/project', confirmLabel: 'Set',
-    })
+    const dir = await promptInput(workingDirectoryPrompt(workingDir))
     if (dir == null) return
+    let shownFor = 2600
     try {
       const r = await api.setSessionWorkspaceDir(s, dir.trim())
       if (typeof r.auto_chain === 'string') setAutoChain(r.auto_chain)
-      setToast(dir.trim() ? `Working directory set to ${dir.trim()}` : 'Working directory cleared')
+      if (typeof r.workspace_dir === 'string') setWorkingDir(r.workspace_dir)
+      setToast(workingDirectoryToast(r, !dir.trim()))
+      if (r.moved) shownFor = 6000
     }
     catch (e) { setToast((e as Error).message || 'Failed to set working directory') }
-    window.setTimeout(() => setToast(null), 2600)
+    window.setTimeout(() => setToast(null), shownFor)
   }
 
   async function attach(files: File[]) {

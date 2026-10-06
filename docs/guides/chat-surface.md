@@ -122,7 +122,9 @@ answered with a plan instead of with work.
 
 "Nothing runs" is not a promise made to the model. Plan is one of the ordinary task modes,
 and it is the tool gate that refuses a mutating tool while you are in it — the same gate the
-task-mode pill uses, checked before any approval you might already have granted.
+task-mode pill uses, checked before any approval you might already have granted. An agent CLI
+with a planning mode of its own (Claude Code) is also put in it for a Plan turn, and taken out
+of it at the next turn in another mode.
 
 When that turn finishes, a review panel opens above the composer with the plan as Markdown
 (until then it says *Drafting…*, because there is nothing to review yet):
@@ -184,15 +186,16 @@ that chat.
 
 ### Changing the agent while it answers
 
-Picking another agent, agent CLI, model or reasoning effort while a turn runs — in the
-composer, with **Route** on the routing chip, or through the API — applies to the message
-being answered. The running turn stops, a permission card it was waiting on ends as not run,
-and your message is answered again by what you picked. The chat says so where the
-conversation is: "Moved to oncall-triage — it is answering your message." If the answer had
-already arrived, it stands, and the change applies from your next message. If the turn had
-already finished a step that may have changed something, your message is not sent to what you
-picked on its own, since that could repeat the step: the chat says so, with **Retry**, which asks
-first.
+Picking another agent, agent CLI, model, reasoning effort or working directory while a turn runs
+— in the composer, the chat header's **Working directory**, with **Route** on the routing chip,
+or through the API — applies to the message being answered. The running turn stops, so nothing
+more of it runs in the folder you left, a permission card it was waiting on ends as not run, and
+your message is answered again by what you picked. The chat says so where the conversation is:
+"Moved to oncall-triage — it is answering your message.", or for a folder "Moved to PersonalClaw
+in /Users/you/src/recipe-box — it is answering your message." If the answer had already arrived,
+it stands, and the change applies from your next message. If the turn had already finished a step
+that may have changed something, your message is not sent to what you picked on its own, since
+that could repeat the step: the chat says so, with **Retry**, which asks first.
 
 ### Subagents the agent starts
 
@@ -477,10 +480,12 @@ The folder decides before the turn starts, never what you ask in it. So with Cod
 provider (your work account, say) and Chat on another (a plan for your own chats), a chat working
 in your repository sends its turns to the first and an everyday chat to the second. Set the
 working directory before the work starts: a chat with no folder of its own runs on Chat even when
-you ask it to run a command in a repository. Changing it moves the chat's next turn. A side
-question asked beside the chat runs on the same chain as the chat. The chat's subagents use
-Orchestration, and its title, tags and follow-ups use Background, as Settings → Models says for
-each.
+you ask it to run a command in a repository. Changing it moves the chat's next turn, its tools
+with it: the shell starts in the new folder, and a file named by a relative path is read and
+written there. The prompt opens on the folder the chat works in, and an empty path puts the chat
+back in the workspace. A side question asked beside the chat runs on the same chain as the chat.
+The chat's subagents use Orchestration, and its title, tags and follow-ups use Background, as
+Settings → Models says for each.
 
 Each turn names the model that answered it. Its details chip says **on <model>**, and opened,
 **Answered by <model>, from your Code & tools chain** (or your Chat chain, or **picked for this

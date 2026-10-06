@@ -4,8 +4,9 @@ Run as ``python scripted_acp_agent.py <scenario> <record.jsonl> [spec|id-label] 
 answers ``initialize``,
 ``session/new`` and the session configuration requests the way an ACP agent does, then plays
 one scripted turn per ``session/prompt``. Every frame it receives is appended to the record
-file, one JSON object per line, together with a ``spawn`` line per process, so a test can read
-what PersonalClaw put on the wire and how many agent processes it started. Permission options go
+file, one JSON object per line, together with a ``spawn`` line per process naming the folder it
+was started in, so a test can read what PersonalClaw put on the wire and how many agent processes
+it started, and where. Permission options go
 out keyed the way the ACP specification spells them (``optionId``/``name``), or ``id``/``label``
 for an agent that speaks the older shape.
 
@@ -185,7 +186,8 @@ class Agent:
         self.tool_server: subprocess.Popen | None = None
         self.tool_requests = 0
         self.tool_calls = 0
-        self.log("spawn")
+        # Where this process was started: the folder its commands and edits work in.
+        self.log("spawn", cwd=os.getcwd())
 
     def log(self, kind: str, **fields: object) -> None:
         self.record.write(json.dumps({"kind": kind, "pid": os.getpid(), **fields}) + "\n")
