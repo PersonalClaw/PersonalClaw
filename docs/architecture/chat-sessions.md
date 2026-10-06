@@ -709,11 +709,36 @@ chat, channel thread, loop worker, webhook, subagent).
    followed by a notice row that gives its word count and quotes the agent's
    sentence. The answer is never cut, and an answer to a message that sets a word
    limit of its own is not checked against the agent's.
-4. **Model resolution** — the `chat` use-case binding from
-   `active_models.json`, unless the composer picked a model for the session or
-   the agent pins one (in that order; the `model` kwarg threads through
+4. **Model resolution** — the chain of the use case the chat's turns resolve on
+   (`chat_runner.model_axis_for`, the `model_axis` it acquires its runtime with):
+   `loops` for a loop's worker and planner, `code_tools` for a chat working in a
+   folder of its own, and `chat` for any other. A chat works in a folder of its own
+   when its `workspace_dir` is one: the working directory set for it, its
+   project's folder or its agent's (`chat_handlers.api_chat_session_create`), the
+   same folder that keeps its own memory (`chat_utils.chat_model_axis` asks
+   `memory_locality.is_local_partition`); the workspace every chat starts in keeps
+   the chat binding. Code & tools with no model bound is the Chat chain
+   (`use_cases.chain_owner`). The axis is decided from the chat before its first
+   request, never from what the turn says or does, so with Code & tools on one
+   provider and Chat on another a turn over the chat's folder never reaches
+   Chat's. A cached runtime built on another axis (the working directory set or
+   cleared between two turns) is rebuilt at its next acquire
+   (`session._axis_moved`, `ResolutionBasis.serves`), and a side question asked
+   beside the chat acquires on the chat's axis too (`dashboard/side.py`). Both
+   axes are a person's own turns, which the spend guard leaves alone. A model the
+   composer picked for the session, then one the agent pins, come before the
+   chain (in that order; the `model` kwarg threads through
    `llm/registry.py` `registry.build`; every factory honors it). A chosen
    model runs on ITS provider, not on the chain head with a borrowed model id.
+   **A turn names the model that answered it and how that model was chosen**
+   (`provider_bridge.how_chosen`, read off its runtime's `ResolutionBasis.sources`: "from
+   your Code & tools chain", "from your Chat chain", "picked for this chat",
+   "<agent>'s own model"): in its "Turn complete" line, in `meta.turn_telemetry`
+   (`model`, `provider`, `chosen`) and on the live `stats` activity, which the
+   turn's details chip ("on <model>", and "Answered by …" opened) and the model
+   pill's Auto ("Auto · <model>") read. Session detail and the working-directory
+   route answer `auto_chain`, the chain a turn on Auto takes next, which the
+   pill's Auto row names.
    One rule decides whether a chosen model can run
    (`providers/provider_bridge.named_model_problem`): it must be one of the
    chat models set up in Settings → Models, and its provider must be able to

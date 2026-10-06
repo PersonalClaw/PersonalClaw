@@ -419,6 +419,8 @@ def build_turn_telemetry(
     events: int,
     tool_calls: int,
     model: str,
+    provider: str,
+    chosen: str,
     line: str,
 ) -> dict[str, Any] | None:
     """The structured per-turn telemetry record, or ``None`` when the turn reported none.
@@ -437,6 +439,10 @@ def build_turn_telemetry(
     * ``context_pct`` is ``None`` when the provider measured nothing. Folding that into
       ``0.0`` is the exact defect ``test_context_pct_honesty.py`` was written to
       stop, and persisting it would make the lie durable.
+    * ``model`` and ``provider`` are the model that answered and the provider entry it came
+      from, the two its usage row names; ``chosen`` says how that model was chosen ("from your
+      Code & tools chain", "picked for this chat", ``""`` when the runtime does not say), so the
+      turn's chip and the composer's Auto name it after a reload as they did live.
 
     ``None`` (no record at all) when the turn reported no events, no tool calls and no
     tokens — the same gate the live stats line uses, so a turn that says nothing live
@@ -456,6 +462,8 @@ def build_turn_telemetry(
         "events": int(events),
         "tool_calls": int(tool_calls),
         "model": str(model or ""),
+        "provider": str(provider or ""),
+        "chosen": str(chosen or ""),
         "line": str(line),
     }
 

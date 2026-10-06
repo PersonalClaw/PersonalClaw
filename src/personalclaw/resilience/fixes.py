@@ -259,8 +259,10 @@ def _bindings_that_cannot_run() -> dict[str, list[tuple[str, str]]]:
 
 
 def _use_case_label(use_case: str) -> str:
-    """The use case as Settings → Models names it (``code_tools`` → "Code tools")."""
-    return use_case.replace("_", " ").capitalize()
+    """The use case as Settings → Models names it (``code_tools`` → "Code & tools")."""
+    from personalclaw.providers.use_cases import USE_CASE_NAMES
+
+    return USE_CASE_NAMES.get(use_case, use_case)
 
 
 def _left_empty(use_case: str, dropped: list[str]) -> str:

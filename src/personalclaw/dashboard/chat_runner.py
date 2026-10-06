@@ -84,6 +84,7 @@ from personalclaw.dashboard.chat_utils import (
     _say_compaction_notice,
     _validate_tool_name,
     attached_item_source,
+    chat_model_axis,
     chat_usage,
     model_substitution_notice,
     stream_slash_command,
@@ -885,6 +886,15 @@ _WRITE_FILE_TOOLS = {"write_file", "edit_file"}
 _MAX_FILE_SNAPSHOT = 200_000
 
 
+def served_model_phrase(model: str, chosen: str) -> str:
+    """The model that answered a turn and how it was chosen, as the turn says it:
+    ``"deep-coder, from your Code & tools chain"``; the model alone when nothing says how, ``""``
+    when no model is named."""
+    if not model:
+        return ""
+    return f"{model}, {chosen}" if chosen else model
+
+
 def _turn_complete_line(
     *,
     events: int,
@@ -898,8 +908,13 @@ def _turn_complete_line(
     cache_creation_tokens: int = 0,
     cache_hit_pct: float | None = None,
     cache_saved_usd: float | None = None,
+    served: str = "",
 ) -> str:
     """Compose the live-only "Turn complete" telemetry line.
+
+    ``served`` names the model that answered and how it was chosen
+    (:func:`served_model_phrase`), right after the counts: a turn on Code & tools and a turn on
+    Chat otherwise read the same. Empty, the line is the one it was before.
 
     Appends a real cost + in/out token fragment to the existing events/tool-calls/
     context summary. Honest-unpriced: a model with no price row renders ``unpriced``,
@@ -929,6 +944,8 @@ def _turn_complete_line(
     line = f"Turn complete: {events} events, {tool_calls} tool calls"
     if context_pct is not None:
         line += f", context {round(context_pct)}%"
+    if served:
+        line += f" · {served}"
     if input_tokens or output_tokens:
         cost_str = f"${cost_usd:.4f}" if priced else "unpriced"
         line += f" · {cost_str} · {input_tokens:,} in / {output_tokens:,} out tokens"
@@ -975,16 +992,32 @@ def refused_on_a_substitute(state: DashboardState, session: _ChatSession, client
 
 def model_axis_for(session: object) -> str:
     """The axis a chat turn's inner model resolves on, which is also the axis the spend guard
-    meters it on: ``loops`` for a loop's worker and planner, else ``""`` (the chat binding).
+    meters it on: ``loops`` for a loop's worker and planner, else the person's own chat axis
+    (:func:`chat_model_axis`): ``code_tools`` for a chat working in a folder of its own, ``""``
+    (the chat binding) for any other.
 
     Keyed off ``_app`` (the loop code sets it, and it is persisted), NOT the session-key prefix.
-    An explicit per-loop model still wins — it rides ``session.model`` beside the axis. Every
-    other session's turn takes the chat binding, which the spend guard leaves alone by design:
-    Settings → Guardrails says the daily cap binds unattended work, not a chat. The planner used
-    to take the chat binding, because only the worker's tag was checked here, so a loop's
-    planning was never metered.
+    An explicit per-loop model still wins — it rides ``session.model`` beside the axis, as a
+    chat's pick does. A chat's turn on either of its axes is left alone by the spend guard by
+    design: Settings → Guardrails says the daily cap binds unattended work, not a chat. The
+    planner used to take the chat binding, because only the worker's tag was checked here, so a
+    loop's planning was never metered.
     """
-    return "loops" if getattr(session, "_app", "") in LOOP_WORK_APPS else ""
+    if getattr(session, "_app", "") in LOOP_WORK_APPS:
+        return "loops"
+    return chat_model_axis(session)
+
+
+def auto_chain_name(session: object) -> str:
+    """The Settings → Models chain a turn of *session* runs on when no model is picked for it, as
+    the Models page names it: "Code & tools" for a chat working in a folder of its own while that
+    chain binds a model, "Chat" otherwise (an empty Code & tools is the Chat chain). What the
+    composer's model pill says its Auto runs on, before the turn starts."""
+    from personalclaw.providers.provider_bridge import governing_axis
+    from personalclaw.providers.use_cases import USE_CASE_NAMES, chain_owner
+
+    owner = chain_owner(governing_axis(model_axis_for(session)))
+    return USE_CASE_NAMES.get(owner, owner)
 
 
 def _record_turn_usage(
@@ -1608,17 +1641,23 @@ async def session_image_input(
     The live runtime answers when the session has one — the same question the turn asks
     (:func:`_turn_image_input`). Before one exists (a new chat, or one whose runtime was
     evicted), the answer is for what a runtime would serve: an ACP agent takes none, and a
-    native turn is served by the chat binding for the session's model. ``agent``/``model``/
-    ``runtime`` (an ACP runtime id the composer's pick runs on) stand in for a composer that
-    has no session yet.
+    native turn is served by the binding the session's turns take (:func:`model_axis_for`:
+    Code & tools for a chat working in a folder of its own, else the chat binding) for the
+    session's model. ``agent``/``model``/``runtime`` (an ACP runtime id the composer's pick runs
+    on) stand in for a composer that has no session yet, which takes the chat binding.
     """
     from personalclaw.providers.image_input import (
         agent_label,
         agent_takes_no_images,
         image_input,
     )
-    from personalclaw.providers.provider_bridge import _agent_provider_kind, expected_served_ref
+    from personalclaw.providers.provider_bridge import (
+        _agent_provider_kind,
+        expected_served_ref,
+        governing_axis,
+    )
 
+    axis = "chat"
     if session is not None:
         client = state.sessions.get_provider(_history_key_for(session.key))
         if client is not None:
@@ -1626,11 +1665,12 @@ async def session_image_input(
         agent = getattr(session, "agent", "") or ""
         model = getattr(session, "model", "") or ""
         runtime = getattr(session, "acp_provider", "") or ""
+        axis = governing_axis(model_axis_for(session))
     if runtime.startswith("acp"):
         return agent_takes_no_images(agent_label(runtime))
     if _agent_provider_kind(agent or None) == "acp":
         return agent_takes_no_images(agent)
-    return await image_input(expected_served_ref(model))
+    return await image_input(expected_served_ref(model, use_case=axis))
 
 
 async def _prepare_image_attachments(
@@ -2929,7 +2969,8 @@ async def run_chat(
             # created here back to the Project. "" for an unscoped session.
             project_id=getattr(session, "project_id", "") or "",
             # A loop's worker and planner sessions resolve — and are metered on — the ``loops``
-            # axis; every other session takes the chat binding (`model_axis_for`).
+            # axis; a chat working in a folder of its own takes Code & tools, and every other
+            # session the chat binding (`model_axis_for`).
             model_axis=model_axis_for(session),
             # An Attended loop's sessions are answered by a person: the cap does not count them.
             unmetered=not loop_posture.spend_metered(session),
@@ -3600,6 +3641,9 @@ async def run_chat(
         # reported usage — these carry it out to the broadcast without that hazard.
         _turn_model = ""
         _turn_provider = ""
+        # How the model that answered was chosen ("from your Code & tools chain", "picked for this
+        # chat"), as the runtime that served the turn records it (`provider_bridge.how_chosen`).
+        _turn_chosen = ""
         _turn_cost_usd = 0.0
         _turn_priced = False
         # How long the turn took, for the persisted per-turn record. Most
@@ -4954,6 +4998,7 @@ async def run_chat(
                     # the estimate, never write it onto session.model (the user's selection);
                     # the ACP CLI's internal model would clobber the user's choice with a model
                     # no model-provider offers.
+                    from personalclaw.providers.provider_bridge import how_chosen
                     from personalclaw.routing.rates import price_event
                     from personalclaw.usage_ledger import answered_model, answered_provider
 
@@ -4995,6 +5040,7 @@ async def run_chat(
                     _turn_priced = _turn_price.priced
                     _turn_model = _record_model or ""
                     _turn_provider = _record_provider
+                    _turn_chosen = how_chosen(client, getattr(event, "served_model_ref", "") or "")
                 _stop_reason, _output_cap = event.stop_reason, getattr(event, "output_cap", 0)
                 _answered = not is_cancelled_stop(_stop_reason)
                 if is_cancelled_stop(_stop_reason) and event.text:
@@ -5198,6 +5244,7 @@ async def run_chat(
             events=_turn_event_count,
             tool_calls=_turn_tool_call_count,
             context_pct=pct,
+            served=served_model_phrase(_turn_model, _turn_chosen),
             input_tokens=_turn_input_tokens,
             output_tokens=_turn_output_tokens,
             cost_usd=_turn_cost_usd,
@@ -5237,6 +5284,8 @@ async def run_chat(
             events=_turn_event_count,
             tool_calls=_turn_tool_call_count,
             model=_turn_model,
+            provider=_turn_provider,
+            chosen=_turn_chosen,
             line=_turn_line,
         )
         stamp_turn_telemetry(session, _turn_telemetry)
@@ -5302,7 +5351,15 @@ async def run_chat(
         if _turn_telemetry is not None:
             state.broadcast_ws(
                 "activity_event",
-                {"session": session.key, "kind": "stats", "text": _turn_line},
+                {
+                    "session": session.key,
+                    "kind": "stats",
+                    "text": _turn_line,
+                    # The model that answered and how it was chosen, which the turn's chip and the
+                    # composer's Auto name (the same two `meta.turn_telemetry` keeps for a reload).
+                    "model": _turn_model,
+                    "chosen": _turn_chosen,
+                },
             )
         _stop_text = redact_exfiltration_urls(assistant_text[:500])[0]
         _stop_text = redact_credentials(_stop_text)[0]

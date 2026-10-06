@@ -79,7 +79,7 @@ import type { TurnPaste } from './chat/PasteChip'
 import { sessionTemplatePatch } from './chat/sessionTemplate'
 import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
-import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type QuestionSegment, type ActivitySegment, type ThinkingSegment, type ErrorSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, failedStepCount, unaskedStepCount, foldStepLine, noteOf, LEDGER_ACTIVITY_KINDS, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, imageDeliveryOf, noticeSegment, ranPromptOf, replyCutOf, type ReplyCut, pastesOf, shownText } from './chat/chatTypes'
+import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type QuestionSegment, type ActivitySegment, type ThinkingSegment, type ErrorSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, failedStepCount, unaskedStepCount, foldStepLine, noteOf, LEDGER_ACTIVITY_KINDS, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, imageDeliveryOf, noticeSegment, ranPromptOf, replyCutOf, type ReplyCut, pastesOf, shownText, servedModelOf, lastServedModel, type ServedModel } from './chat/chatTypes'
 import { isImagePath } from './chat/imageAttachments'
 import { AttachmentChips, TurnAttachments } from './chat/AttachmentChips'
 import { applyApprovalFrame, applyApprovalResolved, applyToolCallFrame, applyToolResultFrame } from './chat/liveToolFrames'
@@ -986,6 +986,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const [contextWindow, setContextWindow] = useState<number | null | undefined>(undefined)
   // A reading that arrived live outranks the one a later snapshot carries, which is older.
   const contextSaidLive = useRef(false)
+  // The Settings → Models chain a turn here runs on when no model is picked ("Code & tools" for a
+  // chat working in a folder of its own, else "Chat"): the composer's Auto says it. From session
+  // detail, and from the answer to setting the chat's working directory, which can move it.
+  const [autoChain, setAutoChain] = useState('')
   const takeContextUsage = (u: { pct?: number | null; window?: number | null }) => {
     setContextPct(typeof u.pct === 'number' ? u.pct : undefined)
     if ('window' in u) setContextWindow(typeof u.window === 'number' ? u.window : null)
@@ -1203,6 +1207,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     coalescer.resume(partial, d.stream_seq ?? 0)
     // What the ring was last told, so a chat opened after its turn draws the same ring.
     if (d.context_usage && !contextSaidLive.current) takeContextUsage(d.context_usage)
+    setAutoChain(d.auto_chain ?? '')
   }
   // Read session detail with this chat's live frames HELD, adopt the snapshot, then replay every
   // frame since the read was issued on top of it — see snapshotReplay.ts for why that one rule
@@ -1541,6 +1546,18 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           break
         }
         if (kind === 'status' || kind === 'session' || !text) break
+        // The turn's stats line names the model that answered and how it was chosen: the turn's
+        // chip and the composer's Auto say it from here, the line itself goes to the ledger below.
+        if (kind === 'stats') {
+          const served = servedModelOf(d as { model?: unknown; chosen?: unknown })
+          if (served) setTurns((prev) => {
+            const list = ensureAssistant(prev)
+            const i = list.length - 1
+            const next = [...list]
+            next[i] = { ...next[i], servedModel: served }
+            return next
+          })
+        }
         setLatestActivity(text)
         // Which learning path emitted a `learned` event. Absent on every other
         // activity kind, and absent on a `learned` event from a build — which
@@ -3379,7 +3396,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       placeholder: '/Users/you/project', confirmLabel: 'Set',
     })
     if (dir == null) return
-    try { await api.setSessionWorkspaceDir(s, dir.trim()); setToast(dir.trim() ? `Working directory set to ${dir.trim()}` : 'Working directory cleared') }
+    try {
+      const r = await api.setSessionWorkspaceDir(s, dir.trim())
+      if (typeof r.auto_chain === 'string') setAutoChain(r.auto_chain)
+      setToast(dir.trim() ? `Working directory set to ${dir.trim()}` : 'Working directory cleared')
+    }
     catch (e) { setToast((e as Error).message || 'Failed to set working directory') }
     window.setTimeout(() => setToast(null), 2600)
   }
@@ -3699,7 +3720,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           onMentionFile={onMentionFile} onMentionKnowledge={onMentionKnowledge} onLargePaste={onLargePaste}
           openModelSignal={openModelSignal} openAgentSignal={openAgentSignal} openReasoningSignal={openReasoningSignal}
           onOptimize={optimize} optimizing={optimizing} history={historyTexts} onRecall={recallPrompt}
-          onTranscribe={transcribe} onMicError={(msg) => notice.showError(msg, 'voice-input')} canQueue canSteer={takesSteers} sendHeldReason={uploadHold} contextPct={contextPct} contextWindow={contextWindow}
+          onTranscribe={transcribe} onMicError={(msg) => notice.showError(msg, 'voice-input')} canQueue canSteer={takesSteers} sendHeldReason={uploadHold} contextPct={contextPct} contextWindow={contextWindow} servedModel={lastServedModel(turns)} autoChain={autoChain}
           handsFree={{ confirmationPhrases: voiceCfg.confirmation_phrases, exitPhrases: voiceCfg.exit_phrases, speaking: speakingTurn !== null, muteWhileSpeaking: voiceCfg.duplex_mute_enabled }}
           onHandsFreeSubmit={(t) => void send(t, { inputOrigin: 'voice' })}
           screenShare={{ available: screenShare.available, sharing: screenShare.sharing, disabledReason: screenShare.disabledReason, onToggle: screenShare.toggle }} />
@@ -3989,7 +4010,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                               onSwitchVariant={isLast ? switchVariant : undefined}
                               speaking={speakingTurn === i} onSpeak={() => speak(turnText(turn), i)} />
                           )}>
-                            <AssistantSegments segments={turn.segments} liveCards={liveCards} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onAnswerQuestion={answerQuestion} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} onSetupModel={() => navigate(MODELS_PATH)} onRetry={isLast && !streaming ? regenerate : undefined} chatSessionKey={sessionRef.current ?? undefined} citations={turn.citations} skillsUsed={turn.skillsUsed} cutOff={turn.cutOff} modelSubstitution={turn.modelSubstitution} />
+                            <AssistantSegments segments={turn.segments} liveCards={liveCards} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onAnswerQuestion={answerQuestion} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} onSetupModel={() => navigate(MODELS_PATH)} onRetry={isLast && !streaming ? regenerate : undefined} chatSessionKey={sessionRef.current ?? undefined} citations={turn.citations} skillsUsed={turn.skillsUsed} cutOff={turn.cutOff} modelSubstitution={turn.modelSubstitution} servedModel={turn.servedModel} />
                           </MessageAssistant>
                         )}
                         {/* Follow-up chips under the last assistant turn only,
@@ -4699,7 +4720,7 @@ function SelectionQuote({ scrollRef, onQuote, attributionFor }: {
  *  historical messages get stripped from the prose (they are never rendered as
  *  buttons — follow-up chips are the single suggestion surface) and referenced
  *  file paths surface as clickable chips below the prose. */
-function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, onApprove, onAnswerQuestion, onSwitchToAgent, onOpenFile, onSetupModel, onRetry, chatSessionKey, citations, skillsUsed, cutOff, modelSubstitution }: {
+function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, onApprove, onAnswerQuestion, onSwitchToAgent, onOpenFile, onSetupModel, onRetry, chatSessionKey, citations, skillsUsed, cutOff, modelSubstitution, servedModel }: {
   segments: Segment[]; isLast: boolean
   /** The tool results of the whole chat that show a run's live card, one per run. */
   liveCards: Set<Segment>
@@ -4722,6 +4743,8 @@ function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, 
   cutOff?: ReplyCut
   /** "Ran on X instead of Y: …" — another model answered than the one chosen for this chat. */
   modelSubstitution?: string
+  /** The model that answered this turn and how it was chosen, which the turn's chip names. */
+  servedModel?: ServedModel
 }) {
   const fullText = segments.filter((s) => s.kind === 'text').map((s) => (s as { text: string }).text).join('\n')
   // A restricted-mode turn may OFFER a one-click escalation to Agent.
@@ -4749,7 +4772,7 @@ function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, 
     }
     else if (ak === 'stats') ledger.stats = (s as ActivitySegment).text
   }
-  const hasLedger = Boolean(ledger.fed || ledger.learned || ledger.stats)
+  const hasLedger = Boolean(ledger.fed || ledger.learned || ledger.stats || servedModel)
   // The last segment the turn shows in its body: the ledger's rows are pulled out into its footer.
   const inLedger = (s: Segment) => s.kind === 'activity' && LEDGER_ACTIVITY_KINDS.includes((s as ActivitySegment).activityKind || '')
   const lastShown = [...segments].reverse().find((s) => !inLedger(s))
@@ -4882,7 +4905,7 @@ function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, 
           actually paying for" a thing you have to go looking for. */}
       {skillsUsed && skillsUsed.length > 0 && <SkillsUsedChip skills={skillsUsed} />}
 
-      {hasLedger && <ContextLedger fed={ledger.fed} fedNoMemory={ledger.fedNoMemory} learned={ledger.learned} learnedOrigin={ledger.learnedOrigin} learnedRef={ledger.learnedRef} stats={ledger.stats} />}
+      {hasLedger && <ContextLedger fed={ledger.fed} fedNoMemory={ledger.fedNoMemory} learned={ledger.learned} learnedOrigin={ledger.learnedOrigin} learnedRef={ledger.learnedRef} stats={ledger.stats} served={servedModel} />}
 
       {/* Agent-driven one-click escalation: the model proposed a switch out
           of a restricted mode; the user approves with a single click, which flips

@@ -12,9 +12,10 @@ of the parent session. Isolation is structural (see side_state.py):
     transcript does not consume.
 
 A side turn is the parent chat's own work (``memory_writes.as_its_session``) and names the model
-it is answered on, as the chat's turn does. So in an Incognito or Temporary chat neither the
-question nor the conversation it reads reaches any other model: its tools are ranked by their
-words, and the embedding model is sent nothing.
+it is answered on, as the chat's turn does, which it resolves on the chain the chat's turns do
+(Code & tools for a chat working in a folder of its own). So in an Incognito or Temporary chat
+neither the question nor the conversation it reads reaches any other model: its tools are ranked
+by their words, and the embedding model is sent nothing.
 """
 
 from __future__ import annotations
@@ -135,7 +136,7 @@ async def _run_side_turn(
     Streams ``chat.side_result`` deltas. A late frame whose run_id no longer
     matches ``side.last_run_id`` (turn superseded or side closed) is dropped.
     """
-    from personalclaw.dashboard.chat_utils import chat_usage
+    from personalclaw.dashboard.chat_utils import chat_model_axis, chat_usage
     from personalclaw.llm_helpers import (
         PromptBusyExhaustedError,
         ToolApprovalPolicy,
@@ -159,12 +160,15 @@ async def _run_side_turn(
     try:
         prompt = build_side_message(session, side, question)
         # The chat's own work, as its turn is: what the question and the snapshot are handed to
-        # is asked of the chat's mode at every seam, and the model it is answered on is named.
+        # is asked of the chat's mode at every seam, and the model it is answered on is named. It
+        # resolves on the chain the chat's own turns do (`chat_model_axis`): the snapshot is the
+        # chat's conversation, and a chat working in a folder of its own keeps that on Code & tools.
         with memory_writes.as_its_session(session):
             provider, _is_new, _resumed = await state.sessions.get_or_create(
                 side_key,
                 agent=session.agent,
                 model=session.model or None,
+                model_axis=chat_model_axis(session),
             )
             try:
                 memory_writes.answered_by(turn_model_ref(provider))

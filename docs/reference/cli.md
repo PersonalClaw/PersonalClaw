@@ -182,7 +182,7 @@ unattended (see the safety posture below): nobody is there to answer an approval
 | `--agent NAME` | Agent to run the turn as (default: the configured default agent). |
 | `--model NAME` | Model override for this turn. |
 | `--session KEY` | Continue a **named persistent** session (`inbound:cli:<key>`). Omitted = a fresh stateless one-shot per invocation. |
-| `--cwd DIR` | Working directory for the turn's tools. |
+| `--cwd DIR` | Working directory for the turn's tools. A folder of its own (not the workspace) also runs the turn on Settings → Models → Code & tools, while that binds a model, as a chat working in a folder does. |
 | `--allow` | Grant write/execute tools, and approve the run's calls without asking. **Default is read-only.** |
 | `--timeout SECS` | Ceiling on the turn (default 600). When it passes, `run` stops the turn in the gateway before it exits. |
 | `--port PORT` | Port of this home's gateway (default: the port it recorded when it started; `PERSONALCLAW_PORT` names one too). A gateway there that is not this home's is refused. |

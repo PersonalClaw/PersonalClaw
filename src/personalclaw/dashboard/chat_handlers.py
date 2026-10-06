@@ -35,7 +35,12 @@ from personalclaw.dashboard.chat_persistence import (
     session_key_exists,
 )
 from personalclaw.dashboard.chat_queue import shown
-from personalclaw.dashboard.chat_runner import TURN_STOPPED, run_chat, started_by_app
+from personalclaw.dashboard.chat_runner import (
+    TURN_STOPPED,
+    auto_chain_name,
+    run_chat,
+    started_by_app,
+)
 from personalclaw.dashboard.chat_title import title_needs_model
 from personalclaw.dashboard.chat_utils import (
     _build_stream_chunk,
@@ -1047,6 +1052,10 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             # + provider_agent + reasoning effort).
             "agent": session.agent or "",
             "model": session.model or "",
+            # The Settings → Models chain a turn here runs on when no model is picked for it
+            # ("Code & tools" for a chat working in a folder of its own, else "Chat"), which the
+            # model pill's Auto names before the turn starts (`chat_runner.auto_chain_name`).
+            "auto_chain": auto_chain_name(session),
             # session mode so the UI can show the right indicator when a session
             # is reopened.
             "mode": getattr(session, "mode", "") or "",
@@ -2227,7 +2236,11 @@ async def api_chat_session_workspace_dir(request: web.Request) -> web.Response:
         except Exception:
             logger.warning("Failed to save recent workspace dir", exc_info=True)
     state.push_sessions_update()
-    return web.json_response({"ok": True, "workspace_dir": workspace_dir})
+    # A folder of its own moves the chat's next turn to Code & tools, and clearing it back to
+    # Chat: the composer's Auto says which from this answer (`chat_runner.auto_chain_name`).
+    return web.json_response(
+        {"ok": True, "workspace_dir": workspace_dir, "auto_chain": auto_chain_name(session)}
+    )
 
 
 _MAX_RECENT_PROJECTS = 10

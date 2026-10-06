@@ -559,6 +559,14 @@ def stamp_substitution(provider: object, substitution: ModelSubstitution | None)
         logger.debug("%s does not accept a substitution stamp", type(provider).__name__)
 
 
+def governing_axis(model_axis: str) -> str:
+    """The use case whose chain governs a native runtime asked for on *model_axis*: the chat
+    sub-category it names (``code_tools``, ``loops``, …), else ``chat`` (``""`` included)."""
+    from personalclaw.providers.use_cases import CHAT_SUBCATEGORIES
+
+    return model_axis if model_axis in CHAT_SUBCATEGORIES else "chat"
+
+
 @dataclass(frozen=True)
 class ResolutionBasis:
     """What a native runtime's model was resolved from — what a rebind or an instance edit changes.
@@ -578,12 +586,17 @@ class ResolutionBasis:
     were built with (``background.max_output_tokens``), ``None`` when no such limit was applied:
     a change in Settings → Models → Background reads as moved too, so a Background runtime (a
     heartbeat task's) is built at its next acquire with the limit as it reads now.
+
+    ``sources`` says how each model the runtime may run on was chosen, as ``(ref, how)`` pairs in
+    the order it tries them (:func:`_model_sources`): what a turn names beside the model that
+    answered it (:func:`how_chosen`). Read from the same chains, it is never compared.
     """
 
     axis: str
     chains: tuple[tuple[str, ...], tuple[str, ...]]
     entry: object | None = None
     output_cap: int | None = None
+    sources: tuple[tuple[str, str], ...] = ()
 
     @classmethod
     def read(cls, axis: str, *, output_cap: int | None = None) -> "ResolutionBasis":
@@ -604,6 +617,13 @@ class ResolutionBasis:
             logger.debug("resolution basis: registry unreadable for %r", name, exc_info=True)
             entry = None
         return replace(self, entry=entry)
+
+    def serves(self, model_axis: str) -> bool:
+        """Whether a runtime asked for on *model_axis* (``get_or_create``'s ``model_axis``) would
+        resolve on the use case this one did. A chat that comes to work in a folder of its own
+        asks for another (``chat_utils.chat_model_axis``), and its cached runtime is rebuilt at
+        its next acquire rather than kept on the chain it was built from."""
+        return governing_axis(model_axis) == self.axis
 
     def holds(self) -> bool:
         """Whether a resolution now would read what this one read. A probe that fails holds:
@@ -738,9 +758,7 @@ def _inner_model(
     # implement. Without this, a stack whose ``chat`` use case resolves to an
     # ACP entry would hand the native loop an AcpAgentProvider and blow up with
     # "'AcpAgentProvider' object has no attribute 'complete'".
-    from personalclaw.providers.use_cases import CHAT_SUBCATEGORIES
-
-    inner_axis = model_axis if model_axis in CHAT_SUBCATEGORIES else "chat"
+    inner_axis = governing_axis(model_axis)
     # A Background turn's every inference carries an output cap, as a one-shot call's does
     # (``one_shot_completion``'s per-entry ``max_tokens``): its models are built with it, the one
     # it falls back to included. Measured without one: a memory consolidation on a local model
@@ -823,9 +841,50 @@ def _inner_model(
         missed=missed,
         choices=choices,
         axis=inner_axis,
-        basis=basis,
+        basis=replace(
+            basis,
+            sources=_model_sources(
+                pick=model_override or "",
+                pin=pin,
+                agent=name,
+                chain=basis.chains[0],
+                axis=inner_axis,
+            ),
+        ),
         resolve=_resolve,
     )
+
+
+def _model_sources(
+    *, pick: str, pin: str, agent: str, chain: tuple[str, ...], axis: str
+) -> tuple[tuple[str, str], ...]:
+    """How each model a native runtime may run on was chosen, as ``(ref, how)`` pairs in the order
+    the runtime tries them: the chat's own pick, the agent's pin, then the *chain* of the use case
+    that governs it, named for the use case whose chain it is (Code & tools with nothing bound is
+    the Chat chain). The chain is the one the runtime's basis read, so the name and the models it
+    covers are one reading."""
+    from personalclaw.providers.use_cases import USE_CASE_NAMES, chain_owner
+
+    sources: dict[str, str] = {}
+    if pick:
+        sources[_qualified_chat_ref(pick)] = "picked for this chat"
+    if pin:
+        sources.setdefault(_qualified_chat_ref(pin), f"{agent}'s own model")
+    owner = chain_owner(axis)
+    for ref in chain:
+        sources.setdefault(ref, f"from your {USE_CASE_NAMES.get(owner, owner)} chain")
+    return tuple(sources.items())
+
+
+def how_chosen(runtime: object, served_ref: str) -> str:
+    """How the model a turn on *runtime* was answered by was chosen ("from your Code & tools
+    chain", "picked for this chat", "Builder's own model"), as the runtime's basis records it
+    (``ResolutionBasis.sources``), or ``""`` when the runtime records none (an agent CLI runs its
+    own model) or the model is none it was built to try."""
+    sources = getattr(getattr(runtime, "resolved_from", None), "sources", ())
+    if not isinstance(sources, tuple) or not served_ref:
+        return ""
+    return next((how for ref, how in sources if ref == served_ref), "")
 
 
 async def model_without_tools(
@@ -2166,15 +2225,16 @@ def turn_model_ref(runtime: object) -> str:
     )
 
 
-def expected_served_ref(model: str) -> str:
+def expected_served_ref(model: str, *, use_case: str = "chat") -> str:
     """The ``"<entry>:<model>"`` a native chat turn would be served by, WITHOUT building it.
 
     For a surface that must answer before a runtime exists (the attachment chip on a new
     chat). ``model`` is the session's selection: a ``"<entry>:<model>"`` ref naming a
-    registered entry stands as given; a bare id is served by the entry the ``chat`` binding
-    resolves to (:func:`serving_entry`); ``""``/``"auto"`` takes that entry's model the way a
-    runtime picks it (:func:`_fallback_chat_model`, else the entry's own model). ``""`` when
-    nothing would serve chat.
+    registered entry stands as given; a bare id is served by the entry the *use_case* binding
+    resolves to (:func:`serving_entry`) — ``chat``, or the chain a chat's turns take
+    (``code_tools`` for a chat working in a folder of its own); ``""``/``"auto"`` takes that
+    entry's model the way a runtime picks it (:func:`_fallback_chat_model`, else the entry's own
+    model). ``""`` when nothing would serve it.
     """
     from personalclaw.llm.registry import get_default_registry
     from personalclaw.providers.use_cases import split_ref
@@ -2183,12 +2243,12 @@ def expected_served_ref(model: str) -> str:
     parsed = split_ref(chosen)
     if parsed and parsed[0] in {e.name for e in get_default_registry().list_entries()}:
         return chosen
-    entry = serving_entry("chat")
+    entry = serving_entry(use_case)
     if entry is None:
         return ""
     if chosen and chosen.lower() != "auto":
         return f"{entry.name}:{chosen}"
-    picked = _fallback_chat_model(entry.name) or entry.own_model
+    picked = _fallback_chat_model(entry.name, use_case=use_case) or entry.own_model
     return f"{entry.name}:{picked}" if picked else ""
 
 

@@ -198,8 +198,9 @@ describe('C — the fold is wired (the reader is not an unreachable component)',
 
     it('a stats-only turn still OPENS the ledger (the gate counts telemetry)', () => {
       // Dropping `ledger.stats` from `hasLedger` leaves the fold intact and the row
-      // unreachable on any turn that fed no context and learned nothing.
-      expect(chatPage).toContain('Boolean(ledger.fed || ledger.learned || ledger.stats)')
+      // unreachable on any turn that fed no context and learned nothing. The model that
+      // answered opens it too: the chip names it even on a turn whose line never arrived.
+      expect(chatPage).toContain('Boolean(ledger.fed || ledger.learned || ledger.stats || servedModel)')
     })
 
     it('hands the folded text to the component that renders it', () => {

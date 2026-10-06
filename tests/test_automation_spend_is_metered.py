@@ -59,9 +59,6 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 #: Surfaces a person is working in. The daily cap is for automations; these stay on the chat
 #: binding, as a chat does. Keyed by (file under ``src/personalclaw``, function qualname).
 INTERACTIVE: dict[tuple[str, str], str] = {
-    ("dashboard/side.py", "_run_side_turn"): (
-        "a side question a person asked beside their chat, answered while they wait"
-    ),
     ("dashboard/handlers/agent_marketplace.py", "api_agent_marketplace_test"): (
         "an agent's test run from its page: a person pressed the button and reads the reply"
     ),
@@ -76,11 +73,14 @@ INTERACTIVE: dict[tuple[str, str], str] = {
 
 #: Calls whose axis a named function decides, keyed like INTERACTIVE: the call passes
 #: ``model_axis=<function>(...)``, and the tests below pin what the function answers. A chat's
-#: turn is on the chat binding, which the cap leaves alone as the Guardrails page says, unless it
-#: is a loop's worker or planner. A finished subagent's announcement keeps the chat binding in a
-#: channel thread, a person's conversation, and is metered in any other parent.
+#: turn is on the chat binding, or on Code & tools when it works in a folder of its own, both of
+#: which the cap leaves alone as the Guardrails page says, unless it is a loop's worker or planner.
+#: A side question a person asks beside their chat is answered on the chat's own axis, while they
+#: wait. A finished subagent's announcement keeps the chat binding in a channel thread, a person's
+#: conversation, and is metered in any other parent.
 DECIDED: dict[tuple[str, str], str] = {
     ("dashboard/chat_runner.py", "run_chat"): "model_axis_for",
+    ("dashboard/side.py", "_run_side_turn"): "chat_model_axis",
     ("gateway.py", "GatewayOrchestrator._init_subagents._subagent_done"): "announce_axis",
 }
 
@@ -424,6 +424,29 @@ def test_a_loops_worker_and_its_planner_take_the_loops_axis_and_a_chat_does_not(
     assert model_axis_for(SimpleNamespace(_app="loop")) == "loops"
     assert model_axis_for(SimpleNamespace(_app="")) == ""
     assert model_axis_for(SimpleNamespace(_app="notes")) == ""
+
+
+def test_a_persons_own_chat_axis_is_never_a_metered_one(tmp_path):
+    """A chat's turn and the side question beside it take Code & tools when the chat works in a
+    folder of its own, and the chat binding otherwise: a person's own turns, which the cap leaves
+    alone whichever of the two they run on."""
+    from personalclaw.dashboard.chat_runner import model_axis_for
+    from personalclaw.dashboard.chat_utils import chat_model_axis
+
+    guarded = guarded_axes()
+    folder = tmp_path / "repo"
+    folder.mkdir()
+    for chat in (
+        SimpleNamespace(_app="", workspace_dir=str(folder)),
+        SimpleNamespace(_app="slack", workspace_dir=str(folder)),
+        SimpleNamespace(_app="", workspace_dir=""),
+    ):
+        assert chat_model_axis(chat) in ("", "code_tools")
+        assert chat_model_axis(chat) not in guarded
+        assert model_axis_for(chat) == chat_model_axis(chat)
+    assert (
+        chat_model_axis(SimpleNamespace(workspace_dir=str(folder))) == "code_tools"
+    ), "vacuity: no chat took Code & tools"
 
 
 # ── a finished subagent's announcement ─────────────────────────────────────────────────────

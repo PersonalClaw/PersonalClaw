@@ -8583,8 +8583,11 @@ export const api = {
   briefSession: (key: string, content: string, source = 'user-brief') =>
     post<{ ok: boolean }>(`/api/chat/sessions/${encodeURIComponent(key)}/context`, { content, source, ephemeral: false }),
   /** Set a live session's working directory (agent cwd + memory-partition scope). */
+  /** Set (or, with `''`, clear) a chat's working directory. `auto_chain` is the Settings → Models
+   *  chain its next turn on Auto runs on after the change: a folder of its own moves it to Code &
+   *  tools, while that chain binds a model. */
   setSessionWorkspaceDir: (key: string, workspace_dir: string) =>
-    post<{ ok: boolean; workspace_dir?: string }>(`/api/chat/sessions/${encodeURIComponent(key)}/workspace-dir`, { workspace_dir }),
+    post<{ ok: boolean; workspace_dir?: string; auto_chain?: string }>(`/api/chat/sessions/${encodeURIComponent(key)}/workspace-dir`, { workspace_dir }),
 
   // ── Contextual prompt starters (background-computed from memory + recent activity) ──
   // Answers at once. `refreshing`: a new list is being written in the background, and every page
@@ -8974,6 +8977,10 @@ export const api = {
     /** What the context ring was last told — the `context_usage` frame's reading and window
      *  (`null` window = none declared or served) — or null before any turn said anything. */
     context_usage?: { pct: number | null; window?: number | null } | null
+    /** The Settings → Models chain a turn here runs on when no model is picked for it, as the
+     *  Models page names it: "Code & tools" for a chat working in a folder of its own while that
+     *  chain binds a model, else "Chat". The model pill's Auto says it. */
+    auto_chain?: string
     /** Present only on a conversation an APP started (`AppStarted`). A turn in it runs under
      *  that app's permissions, whoever sends the message: your approval switches never reach it,
      *  and the app approves none of its calls, so each one that needs approval asks you. */

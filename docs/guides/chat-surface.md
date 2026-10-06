@@ -5,7 +5,8 @@ needs more than a send button. This guide covers the nine things the chat surfac
 beyond typing a message: taking a wrong turn back, spinning the same conversation off in two
 directions, having a plan approved before anything runs, letting a queued message cut in,
 finding something you said hours ago, quoting it, following a suggestion, controlling how
-text appears, and putting a piece of your screen into the conversation.
+text appears, and putting a piece of your screen into the conversation. It ends with which
+model answers a turn, and what gets recorded.
 
 Everything here works in a browser tab. Where a mechanic needs a platform capability that
 your browser does not have, the control is **hidden** rather than shown and made to fail —
@@ -450,6 +451,30 @@ the security log as the file write that it is — there is no separate "screensh
 no ongoing capture to audit, because the capture ends before the crop overlay even opens.
 
 ---
+
+## Which model answers a turn
+
+A turn runs on the model you pick in the composer's model pill. Left on **Auto**, it runs on a
+chain from **Settings → Models**, chosen by the folder the chat works in:
+
+- **Code & tools**, for a chat working in a folder of its own: the working directory you set for
+  it (the chat header's **Working directory**), its project's folder, or its agent's. While Code &
+  tools has no model bound, these turns use your Chat chain.
+- **Chat**, for every other chat: one in the workspace every chat starts in.
+
+The folder decides before the turn starts, never what you ask in it. So with Code & tools on one
+provider (your work account, say) and Chat on another (a plan for your own chats), a chat working
+in your repository sends its turns to the first and an everyday chat to the second. Set the
+working directory before the work starts: a chat with no folder of its own runs on Chat even when
+you ask it to run a command in a repository. Changing it moves the chat's next turn. A side
+question asked beside the chat runs on the same chain as the chat. The chat's subagents use
+Orchestration, and its title, tags and follow-ups use Background, as Settings → Models says for
+each.
+
+Each turn names the model that answered it. Its details chip says **on <model>**, and opened,
+**Answered by <model>, from your Code & tools chain** (or your Chat chain, or **picked for this
+chat**). On Auto the pill says the same, **Auto · <model>**, and its Auto row names the chain the
+next turn takes. A chat on an agent CLI runs on that CLI's own model.
 
 ## What gets recorded
 

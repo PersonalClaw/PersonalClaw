@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
     from personalclaw.llm.base import LLMEvent
 
-from personalclaw import task_modes
+from personalclaw import memory_locality, task_modes
 from personalclaw.dashboard.chat_queue import ON_RECORD
 from personalclaw.dashboard.state import (
     CRON_NOTIFY_PREFIX,
@@ -298,6 +298,26 @@ NO_TOOLS_ACTIVITY_KIND = "no_tools"
 #: ``"loop"`` alone, on purpose — the planner is not a cycle worker — but both are loop work, so
 #: both take the loops axis (``chat_runner.model_axis_for``).
 LOOP_WORK_APPS = frozenset({"loop", "loops"})
+
+
+def chat_model_axis(session: object) -> str:
+    """The use case a person's chat resolves its model on when it picks none: ``code_tools`` for a
+    chat working in a folder of its own, else ``""`` (the Chat binding).
+
+    Settings → Models offers Code & tools for the native agent turns that lean on tool use and code
+    work, and the one thing a chat holds before its turn that says its work is in a folder of hers
+    is the folder it works in: the working directory set for it, its project's folder or its
+    agent's (``chat_handlers.api_chat_session_create``). The same folder keeps its own memory
+    (``memory_locality.is_local_partition``); the workspace every chat starts in shares the global
+    memory, and keeps the Chat binding. Decided from the chat, never from what the turn says or
+    does, so the model is chosen before the first request: with Code & tools on one provider and
+    Chat on another, a turn over her repository never reaches Chat's.
+
+    Empty, the Code & tools chain is the Chat chain (``use_cases.active_model_refs``). Like Chat it
+    is a person's own turn, which the spend guard leaves alone (``provider_bridge.METERED_AXES``).
+    """
+    folder = memory_locality.chat_folder(session)
+    return "code_tools" if folder and memory_locality.is_local_partition(folder) else ""
 
 
 def tools_said(state: object, session: object, client: object, *, said: str = "") -> str:

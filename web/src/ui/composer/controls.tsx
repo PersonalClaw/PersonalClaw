@@ -38,15 +38,17 @@ const NATIVE_EFFORTS: { value: string; label: string }[] = [
  *  in the app agree instead of one being precise and the other mute. Sighted users see no change —
  *  the dimension is already obvious from position and icon on screen, which is exactly why the
  *  visible label spends its width on the value. */
-export function PillButton({ icon, label, dimension, open, toggle, wide = false }: {
+export function PillButton({ icon, label, dimension, open, toggle, wide = false, title }: {
   icon: React.ReactNode; label: string; dimension: string; open: boolean; toggle: () => void
   /** Room for a two-part value ("Codex · Careful coder", or one marked unavailable) that the
    *  standard width would cut to its first word. */
   wide?: boolean
+  /** The whole sentence behind a value the pill can only show the start of. */
+  title?: string
 }) {
   return (
     <motion.button
-      type="button" onClick={toggle} aria-expanded={open}
+      type="button" onClick={toggle} aria-expanded={open} title={title}
       // A pill whose value IS its dimension ("Agent" when no specific agent is bound) would
       // otherwise announce "Agent: Agent".
       aria-label={label === dimension ? dimension : `${dimension}: ${label}`}
@@ -172,7 +174,13 @@ function unmeasuredTitle(windowTokens: number | null | undefined): string {
   return `Context usage not measured yet — it's measured each time the model answers${against}.`
 }
 
-export function ModelPill({ data, agent, value, onSelect, contextPct, contextWindow, openSignal }: { data?: ComposerData; agent?: string; value: string; onSelect: (m: string) => void; contextPct?: number; contextWindow?: number | null; openSignal?: number }) {
+export function ModelPill({ data, agent, value, onSelect, contextPct, contextWindow, openSignal, served, autoChain }: {
+  data?: ComposerData; agent?: string; value: string; onSelect: (m: string) => void; contextPct?: number; contextWindow?: number | null; openSignal?: number
+  /** The model the chat's latest turn was answered by, and how it was chosen. */
+  served?: { model: string; chosen: string }
+  /** The Settings → Models chain the chat's turns run on while the pill is on Auto. */
+  autoChain?: string
+}) {
   // If the selected agent is an ACP-discovered agent, scope the model list to
   // the models THAT agent provides (not the native global model list).
   const acp = agent
@@ -192,14 +200,23 @@ export function ModelPill({ data, agent, value, onSelect, contextPct, contextWin
     : <span title={unmeasuredTitle(contextWindow)} className="size-1.5 rounded-pill bg-primary" />
   // The pill shows the friendly model_name, not the raw "Provider:model_id" ref
   // stored as the value (the dropdown rows already display model_name).
-  const pillLabel = !value || value === 'Auto'
-    ? 'Auto'
+  const onAuto = !value || value === 'Auto'
+  // On Auto it also names the model the latest turn was answered by: "Auto" alone read the same
+  // whichever chain served the turn, so a binding passed over looked like one that was used.
+  const pillLabel = onAuto
+    ? (served ? `Auto · ${served.model}` : 'Auto')
     : (data?.models ?? []).find((m) => m.name === value)?.model_name || value
+  const pillTitle = onAuto && served
+    ? `Auto — the latest turn ran on ${served.model}${served.chosen ? `, ${served.chosen}` : ''}.`
+    : undefined
+  // Which chain Auto runs on, before the turn: an agent CLI brings its own model, so it has none.
+  // Short enough for the menu's width, which cut a longer one off before the chain's name ended.
+  const autoHint = autoChain && !acp ? `Your ${autoChain} chain` : 'Use-case chain (Settings → Models)'
   return (
-    <Popover portal width={280} openSignal={openSignal} trigger={(open, toggle) => <PillButton icon={dot} label={pillLabel} dimension="Model" open={open} toggle={toggle} />}>
+    <Popover portal width={280} openSignal={openSignal} trigger={(open, toggle) => <PillButton icon={dot} label={pillLabel} dimension="Model" open={open} toggle={toggle} wide={onAuto && !!served} title={pillTitle} />}>
       {(close) => (
         <div className="max-h-[320px] overflow-y-auto">
-          <MenuRow icon={<Cpu size={16} />} label="Auto" hint="Use-case chain (Settings → Models)" selected={!value || value === 'Auto'} onClick={() => { onSelect('Auto'); close() }} />
+          <MenuRow icon={<Cpu size={16} />} label="Auto" hint={autoHint} selected={onAuto} onClick={() => { onSelect('Auto'); close() }} />
           {acp
             ? acpModels.length > 0
               ? acpModels.map((m) => <MenuRow key={m} icon={<Cpu size={16} />} label={m} hint={acp.runtime} selected={m === value} onClick={() => { onSelect(m); close() }} />)

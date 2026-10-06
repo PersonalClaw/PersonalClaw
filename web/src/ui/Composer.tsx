@@ -30,7 +30,7 @@ export function Composer({
   value, onChange, onSend, streaming, processing, onStop, placeholder = 'Ask anything',
   controls = DEFAULT_CONTROLS, data, selection, onSelect, onAttach, onOpenPrompts, plusMenuExtra, onFocusChange,
   mentionProject, onMentionFile, onMentionKnowledge, onLargePaste,
-  onOptimize, optimizing, history, onRecall, onTranscribe, onMicError, canQueue, canSteer, contextPct, contextWindow, minChars = 1,
+  onOptimize, optimizing, history, onRecall, onTranscribe, onMicError, canQueue, canSteer, contextPct, contextWindow, servedModel, autoChain, minChars = 1,
   openModelSignal, openAgentSignal, openReasoningSignal, handsFree, onHandsFreeSubmit, screenShare,
   naturalVoice, sendHeldReason, hostPills,
 }: ComposerProps) {
@@ -152,7 +152,7 @@ export function Composer({
     <div className="flex items-center gap-xs min-w-0 flex-wrap">
       {controls.attach && <PlusMenu onAttach={() => fileRef.current?.click()} onOpenPrompts={onOpenPrompts} extra={plusMenuExtra} />}
       {controls.agent && <AgentPill data={data} value={sel?.agent ?? ''} openSignal={openAgentSignal} onSelect={(a) => onSelect?.({ agent: a })} />}
-      {controls.model && <ModelPill data={data} agent={sel?.agent ?? ''} value={sel?.model ?? ''} contextPct={contextPct} contextWindow={contextWindow} openSignal={openModelSignal} onSelect={(m) => onSelect?.({ model: m })} />}
+      {controls.model && <ModelPill data={data} agent={sel?.agent ?? ''} value={sel?.model ?? ''} contextPct={contextPct} contextWindow={contextWindow} served={servedModel} autoChain={autoChain} openSignal={openModelSignal} onSelect={(m) => onSelect?.({ model: m })} />}
       {controls.approval && <ApprovalPill value={sel?.approval ?? 'normal'} onSelect={(m) => onSelect?.({ approval: m })} />}
       {controls.reasoning && <ReasoningPill value={sel?.reasoning ?? ''} efforts={effortsForAgent(data, sel?.agent ?? '')} openSignal={openReasoningSignal} onSelect={(e) => onSelect?.({ reasoning: e })} />}
       {/* Natural voice — feature-detected on the prop, not a `controls` flag:

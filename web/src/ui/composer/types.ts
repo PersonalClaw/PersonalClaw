@@ -149,6 +149,12 @@ export interface ComposerProps {
    *  which the unmeasured dot sends the user to declare it; `undefined` means it has said nothing
    *  yet. Read only while `contextPct` is `undefined`, to say why there is no ring. */
   contextWindow?: number | null
+  /** The model that answered the bound chat's latest turn and how it was chosen ("from your Code &
+   *  tools chain"), which the model pill's Auto names. Absent before any turn named one. */
+  servedModel?: { model: string; chosen: string }
+  /** The Settings → Models chain the bound chat's turns run on while the pill is on Auto ("Code &
+   *  tools", "Chat"), which the Auto row names. `''`/absent when the host does not know it. */
+  autoChain?: string
   /** Minimum trimmed length before Send enables (default 1). The goal composer
    *  needs ≥20 chars to plan, so the button stays disabled (not a silent no-op)
    *  until the draft is long enough. */

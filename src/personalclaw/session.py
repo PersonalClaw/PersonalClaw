@@ -304,6 +304,20 @@ def _resolution_moved(provider: Any) -> bool:
     return basis is not None and not basis.holds()
 
 
+def _axis_moved(provider: Any, asked: dict[str, Any]) -> bool:
+    """Whether the turn *asked* acquires a cached runtime for resolves its model on another use
+    case than the runtime was built on: a chat given a working directory of its own moves from the
+    Chat chain to Code & tools (``chat_utils.chat_model_axis``), and back when it is cleared.
+
+    Asked of a native runtime only (``resolved_from``, ``provider_bridge.ResolutionBasis``), and
+    only when the request names an axis; an agent CLI runs its own model and never moves.
+    """
+    basis = getattr(provider, "resolved_from", None)
+    if basis is None or "model_axis" not in asked:
+        return False
+    return not basis.serves(str(asked.get("model_axis") or ""))
+
+
 def _rebuild_reason(sess: "_Session", asked: dict[str, Any]) -> str:
     """Why *sess*'s cached runtime cannot answer the turn *asked* (``get_or_create``'s factory
     arguments) acquires it for, or ``""`` when it can."""
@@ -313,6 +327,8 @@ def _rebuild_reason(sess: "_Session", asked: dict[str, Any]) -> str:
         return "its agent was edited"
     if _resolution_moved(sess.provider):
         return "what its model was resolved from changed"
+    if _axis_moved(sess.provider, asked):
+        return "the use case its model is chosen from changed"
     if _posture_moved(sess, asked):
         return "who answers it or whose spend it is changed"
     return ""

@@ -333,6 +333,27 @@ export function learnedSurface(origin?: string | null, ref?: string | null): Lea
   }
 }
 
+/** The model that answered a turn (its id, as the composer's model list names it) and how it was
+ *  chosen, in the gateway's words: "from your Code & tools chain", "from your Chat chain",
+ *  "picked for this chat", "<agent>'s own model" — or `''` when nothing says how. */
+export interface ServedModel { model: string; chosen: string }
+
+/** The served model a turn's telemetry record (or its live `stats` frame) names, or undefined
+ *  when it names none. */
+export function servedModelOf(t: { model?: unknown; chosen?: unknown } | null | undefined): ServedModel | undefined {
+  const model = typeof t?.model === 'string' ? t.model : ''
+  if (!model) return undefined
+  return { model, chosen: typeof t?.chosen === 'string' ? t.chosen : '' }
+}
+
+/** The model the latest turn that named one was answered by: what the composer's Auto says. */
+export function lastServedModel(turns: ChatTurn[]): ServedModel | undefined {
+  for (let i = turns.length - 1; i >= 0; i--) {
+    if (turns[i].role === 'assistant' && turns[i].servedModel) return turns[i].servedModel
+  }
+  return undefined
+}
+
 export interface ChatTurn {
   role: 'user' | 'assistant'
   segments: Segment[]     // user turns are a single text segment
@@ -355,6 +376,11 @@ export interface ChatTurn {
   // the chat's own pick could not run. The sentence, "Ran on X instead of Y: …", from the assistant
   // message's `meta.model_substitution`. Absent when the chosen model answered.
   modelSubstitution?: string
+  // The model that answered THIS assistant turn and how it was chosen (`servedModelOf`): the
+  // turn's chip names it, and the composer's Auto names the latest one. From the turn's
+  // `meta.turn_telemetry` on reload, from its `stats` activity live. Absent on a turn that named
+  // no model (an agent CLI's, a slash command's).
+  servedModel?: ServedModel
   // paste blocks referenced by `[Paste #N]` markers in this turn's text, kept so
   // the bubble can render the markers as inspectable chips after send.
   pastes?: { seq: number; lines: number; content: string }[]
@@ -555,7 +581,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
   return { files: [...files.values()], links: [...links.values()] }
 }
 
-export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; blast_radius?: unknown; grant_agent?: string; reach?: string; deny_effect?: string; asked_for?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; ran_prompt?: { name?: unknown; text?: unknown }; steered?: boolean; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string }; context_fed?: { kind?: string; text?: string }; learned?: LearnedRecord[]; ungated?: string; note?: string; about_call?: string; question?: unknown } }
+export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; blast_radius?: unknown; grant_agent?: string; reach?: string; deny_effect?: string; asked_for?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; ran_prompt?: { name?: unknown; text?: unknown }; steered?: boolean; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string; model?: string; chosen?: string }; context_fed?: { kind?: string; text?: string }; learned?: LearnedRecord[]; ungated?: string; note?: string; about_call?: string; question?: unknown } }
 
 /** The blocks a sent message of hers carries (`meta.pastes` on its row, `pastes` on a frame that
  *  tells a page of it), or undefined when it carries none. */
@@ -760,6 +786,10 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       // sentence was persisted has none, and the turn shows no telemetry row, as before.
       const statsLine = m.meta?.turn_telemetry?.line
       if (typeof statsLine === 'string' && statsLine) at.segments.push({ kind: 'activity', text: statsLine, activityKind: 'stats' })
+      // The model that answered, from the same record: re-decided per message like the line.
+      const served = servedModelOf(m.meta?.turn_telemetry)
+      if (served) at.servedModel = served
+      else delete at.servedModel
       // What fed the turn ("Injected 1,204 chars of context …"), on the same last message: live it
       // is the `context` activity line the turn's footer shows, which a reload never replays — or
       // the `context_without_memory` one of a turn that read none of your memory, kept as that kind

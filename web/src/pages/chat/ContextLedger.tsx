@@ -1,18 +1,20 @@
 import { useEffect, useRef, useState, type ReactNode, type Ref } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Brain, ChevronRight, Gauge, Sparkles, type LucideIcon } from 'lucide-react'
+import { Brain, ChevronRight, Cpu, Gauge, Sparkles, type LucideIcon } from 'lucide-react'
 import { spring } from '../../design/motion'
 import { api } from '../../lib/api'
 import { TextLink } from '../../ui/TextLink'
 import { confirmForgetPreference } from '../settings/forgetPreference'
 import { learnedSurface } from './chatTypes'
 
-/** Holistic per-turn context-transparency footer. Consolidates the three
+/** Holistic per-turn context-transparency footer. Consolidates the
  *  provenance signals — what context FED the turn (memory/lessons/knowledge/
- *  skills/workflows), what the turn LEARNED & saved (after-turn review), and the
- *  turn TELEMETRY — into one quiet, collapsed-by-default affordance. The
- *  high-signal "learned" flag stays visible even collapsed (so the user always
- *  sees, and can open to undo, what was persisted). On demand, never intrusive.
+ *  skills/workflows), what the turn LEARNED & saved (after-turn review), the model
+ *  that ANSWERED it, and the turn TELEMETRY — into one quiet, collapsed-by-default
+ *  affordance. The high-signal "learned" flag stays visible even collapsed (so the
+ *  user always sees, and can open to undo, what was persisted), and so does the model
+ *  that answered (`served`): a turn on Code & tools and a turn on Chat otherwise read
+ *  the same. On demand, never intrusive.
  *
  *  Lives in its own module rather than inside `ChatPage.tsx` because its ONE-ACTION
  *  reach (below) is a behavioural contract, and a component defined inside a ~4k-line
@@ -23,8 +25,10 @@ import { learnedSurface } from './chatTypes'
  *  `fedNoMemory` marks a turn that read none of your memory (a Temporary chat's, an app's not
  *  given it: `memory_reads.fed`). Its row is the gateway's own sentence, which says why, and
  *  never the memory claim below. */
-export function ContextLedger({ fed, fedNoMemory, learned, learnedOrigin, learnedRef, stats }: {
+export function ContextLedger({ fed, fedNoMemory, learned, learnedOrigin, learnedRef, stats, served }: {
   fed?: string; fedNoMemory?: boolean; learned?: string; learnedOrigin?: string; learnedRef?: string; stats?: string
+  /** The model that answered the turn and how it was chosen ("from your Code & tools chain"). */
+  served?: { model: string; chosen: string }
 }) {
   const [open, setOpen] = useState(false)
   const learnedRowRef = useRef<HTMLDivElement>(null)
@@ -85,7 +89,7 @@ export function ContextLedger({ fed, fedNoMemory, learned, learnedOrigin, learne
 
   const summary = open
     ? 'Context & learning'
-    : [fed && (fedNoMemory ? 'context, no memory' : 'recalled context'), learned && 'learned 1', stats && 'telemetry'].filter(Boolean).join(' · ') || 'Turn details'
+    : [fed && (fedNoMemory ? 'context, no memory' : 'recalled context'), learned && 'learned 1', served && `on ${served.model}`, stats && 'telemetry'].filter(Boolean).join(' · ') || 'Turn details'
   // Hover says what the tap DOES when there is somewhere to land, so the focus jump reads as
   // the affordance it is rather than as the page moving on its own. `title` is a hover
   // affordance only — the button's accessible name is its visible text, which already carries
@@ -126,6 +130,11 @@ export function ContextLedger({ fed, fedNoMemory, learned, learnedOrigin, learne
                     ? <span className="text-ok">{' · '}Forgotten — it no longer reaches the model.</span>
                     : <>{' · '}<TextLink onClick={() => void forget()} disabled={forgetPending}>Forget it</TextLink></>)}
                   {forgetError && <span role="alert" className="block text-danger">{forgetError}</span>}
+                </LedgerRow>
+              )}
+              {served && (
+                <LedgerRow icon={Cpu} label="Answered by">
+                  <span className="text-on-surface-var">{served.model}</span>{served.chosen ? `, ${served.chosen}.` : '.'}
                 </LedgerRow>
               )}
               {stats && (

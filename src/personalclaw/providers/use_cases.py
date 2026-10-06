@@ -73,7 +73,8 @@ CAPABILITIES: tuple[str, ...] = (
 # Capability.SUMMARIZATION / .PLANNING enum flags remain as provider capability
 # *advertisements* that installed apps declare; they are not use-cases.)
 # Consumers, per axis:
-#   code_tools    — the native agent runtime (provider_bridge)
+#   code_tools    — every turn of a chat working in a folder of its own, and the side
+#                   questions asked beside it (dashboard.chat_utils.chat_model_axis)
 #   reasoning     — explicit one-shot judgment calls (web-extract, guarded one-shots)
 #                   and, by default, every LOOP JUDGE (loops.judge_use_case) — the
 #                   judge must not ride the binding of the work it grades
@@ -106,8 +107,14 @@ USE_CASE_NAMES: dict[str, str] = {
     "loops": "Loops",
     "embedding": "Embedding",
     "stt": "Speech-to-text",
+    "tts": "Text-to-speech",
     "diarization": "Speaker diarization",
     "image_modality": "Image · Modality",
+    "image_gen": "Image · Generation",
+    "audio_modality": "Audio · Modality",
+    "audio_gen": "Audio · Generation",
+    "video_modality": "Video · Modality",
+    "video_gen": "Video · Generation",
 }
 
 # Every selectable use case = capabilities + chat sub-categories.
@@ -302,17 +309,29 @@ def save_active_models(active: dict[str, list[str]]) -> None:
     atomic_write(path, json.dumps(active, indent=2) + "\n")
 
 
+def chain_owner(use_case: str, active: dict[str, list[str]] | None = None) -> str:
+    """The use case whose chain resolves ``use_case``: its own, or ``chat`` for a chat
+    sub-category that binds no model of its own (:func:`parent_capability`).
+
+    What a turn names when it says which chain its model came from ("from your Chat chain"):
+    Code & tools with nothing bound is the Chat chain, not an empty one. *active* is the store
+    already read, when the caller has it.
+    """
+    selections = load_active_models() if active is None else active
+    if use_case in CHAT_SUBCATEGORIES and not selections.get(use_case):
+        return "chat"
+    return use_case
+
+
 def active_model_refs(use_case: str) -> list[str]:
     """Active model ref(s) for ``use_case``, applying the sub-category fallback.
 
     A chat sub-category with no model of its own borrows the parent ``chat``
-    selection (:func:`parent_capability`). Returns ``[]`` when nothing is active.
+    selection (:func:`chain_owner`). Returns ``[]`` when nothing is active.
     The list is the use case's ordered fallback CHAIN (position 0 = default).
     """
     active = load_active_models()
-    refs = active.get(use_case)
-    if not refs and use_case in CHAT_SUBCATEGORIES:
-        refs = active.get("chat")
+    refs = active.get(chain_owner(use_case, active))
     return list(refs) if isinstance(refs, list) else []
 
 
