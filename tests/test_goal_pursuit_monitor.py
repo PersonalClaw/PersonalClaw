@@ -240,10 +240,17 @@ def test_resume_trigger_survives_a_store_reload(store, tmp_path):
 
 
 def test_self_resolves_from_leaf_lineage_env(monkeypatch):
-    from personalclaw.mcp_automation import _resolve_resume_target
+    from personalclaw.mcp_automation import _resolve_resume_target, _validate_args
 
     monkeypatch.setenv("__wf_run_id", "r-lineage-9")
-    target, err = _resolve_resume_target({"resume_run_id": "self"})
+    # Named when the call is admitted, where the leaf's lineage is: the tool server an agent CLI
+    # runs hands the admitted call to the gateway, whose own lineage names no run.
+    admitted = _validate_args(
+        "set_onetime_task",
+        {"name": "Check back", "when": "in 1 hour", "message": "Resume.", "resume_run_id": "self"},
+    )
+    assert admitted["resume_run_id"] == "r-lineage-9"
+    target, err = _resolve_resume_target(admitted)
     assert err == ""
     assert target == {"run_id": "r-lineage-9"}
 

@@ -179,7 +179,16 @@ has cost someone a debugging session.
   so a `provider` in the body is not read, and an external MCP server's tool
   (`mcp/<server>/<tool>`) runs through the provider that serves it to agents. A name the
   agent's hard deny-list refuses (its built-in patterns, or a pattern in
-  `hooks.auto_deny_tools`) is refused here too, with `403 tool_denied_by_policy`.
+  `hooks.auto_deny_tools`) is refused here too, with `403 tool_denied_by_policy`. A call the
+  tool itself fails or refuses answers `200` with `ok: false`, its `error`, and its `code`
+  when the tool says the failure with one (`restricted_session`, `store_unreadable`), so the
+  tool server an agent CLI runs, which hands the calls whose work writes the home's own stores
+  to this route, says each failure as the tool does (`Error [code]: …`). An answer about a call
+  the route records in the security log says so: one that reached the tool carries `output`,
+  and a refusal before the tool ran carries `not_run` (`refused_by_tool`, `tool_disabled`,
+  `tool_denied_by_policy`, `risk_confirmation_required`, `app_not_permitted`). A body it
+  cannot read and a tool it does not serve carry neither, so that tool server records those
+  calls itself, once.
 - **A tool name has one provider.** `bash`, `read_file` and the other platform tools are
   the platform's, names under `mcp/` are the MCP Tool Servers app's, a provider core ships
   outranks an installed app's, and otherwise the provider that claimed a name first keeps

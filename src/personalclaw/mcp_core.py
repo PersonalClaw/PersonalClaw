@@ -35,7 +35,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from personalclaw import gateway_base, home_gateway, lasting_work
 from personalclaw.config import loader as config_loader
@@ -939,6 +939,20 @@ def _refused(exc: urllib.error.HTTPError) -> dict:
 #: watch of a workflow run) names its own ``timeout``, that wait and this budget.
 GATEWAY_READ_TIMEOUT_SECS = 10.0
 GATEWAY_WRITE_TIMEOUT_SECS = 30.0
+#: How long the tool server an agent CLI runs waits for a call the gateway makes whose work is a
+#: model's (an image, a video, a sampled answer, a chart, a schedule it reads): as long as its
+#: provider takes, so only a gateway that stopped answering ends the wait. ``wait`` waits as long
+#: at most.
+GATEWAY_MODEL_WORK_TIMEOUT_SECS = 1800.0
+#: The tools whose work is a model's: their calls are the gateway's in the tool server an agent
+#: CLI runs (``gateway_makes``, :func:`made_by_the_gateway`), each waited for as long as that work
+#: takes. A model call's spend is charged to the day's meter (``spend.json``) and kept in the
+#: model-call log, both at the top of the home, which that process's sandbox lets it change nothing
+#: at; made in the gateway, they are metered with every other model call.
+MODEL_WORK: dict[str, float | None] = dict.fromkeys(
+    ("best_of_n", "image_generate", "video_generate", "visualize"),
+    GATEWAY_MODEL_WORK_TIMEOUT_SECS,
+)
 
 
 def _timed_out(exc: BaseException) -> bool:
@@ -1022,6 +1036,73 @@ def _delete(path: str, body: dict | None = None) -> dict:
         if _timed_out(e):
             return _unanswered("DELETE", path, GATEWAY_READ_TIMEOUT_SECS)
         return {"error": str(e)}
+
+
+class GatewayMade(NamedTuple):
+    """A call :func:`made_by_the_gateway` handed to the gateway: its answer, and whether the gateway
+    recorded it in the security log, where it made or refused it."""
+
+    answer: str
+    audited: bool
+
+
+def made_by_the_gateway(
+    name: str, args: dict[str, Any], *, timeout: float | None = None
+) -> GatewayMade:
+    """The call *name*(*args*), made by the gateway and answered as the gateway answered it.
+
+    For the tool server an agent CLI runs (:func:`serves_an_agent_cli`), which runs in the CLI's
+    sandbox: on Linux nothing can be added, replaced or removed at the top of the home from inside
+    it, and a folder made there after the CLI started cannot be written either. So a call whose
+    work writes one of PersonalClaw's stores there (an automation, a callback, a tile, a proposal
+    and its Inbox row, the spend a model call is charged) cannot be made here, and no folder layout
+    changes that: those stores are the gateway's, which also holds what this process cannot (the
+    automations apps serve, the meter its other model calls are charged to).
+
+    The gateway makes it through ``POST /api/tools/invoke``, the door every sandboxed process of
+    PersonalClaw's makes its tool calls by: as the work of the chat this process names
+    (``_internal_headers``), so it keeps that chat's memory mode and who asked; held to what the
+    gateway holds the same call to from a chat (a tool switched off, the deny-list, the tool's own
+    refusals before it runs, its schema); run by the same handler; and audited there, so this
+    process records only a call the gateway did not (``audited``). The call was approved where
+    every call of the CLI's is, at the host's gate with the tier its tool declares
+    (``acp.permission_authority``), or by the CLI's own settings, which the host judges and audits
+    as an ungated call (``acp.ungated``). So a tool that declares itself destructive is sent with
+    that tier named: the route's confirmation is a scripted caller's word that it means the
+    destructive call, and this caller's was given there. *args* were admitted here first: the
+    leaf's and the tier's rules read this process's environment.
+    """
+    from personalclaw.tool_providers.base import RiskLevel, risk_from_annotations
+
+    body: dict[str, Any] = {"tool": name, "arguments": args}
+    declared = own_tool(name) or {}
+    if risk_from_annotations(declared.get("annotations"), trusted=True) is RiskLevel.DESTRUCTIVE:
+        body["confirm_risk"] = RiskLevel.DESTRUCTIVE.value
+    reply = _post("/api/tools/invoke", body, timeout=timeout)
+    if reply.get("ok") is True:
+        return GatewayMade(str(reply.get("output") or ""), audited=True)
+    error = str(reply.get("error") or "")
+    if reply.get("timed_out"):
+        said = (
+            f"Asked PersonalClaw's gateway to make this call, and {error}: it may have made it, "
+            "so look before you call it again."
+        )
+        return GatewayMade(tool_failure(said), audited=False)
+    detail = reply.get("error_detail")
+    if "ok" in reply or isinstance(detail, dict):
+        # The gateway's own answer: the tool's failure or refusal, its code beside it, or a refusal
+        # of the call, its code in the envelope. The route says which of its answers it recorded:
+        # ``output`` for a call that reached the tool, ``not_run`` for one it refused before. A
+        # refusal made before the route (of the credential, of the session it names), a body it
+        # could not read and a tool it does not serve are recorded here.
+        code = reply.get("code") or (detail.get("code") if isinstance(detail, dict) else "")
+        recorded = "output" in reply or "not_run" in reply
+        return GatewayMade(tool_failure(error, code=str(code or "")), audited=recorded)
+    said = (
+        "Could not make this call: PersonalClaw's gateway makes it, and it did not answer "
+        f"({error})."
+    )
+    return GatewayMade(tool_failure(said), audited=False)
 
 
 def _validate_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -1346,6 +1427,23 @@ def _answered(name: str, args: dict[str, Any]) -> str:
         return tool_failure(str(refused), code=refused.code)
 
 
+#: These tools' calls are the gateway's in the tool server an agent CLI runs (``gateway_makes``,
+#: :func:`made_by_the_gateway`): each writes a store at the top of the home, which that process's
+#: sandbox lets it change nothing at: a callback (``webhook_callbacks.json``), a tile
+#: (``dashboard_views.json``), or a proposal for the review queue with its Inbox row
+#: (``inbox.json``) and, for a template's diff, its study.
+_GATEWAY_MAKES: dict[str, float | None] = dict.fromkeys(
+    (
+        "hook_register",
+        "dashboard_tile_propose",
+        "skill_promote",
+        "template_save_from_session",
+        "project_context_review",
+        "propose_template_diff",
+    )
+)
+
+
 def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
     from personalclaw.mcp_shared import call_tool_with_logging
 
@@ -1356,6 +1454,7 @@ def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
         _answered,
         session_key="mcp_core",
         downstream_service="personalclaw-core",
+        gateway_makes=_GATEWAY_MAKES,
     )
 
 
@@ -2280,33 +2379,46 @@ def make_its_folders() -> None:
 
     The server runs in the CLI's sandbox, and on Linux nothing can be added at the top of the home
     from inside it, so a folder made after the CLI started is one its tools cannot write for as long
-    as the CLI runs. The skills folder holds what the skill tools save: a session's drafts and the
-    library. A gateway's start seeds the shipped skills into it, and nothing else makes it before
-    the first save. A folder that cannot be made is logged and the CLI still starts: only the tools
-    that write in it fail, and they say so. An existing folder is left as it is.
+    as the CLI runs. These hold what the tools this server makes itself write: the skills folder (a
+    session's drafts and the library; a gateway's start seeds the shipped skills into it), the
+    locks folder (the library's lock, which every skill read takes), the artifacts folder (what
+    the artifact and document tools save; a gateway's start lists it for the search index) and the
+    workflows folder (the template tools' records, beside the run store the refiner reads; a
+    gateway's start reads that store). Nothing else makes any of them before its first write, and
+    a start that skips that step makes none. A tool whose store is a file at the top of the home is
+    made by the gateway instead (``gateway_makes``). A folder that cannot be made is logged and the
+    CLI still starts: only the tools that write in it fail, and they say so. An existing folder is
+    left as it is.
     """
+    from personalclaw.artifacts.native import artifacts_root
     from personalclaw.atomic_write import PRIVATE_DIR_MODE, ensure_home_for
+    from personalclaw.concurrency import LOCKS_DIR_NAME
     from personalclaw.skills.loader import skills_dir
+    from personalclaw.workflows.store import workflows_dir
 
-    folder = skills_dir()
-    try:
-        ensure_home_for(folder)
-        folder.mkdir(mode=PRIVATE_DIR_MODE, exist_ok=True)
-    except OSError as exc:
-        logger.warning(
-            "could not make the home's %s folder for an agent CLI's tools (%s)",
-            folder.name,
-            exc.strerror or type(exc).__name__,
-        )
+    locks = config_dir() / LOCKS_DIR_NAME
+    for folder in (skills_dir(), locks, artifacts_root(), workflows_dir()):
+        try:
+            ensure_home_for(folder)
+            folder.mkdir(mode=PRIVATE_DIR_MODE, exist_ok=True)
+        except OSError as exc:
+            logger.warning(
+                "could not make the home's %s folder for an agent CLI's tools (%s)",
+                folder.name,
+                exc.strerror or type(exc).__name__,
+            )
 
 
 def run_mcp_core_server() -> None:
     """Run MCP stdio server for core agent tools — the single endpoint an ACP CLI
     consumes, aggregating every native tool category into one surface. Each call runs as the chat
     it serves (:func:`_call_as_its_session`), and what only the gateway holds is reached through
-    it (:func:`serves_an_agent_cli`)."""
+    it (:func:`serves_an_agent_cli`). A security-log row the CLI's sandbox no longer lets this
+    process write is said in its own log (``sel.say_rows_the_file_cannot_take``)."""
     from personalclaw.mcp_shared import run_mcp_stdio_loop
+    from personalclaw.sel import say_rows_the_file_cannot_take
 
     global _SERVES_AN_AGENT_CLI
     _SERVES_AN_AGENT_CLI = True
+    say_rows_the_file_cannot_take()
     run_mcp_stdio_loop("personalclaw-core", "1.0.0", _aggregated_list_tools, _call_as_its_session)

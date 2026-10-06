@@ -425,14 +425,28 @@ def _shown(text: str) -> str:
     return masked
 
 
+def _code_of(result: "ToolResult") -> dict[str, str]:
+    """The code a failed *result* says it with (``FAILURE_CODE_META_KEY``), as the answer's
+    ``code``; nothing for a result that has none."""
+    from personalclaw.tool_providers.base import FAILURE_CODE_META_KEY
+
+    code = (result.metadata or {}).get(FAILURE_CODE_META_KEY)
+    return {"code": code} if isinstance(code, str) and code else {}
+
+
 async def api_tool_invoke(request: web.Request) -> web.Response:
     """POST /api/tools/invoke — execute one tool through the Tool entity.
 
     Internal-only (loopback + X-Internal-Secret): used by zero-token cron
     scripts so a sandboxed subprocess gets the same MCP+native tool surface
-    the agent has, without importing the in-process registry. Body:
+    the agent has, without importing the in-process registry, and by the tool
+    server an agent CLI runs for the calls whose work only the gateway can do
+    (``mcp_core.made_by_the_gateway``). Body:
     ``{"tool": str, "arguments": dict, "confirm_risk"?: str}``.
-    Returns ``{ok, output, error}``.
+    Returns ``{ok, output, error}``, and ``code`` for a failure the tool says with one. An answer
+    about a call this route recorded in the security log says so: one that reached the tool
+    carries ``output``, and a refusal before the tool ran carries ``not_run``, naming what refused
+    it. A body it cannot read and a tool it does not serve carry neither, and are not recorded.
 
     "The same surface the agent has" is literal: the tool is resolved by name
     (``tool_providers.registry.resolve``) over ``tool_providers.registry.tool_surface``, the list
@@ -522,6 +536,7 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
                 {
                     "ok": False,
                     "error": f"app {app_name!r} not permitted to invoke {tool_name!r} — declare it in permissions.mcpTools",  # noqa: E501
+                    "not_run": "app_not_permitted",
                     **checked,
                 },
                 status=403,
@@ -587,6 +602,7 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
             "tool_disabled",
             message=(f"{tool_name!r} is disabled — re-enable it on the Tools page to invoke it"),
             status=403,
+            not_run="tool_disabled",
             **checked,
         )
 
@@ -619,6 +635,7 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
             "tool_denied_by_policy",
             message=f"{denied}. No agent may run {tool_name!r}, and neither may this request.",
             status=403,
+            not_run="tool_denied_by_policy",
             **checked,
         )
 
@@ -661,7 +678,14 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
         except Exception:  # noqa: BLE001 — an unaudited refusal is still a refusal
             pass
         return web.json_response(
-            {"ok": False, "output": "", "error": why, "not_run": "refused_by_tool", **checked}
+            {
+                "ok": False,
+                "output": "",
+                "error": why,
+                "not_run": "refused_by_tool",
+                **_code_of(refused),
+                **checked,
+            }
         )
     if checked:
         # The check ends here: every refusal no confirmation changes has been asked, and nothing
@@ -732,6 +756,7 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
             # which happens whenever name inference or an absent shell command floors the
             # effective tier above the declaration.
             error_extra={"risk": _risk, "confirm_field": "confirm_risk"},
+            not_run="risk_confirmation_required",
         )
     try:
         with _as_its_work(request):
@@ -749,7 +774,9 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
             metadata={"risk": _risk},
         )
         # Raw text stays in the SEL record above; the wire speaks guidance (failure_copy).
-        return web.json_response({"ok": False, "error": relayed_failure_copy(exc)}, status=500)
+        return web.json_response(
+            {"ok": False, "output": "", "error": relayed_failure_copy(exc)}, status=500
+        )
 
     out, err = _shown(result.output), _shown(result.error)
     # A control of the tool can still refuse as the call starts (a pattern added since the check):
@@ -766,7 +793,9 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
         error="" if result.success else err[:200],
         metadata={"risk": _risk, **control},
     )
-    return web.json_response({"ok": bool(result.success), "output": out, "error": err})
+    return web.json_response(
+        {"ok": bool(result.success), "output": out, "error": err, **_code_of(result)}
+    )
 
 
 async def api_tools_toggle(request: web.Request) -> web.Response:

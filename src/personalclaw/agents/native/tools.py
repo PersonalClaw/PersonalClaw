@@ -192,7 +192,7 @@ class InProcessMcpToolProvider(ToolProvider):
             # is the signal; the text is never read here, because a prose predicate calls
             # ``artifact_delete``'s "Artifact not found: X" a success.
             if isinstance(output, ToolFailure):
-                return ToolResult(success=False, error=output.reason)
+                return _failed(output)
             return ToolResult(success=True, output=output or "")
         except Exception as exc:  # noqa: BLE001 - surface any tool error to the model
             logger.debug("in-process tool %s failed: %s", tool_name, exc, exc_info=True)
@@ -214,7 +214,17 @@ class InProcessMcpToolProvider(ToolProvider):
         )
         if not isinstance(refused, ToolFailure):
             return None
-        return ToolResult(success=False, error=refused.reason)
+        return _failed(refused)
+
+
+def _failed(failure: ToolFailure) -> ToolResult:
+    """A module's handled failure as a result: its reason, and its code when it has one
+    (``FAILURE_CODE_META_KEY``), so a door that answers with the reason alone can say it again in
+    full."""
+    from personalclaw.tool_providers.base import FAILURE_CODE_META_KEY
+
+    meta = {FAILURE_CODE_META_KEY: failure.code} if failure.code else {}
+    return ToolResult(success=False, error=failure.reason, metadata=meta)
 
 
 def _owner_notice_args(declared: Any) -> tuple[str, ...]:

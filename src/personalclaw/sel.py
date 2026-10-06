@@ -577,10 +577,21 @@ class SecurityEventLog:
         with self._lock:
             event.prev_hash = self._last_hash
             event.entry_hash = self._compute_hash(event)
-            self._dir.mkdir(parents=True, exist_ok=True)
-            with open(self._path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(asdict(event)) + "\n")
-                full = f.tell() >= _ROTATE_BYTES
+            try:
+                self._dir.mkdir(parents=True, exist_ok=True)
+                with open(self._path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(asdict(event)) + "\n")
+                    full = f.tell() >= _ROTATE_BYTES
+            except OSError as exc:
+                if not _UNWRITABLE_ROWS_SAID:
+                    raise
+                logger.warning(
+                    "The security log %s could not take this row (%s), so it is kept here: %s",
+                    self._path.name,
+                    exc.strerror or type(exc).__name__,
+                    json.dumps(redact_event(asdict(event))),
+                )
+                return
             self._last_hash = event.entry_hash
             callback = self._forward_callback
         if full:
@@ -1114,3 +1125,22 @@ def _infer_source(session_key: str) -> str:
 def sel() -> SecurityEventLog:
     """Module-level accessor for the singleton SEL instance."""
     return SecurityEventLog()
+
+
+#: Whether a row the log's file cannot take is said in this process's own log instead of raised
+#: into what wrote it (:func:`say_rows_the_file_cannot_take`).
+_UNWRITABLE_ROWS_SAID = False
+
+
+def say_rows_the_file_cannot_take() -> None:
+    """From now on, a row this process cannot append to the log's file is said in this process's
+    own log, masked, with the row, and what wrote it goes on as if it had been written.
+
+    For the tool server an agent CLI runs (``mcp_core.run_mcp_core_server``) alone. It runs in the
+    CLI's sandbox, which on Linux lets it write the log's file only as it was when the CLI started:
+    once the gateway rotates the log, the file at its name is a new one that process can only read,
+    and a raised error took the call it was recording with it, and the server after it. Every other
+    process still raises: a control that refuses what it cannot record
+    (``security._emit_deny_exception_event``) refuses."""
+    global _UNWRITABLE_ROWS_SAID
+    _UNWRITABLE_ROWS_SAID = True

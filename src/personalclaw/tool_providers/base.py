@@ -56,6 +56,11 @@ TELLS_OWNER_META_KEY = "personalclaw/tells_owner"
 #: never from another server.
 WORK_ASKS_META_KEY = "personalclaw/work_asks"
 
+#: The :attr:`ToolResult.metadata` key a failed result keeps its failure's code under
+#: (:attr:`ToolFailure.code`), so the door that answers a call with its ``error`` alone
+#: (``POST /api/tools/invoke``) hands the code on with it.
+FAILURE_CODE_META_KEY = "code"
+
 
 def only_tells_the_owner(tells_owner: Collection[str], tool_input: object) -> bool:
     """Whether a call does nothing but tell the owner something: its tool declares the arguments
@@ -254,14 +259,17 @@ class ToolFailure(str):
     Construct these through :func:`tool_failure`, which owns the package's failure
     convention (``Error: …`` / ``Error [CODE]: …``) in one place instead of at ~90 call
     sites. ``reason`` is the same message without that prefix, so a consumer that adds its
-    own (``format_tool_result``) renders exactly one.
+    own (``format_tool_result``) renders exactly one, and ``code`` is the code in it, if any, so a
+    failure handed on as ``reason`` alone (a :class:`ToolResult`) can be said again in full.
     """
 
     reason: str
+    code: str
 
-    def __new__(cls, text: str, *, reason: str = "") -> "ToolFailure":
+    def __new__(cls, text: str, *, reason: str = "", code: str = "") -> "ToolFailure":
         self = super().__new__(cls, text)
         self.reason = reason or str(text)
+        self.code = code
         return self
 
 
@@ -273,7 +281,7 @@ def tool_failure(reason: str, *, code: str = "") -> ToolFailure:
     verdict is structural and no consumer has to read the prose to recover it.
     """
     head = f"Error [{code}]" if code else "Error"
-    return ToolFailure(f"{head}: {reason}", reason=reason)
+    return ToolFailure(f"{head}: {reason}", reason=reason, code=code)
 
 
 def maybe_truncate(text: str, cap: int | None) -> tuple[str, bool, int | None]:

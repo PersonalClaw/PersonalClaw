@@ -635,6 +635,26 @@ boards, the folders, the dashboard's views and the hooks each have one lock thei
 store and those paths hold — and a store that holds its records in memory keeps,
 when it writes, what another writer put there since it last read the file.
 
+**An agent CLI's automation tools are the gateway's.** An agent on an agent CLI
+reaches the automation tools through the CLI's tool server (`personalclaw
+mcp-core`), which runs in the CLI's sandbox: on Linux it can add, replace or
+remove nothing at the top of the home, so it can write no `triggers.json`, and
+every save there ended the server and the turn's later calls with it. So every
+automation tool call it serves is made by the gateway, through the door every
+sandboxed process of PersonalClaw's makes its tool calls by (`POST
+/api/tools/invoke`, `mcp_core.made_by_the_gateway`): as the work of the chat the
+server serves, so a Temporary chat's call is refused as it is from the chat, held
+to what a chat's call is held to (a tool switched off, the deny-list, the tool's
+own refusals before it runs, its schema), and audited there; a delete carries its
+destructive tier, since the call was approved where every call of the CLI's is, at
+the host's gate with that tier or by the CLI's own settings, which the host audits
+as an ungated call. The server admits a call first by its own lineage and tier,
+and a `resume_run_id` of `self` is resolved to its own run before the call is
+handed on. A create may ask a model to read its `when`, so it is waited for as
+long as a model's work is, not as long as a write. A gateway that does not answer
+is said: the call was not made, or, for one it did not answer in time, may have
+been.
+
 **A file of records that cannot be read is never written over.** Each of those stores reads
 its file through `record_files` (`records`, `read`), which takes one that is there and holds
 no document of its own — not JSON, not UTF-8, not the store's shape, or not openable — as

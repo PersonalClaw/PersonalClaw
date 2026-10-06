@@ -52,8 +52,12 @@ logger = logging.getLogger(__name__)
 _UNSAFE = re.compile(r"[^a-zA-Z0-9._-]")
 
 
+#: The folder under the home the lock files are kept in.
+LOCKS_DIR_NAME = "locks"
+
+
 def _locks_dir() -> Path:
-    d = config_dir() / "locks"
+    d = config_dir() / LOCKS_DIR_NAME
     d.mkdir(parents=True, exist_ok=True)
     return d
 

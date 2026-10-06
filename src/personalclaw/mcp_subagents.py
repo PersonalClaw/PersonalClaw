@@ -16,7 +16,7 @@ import secrets
 import time
 from typing import Any
 
-from personalclaw.mcp_core import _get, _post, _resolve_session_key
+from personalclaw.mcp_core import MODEL_WORK, _get, _post, _resolve_session_key
 from personalclaw.tool_providers.base import WORK_ASKS_META_KEY, ToolFailure, tool_failure
 from personalclaw.workflows import batch_compile
 from personalclaw.workflows.batch_compile import LeafTask
@@ -582,4 +582,5 @@ def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
         _call_tool_inner,
         session_key="mcp_core",
         downstream_service="personalclaw-subagents",
+        gateway_makes=MODEL_WORK,
     )
