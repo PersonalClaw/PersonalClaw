@@ -1147,9 +1147,12 @@ class GatewayOrchestrator:
         memory.vector_store = self.vector_memory
         # Whatever an Incognito or Temporary chat left in memory (an earlier version consolidated
         # them like any other) goes before anything can recall it.
+        from personalclaw.learning import surfacing_events
         from personalclaw.memory_writes import forget_what_restricted_sessions_left
 
         forget_what_restricted_sessions_left(self.vector_memory, memory)
+        # And what it recorded of their turns in the learning log, each one's message with it.
+        surfacing_events.forget_what_restricted_sessions_left()
         self.vector_memory.serve_recall()
 
         skills = SkillsLoader()

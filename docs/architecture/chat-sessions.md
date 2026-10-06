@@ -182,6 +182,19 @@ chat, channel thread, loop worker, webhook, subagent).
     and `MemoryStore._persist` refuses the markdown files. Reads still work, by
     keyword, and leave no mark (no recall counts, access stamps or volunteer
     log). The API answers a refused write `403`.
+  - The learning log records no skill offer for work that may change none of
+    your memory (`learning/surfacing_events.py`): each row holds the turn's
+    message (`query`), so the store asks `memory_writes.changes_no_memory` where
+    every writer of the log writes, as the memory reflex's own offer log is
+    asked. What an earlier version recorded for a chat whose transcript records
+    it Incognito or Temporary goes when the gateway starts
+    (`surfacing_events.forget_what_restricted_sessions_left`), overwritten as it
+    goes so no copy of the database carries its words; a row that names no chat
+    is left. Kept as for any chat, whatever its mode, and the notices say so: the
+    Audit log's record of each tool call (`sel.log_tool_invocation`), and the
+    approvals, questions and notes its work raises in the Inbox and the bell
+    (`inbox.emit_attention_item`, `DashboardState.notify`), since an audit and a
+    consent record keep what ran and what was asked.
   - The markdown memory files are also files in the folder every chat starts in
     (`<home>/workspace`), so the agent's own tools reach them, and they hold the
     same line. The memory folders (`memory.memory_folders`: the home's `memory`
@@ -303,7 +316,10 @@ chat, channel thread, loop worker, webhook, subagent).
     memory_mode=)` is the same answer, and work inside a restricted scope hands
     nothing on whichever session it names. The chat is titled by its mode
     ("Incognito chat", "Temporary chat") on its first turn and when a title is
-    asked for again (`dashboard/chat_title.py`), and gets no model tags or
+    asked for again (`dashboard/chat_title.py`), and when it comes back with no
+    title of its own, as one saved before its title chore ran does, rather than
+    by the chat list's fallback, its first message
+    (`chat_persistence.continue_kept_chat`); it gets no model tags or
     follow-ups (`dashboard/chat_followups.py`); a reopened chat whose history
     does not fit is cut to fit rather than condensed
     (`context.compress_thread_history`); the suggestions built from recent chats
@@ -374,9 +390,10 @@ chat, channel thread, loop worker, webhook, subagent).
   (`sessions/<key>/`), its turn checkpoints, the files attached to it
   (`uploads/`, `screenshots/`) and the skills it was taught and not yet kept
   (`skills/.ephemeral/`); `chat_traces` reads that and `chat_forget` deletes it.
-  `purge_chat` deletes them for a deleted chat (which keeps a kept chat's
-  uploads, since Files lists them) and for a **temporary** chat's end, which
-  takes its attachments too; a chat named again after a deleted one is not
+  `purge_chat` deletes them, and what the learning log kept of its turns, for a
+  deleted chat (which keeps a kept chat's uploads, since Files lists them) and
+  for a **temporary** chat's end, which takes its attachments too; a chat named
+  again after a deleted one is not
   handed the deleted chat's skill drafts. A chat is deleted one way,
   `delete_chats`, from the Delete button (`DELETE /api/chat/sessions/{session}`)
   and both history routes (`DELETE /api/sessions/{key}`, `DELETE /api/sessions`):

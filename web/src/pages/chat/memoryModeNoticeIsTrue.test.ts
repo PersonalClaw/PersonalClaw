@@ -41,6 +41,28 @@ describe('a chat that is not persistent says what is kept', () => {
     expect(MEMORY_MODE_NOTICE.temporary).not.toMatch(/keeps its transcript/)
   })
 
+  it('each notice says what is kept as for any chat, and the learning log keeps none of its words', () => {
+    // The learning log's skill offers held each turn's message word for word, a Temporary or an
+    // Incognito chat's too, kept ninety days, backed up and synced. A turn of either keeps none.
+    const offers = read(join(GATEWAY, 'learning', 'surfacing_events.py'))
+    expect(offers).toMatch(/if memory_writes\.changes_no_memory\(\):\s*\n\s*return 0/)
+    // What the notices then say is kept, because an audit and a consent record keep what ran and
+    // what was asked whatever the chat's mode.
+    for (const [mode, text] of Object.entries(MEMORY_MODE_NOTICE)) {
+      expect(text, mode).toContain(
+        "Your Audit log records each tool call it makes, and the approvals, questions and notes it raises "
+          + "reach your Inbox and notifications as any chat's do.",
+      )
+    }
+    const sel = read(join(GATEWAY, 'sel.py'))
+    expect(sel).toMatch(/def log_tool_invocation\(/)
+    expect(sel, 'the Audit log leaves a chat out now: say so in the notices').not.toMatch(
+      /writes_refused|changes_no_memory|keeps_nothing|memory_mode/,
+    )
+    expect(read(join(GATEWAY, 'dashboard', 'approval_state.py'))).toMatch(/emit_attention_item\(/)
+    expect(read(join(GATEWAY, 'inbox.py'))).toMatch(/def _notify_view\([\s\S]{0,600}?state\.notify\(/)
+  })
+
   it('no mode promises the chat a place in the history, and only Temporary says it is forgotten', () => {
     const incognito = [MEMORY_MODE_NOTICE.incognito, MEMORY_MODES.find((m) => m.id === 'incognito')!.hint]
     for (const text of incognito) expect(text).not.toMatch(/saved in your history|forgot|forget/i)

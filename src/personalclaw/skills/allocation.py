@@ -446,7 +446,9 @@ def _record_surfacing_events(
 
     Every candidate in `facts` gets a row, not just the included ones: precision is
     used ÷ SURFACED, so dropping the offers that lost would make the denominator the numerator
-    and report every arm at 1.0.
+    and report every arm at 1.0. A row holds the turn's words, so the store writes none for work
+    that may change none of your memory, an Incognito or Temporary chat's turn among it
+    (`SurfacingEventStore.record`).
 
     Best-effort by the same contract as the caller ("Never raises"). A measurement write that
     cost a user their skills would be strictly worse than an unmeasured turn.

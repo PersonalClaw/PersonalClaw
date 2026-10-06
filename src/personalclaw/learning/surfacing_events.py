@@ -23,13 +23,23 @@ than a narrow correct one:
 | `entity` | the retrieval benchmark's weak labels: the id a positive label points AT |
 | `query` | the same: `mine_knowledge_qrels` needs the text the retrieval answered |
 | `confidence` | `measure.propose_thresholds` — tuning 0.55/0.62 needs the scores actually seen |
-| `session` | self-similar dedup: ten retrievals in one session are one act of attention |
+| `session` | self-similar dedup, and forgetting a chat: its rows are found by it |
 | `created_ts` | the 90d prune |
 
 **Storage rides `learning.db`**, the one file for the flywheel's lifecycle tables, and
 declares its own table lazily with `IF NOT EXISTS` — the same shape `usage.UsageStore` uses over
 the same connection. That idempotent declaration IS the migration story here; this project ships
 no migration machinery and is not getting any.
+
+**A row keeps the turn's words** (`query`), so nothing is recorded for work that may change none
+of your memory (``memory_writes.changes_no_memory``): a turn of an Incognito or Temporary chat,
+whose words are kept nowhere but its transcript, and the work of an app not given your memory or
+of a turn someone else asked for, which teach the flywheel nothing (``learning.gate``). The store
+asks, where every writer of the log writes, as the memory reflex's own offer log is asked
+(``memory_service``). What a chat's turns left here goes with the chat: when it is deleted or a
+Temporary chat ends (``dashboard.chat_forget.purge_chat``), and, for what an earlier version
+recorded of a chat that keeps nothing, when the gateway starts
+(:func:`forget_what_restricted_sessions_left`).
 """
 
 from __future__ import annotations
@@ -39,7 +49,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from personalclaw.durability import numbered_rows
 
@@ -203,7 +213,14 @@ class SurfacingEventStore:
         `from_dict`. Returning the count is what lets the caller's test assert a row was written
         WITHOUT reaching past the store, which is the difference between testing the writer and
         testing sqlite.
+
+        Nothing is written, and 0 returned, for work that may change none of your memory (the
+        module docstring): its events would keep its words.
         """
+        from personalclaw import memory_writes
+
+        if memory_writes.changes_no_memory():
+            return 0
         stamp = time.time() if now is None else now
         rows = [
             (
@@ -306,3 +323,76 @@ class SurfacingEventStore:
         except Exception:
             logger.debug("surfacing_events prune failed", exc_info=True)
             return 0
+
+    def forget_sessions(self, gone: Callable[[str], bool]) -> int:
+        """Remove every event filed under a session *gone* names (``gone(session)``, asked once
+        for each). Returns rows removed. An event that names no session is no one chat's, and
+        stays. Idempotent: a second pass finds nothing.
+
+        Removed outright, as what such a session left in memory is
+        (``VectorMemoryStore.purge_records_from``), and overwritten as it goes
+        (``secure_delete``): a deleted row's words would otherwise stay in the file's free space,
+        which a backup or a sync's copy of the database carries until the file is next compacted.
+        The write-ahead log is folded into the file and emptied for the same reason, when no
+        reader holds it longer than a moment. A log that was never written holds nothing to
+        forget, and is not made by being asked.
+        """
+        if not self.path.exists():
+            return 0
+        self._ensure()
+        with self._lock, self._staging._cursor() as cur:
+            named = [
+                row[0]
+                for row in cur.execute(
+                    "SELECT DISTINCT session FROM surfacing_events WHERE session != '';"
+                ).fetchall()
+            ]
+            doomed = [session for session in named if gone(session)]
+            if not doomed:
+                return 0
+            cur.execute("PRAGMA secure_delete = ON;")
+            removed = 0
+            for start in range(0, len(doomed), 400):
+                batch = doomed[start : start + 400]
+                marks = ",".join("?" * len(batch))
+                cur.execute(f"DELETE FROM surfacing_events WHERE session IN ({marks});", batch)
+                removed += int(cur.rowcount or 0)
+        with self._lock, self._staging._cursor() as cur:
+            # Waits a quarter of a second at most for a reader to finish: a chat is deleted on the
+            # gateway's loop. A checkpoint a reader holds off folds the rest of the log in later.
+            waited = cur.execute("PRAGMA busy_timeout;").fetchone()[0]
+            cur.execute("PRAGMA busy_timeout = 250;")
+            cur.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            cur.execute(f"PRAGMA busy_timeout = {int(waited)};")
+        return removed
+
+
+def forget_what_restricted_sessions_left() -> int:
+    """Remove the events an earlier version recorded for a turn of an Incognito or Temporary chat:
+    those filed under a session whose transcript records it so
+    (``memory_writes.transcript_keeps_nothing``, the record the start's sweep of memory acts on).
+    Returns how many went.
+
+    Run when the gateway starts, before anything reads the log or exports it again; idempotent.
+    An event that names no session, or one no transcript records as such a chat's, cannot be
+    traced to one and is left: it ages out with the rest (:data:`DEFAULT_RETENTION_DAYS`).
+    """
+    from personalclaw import memory_writes
+
+    store = SurfacingEventStore()
+    try:
+        removed = store.forget_sessions(memory_writes.transcript_keeps_nothing)
+    except Exception:  # noqa: BLE001 - a failed sweep must not stop the gateway; it runs again
+        logger.warning(
+            "Could not remove what Incognito or Temporary chats left in the learning log",
+            exc_info=True,
+        )
+        return 0
+    finally:
+        store.close()
+    if removed:
+        logger.warning(
+            "Removed %d learning log row(s) that kept an Incognito or Temporary chat's words",
+            removed,
+        )
+    return removed

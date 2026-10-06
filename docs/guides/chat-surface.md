@@ -272,10 +272,21 @@ stopped, and the run, any run it started, and what they produced are deleted. So
 its still waiting for your Allow: its ask leaves your Inbox. An **Incognito** chat's runs are kept,
 as its transcript is, until you delete the chat: then they go the same way.
 
+Nor does the learning log keep its words: a turn of such a chat records nothing of the skills it
+brought up, where an ordinary chat's turn records each one with its message. What an earlier
+version recorded of an Incognito or Temporary chat's turns is removed when PersonalClaw starts. A
+chat that comes back before it was titled is called by its mode, never by its first message.
+
+What stays, as for any chat, and the chat's notice says so: **Settings → Audit log** records each
+tool call it makes, and the approvals, questions and notes it raises reach your Inbox and
+notifications. The Audit log is the record of what your agent did, and an approval is your answer to
+what it asked, so neither leaves a chat out for its mode.
+
 ### Deleting a chat
 
-**Delete chat** removes the conversation for good, and with it what memory drew from that chat
-alone: its summary, its episodes, and the facts and lessons that came only from it. Other chats
+**Delete chat** removes the conversation for good, what the learning log kept of its turns too,
+and with it what memory drew from that chat alone: its summary, its episodes, and the facts and
+lessons that came only from it. Other chats
 stop recalling them, and the daily history and the day's digest stop repeating them. If the chat
 had replaced something memory held from earlier, the earlier version comes back.
 

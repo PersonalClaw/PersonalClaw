@@ -107,9 +107,10 @@ def purge_chat(
     keys: Iterable[str],
     attachments: Iterable[str] = (),
 ) -> Purge:
-    """Delete what the chat persisted under *history_key* keeps on disk, the skills it was taught
-    and not yet kept, and the links it was given (held in memory for web_fetch). Says how many
-    attached files were deleted, and whether the transcript stayed.
+    """Delete what the chat persisted under *history_key* keeps on disk, what the learning log
+    kept of its turns, the skills it was taught and not yet kept, and the links it was given (held
+    in memory for web_fetch). Says how many attached files were deleted, and whether the
+    transcript stayed.
 
     ``keys`` are every form of the chat's key the per-session stores may have been written under
     (a turn's tool results and checkpoints are keyed by the canonical ``dashboard:`` key, some
@@ -141,6 +142,17 @@ def purge_chat(
             turn_checkpoints.prune_session(sid)
     except Exception:
         logger.warning("forget: checkpoint purge failed for %s", history_key, exc_info=True)
+    # What the learning log kept of its turns: each one that surfaced a skill, with its message.
+    try:
+        from personalclaw.learning.surfacing_events import SurfacingEventStore
+
+        events = SurfacingEventStore()
+        try:
+            events.forget_sessions(_spellings(names | {history_key}).__contains__)
+        finally:
+            events.close()
+    except Exception:
+        logger.warning("forget: learning log purge failed for %s", history_key, exc_info=True)
     from personalclaw.constants import dashboard_history_key
 
     # The skills it was taught and not yet kept, under the key its tools saw: a chat named again
