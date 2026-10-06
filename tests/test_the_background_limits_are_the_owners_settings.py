@@ -30,6 +30,7 @@ from personalclaw.guardrails.audit import caller_scope
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 from personalclaw.llm.capabilities import Capability, ProviderCapability
 from personalclaw.llm.registry import ProviderEntry, ProviderRegistry
+from personalclaw.llm_helpers import json_object_problem
 from personalclaw.routing import rates as rates_mod
 
 #: Each limit: its shipped value, the window Settings accepts, and a value inside it.
@@ -289,7 +290,9 @@ def test_a_changed_time_limit_binds_the_next_chore(chain, home):
         for limit in (30.0, 60.0):
             _write(call_timeout_secs=limit)
             started = loop.time()
-            answer = await consolidator._call_llm("Consolidate chat-3.", "dashboard:chat-3")
+            answer = await consolidator._call_llm(
+                "Consolidate chat-3.", "dashboard:chat-3", validate=json_object_problem
+            )
             took.append((answer, loop.time() - started))
         return took
 

@@ -1378,23 +1378,20 @@ def _kept_lines(rewrite: object, stored: str) -> str:
         return ""
 
 
-def _consolidation_problem(asked: frozenset[str]) -> Callable[[str], str]:
-    """The check a consolidation's answer meets (``chores.run_chore``'s ``validate``): ``""`` when
-    its JSON object (``llm_helpers.parse_llm_json``) holds a key the pass *asked* for. One holding
-    none is an object from inside an answer whose own did not parse (a fact, a lesson), and read
-    as the answer it kept nothing while the chat was marked consolidated. A whole answer that
-    found nothing to keep holds the keys, empty."""
+def _consolidation_problem(text: str, asked: frozenset[str]) -> str:
+    """What is wrong with *text* as a consolidation's answer (``chores.run_chore``'s
+    ``validate``), ``""`` when its JSON object (``llm_helpers.parse_llm_json``) holds a key the
+    pass *asked* for. One holding none is an object from inside an answer whose own did not parse
+    (a fact, a lesson), and read as the answer it kept nothing while the chat was marked
+    consolidated. A whole answer that found nothing to keep holds the keys, empty."""
     from personalclaw.llm_helpers import parse_llm_json
 
-    def problem(text: str) -> str:
-        found = parse_llm_json(text)
-        if found is None:
-            return "no JSON object"
-        if asked.isdisjoint(found):
-            return "no key it was asked for (" + ", ".join(sorted(asked)) + ")"
-        return ""
-
-    return problem
+    found = parse_llm_json(text)
+    if found is None:
+        return "no JSON object"
+    if asked.isdisjoint(found):
+        return "no key it was asked for (" + ", ".join(sorted(asked)) + ")"
+    return ""
 
 
 class _KeptMemory(NamedTuple):
@@ -1938,8 +1935,9 @@ class HistoryConsolidator:
             # No answer (one cut at its output cap is none, `llm_helpers.one_shot_completion`,
             # nor an object without a key asked for) ends the pass keeping and marking nothing;
             # the trigger that ran it owes one no model could finish (`_owe_if_unanswered`).
+            wanted = frozenset(asked)
             result = await self._call_llm(
-                prompt, key, validate=_consolidation_problem(frozenset(asked))
+                prompt, key, validate=lambda answer: _consolidation_problem(answer, wanted)
             )
             if not result or self._was_deleted(key):
                 return
@@ -2261,6 +2259,7 @@ class HistoryConsolidator:
         if vs is None:
             return
         from personalclaw import memory_formation
+        from personalclaw.llm_helpers import json_object_problem
         from personalclaw.vector_memory import _MAX_SEMANTIC_PER_CONSOLIDATION
 
         semantic_items = result.get("semantic")
@@ -2281,7 +2280,7 @@ class HistoryConsolidator:
             memory_formation.gather(vs, candidates)
             prompt = memory_formation.build_decide_prompt(candidates)
             if prompt:
-                decide_result = await self._call_llm(prompt, key)
+                decide_result = await self._call_llm(prompt, key, validate=json_object_problem)
                 if self._was_deleted(key):
                     return
                 decisions = memory_formation.parse_decisions(decide_result, candidates)
@@ -2623,32 +2622,26 @@ class HistoryConsolidator:
                 )
 
     async def _call_llm(
-        self, prompt: str, chat_key: str, *, validate: Callable[[str], str] | None = None
+        self, prompt: str, chat_key: str, *, validate: Callable[[str], str]
     ) -> dict | None:
         """The answer to *prompt* as a JSON object, None on failure.
 
         Asked as a chore of its own (``chores.run_chore``): a call that is sent this chat's
         consolidation prompt and nothing else, so what it keeps is read from this chat alone. A
         first model of the Background chain that fails, is paused, stops at its output cap or
-        answers no JSON object hands the call to the next one; *validate* is the check the answer
-        meets beyond that (``llm_helpers.json_object_problem`` when it names none). The call's
-        usage row is the consolidated chat's (*chat_key*), as its compression's is. A failure no
-        model answered, or none finished, is kept for *chat_key* (``_unanswered``), so the
-        consolidation it was for is owed rather than lost; any other outcome settles it.
+        answers in a shape *validate* refuses hands the call to the next one: the pass's own check
+        (``_consolidation_problem``), or a JSON object for the Decide call
+        (``llm_helpers.json_object_problem``). The call's usage row is the consolidated chat's
+        (*chat_key*), as its compression's is. A failure no model answered, or none finished, is
+        kept for *chat_key* (``_unanswered``), so the consolidation it was for is owed rather than
+        lost; any other outcome settles it.
         """
         from personalclaw import chores, owed_chores
-        from personalclaw.llm_helpers import (
-            failure_clause,
-            is_model_call_failure,
-            json_object_problem,
-            parse_llm_json,
-        )
+        from personalclaw.llm_helpers import failure_clause, is_model_call_failure, parse_llm_json
 
         try:
             text = await chores.run_chore(
-                prompt,
-                usage=chores.chore_usage(chat_key),
-                validate=validate or json_object_problem,
+                prompt, usage=chores.chore_usage(chat_key), validate=validate
             )
         except Exception as exc:
             # A model that did not answer is said in one line, with what happened; its

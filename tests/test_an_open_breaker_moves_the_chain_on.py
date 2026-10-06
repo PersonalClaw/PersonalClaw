@@ -28,6 +28,7 @@ import personalclaw.agents.native.runtime as runtime_mod
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 from personalclaw.llm.capabilities import Capability, ProviderCapability
 from personalclaw.llm.registry import ProviderEntry, ProviderRegistry
+from personalclaw.llm_helpers import json_object_problem
 from personalclaw.routing import rates as rates_mod
 
 HERE, HERE_REF = "here", "here:tiny"
@@ -207,7 +208,9 @@ def test_a_consolidation_with_the_first_models_breaker_open_comes_from_the_next(
     async def scenario():
         _open_breaker(HERE)
         consolidator = HistoryConsolidator(ConversationLog(tmp_path / "log"), memory=None)
-        return await consolidator._call_llm("Consolidate this chat.", "dashboard:chat-3")
+        return await consolidator._call_llm(
+            "Consolidate this chat.", "dashboard:chat-3", validate=json_object_problem
+        )
 
     world.answers.update(relay='{"history_entry": "Packed for the hike."}')
     assert asyncio.run(scenario()) == {"history_entry": "Packed for the hike."}
@@ -285,7 +288,9 @@ def test_a_consolidation_answered_without_json_comes_from_the_next_model(world, 
 
     async def scenario():
         consolidator = HistoryConsolidator(ConversationLog(tmp_path / "log"), memory=None)
-        return await consolidator._call_llm("Consolidate this chat.", "dashboard:chat-3")
+        return await consolidator._call_llm(
+            "Consolidate this chat.", "dashboard:chat-3", validate=json_object_problem
+        )
 
     world.answers.update(
         here="The chat was about packing for a hike.",
@@ -323,7 +328,9 @@ def test_with_no_next_model_the_one_model_is_asked_once_more(world, monkeypatch,
 
     async def scenario():
         consolidator = HistoryConsolidator(ConversationLog(tmp_path / "log"), memory=None)
-        return await consolidator._call_llm("Consolidate this chat.", "dashboard:chat-3")
+        return await consolidator._call_llm(
+            "Consolidate this chat.", "dashboard:chat-3", validate=json_object_problem
+        )
 
     world.answers.update(here="The chat was about packing for a hike.")
     assert asyncio.run(scenario()) is None

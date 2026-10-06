@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fakes import BoundEmbedder
 
+from personalclaw.llm_helpers import json_object_problem
 from personalclaw.providers import use_cases as uc
 
 
@@ -151,7 +152,11 @@ def test_history_consolidation_falls_back_down_its_chain_and_says_so(
     consolidator = HistoryConsolidator(ConversationLog(isolated_store / "log"), memory=None)
 
     with resolve, stream, caplog.at_level(logging.WARNING, logger="personalclaw.llm_helpers"):
-        result = asyncio.run(consolidator._call_llm("consolidate this", "dashboard:chat-1"))
+        result = asyncio.run(
+            consolidator._call_llm(
+                "consolidate this", "dashboard:chat-1", validate=json_object_problem
+            )
+        )
 
     assert result == {"facts": ["kept"]}
     assert calls == ["slow:model-a", "next:model-b"]
@@ -174,7 +179,12 @@ def test_a_consolidation_no_model_answered_is_one_line_with_what_happened(
     )
     consolidator = HistoryConsolidator(ConversationLog(isolated_store / "log"), memory=None)
     with resolve, stream, caplog.at_level(logging.WARNING, logger="personalclaw.history"):
-        assert asyncio.run(consolidator._call_llm("consolidate this", "k")) is None
+        assert (
+            asyncio.run(
+                consolidator._call_llm("consolidate this", "k", validate=json_object_problem)
+            )
+            is None
+        )
 
     (record,) = [r for r in caplog.records if "consolidation call failed" in r.getMessage()]
     assert record.exc_info is None

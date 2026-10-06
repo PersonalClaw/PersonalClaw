@@ -20,6 +20,7 @@ import personalclaw.agents.native.runtime as runtime_mod
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 from personalclaw.llm.capabilities import Capability, ProviderCapability
 from personalclaw.llm.registry import ProviderEntry, ProviderRegistry
+from personalclaw.llm_helpers import json_object_problem
 from personalclaw.routing import rates as rates_mod
 
 HERE_REF, RELAY_REF = "here:tiny", "relay:swift"
@@ -145,7 +146,10 @@ def test_a_consolidation_is_cut_at_its_ceiling_and_handed_on(built, monkeypatch,
     async def scenario():
         consolidator = HistoryConsolidator(ConversationLog(tmp_path / "log"), memory=None)
         return await asyncio.wait_for(
-            consolidator._call_llm("Consolidate chat-3.", "dashboard:chat-3"), timeout=3.0
+            consolidator._call_llm(
+                "Consolidate chat-3.", "dashboard:chat-3", validate=json_object_problem
+            ),
+            timeout=3.0,
         )
 
     assert asyncio.run(scenario()) == {"history_entry": "Relay."}
