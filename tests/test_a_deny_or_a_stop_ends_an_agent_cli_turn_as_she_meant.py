@@ -168,8 +168,10 @@ def make_world(tmp_path, monkeypatch):
 
 @pytest.fixture
 def unretrieved():
-    """What the event loop reports as a future whose exception nobody read. ``install`` runs
-    inside the test, where the loop is."""
+    """What the event loop reports as a future whose exception nobody read, with the future it
+    names: a task's repr says its coroutine, where that is defined and the exception, so a failure
+    says which task it was. ``install`` runs inside the test, where the loop is. Each test runs on
+    a loop of its own, and a future reports to its own loop, so what lands here is this test's."""
     seen: list[str] = []
 
     def install() -> None:
@@ -177,7 +179,9 @@ def unretrieved():
         previous = running.get_exception_handler()
 
         def handler(loop, context):
-            seen.append(str(context.get("message", "")))
+            about = context.get("future") or context.get("task")
+            message = str(context.get("message", ""))
+            seen.append(message if about is None else f"{message}: {about!r}")
             if previous is not None:
                 previous(loop, context)
 
