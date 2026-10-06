@@ -2737,6 +2737,14 @@
     ],
     "returns": "str | None"
    },
+   "hand_back_opening": {
+    "kind": "method",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "key"},
+     {"annotation": "ModelProvider", "kind": "positional_or_keyword", "name": "provider"}
+    ],
+    "returns": "None"
+   },
    "has_session": {
     "kind": "method",
     "params": [

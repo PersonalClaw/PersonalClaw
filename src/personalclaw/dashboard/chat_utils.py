@@ -10,7 +10,7 @@ import logging
 import re
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -346,8 +346,20 @@ def tools_said(state: object, session: object, client: object, *, said: str = ""
     return model
 
 
+def runs_as_command(client: object, command: str) -> bool:
+    """Whether :func:`stream_slash_command` hands *command* to *client* as a command, rather
+    than sending it as a plain message: the provider runs ``/compact`` on its own state, or it
+    declares the wire-level command axis. A command sends the model no message, so it cannot
+    open a new session; a slash word that is sent as a message is a message, assembled and sent
+    like any other (``chat_runner.run_chat``).
+    """
+    if command == "/compact" and bool(getattr(client, "compacts_in_process", False)):
+        return True
+    return bool(getattr(client, "supports_native_commands", False))
+
+
 async def stream_slash_command(
-    client, command: str, *, prompt: str, notify
+    client, command: str, *, prompt: str | None, notify
 ) -> "AsyncIterator[LLMEvent]":
     """Run *command* natively if the provider can, else answer *prompt* as plain text.
 
@@ -378,10 +390,17 @@ async def stream_slash_command(
     agent *cannot*, and a substitution triggered by anything else would silently swallow a
     real failure.
 
+    *prompt* is ``None`` when nothing may be sent in a command's place: a command
+    (:func:`runs_as_command`, so never outcome 1) on a session no message has opened yet, whose
+    first message must carry the opening a command's text does not
+    (``SessionManager.hand_back_opening``). Outcome 2 then stops the turn with
+    :class:`AcpCommandNotResent` instead of substituting.
+
     ``notify`` takes the user-visible sentence; the caller owns the surface it lands on.
     """
     from personalclaw.acp.errors import (
         AcpCommandFailedAfterOutput,
+        AcpCommandNotResent,
         AcpCommandsUnsupported,
         AcpMethodNotFound,
     )
@@ -394,7 +413,7 @@ async def stream_slash_command(
                 yield event
         return
 
-    if not bool(getattr(client, "supports_native_commands", False)):
+    if not runs_as_command(client, command):
         notify(f"`{command}` isn't a command this agent can run — sent as a plain message.")
         async with closing_stream(client.stream(prompt)) as events:
             async for event in events:
@@ -411,6 +430,8 @@ async def stream_slash_command(
     except (AcpCommandsUnsupported, AcpMethodNotFound) as exc:
         if produced:
             raise AcpCommandFailedAfterOutput(command) from exc
+        if prompt is None:
+            raise AcpCommandNotResent(command) from exc
         logger.info("slash command %s unsupported (%s) — substituting a plain prompt", command, exc)
         notify(f"`{command}` was rejected as an unknown command — re-sent as a plain message.")
     async with closing_stream(client.stream(prompt)) as events:
@@ -493,6 +514,36 @@ async def _say_compaction_notice(state: DashboardState, session: _ChatSession, t
     await state.tell_linked_channel(_history_key_for(session.key), text)
 
 
+#: What a compaction that found nothing to reclaim says, of a conversation that is short.
+NOTHING_TO_COMPACT = "Nothing to compact — this conversation is already short enough."
+#: What ``/compact`` says on a session no message has opened yet, in a chat that has turns.
+NOTHING_TO_COMPACT_YET = (
+    "Nothing to compact yet — the model holds none of this conversation until your next "
+    "message, which hands it over, shortened if it is long."
+)
+
+
+async def compact_before_opening(
+    state: DashboardState, session: _ChatSession, client: Any, *, model: str, has_turns: bool
+) -> None:
+    """``/compact`` on a session that holds none of its chat yet, said where the conversation is.
+
+    The session's runtime holds nothing to compact, and asked, it would answer for itself:
+    "already short enough", said of a long chat. So the chat answers for the chat. A chat with no
+    turns is short enough. One with turns goes to the session with the next message, shortened
+    when it is long (``context.compress_thread_history``), and that is what it says. Nothing is
+    sent either way, so the session's opening waits for that message. The context ring is told
+    what the runtime measured (nothing yet) and the window *model* is served with.
+    """
+    from personalclaw.context_headroom import resolve_window
+
+    await _say_compaction_notice(
+        state, session, NOTHING_TO_COMPACT_YET if has_turns else NOTHING_TO_COMPACT
+    )
+    window = await resolve_window(model, serving=client)
+    state.say_context_usage(session, client.context_usage_pct(), window=window)
+
+
 async def _broadcast_compaction_result(
     state: DashboardState, session: _ChatSession, event: "LLMEvent"
 ) -> str | None:
@@ -516,7 +567,7 @@ async def _broadcast_compaction_result(
         summary, _ = redact_exfiltration_urls(summary)
         msg_text = f"Conversation compacted: {summary}" if summary else "Conversation compacted."
     elif status_type == "noop":
-        msg_text = "Nothing to compact — this conversation is already short enough."
+        msg_text = NOTHING_TO_COMPACT
     elif status_type == "failed":
         error, _ = redact_credentials(event.title or "unknown error")
         error, _ = redact_exfiltration_urls(error)

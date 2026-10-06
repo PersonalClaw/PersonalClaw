@@ -87,7 +87,9 @@ from personalclaw.dashboard.chat_utils import (
     attached_item_source,
     chat_model_axis,
     chat_usage,
+    compact_before_opening,
     model_substitution_notice,
+    runs_as_command,
     stream_slash_command,
     strip_status_sentinel,
     task_mode_denies,
@@ -2826,6 +2828,9 @@ async def run_chat(
     # The turn's stream. Its reading below stops at the terminal event, or part way on an error, a
     # Stop or a cancel, so the finally closes it on every way out (`turn_streams`).
     _turn_events: AsyncIterator[Any] | None = None
+    # Whether this turn sent its runtime a message: one that is new and was sent none keeps its
+    # opening for the next message (`SessionManager.hand_back_opening`, in the finally).
+    _sent_a_message = False
     try:
         # Resolve agent bindings early so we pass the correct ACP agent
         # name (e.g. "personalclaw") instead of the PersonalClaw session name
@@ -2990,6 +2995,11 @@ async def run_chat(
         _acquired = True
         if refused_on_a_substitute(state, session, client):
             return
+        # A slash word its runtime runs (`runs_as_command`), and `/compact` on a session that holds
+        # none of the chat yet (answered here), is a command: it sends the model no message, so a
+        # new session's opening waits for the first one that does. Any other is a message.
+        _compacts_nothing = first_word == "/compact" and is_new and not resumed
+        is_command = is_slash and (_compacts_nothing or runs_as_command(client, message))
         # The model this turn runs on is the one its work may hand anything to: in an Incognito or
         # Temporary chat its tools, recall, fallbacks and the subagents it starts stay on it.
         from personalclaw.providers.provider_bridge import turn_model_ref
@@ -3041,26 +3051,20 @@ async def run_chat(
         # running its own tools. Derive from the live provider: NativeAgentRuntime
         # reports provider_id "native"; ACP reports "acp:<cli>".
         _runtime_label = getattr(client, "provider_id", "") or provider_kind or "native"
-        # WHICH of four things actually happened this turn. ``get_or_create``
-        # returns a pair of flags, and the sentence must not collapse them:
-        #   is_new and resumed        → a runner was started and LOADED a persisted
-        #                               session (ACP ``session/load``) → "resumed"
-        #   is_new, not resumed, but
-        #   the key HAS prior history → a runner was started fresh and this turn's
-        #                               context comes from the compressed-history
-        #                               bootstrap below → "restored from history"
-        #   is_new and neither        → a runner was started over nothing → "created"
-        #   not is_new                → the SAME live in-process session served this
-        #                               turn; nothing was created or loaded →
-        #                               "continued"
-        # ``resumed`` alone was the gate, and the reuse path returns
-        # ``resumed=False`` unconditionally (``session.py`` "return provider,
-        # was_new, False"), so every turn of a long-lived session claimed "Session
-        # created". Gating on ``is_new`` alone inverts the same lie — a reused
-        # session would read "resumed". So: ``is_new`` says whether a runner was
-        # started at all, ``resumed`` picks the verb when one was.
+        # WHICH of four things is true of this turn's session. ``get_or_create`` returns a pair
+        # of flags, and the sentence must not collapse them:
+        #   is_new and resumed        → its runner LOADED a persisted session (ACP
+        #                               ``session/load``) that no message has opened → "resumed"
+        #   is_new, not resumed, and
+        #   this message restores the
+        #   key's prior history       → the bootstrap below hands it the conversation →
+        #                               "restored from history"
+        #   is_new otherwise          → nothing opened it and nothing restores → "created"
+        #   not is_new                → a message opened it before this turn → "continued"
+        # ``is_new`` holds until a message is sent the runtime, so a command, which sends none,
+        # restores nothing: the turn after it does, and says so.
         #
-        # The fourth case is the honest boundary for a provider that cannot resume
+        # The restore is the honest boundary for a provider that cannot resume
         # (no ``loadSession``, or an id the agent refused): the conversation IS
         # continued, but from OUR compressed transcript, not the agent's own state,
         # and the two are not equivalent — the bootstrap carries user/assistant text
@@ -3073,12 +3077,13 @@ async def run_chat(
         _prior_transcript = prior_turns_transcript(
             session, _in_flight_text, nested=_prompt_depth > 0
         )
-        if is_new and not resumed and _prior_transcript:
+        _restores = is_new and not resumed and not is_command and bool(state.context_builder)
+        if _restores and _prior_transcript:
             # What the fresh runtime is handed of those turns: while the chat's background
             # summary (`bg_compress`) still describes its oldest span, the summary stands in
             # for that span. The chat itself — the buffer and the file — is never shortened.
             _prior_transcript = model_view(_prior_transcript, background_summary(state, session))
-        _restoring_history = bool(is_new and not resumed and _prior_transcript)
+        _restoring_history = bool(_restores and _prior_transcript)
         if not is_new:
             _session_verb = "continued"
         elif resumed:
@@ -3188,7 +3193,7 @@ async def run_chat(
         _window = None  # the window an assembled turn resolves below
         # What fed it ({kind, text}), said live and stamped on its answer at the end.
         _context_fed: dict[str, str] = {}
-        if is_slash:
+        if is_command:
             full_message = message
             sel().log_tool_invocation(
                 session_key=session_key,
@@ -3199,6 +3204,11 @@ async def run_chat(
                 outcome="bypass",
                 metadata={"command": first_word, "session": session.key},
             )
+            if _compacts_nothing:
+                await compact_before_opening(
+                    state, session, client, model=model_label, has_turns=bool(_prior_transcript)
+                )
+                return
         elif state.context_builder:
 
             compressed: str | None = None
@@ -3478,7 +3488,7 @@ async def run_chat(
         else:
             full_message = message
 
-        if is_new:
+        if is_new and not is_command:  # the session starts with the message this turn sends
             await _fire(HOOK_EVENT_SESSION_START, session_key)
             spawn_injected = await _fire(HOOK_EVENT_AGENT_SPAWN, session_key)
         else:
@@ -3579,9 +3589,10 @@ async def run_chat(
                 },
             )
 
-        if is_slash:
+        if is_slash:  # a command on a new session is never sent as a message: it has no opening
+            _in_its_place = None if is_command and is_new else full_message
             event_stream = stream_slash_command(
-                client, message, prompt=full_message, notify=_slash_notice
+                client, message, prompt=_in_its_place, notify=_slash_notice
             )
         else:
             # This runner says which model answered (the live line and the reply's meta below),
@@ -3673,6 +3684,7 @@ async def run_chat(
             _acp_cli = _prov_id[4:]
         _turn_agent = turn_endings.serving_agent_name(client)
         running_turn.end_if_stopped_or_moved(session)  # nothing awaits from here to the prompt
+        _sent_a_message = not is_command
         _turn_events = spent_rows(event_stream, recorder(client, chat_usage(session)))
         async for event in _turn_events:
             # Security: tool_call_id originates from LLM — redact before any use
@@ -5635,6 +5647,8 @@ async def run_chat(
                 state, session, session_key, _turn_outcome, after_deny=_deny_note
             )
         if _acquired:
+            if is_new and not _sent_a_message:
+                state.sessions.hand_back_opening(session_key, client)
             # The turn is over: a steer sent from here on queues, and one it did not take runs next.
             running_turn.end_steers(state, session, session_key, client)
             if needs_session_reset:

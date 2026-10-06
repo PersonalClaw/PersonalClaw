@@ -410,7 +410,15 @@ def _record_runner_lease(runtime_id: str, holder: str) -> None:
 class _Session:
     provider: ModelProvider
     last_used: float = field(default_factory=time.monotonic)
+    #: Whether the next turn to acquire this runtime is told it is new, and so sends it the
+    #: message that opens its conversation: the agent's instructions, the safety rules, the
+    #: standing context and the conversation's history. The acquisition that reads it takes it,
+    #: and a turn that sends its model nothing gives it back (``hand_back_opening``), so the
+    #: opening stays with the runtime until a message carries it.
     is_new: bool = True
+    #: The runtime was built by loading its saved conversation (an agent CLI's ``session/load``):
+    #: the turn that opens it hands over no history, which the agent already holds.
+    resumed: bool = False
     prompt_count: int = 0
     consecutive_failures: int = 0
     semaphore: asyncio.Semaphore = field(default_factory=lambda: asyncio.Semaphore(1))
@@ -477,6 +485,19 @@ class SessionManager:
         """
         sess = self._sessions.get(key)
         if sess is not None:
+            sess.is_new, sess.resumed = True, False
+
+    def hand_back_opening(self, key: str, provider: ModelProvider) -> None:
+        """The turn holding *key*'s runtime *provider* was told it is new and sent it no message
+        (a slash command the runtime runs itself, a refusal, a stop before the prompt), so the
+        opening it took stays owed: the next turn to acquire the runtime is told it is new, and
+        resumed when it was built by loading its saved conversation (``_Session.is_new``).
+
+        Named by its *provider* so a turn whose runtime was replaced under it gives nothing to the
+        one that replaced it. A caller that sends its message right after acquiring never needs it.
+        """
+        sess = self._sessions.get(key)
+        if sess is not None and sess.provider is provider:
             sess.is_new = True
 
     def get_pid(self, key: str) -> int | None:
@@ -1050,8 +1071,14 @@ class SessionManager:
     ) -> tuple[ModelProvider, bool, bool]:
         """Return ``(ModelProvider, is_new, resumed)`` for *key*, creating if needed.
 
+        ``is_new`` is True for the turn that is to send the runtime the message that opens its
+        conversation: the one this call built the runtime for, or the next one after a turn that
+        sent it nothing (:meth:`hand_back_opening`). It is read once this call holds the
+        runtime's permit, so it is what the turn before left.
+
         ``resumed`` is True when the session was restored via ACP session/load
-        (ACP agent has full native history — skip thread history injection).
+        (ACP agent has full native history — skip thread history injection), for as long as it
+        is new.
 
         For new sessions, tries the warm pool first for instant startup.
         If the session is being restarted at the context threshold, creates a fresh one.
@@ -1074,7 +1101,7 @@ class SessionManager:
         # AFTER the global lock is released (see below). Acquiring it under the lock
         # would deadlock every other get_or_create: if that session is mid-turn its
         # semaphore is held, so `await acquire()` would block while holding _lock.
-        reuse: tuple[ModelProvider, bool, "_Session"] | None = None
+        reuse: tuple[ModelProvider, "_Session"] | None = None
         try:
             async with self._lock:
                 if key in self._sessions and key not in self._restarting:
@@ -1101,11 +1128,9 @@ class SessionManager:
                         # first (`running_turn.rebind`), so a live one here was built for the
                         # agent the conversation runs. Subagent keys are unique per spawn.
                         sess.last_used = time.monotonic()
-                        was_new = sess.is_new
-                        sess.is_new = False
                         # Defer the (potentially blocking) semaphore acquire until
                         # after the lock is released — do NOT await it here.
-                        reuse = (sess.provider, was_new, sess)
+                        reuse = (sess.provider, sess)
 
                 if reuse is None:
                     if not self._provider_factory:
@@ -1126,7 +1151,7 @@ class SessionManager:
         # must never happen under _lock, or all other get_or_create calls wedge).
         provider: "ModelProvider | None"
         if reuse is not None:
-            provider, was_new, sess = reuse
+            provider, sess = reuse
             await sess.semaphore.acquire()
             # The adapter-verification gate below guards the runners this call CREATES; a
             # runner already running is reused past it, so turning the flag on did not reach an
@@ -1145,7 +1170,8 @@ class SessionManager:
                     sess.semaphore.release()
                     raise
                 self._stopped_turns.discard(key)
-                return provider, was_new, False
+                was_new, sess.is_new = sess.is_new, False
+                return provider, was_new, was_new and sess.resumed
             # The agent was edited while this runtime was cached, or what its model was resolved
             # from moved (a rebind in Settings → Models, an edit or removal of the instance it
             # serves from), or the conversation it holds was let go. Checked AFTER the permit is
@@ -1341,6 +1367,7 @@ class SessionManager:
                     sess = _Session(
                         provider=provider,
                         is_new=False,
+                        resumed=resumed,
                         approval_policy=approval_policy,
                         approval_source=approval_source,
                         agent=agent or "",
@@ -1387,7 +1414,8 @@ class SessionManager:
         if race_loser is not None:
             await race_loser.semaphore.acquire()
             self._stopped_turns.discard(key)
-            return race_loser.provider, False, False
+            was_new, race_loser.is_new = race_loser.is_new, False
+            return race_loser.provider, was_new, was_new and race_loser.resumed
 
         if registered:
             _record_runner_lease(str(extra_factory_kwargs.get("provider_kind") or ""), key)

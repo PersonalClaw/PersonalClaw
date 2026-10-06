@@ -432,7 +432,9 @@ class TestTurnLevel:
             yield
 
         client.stream_command = _never
-        state.sessions.get_or_create = AsyncMock(return_value=(client, True, False))
+        # A conversation in progress, which a message has opened: on a session no message has
+        # opened, `/compact` has nothing to compact and the chat answers it.
+        state.sessions.get_or_create = AsyncMock(return_value=(client, False, False))
 
         session = state.get_or_create_session("g4")
         from personalclaw.dashboard.chat_runner import run_chat

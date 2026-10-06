@@ -654,7 +654,19 @@ chat, channel thread, loop worker, webhook, subagent).
    the one being sent (`chat_persistence.prior_turns_transcript`) — never the
    in-flight message, never another session's transcript — with the chat's
    background summary standing in for its oldest turns while it still describes
-   them (`history.model_view`). `context_engine.py` and
+   them (`history.model_view`). A session is new until a message is sent its
+   runtime, and that message carries the session's opening: the agent's
+   instructions, the safety rules, the standing context and memory, and the
+   restored history. The opening is the runtime's own: a turn told its runtime
+   is new that sends it nothing gives the opening back
+   (`SessionManager.hand_back_opening`, in `run_chat`'s finally), so the next
+   message carries it: after a slash command the runtime runs itself
+   (`/compact` on the native loop, an agent CLI's own commands:
+   `chat_utils.runs_as_command`), a refusal, a stop before the prompt. Any
+   other slash word is sent as a message, with all of it, and `/compact` on a
+   session that holds none of the chat yet is answered by the chat ("Nothing
+   to compact yet — …"), saying that the next message brings the conversation
+   back. `context_engine.py` and
    `context_compaction.py` manage sizing and compaction. The native loop
    compacts its own history at the Settings threshold
    (`session.autocompact_pct`) and when a model rejects a prompt as too long,

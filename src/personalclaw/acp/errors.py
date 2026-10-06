@@ -124,6 +124,26 @@ class AcpCommandFailedAfterOutput(AcpError):  # noqa: N818
         )
 
 
+class AcpCommandNotResent(AcpError):  # noqa: N818
+    """A slash command was rejected as unknown on a session no message has opened yet.
+
+    The other refusal case. Re-issued as a plain prompt it would be the session's first
+    message, and a session's first message carries its opening (the agent's instructions, the
+    safety rules, the standing context and the conversation's history), which a command's text
+    does not. So this turn stops with an explanation instead, and the next message she sends
+    opens the session. Written for the user, like the refusal above.
+    """
+
+    def __init__(self, command: str):
+        self.command = command
+        super().__init__(
+            f"The agent rejected `{command}` as an unknown command, so it did not run. It was "
+            "not re-sent as a plain message either: it would have been the first message of "
+            "this chat's new session, sent without the agent's instructions. Send it again as "
+            "a plain question if you want an answer."
+        )
+
+
 class AcpCommandsUnsupported(AcpError):  # noqa: N818
     """The agent never advertised the slash-command extension, so nothing was sent.
 

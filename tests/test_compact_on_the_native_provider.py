@@ -364,7 +364,9 @@ class TestTurnLevel:
             yield
 
         client.stream = _never
-        state.sessions.get_or_create = AsyncMock(return_value=(client, True, False))
+        # The runtime holds a conversation, so a message has opened its session: on one no
+        # message has opened, `/compact` has nothing to compact and the chat answers it.
+        state.sessions.get_or_create = AsyncMock(return_value=(client, False, False))
 
         session = state.get_or_create_session("compact-native")
         await run_chat(state, session, "/compact")

@@ -60,6 +60,87 @@ class TestSessionManager:
         await mgr.close_all()
 
     @pytest.mark.asyncio
+    async def test_an_opening_a_turn_did_not_send_goes_to_the_next(self, cfg):
+        """A turn told its runtime is new that sends it nothing (a slash command the runtime runs
+        itself, a refusal, a stop before the prompt) gives the opening back: the next turn is told
+        the runtime is new, and the one after that is not."""
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        provider, first, _ = await mgr.get_or_create("thread1")
+        mgr.hand_back_opening("thread1", provider)
+        mgr.release("thread1")
+        _, second, _ = await mgr.get_or_create("thread1")
+        mgr.release("thread1")
+        _, third, _ = await mgr.get_or_create("thread1")
+        mgr.release("thread1")
+
+        assert (first, second, third) == (True, True, False)
+        await mgr.close_all()
+
+    @pytest.mark.asyncio
+    async def test_an_opening_goes_back_only_to_the_runtime_that_took_it(self, cfg):
+        """A turn whose runtime was replaced under it gives nothing to the one that replaced it."""
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        before, _new, _ = await mgr.get_or_create("thread1")
+        mgr.release("thread1")
+        await mgr.reset("thread1")
+        after, _new, _ = await mgr.get_or_create("thread1")
+        mgr.release("thread1")
+        mgr.hand_back_opening("thread1", before)
+        _, told_new, _ = await mgr.get_or_create("thread1")
+        mgr.release("thread1")
+
+        assert after is not before and told_new is False
+        await mgr.close_all()
+
+    @pytest.mark.asyncio
+    async def test_a_turn_waiting_for_the_runtime_is_told_what_the_turn_before_left(self, cfg):
+        """Read once the permit is held: a turn that arrived while the one before still held the
+        runtime is told it is new when that turn gives its opening back."""
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        provider, _new, _ = await mgr.get_or_create("thread1")
+        waiting = asyncio.create_task(mgr.get_or_create("thread1"))
+        await asyncio.sleep(0.05)
+        assert not waiting.done(), "premise: the second turn waits for the runtime"
+        mgr.hand_back_opening("thread1", provider)
+        mgr.release("thread1")
+        _, told_new, _ = await waiting
+        mgr.release("thread1")
+
+        assert told_new is True
+        await mgr.close_all()
+
+    @pytest.mark.asyncio
+    async def test_a_turn_that_lost_the_race_to_build_the_runtime_is_told_what_the_winner_left(
+        self, cfg
+    ):
+        """Two turns built a runtime for one key at once: the one whose runtime lost waits for the
+        winner's, and is told it is new when the winner's turn gave its opening back."""
+        gate = asyncio.Event()
+        make = _mock_provider_factory()
+
+        def factory(session_key=None, **kwargs):
+            provider = make(session_key, **kwargs)
+            provider.start = AsyncMock(side_effect=gate.wait)
+            return provider
+
+        mgr = SessionManager(cfg, provider_factory=factory)
+        racers = [asyncio.create_task(mgr.get_or_create("thread1")) for _ in range(2)]
+        await asyncio.sleep(0.05)
+        gate.set()
+        done, waiting = await asyncio.wait(racers, return_when=asyncio.FIRST_COMPLETED)
+        (won,) = done
+        provider, first_new, _ = won.result()
+        assert first_new is True and len(waiting) == 1, "premise: one built it, one waits"
+        mgr.hand_back_opening("thread1", provider)
+        mgr.release("thread1")
+        (lost,) = waiting
+        same, told_new, _ = await lost
+        mgr.release("thread1")
+
+        assert same is provider and told_new is True
+        await mgr.close_all()
+
+    @pytest.mark.asyncio
     async def test_separate_sessions_per_key(self, cfg):
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         await mgr.get_or_create("t1")

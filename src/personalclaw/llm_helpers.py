@@ -1577,7 +1577,11 @@ def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
 def _known_failure_sentence(exc: object, *, room_member: str = "") -> str | None:
     """:func:`humanize_provider_error`'s sentence for a failure it recognizes, or ``None`` for
     one that carries a message it recognizes nothing in."""
-    from personalclaw.acp.errors import AcpTimeoutError
+    from personalclaw.acp.errors import (
+        AcpCommandFailedAfterOutput,
+        AcpCommandNotResent,
+        AcpTimeoutError,
+    )
     from personalclaw.errors import ERROR_CODES, AgentError
     from personalclaw.guardrails.failure import (
         AnswerCutOff,
@@ -1610,6 +1614,10 @@ def _known_failure_sentence(exc: object, *, room_member: str = "") -> str | None
             "The agent did not finish within the turn's time limit, so the turn was stopped. "
             "Try again; if it keeps happening, check the gateway log."
         )
+    if isinstance(exc, (AcpCommandFailedAfterOutput, AcpCommandNotResent)):
+        # A slash command the agent rejected is refused in words written for the chat: what did
+        # not run, why it was not re-sent as a message, and how to ask instead.
+        return str(exc)
     refusal = budget_refusal(exc)
     if refusal is not None:
         # A spend ceiling's refusal says which ceiling, what was spent, and how it is lifted.

@@ -107,8 +107,9 @@ def _told(delivery: MagicMock) -> list[tuple[Any, ...]]:
     return [tuple(c.args[:3]) for c in delivery.deliver_text.await_args_list]
 
 
-def _state(tmp_path, monkeypatch, client: Any = None):
-    """The dashboard, over a session manager whose channel links are a dict."""
+def _state(tmp_path, monkeypatch, client: Any = None, *, opened: bool = False):
+    """The dashboard, over a session manager whose channel links are a dict. *opened*: a message
+    has opened the runtime's session, as one a conversation is in progress on."""
     from personalclaw.dashboard.state import DashboardState
     from personalclaw.history import ConversationLog
     from personalclaw.hooks import ToolHookResult
@@ -129,7 +130,7 @@ def _state(tmp_path, monkeypatch, client: Any = None):
     sessions.record_failure = AsyncMock()
     sessions.check_context_usage = MagicMock()
     sessions.record_success = MagicMock()
-    sessions.get_or_create = AsyncMock(return_value=(client, True, False))
+    sessions.get_or_create = AsyncMock(return_value=(client, not opened, False))
     state = DashboardState(
         sessions=sessions, start_time=0.0, conversation_log=ConversationLog(base_dir=tmp_path)
     )
@@ -236,7 +237,7 @@ async def test_a_compact_typed_on_a_channel_is_answered_there(
 ):
     """🔴 Red before: `/compact` sent from Telegram was answered in the dashboard alone."""
     telegram = chats("telegram")["telegram"]
-    state = _state(tmp_path, monkeypatch, _compacting(deferred=deferred))
+    state = _state(tmp_path, monkeypatch, _compacting(deferred=deferred), opened=True)
     session = _from_telegram(state)
 
     await _turn(state, session, "/compact")
@@ -250,7 +251,7 @@ async def test_a_compact_typed_on_a_channel_is_answered_there(
 async def test_a_chat_on_no_channel_is_told_in_the_dashboard_alone(tmp_path, monkeypatch, chats):
     """The control: a chat no channel is linked to says it where it is, and nothing is sent."""
     telegram = chats("telegram")["telegram"]
-    state = _state(tmp_path, monkeypatch, _compacting(deferred=False))
+    state = _state(tmp_path, monkeypatch, _compacting(deferred=False), opened=True)
     session = state.get_or_create_session("s1")
     session._titled = True
 

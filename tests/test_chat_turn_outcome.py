@@ -240,7 +240,8 @@ async def test_deferred_compaction_ends_the_turn_once_after_the_compaction(tmp_p
     client.compacts_in_process = False
     client.stream_command = stream_command
     client.wait_for_compaction = AsyncMock(return_value={"type": "completed", "summary": "short"})
-    state = _state(tmp_path, AsyncMock(return_value=(client, True, False)))
+    # A conversation in progress: a message has opened its session.
+    state = _state(tmp_path, AsyncMock(return_value=(client, False, False)))
     await _turn(state, _session(state), "/compact")
 
     client.wait_for_compaction.assert_awaited_once()
