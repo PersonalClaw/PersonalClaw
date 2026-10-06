@@ -521,19 +521,21 @@ def substitution_reason(exc: BaseException) -> tuple[str, str]:
     A spend ceiling that refused it says which one and what lifts it, as a person reads it: past
     a spent dollar budget, a chain's model that costs nothing serving in a paid one's place is the
     usual case, not a fault. A local model that was busy says what with, a model that answered
-    nothing or not in the shape asked for says so, and a provider whose breaker opened says that
-    its calls are paused: none raised an error worth quoting."""
+    nothing, ran out of output room or answered not in the shape asked for says so, and a
+    provider whose breaker opened says that its calls are paused: none raised an error worth
+    quoting."""
     from personalclaw.guardrails.failure import (
         BudgetExceededError,
         CircuitOpenError,
         EmptyCompletion,
         LocalModelBusy,
+        OutOfOutputRoom,
         OutputContractError,
     )
 
     if isinstance(exc, (BudgetExceededError, CircuitOpenError)):
         return exc.reason(), exc.fix()
-    if isinstance(exc, (LocalModelBusy, EmptyCompletion, OutputContractError)):
+    if isinstance(exc, (LocalModelBusy, EmptyCompletion, OutOfOutputRoom, OutputContractError)):
         return exc.reason(), ""
     agent_error = getattr(exc, "agent_error", None)
     why = str(getattr(agent_error, "why", "") or "")

@@ -389,7 +389,8 @@ async def regenerate_synthesis(store: Any, item_id: str, *, completion: Any = No
 
     ``completion`` overrides the model call for tests. Returns an :class:`UpdateOutcome` dict,
     whose ``pending``/``proposal_id`` are the only honest evidence that anything was filed.
-    Raises :class:`SynthesisUnavailable` when the recompute produced no text.
+    Raises :class:`SynthesisUnavailable` when the recompute produced no text, or only the start
+    of one (its model stopped at its output cap).
     """
     row = store.get_item(item_id)
     if not row:
@@ -410,12 +411,19 @@ async def regenerate_synthesis(store: Any, item_id: str, *, completion: Any = No
     # A second prompt here would mean two definitions of what a synthesis may say.
     prompt = consolidation.synthesis_prompt(consolidation.Cluster(items=sources))
     caller = completion or _synthesis_completion
-    from personalclaw.guardrails.failure import EmptyCompletion
+    from personalclaw.guardrails.failure import EmptyCompletion, OutOfOutputRoom
 
     try:
         text = str(await caller(prompt) or "").strip()
     except EmptyCompletion:
         text = ""  # every model answered nothing: no synthesis, said as one below
+    except OutOfOutputRoom as exc:
+        # The start of a synthesis, never one to file for review as the document.
+        raise SynthesisUnavailable(
+            f"{exc.ref or 'the model'} {exc.reason().removeprefix('it ')}, so there is no "
+            "synthesis to propose — give it more output room where its provider's settings have "
+            f"one, or bind another model for the {SYNTHESIS_USE_CASE} use case in Settings → Models"
+        ) from exc
     if not text:
         raise SynthesisUnavailable(
             "regeneration needs a model and none produced a synthesis — bind one for the "

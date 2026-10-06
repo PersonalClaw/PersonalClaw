@@ -122,7 +122,9 @@ def gw(tmp_path: Path):
         log=log, memory=main, vector_store=store, migrated=True, history_idle_secs=0
     )
     answers: dict[str, dict] = {}
-    model = AsyncMock(side_effect=lambda _prompt, key: json.loads(json.dumps(answers.get(key, {}))))
+    model = AsyncMock(
+        side_effect=lambda _prompt, key, **_kw: json.loads(json.dumps(answers.get(key, {})))
+    )
     consolidator._call_llm = model  # type: ignore[method-assign]
     sessions = MagicMock(count=0)
     sessions.remove = AsyncMock()

@@ -829,10 +829,16 @@ chat, channel thread, loop worker, webhook, subagent).
    `tests/test_an_open_breaker_moves_the_chain_on.py`). A chore names what it
    reads the answer as (`validate`), so an empty answer or one in the wrong shape
    is that model failing and the next one answers, as a failure, a timeout and an
-   open breaker do. A title or a consolidation that no model could answer is owed
+   open breaker do. So is an answer its model stopped at its output cap, whatever
+   it wrote before the cap (`guardrails.failure.OutOfOutputRoom`, raised by every
+   one-shot call): the start of an answer is never read as one, since a cut JSON
+   answer still holds every object it closed. A title or a consolidation that no
+   model could answer, or none finished, is owed
    (`owed_chores`): the heartbeat tries it again, at once after a provider whose
    breaker opened answers again, and an ended chat is sealed only after its
-   consolidation ran. A
+   consolidation ran. One owed because its model ran out of output room is said in
+   a notice ("Memory from a chat isn't saved yet"), naming the limit that gives it
+   room. A heartbeat task's result cut at the cap ends on a line that says so. A
    one-shot call walks its chain the same way with a time budget per model
    (`one_shot_completion(attempt_timeout=…)`, which knowledge enrichment uses), so a
    slow first model hands over instead of spending the whole wait, and a chain that

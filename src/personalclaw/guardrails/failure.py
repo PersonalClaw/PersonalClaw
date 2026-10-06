@@ -13,6 +13,9 @@ mapping of those stays in ``llm_helpers.humanize_provider_error``.
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
+from collections.abc import Iterator
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -110,6 +113,31 @@ def answered_mode(stop_reason: object, *, produced: bool) -> tuple[FailureMode, 
     if is_length_stop(stop_reason):
         return FailureMode.OUTPUT_CAP, produced
     return FailureMode.NONE, True
+
+
+#: Whether the calls made now read their answer as a whole one (:func:`answers_read_whole`).
+_READ_WHOLE: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "personalclaw_answers_read_whole", default=False
+)
+
+
+@contextlib.contextmanager
+def answers_read_whole() -> Iterator[None]:
+    """The calls made in this block read each answer as a whole one
+    (``llm_helpers.one_shot_completion``), so a call that stopped at its output cap produced
+    nothing they can use, whatever it wrote (:class:`OutOfOutputRoom`): the model-call guard
+    records it as failed (:func:`reads_whole`). A turn of the native loop shows such a reply as cut,
+    and its call passed."""
+    token = _READ_WHOLE.set(True)
+    try:
+        yield
+    finally:
+        _READ_WHOLE.reset(token)
+
+
+def reads_whole() -> bool:
+    """Whether the call being made reads its answer as a whole one (:func:`answers_read_whole`)."""
+    return _READ_WHOLE.get()
 
 
 def correction_note(mode: FailureMode) -> str:
@@ -254,7 +282,9 @@ class EmptyCompletion(GuardError):
     A failure like any other, so a chain walk moves on to its next model and no caller has to
     tell "answered nothing" apart from "failed". Measured: a local model spent its whole output
     budget thinking and returned no text, and a digest that read the empty string as an answer
-    was written unsynthesised while the next model of its chain went unasked.
+    was written unsynthesised while the next model of its chain went unasked. A one-shot call
+    whose model's provider says it stopped at its output cap, as that one had, raises
+    :class:`OutOfOutputRoom` instead, which names the cap.
     """
 
     mode = FailureMode.PROVIDER_ERROR
@@ -322,6 +352,54 @@ def answer_cut_off(exc: object) -> AnswerCutOff | None:
             return None
         if isinstance(seen, AnswerCutOff):
             return seen
+        seen = seen.__cause__
+    return None
+
+
+class OutOfOutputRoom(GuardError):
+    """A model stopped at its output cap before it finished its answer: its terminal event's stop
+    is a length stop, in any provider's words (``llm.events.is_length_stop``).
+
+    What it wrote is the start of an answer, never the whole of one, so a call that reads its
+    answer whole (``llm_helpers.one_shot_completion``, and every chore through it) fails on it as
+    on any other failed call: its chain's next model is asked, and with none left this is raised.
+    Measured: a memory consolidation on a local model stopped at the 4,096-token Background output
+    limit, the unfinished JSON it wrote still held one whole fact object, and read as the answer
+    that object kept nothing while the chat was marked consolidated, so what it said was never
+    kept.
+
+    ``OUTPUT_CAP``. ``ref`` names the model, ``output_cap`` the tokens it stopped at (0 when its
+    provider did not say), and ``wrote`` whether it wrote any text before the cap.
+    """
+
+    mode = FailureMode.OUTPUT_CAP
+
+    def __init__(self, ref: str, *, output_cap: int = 0, wrote: bool = False) -> None:
+        self.ref = ref
+        self.output_cap = output_cap
+        self.wrote = wrote
+        super().__init__(f"{ref or 'the model'} {self.reason().removeprefix('it ')}")
+
+    def reason(self) -> str:
+        """Why it did not serve, as the substitution sentence of the model that did reads it."""
+        before = "before it finished its answer" if self.wrote else "before it answered"
+        room = f" ({self.output_cap:,} tokens)" if self.output_cap > 0 else ""
+        return f"it ran out of output room {before}{room}"
+
+
+def out_of_output_room(exc: object) -> OutOfOutputRoom | None:
+    """The model out of output room that *exc* is, was raised from, or, for a chain every model of
+    which failed (``llm_helpers.ChainExhausted``), the first of its models that was; else ``None``
+    (five hops, as every cause walk here keeps)."""
+    seen = exc if isinstance(exc, BaseException) else None
+    for _ in range(5):
+        if seen is None:
+            return None
+        if isinstance(seen, OutOfOutputRoom):
+            return seen
+        failures = getattr(seen, "failures", None)
+        if isinstance(failures, list):
+            return next((err for _ref, err in failures if isinstance(err, OutOfOutputRoom)), None)
         seen = seen.__cause__
     return None
 

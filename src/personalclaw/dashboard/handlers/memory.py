@@ -1534,12 +1534,21 @@ async def api_memory_consolidate(request: web.Request) -> web.Response:
         # memory, so there is nothing to consolidate, and the answer says which.
         return web.json_response({"error": nothing}, status=403)
     # Fire consolidation in background
-    if key in state.consolidator._running:
+    consolidator = state.consolidator
+    if key in consolidator._running:
         return web.json_response({"error": "consolidation already running"}, status=409)
-    state.consolidator._running.add(key)
-    task = asyncio.create_task(state.consolidator._consolidate(key, include_history))
-    state.consolidator._tasks.add(task)
-    task.add_done_callback(state.consolidator._tasks.discard)
+    consolidator._running.add(key)
+    task = asyncio.create_task(consolidator._consolidate(key, include_history))
+    consolidator._tasks.add(task)
+
+    def _done(fut: asyncio.Task) -> None:  # type: ignore[type-arg]
+        consolidator._tasks.discard(fut)
+        # A history pass no model could finish is owed, and said, as an idle chat's is: the
+        # answer above said only that it started.
+        if include_history and not fut.cancelled() and fut.exception() is None:
+            consolidator._owe_if_unanswered(key, ending=False)
+
+    task.add_done_callback(_done)
     return web.json_response({"ok": True, "key": key})
 
 

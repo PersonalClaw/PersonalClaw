@@ -39,12 +39,16 @@ the helper refuses one that did not (:func:`run_chore`).
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from personalclaw import memory_writes
 from personalclaw.agents.defaults import LITE_AGENT_NAME
 from personalclaw.providers.provider_bridge import ProviderResolutionError
 from personalclaw.security import redact_for_model
 from personalclaw.usage_ledger import Attribution
+
+if TYPE_CHECKING:
+    from personalclaw.guardrails.failure import OutOfOutputRoom
 
 
 class NoModelChosen(ProviderResolutionError):
@@ -114,6 +118,21 @@ async def run_chore(
         if model_chosen():
             raise
         raise NoModelChosen(str(exc), exc.agent_error) from exc
+
+
+def room_for(capped: OutOfOutputRoom) -> str:
+    """What gives a chore whose model ran out of output room (*capped*) the room to finish, as a
+    clause: the Background output limit every chore is held to (:func:`run_chore`), or the
+    model's own when it stopped short of that one, which raising the Background limit does not
+    reach."""
+    from personalclaw.config.loader import background_limits
+
+    if 0 < capped.output_cap < int(background_limits().max_output_tokens):
+        return (
+            "raise that model's own output limit where its provider's settings have one, or add "
+            "another model to Background in Settings → Models"
+        )
+    return "raise the Background output limit in Settings → Models"
 
 
 def _reaches_no_model(chat_key: str, memory_mode: str | None) -> bool:

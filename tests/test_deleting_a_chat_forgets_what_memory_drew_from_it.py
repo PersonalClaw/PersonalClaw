@@ -103,7 +103,9 @@ def gw(tmp_path: Path):
         log=log, memory=main, vector_store=store, migrated=True, history_idle_secs=0
     )
     answers: dict[str, dict] = {}
-    model = AsyncMock(side_effect=lambda _prompt, key: json.loads(json.dumps(answers.get(key, {}))))
+    model = AsyncMock(
+        side_effect=lambda _prompt, key, **_kw: json.loads(json.dumps(answers.get(key, {})))
+    )
     consolidator._call_llm = model  # type: ignore[method-assign]
     sessions = MagicMock(count=0)
     sessions.remove = AsyncMock()
@@ -345,7 +347,7 @@ async def test_a_chat_deleted_while_its_consolidation_waits_on_the_model_keeps_n
     ski, ski_chat = _chat(gw, SKI)
     calls = 0
 
-    async def answer(_prompt: str, key: str) -> dict:
+    async def answer(_prompt: str, key: str, **_kw: object) -> dict:
         nonlocal calls
         calls += 1
         if calls == deleted_on_call:

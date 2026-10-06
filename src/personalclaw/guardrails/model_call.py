@@ -60,6 +60,7 @@ from personalclaw.guardrails.failure import (
     PromptInjectionBlocked,
     SecretLeakBlocked,
     answered_mode,
+    reads_whole,
 )
 from personalclaw.guardrails.local_queue import Turn, queue_key, take_turn
 from personalclaw.guardrails.scan import scan_outbound
@@ -645,7 +646,8 @@ class ModelCallGuard(ModelProvider):
 
         A call that answered is recorded the moment ``EVENT_COMPLETE`` is observed, by how it
         stopped and what it produced (:func:`answered_mode`): one that ran into its output cap is
-        ``output_cap``, and passed only when it wrote text or made a call that can run. It is
+        ``output_cap``, and passed only when it wrote text or made a call that can run, and never
+        for a call that reads its answer whole (a one-shot call's, ``answers_read_whole``). It is
         recorded BEFORE the event is yielded, because the canonical consumer
         (``stream_and_collect``) ``break``s on ``EVENT_COMPLETE`` rather than draining to
         ``StopAsyncIteration``: a guard that only recorded after loop-exit would then be
@@ -782,9 +784,10 @@ class ModelCallGuard(ModelProvider):
                         # threading one in would touch all 33 call sites reaching the bridge.
                         self._charge(hold, tokens_in, tokens_out, price, called)
                         # The provider answered, so its breaker closes whatever the answer was;
-                        # the row says what the answer was worth.
+                        # the row says what the answer was worth: to a call that reads it whole,
+                        # what a cut answer wrote is worth nothing (`answers_read_whole`).
                         mode, passed = answered_mode(
-                            event.stop_reason, produced=produced.anything()
+                            event.stop_reason, produced=produced.anything() and not reads_whole()
                         )
                         self._audit(
                             audit_id,

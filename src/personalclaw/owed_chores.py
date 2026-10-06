@@ -1,9 +1,9 @@
 """Background chores no model answered, owed until one does.
 
 A chore the gateway does on its own (a chat's title, a chat's consolidation) that fails because no
-model of its chain could be asked or answered is owed here and tried again, never dropped.
-Measured: with the local background model down, a new chat kept its key for a title, two chats that
-went idle closed without their consolidation, and nothing ever tried either again.
+model of its chain could be asked or finished its answer is owed here and tried again, never
+dropped. Measured: with the local background model down, a new chat kept its key for a title, two
+chats that went idle closed without their consolidation, and nothing ever tried either again.
 
 When an owed chore is tried again:
 
@@ -57,10 +57,12 @@ _PASS: asyncio.Task | None = None  # type: ignore[type-arg]
 
 def no_model_answered(exc: BaseException) -> bool:
     """Whether *exc* says no model could be asked or answered: a provider that failed, did not
-    answer in time or is paused (its breaker open), every model of a chain doing so, or a spend
-    ceiling that refused the call (it resets). A later try can get past each of these. Not a prompt
-    too large to run, a guard's refusal of what was sent, a model that answered in the wrong shape,
-    or no model bound at all: trying again fails the same way."""
+    answer in time or is paused (its breaker open), every model of a chain doing so, a spend
+    ceiling that refused the call (it resets), or a model that ran out of output room before it
+    finished (``OutOfOutputRoom``: its next answer to the same request may fit, and a limit she
+    raises gives it the room). A later try can get past each of these. Not a prompt too large to
+    run, a guard's refusal of what was sent, a model that answered in the wrong shape, or no model
+    bound at all: trying again fails the same way."""
     import httpx
 
     from personalclaw.guardrails.failure import (
@@ -75,6 +77,7 @@ def no_model_answered(exc: BaseException) -> bool:
         FailureMode.TIMEOUT,
         FailureMode.CIRCUIT_OPEN,
         FailureMode.BUDGET_EXCEEDED,
+        FailureMode.OUTPUT_CAP,
     }
     seen: BaseException | None = exc
     for _ in range(5):

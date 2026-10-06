@@ -2025,6 +2025,35 @@ class TestHeartbeatCallback:
         assert orch._deliver_result.await_args.args[2] == result
 
     @pytest.mark.asyncio
+    async def test_a_heartbeat_cut_at_its_output_cap_says_so_under_what_it_wrote(self):
+        """🔴 Before: the start of a result was delivered as the whole of it."""
+        from personalclaw.llm.events import EVENT_COMPLETE, AgentEvent
+
+        orch = _make_orchestrator()
+        orch.sessions = _mock_sessions()
+        orch.ctx_builder = MagicMock()
+        orch.ctx_builder.build_message = MagicMock(return_value=("msg", None))
+        orch.ctx_builder.hooks = MagicMock()
+        orch.dashboard_state = None
+        orch._deliver_result = AsyncMock()
+
+        async def cut(*_a, on_complete=None, **_kw):
+            on_complete(AgentEvent(kind=EVENT_COMPLETE, stop_reason="max_tokens", output_cap=4096))
+            return "Two replies are waiting in the inbox, the first from"
+
+        with (
+            patch("personalclaw.gateway.stream_and_collect", new=cut),
+            patch("personalclaw.usage_ledger.record_from_event"),
+        ):
+            result = await orch._run_heartbeat_task("summarize the inbox", "")
+
+        assert result == (
+            "Two replies are waiting in the inbox, the first from\n\n"
+            "Cut off: the model ran out of output room before it finished (4,096 tokens)."
+        )
+        assert orch._deliver_result.await_args.args[2] == result
+
+    @pytest.mark.asyncio
     async def test_heartbeat_task_failure(self):
         """Heartbeat task exception propagates."""
         orch = _make_orchestrator()

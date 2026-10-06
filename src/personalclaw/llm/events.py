@@ -99,6 +99,14 @@ def out_of_room_notice(output_cap: int = 0) -> str:
     )
 
 
+def cut_off_note(output_cap: int = 0) -> str:
+    """The line under what a turn wrote before its model stopped at its output cap, where a person
+    reads it without the chat's own mark for a cut reply (a background task's result): what it
+    wrote is the start of an answer, not all of it. *output_cap* as :func:`out_of_room` has it."""
+    room = f" ({output_cap:,} tokens)" if output_cap > 0 else ""
+    return f"Cut off: the model ran out of output room before it finished{room}."
+
+
 #: The ``stop_reason`` of a turn the agent refused to go on with — the Agent Client Protocol's
 #: word and the Anthropic API's alike.
 STOP_REFUSAL = "refusal"

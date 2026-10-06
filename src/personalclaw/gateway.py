@@ -87,7 +87,7 @@ from personalclaw.heartbeat import (
 from personalclaw.history import ConversationLog, HistoryConsolidator
 from personalclaw.hooks import live_hook_manager
 from personalclaw.llm.base import LLMEvent
-from personalclaw.llm.events import is_length_stop, out_of_room_notice
+from personalclaw.llm.events import cut_off_note, is_length_stop, out_of_room_notice
 from personalclaw.llm_helpers import (
     PromptBusyExhaustedError,
     stream_and_collect,
@@ -2922,14 +2922,15 @@ class GatewayOrchestrator:
                 on_complete=_hb_usage,
             )
 
+            # A model out of output room says so (`llm.events`): before it answered, in place of
+            # the answer, and part way, under the start of one it wrote.
+            last = ended[-1] if ended else None
+            capped = is_length_stop(getattr(last, "stop_reason", ""))
+            room = int(getattr(last, "output_cap", 0) or 0)
             if not result_text:
-                # A model out of output room before it answered says so (`llm.events`).
-                last = ended[-1] if ended else None
-                result_text = (
-                    out_of_room_notice(int(getattr(last, "output_cap", 0) or 0))
-                    if is_length_stop(getattr(last, "stop_reason", ""))
-                    else "_No response._"
-                )
+                result_text = out_of_room_notice(room) if capped else "_No response._"
+            elif capped:
+                result_text = f"{result_text}\n\n{cut_off_note(room)}"
         except Exception:
             logger.exception("Heartbeat task failed: %s", task_text[:80])
             raise

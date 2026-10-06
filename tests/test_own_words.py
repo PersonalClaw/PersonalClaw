@@ -363,7 +363,7 @@ async def test_consolidation_reads_her_typed_words_as_hers_and_the_rest_as_mater
     )
     prompts: list[str] = []
 
-    async def fake_llm(prompt, _key):
+    async def fake_llm(prompt, _key, **_kw):
         prompts.append(prompt)
         return {"history_entry": "worked through an import failure"}
 

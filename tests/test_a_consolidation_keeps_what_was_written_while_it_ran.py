@@ -89,7 +89,7 @@ async def _consolidate(
     if projects is not None:
         result["projects_update"] = projects
 
-    async def answer(_prompt: str, _key: str) -> dict:
+    async def answer(_prompt: str, _key: str, **_kw: object) -> dict:
         if meanwhile is not None:
             await meanwhile()
         return result

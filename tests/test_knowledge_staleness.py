@@ -348,6 +348,67 @@ def test_regenerate_files_nothing_and_says_so_when_the_synthesis_cites_nothing(
     assert _pending(queue, insight) == []
 
 
+def test_a_synthesis_its_model_cut_at_its_output_cap_is_not_filed(store, queue, monkeypatch):
+    """🔴 Before: the start of a synthesis was filed for review as the document. The model call is
+    the real one-shot, over a scripted model that stops at its output cap."""
+    from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
+    from personalclaw.llm.capabilities import Capability, ProviderCapability
+    from personalclaw.llm.registry import ProviderEntry, ProviderRegistry
+    from personalclaw.routing import rates as rates_mod
+
+    class _Cut:
+        supports_tools = False
+
+        async def start(self) -> None:
+            return None
+
+        async def shutdown(self) -> None:
+            return None
+
+        async def complete(self, messages, **_kw):
+            yield LLMEvent(kind=EVENT_TEXT_CHUNK, text="Regenerated: cold start is 4.2s on the")
+            yield LLMEvent(kind=EVENT_COMPLETE, stop_reason="max_tokens", output_tokens=8_192)
+
+        async def stream(self, message: str):
+            async for event in self.complete([{"role": "user", "content": message}]):
+                yield event
+
+    registry = ProviderRegistry()
+    registry.register_type(
+        ProviderCapability(
+            type="cloud-fake",
+            capabilities=frozenset({Capability.CHAT}),
+            supports_streaming=True,
+            supports_tools=False,
+            supports_embeddings=False,
+            supports_vision=False,
+            max_context_tokens=32_768,
+        ),
+        lambda **_kw: _Cut(),
+    )
+    registry.register_entry(ProviderEntry(name="relay", type="cloud-fake", model="swift"))
+    monkeypatch.setattr("personalclaw.llm.registry.get_default_registry", lambda: registry)
+    monkeypatch.setattr(
+        "personalclaw.providers.use_cases.load_active_models", lambda: {"chat": ["relay:swift"]}
+    )
+    monkeypatch.setattr(rates_mod, "_overlay_cache", None)
+    source = _item(store, "note", "Cited source")
+    store.update_item(source, content=SOURCE_BODY)
+    insight = _item(store, "insight", "Overview of alpha", tags=["alpha"])
+    _cite(store, insight, source)
+
+    resp, body = _post_regenerate(store, insight)
+
+    assert resp.status == 503
+    assert body["reason"] == "model_unavailable"
+    assert body["error"] == (
+        "relay:swift ran out of output room before it finished its answer (8,192 tokens), so "
+        "there is no synthesis to propose — give it more output room where its provider's "
+        "settings have one, or bind another model for the reasoning use case in Settings → Models"
+    )
+    assert _pending(queue, insight) == []
+
+
 def test_regenerate_without_a_model_is_an_explicit_503(store, queue, monkeypatch):
     """`one_shot_completion` returns a falsy value instead of raising, so the empty text IS the
     signal. A regeneration that produced nothing says so; it does not file an empty proposal."""

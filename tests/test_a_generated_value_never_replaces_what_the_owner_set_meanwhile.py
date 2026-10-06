@@ -300,7 +300,7 @@ async def _refine(consolidator, meanwhile: Callable | None = None) -> list[dict]
     """One consolidation whose model refines ``auto/trip-planner`` after *meanwhile* ran. Returns
     the audit rows it wrote."""
 
-    async def answer(_prompt, _key):
+    async def answer(_prompt, _key, **_kw):
         if meanwhile is not None:
             await meanwhile()
         return {

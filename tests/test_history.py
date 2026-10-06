@@ -1074,7 +1074,7 @@ class TestProcessAutoSkillsIntegration:
         for i in range(10):
             conv_log.append("dashboard:chat-1", "assistant", f"step {i}", tools=["fs_read"])
 
-        async def fake_llm(_prompt, _chat_key):
+        async def fake_llm(_prompt, _chat_key, **_kw):
             return {
                 "history_entry": "did 10 things",
                 "new_skill": {
@@ -1116,7 +1116,7 @@ class TestProcessAutoSkillsIntegration:
                 "dashboard:chat-2", "assistant", f"step {i}", tools=["Running: grep foo bar.txt"]
             )
 
-        async def fake_llm(_prompt, _chat_key):
+        async def fake_llm(_prompt, _chat_key, **_kw):
             return {
                 "history_entry": "did 6 things",
                 "new_skill": {
@@ -1177,7 +1177,7 @@ class TestProcessAutoSkillsIntegration:
 
         llm_called = False
 
-        async def fake_llm(_prompt, _chat_key):
+        async def fake_llm(_prompt, _chat_key, **_kw):
             nonlocal llm_called
             llm_called = True
             # The prompt built for this session should NOT include new_skill
@@ -1218,7 +1218,7 @@ class TestProcessAutoSkillsIntegration:
         for i in range(5):
             conv_log.append("dashboard:chat-4", "assistant", f"step {i}", tools=["fs_read"])
 
-        async def fake_llm(_prompt, _chat_key):
+        async def fake_llm(_prompt, _chat_key, **_kw):
             return {
                 "history_entry": "x",
                 "new_skill": {
@@ -1277,7 +1277,7 @@ class TestProcessAutoSkillsIntegration:
         for i in range(5):
             conv_log.append("dashboard:chat-5", "assistant", f"step {i}", tools=["fs_read"])
 
-        async def fake_llm(_prompt, _chat_key):
+        async def fake_llm(_prompt, _chat_key, **_kw):
             return {
                 "history_entry": "x",
                 "new_skill": {
@@ -1331,7 +1331,7 @@ class TestProcessAutoSkillsIntegration:
         conv_log.append("dashboard:chat-schema", "tool", "✅ Running: @my-mcp-server/SearchCode")
         conv_log.append("dashboard:chat-schema", "assistant", "Here's the full list.")
 
-        async def fake_llm(_prompt, _chat_key):
+        async def fake_llm(_prompt, _chat_key, **_kw):
             return {
                 "history_entry": "explored grading services",
                 "new_skill": {
@@ -1391,7 +1391,7 @@ class TestAutoSkillSELAudit:
         for i in range(5):
             conv_log.append("dashboard:chat-refine", "assistant", f"s{i}", tools=["fs_read"])
 
-        async def fake_llm(_prompt, _chat_key):
+        async def fake_llm(_prompt, _chat_key, **_kw):
             return {
                 "history_entry": "x",
                 # LLM tries to refine a NON-auto skill (attack surface)
@@ -1454,7 +1454,7 @@ class TestAutoSkillSELAudit:
         for i in range(5):
             conv_log.append("dashboard:chat-empty", "assistant", f"s{i}", tools=["fs_read"])
 
-        async def fake_llm(_prompt, _chat_key):
+        async def fake_llm(_prompt, _chat_key, **_kw):
             return {
                 "history_entry": "x",
                 "new_skill": {
@@ -1525,7 +1525,7 @@ class TestAutoSkillSELAuditCompleteness:
         for i in range(5):
             conv_log.append("dashboard:chat-empty", "assistant", f"s{i}", tools=["fs_read"])
 
-        async def fake_llm(_prompt, _chat_key):
+        async def fake_llm(_prompt, _chat_key, **_kw):
             return {
                 "history_entry": "x",
                 "new_skill": {
@@ -1590,7 +1590,7 @@ class TestAutoSkillSELAuditCompleteness:
         for i in range(5):
             conv_log.append("dashboard:chat-refine-empty", "assistant", f"s{i}", tools=["fs_read"])
 
-        async def fake_llm(_prompt, _chat_key):
+        async def fake_llm(_prompt, _chat_key, **_kw):
             return {
                 "history_entry": "x",
                 "refined_skill": {
@@ -1659,7 +1659,7 @@ class TestAutoSkillSELAuditCompleteness:
 
         huge = "x" * (AUTO_SKILL_MAX_PROCEDURE_CHARS + 1)
 
-        async def fake_llm(_prompt, _chat_key):
+        async def fake_llm(_prompt, _chat_key, **_kw):
             return {
                 "history_entry": "x",
                 "refined_skill": {
@@ -1755,7 +1755,7 @@ class TestPersonaCommitmentCapture:
         for i in range(3):
             conv_log.append("dashboard:chat-p", "assistant", f"step {i}", tools=["fs_read"])
 
-        async def fake_llm(_prompt, _chat_key):
+        async def fake_llm(_prompt, _chat_key, **_kw):
             return {
                 "history_entry": "reviewed code thoroughly",
                 "self_persona": [
@@ -1785,7 +1785,7 @@ class TestPersonaCommitmentCapture:
         for i in range(3):
             conv_log.append("dashboard:chat-c", "assistant", f"step {i}", tools=["fs_read"])
 
-        async def fake_llm(_prompt, _chat_key):
+        async def fake_llm(_prompt, _chat_key, **_kw):
             # Even if the LLM returns commitments, the flag-off path must not write
             return {
                 "history_entry": "discussed the migration",
@@ -1815,7 +1815,7 @@ class TestPersonaCommitmentCapture:
         for i in range(3):
             conv_log.append("dashboard:chat-d", "assistant", f"step {i}", tools=["fs_read"])
 
-        async def fake_llm(_prompt, _chat_key):
+        async def fake_llm(_prompt, _chat_key, **_kw):
             return {
                 "history_entry": "discussed the migration",
                 "commitments": [
@@ -1862,7 +1862,7 @@ class TestPersonaCommitmentCapture:
         for i in range(3):
             conv_log.append("dashboard:chat-na", "assistant", f"step {i}", tools=["fs_read"])
 
-        async def fake_llm(_prompt, _chat_key):
+        async def fake_llm(_prompt, _chat_key, **_kw):
             return {"history_entry": "did things", "self_persona": ["a default-agent growth note"]}
 
         with self._patch_flag(True):

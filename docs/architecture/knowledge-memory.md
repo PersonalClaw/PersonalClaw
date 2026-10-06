@@ -769,6 +769,15 @@ item vector).
   its task, never by the instructions the task is put under (`recall_query`). Only
   work that may read memory reads any: a Temporary chat's and an app's not given your
   memory read none.
+- **A consolidation marks its chat consolidated only when its answer was whole and
+  was its own.** An answer its model stopped at its output cap is no answer (the chain's
+  next model is asked), and nor is a JSON object holding none of the keys the pass
+  asked for (`history._consolidation_problem`): a cut or unparsable answer still holds
+  whole objects from inside it, a fact or a lesson, and read as the answer one kept
+  nothing while the chat read consolidated. A whole answer that found nothing to keep
+  holds the keys, empty, and does mark it. With no answer the pass keeps and marks
+  nothing; one no model could finish is owed and tried again on the heartbeat, and said
+  in a notice that names the output limit to raise.
 - **Consolidation keeps a folder chat's memory in that folder's partition**
   (`HistoryConsolidator._kept_in`): the daily history entry and the session summary,
   the facts, the episodes, the persona notes, the seal, and the per-store

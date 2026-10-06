@@ -158,7 +158,7 @@ async def _consolidation_prompt(log: ConversationLog, key: str, tmp_path: Path) 
     )
     prompts: list[str] = []
 
-    async def _model(prompt: str, _key: str) -> dict:
+    async def _model(prompt: str, _key: str, **_kw: object) -> dict:
         prompts.append(prompt)
         return {"history_entry": "planned the lake trip"}
 

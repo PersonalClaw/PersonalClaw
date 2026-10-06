@@ -1378,6 +1378,25 @@ def _kept_lines(rewrite: object, stored: str) -> str:
         return ""
 
 
+def _consolidation_problem(asked: frozenset[str]) -> Callable[[str], str]:
+    """The check a consolidation's answer meets (``chores.run_chore``'s ``validate``): ``""`` when
+    its JSON object (``llm_helpers.parse_llm_json``) holds a key the pass *asked* for. One holding
+    none is an object from inside an answer whose own did not parse (a fact, a lesson), and read
+    as the answer it kept nothing while the chat was marked consolidated. A whole answer that
+    found nothing to keep holds the keys, empty."""
+    from personalclaw.llm_helpers import parse_llm_json
+
+    def problem(text: str) -> str:
+        found = parse_llm_json(text)
+        if found is None:
+            return "no JSON object"
+        if asked.isdisjoint(found):
+            return "no key it was asked for (" + ", ".join(sorted(asked)) + ")"
+        return ""
+
+    return problem
+
+
 class _KeptMemory(NamedTuple):
     """The memory a chat keeps, as consolidation writes it (:meth:`HistoryConsolidator._kept_in`):
     its markdown store, the service over its record store, and that record store."""
@@ -1611,9 +1630,11 @@ class HistoryConsolidator:
             logger.debug("memory vault mirror failed for %s", key, exc_info=True)
 
     def _owe_if_unanswered(self, key: str, *, ending: bool) -> bool:
-        """Owe *key*'s consolidation when no model answered its call and messages are left to
-        consolidate (``owed_chores``); True when it is owed. *ending* also owes the seal of the
-        session it ended (:meth:`consolidate_session`)."""
+        """Owe *key*'s consolidation when no model answered its call, or none finished its
+        answer, and messages are left to consolidate (``owed_chores``); True when it is owed.
+        *ending* also owes the seal of the session it ended (:meth:`consolidate_session`). One
+        that is newly owed because a model ran out of output room is said to her
+        (:meth:`_say_it_is_not_kept_yet`)."""
         failure = self._unanswered.pop(key, None)
         if failure is None or self._log.unconsolidated_count(key) < 1:
             return False
@@ -1621,12 +1642,42 @@ class HistoryConsolidator:
             self._owed_seal.add(key)
         from personalclaw import owed_chores
 
+        chore = f"consolidation:{key}"
+        if chore not in owed_chores.owed():
+            self._say_it_is_not_kept_yet(key, failure)
         owed_chores.owe(
-            f"consolidation:{key}",
-            f"the consolidation of {key}",
-            partial(self._owed_consolidation, key),
+            chore, f"the consolidation of {key}", partial(self._owed_consolidation, key)
         )
         return True
+
+    def _say_it_is_not_kept_yet(self, key: str, failure: BaseException) -> None:
+        """Tell her in a notice that what chat *key* taught PersonalClaw is not in memory yet when
+        the model consolidating it ran out of output room before it finished (*failure*), and what
+        gives it the room (``chores.room_for``). One owed for any other reason (a model down) is
+        tried again the moment a model answers and asks nothing of her; this one may not finish
+        until she raises the limit it stopped at."""
+        from personalclaw import chores, notification_kinds
+        from personalclaw.guardrails.failure import out_of_output_room
+        from personalclaw.inbox_providers.native_source import get_dashboard_state
+
+        capped = out_of_output_room(failure)
+        state = get_dashboard_state() if capped is not None else None
+        if capped is None or state is None:
+            return
+        title, _ = redact_exfiltration_urls(listed_title(self._log, key))
+        title, _ = redact_credentials(title)
+        stopped = f"{capped.ref or 'its model'} {capped.reason().removeprefix('it ')}"
+        if len(getattr(failure, "failures", None) or ()) > 1:
+            stopped += ", and no other Background model finished it"
+        try:
+            state.notify(
+                notification_kinds.WARNING,
+                "Memory from a chat isn't saved yet",
+                f"PersonalClaw couldn't save what it learned from “{title}” to memory: {stopped}. "
+                f"It tries again later. To give it room, {chores.room_for(capped)}.",
+            )
+        except Exception:  # noqa: BLE001 — best-effort: the consolidation is owed and logged
+            logger.debug("consolidation: the notice for %s was not posted", key, exc_info=True)
 
     async def _owed_consolidation(self, key: str) -> bool:
         """Consolidate *key* again, and seal it if it had ended (``owed_chores``). False while no
@@ -1761,12 +1812,20 @@ class HistoryConsolidator:
 
             # Build prompt keys dynamically based on consolidation type. Each key's
             # instruction prose is a bundled ``consolidation-key-*`` snippet; the
-            # selection logic (which keys apply) stays here.
+            # selection logic (which keys apply) stays here, and so does the key each asks the
+            # answer to hold: an answer holding none of them is not this pass's
+            # (`_consolidation_problem`).
             from personalclaw.prompt_providers.runtime import render_snippet_block
 
             keys: list[str] = []
+            asked: set[str] = set()
+
+            def ask_for(snippet: str, key: str, values: dict[str, Any] | None = None) -> None:
+                keys.append(render_snippet_block(snippet, values))
+                asked.add(key)
+
             if include_history:
-                keys.append(render_snippet_block("consolidation-key-history"))
+                ask_for("consolidation-key-history", "history_entry")
 
             # Structured memory extraction (when the record store is available)
             has_vector = svc.has_vector
@@ -1790,8 +1849,8 @@ class HistoryConsolidator:
                     if current_semantic
                     else "[]"
                 )
-                keys.append(render_snippet_block("consolidation-key-semantic"))
-                keys.append(render_snippet_block("consolidation-key-episodic"))
+                ask_for("consolidation-key-semantic", "semantic")
+                ask_for("consolidation-key-episodic", "episodic")
                 # Holder attribution: opt-in, so
                 # the fragment is only composed when the axis is on. With it off the
                 # extraction prompt is byte-identical to before and nothing downstream
@@ -1801,28 +1860,27 @@ class HistoryConsolidator:
 
             # Markdown memory (used when not migrated to structured memory)
             if not self._migrated:
-                keys.append(render_snippet_block("consolidation-key-preferences"))
-                keys.append(render_snippet_block("consolidation-key-projects"))
+                ask_for("consolidation-key-preferences", "preferences_update")
+                ask_for("consolidation-key-projects", "projects_update")
 
             if include_history:
-                keys.append(render_snippet_block("consolidation-key-lessons"))
+                ask_for("consolidation-key-lessons", "lessons")
 
             # Agent self-persona: the agent's own positive growth notes —
             # always available on the history path. Distinct from lessons (which
             # record what NOT to do); this records who the agent is becoming.
             if include_history and has_vector:
-                keys.append(render_snippet_block("consolidation-key-self-persona"))
+                ask_for("consolidation-key-self-persona", "self_persona")
 
             # Commitments: inferred proactive check-ins. GUARDRAILED —
             # only extracted when the user opted in (off by default). The 'creepy
             # when wrong' class, so the prompt demands high-confidence + genuinely
             # useful time-bound follow-ups the user did NOT ask to be reminded of.
             if include_history and has_vector and self._proactive_commitments:
-                keys.append(
-                    render_snippet_block(
-                        "consolidation-key-commitments",
-                        {"max_commitments": self._proactive_commitments_max},
-                    )
+                ask_for(
+                    "consolidation-key-commitments",
+                    "commitments",
+                    {"max_commitments": self._proactive_commitments_max},
                 )
 
             # ── Auto skill creation ──
@@ -1837,9 +1895,9 @@ class HistoryConsolidator:
                 and not _session_touched_sensitive(unconsolidated)
             )
             if auto_skills_eligible:
-                keys.append(render_snippet_block("consolidation-key-new-skill"))
+                ask_for("consolidation-key-new-skill", "new_skill")
                 if self._auto_refine_enabled:
-                    keys.append(render_snippet_block("consolidation-key-refined-skill"))
+                    ask_for("consolidation-key-refined-skill", "refined_skill")
             # A refinement rewrites a skill's SKILL.md whole, so it is written only over the
             # skill as it is here, before the model is called (`_process_auto_skills`).
             loader = self._skills_loader
@@ -1877,7 +1935,12 @@ class HistoryConsolidator:
                 or ""
             )
 
-            result = await self._call_llm(prompt, key)
+            # No answer (one cut at its output cap is none, `llm_helpers.one_shot_completion`,
+            # nor an object without a key asked for) ends the pass keeping and marking nothing;
+            # the trigger that ran it owes one no model could finish (`_owe_if_unanswered`).
+            result = await self._call_llm(
+                prompt, key, validate=_consolidation_problem(frozenset(asked))
+            )
             if not result or self._was_deleted(key):
                 return
 
@@ -2559,16 +2622,19 @@ class HistoryConsolidator:
                     metadata={"name": name, "reason": "update_failed"},
                 )
 
-    async def _call_llm(self, prompt: str, chat_key: str) -> dict | None:
-        """The consolidation's answer as a JSON object, None on failure.
+    async def _call_llm(
+        self, prompt: str, chat_key: str, *, validate: Callable[[str], str] | None = None
+    ) -> dict | None:
+        """The answer to *prompt* as a JSON object, None on failure.
 
         Asked as a chore of its own (``chores.run_chore``): a call that is sent this chat's
         consolidation prompt and nothing else, so what it keeps is read from this chat alone. A
-        first model of the Background chain that fails, is paused or answers no JSON object hands
-        the call to the next one. The call's usage row is the consolidated chat's (*chat_key*), as
-        its compression's is. A failure no model answered is kept for *chat_key*
-        (``_unanswered``), so the consolidation it was for is owed rather than lost; any other
-        outcome settles it.
+        first model of the Background chain that fails, is paused, stops at its output cap or
+        answers no JSON object hands the call to the next one; *validate* is the check the answer
+        meets beyond that (``llm_helpers.json_object_problem`` when it names none). The call's
+        usage row is the consolidated chat's (*chat_key*), as its compression's is. A failure no
+        model answered, or none finished, is kept for *chat_key* (``_unanswered``), so the
+        consolidation it was for is owed rather than lost; any other outcome settles it.
         """
         from personalclaw import chores, owed_chores
         from personalclaw.llm_helpers import (
@@ -2580,7 +2646,9 @@ class HistoryConsolidator:
 
         try:
             text = await chores.run_chore(
-                prompt, usage=chores.chore_usage(chat_key), validate=json_object_problem
+                prompt,
+                usage=chores.chore_usage(chat_key),
+                validate=validate or json_object_problem,
             )
         except Exception as exc:
             # A model that did not answer is said in one line, with what happened; its

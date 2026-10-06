@@ -29,6 +29,7 @@ from personalclaw.llm.base import (
 from personalclaw.llm.events import (
     EVENT_MODEL_SUBSTITUTION,
     EVENT_SPENT,
+    is_length_stop,
     refusal_audit,
     unasked_outcome,
     unasked_reason,
@@ -838,6 +839,9 @@ async def run_over_use_case_chain(
     from a good answer and would pin the walk to entry 0 forever. An answer that is empty text
     is a failure too (:class:`~personalclaw.guardrails.failure.EmptyCompletion`): a model that
     spent its output budget thinking and said nothing has not answered, and the next model may.
+    So is one its model stopped at its output cap, which only a ``run`` that reads the call's
+    terminal event can see, and the one-shot call's raises
+    (:class:`~personalclaw.guardrails.failure.OutOfOutputRoom`).
 
     ``entry_kwargs`` derives the per-ENTRY build kwargs (budget/constraint) for the ref
     about to run — per entry, not once, because the walk can advance from a capable model
@@ -989,7 +993,12 @@ async def one_shot_completion(
     call-failure walk that complements the seam's resolution-time breaker skip. An answer
     with no text is such a failure on every path: it raises
     :class:`~personalclaw.guardrails.failure.EmptyCompletion`, so a chain moves on and a
-    caller never has to tell an empty string from a failure.
+    caller never has to tell an empty string from a failure. So is an answer its model stopped
+    at its output cap, whatever it wrote before the cap
+    (:class:`~personalclaw.guardrails.failure.OutOfOutputRoom`): the start of an answer is not
+    one, and no check of its shape can tell it from the whole, since a cut JSON answer still holds
+    every object it closed. Within the call it is not asked again: the same request meets the
+    same cap.
 
     ``output_type`` opts into typed structured output:
     pass ``dict`` or ``list`` to require the response parse as that JSON shape.
@@ -1074,6 +1083,7 @@ async def one_shot_completion(
     for a busy one only briefly when its chain has another model to try, and while it waits the
     page can say why. ``None`` is background work: it waits its turn behind them.
     """
+    from personalclaw.guardrails.failure import answers_read_whole
     from personalclaw.guardrails.local_queue import attending, next_entry
 
     # The shape this call needs is its own (the argument, else the block's), and no call it
@@ -1083,8 +1093,9 @@ async def one_shot_completion(
     try:
         # Bound here, inside the coroutine, so a sync bridge that runs it on a thread of its
         # own still carries it to the guard. What it moves on to is its own chain's to say, so
-        # nothing a caller's walk bound reaches it.
-        with attending(attended), next_entry(""):
+        # nothing a caller's walk bound reaches it. Its answer is read whole, so the guard records
+        # a call cut at its cap as failed, as `_ask` treats it.
+        with attending(attended), next_entry(""), answers_read_whole():
             return await _one_shot_completion(
                 prompt,
                 use_case=use_case,
@@ -1129,7 +1140,11 @@ async def _one_shot_completion(
     else:
         resolved_uc = "reasoning"
 
-    from personalclaw.guardrails.failure import EmptyCompletion, OutputContractError
+    from personalclaw.guardrails.failure import (
+        EmptyCompletion,
+        OutOfOutputRoom,
+        OutputContractError,
+    )
 
     # A pinned sampling temperature rides EVERY resolution path as a build kwarg
     # (pin / chain-advance / plain), so a fallback entry samples at the
@@ -1207,14 +1222,33 @@ async def _one_shot_completion(
         except Exception as exc:  # noqa: BLE001 — an answer its reader fails on is unusable
             return f"it could not be read ({type(exc).__name__})"
 
-    async def _ask(provider, text: str, on_complete: Callable[[LLMEvent], None]) -> str:
-        """*text*'s answer from *provider*, in text alone. A one-shot call offers its model no
-        tools: it answers from what its prompt carries, and that prompt can quote text nobody
+    async def _ask(
+        provider, text: str, on_complete: Callable[[LLMEvent], None], served: str
+    ) -> str:
+        """*text*'s whole answer from *provider*, in text alone. A one-shot call offers its model
+        no tools: it answers from what its prompt carries, and that prompt can quote text nobody
         vetted. So a model that asks for a tool anyway has every call it asks about refused, with
-        nobody asked; and no agent CLI, which brings tools of its own, is ever the model here."""
-        return await stream_and_collect(
-            provider, text, approval_policy=ToolApprovalPolicy.REJECT_ALL, on_complete=on_complete
+        nobody asked; and no agent CLI, which brings tools of its own, is ever the model here.
+
+        An answer its model stopped at its output cap is the start of one, however much of it
+        reads (a cut JSON answer still holds every object it closed before the cut), so it is no
+        answer: :class:`~personalclaw.guardrails.failure.OutOfOutputRoom`, the model *served*
+        failing the call."""
+        ending: list[LLMEvent] = []
+
+        def _ended(event: LLMEvent) -> None:
+            ending.append(event)
+            on_complete(event)
+
+        answer = await stream_and_collect(
+            provider, text, approval_policy=ToolApprovalPolicy.REJECT_ALL, on_complete=_ended
         )
+        last = ending[-1] if ending else None
+        if last is not None and is_length_stop(last.stop_reason):
+            raise OutOfOutputRoom(
+                served, output_cap=int(last.output_tokens or 0), wrote=bool(answer.strip())
+            )
+        return answer
 
     async def _run(provider) -> str:
         from personalclaw.guardrails.local_queue import moving_on_to
@@ -1223,9 +1257,10 @@ async def _one_shot_completion(
             await provider.start()
             on_complete = recorder(provider, who)
             served = str(getattr(provider, "served_ref", "") or "")
-            text = await _ask(provider, prompt, on_complete)
-            # No text is no answer, on every path: the chain moves on, and a caller with one
-            # model sees a failure rather than an empty string it would have to tell apart.
+            text = await _ask(provider, prompt, on_complete, served)
+            # No text is no answer, on every path, and nor is one cut at its output cap, which
+            # `_ask` raised for: the chain moves on, and a caller with one model sees a failure
+            # rather than an empty string or a fragment it would have to tell apart.
             if not text.strip():
                 raise EmptyCompletion(served)
             miss = _miss(text)
@@ -1240,7 +1275,7 @@ async def _one_shot_completion(
 
             note = correction_note(FailureMode.SCHEMA_VIOLATION)
             retry_prompt = f"{prompt}\n\n{note} What was wrong: {miss}."
-            retry_text = await _ask(provider, retry_prompt, on_complete)
+            retry_text = await _ask(provider, retry_prompt, on_complete, served)
             if not retry_text.strip():
                 raise EmptyCompletion(served)
             miss = _miss(retry_text)
@@ -1730,19 +1765,22 @@ def failure_clause(exc: BaseException) -> str:
     error the same failure shows cannot describe it differently. For a failure that reading does
     not recognize, the clause is the failure's own words — the detail the chat shows it with —
     since "doesn't recognize" says nothing about what failed in a line that names each model.
-    A model that was busy, answered nothing or answered in the wrong shape raised no error worth
-    quoting, and reads as what it did ("it answered with nothing"); a chain none of whose models
-    answered reads as what each did, whoever's chain it was.
+    A model that was busy, answered nothing, ran out of output room or answered in the wrong shape
+    raised no error worth quoting, and reads as what it did ("it answered with nothing"); a chain
+    none of whose models answered reads as what each did, whoever's chain it was.
     """
     from personalclaw.guardrails.failure import (
         AnswerCutOff,
         EmptyCompletion,
         LocalModelBusy,
         NoModelAnswered,
+        OutOfOutputRoom,
         OutputContractError,
     )
 
-    if isinstance(exc, (EmptyCompletion, LocalModelBusy, OutputContractError, AnswerCutOff)):
+    if isinstance(
+        exc, (EmptyCompletion, LocalModelBusy, OutOfOutputRoom, OutputContractError, AnswerCutOff)
+    ):
         return exc.reason()
     if isinstance(exc, NoModelAnswered):
         return f"no model of its chain answered: {exc.tried()}"

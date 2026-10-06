@@ -746,7 +746,7 @@ class TestConsolidationSeam:
         ]
         calls: list[str] = []
 
-        async def fake_llm(prompt: str, _chat_key: str):
+        async def fake_llm(prompt: str, _chat_key: str, **_kw: object):
             calls.append(prompt)
             return responses[len(calls) - 1] if len(calls) <= len(responses) else None
 
@@ -762,7 +762,7 @@ class TestConsolidationSeam:
         consolidator = self._consolidator(store, tmp_path)
         calls: list[str] = []
 
-        async def fake_llm(prompt: str, _chat_key: str):
+        async def fake_llm(prompt: str, _chat_key: str, **_kw: object):
             calls.append(prompt)
             return {"semantic": [{"key": "pref.brand_new", "value": "x", "confidence": 0.9}]}
 
@@ -800,7 +800,7 @@ class TestConsolidationSeam:
         consolidator = self._consolidator(store, tmp_path)
         calls: list[str] = []
 
-        async def fake_llm(prompt: str, _chat_key: str):
+        async def fake_llm(prompt: str, _chat_key: str, **_kw: object):
             calls.append(prompt)
             if len(calls) > 1:
                 return None  # Decide gives no verdicts: every surviving candidate is an ADD
@@ -828,7 +828,7 @@ class TestConsolidationSeam:
         consolidator = self._consolidator(store, tmp_path)
         calls: list[str] = []
 
-        async def fake_llm(prompt: str, _chat_key: str):
+        async def fake_llm(prompt: str, _chat_key: str, **_kw: object):
             calls.append(prompt)
             if len(calls) == 1:
                 return {
