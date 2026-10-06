@@ -9,7 +9,8 @@ contents off this machine").
 
 The answer is a CLAIM on a security surface, so it is proved the way reachability is:
 structurally, never from a filename, and default-deny. The attack table below is the half
-that matters — every shape in it must NOT come back ``unloaded``.
+that matters — every shape in it must NOT come back ``unloaded`` — because "unloaded" also
+lets a destructive string in that file be disclosed rather than refused.
 """
 
 from __future__ import annotations
@@ -74,7 +75,10 @@ def test_the_apps_own_test_file_is_unloaded_and_its_entry_point_is_loaded(tmp_pa
     assert entry.runtime_reason == "app.json names it"
 
 
-def test_it_is_disclosure_and_never_touches_severity_or_verdict(tmp_path):
+def test_it_never_touches_a_warning_band_finding(tmp_path):
+    """Stamping the answer changes nothing else on a finding. The same proof decides two
+    DANGEROUS-band clauses (see ``test_scanner_judges_what_the_app_runs.py``), and only ever
+    to keep a terminal finding terminal or to lower it to WARNING — never a warning itself."""
     report = default_scanner.scan(
         _bundle(tmp_path, {"provider.py": _PROVIDER, "test_provider.py": _TEST}),
         TrustTier.COMMUNITY,

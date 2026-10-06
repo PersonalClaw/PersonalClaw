@@ -1382,13 +1382,15 @@ export interface AppCatalog {
   unavailableSources?: { source: string; reason: string }[]
 }
 /** One scanner finding. `reachability` answers whether a DANGEROUS-band match can EXECUTE
- *  (`unreachable`/`commentary` are proofs it cannot — inert text); `runtime` answers whether
- *  anything the app runs LOADS the file (`unloaded` is a proof it never does — the app's own
- *  tests and fixtures; `untraceable` means that could not be established). Both are
- *  disclosure, never a softener: the severity is untouched either way. */
+ *  (`unreachable`/`commentary` are proofs it cannot — inert text; `not_run` is a string its
+ *  file cannot run, in a file nothing the app runs loads); `runtime` answers whether anything
+ *  the app runs LOADS the file (`unloaded` is a proof it never does — the app's own tests and
+ *  fixtures; `untraceable` means that could not be established). The server decides the
+ *  severity from both — a match in a file the app loads stays dangerous — so they are its
+ *  reasons, shown beside it, and never a second decision made here. */
 export interface AppScanFinding {
   surface: string; severity: string; rule: string; path: string; evidence: string
-  reachability?: 'not_analysed' | 'reachable' | 'unreachable' | 'commentary' | 'unparseable'
+  reachability?: 'not_analysed' | 'reachable' | 'unreachable' | 'commentary' | 'unparseable' | 'not_run'
   reachability_reason?: string
   runtime?: 'not_analysed' | 'loaded' | 'unloaded' | 'untraceable'
   runtime_reason?: string

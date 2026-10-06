@@ -60,7 +60,10 @@ backend**.
   verdict (or an invalid signature) is a terminal refusal, **non-overridable**.
   Each finding carries whether the code it sits in can run (`reachability`) and
   whether anything the app runs loads its file at all (`runtime` — the install
-  dialog groups an app's own test files apart from the code it runs).
+  dialog groups an app's own test files apart from the code it runs). A destructive
+  string in a file the app loads is refused; the same string in a test file nothing
+  the app runs loads, which cannot run a string itself, is a warning to consent to
+  (see [scanner-testing](../security/scanner-testing.md)).
 - **A registry listing names a remote repository** — a `repo` in a source's
   `app-registry.json` must be a plain `https://` URL (no credentials, no port), the
   form the published registry requires. A listing naming a local path, `file://`,

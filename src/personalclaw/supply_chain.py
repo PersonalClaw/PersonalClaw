@@ -80,15 +80,16 @@ class TrustTier(str, Enum):
 class Reachability(str, Enum):
     """Whether the code a DANGEROUS match sits in can EXECUTE that match.
 
-    FIVE states, not two, and that is the point. "We could not tell" must never render
+    SIX states, not two, and that is the point. "We could not tell" must never render
     as "safe": a file the analysis could not read is reported as its own outcome
     (:data:`UNPARSEABLE`) and treated exactly like :data:`REACHABLE`, so an unreadable
     file can never be mistaken for a clean one by a reviewer reading the report.
 
-    :data:`COMMENTARY` and :data:`UNREACHABLE` are kept apart for the same reason, in the
-    other direction: they are proved by different evidence (a token class vs. five
-    clauses over the whole bundle) and both land on WARNING, so a reviewer can tell
-    "this is a comment" from "this is a literal nothing reaches".
+    :data:`COMMENTARY`, :data:`UNREACHABLE` and :data:`NOT_RUN` are kept apart for the same
+    reason, in the other direction: they are proved by different evidence (a token class,
+    five clauses over the whole bundle, what the app runs) and all land on WARNING, so a
+    reviewer can tell "this is a comment" from "a literal nothing reaches" from "a literal
+    in a file the app never loads".
     """
 
     #: Nothing was asked — the finding is not a DANGEROUS script match, or the caller
@@ -104,6 +105,9 @@ class Reachability(str, Enum):
     #: The file is not parseable Python, so there is no AST to reason over. Its own
     #: state, and DANGEROUS — never folded into any of the answers above.
     UNPARSEABLE = "unparseable"
+    #: L1 and L2 held and nothing the app runs loads the file (:data:`RuntimeUse.UNLOADED`):
+    #: the app's own test data. Its own state → WARNING (clause R, see "Execution reachability").
+    NOT_RUN = "not_run"
 
 
 class RuntimeUse(str, Enum):
@@ -118,8 +122,9 @@ class RuntimeUse(str, Enum):
     Proved the way reachability is: from the AST and the manifest, never from a filename,
     and default-deny. A module named ``test_evil.py`` that the provider imports is
     :data:`LOADED`; a file is :data:`UNLOADED` only when nothing the app runs can reach it
-    and the bundle gives no way to reach it that the analysis cannot see. Disclosure only:
-    it never changes a severity or a verdict.
+    and the bundle gives no way to reach it that the analysis cannot see. The same proof
+    decides two clauses of the DANGEROUS band (L3 and R): a match in a LOADED file is
+    never re-scored, and one in an UNLOADED file can be. It never touches a WARNING.
     """
 
     #: Not asked — the finding is not in a Python file, or there is no bundle to reason over.
@@ -146,7 +151,7 @@ class Finding:
     surface and evidence byte-for-byte, so the user is still told and still consents.
 
     ``runtime`` / ``runtime_reason`` say whether anything the app runs loads this file
-    (:class:`RuntimeUse`) — disclosure too, so it touches nothing else on the finding."""
+    (:class:`RuntimeUse`); stamping them touches nothing else on the finding."""
 
     surface: str  # "script" | "manifest" | "frontmatter" | "supply_chain"
     severity: Verdict
@@ -629,9 +634,9 @@ def _evidence(text: str, match: "re.Match[str]") -> str:
 #     degrades the fixtures, whose entire job is to be read.
 #
 # THE RULE. A DANGEROUS match is re-scored to WARNING — never lower, never dropped —
-# iff L0 holds, or ALL FIVE of L1-L5 do. Default-deny: fail a clause, or fail to
-# evaluate one, and the finding stays DANGEROUS. The failure mode is a false BLOCK
-# (annoying, and fixable by the author) and never a false PASS.
+# iff L0 holds, or ALL FIVE of L1-L5 do, or L1, L2 and R do. Default-deny: fail a clause,
+# or fail to evaluate one, and the finding stays DANGEROUS. The failure mode is a false
+# BLOCK (annoying, and fixable by the author) and never a false PASS.
 #
 #   L0  COMMENTARY, NOT CODE (issue #2625). Every match of this rule lies wholly inside a
 #       ``COMMENT`` token or a docstring. That is decided from :mod:`tokenize` and the
@@ -656,7 +661,10 @@ def _evidence(text: str, match: "re.Match[str]") -> str:
 #       a sink?" is defeated by two lines (`c = "rm -rf / " + x; os.system(c)`), so the
 #       question asked is the answerable one: can this file hand ANY string to an
 #       interpreter? If it can, the literal is treated as reachable.
-#   L3  NO EXPORT. Nothing else in the bundle can lift the literal out: no other module
+#   L3  NO EXPORT. The app does not load the file — the runtime-use proof below, so an
+#       import, a dotted import of a package module, ``app.json`` and the name the platform
+#       runs all count: a file the app loads is code it runs, however it is reached. And
+#       nothing else in the bundle can lift the literal out: no other module
 #       imports it, no sibling names its file or module stem in a string, no script or
 #       config in the bundle mentions it, and ``app.json`` does not declare it. Prose is
 #       deliberately excluded — a README saying "run pytest test_provider.py" is
@@ -671,6 +679,12 @@ def _evidence(text: str, match: "re.Match[str]") -> str:
 #   L5  IMPORTING IT IS A NO-OP. Unreachable is not never-imported: a test runner, or a
 #       curious user, may import the module. Its top level must contain no call outside
 #       a small pure allowlist, so the payload cannot fire on import.
+#   R   NOT RUN BY THE APP. L1 and L2 hold and the runtime-use proof says nothing the app
+#       runs loads the file (:data:`RuntimeUse.UNLOADED` — never UNTRACEABLE). L3-L5 ask
+#       what ANY importer could do with the file; R asks what the APP does, which is the
+#       install's question. An app's test puts its test kit on ``sys.path`` and calls
+#       helpers when it is imported, which fails L4 and L5, and nothing the app runs ever
+#       imports it — so its refusal fixtures are disclosed, not refused (``NOT_RUN``).
 #
 # WHY L0 IS ON THE TOKENISER AND NOT ON THE TEXT (issue #2625). "Skip lines that start
 # with ``#``" is a one-liner and it is the wrong fix: it is defeated by anything that
@@ -689,9 +703,9 @@ def _evidence(text: str, match: "re.Match[str]") -> str:
 #   * A bundle can ship a module of pure inert data that nothing references and get its
 #     literal disclosed-and-consentable instead of refused. That is a real reduction in
 #     the floor for that one shape. The counterweight is measured, not asserted: the
-#     shipped band already scores ``"rm -" + "rf /"`` as CLEAN and ``os.system("rm -rf
-#     /")`` as WARNING, so the capability given up is refusing the attacker who wrote
-#     their payload as a plain literal AND left it unreachable AND did not obfuscate it.
+#     shipped band reads plain literals only, so it already scores ``"rm -" + "rf /"`` as
+#     CLEAN, and the capability given up is refusing the attacker who wrote their
+#     payload as a plain literal AND left it unreachable AND did not obfuscate it.
 #   * Under L0, a bundle that performs STRING SURGERY ON ITS OWN SOURCE — reads a sibling
 #     file, strips the ``#``, and ``exec``s the result — could promote a comment back to
 #     code, and L0 does not consult L4's bundle-wide graph-trust check to stop it. L4
@@ -700,6 +714,10 @@ def _evidence(text: str, match: "re.Match[str]") -> str:
 #     not need a comment: a bundle that can ``exec`` arbitrary text can spell the payload
 #     itself, and its ``exec`` is separately flagged. It is a real hole all the same, and
 #     it is the reason L0 is stated on a token class rather than on a filename or a line.
+#   * Under R, the bundle's tests RUN BY HAND may pass the literal to another module's
+#     sink, and a way of loading a file that the runtime-use proof does not model is
+#     missed. R is exactly as wide as that proof: each way in it knows it cannot follow
+#     makes the file UNTRACEABLE (``tests/security/test_scanner_judges_what_the_app_runs.py``).
 #
 # Either way the finding survives: rule id, path, evidence and a required click, all
 # unchanged. See ``tests/security/test_scanner_reachability.py``.
@@ -740,6 +758,17 @@ _SHELL_ARGV0 = frozenset(
         "xargs",
         "eval",
     }
+    # Launchers, container and package runners, and test runners run the program or files
+    # their arguments name, so a pinned one starts anything (a test runner every test file).
+    | set(
+        "sudo doas nohup timeout nice stdbuf setsid time chroot flock su runuser script watch "
+        "parallel find ssh docker podman nerdctl finch limactl py npx uvx pipx npm pnpm yarn "
+        "bunx uv make just pytest py.test tox nox".split()
+    )
+)
+#: An interpreter named with its version (``python3.12``, ``pypy3``) is the same interpreter.
+_VERSIONED_INTERPRETER = re.compile(
+    r"(?:python|pypy|node|ruby|perl|php|lua)[0-9.]*(?:\.exe)?", re.I
 )
 
 #: Attribute names that execute a string (or a program) without going through
@@ -812,12 +841,18 @@ _INERT_TOP_LEVEL_CALLS = frozenset(
 #: command STRING and is separately fatal, which the shell check below catches.
 _SPAWN_FUNCS = ("subprocess.", "asyncio.create_subprocess_")
 
-#: ``subprocess`` names that are exceptions or constants, not spawns — ``ops``'s test
-#: module references ``subprocess.TimeoutExpired`` and spawns nothing, and calling that
-#: an execution sink would be false.
+#: ``subprocess`` names that are exceptions, constants or a result object, not spawns —
+#: ``ops``'s test module references ``subprocess.TimeoutExpired`` and spawns nothing, and
+#: a test builds a ``CompletedProcess`` by hand: calling either an execution sink is false.
 _SUBPROCESS_NON_SPAWN = frozenset(
-    {"TimeoutExpired", "CalledProcessError", "SubprocessError", "PIPE", "STDOUT", "DEVNULL"}
+    "TimeoutExpired CalledProcessError SubprocessError CompletedProcess PIPE STDOUT DEVNULL".split()
 )
+#: The SDK's git argv builder. Its argv[0] is its ``git`` keyword (``"git"`` when not given),
+#: so a spawn of what it returns is pinned — while the platform's own module is the one an
+#: import reaches (``_BundleReach`` checks the bundle neither shadows nor rebinds it).
+_SDK_GIT_ARGV = "personalclaw.sdk.git.git_argv"
+#: Modules that run a test suite in-process, loading test files by convention.
+_TEST_RUNNER_MODULES = frozenset({"pytest", "unittest", "nose", "nose2", "doctest"})
 
 #: Non-Python surfaces that can LOAD OR RUN a file, and so count as a reference under L3.
 _LOADER_SUFFIXES = frozenset(
@@ -853,10 +888,10 @@ _LOADER_NAMES = frozenset({"Makefile", "makefile", "Dockerfile", "Procfile", "ju
 #: modulates any other warning (no special case, and no path to CLEAN).
 _REACH_FLOOR = Verdict.WARNING
 
-#: The states that earn :data:`_REACH_FLOOR`. Both are POSITIVE PROOFS of inertness and
-#: neither is a "we could not tell" — those land on REACHABLE or UNPARSEABLE and keep the
-#: terminal severity. Listed once so the two proofs cannot drift apart in severity.
-_INERT_STATES = frozenset({Reachability.UNREACHABLE, Reachability.COMMENTARY})
+#: The states that earn :data:`_REACH_FLOOR`. Each is a POSITIVE PROOF of inertness and
+#: none is a "we could not tell" — those land on REACHABLE or UNPARSEABLE and keep the
+#: terminal severity. Listed once so the three proofs cannot drift apart in severity.
+_INERT_STATES = frozenset({Reachability.UNREACHABLE, Reachability.COMMENTARY, Reachability.NOT_RUN})
 
 
 @dataclass
@@ -873,6 +908,10 @@ class _FileFacts:
     dynamic: set[str]  # L4 evidence: names that make the import graph untrustworthy
     sinks: set[str]  # L2 evidence: sites in THIS file that could run a string
     top_level_calls: set[str]  # L5 evidence: what importing this module would call
+    #: Spawns pinned only through the SDK's argv builder: sinks after all if the bundle
+    #: shadows or rebinds the platform's module.
+    sdk_spawns: set[str] = field(default_factory=set)
+    rebinds_core: bool = False  # stores to, sets or deletes a name of the platform's modules
 
 
 def _offset_table(text: str) -> list[int]:
@@ -980,23 +1019,58 @@ def _within(regions: Iterable[tuple[int, int]], probes: Iterable[tuple[int, int]
     return all(any(s <= start and end <= e for s, e in regions) for start, end in probes)
 
 
-def _argv0_of(call: ast.Call) -> tuple[bool, str | None]:
-    """``(pinned, program)`` for a spawn site's argv[0].
+def _argv0_of(call: ast.Call, ctx: _NativeCtx) -> tuple[bool, str | None, bool]:
+    """``(pinned, program, via_sdk)`` for a spawn site's argv[0].
 
     ``pinned`` is False whenever the program name is not a plain string literal — the
     default-deny answer, because an argv assembled at runtime can name anything. A bare
     command STRING rather than a list is never pinned either: that form is only ever run
-    through a shell."""
-    if not call.args:
-        return False, None
-    first = call.args[0]
-    if isinstance(first, ast.Constant) and isinstance(first.value, str):
-        return False, first.value
-    if isinstance(first, (ast.List, ast.Tuple)) and first.elts:
-        head = first.elts[0]
+    through a shell. The argv is read through a local name bound once and read once in
+    the spawn's own function (``ctx.bindings``), and through the SDK's git argv builder
+    (``via_sdk``), whose program is its ``git`` keyword — a literal, or ``"git"``."""
+    node = call.args[0] if call.args else None
+    for _ in range(_TARGET_DEPTH):
+        if not isinstance(node, ast.Name) or node.id not in ctx.bindings:
+            break
+        node = ctx.bindings[node.id]
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return False, node.value, False
+    if isinstance(node, (ast.List, ast.Tuple)) and node.elts:
+        head = node.elts[0]
         if isinstance(head, ast.Constant) and isinstance(head.value, str):
-            return True, head.value
-    return False, None
+            return True, head.value, False
+    if isinstance(node, ast.Call) and _canonical_name(node.func, ctx) == _SDK_GIT_ARGV:
+        # Only through an import the file makes once: a name it also rebinds, or one it
+        # never imported, is not the SDK's builder.
+        root = (_dotted_name(node.func) or "").split(".")[0]
+        given = {kw.arg: kw.value for kw in node.keywords}
+        git = given.get("git", ast.Constant("git"))
+        if root in ctx.aliases and None not in given and isinstance(git, ast.Constant):
+            if isinstance(git.value, str):
+                return True, git.value, True
+    return False, None, False
+
+
+def _read_once_locals(tree: ast.AST) -> dict[str, ast.expr]:
+    """Names bound once and read once, both in the same function — ``argv = …`` then
+    ``run(argv)`` — mapped to the bound expression. A second read, a mutation such as
+    ``argv[0] = …``, or a name at module level (which another module can rebind) leaves
+    the name out, so the spawn reads as unpinned."""
+    seen: dict[str, list[tuple[int, type]]] = {}
+    stack: list[tuple[ast.AST, int]] = [(tree, 0)]
+    while stack:
+        node, scope = stack.pop()
+        if isinstance(node, ast.Name):
+            seen.setdefault(node.id, []).append((scope, type(node.ctx)))
+        inner = id(node) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) else scope
+        stack.extend((child, inner) for child in ast.iter_child_nodes(node))
+    out: dict[str, ast.expr] = {}
+    for name, value in _single_bindings(tree).items():
+        uses = seen.get(name, [])
+        if len(uses) == 2 and uses[0][0] == uses[1][0] != 0:
+            if {kind for _, kind in uses} == {ast.Store, ast.Load}:
+                out[name] = value
+    return out
 
 
 def _spawn_names(tree: ast.AST) -> tuple[set[str], set[str]]:
@@ -1028,7 +1102,11 @@ def _spawn_names(tree: ast.AST) -> tuple[set[str], set[str]]:
 
 
 def _note_call(
-    node: ast.Call, facts: _FileFacts, spawn_prefixes: set[str], spawn_bare: set[str]
+    node: ast.Call,
+    facts: _FileFacts,
+    spawn_prefixes: set[str],
+    spawn_bare: set[str],
+    ctx: _NativeCtx,
 ) -> None:
     """Record what one call site means for L2 (can it run a string?) and L4."""
     name = ast.unparse(node.func)
@@ -1039,7 +1117,9 @@ def _note_call(
     if isinstance(node.func, ast.Name) and node.func.id in _EXEC_ATTRS:
         facts.sinks.add(f"{node.func.id}()")
         return
-    if name.startswith("subprocess.") and name.split(".")[-1] in _SUBPROCESS_NON_SPAWN:
+    # A method of a spawn's RESULT (`subprocess.run(…).stdout.split()`) is no spawn: the
+    # spawn inside it is a call of its own, and is judged on its own argv.
+    if _dotted_name(node.func) is None or name.split(".")[-1] in _SUBPROCESS_NON_SPAWN:
         return
     if not (name.startswith(tuple(sorted(spawn_prefixes))) or name in spawn_bare):
         return
@@ -1050,13 +1130,25 @@ def _note_call(
     if shell is not None and not (isinstance(shell, ast.Constant) and shell.value is False):
         facts.sinks.add(f"{name}(shell=…)")
         return
-    pinned, program = _argv0_of(node)
+    pinned, program, via_sdk = _argv0_of(node, ctx)
     if not pinned:
         facts.sinks.add(f"{name} with an argv the source does not pin")
         return
     leaf = (program or "").replace("\\", "/").rsplit("/", 1)[-1]
-    if "/" in (program or "") or leaf in _SHELL_ARGV0 or leaf.endswith((".sh", ".bash", ".py")):
+    if (
+        "/" in (program or "")
+        or leaf in _SHELL_ARGV0
+        or _VERSIONED_INTERPRETER.fullmatch(leaf)
+        or leaf.endswith((".sh", ".bash", ".py"))
+    ):
         facts.sinks.add(f"{name} spawning {program!r}")
+    elif via_sdk:
+        facts.sdk_spawns.add(f"{name} with an argv the source does not pin")
+
+
+def _names_core(node: ast.expr, ctx: _NativeCtx) -> bool:
+    """Whether ``node`` resolves to one of the platform's own modules or a name in one."""
+    return _canonical_name(node, ctx).split(".")[0] == "personalclaw"
 
 
 def _dotted_prefixes(module: str) -> set[str]:
@@ -1082,6 +1174,15 @@ def _analyse_python(text: str) -> _FileFacts:
 
     starts = _offset_table(text)
     spawn_prefixes, spawn_bare = _spawn_names(tree)
+    counts = _binding_counts(tree)
+    every_alias = _import_aliases(tree)
+    # To trust the SDK, an alias resolves only when its import is the name's one binding in
+    # the file; to spot a store on the platform's modules, every alias counts.
+    ctx = _NativeCtx(
+        aliases={k: v for k, v in every_alias.items() if counts.get(k) == 1},
+        bindings=_read_once_locals(tree),
+    )
+    core = _NativeCtx(aliases=every_alias, bindings={})
 
     def off(lineno: int, col: int) -> int:
         return starts[lineno - 1] + col
@@ -1097,9 +1198,8 @@ def _analyse_python(text: str) -> _FileFacts:
             for alias in node.names:
                 root = alias.name.split(".")[0]
                 # Every dotted PREFIX, not just the root and the leaf: `import a.b.c` runs
-                # `a/__init__.py` and `a/b/__init__.py` first, and the runtime-use pass has to
-                # see that package init is loaded too. Stems carry no dots, so L3's
-                # `stem in imports` reads exactly what it read before.
+                # `a/__init__.py` and `a/b/__init__.py` first, and the runtime-use pass and L3
+                # both have to see that package init is loaded too.
                 facts.imports.update({root, *_dotted_prefixes(alias.name)})
                 if root in _DYNAMIC_MODULES:
                     facts.dynamic.add(f"imports {root}")
@@ -1122,8 +1222,14 @@ def _analyse_python(text: str) -> _FileFacts:
             if node.attr == "path" and isinstance(node.value, ast.Name) and node.value.id == "sys":
                 # `sys.path.insert(...)` makes any static import resolution a guess.
                 facts.dynamic.add("sys.path mutation")
+            if isinstance(node.ctx, (ast.Store, ast.Del)) and _names_core(node.value, core):
+                facts.rebinds_core = True
+        elif isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            facts.rebinds_core |= _names_core(node.value, core)
         if isinstance(node, ast.Call):
-            _note_call(node, facts, spawn_prefixes, spawn_bare)
+            _note_call(node, facts, spawn_prefixes, spawn_bare, ctx)
+            if _dotted_name(node.func) in {"setattr", "delattr"} and node.args:
+                facts.rebinds_core |= _names_core(node.args[0], core)
 
     for stmt in tree.body:
         if isinstance(
@@ -1179,11 +1285,14 @@ def _manifest_tokens(manifest_text: str | None) -> set[str]:
 #
 #   * the import graph is not trustworthy (L4 — dynamic imports, `sys.path` edits, a
 #     Python file the walk could not read);
-#   * something invokes a TEST RUNNER, which loads `test_*.py` by convention;
+#   * something invokes a TEST RUNNER, which loads `test_*.py` by convention — a hook, a
+#     script, or a LOADED module that imports one (`pytest`, `unittest`, `doctest`);
 #   * a shell script or `package.json` mentions Python, or a JS file can start a process —
 #     either can run any script by a path it builds;
 #   * a LOADED module can start a program with a command it builds while running (an L2
-#     sink), so it could start any file in the bundle.
+#     sink: a shell, an interpreter, a launcher, a path, an argv the source does not pin),
+#     so it could start any file in the bundle. A spawn of git through the SDK's argv
+#     builder is pinned, unless the bundle shadows or rebinds the platform's module.
 
 #: Python files the platform runs by NAME rather than because `app.json` points at them.
 #: `worker.py` is `apps.background.WORKER_ENTRY_POINT`, pinned against it by a test.
@@ -1260,9 +1369,21 @@ class _BundleReach:
         loader_texts: dict[str, str],
         manifest_text: str | None,
         opaque: Iterable[str],
+        paths: Iterable[str],
     ) -> None:
         self._py_texts = py_texts
         self._facts = {rel: _analyse_python(text) for rel, text in py_texts.items()}
+        # The SDK's argv builder is the platform's only while an import reaches the platform's
+        # module. A bundle that ships anything an import of `personalclaw` could load (an app's
+        # own process puts its folder first on `sys.path`), or stores to one of the platform's
+        # names, turns every spawn built with it back into an unpinned one.
+        if any(
+            part.split(".")[0].casefold() == "personalclaw"
+            for rel in paths
+            for part in Path(rel).parts
+        ) or any(f.rebinds_core for f in self._facts.values()):
+            for facts in self._facts.values():
+                facts.sinks |= facts.sdk_spawns
         self._loader_texts = loader_texts
         self._loader_blob = "\n".join(loader_texts.values())
         self._manifest_text = manifest_text
@@ -1292,7 +1413,8 @@ class _BundleReach:
         for other, facts in sorted(self._facts.items()):
             if other == rel:
                 continue
-            if stem in facts.imports:
+            # Every name an import could load it by (`pkg.payload`, not only `payload`).
+            if _module_names(rel) & facts.imports:
                 return f"{other} imports it"
             if stem in facts.string_literals or rel in facts.string_literals:
                 return f"{other} names it in a string"
@@ -1309,7 +1431,7 @@ class _BundleReach:
     # ── the decision ──
 
     def decide(self, finding: Finding) -> tuple[Reachability, str]:
-        """L0-L5 for one DANGEROUS finding, plus the sentence that justifies it."""
+        """L0-L5 and R for one DANGEROUS finding, plus the sentence that justifies it."""
         if finding.rule in _NATIVE_DESTRUCTION_RULES:
             # The native family (#2607) is decided on CALL SITES, so L0 and L1 answer
             # themselves and the clauses below have nothing left to weigh. Commentary never
@@ -1357,22 +1479,31 @@ class _BundleReach:
                 Reachability.REACHABLE,
                 f"file can execute a string: {sorted(facts.sinks)[0]} (L2)",
             )
+        use, why = self.runtime_use(rel)
+        if use is RuntimeUse.LOADED:
+            return Reachability.REACHABLE, f"the app loads this file — {why} (L3)"
+        refusal = ""
         exported = self._referenced_elsewhere(rel)
-        if exported:
-            return Reachability.REACHABLE, f"literal is reachable — {exported} (L3)"
-        if self._untrustworthy:
-            return (
-                Reachability.REACHABLE,
-                f"bundle can rewrite its own graph — {self._untrustworthy} (L4)",
-            )
         impure = sorted(facts.top_level_calls - _INERT_TOP_LEVEL_CALLS)
-        if impure:
-            return Reachability.REACHABLE, f"module runs {impure[0]} on import (L5)"
-        return (
-            Reachability.UNREACHABLE,
-            "inert literal: not code, this file cannot execute a string, nothing in the "
-            "bundle reaches it, and importing it runs nothing (L1-L5)",
-        )
+        if exported:
+            refusal = f"literal is reachable — {exported} (L3)"
+        elif self._untrustworthy:
+            refusal = f"bundle can rewrite its own graph — {self._untrustworthy} (L4)"
+        elif impure:
+            refusal = f"module runs {impure[0]} on import (L5)"
+        if not refusal:
+            return (
+                Reachability.UNREACHABLE,
+                "inert literal: not code, this file cannot execute a string, nothing in the "
+                "bundle reaches it, and importing it runs nothing (L1-L5)",
+            )
+        if use is RuntimeUse.UNLOADED:
+            return (
+                Reachability.NOT_RUN,
+                "nothing the app runs loads this file, and the file cannot execute a string "
+                f"(L1, L2, R); were it run some other way: {refusal}",
+            )
+        return Reachability.REACHABLE, refusal
 
     # ── the WARNING band's commentary (see "Commentary in the warning band" below) ──
 
@@ -1467,6 +1598,9 @@ class _BundleReach:
                     f"{rel} loads code in a way this check cannot follow "
                     f"({sorted(facts.dynamic)[0]})"
                 )
+            runner = sorted(facts.imports & _TEST_RUNNER_MODULES)
+            if runner:
+                return f"{rel} imports {runner[0]}, which can run test files by convention"
             if facts.sinks:
                 return (
                     f"{rel} can start a program with a command it builds while running "
@@ -1956,6 +2090,15 @@ def _bound_names(node: ast.AST) -> Iterator[str]:
                 yield maybe.arg
 
 
+def _binding_counts(tree: ast.AST) -> dict[str, int]:
+    """How many times the file binds each name, counting every binding form."""
+    counts: dict[str, int] = {}
+    for node in ast.walk(tree):
+        for name in _bound_names(node):
+            counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
 def _single_bindings(tree: ast.AST) -> dict[str, ast.expr]:
     """Names bound EXACTLY ONCE in the file, mapped to the expression bound to them.
 
@@ -1967,10 +2110,7 @@ def _single_bindings(tree: ast.AST) -> dict[str, ast.expr]:
     parameter, a `del`, an `except … as`, a `global`, or an import of the same name drops it
     entirely. One binding in the whole file means there is exactly one scope to be wrong
     about, which is why this needs no scope tracking to be sound."""
-    counts: dict[str, int] = {}
-    for node in ast.walk(tree):
-        for name in _bound_names(node):
-            counts[name] = counts.get(name, 0) + 1
+    counts = _binding_counts(tree)
     out: dict[str, ast.expr] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
@@ -2221,6 +2361,7 @@ class SkillScanner:
         loader_texts: dict[str, str] = {}
         manifest_text: str | None = None
         opaque: list[str] = []  # Python/loader files the walk could not read (L4)
+        paths: list[str] = []  # every file, read or not: what an import could load
 
         if staged_dir.is_dir():
             # EVERY file of the tree, whatever folder it sits in: what the tree holds is
@@ -2230,6 +2371,7 @@ class SkillScanner:
                 if not path.is_file():
                     continue
                 rel = str(path.relative_to(staged_dir))
+                paths.append(rel)
                 suffix, lname = path.suffix.lower(), path.name.lower()
                 is_py = suffix == ".py"
                 is_loader = not is_py and _is_loader_name(path.name)
@@ -2280,6 +2422,7 @@ class SkillScanner:
                 loader_texts=loader_texts,
                 manifest_text=manifest_text,
                 opaque=opaque,
+                paths=paths,
             )
             if findings
             else None

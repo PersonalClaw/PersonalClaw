@@ -177,9 +177,11 @@ authors to delete their adversarial tests or obfuscate the strings until the sca
 stopped recognising them.
 
 `supply_chain.py` closes that with a second pass that asks a narrower question: **can
-this matched literal be executed at all, anywhere in this bundle?** Only on a positive
-answer of *no* is the finding re-scored — to `WARNING`, never lower, never dropped, with
-rule, path, surface and evidence intact, so the user is still told and still consents.
+this matched literal be executed at all, anywhere in this bundle — or, failing that, does
+anything the app runs ever load the file it sits in?** Only on a positive answer of *no*
+is the finding re-scored — to `WARNING`, never lower, never dropped, with rule, path,
+surface and evidence intact, so the user is still told and still consents. A match in a
+file the app loads is never re-scored.
 
 The predicate is stated on the AST and **never on a filename**. That is the whole basis
 of it: "skip test files" would create a place to park a payload, whereas "nothing here
@@ -194,9 +196,30 @@ the finding stays `DANGEROUS`:
 |---|---|---|
 | **L1** literal, not code | The file parses as Python and *every* match of this rule lies wholly inside a `str` constant | A shell script (its text is its program); a payload in a comment; a second, live occurrence of the same shape that the scanner did not report |
 | **L2** no execution sink | The file contains no `os.system`/`popen`/`exec*`/`spawn*`/`fork`, no `eval`/`exec`/`compile`/`__import__`, no `subprocess` call whose `shell` is other than a literal `False`, and every spawn site's argv[0] is a literal non-shell, non-interpreter, non-path program | The literal being handed to an interpreter — **including after being concatenated into a larger string**, which is why the clause is stated at module scope rather than on the literal's argument position |
-| **L3** no export | No other module imports it, no sibling names its file or stem in a string, no script or config mentions it, `app.json` does not declare it | Another file lifting the literal out. Prose is excluded on purpose: a README saying "run pytest test_provider.py" is documentation |
+| **L3** no export | The app does not load the file (the runtime-use proof: an import, a dotted import of a package module, `app.json`, or the name the platform runs), no other module imports it, no sibling names its file or stem in a string, no script or config mentions it, `app.json` does not declare it | Code the app runs holding the literal, however it is loaded — `import pkg.payload` names the module by its dotted path only, which a stem check never sees — and another file lifting the literal out. Prose is excluded on purpose: a README saying "run pytest test_provider.py" is documentation |
 | **L4** the graph is trustworthy | No `eval`/`exec`/`compile`/`__import__`/`importlib`/`runpy`/`pickle`/`marshal`/`ctypes`, no computed `getattr`, no `import *`, no `sys.path` mutation, and no Python or loader file the walk could not read — anywhere in the bundle | L3 is a static claim; a bundle that can rewrite its own import graph, or a file nobody could read, makes it worthless |
 | **L5** importing it is a no-op | The module's top level calls nothing outside a small pure allowlist | The payload firing on import — unreachable is not never-imported |
+
+L3-L5 ask what *any* importer could do with the file. An app's own test fails them as a
+matter of course — it puts a shared test kit on `sys.path` and calls helpers when it is
+imported — while nothing the app runs ever imports it. So one more proof stands beside
+L1-L5, and it asks the install's own question, what the **app** runs:
+
+| Clause | What must hold | What it closes |
+|---|---|---|
+| **R** not run by the app | L1 and L2 hold, and the runtime-use proof says nothing the app runs loads the file (`unloaded`, never `untraceable`) | A refusal fixture in the app's own tests (`x; rm -rf /` proving a revision is refused) blocking the install outright |
+
+R is exactly as wide as the runtime-use proof, so that proof is held to the same standard.
+A file is never `unloaded` when something the app runs could start or load it by a route
+the analysis cannot follow: a dynamic import, a `sys.path` edit, a test runner (a hook, a
+script, or a loaded module that imports `pytest`, `unittest` or `doctest`), a shell, an
+interpreter (`python3.12` included), a launcher or package runner (`sudo`, `nohup`, `npx`,
+`uv`, `docker`…), a path, or an argv the source does not pin. A spawn of git through the
+SDK's argv builder is pinned — unless the bundle ships anything an import of
+`personalclaw` could load, or stores to one of the platform's names. A re-scored finding
+is reported as its own state (`Reachability.NOT_RUN`), apart from `UNREACHABLE` and
+`COMMENTARY`. The attack table in `tests/security/test_scanner_judges_what_the_app_runs.py`
+holds each route.
 
 A file that does not parse is reported as its **own** outcome
 (`Reachability.UNPARSEABLE`), distinct from both `REACHABLE` and `UNREACHABLE`, and
@@ -228,7 +251,8 @@ Each row is also the recipe for reproducing it by hand.
 | Replace `supply_chain.py::_scope_by_reachability` with the identity | the two blocked bundle shapes become uninstallable again |
 | Widen L1's `str_spans` to the whole file | `payload in a comment, which is not rescued` |
 | Clear L2's `_FileFacts.sinks` | `payload built at runtime and then executed`, and `payload passed straight to os.system` |
-| Stub L3's `_BundleReach._referenced_elsewhere` to `None` | `inert payload module that the provider imports` |
+| Stub L3's `_BundleReach._referenced_elsewhere` to `None` | `inert payload module that a sibling names in a string` |
+| Stub `_BundleReach.runtime_use` to "could not tell" (L3's runtime half) | `inert payload in the worker the platform runs by name` |
 | Clear L4's `_FileFacts.dynamic` | `inert payload module in a bundle that imports importlib` |
 | Clear L5's `_FileFacts.top_level_calls` | `inert-looking payload module that runs code on import` |
 | Report a parse failure as a parsed file with a whole-file span | the unparseable-file rail |
@@ -402,11 +426,16 @@ auditable rather than invisible. They are accepted, not unnoticed.
   a clause and tested — but "nothing in *this* bundle can reach it" is not "nothing can
   ever reach it". The counterweight is measured, not asserted: the `DANGEROUS` band is a
   literal matcher, so the same attacker already gets **`clean`** from
-  `P = "rm -" + "rf / "` and only **`warning`** from a live `os.system("rm -rf /")`. The
-  capability given up is refusing the attacker who wrote the payload plainly *and* left
-  it unreachable *and* did not obfuscate it — and even they get the finding, the rule id,
-  the evidence, and a required click. Scoping does **not** address the false-negative
-  side, and should not be read as doing so.
+  `P = "rm -" + "rf / "`. The capability given up is refusing the attacker who wrote the
+  payload plainly *and* left it unreachable *and* did not obfuscate it — and even they get
+  the finding, the rule id, the evidence, and a required click. Scoping does **not**
+  address the false-negative side, and should not be read as doing so.
+- **R trusts the runtime-use proof.** A string in a file nothing the app runs loads is
+  consentable even when that file, run by hand (the bundle's own test suite), would pass
+  it to another module's sink — and a way of loading a file the proof does not model
+  would be missed. The same counterweight applies: the plain literal is the only shape the
+  band reads at all. Each route the proof knows it cannot follow keeps the file
+  `untraceable`, and so keeps the string terminal.
 
 - **Zero-width splitting degrades `DANGEROUS` to `WARNING`.** A zero-width space
   inside `rm` defeats the destructive-root regex; the invisible-codepoint rule still

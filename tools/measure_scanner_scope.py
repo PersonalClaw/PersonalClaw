@@ -7,7 +7,7 @@ Usage::
 
 Prints, per bundle: the verdict, the finding count, how many findings are DANGEROUS, and
 then every DANGEROUS-band match the execution-reachability pass had an opinion about with
-the clause that decided it (see ``supply_chain.py``'s reachability section for L1-L5).
+the clause that decided it (see ``supply_chain.py``'s reachability section: L0-L5, R).
 
 This is the "one command per bundle" re-validation #2526 asked for: a bundle's
 installability is a number a reviewer reads off rather than takes on trust, and a
@@ -111,7 +111,9 @@ def main(argv: list[str]) -> int:
         for finding in report.findings:
             if finding.reachability is Reachability.NOT_ANALYSED:
                 continue
-            mark = "RESCORED " if finding.reachability is Reachability.UNREACHABLE else "kept     "
+            # Only a DANGEROUS-band match is analysed, so one that is no longer DANGEROUS was
+            # re-scored — by any of the proofs, commentary and "not run by the app" included.
+            mark = "RESCORED " if finding.severity is not Verdict.DANGEROUS else "kept     "
             notes.append(
                 f"  {mark} {bundle.name}/{finding.path} [{finding.rule}] "
                 f"{finding.reachability.value}: {finding.reachability_reason}"
