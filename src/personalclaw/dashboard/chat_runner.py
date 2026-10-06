@@ -17,6 +17,7 @@ from personalclaw import (
     memory_writes,
     pre_tool_hooks,
     run_bounds,
+    subagent_endings,
 )
 from personalclaw.acp import permission_authority as acp_permission_authority
 from personalclaw.acp import ungated as acp_ungated
@@ -1477,7 +1478,7 @@ def _ahead_of_the_request(read: str, message: str, sep: str = "\n\n") -> str:
     """*read* placed in front of the person's request.
 
     The request goes to the model as typed (``context._Parts``'s ``is_request``), so text read
-    from somewhere and put ahead of it — a cancelled turn read back, a subagent's failure notice,
+    from somewhere and put ahead of it — a cancelled turn read back, how the chat's helpers ended,
     an app's background context, the project's record, a loop's current phase, a hook's output —
     would reach the model unmasked. It is masked here, where it joins
     (``security.redact_for_model``).
@@ -3224,15 +3225,13 @@ async def run_chat(
                     if preamble:
                         message = _ahead_of_the_request(preamble, message)
             logger.info("Chat session=%s is_new=%s mode=%r", session.key, is_new, session.mode)
-            # Drain any pending subagent delivery failures so the LLM knows
-            # about timed-out results and can read them from disk.
-            if session._pending_subagent_failures:
-                failures = session._pending_subagent_failures[:]
-                session._pending_subagent_failures.clear()
-                _taken_once.append(
-                    _give_back_items(session, "_pending_subagent_failures", failures)
-                )
-                message = _ahead_of_the_request("\n\n".join(failures), message)
+            # How the chat's helpers ended that its agent is owed (`subagent_endings`): a report
+            # that could not be delivered, and a helper whose ending starts no turn (one whose
+            # start she declined, say). Handed to this turn, whoever started it, ahead of its
+            # message.
+            if owed := subagent_endings.take(session):
+                _taken_once.append(_give_back_items(session, subagent_endings.OWED, owed))
+                message = _ahead_of_the_request("\n\n".join(owed), message)
             # Drain pending context injections (silent background context
             # from apps/subagents).  Expired entries are discarded.
             if session._pending_context:

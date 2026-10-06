@@ -405,7 +405,7 @@ async def test_a_note_an_earlier_request_left_for_the_next_turn_is_not_handed_to
     status, _ = await w.ask(FIRST)
     assert status == 200
     note = "The subagent that read the locker log timed out; its result is in notes/run-58.md."
-    w.session()._pending_subagent_failures.append(note)
+    w.session()._owed_subagent_endings.append(note)
 
     status, second = await w.ask(SECOND)
     assert status == 200, second

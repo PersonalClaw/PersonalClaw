@@ -256,7 +256,7 @@ class _ChatSession(ChatQueue):
         "lifecycle",
         "last_activity_at",
         "never_archive",
-        "_pending_subagent_failures",
+        "_owed_subagent_endings",
         "_prompt_busy_retries",
         "_acp_pipe_death_retries",
         "_empty_response_retries",
@@ -445,7 +445,7 @@ class _ChatSession(ChatQueue):
         # `pinned` (sidebar ordering) on purpose — wanting a session at the top and
         # wanting it exempt from cleanup are different intents.
         self.never_archive: bool = False
-        self._pending_subagent_failures: list[str] = []
+        self._owed_subagent_endings: list[str] = []  # told its agent next (`subagent_endings`)
         self._prompt_busy_retries: int = 0
         self._acp_pipe_death_retries: int = 0
         self._empty_response_retries: int = 0  # consecutive empty turns (silent-retry guard)

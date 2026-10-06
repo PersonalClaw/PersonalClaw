@@ -28,8 +28,9 @@ that is decided once, for all of its tasks. The call that asked for it asks nobo
   (`workflows.private_runs`), its record and its waiting ask too
   (:func:`end_records_of_ended_chats`).
 * **A Deny ends it declined**, and an ask nobody answers ends it unstarted: nothing is run, and the
-  conversation that started it is told so (:func:`never_started`), as it is told how a batch that
-  ran ended (:func:`ending_of_run`).
+  conversation that started it is told so (:func:`never_started`) with its next turn, never as a
+  turn of its own (`subagent_endings`), where how a batch that ran ended starts one
+  (:func:`ending_of_run`).
 * **Nobody to ask, nothing started.** Where nothing lets it start on its own, a session that runs
   without asking anyone (a loop started Unattended) and a gateway with nowhere to ask are refused,
   saying why: a grant that approves calls on its own is not consent to a batch's writes.
@@ -885,7 +886,8 @@ def never_started(
     session_key: str, name: str, tasks: list[Task], *, error: str, declined: bool = False
 ) -> list[SubagentInfo]:
     """How a batch that never started ended, as the one completion its conversation reads: the
-    batch by its definition's name, its tasks by theirs, and why none of them ran."""
+    batch by its definition's name, its tasks by theirs, and why none of them ran. It never ran,
+    so it starts no turn there: its agent is told (`subagent_endings`)."""
     from personalclaw.subagent import SubagentInfo
 
     labels = "; ".join(task.label for task in tasks)
@@ -897,6 +899,7 @@ def never_started(
             done=True,
             error=error,
             declined=declined,
+            never_ran=True,
         )
     ]
 
@@ -935,12 +938,13 @@ def ending_of_run(run: WorkflowRun, status: RunStatus, *, subagents: Any = None)
         cause = str(getattr(failure, "cause_plain", "") or "")
         if state in (InstanceState.DONE, InstanceState.DEGRADED):
             info.result = str(getattr(known, "result", "") or "") or _stored(run.id, path)
-        elif state is InstanceState.DECLINED:
-            info.declined, info.error = True, cause or "its start was denied, so it never started"
+        elif state is InstanceState.DECLINED:  # her Deny of its start: it never ran
+            info.declined, info.never_ran = True, True
+            info.error = cause or "its start was denied, so it never started"
         elif state in (InstanceState.FAILED, InstanceState.CANCELLED, InstanceState.ESCALATED):
             info.error = cause or f"it {state.value}: the batch {run_ending(status)}"
         else:
-            info.error = f"it never started: the batch {run_ending(status)}"
+            info.never_ran, info.error = True, f"it never started: the batch {run_ending(status)}"
         endings.append(info)
     return endings
 

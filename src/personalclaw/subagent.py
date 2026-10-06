@@ -27,6 +27,7 @@ from personalclaw import (
     pre_tool_hooks,
     run_bounds,
     session_keys,
+    subagent_endings,
     subagent_waiting,
 )
 from personalclaw.approval_grants import ToolDecision, decision_of
@@ -195,19 +196,6 @@ def _redact(text: str) -> str:
     text, _ = redact_exfiltration_urls(text)
     text, _ = redact_credentials(text)
     return text
-
-
-_MAX_DONE_RESULT_LEN = 50_000  # cap subagent_done payload to avoid bloating WS frames
-
-
-def _done_result(text: str) -> str:
-    """Redact + cap result for inclusion in subagent_done event."""
-    if not text:
-        return ""
-    redacted = _redact(text)
-    if len(redacted) <= _MAX_DONE_RESULT_LEN:
-        return redacted
-    return "…(truncated)\n" + redacted[-_MAX_DONE_RESULT_LEN:]
 
 
 _TIMEOUT_SECS = 1800  # 30 minutes
@@ -516,6 +504,11 @@ class SubagentInfo:
     # stopped", `started_work.end_started`), or "". Its report then starts no turn where that work
     # ran: nobody stopped the work to have it taken up again. Last, as `trigger_id` is.
     starter_ended: str = ""
+    # It ended without running (its start declined, refused or unanswered): its report starts no
+    # turn, and its chat's agent is told how it ended (`subagent_endings`). Last, as above.
+    never_ran: bool = False
+    # She stopped it herself (`cancel`'s `by_you`): told the same way. Last, as above.
+    stopped_by_you: bool = False
 
 
 # Delivery callback: a BATCH of completed subagents that all share one
@@ -1004,6 +997,7 @@ class SubagentManager:
             if ran:
                 self._write_tombstone(info, "reaped")
             else:  # it was asking for its start: it leaves no record a restart could take back
+                info.never_ran = True
                 subagent_waiting.forget(agent_id)
             self._note_child_outcome(info)
         info.reaped = True
@@ -1037,17 +1031,7 @@ class SubagentManager:
         # Fire WS event immediately so Activity Viewer updates
         # before the slow _on_done path (stream_and_collect).
         info.elapsed = elapsed
-        await self._fire_event(
-            "subagent_done",
-            info,
-            {
-                "elapsed": elapsed,
-                "error": _redact(info.error) if info.error else None,
-                "task": _redact(info.task),
-                "agent": _redact(info.agent),
-                "result": _done_result(info.result),
-            },
-        )
+        await self._fire_event("subagent_done", info, subagent_endings.done_event(info))
 
         if self._on_done:
             # Reaped completions go through the SAME coalesced batch delivery,
@@ -1064,8 +1048,8 @@ class SubagentManager:
     ) -> None:
         """Notify UI and queue failure for LLM when injection times out.
 
-        Appends a synthetic error to the dashboard session (UI) and queues a
-        failure message into ``session._pending_subagent_failures`` so the LLM
+        Appends a synthetic error to the dashboard session (UI) and owes a
+        failure message to the chat's agent (``subagent_endings.owe``) so the LLM
         learns about the failure on the next ``run_chat`` turn and can read
         the result from disk if needed.
         """
@@ -1444,7 +1428,7 @@ class SubagentManager:
         fkey = _fanout_key(info)
         stop_reason = self._fanout_stops.get(fkey)
         if stop_reason:
-            info.done = True
+            info.done, info.never_ran = True, True
             info.error = f"spawn refused: {stop_reason}"
             sel().log_tool_invocation(
                 session_key=info.parent_session_key or "",
@@ -1526,7 +1510,7 @@ class SubagentManager:
                 self._spawn_with_approval(info), context=own
             )
         elif self._ctx_builder and self._ctx_builder.hooks:
-            info.done = True
+            info.done, info.never_ran = True, True
             info.error = "spawn rejected: no approval mechanism configured"
             subagent_waiting.forget(agent_id)
             self._dec_running(info)
@@ -1544,7 +1528,7 @@ class SubagentManager:
             )
             return
         else:
-            info.done = True
+            info.done, info.never_ran = True, True
             info.error = "spawn rejected: no approval mechanism configured"
             subagent_waiting.forget(agent_id)
             self._dec_running(info)
@@ -1777,7 +1761,7 @@ class SubagentManager:
         # A fan-out stopped while this spawn waited is refused, not started.
         stop_reason = self._fanout_stops.get(_fanout_key(info))
         if stop_reason:
-            info.done = True
+            info.done, info.never_ran = True, True
             info.error = f"spawn refused: {stop_reason}"
             subagent_waiting.forget(info.id)
             self._drain_queue()
@@ -1800,7 +1784,7 @@ class SubagentManager:
             decision = ToolDecision(False, "rejected", "approval_failed")
 
         if not decision:
-            info.done = True
+            info.done, info.never_ran = True, True
             info.error = spawn_refusal(decision)
             # A person's Deny, and only that: a window nobody answered, or an approval that could
             # not be asked, is not their decision.
@@ -1824,6 +1808,7 @@ class SubagentManager:
                 metadata={"subagent_id": info.id, "decided_by": decision.decided_by},
             )
             logger.info("Subagent %s spawn rejected (%s)", info.id, decision.outcome)
+            await self._fire_event("subagent_done", info, subagent_endings.done_event(info))
             if self._on_done:
                 await self._safe_announce(info)
             return
@@ -1951,21 +1936,7 @@ class SubagentManager:
                 # Fire WS event immediately so Activity Viewer updates
                 # before the slow reset + on_done path.
                 info.elapsed = time.time() - info.started
-                await self._fire_event(
-                    "subagent_done",
-                    info,
-                    {
-                        "elapsed": info.elapsed,
-                        "error": _redact(info.error) if info.error else None,
-                        "task": _redact(info.task),
-                        "agent": _redact(info.agent),
-                        "result": _done_result(info.result),
-                        # Per-child cost/tokens for the activity panel — the
-                        # figures already captured at EVENT_COMPLETE.
-                        "cost_usd": round(info.cost_usd, 6),
-                        "tokens": info.input_tokens + info.output_tokens,
-                    },
-                )
+                await self._fire_event("subagent_done", info, subagent_endings.done_event(info))
                 try:
                     self._sessions.release(session_key, cleanup=True)
                 except Exception:
@@ -2593,21 +2564,24 @@ class SubagentManager:
             model=info.model or "",
         )
 
-    async def cancel(self, agent_id: str, *, reason: str = "Cancelled by user") -> bool:
+    async def cancel(
+        self, agent_id: str, *, reason: str = "Cancelled by user", by_you: bool = False
+    ) -> bool:
         """Cancel a single subagent — running, still queued, or waiting to be approved.
 
         Returns True if found. *reason* is the error it ends with, so a subagent stopped because
-        the run that spawned it ended says that rather than claiming a user cancelled it.
+        the run that spawned it ended says that rather than claiming a user cancelled it. *by_you*
+        says she stopped it herself (``SubagentInfo.stopped_by_you``): its report starts no turn.
         """
         info = self._agents.get(agent_id)
         if not info or info.done:
             return False
-        info.cancelled = True  # an intentional stop is not a child failure
+        info.cancelled, info.stopped_by_you = True, by_you  # an intentional stop: no failure
         if info.queued:
             # Not yet started: drop it from the queue and mark done without a reap.
             self._queue = [qi for qi in self._queue if qi.id != agent_id]
             info.queued = False
-            info.done = True
+            info.done, info.never_ran = True, True
             info.error = reason
             subagent_waiting.forget(agent_id)
             return True
@@ -2654,14 +2628,17 @@ class SubagentManager:
         logger.info("Stopped %d/%d subagent(s): %s", stopped, len(victims), because)
         return stopped
 
-    async def cancel_fanout(self, fanout_key: str, *, reason: str = "") -> int:
+    async def cancel_fanout(
+        self, fanout_key: str, *, reason: str = "", by_you: bool = False
+    ) -> int:
         """Kill EVERY child (running + queued) of one parent/run — "stop this
         fan-out". Returns the number cancelled.
 
         Keyed on ``_fanout_key`` so a chat fan-out (parent session) and a workflow
         fan-out (``workflow:<run_id>``) are each addressable as a unit. Marks the
         fan-out stopped so a spawn already in flight to the queue is refused too,
-        then cancels each child concurrently. Idempotent: a second call finds
+        then cancels each child concurrently, each ending with *reason* (the run budget it ran
+        past, or her Stop fan-out, *by_you*: :meth:`cancel`). Idempotent: a second call finds
         nothing to cancel. Unlike ``cancel_all`` (the shutdown switch) this touches
         ONE fan-out and leaves other runs untouched.
         """
@@ -2675,7 +2652,11 @@ class SubagentManager:
         ]
         for info in victims:
             info.cancelled = True
-        await asyncio.gather(*(self.cancel(info.id) for info in victims), return_exceptions=True)
+        ended = {"reason": reason} if reason else {}
+        await asyncio.gather(
+            *(self.cancel(info.id, by_you=by_you, **ended) for info in victims),
+            return_exceptions=True,
+        )
         logger.info("Cancelled fan-out %s (%d child(ren))", fanout_key, len(victims))
         return len(victims)
 

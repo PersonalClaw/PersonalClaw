@@ -1483,23 +1483,24 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         reason_safe, _ = redact_exfiltration_urls(reason)
         reason_safe, _ = redact_credentials(reason_safe)
         deadline = _time.monotonic() + seconds
-        # Ping session-keepalive every 60s so the gateway's is_responsive()
-        # doesn't flag this session as stale and SIGTERM the ACP subprocess.
-        _next_ping = _time.monotonic()
         # A wait ends with its turn: one the user stops is waited on no longer, so the tool server
         # an agent CLI runs is not held for the rest of the wait, its next turn's calls behind it.
         waiting_for = _resolve_session_key()
         while True:
-            now = _time.monotonic()
-            remaining = deadline - now
+            remaining = deadline - _time.monotonic()
             if remaining <= 0:
                 break
-            if now >= _next_ping:
-                try:
-                    _post("/api/session-keepalive", {})
-                except Exception:
-                    pass  # keepalive is best-effort
-                _next_ping = now + 60.0
+            # The wait checks in every few seconds: the gateway's is_responsive() does not take the
+            # session for stuck and SIGTERM the ACP subprocess, and the answer hands the turn how
+            # the chat's helpers ended since, when its agent is owed that (one whose start she
+            # declined, say): the wait ends with it, for no report of it will come.
+            try:
+                checked_in = _post("/api/session-keepalive", {})
+            except Exception:
+                checked_in = {}  # best-effort: the wait goes on
+            endings = checked_in.get("endings") if isinstance(checked_in, dict) else None
+            if isinstance(endings, list) and endings:
+                return "\n\n".join([ENDED_WAIT, *(str(e) for e in endings)])
             _time.sleep(min(5, remaining))
             if waiting_for and _turn_reach(waiting_for)[1]:
                 return tool_failure(STOPPED_WAIT, code="turn_stopped")
@@ -2194,6 +2195,8 @@ STOPPED_CALL = (
 STOPPED_WAIT = (
     "Stopped waiting: the user stopped this turn, and PersonalClaw runs nothing more for it."
 )
+#: What a ``wait`` answers ahead of how the chat's helpers ended, when its check-in hands it that.
+ENDED_WAIT = "Stopped waiting: work this chat started has ended."
 
 
 def _turn_reach(key: str) -> tuple[str, bool]:

@@ -187,7 +187,7 @@ async def test_the_report_goes_out_wherever_the_reply_goes(home):
     _store_trigger(home)
     orch, on_done = _on_done()
     session = MagicMock(running=False, task=None, key="kitchen", mode="")
-    session._pending_subagent_failures = []
+    session._owed_subagent_endings = []
     orch.dashboard_state.get_session = MagicMock(return_value=session)
     with patch("personalclaw.gateway.run_chat", new_callable=AsyncMock):
         await on_done([_agent(parent="dashboard:kitchen")])

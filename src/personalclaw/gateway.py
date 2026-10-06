@@ -40,6 +40,7 @@ from personalclaw import (
     run_bounds,
     session_keys,
     shutdown_event,
+    subagent_endings,
     subagent_notes,
     subagent_report,
 )
@@ -288,13 +289,6 @@ def announce_axis(thread_channel: str | None) -> str:
     subagent rode.
     """
     return "" if thread_channel else "orchestration"
-
-
-def _ended_with_its_starter(member: Any) -> bool:
-    """Whether the work that started *member* ended, and ended it too
-    (``SubagentInfo.starter_ended``): its report is then handed to no turn."""
-    why = getattr(member, "starter_ended", "")
-    return isinstance(why, str) and bool(why)
 
 
 def announce_profile(parent_key: str, thread_channel: str | None) -> "SafetyProfile | None":
@@ -3858,7 +3852,7 @@ class GatewayOrchestrator:
             def _notify_all_failed(reason: str) -> None:
                 if not self.subagent_mgr:
                     return
-                for _member in batch:
+                for _member in handed:  # the reports a turn was to be handed
                     self.subagent_mgr.notify_injection_failed(_member, reason=reason)
 
             async def _inject_with_retry(
@@ -4110,18 +4104,36 @@ class GatewayOrchestrator:
                     f"{said}"
                 )
 
-            def _announce(chat: str) -> str:
+            def _announce(chat: str, members: "list[SubagentInfo]") -> str:
                 """ONE completion event covering every member, as the chat *chat* is handed it:
                 a burst of 8 completions is one turn listing all 8, rather than 8 turns serialized
                 behind the parent's Semaphore(1). Built only for a chat it is handed to, since
                 each report is kept there as it is handed on."""
-                blocks = [_one_block(m, _detail(m, chat)) for m in batch]
-                if len(batch) == 1:
+                blocks = [_one_block(m, _detail(m, chat)) for m in members]
+                if len(members) == 1:
                     return "[Subagent completion event]\n" + blocks[0]
-                n_failed = sum(1 for m in batch if subagent_notes.ended(m) == "failed")
+                n_failed = sum(1 for m in members if subagent_notes.ended(m) == "failed")
                 return (
-                    f"[Subagent completion batch — {len(batch)} agents, "
+                    f"[Subagent completion batch — {len(members)} agents, "
                     f"{n_failed} failed]\n\n" + "\n\n---\n\n".join(blocks)
+                )
+
+            # Only the report of work that ran, and that neither she nor the end of its starter
+            # stopped, starts a turn where the work was asked for (`subagent_endings`). One that
+            # never ran (her Deny of its start, a start nobody allowed, a batch that never
+            # started) or that she stopped is told to its chat's agent instead: handed to a turn,
+            # its ending set the agent to work again by itself, with nobody asking.
+            handed = [m for m in batch if subagent_endings.starts_a_turn(m)]
+            told_instead = [m for m in batch if subagent_endings.told_instead(m)]
+
+            def _told(member: "SubagentInfo") -> str:
+                """How *member* ended, as its chat's agent is told it in place of a report."""
+                m_task, _ = redact_exfiltration_urls(member.task)
+                m_task, _ = redact_credentials(m_task)
+                reason, _ = redact_exfiltration_urls(member.error)
+                reason, _ = redact_credentials(reason)
+                return "[Subagent completion event]\n" + subagent_endings.note(
+                    member, task=m_task[:100], reason=reason
                 )
 
             # The note a PERSON reads is not that event: it is named by the run and says what
@@ -4156,7 +4168,13 @@ class GatewayOrchestrator:
                 body, _ = redact_exfiltration_urls(body)
                 body, _ = redact_credentials(body)
 
-                if _injection_session and _injection_session.running:
+                # Told now, while the turn that asked may still run: the next turn that runs in
+                # the chat takes it ahead of its message, or a `wait` under way there takes it at
+                # its next check-in. Its report never waits for that turn to end, as one would.
+                if told_instead and _injection_session:
+                    subagent_endings.owe(_injection_session, [_told(m) for m in told_instead])
+
+                if handed and _injection_session and _injection_session.running:
                     # Session is busy — wait for current turn to finish,
                     # then inject. No visible queue card.
                     _current = _injection_session.task
@@ -4179,7 +4197,9 @@ class GatewayOrchestrator:
                 # the chat she stopped went on. Read after the wait above, since the Stop can come
                 # while the report waits for that very turn to end. The Stop's own record says
                 # what it reached.
-                stopped_with_its_turn = [m for m in batch if _ended_with_its_starter(m)]
+                stopped_with_its_turn = [
+                    m for m in handed if subagent_endings.ended_with_its_starter(m)
+                ]
                 if stopped_with_its_turn:
                     logger.info(
                         "Subagent(s) %s: the turn that started them was stopped, so %s takes no "
@@ -4187,14 +4207,19 @@ class GatewayOrchestrator:
                         ", ".join(m.id for m in stopped_with_its_turn),
                         _session_name,
                     )
-                    batch = [m for m in batch if not _ended_with_its_starter(m)]
-                    if not batch:
-                        return
-                    info = batch[0]
+                    handed = [m for m in handed if m not in stopped_with_its_turn]
+                if not handed:
+                    # No turn is started: the person's note still says how what was told ended.
+                    if told_instead and not told:
+                        self.dashboard_state.notify(
+                            notification_kinds.SUBAGENT, title, body, meta=notice_meta
+                        )
+                    return
+                info = handed[0]
 
                 if _injection_session:
                     # Not for a chat that is gone: its reports would be kept for a deleted chat.
-                    announce, _ = redact_exfiltration_urls(_announce(parent_key))
+                    announce, _ = redact_exfiltration_urls(_announce(parent_key, handed))
                     announce, _ = redact_credentials(announce)
 
                     # Re-check: another injection may have claimed the session
@@ -4267,16 +4292,22 @@ class GatewayOrchestrator:
                     )
                 return
 
-            if parent_key and not any(kind.names(parent_key) for kind in _NOT_ANNOUNCED_INTO):
+            # A parent nothing is handed to (`subagent_endings`) is told by the note below alone.
+            if (
+                handed
+                and parent_key
+                and not any(kind.names(parent_key) for kind in _NOT_ANNOUNCED_INTO)
+            ):
                 # Channel session — inject silently into ACP session (no visible channel message).
                 # Retry up to _MAX_INJECT_ATTEMPTS times on timeout.
                 assert self.sessions is not None
+                info = handed[0]
                 # Whose turn the announcement is (`announce_axis`): a channel thread's is a
                 # person's conversation, booked as channel spend; any other parent's is
                 # automation's, metered, and booked as background spend.
                 _thread_channel = self.sessions.get_channel(parent_key)
                 _announce_source = "channel" if _thread_channel else "background"
-                announce = _announce(parent_key)
+                announce = _announce(parent_key, handed)
                 _injected = False
                 _channel_failure_reasons: list[str] = []
                 _sleep_before_retry = False
@@ -4462,32 +4493,36 @@ class GatewayOrchestrator:
                 acquired = False
                 cron_response: str | None = None
                 try:
-                    announce = _announce(parent_key)
                     # The scheduled job's session reading its subagent's result: a supervising
                     # turn nobody typed, so it rides the orchestration axis its subagent rode —
-                    # the axis is what meters it under the daily cap.
-                    client, is_new, _resumed = await self.sessions.get_or_create(
-                        parent_key, model_axis="orchestration"
-                    )
-                    acquired = True
-                    if self.ctx_builder:
-                        from personalclaw.context_headroom import resolve_window
-
-                        msg, _ = await asyncio.to_thread(
-                            self.ctx_builder.build_message,
-                            announce,
-                            is_new,
-                            parent_key,
-                            window=await resolve_window(serving=client),
-                            # The job's own turn reads memory only where its work may.
-                            blocks_reads=not reach_of(self.dashboard_state, parent_key).reads,
+                    # the axis is what meters it under the daily cap. With nothing to hand on
+                    # (`subagent_endings`) no turn is started, but the session is still taken once
+                    # the job's own turn lets go of it, so the reset below cannot end that turn.
+                    if handed or self.sessions.has_session(parent_key):
+                        client, is_new, _resumed = await self.sessions.get_or_create(
+                            parent_key, model_axis="orchestration"
                         )
-                    else:
-                        msg = announce
-                    cron_response = await asyncio.wait_for(
-                        _inject_with_retry(client, msg, parent_key, "cron"),
-                        timeout=INJECTION_TIMEOUT,
-                    )
+                        acquired = True
+                    if handed:
+                        announce = _announce(parent_key, handed)
+                        if self.ctx_builder:
+                            from personalclaw.context_headroom import resolve_window
+
+                            msg, _ = await asyncio.to_thread(
+                                self.ctx_builder.build_message,
+                                announce,
+                                is_new,
+                                parent_key,
+                                window=await resolve_window(serving=client),
+                                # The job's own turn reads memory only where its work may.
+                                blocks_reads=not reach_of(self.dashboard_state, parent_key).reads,
+                            )
+                        else:
+                            msg = announce
+                        cron_response = await asyncio.wait_for(
+                            _inject_with_retry(client, msg, parent_key, "cron"),
+                            timeout=INJECTION_TIMEOUT,
+                        )
                 except AnnounceRefused as refused:
                     logger.warning("Subagent %s: %s", info.id, refused)
                     _notify_all_failed(str(refused))
@@ -4678,12 +4713,12 @@ class GatewayOrchestrator:
                         f"its result could not be injected into this session.",
                         "msg msg-a",
                     )
-                    # Queue failure for LLM context drain
+                    # Owed to the chat's agent with its next turn (`subagent_endings`).
                     failure_msg = extra.get("failure_msg", "")
                     if failure_msg:
                         failure_msg, _ = redact_exfiltration_urls(failure_msg)
                         failure_msg, _ = redact_credentials(failure_msg)
-                        session._pending_subagent_failures.append(failure_msg)
+                        subagent_endings.owe(session, [failure_msg])
                     self.dashboard_state.push_sessions_update()
                     logger.warning(
                         "Injected timeout error for subagent %s into session %s",

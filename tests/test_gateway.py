@@ -1482,7 +1482,7 @@ class TestSubagentDone:
         session.task = None
         session.key = "test-session"
         session.mode = ""
-        session._pending_subagent_failures = []
+        session._owed_subagent_endings = []
         orch.dashboard_state.get_session = MagicMock(return_value=session)
 
         info = MagicMock(title="", trigger_id="")
@@ -1524,7 +1524,7 @@ class TestSubagentDone:
         session.running = True
         session.key = "busy-session"
         session.mode = ""
-        session._pending_subagent_failures = []
+        session._owed_subagent_endings = []
         session.queue_append = MagicMock()
         orch.dashboard_state.get_session = MagicMock(return_value=session)
 
@@ -2699,7 +2699,7 @@ class TestSubagentEvents:
 
         session = MagicMock()
         session.append = MagicMock()
-        session._pending_subagent_failures = []
+        session._owed_subagent_endings = []
         orch.dashboard_state.get_session = MagicMock(return_value=session)
 
         info = MagicMock(title="", trigger_id="")
@@ -2714,7 +2714,7 @@ class TestSubagentEvents:
         )
 
         session.append.assert_called_once()
-        assert len(session._pending_subagent_failures) == 1
+        assert len(session._owed_subagent_endings) == 1
         orch.dashboard_state.push_sessions_update.assert_called()
 
     @pytest.mark.asyncio

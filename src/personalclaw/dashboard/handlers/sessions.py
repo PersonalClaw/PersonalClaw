@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 from aiohttp import web
 
-from personalclaw import approval_answer, session_keys
+from personalclaw import approval_answer, session_keys, subagent_endings
 from personalclaw.cancellation import cancel_and_wait
 from personalclaw.config import loader as config_loader
 from personalclaw.dashboard.state import DashboardState
@@ -476,10 +476,14 @@ async def api_approval_resolve(request: web.Request) -> web.Response:
 
 
 async def api_session_keepalive(request: web.Request) -> web.Response:
-    """POST /api/session-keepalive — refresh activity timestamp on the
-    session's provider so idle-detection/stale-checks don't SIGTERM a
-    session that's intentionally blocking in a long-running MCP tool
-    (e.g. the `wait` tool).
+    """POST /api/session-keepalive — a waiting tool's check-in, which keeps its session alive.
+
+    Sent by the `wait` tool every few seconds. It refreshes the activity timestamp on the session's
+    provider so idle-detection/stale-checks don't SIGTERM a session that's intentionally blocking
+    in a long-running MCP tool, and it hands the waiting turn how the chat's helpers ended since,
+    when its agent is owed that (``{"endings": [...]}``, ``subagent_endings``): a helper whose start
+    she declined is told at once, and the wait ends with it, rather than running out its time on a
+    report that will not come.
 
     Authenticated via X-Internal-Secret; session is selected via the
     X-Session-Key header that all MCP subprocesses already send, as the work the internal
@@ -498,7 +502,7 @@ async def api_session_keepalive(request: web.Request) -> web.Response:
     except Exception as exc:
         logger.debug("touch_activity failed for %s: %s", session_key, exc)
         return web.json_response({"error": "touch failed"}, status=500)
-    return web.json_response({"ok": True})
+    return web.json_response({"ok": True, "endings": subagent_endings.take_for(state, session_key)})
 
 
 async def api_session_tool_policy(request: web.Request) -> web.Response:

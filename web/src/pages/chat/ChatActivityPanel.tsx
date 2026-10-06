@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { unavailableWhen } from '../../ui/unavailable'
 import { fvs } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
-import { FileText, Link2, ExternalLink, MessagesSquare, ArrowUp, Loader2, Bot, Check, AlertTriangle, OctagonX } from 'lucide-react'
+import { FileText, Link2, ExternalLink, MessagesSquare, ArrowUp, Loader2, Bot, Check, AlertTriangle, OctagonX, Ban } from 'lucide-react'
 import { Markdown } from '../../ui/Markdown'
 import { Button } from '../../ui/Button'
 import { spring } from '../../design/motion'
@@ -163,25 +163,29 @@ function Empty({ icon: Icon, text }: { icon: typeof FileText; text: string }) {
 
 /** A live subagent card: agent + task, running/done/failed status, latest tool
  *  while running, and (on done) an expandable result. Driven by subagent_* WS
- *  events; the final output also posts to the transcript as a completion event. */
+ *  events; the report of one that ran also starts its turn in the chat. One that never ran (her
+ *  Deny of its start, a start nobody allowed in time) is "declined" or "not started", not failed,
+ *  and says why. */
 function SubagentRow({ sub, index = 0 }: { sub: SubagentCard; index?: number }) {
   const [open, setOpen] = useState(false)
-  const failed = sub.done && !!sub.error
-  const status = failed ? 'failed' : sub.done ? 'done' : 'running'
-  const tone = failed ? 'var(--color-danger)' : sub.done ? 'var(--color-primary)' : 'var(--color-on-surface-low)'
+  const unrun = sub.done && !!sub.neverRan
+  const failed = sub.done && !!sub.error && !unrun
+  const status = unrun ? 'unrun' : failed ? 'failed' : sub.done ? 'done' : 'running'
+  const tone = failed ? 'var(--color-danger)' : sub.done && !unrun ? 'var(--color-primary)' : 'var(--color-on-surface-low)'
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: Math.min(index * 0.03, 0.3) }}
       className="rounded-lg border border-outline-variant/50 bg-surface-high/40 px-2.5 py-2">
       <div className="flex items-center gap-2">
         <span className="shrink-0" style={{ color: tone }}>
-          {status === 'running' ? <Loader2 size={14} className="animate-spin" /> : failed ? <AlertTriangle size={14} /> : <Check size={14} />}
+          {status === 'running' ? <Loader2 size={14} className="animate-spin" /> : unrun ? <Ban size={14} /> : failed ? <AlertTriangle size={14} /> : <Check size={14} />}
         </span>
         <span className="min-w-0 flex-1">
           <span data-type="label-s" className="block truncate text-on-surface" style={fvs(500)} title={sub.task}>{sub.title || sub.task || '(task)'}</span>
           <span data-type="caption" className="block truncate text-on-surface-low">
             {sub.agent || 'subagent'}
             {sub.run ? ' · a task of a batch' : ''}
+            {unrun ? (sub.declined ? ' · declined' : ' · not started') : ''}
             {status === 'running' && sub.lastTool ? ` · ${sub.lastTool}` : ''}
             {sub.done && sub.elapsed !== undefined ? ` · ${sub.elapsed.toFixed(1)}s` : ''}
             {sub.done && sub.costUsd !== undefined && sub.costUsd > 0 ? ` · $${sub.costUsd < 0.01 ? sub.costUsd.toFixed(4) : sub.costUsd.toFixed(2)}` : ''}
@@ -190,7 +194,7 @@ function SubagentRow({ sub, index = 0 }: { sub: SubagentCard; index?: number }) 
           </span>
         </span>
       </div>
-      {failed && <div data-type="caption" className="mt-1.5 text-danger">{sub.error}</div>}
+      {(failed || unrun) && <div data-type="caption" className={`mt-1.5 ${failed ? 'text-danger' : 'text-on-surface-low'}`}>{sub.error}</div>}
       {sub.done && !failed && sub.result && (
         <div className="mt-1.5">
           <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}

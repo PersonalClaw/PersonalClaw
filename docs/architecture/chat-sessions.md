@@ -1049,6 +1049,20 @@ CLI's process stays up for the chat's next turn until it has been idle for
 (`run_processes`), so what they leave running, a server that detached itself included, ends
 when that process is taken down; a loop worker's ends with its loop.
 
+**A helper's report starts a turn only for work that ran** (`subagent_endings`). The
+report of a helper starts the chat's next turn once the turn that asked for it has
+ended, so the agent carries the work on with what the helper found, or says why it
+failed. A helper that never ran (you declined its start, nobody allowed it in time,
+PersonalClaw refused it, or none of a batch's tasks started) and one you stopped
+yourself (in the background agents list, or with Stop fan-out) start no turn: a turn
+started with that ending told the agent only that its work was not done, and it took
+the work up again by itself. Its chat's agent is told how it ended instead, ahead of
+the next message the chat runs, or at once by a `wait` under way, whose check-in
+every few seconds hands it over (`POST /api/session-keepalive`), and the chat's
+Subagents list shows it as declined or not started. A scheduled job's helper, or any
+other session's, starts no turn there either, and its note says how it ended. A
+helper the run budget stopped did run: its report starts its turn, saying so.
+
 An agent's JSON-RPC error is said in its own words — its message and data,
 masked like any child's output (`acp/errors.py`, `AcpRequestError`) — and a
 process that exits is said with its exit code and its last output. A runtime's

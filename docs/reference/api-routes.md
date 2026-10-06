@@ -888,7 +888,7 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/security/stats` | live security feature counts. |
 | `POST` | `/api/sel/rotate` | archive existing SEL log and start a fresh chain. |
 | `POST` | `/api/send-message` | deliver a message to the messaging channel and/or dashboard. |
-| `POST` | `/api/session-keepalive` | refresh activity timestamp on the |
+| `POST` | `/api/session-keepalive` | a waiting tool's check-in, which keeps its session alive. |
 | `GET` | `/api/session-tool-policy` | return managedToolPolicy for the |
 | `GET` | `/api/session/archive` | list archive files for a session key. |
 | `GET` | `/api/session/archive/{name}` | read a single archive file as JSONL text. |

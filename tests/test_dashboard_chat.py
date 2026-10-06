@@ -77,27 +77,27 @@ class TestChatSession:
         assert session.to_dict()["pending_approval"] is False
         loop.close()
 
-    def test_pending_subagent_failures_initialized_empty(self):
+    def test_owed_subagent_endings_initialized_empty(self):
         session = _ChatSession("s1")
-        assert session._pending_subagent_failures == []
+        assert session._owed_subagent_endings == []
 
-    def test_pending_subagent_failures_drain(self):
+    def test_owed_subagent_endings_drain(self):
         session = _ChatSession("s1")
-        session._pending_subagent_failures.append(
+        session._owed_subagent_endings.append(
             "[Subagent completion event]\nAgent `a1` ❌ timed out"
         )
-        session._pending_subagent_failures.append(
+        session._owed_subagent_endings.append(
             "[Subagent completion event]\nAgent `a2` ❌ timed out"
         )
         # Simulate drain logic from run_chat
-        failures = session._pending_subagent_failures[:]
-        session._pending_subagent_failures.clear()
+        failures = session._owed_subagent_endings[:]
+        session._owed_subagent_endings.clear()
         message = "\n\n".join(failures) + "\n\n" + "user message"
         assert "[Subagent completion event]" in message
         assert "Agent `a1`" in message
         assert "Agent `a2`" in message
         assert message.endswith("user message")
-        assert session._pending_subagent_failures == []
+        assert session._owed_subagent_endings == []
 
 
 @pytest.mark.asyncio

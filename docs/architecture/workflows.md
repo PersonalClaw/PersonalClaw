@@ -799,8 +799,9 @@ trigger started is reported on that trigger's route (`run_finish.report_to_its_t
 a batch a chat's agent started tells that chat instead, in one turn, how each of its tasks
 ended: its result, or why it has none (`run_finish.report_to_its_chat`, delivered the way a
 subagent's completion is), unless someone stopped it or its loop has ended
-(`batch_start.tells_its_chat`), as a stopped subagent tells nobody; a sub-run's ending is its
-parent's step. A run that completed, was
+(`batch_start.tells_its_chat`), as a stopped subagent tells nobody. A batch none of whose
+tasks ran starts no turn there: the chat's agent is told with its next turn instead
+(`subagent_endings`). A sub-run's ending is its parent's step. A run that completed, was
 cancelled or was declined raises nothing.
 
 ## Waiting on a person

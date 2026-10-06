@@ -133,7 +133,7 @@ class _FakeSession:
         self.agent = agent
         self.messages: list[dict] = []
         self._pending: list[dict] = []
-        self._pending_subagent_failures: list[str] = []
+        self._owed_subagent_endings: list[str] = []
         self._has_reader = False
         self.task = None
         self.event = asyncio.Event()
@@ -546,11 +546,11 @@ async def test_a_stand_alone_reset_lets_go_of_what_the_session_manager_holds(mon
 
     session = _FakeSession(key)
     session.append("assistant", "an earlier turn", "msg")
-    session._pending_subagent_failures.append("a note an earlier turn's subagent left")
+    session._owed_subagent_endings.append("a note an earlier turn's subagent left")
     dialect._reset_session(session, key, state)
 
     assert session.messages == [] and session._pending == []
-    assert session._pending_subagent_failures == []
+    assert session._owed_subagent_endings == []
     assert manager._session_map.get(dashboard_history_key(key)) is None
     assert manager._sessions[dashboard_history_key(key)].forgotten
     # A session the reset does not name keeps its runtime and its id.

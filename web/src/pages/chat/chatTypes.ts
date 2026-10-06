@@ -522,6 +522,10 @@ export interface SubagentCard {
   result?: string        // accumulated/final output (on done)
   costUsd?: number       // per-child cost in USD (on done)
   tokens?: number        // per-child total tokens (on done)
+  /** It ended without running: its start was declined or never allowed (`never_ran`). */
+  neverRan?: boolean
+  /** Her Deny of its start, among those (`declined`). */
+  declined?: boolean
 }
 
 // ── activity-panel derivation (Files / Links) — all client-side from turns ──

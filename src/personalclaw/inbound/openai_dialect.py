@@ -471,7 +471,7 @@ def _reset_session(session: Any, key: str, state: Any) -> None:
 
     session.messages.clear()
     session._pending.clear()
-    session._pending_subagent_failures.clear()
+    session._owed_subagent_endings.clear()
     state.sessions.forget_conversation(dashboard_history_key(key))
 
 

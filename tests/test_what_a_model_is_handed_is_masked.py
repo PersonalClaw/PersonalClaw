@@ -498,7 +498,7 @@ async def test_what_a_chat_turn_puts_ahead_of_the_request_is_masked(tmp_path, mo
     session._pending_context.append(
         {"source": "mail", "content": f"reset link token={TOKEN}", "injectedAt": _time.time()}
     )
-    session._pending_subagent_failures.append(f"a subagent failed calling with api_key={KEY}")
+    session._owed_subagent_endings.append(f"a subagent failed calling with api_key={KEY}")
     handed: list[str] = []
     client = AsyncMock()
     client.context_usage_pct = MagicMock(return_value=10.0)

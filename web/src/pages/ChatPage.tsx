@@ -79,6 +79,7 @@ import type { TurnPaste } from './chat/PasteChip'
 import { sessionTemplatePatch } from './chat/sessionTemplate'
 import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
+import { foldSubagentEvent } from './chat/subagentCards'
 import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type QuestionSegment, type ActivitySegment, type ThinkingSegment, type ErrorSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, failedStepCount, unaskedStepCount, foldStepLine, noteOf, LEDGER_ACTIVITY_KINDS, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, imageDeliveryOf, noticeSegment, ranPromptOf, replyCutOf, type ReplyCut, pastesOf, shownText, servedModelOf, lastServedModel, type ServedModel } from './chat/chatTypes'
 import { isImagePath } from './chat/imageAttachments'
 import { AttachmentChips, TurnAttachments } from './chat/AttachmentChips'
@@ -1043,9 +1044,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // names it by `steer_ts`), and whatever is left goes when the turn ends.
   const [steered, setSteered] = useState<{ text: string; ts: string }[]>([])
   // Async subagents (fire-and-forget) spawned this turn — live cards driven by
-  // the subagent_spawn / subagent_tool / subagent_done WS events. Their final
-  // output posts to the transcript as a "[Subagent completion event]" message
-  // when the parent turn finishes (backend-injected).
+  // the subagent_spawn / subagent_tool / subagent_done WS events (`foldSubagentEvent`). The
+  // report of one that ran starts its own turn once the parent turn finishes (backend-injected);
+  // one that never ran, or that she stopped, starts none, and its card is where it shows.
   const [subagents, setSubagents] = useState<SubagentCard[]>([])
   // side chat (stage 6) — isolated Q&A in the activity panel's Side tab. Each
   // entry is {q, a}; `a` streams in via the chat.side_result WS event by run_id.
@@ -1864,29 +1865,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         break
       }
       // Async subagent lifecycle (fire-and-forget). Cards live in the Activity
-      // panel's Subagents tab; the final output also posts to the transcript.
-      case 'subagent_spawn': {
-        const id = String(d.id ?? '')
-        if (!id) break
-        // A task of a batch this chat started arrives with its batch's run and its step's name.
-        const batchTask = d.run ? { run: String(d.run), title: String(d.title ?? '') } : {}
-        setSubagents((prev) => prev.some((s) => s.id === id) ? prev
-          : [...prev, { id, task: String(d.task ?? ''), agent: String(d.agent ?? ''), done: false, ...batchTask }])
+      // panel's Subagents tab (`foldSubagentEvent`), a helper that never ran among them.
+      case 'subagent_spawn':
+      case 'subagent_tool':
+      case 'subagent_done':
+        setSubagents((prev) => foldSubagentEvent(prev, m.type, d))
         break
-      }
-      case 'subagent_tool': {
-        const id = String(d.id ?? '')
-        if (id) setSubagents((prev) => prev.map((s) => s.id === id ? { ...s, lastTool: String(d.tool ?? '') } : s))
-        break
-      }
-      case 'subagent_done': {
-        const id = String(d.id ?? '')
-        if (id) setSubagents((prev) => prev.map((s) => s.id === id
-          ? { ...s, done: true, error: (d.error as string | null) ?? null, elapsed: typeof d.elapsed === 'number' ? d.elapsed : undefined, result: String(d.result ?? ''),
-              costUsd: typeof d.cost_usd === 'number' ? d.cost_usd : undefined, tokens: typeof d.tokens === 'number' ? d.tokens : undefined }
-          : s))
-        break
-      }
       // Speak (stage 4): the backend streams base64 WAV per sentence for
       // immediate playback. Queue them so sentences play in order. Every tab with this chat open
       // receives them; only the tab whose reading they are plays them.

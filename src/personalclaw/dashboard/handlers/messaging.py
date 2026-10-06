@@ -288,12 +288,14 @@ async def api_spawn_list(request: web.Request) -> web.Response:
 
 
 async def api_spawn_delete(request: web.Request) -> web.Response:
-    """DELETE /api/spawn/{agent_id} — cancel a running subagent or remove a finished one."""
+    """DELETE /api/spawn/{agent_id} — cancel a running subagent or remove a finished one.
+
+    The owner's own stop of it (``SubagentInfo.stopped_by_you``): its report starts no turn."""
     state: DashboardState = request.app["state"]
     agent_id = request.match_info["agent_id"]
     if not state.subagents or agent_id not in state.subagents._agents:
         return web.json_response({"error": "not found"}, status=404)
-    cancelled = await state.subagents.cancel(agent_id)
+    cancelled = await state.subagents.cancel(agent_id, by_you=True)
     if not cancelled:
         # Already done — just remove from list
         state.subagents._agents.pop(agent_id, None)
@@ -341,7 +343,9 @@ async def api_spawn_cancel_fanout(request: web.Request) -> web.Response:
             )
     if not fanout_key:
         return web.json_response({"error": "parent_session or parent_run is required"}, status=400)
-    cancelled = await state.subagents.cancel_fanout(fanout_key, reason="cancelled by user")
+    cancelled = await state.subagents.cancel_fanout(
+        fanout_key, reason="Cancelled by user", by_you=True
+    )
     return web.json_response({"ok": True, "cancelled": cancelled})
 
 
