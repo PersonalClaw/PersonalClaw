@@ -1486,6 +1486,9 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         # Ping session-keepalive every 60s so the gateway's is_responsive()
         # doesn't flag this session as stale and SIGTERM the ACP subprocess.
         _next_ping = _time.monotonic()
+        # A wait ends with its turn: one the user stops is waited on no longer, so the tool server
+        # an agent CLI runs is not held for the rest of the wait, its next turn's calls behind it.
+        waiting_for = _resolve_session_key()
         while True:
             now = _time.monotonic()
             remaining = deadline - now
@@ -1498,6 +1501,8 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                     pass  # keepalive is best-effort
                 _next_ping = now + 60.0
             _time.sleep(min(5, remaining))
+            if waiting_for and _turn_reach(waiting_for)[1]:
+                return tool_failure(STOPPED_WAIT, code="turn_stopped")
         from personalclaw.sel import sel
 
         sel().log_tool_invocation(
@@ -2170,8 +2175,9 @@ def _aggregated_call_tool(name: str, raw_args: dict[str, Any]) -> str:
 
 
 #: The mode the gateway answered for each session this process has served
-#: (:func:`_call_as_its_session`). A session's mode is fixed when it is created, so one answer
-#: holds for the life of the process; an answer that could not be had is not kept.
+#: (:func:`_call_as_its_session`). A session's mode is fixed when it is created, so the answer
+#: kept here is the one a call runs under when the gateway cannot be asked again; an answer that
+#: could not be had is not kept.
 _SESSION_MODES: dict[str, str] = {}
 
 #: What a call this process cannot name the chat of is answered (:func:`_call_as_its_session`).
@@ -2179,6 +2185,32 @@ UNNAMED_CALL = (
     "This call was not made: PersonalClaw's tool server could not tell which chat it is for, and "
     "it makes no call for a chat it cannot name, since the call would run as no one's work."
 )
+#: What a call made for a turn that was stopped is answered (:func:`_call_as_its_session`), and
+#: what a ``wait`` under way when it was stopped answers.
+STOPPED_CALL = (
+    "This call was not made: the user stopped this turn, and PersonalClaw runs nothing more for "
+    "a turn that was stopped. Do not make it again."
+)
+STOPPED_WAIT = (
+    "Stopped waiting: the user stopped this turn, and PersonalClaw runs nothing more for it."
+)
+
+
+def _turn_reach(key: str) -> tuple[str, bool]:
+    """What the gateway answers for the chat *key* now (``GET /api/chat/sessions/model-reach``):
+    the memory mode its calls run under, and whether its turn was stopped. A gateway that does not
+    answer leaves the mode it answered before (:data:`_SESSION_MODES`), else one that keeps
+    nothing, and no stop it never reported."""
+    from personalclaw import memory_writes
+
+    reply = _get("/api/chat/sessions/model-reach")
+    if reply.get("error"):
+        return _SESSION_MODES.get(key, memory_writes.UNREADABLE), False
+    answered = reply.get("memory_mode")
+    if isinstance(answered, str) and answered:
+        _SESSION_MODES[key] = answered
+    mode = _SESSION_MODES.get(key, memory_writes.UNREADABLE)
+    return mode, reply.get("turn_stopped") is True
 
 
 def _call_as_its_session(name: str, raw_args: dict[str, Any]) -> str:
@@ -2186,11 +2218,16 @@ def _call_as_its_session(name: str, raw_args: dict[str, Any]) -> str:
 
     An agent CLI's tools run in this process, outside the gateway, where the session scope a
     chat's turn holds (:mod:`personalclaw.memory_writes`) is empty, so an Incognito chat's request
-    for an image reached the image model from here. A call made for a session therefore asks the
+    for an image reached the image model from here. Each call made for a session therefore asks the
     gateway what that session is (``GET /api/chat/sessions/model-reach``, the answer the gateway's
     own stores give it) and runs as deriving from it when it keeps nothing: no model but its own
     reads the call's work, and the stores refuse its writes, as in the gateway. A session the
     gateway cannot answer for is taken to keep nothing.
+
+    A call made for a turn the user stopped is not made (:data:`STOPPED_CALL`): the CLI decides
+    for itself whether it heeds a stop, and one that goes on calling PersonalClaw's tools after it
+    ran each of them before this asked. The answer is the gateway's, asked at each call, since the
+    stop can come between two calls of one turn.
 
     A call this process cannot name the chat of is made nowhere (:data:`UNNAMED_CALL`), as the
     gateway refuses it too (``internal_call_names_no_work``). The chat is named to this process
@@ -2203,18 +2240,24 @@ def _call_as_its_session(name: str, raw_args: dict[str, Any]) -> str:
     egress tier here too (``net.policy.egress_policy_for_run``).
     """
     from personalclaw import memory_writes
+    from personalclaw.sel import sel
 
     key = _resolve_session_key()
     if not key:
         return tool_failure(UNNAMED_CALL, code="internal_call_names_no_work")
-    mode = _SESSION_MODES.get(key)
-    if mode is None:
-        reply = _get("/api/chat/sessions/model-reach")
-        answered = reply.get("memory_mode") if not reply.get("error") else None
-        if isinstance(answered, str) and answered:
-            mode = _SESSION_MODES[key] = answered
-        else:
-            mode = memory_writes.UNREADABLE
+    mode, stopped = _turn_reach(key)
+    if stopped:
+        sel().log_tool_invocation(
+            session_key=key,
+            source="mcp",
+            tool_name=name,
+            tool_kind="personalclaw-core",
+            tool_input=raw_args,
+            outcome="cancelled",
+            downstream_service="personalclaw-core",
+            error="the turn was stopped",
+        )
+        return tool_failure(STOPPED_CALL, code="turn_stopped")
     token = set_current_session_key(key)
     try:
         if mode == memory_writes.PERSISTENT:

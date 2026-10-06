@@ -512,6 +512,10 @@ class SubagentInfo:
     # The workflow run whose step started it, or "": a workflow it starts is held to what that run
     # may start (`workflows.automation_version.bound_for`). Last, as `trigger_id` is.
     workflow_run: str = ""
+    # Why the work that started it ended, when that ending ended it too ("its chat turn was
+    # stopped", `started_work.end_started`), or "". Its report then starts no turn where that work
+    # ran: nobody stopped the work to have it taken up again. Last, as `trigger_id` is.
+    starter_ended: str = ""
 
 
 # Delivery callback: a BATCH of completed subagents that all share one

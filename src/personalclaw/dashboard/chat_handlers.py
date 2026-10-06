@@ -916,18 +916,24 @@ async def api_chat_session_model_reach(request: web.Request) -> web.Response:
     the lasting work it is), ``{}`` when she did: the tool process holds no turn, so it asks here
     whenever who asked decides what a call does (a skill drafted, an automation made, a callback's
     record). The request runs as deriving from the session it names (``memory_write_gate``), so
-    this is the answer the gateway's own stores give.
+    this is the answer the gateway's own stores give. ``turn_stopped`` is whether the turn the
+    session runs was stopped (``SessionManager.turn_stopped``): nothing more runs for it, so the
+    call that asks is not made.
 
     Keyed off the work the request's sign-in proves (``approval_answer.work_of_request``), never off
     a path segment or a query parameter: the caller asks about the session it is. No header, or the
     dashboard's own, is no session.
     """
     from personalclaw import memory_writes
+    from personalclaw.approval_answer import work_of_request
 
+    work = work_of_request(request)
+    stopped = getattr(getattr(request.app["state"], "sessions", None), "turn_stopped", None)
     return web.json_response(
         {
             "memory_mode": memory_writes.restricted_mode() or memory_writes.PERSISTENT,
             "asked_by": memory_writes.asker(),
+            "turn_stopped": bool(work and callable(stopped) and stopped(work) is True),
         }
     )
 
@@ -1223,16 +1229,55 @@ def _stop_reach_report(session: _ChatSession) -> dict:
     return report if isinstance(report, dict) else {}
 
 
-def _resolve_stop_event(session: _ChatSession, outcome: str) -> None:
-    """Update the in-flight stop_event message in place with final state."""
-    stop_id = session._stop_event_id
-    logger.debug("_resolve_stop_event: outcome=%s stop_id=%r", outcome, stop_id)
-    if not stop_id:
-        return
-    now_ts = datetime.now(tz=timezone.utc).isoformat()
-    final_state = "stopped" if outcome == "soft" else "stop_failed_reset"
-    reached = _stop_reach_report(session)
-    found = False
+#: How a Stop's record reads once the stop is over, by what it came to
+#: (``SessionManager.stop_turn``): the agent answered it; it never did, and its process was ended;
+#: or nothing was in flight on the agent, and the turn ended where it stood (before its prompt
+#: went out, or after its answer).
+_STOP_RECORD_ENDINGS = {"soft": "stopped", "hard": "stop_failed_reset", "idle": "stopped"}
+#: The states a Stop's record holds while its stop is under way.
+_STOP_RECORD_OPEN = frozenset({"stopping", "interrupting"})
+
+
+def _open_stop_event(state: DashboardState, session: _ChatSession, opening: str) -> str:
+    """Write a Stop's record into the transcript, reading *opening* (``stopping`` or
+    ``interrupting``) until the stop is over (:func:`_close_stop_event`). Returns its id."""
+    stop_id = f"stop-{uuid.uuid4().hex}"
+    session._stop_event_id = stop_id
+    stop_data = {
+        "kind": "stop_event",
+        "id": stop_id,
+        "state": opening,
+        "outcome": None,
+        "ts_start": datetime.now(tz=timezone.utc).isoformat(),
+    }
+    # cls must be JSON-encoded so parse_cls_meta() populates meta on the wire. content mirrors the
+    # same payload so consumers that read only content still see the stop event.
+    stop_msg = json.dumps(stop_data)
+    session.append("system", stop_msg, stop_msg)
+    state.push_sessions_update()
+    return stop_id
+
+
+def _close_stop_event(
+    state: DashboardState, session: _ChatSession, stop_id: str, outcome: str
+) -> None:
+    """The Stop *stop_id* is over, having come to *outcome*: its record says how it ended, and the
+    chat no longer reads as stopping while this stop is the one it records.
+
+    Read from what the stop came to, never from the chat's stop state: the stopped turn's own end
+    sets that back as soon as its agent answers the stop, before the stop that asked hears the
+    answer, so a record closed only while the chat still read as stopping was never closed. A
+    record a later press already closed (a forced one) keeps how that press ended it."""
+    _resolve_stop_event(session, stop_id, outcome)
+    if session._stop_event_id in (stop_id, None):
+        session._stop_event_id = None
+        session._stop_state = "idle"
+    state.push_sessions_update()
+
+
+def _resolve_stop_event(session: _ChatSession, stop_id: str, outcome: str) -> None:
+    """Write how the Stop *stop_id* ended (*outcome*) into its record in the transcript, in place,
+    unless that record is already closed."""
     for msg in reversed(session.messages):
         cls_val = msg.get("cls", "")
         if not cls_val:
@@ -1245,28 +1290,27 @@ def _resolve_stop_event(session: _ChatSession, outcome: str) -> None:
             continue
         if cls_data.get("id") != stop_id:
             continue
-        cls_data["state"] = final_state
+        if cls_data.get("state") not in _STOP_RECORD_OPEN:
+            return
+        cls_data["state"] = _STOP_RECORD_ENDINGS.get(outcome, "stop_failed_reset")
         cls_data["outcome"] = outcome
-        cls_data["ts_end"] = now_ts
+        cls_data["ts_end"] = datetime.now(tz=timezone.utc).isoformat()
+        reached = _stop_reach_report(session)
         if reached:
             cls_data["reached"] = reached
         serialized = json.dumps(cls_data)
         msg["cls"] = serialized
         msg["content"] = serialized
         session._dirty = True
-        found = True
-        # Re-broadcast updated stop_event so frontend StopEventCard
-        # transitions from "stopping" → "stopped"/"stop_failed_reset".
+        # Re-broadcast the record, so every page of the chat reads how the stop ended.
         on_msg = getattr(session, "_on_message", None)
         if on_msg:
             try:
                 on_msg(session.key, msg)
             except Exception:
                 logger.debug("stop_event re-broadcast failed", exc_info=True)
-        break
-    if not found:
-        logger.debug("_resolve_stop_event: no matching message for stop_id=%s", stop_id)
-    session._stop_event_id = None
+        return
+    logger.debug("_resolve_stop_event: no record for stop %s", stop_id)
 
 
 async def api_chat_session_stop(request: web.Request) -> web.Response:
@@ -1291,22 +1335,15 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
     headless_run.end_the_runs_trust(state, session, why="its turn was stopped")
     force = request.query.get("force", "").lower() == "true"
 
-    # Force path: already soft_pending, user pressed again
+    # Force path: already soft_pending, user pressed again. It closes the record the first press
+    # opened, with how the forced stop ended.
     if session._stop_state == "soft_pending" and force:
         session._stop_state = "killing"
         state.push_sessions_update()
         logger.info("Stop (force): hard-killing session for session %s", name)
-
-        async def _on_hard_force() -> None:
-            if session._stop_state != "killing":
-                return
-            _resolve_stop_event(session, "hard")
-            session._stop_state = "idle"
-            state.push_sessions_update()
-
-        forced = await state.sessions.stop_turn(
-            _history_key_for(name), force=True, on_hard=_on_hard_force
-        )
+        stop_id = session._stop_event_id or ""
+        forced = await state.sessions.stop_turn(_history_key_for(name), force=True)
+        _close_stop_event(state, session, stop_id, forced)
         sel().log_tool_invocation(
             session_key=_history_key_for(name),
             agent=getattr(session, "agent", "") or "personalclaw",
@@ -1314,7 +1351,7 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
             tool_name="dashboard_stop",
             tool_kind="command",
             tool_input=None,
-            outcome="hard",
+            outcome=forced,
             metadata={"session": name, "force": True},
         )
         return web.json_response(
@@ -1330,51 +1367,10 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
     # First press: soft stop
     session._stop_state = "soft_pending"
     session._queue.clear()
-
-    # Insert stop_event message into transcript
-    stop_id = f"stop-{uuid.uuid4().hex}"
-    session._stop_event_id = stop_id
-    now_ts = datetime.now(tz=timezone.utc).isoformat()
-    stop_data = {
-        "kind": "stop_event",
-        "id": stop_id,
-        "state": "stopping",
-        "outcome": None,
-        "ts_start": now_ts,
-    }
-    # cls must be JSON-encoded so parse_cls_meta() populates meta on the wire.
-    # content mirrors the same payload so consumers that read only content
-    # still see the stop event.
-    stop_msg = json.dumps(stop_data)
-    session.append("system", stop_msg, stop_msg)
-    state.push_sessions_update()
+    stop_id = _open_stop_event(state, session, "stopping")
     logger.info("Stop: cooperative cancel for session %s (queue=%d)", name, len(session._queue))
-
-    async def _on_soft() -> None:
-        logger.debug(
-            "_on_soft called: stop_state=%r stop_event_id=%r",
-            session._stop_state,
-            session._stop_event_id,
-        )
-        if session._stop_state != "soft_pending":
-            logger.debug("_on_soft: state not soft_pending, bail")
-            return
-        _resolve_stop_event(session, "soft")
-        session._stop_state = "idle"
-        state.push_sessions_update()
-
-    async def _on_hard() -> None:
-        logger.debug("_on_hard called: stop_state=%r", session._stop_state)
-        if session._stop_state not in ("soft_pending", "killing"):
-            logger.debug("_on_hard: state not soft_pending/killing, bail")
-            return
-        _resolve_stop_event(session, "hard")
-        session._stop_state = "idle"
-        state.push_sessions_update()
-
-    outcome = await state.sessions.stop_turn(
-        _history_key_for(name), force=False, on_soft=_on_soft, on_hard=_on_hard
-    )
+    outcome = await state.sessions.stop_turn(_history_key_for(name), force=False)
+    _close_stop_event(state, session, stop_id, outcome)
     sel().log_tool_invocation(
         session_key=_history_key_for(name),
         agent=getattr(session, "agent", "") or "personalclaw",
@@ -1711,43 +1707,16 @@ async def api_chat_session_interrupt(request: web.Request) -> web.Response:
         state.broadcast_ws("queue_promoted", {"session": name, "queue_id": str(queue_id)})
 
     session._stop_state = "soft_pending"
-
-    stop_id = f"stop-{uuid.uuid4().hex}"
-    session._stop_event_id = stop_id
-    now_ts = datetime.now(tz=timezone.utc).isoformat()
-    stop_data = {
-        "kind": "stop_event",
-        "id": stop_id,
-        "state": "interrupting",
-        "outcome": None,
-        "ts_start": now_ts,
-    }
-    stop_msg = json.dumps(stop_data)
-    session.append("system", stop_msg, stop_msg)
-    state.push_sessions_update()
+    stop_id = _open_stop_event(state, session, "interrupting")
     logger.info(
         "Interrupt: cooperative cancel for session %s (queue=%d preserved)",
         name,
         len(session._queue),
     )
-
-    async def _on_soft() -> None:
-        if session._stop_state != "soft_pending":
-            return
-        _resolve_stop_event(session, "soft")
-        session._stop_state = "idle"
-        state.push_sessions_update()
-
-    async def _on_hard() -> None:
-        if session._stop_state not in ("soft_pending", "killing"):
-            return
-        _resolve_stop_event(session, "hard")
-        session._stop_state = "idle"
-        state.push_sessions_update()
-
     outcome = await state.sessions.stop_turn(
-        _history_key_for(name), force=False, preserve_queue=True, on_soft=_on_soft, on_hard=_on_hard
+        _history_key_for(name), force=False, preserve_queue=True
     )
+    _close_stop_event(state, session, stop_id, outcome)
     sel().log_tool_invocation(
         session_key=_history_key_for(name),
         agent=getattr(session, "agent", "") or "personalclaw",

@@ -367,7 +367,6 @@ _NO_FAMILY: dict[str, tuple[str, ...]] = {
         "degraded",
         "downgraded",
         "halted_on_budget",
-        "hard",
         "interrupted",
         "narrowed",
         "open",

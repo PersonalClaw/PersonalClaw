@@ -8,6 +8,7 @@ queue_id promotes a message to the front (id-preserving).
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock
 
 import pytest
@@ -58,8 +59,13 @@ async def test_interrupt_preserves_queue(tmp_path) -> None:
         assert state.sessions.stop_turn.call_args.kwargs["preserve_queue"] is True
         # Queue NOT cleared.
         assert len(session._queue) == 1
-        # An "interrupting" stop_event was appended.
-        assert any('"interrupting"' in m.get("content", "") for m in session.messages)
+        # The interrupt's stop_event was appended, and once the stop is over it says how it ended.
+        records = [
+            json.loads(m["content"])
+            for m in session.messages
+            if '"stop_event"' in m.get("content", "")
+        ]
+        assert [(r["state"], r["outcome"]) for r in records] == [("stopped", "soft")]
     finally:
         await client.close()
 

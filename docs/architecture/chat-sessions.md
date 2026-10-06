@@ -240,9 +240,10 @@ chat, channel thread, loop worker, webhook, subagent).
     variable reaches, so that server runs each call as the chat it serves
     (`mcp_core._call_as_its_session`): it asks the gateway what the calling
     session is (`GET /api/chat/sessions/model-reach`, answered under the same
-    scope the gateway's stores use), once per session, and runs the call as
+    scope the gateway's stores use), at each call, and runs the call as
     deriving from it when it keeps nothing; a session the gateway cannot answer
-    for is taken to keep nothing. What the person gives such a chat in a form
+    for is taken to keep nothing. The same answer says whether the session's turn
+    was stopped, and a call made for a stopped turn is not made. What the person gives such a chat in a form
     its model cannot read is the one exception, and the chat's notice says so: a
     file they attach, read for its text, and a screen they share, described, are
     read by the models set up for them (`reading_their_input`, which changes only
@@ -988,7 +989,19 @@ CLI's call names every answer the agent offered (`offered`), beside the one sent
 A **Stop** sends `session/cancel`, answers a pending approval `cancelled`, and
 waits for the agent's answer (`agent.soft_stop_budget_secs`). An agent that
 answers keeps its process for the chat's next turn; one that does not is killed,
-and nothing starts in its place until a turn needs one. Between turns an agent
+and nothing starts in its place until a turn needs one. The agent hears of the
+Stop before anything answers on its behalf, so the approval the Stop ends is never
+read as your Deny and the turn is not carried on. From the press until a turn next
+takes the session, nothing more runs for the stopped turn
+(`SessionManager.turn_stopped`): a call its agent CLI still makes of PersonalClaw's
+tools is answered as not made, and a `wait` under way ends. What the turn started
+ends with it (`started_work`) and hands its report to no turn
+(`SubagentInfo.starter_ended`), where a stopped helper's report used to start the
+chat's next turn and the agent took the work up again. A Stop that lands while the
+turn is being put together ends it before its prompt goes out. Each Stop's record
+in the transcript (`stop_event`) says how it ended: `stopped` when the agent
+answered it or nothing was in flight on the agent, `stop_failed_reset` when its
+process had to be ended. Between turns an agent
 CLI's process stays up for the chat's next turn until it has been idle for
 `session.timeout_secs`. What its commands start inherits the process's own run marker
 (`run_processes`), so what they leave running, a server that detached itself included, ends

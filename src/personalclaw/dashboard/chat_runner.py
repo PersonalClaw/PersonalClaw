@@ -3618,7 +3618,7 @@ async def run_chat(
         if _prov_id.startswith("acp:"):
             _acp_cli = _prov_id[4:]
         _turn_agent = turn_endings.serving_agent_name(client)
-        running_turn.end_if_moved(session)  # nothing awaits from here to the runtime's prompt
+        running_turn.end_if_stopped_or_moved(session)  # nothing awaits from here to the prompt
         _turn_events = spent_rows(event_stream, recorder(client, chat_usage(session)))
         async for event in _turn_events:
             # Security: tool_call_id originates from LLM — redact before any use
@@ -5340,8 +5340,9 @@ async def run_chat(
     # so the partial answer the user was reading is kept, and sits ahead of the error that
     # explains why it stops.
     except asyncio.CancelledError:
-        # A force stop can cancel the task before the provider reports a stop reason, and a move
-        # before the prompt went out ends it here too (`running_turn.TurnMoved`).
+        # A force stop can cancel the task before the provider reports a stop reason, and a Stop
+        # or a move before the prompt went out ends it here too
+        # (`running_turn.TurnEndedBeforeItsPrompt`).
         _turn_cancelled = True
         if assistant_text:
             _flush_segment(state, session, assistant_text, broadcast=False)

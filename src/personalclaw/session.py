@@ -462,6 +462,9 @@ class SessionManager:
         # same reason as `_stop_children`: it depends on this class, not the other way round.
         # Returns how many were ended.
         self._on_turn_stop: Callable[[str], int] | None = None
+        # The sessions whose turn was stopped (`stop_turn`) and that no turn has taken since
+        # (`get_or_create`): nothing more runs for such a turn (`turn_stopped`).
+        self._stopped_turns: set[str] = set()
         self._pool_started = False
         self._session_map = SessionMap()
         # Which chats exist, asked at each sweep (`register_dashboard_sessions`). None until the
@@ -996,7 +999,8 @@ class SessionManager:
         For new sessions, tries the warm pool first for instant startup.
         If the session is being restarted at the context threshold, creates a fresh one.
         Acquires the per-session semaphore before returning — caller MUST
-        call ``release(key)`` when done.
+        call ``release(key)`` when done. That permit is a new turn's, so a Stop of the turn before
+        it no longer holds once it is returned (:meth:`turn_stopped`).
 
         Args:
             agent: Optional agent name for ``session/set_mode``.  Non-default
@@ -1078,6 +1082,7 @@ class SessionManager:
                 raise
             stale = _rebuild_reason(sess, extra_factory_kwargs)
             if not stale:
+                self._stopped_turns.discard(key)
                 return provider, was_new, False
             # The agent was edited while this runtime was cached, or what its model was resolved
             # from moved (a rebind in Settings → Models, an edit or removal of the instance it
@@ -1318,10 +1323,12 @@ class SessionManager:
         # lock (it may be mid-turn) so we never block other get_or_create callers.
         if race_loser is not None:
             await race_loser.semaphore.acquire()
+            self._stopped_turns.discard(key)
             return race_loser.provider, False, False
 
         if registered:
             _record_runner_lease(str(extra_factory_kwargs.get("provider_kind") or ""), key)
+        self._stopped_turns.discard(key)
         return result
 
     async def reset(self, key: str) -> None:
@@ -1964,6 +1971,12 @@ class SessionManager:
         logger.info("Cancelled in-flight operation for %s: %s", key, outcome)
         return outcome
 
+    def turn_stopped(self, key: str) -> bool:
+        """Whether the turn of *key* was stopped (:meth:`stop_turn`) and no turn has taken the
+        session since (:meth:`get_or_create`). Nothing more runs for such a turn: a call its agent
+        CLI still makes of PersonalClaw's tools is answered as not made (``mcp_core``)."""
+        return key in self._stopped_turns
+
     def register_child_stopper(self, stopper: Callable[[str], Awaitable[int]]) -> None:
         """Register the callback :meth:`stop_turn` uses to end what a session's turn started."""
         self._stop_children = stopper
@@ -2018,13 +2031,15 @@ class SessionManager:
         """Cooperative stop with kill fallback.
 
         Sequence:
-          1. clear_queue(key)  — unless preserve_queue (the /interrupt path)
-          2. if force: go straight to hard kill
-          3. else: send session/cancel, wait up to budget
+          1. nothing more runs for the turn (:meth:`turn_stopped`)
+          2. clear_queue(key)  — unless preserve_queue (the /interrupt path)
+          3. if force: end the turn's approvals and what it started, then hard kill
+          4. else: send session/cancel; its approvals and what it started end once the
+             runtime has heard of the stop, while the cancel waits up to budget
              - acked → call on_soft hook → return "soft"
              - timeout/error → fall through to hard kill
              - no_turn → return "idle"
-          4. hard kill: reset(key) → on_hard → "hard"
+          5. hard kill: reset(key) → on_hard → "hard"
 
         The runner a session keeps between turns (an agent CLI's process) survives a soft stop:
         the agent acknowledged the cancel, so the session's next turn reuses it. A hard stop
@@ -2037,30 +2052,46 @@ class SessionManager:
         run_chat finally-block dequeue immediately picks up the next queued
         message. ``/stop`` keeps the default (clears the queue).
         """
-        # A turn parked on an approval is waiting on a future, not on the provider, so the
-        # provider's cancel below is acknowledged while the turn stays parked — and its approval
-        # stayed listed everywhere, answerable, resuming a turn the user had stopped. Ending the
-        # approvals FIRST wakes the turn with a refusal, so it leaves through the same path any
-        # refused call takes. First of all, so it holds even when no provider is registered.
-        self._end_turn_approvals(key)
+        # Before anything else: from here nothing more runs for this turn (`turn_stopped`), so a
+        # call its agent makes while the stop is under way is refused rather than run.
+        self._stopped_turns.add(key)
         session = self._sessions.get(key)
         if not session:
+            # No runtime to tell, so its approvals end at once (see below for why they end).
+            self._end_turn_approvals(key)
             return "idle"
 
         if not preserve_queue:
             self.clear_queue(key)
-        # Spawned subagents and batch runs are WORK this turn started, so a stop reaches them
-        # too. Before this, stopping a turn that had fanned out left every child
-        # running: they kept burning tokens, kept holding their worktrees, and later
-        # delivered results into a session the user had already stopped. Runs BEFORE
-        # provider.cancel so the children are dying while the parent's soft-stop budget
-        # is spending, not after it.
-        await self._stop_spawned_children(key)
+        # The order of what follows is the stop's, step for step:
+        #
+        # 1. The runtime hears of the stop first: the first step of `provider.cancel` below marks
+        #    its turn stopped before it waits for anything. The approvals the turn waits on, ended
+        #    next, wake it with a refusal, and an agent CLI told nothing yet read that refusal as
+        #    her Deny: one whose refusal ends its turn was carried on, a prompt sent after her Stop.
+        # 2. Then the turn's approvals end. A turn parked on an approval is waiting on a future, not
+        #    on the provider, so the provider's cancel is acknowledged while the turn stays parked —
+        #    and its approval stayed listed everywhere, answerable, resuming a turn the user had
+        #    stopped. Ending them wakes the turn, which leaves through the path any refused call
+        #    takes.
+        # 3. Then what the turn started is ended: its spawned subagents and batch runs are WORK it
+        #    started, so a stop reaches them too. Before this, stopping a turn that had fanned out
+        #    left every child running: they kept burning tokens, kept holding their worktrees, and
+        #    later delivered results into a session the user had already stopped. What it started
+        #    is read from the turn's record, and is told the turn was stopped (`started_work`),
+        #    before the turn the approvals woke can end and take its record with it.
+        #
+        # Steps 2 and 3 are queued now and run as soon as step 1 has done its part, in that order
+        # and before the woken turn takes another step; the children then die beside the
+        # provider's soft-stop budget rather than ahead of it.
+        asyncio.get_running_loop().call_soon(self._end_turn_approvals, key)
+        children = asyncio.ensure_future(self._stop_spawned_children(key))
         budget: float = self._cfg.agent.soft_stop_budget_secs
 
         if not force:
             outcome = await session.provider.cancel(wait_ack_timeout=budget)
             logger.debug("stop_turn: provider.cancel outcome=%r for %s", outcome, key)
+            await children
             if outcome == "acked":
                 # ACP agent discards cancelled turns from its conversation log,
                 # so the next prompt must re-inject the cancelled turn context — but only
@@ -2079,6 +2110,7 @@ class SessionManager:
                 return "idle"
             # timeout or error → escalate to hard kill
 
+        await children
         await self.reset(key)
         if on_hard:
             try:

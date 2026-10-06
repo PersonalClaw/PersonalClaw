@@ -290,6 +290,13 @@ def announce_axis(thread_channel: str | None) -> str:
     return "" if thread_channel else "orchestration"
 
 
+def _ended_with_its_starter(member: Any) -> bool:
+    """Whether the work that started *member* ended, and ended it too
+    (``SubagentInfo.starter_ended``): its report is then handed to no turn."""
+    why = getattr(member, "starter_ended", "")
+    return isinstance(why, str) and bool(why)
+
+
 def announce_profile(parent_key: str, thread_channel: str | None) -> "SafetyProfile | None":
     """The profile whose tool grants a finished subagent's announce turn is held to, or ``None``.
 
@@ -4146,49 +4153,68 @@ class GatewayOrchestrator:
                 body, _ = redact_exfiltration_urls(body)
                 body, _ = redact_credentials(body)
 
+                if _injection_session and _injection_session.running:
+                    # Session is busy — wait for current turn to finish,
+                    # then inject. No visible queue card.
+                    _current = _injection_session.task
+                    if _current is not None:
+                        try:
+                            await asyncio.wait_for(
+                                asyncio.shield(_current),
+                                timeout=INJECTION_TIMEOUT,
+                            )
+                        except asyncio.TimeoutError:
+                            pass  # Timed out waiting — session still busy, will be queued below
+                        except asyncio.CancelledError:
+                            raise  # Don't swallow cancellation of this coroutine
+                        except Exception:
+                            pass  # Task failed — session is now idle
+
+                # What the Stop of the turn that started a member ended, or found already ended,
+                # hands its report to nobody (`SubagentInfo.starter_ended`): a turn started with it
+                # tells the agent its work was cut off, and the agent takes the work up again, so
+                # the chat she stopped went on. Read after the wait above, since the Stop can come
+                # while the report waits for that very turn to end. The Stop's own record says
+                # what it reached.
+                stopped_with_its_turn = [m for m in batch if _ended_with_its_starter(m)]
+                if stopped_with_its_turn:
+                    logger.info(
+                        "Subagent(s) %s: the turn that started them was stopped, so %s takes no "
+                        "turn for their report",
+                        ", ".join(m.id for m in stopped_with_its_turn),
+                        _session_name,
+                    )
+                    batch = [m for m in batch if not _ended_with_its_starter(m)]
+                    if not batch:
+                        return
+                    info = batch[0]
+
                 if _injection_session:
                     # Not for a chat that is gone: its reports would be kept for a deleted chat.
                     announce, _ = redact_exfiltration_urls(_announce(parent_key))
                     announce, _ = redact_credentials(announce)
 
+                    # Re-check: another injection may have claimed the session
+                    # during the await above.
                     if _injection_session.running:
-                        # Session is busy — wait for current turn to finish,
-                        # then inject. No visible queue card.
-                        _current = _injection_session.task
-                        if _current is not None:
-                            try:
-                                await asyncio.wait_for(
-                                    asyncio.shield(_current),
-                                    timeout=INJECTION_TIMEOUT,
-                                )
-                            except asyncio.TimeoutError:
-                                pass  # Timed out waiting — session still busy, will be queued below
-                            except asyncio.CancelledError:
-                                raise  # Don't swallow cancellation of this coroutine
-                            except Exception:
-                                pass  # Task failed — session is now idle
-
-                        # Re-check: another injection may have claimed the session
-                        # during the await above.
-                        if _injection_session.running:
-                            logger.info(
-                                "Subagent %s: session %s claimed by another injection, queuing",
-                                info.id,
-                                _session_name,
+                        logger.info(
+                            "Subagent %s: session %s claimed by another injection, queuing",
+                            info.id,
+                            _session_name,
+                        )
+                        # Bounded by CHAT_TURN_TIMEOUT (~600s): run_chat's
+                        # finally block drains session._queue on any exit path.
+                        _injection_session.queue_append(announce, asked_for_by=asked)
+                        self.dashboard_state.push_sessions_update()
+                        logger.info("Subagent %s → queued in %s", info.id, _session_name)
+                        if not told:
+                            self.dashboard_state.notify(
+                                notification_kinds.SUBAGENT,
+                                title,
+                                body,
+                                meta=notice_meta,
                             )
-                            # Bounded by CHAT_TURN_TIMEOUT (~600s): run_chat's
-                            # finally block drains session._queue on any exit path.
-                            _injection_session.queue_append(announce, asked_for_by=asked)
-                            self.dashboard_state.push_sessions_update()
-                            logger.info("Subagent %s → queued in %s", info.id, _session_name)
-                            if not told:
-                                self.dashboard_state.notify(
-                                    notification_kinds.SUBAGENT,
-                                    title,
-                                    body,
-                                    meta=notice_meta,
-                                )
-                            return
+                        return
 
                     # Session is idle — start run_chat.
                     _task = asyncio.create_task(

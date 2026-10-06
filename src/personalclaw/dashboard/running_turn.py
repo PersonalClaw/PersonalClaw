@@ -129,9 +129,9 @@ async def move_to_agent(state: DashboardState, session: _ChatSession, agent_name
     return await rebind(state, session, to_agent(session, agent_name))
 
 
-class TurnMoved(asyncio.CancelledError):
-    """The turn was moved to another runtime before its prompt went out: it asks nothing, and
-    ends the way a turn cancelled before its runtime reported a stop reason ends."""
+class TurnEndedBeforeItsPrompt(asyncio.CancelledError):
+    """The turn was stopped, or moved to another runtime, before its prompt went out: it asks
+    nothing, and ends the way a turn cancelled before its runtime reported a stop reason ends."""
 
 
 def set_steer_drains(
@@ -282,11 +282,12 @@ def end_steers(
         )
 
 
-def end_if_moved(session: _ChatSession) -> None:
-    """Called the moment before a turn's prompt goes out. A move that landed while the turn was
-    being put together found nothing on the runtime to stop, so the turn ends here."""
-    if session._rebinding is not None:
-        raise TurnMoved
+def end_if_stopped_or_moved(session: _ChatSession) -> None:
+    """Called the moment before a turn's prompt goes out. A Stop or a move that landed while the
+    turn was being put together found nothing on the runtime to stop, so the turn ends here,
+    where its prompt used to go out after her Stop and be answered."""
+    if session._rebinding is not None or session._stop_asked:
+        raise TurnEndedBeforeItsPrompt
 
 
 async def rebind(state: DashboardState, session: _ChatSession, change: Rebinding) -> bool:
@@ -311,7 +312,7 @@ async def rebind(state: DashboardState, session: _ChatSession, change: Rebinding
     outcome = await state.sessions.stop_turn(key, force=False, preserve_queue=True)
     if outcome == "idle" and session._stop_state == "idle":
         # Nothing was in flight on the runtime: the turn is before its prompt (it ends there,
-        # `end_if_moved`) or past its answer (which stands), and no stop was made of it.
+        # `end_if_stopped_or_moved`) or past its answer (which stands), and no stop was made of it.
         session._stop_asked = False
     sel().log_tool_invocation(
         session_key=key,

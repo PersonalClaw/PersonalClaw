@@ -58,18 +58,34 @@ In both of those, a prompt that follows a refused one is answered without the co
     asks nothing and writes the file at once, as an agent CLI in that mode does. Each write is
     recorded as a ``wrote`` line.
 
+Two scenarios call PersonalClaw's own tools the way an agent CLI does: through the
+``personalclaw-core`` tool server the client declared in ``session/new``, started from that
+declaration (its command, arguments and environment) and spoken to over stdio, each call reported
+to the client as a call the CLI's own settings let run, asking nobody. Each turn saves a note first
+(``skill_remember`` titled :data:`NOTED_BEFORE`), says :data:`SAVED`, and waits.
+
+``keeps-calling-after-stop``
+    Ignores ``session/cancel``: it goes on calling the tool server, one call per title in
+    :data:`TRIED_AFTER`, and never answers the prompt. Only killing it ends the turn.
+``stops-then-calls``
+    Answers ``session/cancel`` by ending the turn (``stopReason: cancelled``), then still makes
+    the call it had on its way (:data:`TRIED_AFTER`'s first title).
+
+Each answer the tool server gives is recorded as a ``tool_answer`` line.
+
 Every scenario advertises ``loadSession`` and answers ``session/load``, so a resume of a session
 it served is recorded like any other request.
 
 Standard library only. Nothing outside its arguments is read or written (the record file, and
 the file ``writes-a-file`` writes when it may), but the one file ``edits`` edits in the folder it
-was started in.
+was started in, and what the tool server it starts writes for the calls it makes.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import time
 
@@ -100,6 +116,14 @@ WROTE = "I saved the pantry list."
 DID_NOT_WRITE = "I was not allowed to save the pantry list, so I wrote nothing."
 #: The modes in which ``writes-a-file`` approves its own calls, as an agent CLI does in them.
 SELF_APPROVING_MODES = frozenset({"bypassPermissions", "acceptEdits", "dontAsk"})
+#: The tool the scenarios that call PersonalClaw's tools call, the note each call saves under its
+#: title, the title of the note a turn saves first, what the turn says once it has, and the titles
+#: of the notes it tries to save after a ``session/cancel``.
+CORE_TOOL = "skill_remember"
+NOTE_BODY = "Read the changelog before the commit message."
+NOTED_BEFORE = "Noted before the stop"
+SAVED = "I saved a note and I am reading the commit."
+TRIED_AFTER = ("Noted after the stop one", "Noted after the stop two", "Noted after the stop three")
 
 _OPTIONS = {
     "deny-continues": [
@@ -138,6 +162,8 @@ ANSWER_WITHOUT_THE_COMMAND = (
 )
 #: What an agent whose turn a refusal ended answers the prompt that follows.
 ANSWER_AFTER_CARRY_ON = "Without git show I read the commit message only: it is a version bump."
+#: The scenarios that call PersonalClaw's own tools through the declared tool server.
+_CALLS_CORE_TOOLS = frozenset({"keeps-calling-after-stop", "stops-then-calls"})
 
 
 class Agent:
@@ -153,6 +179,12 @@ class Agent:
         self.refused = False
         #: The permission mode the client set (``session/set_config_option``, ``configId: mode``).
         self.mode = ""
+        #: The tool servers the client declared in ``session/new``, the one started from them, the
+        #: requests made of it and the calls reported to the client.
+        self.declared_servers: list[dict] = []
+        self.tool_server: subprocess.Popen | None = None
+        self.tool_requests = 0
+        self.tool_calls = 0
         self.log("spawn")
 
     def log(self, kind: str, **fields: object) -> None:
@@ -308,6 +340,81 @@ class Agent:
         self.say(DID_NOT_WRITE)
         self.end_turn("end_turn")
 
+    # ── PersonalClaw's own tools, through the tool server the client declared ─────────────
+    def ask_tool_server(self, method: str, params: dict) -> dict:
+        """One request to the declared ``personalclaw-core`` server, started on first use as an
+        agent CLI starts it: its declared command and arguments, with its declared environment
+        over this process's own. Returns the request's ``result``."""
+        if self.tool_server is None:
+            (server,) = [s for s in self.declared_servers if s.get("name") == "personalclaw-core"]
+            env = {**os.environ, **{e["name"]: e["value"] for e in server.get("env", [])}}
+            log = open(self.record.name + ".tool-server.log", "a", encoding="utf-8")  # noqa: SIM115
+            self.tool_server = subprocess.Popen(
+                [server["command"], *server.get("args", [])],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=log,
+                env=env,
+                text=True,
+            )
+            self.ask_tool_server("initialize", {})
+        assert self.tool_server.stdin is not None and self.tool_server.stdout is not None
+        self.tool_requests += 1
+        request_id = self.tool_requests
+        message = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
+        self.tool_server.stdin.write(json.dumps(message) + "\n")
+        self.tool_server.stdin.flush()
+        for line in iter(self.tool_server.stdout.readline, ""):
+            try:
+                reply = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(reply, dict) and reply.get("id") == request_id:
+                return reply.get("result") or {}
+        return {"isError": True, "content": [{"type": "text", "text": "the tool server exited"}]}
+
+    def call_core_tool(self, title: str) -> None:
+        """Save the note *title* through the tool server, reported to the client as an agent CLI
+        reports a call its own settings let run: the call, then how it ended, asking nobody."""
+        self.tool_calls += 1
+        call_id = f"core-call-{self.tool_calls}"
+        arguments = {"title": title, "body": NOTE_BODY}
+        self.update(
+            {
+                "sessionUpdate": "tool_call",
+                "toolCallId": call_id,
+                "title": CORE_TOOL,
+                "kind": "other",
+                "status": "in_progress",
+                "rawInput": arguments,
+            }
+        )
+        result = self.ask_tool_server("tools/call", {"name": CORE_TOOL, "arguments": arguments})
+        text = " ".join(part.get("text", "") for part in result.get("content") or [])
+        refused = bool(result.get("isError"))
+        self.log("tool_answer", title=title, refused=refused, text=text)
+        self.update(
+            {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": call_id,
+                "status": "failed" if refused else "completed",
+                "content": [{"type": "content", "content": {"type": "text", "text": text}}],
+            }
+        )
+
+    def note_and_wait(self, request_id: object) -> None:
+        self.prompt_id = request_id
+        self.call_core_tool(NOTED_BEFORE)
+        self.say(SAVED)
+
+    def cancelled_while_noting(self) -> None:
+        if self.scenario == "keeps-calling-after-stop":
+            for title in TRIED_AFTER:
+                self.call_core_tool(title)
+            return
+        self.end_turn("cancelled")
+        self.call_core_tool(TRIED_AFTER[0])
+
     def permission_answered(self, result: dict) -> None:
         outcome = (result or {}).get("outcome") or {}
         chosen = outcome.get("optionId", "")
@@ -377,7 +484,12 @@ class Agent:
             self.send({"id": req_id, "error": error})
             sys.exit(64)
         elif method == "session/new":
+            self.declared_servers = list(params.get("mcpServers") or [])
             self.send({"id": req_id, "result": {"sessionId": SESSION_ID}})
+        elif method == "session/prompt" and self.scenario in _CALLS_CORE_TOOLS:
+            self.note_and_wait(req_id)
+        elif method == "session/cancel" and self.scenario in _CALLS_CORE_TOOLS:
+            self.cancelled_while_noting()
         elif method == "session/prompt" and self.scenario == "dies-mid-turn":
             self.update(
                 {

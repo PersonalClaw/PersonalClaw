@@ -2915,6 +2915,13 @@
      {"annotation": "Callable[[], Awaitable[None]] | None", "default": "None", "kind": "keyword_only", "name": "on_hard"}
     ],
     "returns": "Literal['soft', 'hard', 'idle']"
+   },
+   "turn_stopped": {
+    "kind": "method",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "key"}
+    ],
+    "returns": "bool"
    }
   }
  },
@@ -3358,7 +3365,8 @@
     {"annotation": "list[dict[str, Any]]", "default": "<factory>", "kind": "positional_or_keyword", "name": "declined_calls"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "project_id"},
     {"annotation": "bool", "default": "True", "kind": "positional_or_keyword", "name": "priced"},
-    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "workflow_run"}
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "workflow_run"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "starter_ended"}
    ],
    "returns": "None"
   },

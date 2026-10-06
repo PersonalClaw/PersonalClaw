@@ -593,7 +593,7 @@ def test_an_agent_clis_image_tool_says_it_cannot_run_in_an_incognito_chat(monkey
 
     images = _Images()
     monkeypatch.setattr("personalclaw.image_gen.registry.active_image_gen", lambda: (images, "i1"))
-    asked = _tool_process(monkeypatch, INCOGNITO, [{"memory_mode": "incognito"}])
+    asked = _tool_process(monkeypatch, INCOGNITO, [{"memory_mode": "incognito"}] * 2)
 
     def _dispatch(name: str, args: dict[str, Any]) -> str:
         # What the server's dispatch reaches for this tool, with the tool's own audit.
@@ -609,7 +609,8 @@ def test_an_agent_clis_image_tool_says_it_cannot_run_in_an_incognito_chat(monkey
         "This chat is Incognito, so nothing from it is sent to any model but the one it runs on: "
         "cloud-images:i1 was not asked." in first
     ), first
-    assert asked == ["/api/chat/sessions/model-reach"], "the chat's mode is asked once"
+    # Each call asks, since the chat's turn can be stopped between two of its calls.
+    assert asked == ["/api/chat/sessions/model-reach"] * 2
 
 
 def test_an_agent_clis_tools_for_a_normal_chat_run_as_before(monkeypatch):

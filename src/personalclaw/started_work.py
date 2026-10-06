@@ -6,7 +6,8 @@ task runs as a background subagent. Each records the session it was started from
 ``origin.session_key`` (the call's session header, ``workflows.service.start_run``), the subagent
 its ``parent_session_key``. That is the link, and one rule holds over it: when what started the work
 ends, the work ends with it, saying why. Nothing would read what it found, and asking her to allow
-its steps would start agents for work that is over.
+its steps would start agents for work that is over; nor does its report start a turn where that
+work ran (``SubagentInfo.starter_ended``), which would take the work up again.
 
 * A loop's ending ends what its workers started (``loop.children.end_children``).
 * A turn's Stop ends what the turn started (:func:`end_turn`, which the dashboard state hands
@@ -110,6 +111,13 @@ async def end_started(
         if not more:
             break
         started.update(more)
+    # Each one, finished or not, hands its report to no turn from here: one stopped below would
+    # otherwise be handed back as a turn that tells the agent its work was cut off, which the agent
+    # takes up again, and one that finished just before has its report waiting for the turn that
+    # is ending, to start the next (`gateway._subagent_done`). Before any is stopped, so the
+    # report each stop sends finds it said.
+    for info in started.values():
+        info.starter_ended = clause
     runs = 0
     steps = 0
     for run in store.active_runs():
