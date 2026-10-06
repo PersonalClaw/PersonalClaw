@@ -1875,8 +1875,8 @@ export type ScheduleExecMode = 'agent' | 'script' | 'command' | 'other'
 export interface ScheduleJob {
   id: string; name: string; message: string; enabled: boolean
   // attribution — see the same pair on `Trigger`. A schedule row is served by the same
-  // store, so it carries the same verdict.
-  author?: string; read_only?: boolean
+  // store, so it carries the same verdict, and the same `served_by`.
+  author?: string; read_only?: boolean; served_by?: string
   // Brought over from an older version and not switched on by the owner yet — see `Trigger`.
   needs_review?: boolean
   // What it is not allowed to use — see `Trigger`.
@@ -3308,6 +3308,10 @@ export interface Trigger {
   // path uses — the page must not re-derive it from `author`, or the UI and the scheduler end up
   // with two opinions about who owns a trigger.
   author?: string; read_only?: boolean
+  // The app that serves the row (its display name), or "" for a row of this home's own file. The
+  // app keeps what the automation is, so it is changed there: an edit here is refused
+  // (`automation_kept_elsewhere`), while Run now, the switch and Delete work here.
+  served_by?: string
   // The row was brought over from an older version's automation file and is switched off until
   // the owner switches it on, which asks them to allow what it runs (`triggers/legacy_import.py`).
   // The server's verdict: `created_by` alone cannot say it, because an imported row that needs no
@@ -3440,8 +3444,9 @@ export interface TriggerReviewCard {
   reason: string
   count_is_floor: boolean
   /** Why its slots did not run: PersonalClaw was `stopped` (a restart found them), `paused` (it was
-   *  running and the computer slept, or the process was stopped), or both. */
-  cause: 'stopped' | 'paused' | 'stopped_or_paused'
+   *  running and the computer slept, or the process was stopped), or both; or `unseen`, the
+   *  automation reached PersonalClaw only after its time (an app's, added or readable too late). */
+  cause: 'stopped' | 'paused' | 'stopped_or_paused' | 'unseen'
   name: string
   /** The id the list opens the automation's panel with (`?open=`). */
   open_id: string

@@ -152,13 +152,16 @@ async def tick_once(
     result = await svc.tick(
         store, now=now, base_dir=base_dir, user_active=user_active, catching_up=catching_up
     )
-    if result.missed and on_missed is not None:
+    for report in (result.missed, result.seen_late):
+        if not report or on_missed is None:
+            continue
         # The cards are already kept (the tick wrote them); this only says so, so a failure to
-        # announce is logged and the tick goes on.
+        # announce is logged and the tick goes on. A slot the clock first saw too late is
+        # announced the same way, in its own words (`review.UNSEEN`).
         try:
-            on_missed(result.missed)
+            on_missed(report)
         except Exception:  # noqa: BLE001 - an announcement must never fail the tick
-            logger.warning("could not announce the slots a wake found missed", exc_info=True)
+            logger.warning("could not announce the slots a tick found missed", exc_info=True)
 
     # 🔴 THE TWO SEPARATE WAKE SOURCES, both BEFORE the early return.
     #

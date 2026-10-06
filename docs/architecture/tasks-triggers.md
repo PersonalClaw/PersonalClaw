@@ -1045,6 +1045,31 @@ the chat's `automation_update` / `automation_resume` and the CLI all go through
 them, so a time changed in chat fires at the new time, as one changed on the
 page does.
 
+**A trigger on with no next fire is armed by the next tick, wherever it came
+from.** An app mints its rows (a reminder asked for in chat, the day's nudge, a
+row a shared file gained) with no `next_fire_at` and leaves the arming to core,
+and only the boot used to arm such a row, so one added while the gateway ran was
+listed as active and never fired until a restart. `service.tick` now arms every
+row it reads that is on with no next fire (`arm.first_fire`), and the write goes
+back to the store that serves the row. A one-shot whose time had passed before
+the clock first saw it is armed to that time and decided as any slot that went
+by: run, a little late, or the missed-run review, whose notice says the
+automation reached PersonalClaw only after its time (`review.UNSEEN`).
+
+**An app's rows are read, run and changed where they live.** Every arm and fire
+selection reads every store (`provider.armable` merges the registered providers'
+rows): the clock, the `file`, `web_watch`, `idle` and `view` polls, the event
+router and the chains. A lookup by id (`TriggerStore.get`) finds an app's row,
+as `upsert` and `delete` route its writes, so on the Triggers page its History,
+Dry run, Run now, switch and Delete work, the missed-run review keeps its card,
+and the gateway's dispatch of its file watch finds it. An edit of one is refused
+with `automation_kept_elsewhere`: the app keeps what the automation is and takes
+back only what running it changes. A row someone else wrote is shown and never
+run: every route that would run, rehearse, change, switch or delete it answers
+`automation_read_only`, and the store refuses such a write whichever door asks
+(`routing.SomeoneElsesRow`). A `file` trigger with no path to watch is refused
+where it is made (`models.validate_spec`), and a stored one loads broken.
+
 ### A one-shot runs, is recorded, and only then leaves the list
 
 A clock trigger with no next fire — a one-time `at` — has its slot taken by the

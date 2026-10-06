@@ -142,10 +142,13 @@ def _trigger_names(state: DashboardState) -> dict[str, str]:
 
     Store-only: the boot migration imports every legacy job, INCLUDING the ones it
     refuses (which it now writes disabled rather than dropping), so there is no id the legacy
-    service could name that the store cannot.
+    service could name that the store cannot. Every store's rows, as the list reads them
+    (`provider.all_rows`): an app's automation runs here too, and its runs are named as it is.
     """
+    from personalclaw.triggers.provider import all_rows
+
     names: dict[str, str] = {}
-    for row in _trigger_store().load():
+    for row in all_rows(_trigger_store()):
         names[row.trigger.id] = row.trigger.name
     return names
 
@@ -224,15 +227,13 @@ def _week_triggers(state: DashboardState) -> list[Any]:
 
     Store-only: the legacy translation retired with `ScheduleService`'s CRUD, because the
     boot migration imports every legacy job — including the ones it refuses, which it now writes
-    disabled rather than dropping.
+    disabled rather than dropping. The rows the clock arms (`provider.armable`), an app's among
+    them: the grid is a forecast of what fires here, so a reminder an app serves is on it, and a
+    row someone else wrote, which this machine never runs, is not.
     """
-    store = _trigger_store()
-    rows = [
-        row.trigger
-        for row in store.load()
-        if row.trigger.kind == "clock" and row.trigger.enabled and row.ok
-    ]
-    return rows
+    from personalclaw.triggers.provider import armable
+
+    return [t for t in armable(_trigger_store()) if t.kind == "clock" and t.enabled]
 
 
 def _project_one(
@@ -328,6 +329,56 @@ def _attribution(trigger: Any, *, owner: str) -> dict[str, Any]:
     }
 
 
+def _read_only_refusal(row: Any) -> web.Response | None:
+    """409 ``automation_read_only`` for a row someone else wrote; None for one of hers.
+
+    Asked first by every route that runs, rehearses, changes, switches or deletes one row: this
+    machine shows such a row and never runs it, and a write would change another person's
+    automation where it lives (`routing.SomeoneElsesRow` refuses it at the store too). The page
+    offers none of those actions for it (`read_only`); this is the answer to a caller that asks
+    anyway, which was a bare "not found" for a row an app served and nothing at all for one in
+    this home's own file.
+    """
+    from personalclaw.triggers.ownership import is_owner_authored
+
+    trigger = getattr(row, "trigger", row)
+    if is_owner_authored(trigger):
+        return None
+    who = str(getattr(trigger, "author", "") or "") or "Someone else"
+    return json_error(
+        "automation_read_only",
+        message=(
+            f"{who} wrote this automation. It is shown for reference: PersonalClaw does not run it "
+            "on this computer, and it cannot be edited, switched or deleted here."
+        ),
+        status=409,
+    )
+
+
+def _kept_elsewhere_refusal(raw: str) -> web.Response | None:
+    """409 ``automation_kept_elsewhere`` for an edit of a row an app serves; None otherwise.
+
+    An app keeps what its automation IS (a reminder's title and time, a watched path) and takes
+    back only what running it changes (`sdk.triggers`: next fire, counts, the switch), so an edit
+    saved here would answer "Saved" over a row the app put back as it was: on the next read, or
+    only partly, its next fire moved to a time its own spec does not have. Running it, switching it
+    and deleting it stay here, where they work.
+    """
+    from personalclaw.triggers.routing import served_by
+
+    app = served_by(raw, native=_trigger_store())
+    if not app:
+        return None
+    return json_error(
+        "automation_kept_elsewhere",
+        message=(
+            f"{app} keeps this automation, so it is changed in {app}, not here. It can still be "
+            "run, switched on or off, or deleted here."
+        ),
+        status=409,
+    )
+
+
 def _issue_messages(row: Any) -> tuple[list[str], list[str]]:
     """A loaded row's ``(errors, warnings)`` as plain messages, for the wire.
 
@@ -347,11 +398,41 @@ def _issue_messages(row: Any) -> tuple[list[str], list[str]]:
     site, because four call sites each remembering to forward a second list is how one of them
     doesn't — three of them already forwarded NO errors (the create, update and toggle responses all
     answered `broken: []` for a row the list showed as broken).
+
+    A schedule's spec that can never arm (`arm.semantic_spec_issues`' errors: an expression the
+    clock refuses, a typo'd zone) counts among the errors too. Every door that makes a row refuses
+    one, and a row nothing made here (a hand-written row in a shared file, a hand edit) was listed
+    switched on with its cadence read back ("At 87:99 PM") and no word, while no tick could arm it.
     """
-    return ([i.message for i in row.errors], [i.message for i in row.warnings])
+    from personalclaw.triggers.arm import semantic_spec_issues
+
+    trigger = row.trigger
+    spec = trigger.spec if isinstance(trigger.spec, dict) else {}
+    never = [
+        i.message
+        for i in semantic_spec_issues(
+            trigger.kind, spec, trigger.workflow, created_by=trigger.created_by
+        )
+        if i.severity == "error"
+    ]
+    return ([i.message for i in row.errors] + never, [i.message for i in row.warnings])
 
 
-def _serialize_store(row: Any, *, owner: str = "") -> dict[str, Any]:
+def _served_by(trigger_id: str, served_by: str | None) -> str:
+    """What the app serving *trigger_id* is called, ``""`` for a row of this home's own file: the
+    listing's precomputed answer (`routing.served_by_id`) when it has one, else asked for this row.
+
+    On the wire as ``served_by``, so the page can say where a row comes from and that it is changed
+    there (`_kept_elsewhere_refusal`), rather than offer an edit the app will not keep.
+    """
+    if served_by is not None:
+        return served_by
+    from personalclaw.triggers.routing import served_by as served_by_of
+
+    return served_by_of(trigger_id, native=_trigger_store())
+
+
+def _serialize_store(row: Any, *, owner: str = "", served_by: str | None = None) -> dict[str, Any]:
     """A `TriggerStore` row in the shared list shape. Id is `store:<kind>:<slug>` so the
     mutation routes back to the store; `raw_id` is the store's own id.
 
@@ -421,6 +502,7 @@ def _serialize_store(row: Any, *, owner: str = "") -> dict[str, Any]:
         # A webhook automation's address and its sender tokens; null for another kind.
         "webhook": webhook.door(trigger),
         **_attribution(trigger, owner=owner),
+        "served_by": _served_by(trigger.id, served_by),
     }
 
 
@@ -445,7 +527,9 @@ def _last_check(trigger: Any) -> dict[str, Any] | None:
 # ── serializers ──
 
 
-def _schedule_row_for(state: DashboardState, row: Any, *, owner: str = "") -> dict[str, Any]:
+def _schedule_row_for(
+    state: DashboardState, row: Any, *, owner: str = "", served_by: str | None = None
+) -> dict[str, Any]:
     """ONE schedule row, projected and masked (the masking is the projection's own).
 
     Shared by the list (`api_triggers`) and the single-row write responses (create, update), so
@@ -482,6 +566,7 @@ def _schedule_row_for(state: DashboardState, row: Any, *, owner: str = "") -> di
     projected["held_back"] = _held_back(trigger)
     projected["workflow_version"] = _workflow_version(trigger)
     projected.update(_attribution(trigger, owner=owner))
+    projected["served_by"] = _served_by(trigger.id, served_by)
     return trigger_revisions.with_revision(projected, schedule=True)
 
 
@@ -742,20 +827,31 @@ async def api_triggers(request: web.Request) -> web.Response:
     # per-row read would make a 40-automation page do 40 of them.
     owner = owner_username()
 
+    from personalclaw.triggers.routing import served_by_id
+
+    # Which app serves each row, read once for the whole list as the owner is.
+    served = served_by_id(_trigger_store())
+
     triggers: list[dict[str, Any]] = []
     for kind in _LIST_KINDS:
         if want not in ("", kind):
             continue
         rows = _gather(state, kind)
         if kind == _SCHEDULE:
-            triggers.extend(_schedule_row_for(state, row, owner=owner) for row in rows)
+            triggers.extend(
+                _schedule_row_for(state, row, owner=owner, served_by=served.get(row.trigger.id, ""))
+                for row in rows
+            )
         elif kind == _LIFECYCLE:
             used_by = _used_by_index()
             triggers.extend(_serialize_lifecycle(h, used_by.get(h.id, [])) for h in rows)
         elif kind == _CALLBACK:
             triggers.extend(trigger_callbacks.serialize(c) for c in rows)
         else:
-            triggers.extend(_serialize_store(row, owner=owner) for row in rows)
+            triggers.extend(
+                _serialize_store(row, owner=owner, served_by=served.get(row.trigger.id, ""))
+                for row in rows
+            )
 
     tz_name, _ = get_local_tz()
     # `owner` mirrors the tasks seam's list response: the page labels a foreign row with its
@@ -1316,7 +1412,8 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
             store = _trigger_store()
             if (gone := store.get(raw)) is None:
                 return web.json_response({"error": "not found"}, status=404)
-            store.delete(raw)
+            if (refused := _read_only_refusal(gone) or _deleted(store, raw)) is not None:
+                return refused
             _report_unscheduled(gone.trigger)
             from personalclaw.triggers import review as _review
 
@@ -1348,7 +1445,8 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
         store = _trigger_store()
         if (gone := store.get(raw)) is None:
             return web.json_response({"error": "not found"}, status=404)
-        store.delete(raw)
+        if (refused := _read_only_refusal(gone) or _deleted(store, raw)) is not None:
+            return refused
         _report_unscheduled(gone.trigger)
         try:
             await _runs_store().delete_for_job(raw)
@@ -1383,6 +1481,10 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
             ),
             status=400,
         )
+    if kind != _LIFECYCLE and (stored := _trigger_store().get(raw)) is not None:
+        refused = _read_only_refusal(stored) or _kept_elsewhere_refusal(raw)
+        if refused is not None:
+            return refused
 
     submitted = body
     # An edit's action is the settings it sends over the action as stored (`_saving_action`), and
@@ -1457,6 +1559,26 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
             caller, "success", f"trigger:{raw}: {', '.join(grant.providers)}"
         )
     return saved
+
+
+def _deleted(store: Any, raw: str) -> web.Response | None:
+    """Delete *raw* where it lives: None once it is gone, else 409 ``automation_kept_elsewhere``.
+
+    The delete of a row an app serves is the app's to make (`TriggerStore.delete` routes it), and
+    an app can keep the row anyway (`routing.route_delete` stops arming its rows then). The answer
+    said "deleted" over the row still listed; it says that it was not, and where to delete it.
+    """
+    from personalclaw.triggers.routing import served_by
+
+    app = served_by(raw, native=store)
+    store.delete(raw)
+    if not app or store.get(raw) is None:
+        return None
+    return json_error(
+        "automation_kept_elsewhere",
+        message=f"{app} kept this automation, so it was not deleted. Delete it in {app}.",
+        status=409,
+    )
 
 
 def _report_unscheduled(trigger: Any) -> None:
@@ -1833,6 +1955,8 @@ async def api_trigger_workflow_version(request: web.Request) -> web.Response:
         store = _trigger_store()
         row = store.get(raw)
         trigger = row.trigger if row is not None else None
+        if row is not None and (refused := _read_only_refusal(row)) is not None:
+            return refused
 
         def persist() -> dict[str, Any]:
             store.upsert(trigger)
@@ -1889,6 +2013,8 @@ async def api_trigger_toggle(request: web.Request) -> web.Response:
         row = store.get(raw)
         if row is None:
             return web.json_response({"error": "not found"}, status=404)
+        if (refused := _read_only_refusal(row)) is not None:
+            return refused
         body = await json_object_body(request)
         # Left out, the switch flips; sent, it is the JSON true or false (`bool("false")` is True).
         want = bool_field(body, "enabled", default=None)
@@ -1942,6 +2068,8 @@ async def api_trigger_toggle(request: web.Request) -> web.Response:
     if row is not None:
         from personalclaw.triggers import tools as _tools
 
+        if (refused := _read_only_refusal(row)) is not None:
+            return refused
         want = (not row.trigger.enabled) if enabled is None else enabled
         if want:
             asked = trigger_consent.switch_on_grant(

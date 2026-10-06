@@ -126,29 +126,29 @@ def armable(store: Any) -> list["Trigger"]:
       requirement.
 
     Every arm/fire selection inside this package calls this — the clock walk and boot re-arm in
-    ``service``, the ``file``/``idle``/``web_watch``/``view`` poll loops, and the chain lookups.
-    That is what makes "a foreign row cannot tick" a property of the code rather than a promise:
-    nothing downstream is ever handed one, so nothing downstream can decide to fire it.
+    ``service``, the ``file``/``idle``/``web_watch``/``view`` poll loops, the event router and the
+    chain lookups. That is what makes "a foreign row cannot tick" a property of the code rather
+    than a promise: nothing downstream is ever handed one, so nothing downstream can decide to fire
+    it.
 
     Duck-typed on ``store`` (not annotated as :class:`TriggerStoreProvider`) because the service is
     called with test doubles that implement ``load()`` and nothing else, and tightening the
     annotation here would type-error every one of them without making a single fire safer.
 
-    🔴 Reads the store it is GIVEN — deliberately not :func:`all_rows`, and that is what makes a
-    provider's row armable rather than what stops it. The arm path PERSISTS (``service.tick`` writes
-    ``next_fire_at``, ``run_count`` and the health rollup back through ``store.upsert``), so the row
-    source and the write destination MUST be the same object: read from one store and write to
-    another and you get either two rows under one id in two files, diverging, or a
-    ``next_fire_at`` that never advances — due again on the very next tick, a fire storm and not
-    a missed fire. So both ends are wired: ``tick`` and ``boot`` substitute
-    :func:`personalclaw.triggers.routing.routed` for their store before calling this, which is how a
-    provider's row gets here at all, and :meth:`personalclaw.triggers.store.TriggerStore.upsert`
-    routes that row's write back to the provider that served it — at the store, not at the arm
-    sites, because the run recorder (`run_record.record_run`) writes a fired row back too. Handed a
-    native store — every poll loop, every chain lookup, every test double — this returns exactly the
-    local rows it always did.
+    🔴 Reads EVERY store: *store* merged with every registered provider's rows
+    (:func:`personalclaw.triggers.routing.routed`), in this one place, so no selection can read a
+    narrower set than the clock does. The poll loops read the bare native store, so an app's file
+    watch was never polled while the chat said it was watching. Safe because the write side is
+    wired at the store, not at the selections: every write a selection or its fire makes goes
+    through :meth:`personalclaw.triggers.store.TriggerStore.upsert` (or ``get`` and then
+    ``upsert``), which routes a provider-served row back to the provider that served it, so a row
+    is never read from one store and written to another — two rows under one id, or a
+    ``next_fire_at`` that never advances and is due again every tick. On a single-user install
+    nothing is registered, ``routed`` hands *store* back unchanged, and this reads it alone.
     """
-    return owner_authored(_ok_triggers(store.load()))
+    from personalclaw.triggers.routing import routed
+
+    return owner_authored(_ok_triggers(routed(store).load()))
 
 
 def all_rows(store: Any) -> list[Any]:

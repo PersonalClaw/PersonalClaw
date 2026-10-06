@@ -273,17 +273,16 @@ class _FakeProviderStore:
         return [LoadedTrigger(trigger=t) for t in self._rows]
 
 
-def test_a_registered_providers_rows_join_the_listing_but_not_the_arm_path(store):
-    """`all_rows` is the LISTING read and includes them; `armable` reads only the store it is given.
-
-    A provider's row is rendered before it is armed on purpose — the arm path persists
-    `next_fire_at` back with `store.upsert`, and there is no write-back routing yet, so arming one
-    would either duplicate it into `triggers.json` or leave it permanently due.
-    """
+def test_a_registered_providers_rows_join_the_listing_and_the_arm_path(store):
+    """`all_rows` is the LISTING read and `armable` the ARM read, and both read every store: the
+    arm path's writes go back to the store that served the row (`TriggerStore.upsert` routes
+    them), so an app's row is armed, polled and fired where it lives. Reading only the store it
+    was given is what left an app's file watch never polled."""
     store.save_all([_trigger("local", author=OWNER)])
     TREG.register_trigger_store("team", _FakeProviderStore([_trigger("remote", author=OWNER)]))
     assert sorted(r.trigger.id for r in provider.all_rows(store)) == ["local", "remote"]
-    assert [t.id for t in provider.armable(store)] == ["local"]
+    assert sorted(t.id for t in provider.armable(store)) == ["local", "remote"]
+    assert [r.trigger.id for r in store.load()] == ["local"], "this home's file holds its own"
 
 
 def test_a_faulty_provider_store_costs_its_own_rows_and_nothing_else(store):

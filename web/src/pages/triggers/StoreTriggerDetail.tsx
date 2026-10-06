@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { FieldError } from '../../ui/forms'
-import { Trash2, Play, FlaskConical, AlertTriangle, Users } from 'lucide-react'
+import { Trash2, Play, FlaskConical, AlertTriangle } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { Toggle } from '../../ui/Toggle'
 import { confirmDelete } from '../../ui/dialog'
@@ -15,6 +15,7 @@ import { HeldBackNote } from './HeldBackNote'
 import { WorkflowVersionNote } from './WorkflowVersionNote'
 import { RestoreHoldNote } from './RestoreHold'
 import { WebhookDoorSection } from './WebhookDoorSection'
+import { KeptByAppNote, ReadOnlyNote } from './ReadOnlyNote'
 import { reportingWrite } from '../../app/reportingWrite'
 import { BUSY_REASON } from '../../ui/unavailable'
 
@@ -277,13 +278,9 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
             : <Toggle on={trigger.enabled} onChange={toggle} disabled={busy} label="Enabled" />}
       </div>
 
-      {readOnly && (
-        <div className="rounded-lg bg-surface-container px-3 py-2 text-on-surface-var text-[0.8125rem]">
-          <span className="inline-flex items-center gap-1.5 text-on-surface"><Users size={13} /> {trigger.author || 'Someone else'}</span>
-          {' '}wrote this automation. It is shown for reference: this harness never runs it, and it
-          cannot be edited or deleted here.
-        </div>
-      )}
+      {readOnly
+        ? <ReadOnlyNote author={trigger.author} />
+        : trigger.served_by ? <KeptByAppNote app={trigger.served_by} /> : null}
 
       <Section label="When it runs">
         <div data-type="body-m" className="text-on-surface">

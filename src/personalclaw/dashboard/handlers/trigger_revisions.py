@@ -30,7 +30,8 @@ from personalclaw.stale_write import revision_of, stale_write_refusal
 #: have undone. The second group is the cadence SENTENCE (an adaptive clock's embeds the live
 #: health state maintenance flips — the form edits `cron_expr`/`every_secs`, never the sentence),
 #: the parse issues, the session flag, the attribution verdict, which follows the owner's
-#: configured username, why the results cannot reach the channel named — which follows the
+#: configured username, the app that serves the row (`served_by`), which no edit can change, why
+#: the results cannot reach the channel named — which follows the
 #: channel's own setup, not anything the form sends — the two grant verdicts (`needs_review`,
 #: `needs_grant`), which follow the capability block the owner's switch writes and the form never
 #: sends: an Allow in another tab must not make an open editor's save stale — and a restore's hold
@@ -60,6 +61,7 @@ SCHEDULE_RUN_STATE: frozenset[str] = frozenset(
         "has_session",
         "author",
         "read_only",
+        "served_by",
         "channel_problem",
         "needs_review",
         "needs_grant",

@@ -779,9 +779,15 @@ describe('three more bodies, checked against their handlers', () => {
     expect(web('pages/schedule/ScheduleDetail.tsx')).toContain(
       "'The report stays, with no schedule: it runs when you press Run now. Its run history is removed too. This cannot be undone.'",
     )
-    const del = pyBetween(py('dashboard/handlers/triggers.py'), 'if request.method == "DELETE":', '    # PUT')
+    const handlers = py('dashboard/handlers/triggers.py')
+    const del = pyBetween(handlers, 'if request.method == "DELETE":', '    # PUT')
     expect(del, 'the delete branch must be found').toMatch(/await _runs_store\(\)\.delete_for_job\(raw\)/)
-    expect(del, 'and the schedule delete tells the report').toMatch(/store\.delete\(raw\)\n\s+_report_unscheduled\(gone\.trigger\)/)
+    // The delete is `_deleted`, which answers instead when the app serving the row kept it, so the
+    // report is told only once its automation is really gone.
+    expect(del, 'and the schedule delete tells the report').toMatch(
+      /_deleted\(store, raw\)\) is not None:\n\s+return refused\n\s+_report_unscheduled\(gone\.trigger\)/,
+    )
+    expect(pyMethod(handlers, 'def _deleted('), 'after deleting the row').toMatch(/\n\s+store\.delete\(raw\)\n/)
     const removal = pyMethod(py('knowledge/report_schedules.py'), 'def adopt_removal')
     expect(removal, 'which clears the report’s schedule and saves the report').toMatch(
       /defn\.schedule = ScheduleDefinition\(kind=""\)\n\s+research_reports\.save_report\(defn\)/,

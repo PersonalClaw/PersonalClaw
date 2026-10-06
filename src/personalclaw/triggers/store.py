@@ -265,16 +265,27 @@ class TriggerStore(TriggerStoreProvider):
         return triggers
 
     def get(self, trigger_id: str) -> LoadedTrigger | None:
-        """One row by id, or None when the store holds none.
+        """One row by id: this file's, or else the one a registered `trigger` provider serves under
+        that id (`routing.served_row`), or None when neither holds it.
 
-        Refused with ``record_files.Unreadable`` when the store cannot be read: nothing is known
+        🔴 THE READ HALF OF THE FUNNEL `upsert` and `delete` are. Those route a provider-served id
+        back to its provider, and this read the local file alone, so every lookup by id answered
+        "not found" for a row the Triggers page lists from an app: its History, Dry run, Run now,
+        edit, switch and Delete, the review's card (dropped as gone the first time the page read
+        it), and the gateway's own dispatch of an app's file watch. `load` stays this file's: the
+        listing and the arm path merge every store themselves (`provider.all_rows`,
+        `routing.routed`). Costs one dict emptiness check when nothing is registered.
+
+        Refused with ``record_files.Unreadable`` when this file cannot be read: nothing is known
         of the row then, and a caller that acted on None — made the row again, dropped its review
         card, logged that it was removed — would act on a guess.
         """
         for row in self.load(strict=True):
             if row.trigger.id == trigger_id:
                 return row
-        return None
+        from personalclaw.triggers.routing import served_row
+
+        return served_row(trigger_id)
 
     # ── write ──
 
@@ -366,6 +377,10 @@ class TriggerStore(TriggerStoreProvider):
 
         Ends a restore's hold either way (`Trigger.restore_hold`): switched on it is resumed, and
         switched off by hand it is the owner's own pause, which Resume all leaves alone.
+
+        A row a registered provider serves is switched where it lives, through `upsert`'s routing,
+        and what is returned is the row as that provider holds it afterwards: a provider that did
+        not keep the switch answers with the switch where it was, which the caller reports.
         """
         with self._file_lock():
             rows = self._read_rows()
@@ -381,7 +396,19 @@ class TriggerStore(TriggerStoreProvider):
                 rows[index] = trigger.to_dict()
                 self._write(rows)
                 return trigger
-        return None
+        from personalclaw.triggers.routing import served_row
+
+        served = served_row(trigger_id)
+        if served is None:
+            return None
+        if enabled and served.errors:
+            logger.info("refusing to enable %s: it has parse errors", trigger_id)
+            return None
+        served.trigger.enabled = enabled
+        served.trigger.restore_hold = ""
+        self.upsert(served.trigger)
+        kept = served_row(trigger_id)
+        return kept.trigger if kept is not None else None
 
     # ── the cron migration ──
 

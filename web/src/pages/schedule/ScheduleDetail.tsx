@@ -18,6 +18,7 @@ import { HeldBackNote } from '../triggers/HeldBackNote'
 import { WorkflowVersionNote } from '../triggers/WorkflowVersionNote'
 import { RestoreHoldNote } from '../triggers/RestoreHold'
 import { HeartbeatQueue } from '../triggers/HeartbeatQueue'
+import { KeptByAppNote, ReadOnlyNote } from '../triggers/ReadOnlyNote'
 import {
   ScheduleForm, toDraft, draftToPayload, scheduleDraftInvalidReason, draftProvider, capabilityLabel, type ScheduleDraft,
 } from './ScheduleForm'
@@ -109,6 +110,13 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
   const ActionIcon = provider ? actionIcon(provider) : mm.icon
   const actLabel = provider ? actionLabel(provider) : mm.label
   const running = job.is_running || triggered
+  // The SERVER's verdicts, as the store inspector reads them: a row someone else wrote is shown and
+  // never run here, so it offers no action at all; a row an app serves is run, switched and deleted
+  // here, and changed in the app, which keeps what it is — so it offers no Edit, and `?edit=1` on it
+  // opens the view. Every route behind these buttons refuses the same rows.
+  const readOnly = job.read_only === true
+  const keptBy = job.served_by || ''
+  const editable = !readOnly && !keptBy
   // The edited draft's action, as the catalog classifies it: the cadence floor only speaks for an
   // action that can call a model. Unknown (catalog still loading, an app provider it does not
   // list) keeps the floor — the same direction the backend's table takes.
@@ -254,7 +262,7 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
     catch (e) { setErr(e instanceof Error ? e.message : 'Open chat failed') } finally { setBusy(false) }
   }
 
-  if (editing) {
+  if (editing && editable) {
     return (
       <div className="flex flex-col gap-l">
         {job.report_id && <ReportScheduleNote />}
@@ -306,27 +314,38 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
             is said on its own line below, at full strength. It used to be the button's label for a
             couple of seconds while the button was disabled, so it read at the disabled 40% opacity,
             in the run's tone, and a screen reader heard nothing. */}
-        <Button size="sm" variant="secondary" onClick={runNow} disabled={busy} disabledReason={BUSY_REASON}
-          loading={running} loadingLabel="Running…">
-          <PlayCircle size={14} /> Run now
-        </Button>
+        {!readOnly && (
+          <Button size="sm" variant="secondary" onClick={runNow} disabled={busy} disabledReason={BUSY_REASON}
+            loading={running} loadingLabel="Running…">
+            <PlayCircle size={14} /> Run now
+          </Button>
+        )}
         {/* The explanation rides the button's own `title` (which `Button` joins to a blocked reason)
             rather than a wrapper's: a wrapper tooltip is unreachable from the keyboard. And it says
             what a dry run IS — the old "Dry-run replay … write tools are not executed" described a
             replay that no longer exists. */}
-        <Button size="sm" variant="ghost" onClick={dryRun} disabled={busy || running}
-          title="Preview what a run would do — nothing is executed and nothing is recorded"
-          disabledReason={BUSY_REASON}>
-          <FlaskConical size={14} /> Dry run
-        </Button>
-        <Button size="sm" variant="ghost" onClick={() => { setDry(null); setEditing(true) }}><Pencil size={14} /> Edit</Button>
+        {!readOnly && (
+          <Button size="sm" variant="ghost" onClick={dryRun} disabled={busy || running}
+            title="Preview what a run would do — nothing is executed and nothing is recorded"
+            disabledReason={BUSY_REASON}>
+            <FlaskConical size={14} /> Dry run
+          </Button>
+        )}
+        {editable && <Button size="sm" variant="ghost" onClick={() => { setDry(null); setEditing(true) }}><Pencil size={14} /> Edit</Button>}
         {job.has_result && <Button size="sm" variant="ghost" onClick={openChat} disabled={busy} disabledReason={BUSY_REASON}><MessagesSquare size={14} /> Open as chat</Button>}
-        <Button size="sm" variant="ghost" onClick={del}><Trash2 size={14} /> Delete</Button>
-        <label className="ml-auto inline-flex items-center gap-2 text-[0.8125rem] cursor-pointer">
-          <span className="text-on-surface-var">{job.enabled ? 'Enabled' : 'Disabled'}</span>
-          <Toggle on={job.enabled} onChange={toggle} disabled={busy} label="Toggle enabled" size="sm" />
-        </label>
+        {!readOnly && <Button size="sm" variant="ghost" onClick={del}><Trash2 size={14} /> Delete</Button>}
+        {/* A row someone else wrote shows its STATE, not a switch: this machine never runs it, so a
+            switch here would claim a change it cannot make. */}
+        {readOnly ? (
+          <span className="ml-auto text-on-surface-var text-[0.8125rem]">{job.enabled ? 'Enabled' : 'Disabled'}</span>
+        ) : (
+          <label className="ml-auto inline-flex items-center gap-2 text-[0.8125rem] cursor-pointer">
+            <span className="text-on-surface-var">{job.enabled ? 'Enabled' : 'Disabled'}</span>
+            <Toggle on={job.enabled} onChange={toggle} disabled={busy} label="Toggle enabled" size="sm" />
+          </label>
+        )}
       </div>
+      {readOnly ? <ReadOnlyNote author={job.author} /> : keptBy ? <KeptByAppNote app={keptBy} /> : null}
       {err && <FieldError>{err}</FieldError>}
       {/* What the run this press started recorded, in its history row's words, for a couple of
           seconds. A status, so it is announced; its tone is the row's. */}
@@ -352,7 +371,7 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
       <div className="flex flex-wrap items-center gap-s">
         <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={toneChipSkin(km.tone, 16)}><km.icon size={13} /> {job.schedule}</span>
         <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={toneChipSkin(mm.tone, 16)}><ActionIcon size={13} /> {actLabel}</span>
-        {job.enabled && job.next_run_ts && <span className="text-on-surface-low text-[0.8125rem]">next {relFuture(job.next_run_ts)} · {absTime(job.next_run_ts)}</span>}
+        {job.enabled && !readOnly && job.next_run_ts && <span className="text-on-surface-low text-[0.8125rem]">next {relFuture(job.next_run_ts)} · {absTime(job.next_run_ts)}</span>}
       </div>
 
       {job.report_id && <ReportScheduleNote />}
@@ -373,7 +392,7 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
       {job.needs_review && <ReviewNote />}
       {/* Not allowed to run what its action uses — Run now and every fire are refused until the
           owner allows it. The sections below are what they are allowing. */}
-      {!job.needs_review && (job.needs_grant ?? []).length > 0 && (
+      {!job.needs_review && !readOnly && (job.needs_grant ?? []).length > 0 && (
         <GrantNote labels={job.needs_grant ?? []} enabled={job.enabled} busy={busy} onAllow={allow} />
       )}
       {/* Its agent held to less than its step asks, as things stand: the same note a store kind's
@@ -390,7 +409,7 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
       )}
       {/* Switched off by a restore until it is resumed. Resume is the switch sent on, so a schedule
           whose action needs your yes asks first. */}
-      {!job.enabled && job.restore_hold && (
+      {!job.enabled && !readOnly && job.restore_hold && (
         <RestoreHoldNote hold={job.restore_hold} busy={busy} onResume={allow} />
       )}
 

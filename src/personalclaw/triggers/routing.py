@@ -15,15 +15,20 @@ exactly two possible outcomes, both bad:
 
 This module closes both. Two pieces, and the split is the design:
 
-1. :func:`route_upsert` / :func:`route_delete` — the WRITE decision, called from
-   :class:`personalclaw.triggers.store.TriggerStore`'s own ``upsert``/``delete``. It lives there
-   rather than at the arm sites because the arm path is not the only writer: the run recorder
-   (`run_record.record_run`), the failure-dedup path and the autopause path each construct their OWN
-   ``TriggerStore`` and write a fired row back through it. Routing at seven arm sites would have
-   left every one of those minting the duplicate id this exists to prevent. Funnelling through the
-   native store's write path means there is no second spelling of "persist a trigger" to forget.
-2. :class:`RoutingTriggerStore` — the READ merge, substituted for the store in ``tick`` and ``boot``
-   so a provider's rows reach :func:`personalclaw.triggers.provider.armable` at all.
+1. :func:`route_upsert` / :func:`route_delete` / :func:`served_row` — the one-row decisions,
+   called from :class:`personalclaw.triggers.store.TriggerStore`'s own ``upsert``, ``delete``,
+   ``set_enabled`` and ``get``. They live there rather than at the call sites because the arm path
+   is not the only writer: the run recorder (`run_record.record_run`), the failure-dedup path and
+   the autopause path each construct their OWN ``TriggerStore`` and write a fired row back through
+   it, and every Triggers-page route and the gateway's own fire dispatch look a row up by id
+   through one. Routing at each of them would have left one minting the duplicate id this exists to
+   prevent, or answering "not found" for a row the page lists. Funnelling through the native
+   store means there is no second spelling of "read or persist one trigger" to forget.
+2. :class:`RoutingTriggerStore` — the READ merge, substituted for the store by
+   :func:`personalclaw.triggers.provider.armable`, so a provider's rows reach every arm and fire
+   selection: the clock's tick and boot, the ``file``/``idle``/``web_watch``/``view`` polls, the
+   event router and the chains. A row a provider adds while the gateway runs is armed by the next
+   tick (``service.tick``), and its watch is polled by the next pass.
 
 **Every routed write is verified.** The serving store is re-read and the storm-relevant field
 (``next_fire_at``) compared against what was asked for. A provider whose write raised, vanished or
@@ -31,12 +36,10 @@ silently did not land is **quarantined** for the rest of the process: its rows s
 (they still render, and the log says why), so a store that cannot persist a schedule costs at most
 ONE extra fire instead of one per tick forever.
 
-**Scope, stated rather than implied.** ``tick`` and ``boot`` — the clock path — merge provider rows.
-The ``file``/``idle``/``web_watch``/``view`` poll loops still read the bare native store, so their
-provider-served rows render without arming. That is the position, narrowed from "every provider
-row" to "provider rows of a polled kind". Their
-dispatch is the gateway's, and giving them a routed row without routing that dispatch would be the
-duplicate-identity write again, one layer out.
+**And none is made to a row someone else wrote.** A shared store holds other people's rows, which
+this machine shows and never runs (`triggers.ownership`). A routed write or delete of one is refused
+with :class:`SomeoneElsesRow`, whichever door asked: changing it would change another person's
+automation where it lives.
 """
 
 from __future__ import annotations
@@ -89,6 +92,22 @@ def _next_fire_of(row: Any) -> str:
     return str(getattr(getattr(row, "trigger", row), "next_fire_at", "") or "")
 
 
+class SomeoneElsesRow(Exception):
+    """A routed write or delete of a row its provider serves as someone else's.
+
+    Raised rather than skipped: a write that answered as if it landed would tell the door that
+    asked (the Triggers page, a chat command) that another person's automation changed.
+    """
+
+    def __init__(self, trigger_id: str, author: str) -> None:
+        self.trigger_id = trigger_id
+        self.author = author
+        super().__init__(
+            f"{author or 'someone else'} wrote the automation {trigger_id}, and it is not changed "
+            "or deleted here"
+        )
+
+
 def serving_store(trigger_id: str) -> tuple[str, Any] | None:
     """The ``(name, store)`` of the registered provider serving ``trigger_id``, or None.
 
@@ -122,6 +141,68 @@ def _read_back(name: str, store: Any, trigger_id: str) -> Any:
         return None
 
 
+def served_row(trigger_id: str) -> Any:
+    """The row a registered provider serves under *trigger_id*, as it holds it now, or None.
+
+    The read half of the funnel: :meth:`personalclaw.triggers.store.TriggerStore.get` asks this
+    for an id its own file does not hold, so a lookup by id finds an app's row wherever it is made:
+    the Triggers page's History, Dry run, Run now, edit, switch and Delete, the review, the
+    gateway's fire dispatch. None at once when nothing is registered.
+    """
+    target = serving_store(trigger_id)
+    if target is None:
+        return None
+    name, store = target
+    return _read_back(name, store, trigger_id)
+
+
+def served_by(trigger_id: str, *, native: Any = None) -> str:
+    """What the provider serving *trigger_id* is called (its ``display_name``, else the name it is
+    registered under), or ``""`` for a row this home's own file holds or nobody serves."""
+    target = _target(trigger_id, native)
+    return "" if target is None else _label(*target)
+
+
+def served_by_id(native: Any = None) -> dict[str, str]:
+    """``id → what its provider is called`` for every provider-served row this home's own file
+    does not hold: :func:`served_by` for a whole listing, with each store read once."""
+    if not registered_stores():
+        return {}
+    local = _ids_here(native)
+    out: dict[str, str] = {}
+    for name, store, rows in provider_rows_by_store():
+        for row in rows:
+            tid = _row_id(row)
+            if tid and tid not in local:
+                out.setdefault(tid, _label(name, store))
+    return out
+
+
+def _label(name: str, store: Any) -> str:
+    return str(getattr(store, "display_name", "") or name)
+
+
+def _ids_here(native: Any) -> set[str]:
+    """The ids this home's own file holds; none for no native store, or one that cannot be read."""
+    if native is None:
+        return set()
+    try:
+        return {_row_id(row) for row in native.load(strict=True)}
+    except Exception:  # noqa: BLE001 - an unreadable native store is the native store's problem
+        logger.debug("could not read the native store while routing")
+        return set()
+
+
+def _refuse_someone_elses(target: tuple[str, Any], trigger_id: str) -> None:
+    """Raise :class:`SomeoneElsesRow` when *target* serves *trigger_id* as another person's row."""
+    from personalclaw.triggers.ownership import is_owner_authored
+
+    row = _read_back(*target, trigger_id)
+    trigger = getattr(row, "trigger", None)
+    if trigger is not None and not is_owner_authored(trigger):
+        raise SomeoneElsesRow(trigger_id, str(getattr(trigger, "author", "") or ""))
+
+
 def _target(trigger_id: str, native: Any) -> tuple[str, Any] | None:
     """The provider to route a write for ``trigger_id`` to, or None to let ``native`` have it.
 
@@ -130,13 +211,8 @@ def _target(trigger_id: str, native: Any) -> tuple[str, Any] | None:
     write must stay local — routing it away would update a row nothing reads.
     """
     target = serving_store(trigger_id)
-    if target is None:
+    if target is None or trigger_id in _ids_here(native):
         return None
-    try:
-        if native is not None and native.get(trigger_id) is not None:
-            return None
-    except Exception:  # noqa: BLE001 - an unreadable native store is the native store's problem
-        logger.debug("could not check the native store for %r while routing", trigger_id)
     return target
 
 
@@ -147,13 +223,16 @@ def route_upsert(trigger: Any, *, native: Any = None) -> Any:
     install and for every brand-new row. Anything else is the stored row, and the caller must NOT
     also write it locally: that is the duplicate identity.
 
-    Never raises. A provider fault must not abort a tick that is also rescheduling the owner's own
-    local automations, so a raise or an unverifiable write quarantines the provider instead.
+    A provider fault never raises: it must not abort a tick that is also rescheduling the owner's
+    own local automations, so a raise or an unverifiable write quarantines the provider instead.
+    The one raise is :class:`SomeoneElsesRow`, for a row its provider serves as another person's,
+    which no arm or fire path ever hands over (`provider.armable` drops them before it returns).
     """
     trigger_id = str(getattr(trigger, "id", "") or "")
     target = _target(trigger_id, native)
     if target is None:
         return None
+    _refuse_someone_elses(target, trigger_id)
     name, store = target
     intended = str(getattr(trigger, "next_fire_at", "") or "")
     try:
@@ -178,6 +257,7 @@ def route_delete(trigger_id: str, *, native: Any = None) -> bool | None:
     target = _target(trigger_id, native)
     if target is None:
         return None
+    _refuse_someone_elses(target, trigger_id)
     name, store = target
     try:
         gone = bool(store.delete(trigger_id))

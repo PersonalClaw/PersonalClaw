@@ -714,7 +714,33 @@ def validate_spec(
         issues.append(
             Issue(path="spec.url", message="a web_watch trigger needs a url", severity="error")
         )
+    elif kind == "file" and not watched_paths(spec):
+        # An ERROR, as the url of a web watch is: a watch of no paths is skipped by every poll
+        # (`file_poll.poll_one`), so it would sit listed as watching and never fire. A bare string
+        # is refused too rather than read as a list: the poll would walk it one character at a time.
+        issues.append(
+            Issue(
+                path="spec.paths",
+                message=(
+                    "a file trigger needs at least one file, folder or glob to watch, as a list "
+                    "in `paths`"
+                ),
+                severity="error",
+            )
+        )
     return issues
+
+
+def watched_paths(spec: Any) -> list[str]:
+    """The paths a `file` trigger's spec watches: its `paths` list, blank entries left out.
+
+    Empty for a spec that names none, and for a `paths` that is not a list: what the watch loop
+    polls (`file_poll.poll_one`) and what `validate_spec` requires, read one way.
+    """
+    paths = spec.get("paths") if isinstance(spec, dict) else None
+    if not isinstance(paths, list):
+        return []
+    return [str(path) for path in paths if str(path or "").strip()]
 
 
 # ── gates ──

@@ -55,7 +55,6 @@ import time
 from typing import Any
 
 from personalclaw.triggers.provider import armable
-from personalclaw.triggers.routing import routed
 
 logger = logging.getLogger(__name__)
 
@@ -90,14 +89,13 @@ def chain_triggers(store: Any, *, source_id: str) -> list[Any]:
     rather than everything: a chain that fired on every run in the system would be a fire storm
     authored by omission.
 
-    Reads a :func:`~personalclaw.triggers.routing.routed` store so a shared/team ``trigger``
-    provider can contribute the "when the team brief finishes, notify me" half of a cascade. Safe
-    here, unlike the poll loops: a ``run_completed`` row holds no schedule to advance,
-    and the writes its fire produces (its count and its run's record) are routed back to the serving
-    store by :meth:`personalclaw.triggers.store.TriggerStore.upsert`.
+    Reads every store (`provider.armable` merges the registered providers' rows), so a shared/team
+    ``trigger`` provider can contribute the "when the team brief finishes, notify me" half of a
+    cascade; the writes its fire produces (its count and its run's record) are routed back to the
+    serving store by :meth:`personalclaw.triggers.store.TriggerStore.upsert`.
     """
     out: list[Any] = []
-    for trigger in armable(routed(store)):
+    for trigger in armable(store):
         if trigger.kind != "run_completed" or not trigger.enabled:
             continue
         spec = trigger.spec if isinstance(trigger.spec, dict) else {}
@@ -112,7 +110,7 @@ def _waiting_on(store: Any, key: str, value: str) -> list[Any]:
     if not value:
         return []
     out: list[Any] = []
-    for trigger in armable(routed(store)):
+    for trigger in armable(store):
         if trigger.kind != "run_completed" or not trigger.enabled:
             continue
         spec = trigger.spec if isinstance(trigger.spec, dict) else {}
@@ -314,7 +312,7 @@ def next_fires(
                 {"trigger_id": trigger.id, "trigger_name": trigger.name or "", "reason": reason}
             )
             continue
-        note_fire(routed(store), trigger.id, at=time.time())
+        note_fire(store, trigger.id, at=time.time())
         fires.append((trigger, chain_payload(payload, source_id=source_id, trigger=trigger)))
     return fires, refused
 

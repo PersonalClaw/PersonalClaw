@@ -337,10 +337,11 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                   // An EVENT row gets no Edit either: the store inspector has no editor (the chat's
                   // `automation_update`, or recreating it, changes the pattern), so the item would
                   // silently act as a second Open — an affordance that lies about what it does. Nor
-                  // does a CALLBACK: its context is the agent's, saved by `hook_register`.
+                  // does a CALLBACK: its context is the agent's, saved by `hook_register`. Nor a row
+                  // an app serves: the app keeps what it is, and its panel says where it is changed.
                   const menuItems: ContextMenuItem[] = [
                     { icon: <Zap size={15} />, label: 'Open', onSelect: () => setQuery({ open: t.id, edit: null }) },
-                    ...(t.readOnly || t.kind === 'event' || t.kind === 'callback' ? [] : [{ icon: <Pencil size={15} />, label: 'Edit', onSelect: () => setQuery({ open: t.id, edit: '1' }) }]),
+                    ...(t.readOnly || t.servedBy || t.kind === 'event' || t.kind === 'callback' ? [] : [{ icon: <Pencil size={15} />, label: 'Edit', onSelect: () => setQuery({ open: t.id, edit: '1' }) }]),
                   ]
                   return (
                     <ContextMenu key={t.id} items={menuItems}>
@@ -408,6 +409,8 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                               to a cadence that is not the problem. */}
                           {advisory.length > 0 && <span data-type="caption" className="shrink-0 text-warn">· {t.store?.last_check?.can_fire === false ? "can't fire" : 'check schedule'}</span>}
                           {t.kind === 'store' && t.storeKind && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· {t.storeKind}</span>}
+                          {/* The app that keeps it: where it is changed, and why its menu has no Edit. */}
+                          {t.servedBy && !t.readOnly && <span data-type="caption" className="shrink-0 text-on-surface-low">· from {t.servedBy}</span>}
                           {/* The AUTHOR chip. Shown only for a foreign row — a chip
                               on every row would be noise on the single-user install that is the
                               norm, and the useful signal here is "this one is not mine". */}
@@ -416,7 +419,8 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                         <div className="mt-0.5 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low text-[0.8125rem]">
                           <span className="inline-flex items-center gap-1" style={{ color: t.whenTone }}><t.whenIcon size={11} /> {t.whenLabel}</span>
                           <span className="inline-flex items-center gap-1"><t.actionIcon size={11} /> {t.actionLabel}</span>
-                          {t.kind === 'schedule' && t.enabled && t.schedule?.next_run_ts && <span className="inline-flex items-center gap-1"><Clock size={11} /> {relFuture(t.schedule.next_run_ts)}</span>}
+                          {/* No countdown on a row someone else wrote: it runs on their computer, never on this one. */}
+                          {t.kind === 'schedule' && t.enabled && !t.readOnly && t.schedule?.next_run_ts && <span className="inline-flex items-center gap-1"><Clock size={11} /> {relFuture(t.schedule.next_run_ts)}</span>}
                           {/* The rung chip: what this automation may do on its own, and why.
                               Placed beside the action label because that is the thing being
                               governed — the action, not the schedule that fires it. Absent for

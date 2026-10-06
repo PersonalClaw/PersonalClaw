@@ -62,7 +62,7 @@ describe('StoreTriggerDetail on a foreign automation', () => {
     expect(screen.queryByRole('switch')).toBeNull()
     // …and says WHOSE it is, so the missing controls read as an explanation rather than a bug.
     expect(screen.getByText(/alice/)).toBeTruthy()
-    expect(screen.getByText(/never runs it/i)).toBeTruthy()
+    expect(screen.getByText(/does not run it on this computer/i)).toBeTruthy()
   })
 
   it('still shows the enabled STATE as text — the row is informational, not blank', () => {
@@ -83,6 +83,6 @@ describe('StoreTriggerDetail on a foreign automation', () => {
     expect(screen.getByRole('button', { name: /run now/i })).toBeTruthy()
     expect(screen.getByRole('button', { name: /dry run/i })).toBeTruthy()
     expect(screen.getByRole('button', { name: /delete/i })).toBeTruthy()
-    expect(screen.queryByText(/never runs it/i)).toBeNull()
+    expect(screen.queryByText(/does not run it on this computer/i)).toBeNull()
   })
 })

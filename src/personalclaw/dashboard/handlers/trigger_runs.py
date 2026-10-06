@@ -454,7 +454,11 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
     execute the same action the same way.
     """
 
-    from personalclaw.dashboard.handlers.triggers import _redact, _trigger_store
+    from personalclaw.dashboard.handlers.triggers import (
+        _read_only_refusal,
+        _redact,
+        _trigger_store,
+    )
     from personalclaw.triggers import run_source
     from personalclaw.triggers import tools as T
 
@@ -462,6 +466,9 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
     row = store.get(raw)
     if row is None:
         return web.json_response({"error": "not found"}, status=404)
+    # Someone else's automation is not run here, by hand or for anyone who asks, nor rehearsed.
+    if (refused := _read_only_refusal(row)) is not None:
+        return refused
     by = run_source.of_request(request)
 
     dry_run = request.query.get("dry_run", "") in ("1", "true", "yes")

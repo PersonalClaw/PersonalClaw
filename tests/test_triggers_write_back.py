@@ -219,8 +219,10 @@ def test_the_arm_read_sees_both_stores_rows(native, team):
     native.upsert(_trigger("local", author=OWNER))
     team.seed(_trigger("remote", author=OWNER))
     assert sorted(t.id for t in provider.armable(ROUTE.routed(native))) == ["local", "remote"]
-    # And the bare native store is untouched by all of this.
-    assert [t.id for t in provider.armable(native)] == ["local"]
+    # Every selection reads every store, handed the native one or not (the polls are).
+    assert sorted(t.id for t in provider.armable(native)) == ["local", "remote"]
+    # And this home's own file is untouched by all of this.
+    assert _local_ids(native) == ["local"]
 
 
 def test_the_claim_root_stays_local(native, team):

@@ -1631,6 +1631,13 @@ def set_paused(store: Any, *, trigger_id: str, paused: bool) -> AutomationToolRe
         if refusal:
             return AutomationToolResult(False, f"Error: {refusal[:1].upper()}{refusal[1:]}.")
     saved = store.set_enabled(trigger_id, not paused)
+    if saved is not None and saved.enabled == paused:
+        # The app serving it answered with the switch where it was (`TriggerStore.set_enabled`).
+        return AutomationToolResult(
+            False,
+            f"Error: {trigger_id} was not {'paused' if paused else 'resumed'}: the app that keeps "
+            "it did not keep the change.",
+        )
     if saved is not None and not paused:
         from personalclaw.triggers.arm import next_fire_after_edit
         from personalclaw.triggers.service import budget_spent

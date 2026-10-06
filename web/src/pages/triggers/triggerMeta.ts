@@ -288,6 +288,10 @@ export interface Trigger {
    *  is always a row the service would actually fire. */
   author?: string
   readOnly?: boolean
+  /** The app that serves the row, by name — `''` for one of this home's own. The app keeps what the
+   *  automation is, so the row is changed there and the page offers no Edit for it. The server's
+   *  verdict (`served_by`), passed through. */
+  servedBy?: string
   /** Brought over from an older version and switched off until the owner switches it on, which
    *  asks them to allow what it runs. The server's verdict (`needs_review`), passed through. */
   needsReview?: boolean
@@ -375,7 +379,7 @@ export function scheduleToTrigger(j: ScheduleJob): Trigger {
     // schedule that failed to parse flags "needs attention" instead of listing as if healthy.
     broken: j.broken ?? [],
     warnings: j.warnings ?? [],
-    author: j.author, readOnly: j.read_only === true,
+    author: j.author, readOnly: j.read_only === true, servedBy: j.served_by || '',
     needsReview: j.needs_review === true,
     needsGrant: j.needs_grant ?? [],
     workflowVersion: j.workflow_version ?? null,
@@ -450,7 +454,7 @@ export function storeToTrigger(t: WireTrigger): Trigger {
     runCount: t.run_count ?? null, usedBy: [],
     storeKind: t.store_kind, broken: t.broken ?? [], warnings: t.warnings ?? [], store: t,
     ...(isEvent ? { eventPattern: pattern, eventMatcher: pm ? eventMatcherValue(spec, pm.matcher) : '' } : {}),
-    author: t.author, readOnly: t.read_only === true,
+    author: t.author, readOnly: t.read_only === true, servedBy: t.served_by || '',
     needsReview: t.needs_review === true,
     needsGrant: t.needs_grant ?? [],
     workflowVersion: t.workflow_version ?? null,

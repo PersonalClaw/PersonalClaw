@@ -47,11 +47,14 @@ KINDS = (MISSED, INTERRUPTED)
 
 #: Why a card's slots did not run. STOPPED: PersonalClaw was not running (the boot found them).
 #: PAUSED: it was running and could not tick — the computer slept, or the process was stopped — so
-#: a wake found them. A card that holds slots of both says so (STOPPED_OR_PAUSED).
+#: a wake found them. A card that holds slots of both says so (STOPPED_OR_PAUSED). UNSEEN: the
+#: automation reached PersonalClaw only after its time — an app's row, added or first readable too
+#: late — so the clock had nothing to run then (`arm.first_fire`).
 STOPPED = "stopped"
 PAUSED = "paused"
 STOPPED_OR_PAUSED = "stopped_or_paused"
-CAUSES = (STOPPED, PAUSED, STOPPED_OR_PAUSED)
+UNSEEN = "unseen"
+CAUSES = (STOPPED, PAUSED, STOPPED_OR_PAUSED, UNSEEN)
 
 
 @dataclass
@@ -296,6 +299,16 @@ _WHILE: dict[str, str] = {
 }
 
 
+def _why_missed(cause: str, automations: int) -> str:
+    """The notice's words for *cause*, said of *automations* automations."""
+    if cause == UNSEEN:
+        return (
+            "that reached PersonalClaw only after "
+            f"{_plural(automations, 'its time', 'their times')}"
+        )
+    return _WHILE.get(cause, _WHILE[STOPPED])
+
+
 def boot_notice(report: dict[str, Any], cards: list[ReviewCard]) -> dict[str, Any] | None:
     """The ONE notice about what a boot or a wake found, or None when it found nothing.
 
@@ -323,7 +336,7 @@ def boot_notice(report: dict[str, Any], cards: list[ReviewCard]) -> dict[str, An
         said.append(
             f"{missed} scheduled {_plural(missed, 'run was', 'runs were')} missed across "
             f"{len(every)} {_plural(len(every), 'automation', 'automations')} "
-            f"{_WHILE.get(cause, _WHILE[STOPPED])}."
+            f"{_why_missed(cause, len(every))}."
         )
     if caught_up:
         said.append(

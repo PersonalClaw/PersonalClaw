@@ -140,6 +140,10 @@ class TickResult:
     next_sleep: float = MAX_SLEEP_SECS
     #: Trigger ids whose `next_fire_at` this tick advanced and persisted.
     rescheduled: list[str] = field(default_factory=list)
+    #: Trigger ids this tick armed for the first time (`arm.first_fire`): on, with no next fire,
+    #: because nothing had armed them — an app's row, which an app mints with none, or one written
+    #: by anything else that did not arm it.
+    armed: list[str] = field(default_factory=list)
     #: Trigger ids whose last slot this tick took — a one-shot, which has no next fire. Each is
     #: switched off with no next fire, never left holding its elapsed `next_fire_at`, which would
     #: re-fire the same past slot every tick. Named rather than silent: "it stopped" is the one
@@ -160,6 +164,10 @@ class TickResult:
     #: missed. The caller announces it (`loop.tick_once`'s `on_missed`), the way the boot's report
     #: is announced after a restart.
     missed: dict[str, Any] = field(default_factory=dict)
+    #: What this tick found missed by a trigger it armed for the first time: a one-shot whose time
+    #: had passed by more than `scheduling.LATE_THRESHOLD_SECS` before the clock first saw it
+    #: (`arm.first_fire`). `recover`'s report, with `cause` "unseen", announced as `missed` is.
+    seen_late: dict[str, Any] = field(default_factory=dict)
 
     @property
     def suppressed(self) -> int:
@@ -171,11 +179,13 @@ class TickResult:
             "ledger_rows": list(self.ledger_rows),
             "next_sleep": self.next_sleep,
             "rescheduled": list(self.rescheduled),
+            "armed": list(self.armed),
             "retired": list(self.retired),
             "unparked": list(self.unparked),
             "store_changed": self.store_changed,
             "suppressed": self.suppressed,
             "missed": dict(self.missed),
+            "seen_late": dict(self.seen_late),
         }
 
 
@@ -442,16 +452,18 @@ async def tick(
 
     The order inside a tick is itself a contract:
 
-    1. Read the store (fresh — another process may have written it).
-    2. Recover what a wake finds MISSED (`scheduling.slot_missed`), exactly as a boot does
+    1. Read the store (fresh — another process may have written it), every provider's rows with it.
+    2. Arm what is switched on with no next fire (`arm.first_fire`): an app's row, which nothing
+       else arms. One whose first slot had already gone by is decided as step 3 decides a slot.
+    3. Recover what a wake finds MISSED (`scheduling.slot_missed`), exactly as a boot does
        (`recover`): a slot the process slept through is reviewed, or caught up once, never run
        late on its own.
-    3. Coalesce the due set.
-    4. For each due trigger: **persist the next fire FIRST** (persist-before-execute),
+    4. Coalesce the due set.
+    5. For each due trigger: **persist the next fire FIRST** (persist-before-execute),
     then walk
        the fire path.
-    5. Record a ledger row for every evaluated trigger, fired or not.
-    6. Compute the next sleep from the rows as they now stand.
+    6. Record a ledger row for every evaluated trigger, fired or not.
+    7. Compute the next sleep from the rows as they now stand.
 
     *catching_up* is the caller's map of staggered catch-ups, held across ticks
     (`loop.run_forever`): trigger id → `(the missed slot it stands in for, when it fires)`. A
@@ -513,6 +525,28 @@ async def tick(
     # Driven by the CLOCK rather than by an outcome, exactly as `unpark_due`'s docstring says: a
     # parked trigger produces no fires, so nothing in the outcome path could ever revive it.
     result.unparked.extend(_unpark_ready(store, triggers, now=now, persist=persist))
+
+    # 🔴 ARM WHAT NOTHING ARMED, every tick, before the due set is read. `due_ids` skips a row with
+    # no next fire, and only the boot armed one, so a row an app added while the gateway ran — a
+    # reminder asked for in chat, the day's nudge, a row a shared file gained — read as active on
+    # the Triggers page and never went off until a restart: an app mints its rows with no next
+    # fire and leaves the arming to core. One whose first slot had already gone by when the clock
+    # first saw it is decided as a missed slot is, with its own cause (`seen_late`).
+    armed = _arm_unarmed(store, triggers, now=now, persist=persist)
+    result.armed.extend(t.id for t in armed)
+    late = [t for t in armed if slot_missed(to_epoch(t.next_fire_at), now)]
+    if late:
+        from personalclaw.triggers.review import UNSEEN
+
+        result.seen_late = _recover_on_wake(
+            store,
+            late,
+            now=now,
+            persist=persist,
+            base_dir=base_dir,
+            catching_up=catching_up,
+            cause=UNSEEN,
+        )
 
     # 🔴 A SLOT MISSED WHILE THE PROCESS SLEPT, decided as a restart decides it. Measured before
     # this: a `catch_up: false` one-shot whose slot passed while the gateway was stopped with
@@ -629,6 +663,32 @@ async def tick(
     return result
 
 
+def _arm_unarmed(
+    store: Any, triggers: list[Trigger], *, now: float, persist: bool
+) -> list[Trigger]:
+    """Arm, in place, each of *triggers* that is on with no next fire (`arm.needs_arming`), from
+    `arm.first_fire`, and persist it when *persist*. Returns the ones it armed.
+
+    The write is the store's, so an app's row is armed where it lives (`TriggerStore.upsert`
+    routes it). A trigger whose spec arms to nothing (an expression that never fires, a one-shot
+    on a skipped day) is left as it is: firing on a guessed cadence is worse than not firing.
+    """
+    from personalclaw.triggers.arm import first_fire, needs_arming
+
+    armed: list[Trigger] = []
+    for trigger in triggers:
+        if not needs_arming(trigger):
+            continue
+        when = first_fire(trigger, now=now)
+        if when <= 0:
+            continue
+        trigger.next_fire_at = to_iso(when)
+        if persist:
+            store.upsert(trigger)
+        armed.append(trigger)
+    return armed
+
+
 def _recover_on_wake(
     store: Any,
     triggers: list[Trigger],
@@ -637,8 +697,13 @@ def _recover_on_wake(
     persist: bool,
     base_dir: Any,
     catching_up: dict[str, tuple[float, float]] | None,
+    cause: str = "",
 ) -> dict[str, Any]:
     """`recover` for the slots a wake found missed, and the cards it owes. Returns the report.
+
+    *cause* is why they were missed (`review.CAUSES`): a wake's, the process paused or asleep,
+    unless the caller says otherwise: `review.UNSEEN` for a trigger the clock first saw after its
+    time.
 
     The cards are kept HERE, in the tick that dropped the slots, rather than by whoever announces
     them: a re-arm that dropped a slot and a card that records it are one decision, and a caller
@@ -648,7 +713,7 @@ def _recover_on_wake(
     from personalclaw.triggers import review as _review
 
     report = recover(store, triggers, now=now, persist=persist)
-    report["cause"] = _review.PAUSED
+    report["cause"] = cause or _review.PAUSED
     if persist:
         _review.record(_review.cards_from_boot(report), base_dir=base_dir)
     if catching_up is not None:

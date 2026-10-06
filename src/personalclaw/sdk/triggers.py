@@ -34,6 +34,18 @@ building against:
 * A row whose id also exists in the owner's local ``triggers.json`` is **not armed** — the local row
   wins, because one identity cannot hold two schedules. Both stay visible on the Automations page so
   the collision is reportable. Namespace your ids.
+* **Mint a clock row with no ``next_fire_at`` and core arms it.** Core's next tick arms an enabled
+  clock row that has none and writes the time back to your store, so a row you add while the
+  gateway runs fires at its own time with no restart; a one-shot whose time passed before core saw
+  it goes to the owner's missed-run review rather than running late on its own.
+* **Keep serving a row until core deletes it.** Core writes a fired row back BEFORE it runs it
+  (its next fire, ``run_count``, ``last_fired_at``), reads it again to run it, and retires a
+  finished one-shot (``delete_after_run``) with ``delete``. A store that hides a row in answer to
+  one of those writes leaves nothing to run, and is quarantined for a write it cannot read back.
+* Core writes nothing to a row someone else wrote: every write and delete of one is refused
+  before it reaches your store, whichever door asked. An edit of the OWNER's row on the Automations
+  page is refused too — your store keeps what each automation is — while its Run now, its switch
+  and its delete are made here and reach you through ``upsert`` and ``delete``.
 """
 
 from personalclaw.triggers.models import Issue, Trigger, parse_trigger  # noqa: F401

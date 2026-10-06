@@ -340,7 +340,8 @@ async def test_an_automation_an_app_serves_pauses_itself_where_it_lives(home, mo
             False,
         )
         assert served.trigger.last_error_summary == REASON
-        assert TriggerStore(base_dir=home).get(TRIGGER_ID) is None
+        # Nothing in this home's own file: a lookup by id finds the app's row where it lives.
+        assert [row.trigger.id for row in TriggerStore(base_dir=home).load()] == []
     finally:
         TREG.unregister_trigger_store(team.name)
         ROUTE.clear_quarantine()

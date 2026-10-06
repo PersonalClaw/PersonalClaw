@@ -110,6 +110,7 @@ const MISSED_WHILE: Record<TriggerReviewCard['cause'], string> = {
   stopped: 'while PersonalClaw was not running',
   paused: 'while PersonalClaw was paused or the computer was asleep',
   stopped_or_paused: 'while PersonalClaw was stopped, paused or asleep',
+  unseen: 'before this automation reached PersonalClaw',
 }
 
 /** The card's one sentence: what did not happen, when, and why it is waiting for you. */

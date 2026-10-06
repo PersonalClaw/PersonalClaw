@@ -34,6 +34,7 @@ from typing import Any
 
 from personalclaw.atomic_write import atomic_json_write
 from personalclaw.triggers.file_watch import WatchState, changed_files, fire_payload, should_fire
+from personalclaw.triggers.models import watched_paths
 from personalclaw.triggers.provider import armable
 
 logger = logging.getLogger(__name__)
@@ -112,16 +113,16 @@ def poll_one(trigger: Any, *, base_dir: Path | str | None = None) -> dict[str, A
     precisely to prevent that, and it is the caller's job (here) to honour it. State is persisted
     on every poll, seeding included, so the seed is remembered across a restart.
     """
-    paths = trigger.spec.get("paths") if isinstance(trigger.spec, dict) else None
+    paths = watched_paths(trigger.spec)
     if not paths:
-        # A `file` trigger with no paths cannot watch anything. It should have been refused at
-        # creation (nl_kind asks for a path); if one exists, skip it rather than scan the cwd.
+        # Refused where it is made (`models.validate_spec`), and a stored one loads broken and
+        # switched off. One that reaches here anyway is skipped rather than made to scan the cwd.
         logger.debug("file trigger %s has no paths; skipping", trigger.id)
         return None
 
     state = load_state(trigger.id, base_dir=base_dir)
     dedup = trigger.spec.get("dedup") if isinstance(trigger.spec, dict) else None
-    delta, new_state = changed_files(list(paths), state)
+    delta, new_state = changed_files(paths, state)
     save_state(trigger.id, new_state, base_dir=base_dir)
 
     if not should_fire(delta):

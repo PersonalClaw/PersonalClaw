@@ -1430,6 +1430,16 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # 429 when it fired as often as its owner allows. Nothing ran; the message says which
     # (`triggers.held`), and its history why.
     "fire_held": "The automation's own rules held this fire, so it did not run.",
+    # ── one automation an app serves, or one someone else wrote (dashboard/handlers/triggers.py
+    # — run, Dry run, edit, switch and Delete of /api/triggers/{id}) ──
+    # 409 `automation_read_only`: someone other than the owner wrote it (a row in a shared store);
+    # it is shown for reference, never run here, and nothing changes it from here. The message
+    # names who wrote it; nothing was run or written. 409 `automation_kept_elsewhere`: an edit of a
+    # row an app serves, which keeps what the automation is itself, so it is changed in that app,
+    # which the message names (nothing was written, and it can still be run, switched and deleted
+    # here); or a delete that app was asked to make and did not, so the row is still there.
+    "automation_read_only": "Someone else wrote this automation; it is not run or changed here.",
+    "automation_kept_elsewhere": "An app keeps this automation; it is changed in that app.",
     # ── a link in the home (durability/home_paths.py) ──
     # 409: the home holds a symbolic link, or a file with another name, where the request was to
     # write, read or take a lock (a store's lock, most often), and nothing goes through one. The

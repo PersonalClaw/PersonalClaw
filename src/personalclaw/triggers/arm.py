@@ -334,6 +334,32 @@ def cadence_fingerprint(spec: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def first_fire(trigger: Any, *, now: float = 0.0) -> float:
+    """The fire a trigger that has never been armed is armed to, as a UTC epoch; 0.0 for none.
+
+    Its next fire from *now* (`next_fire`), but for one case: a one-shot whose time passed before
+    anything armed it is armed to THAT time, the slot it was made for, rather than left switched
+    on with no fire at all. An app mints its rows with no next fire and the clock first sees one up
+    to a tick later (`service.MAX_SLEEP_SECS`), or after a restart or once its store can be read,
+    so a reminder set just before its time, or one that reached PersonalClaw after it, was listed
+    and never went off. Armed to its own time, the tick decides it as it decides every slot that has
+    gone by (`scheduling.slot_missed`): run now when it is only a little late, else the missed-run
+    review. Never armed to *now*, which would run an old appointment as if it were new.
+    """
+    now = now or time.time()
+    fire = next_fire(trigger, now=now)
+    if fire > 0:
+        return fire
+    spec = trigger.spec if isinstance(getattr(trigger, "spec", None), dict) else {}
+    if str(spec.get("kind") or "").strip().lower() != "at":
+        return 0.0
+    at = _positive(spec.get("at"))
+    if at <= 0 or at > now:
+        return 0.0
+    # As it would have been armed just before its time: its skip dates and jitter still apply.
+    return next_fire(trigger, now=at - 1.0)
+
+
 def needs_arming(trigger: Any) -> bool:
     """Whether this trigger is a clock trigger with no next fire recorded.
 
