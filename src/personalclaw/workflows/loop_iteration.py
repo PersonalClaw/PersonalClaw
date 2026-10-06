@@ -326,8 +326,8 @@ def _budget_detail(node: Node, reason: str, breaker: BreakerState, *, ruling: An
     *ruling* is what the judge ruled on the iteration the budget ended on
     (`ending_sentence.judge_ruling`), or None when no judge ruled — which is what tells "the judge
     did not accept it" apart from "its own exit test was not met". A PASS the run's contract set
-    aside (`judge_contract`: below its rubric's targets, a forbidden success mode in its
-    reasoning…) is said as that, with the contract's reason: "the judge did not accept" read over
+    aside (`judge_contract`: below its rubric's targets, a forbidden success mode the judge
+    named…) is said as that, with the contract's reason: "the judge did not accept" read over
     a judge that passed the work sent the reader to fault work the judge had accepted.
     """
     cfg = node.config or {}

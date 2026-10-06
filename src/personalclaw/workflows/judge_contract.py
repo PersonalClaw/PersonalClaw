@@ -3,7 +3,7 @@
 **Enforcement is wired.** `engine.dispatch_gate`'s `GateKind.JUDGE` branch asks
 the model for the object `judge_instruction` describes, parses it with `parse_judge_json`,
 and hands it to `validate_verdict` — which is what decides the gate. `meets_ratchet`,
-`compute_overall`, `detect_forbidden_modes` and `aggregate_samples` run underneath it on
+`compute_overall`, `reported_forbidden_modes` and `aggregate_samples` run underneath it on
 every judge gate; `hints_from_dict` parses the `runtime_hints.judge` block the controller
 threads in. `apply_judge_contract` applies the same validation to a judge STAGE's output at
 the dispatch seam. What is NOT wired is stated in "The seams this does not own" below, so
@@ -24,6 +24,14 @@ and the whole point of a checker is to stop accepting claims. The rejection is o
 because the same object generates the prompt: `judge_instruction` names the field and says
 out loud that a PASS without it will be refused, so no judge is failed for a requirement it
 was never told about.
+
+**A forbidden pass is one the judge NAMES.** Each run declares the passes it forbids (a deleted
+test, a claim with no evidence), and the judge lists the ones the work did in
+`forbidden_modes_found`; a PASS that names one is set aside, with the mode as the reason. It is
+read from what the judge states, never from its prose: a word matcher over the reasoning read the
+judge's report of the check ("it does not reinterpret the exit condition") as an admission, and
+fired on "workspace", "claims" and "with", so it set aside nearly every pass it was there to
+protect.
 
 **The deterministic tier runs BEFORE the model, every cycle.** Regex failure patterns,
 schema checks, existence gates — microseconds each. Loop judges run every iteration,
@@ -63,8 +71,9 @@ Three rules keep the teeth off the templates' throat:
 
 1. **The prompt is generated from the object that enforces it.** `judge_instruction` renders
    the closed verdict vocabulary, the proof requirement, the EXACT rubric keys the ratchet
-   will look up, and the forbidden modes. A judge is never refused for a requirement it was
-   not given, which is the only honest way to enforce a contract on a live population.
+   will look up, and the forbidden modes with the field a judge names one in. A judge is never
+   refused for a requirement it was not given, which is the only honest way to enforce a
+   contract on a live population.
 2. **An undeclared rubric is not a shortfall.** `meets_ratchet` iterates the DECLARED
    criteria, so a gate whose run declares none returns "ok" with no shortfalls. A template
    that never described convergence cannot be REJECTed into a dead loop for it.
@@ -118,6 +127,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -239,10 +249,8 @@ GRANULARITY_PRESETS: dict[str, dict[str, float]] = {
 #: The forbidden success modes every code-flavoured judge must actively verify did
 #: NOT happen. These are the passes a worker under pressure actually produces.
 #:
-#: Phrased with TWO signal words each, because that is what the matcher requires (see
-#: `detect_forbidden_modes`). "output stubbed or hardcoded" missed a judge saying "the
-#: return value is hardcoded" — only one signal was present — so hardcoding is its own
-#: entry rather than an alternative buried in another phrase.
+#: Each is one pass a judge can name on its own in `forbidden_modes_found`, so hardcoding a
+#: value is its own entry rather than an alternative buried in "output stubbed".
 DEFAULT_FORBIDDEN_MODES = (
     "test deleted or skipped",
     "gate/validation config modified",
@@ -386,6 +394,10 @@ class JudgeVerdict:
     #: The rubric criteria that fell short, reported even on a RELAXED pass so a relaxed
     #: acceptance is never silent about what it let through.
     shortfalls: list[str] = field(default_factory=list)
+    #: The forbidden success modes the judge SAID the work did (its `forbidden_modes_found`),
+    #: each in its declared wording when it names one. Read on every verdict from what the judge
+    #: states, never from its prose; a PASS that names one is set aside (`validate_verdict`).
+    forbidden_modes_found: list[str] = field(default_factory=list)
     #: True when the invalidity is about the judge's ANSWER (not an object, unknown verdict,
     #: a PASS that scored none of a declared rubric) rather than about the WORK. The gate
     #: reads it to choose `PROTOCOL` over `USER`: "the judge could not answer in the required
@@ -482,6 +494,7 @@ class JudgeVerdict:
             "unanswerable_refs": list(self.unanswerable_refs),
             "cannot_judge": self.cannot_judge,
             "shortfalls": list(self.shortfalls),
+            "forbidden_modes_found": list(self.forbidden_modes_found),
             "invalid_reason": self.invalid_reason,
             "protocol_error": self.protocol_error,
             "escalated": self.escalated,
@@ -556,32 +569,40 @@ def _normalize_key(text: Any) -> str:
     return re.sub(r"[^a-z0-9]+", " ", str(text or "").lower()).strip()
 
 
+def _tolerant_match(wanted: str, candidates: Iterable[str]) -> str | None:
+    """The one of *candidates* that *wanted* restates, or None. Three attempts, narrowest first:
+
+    1. the exact text;
+    2. the normalized text (case, punctuation and spacing collapsed);
+    3. containment — but ONLY when exactly one candidate contains *wanted* or vice versa. An
+       ambiguous partial match is left unmatched on purpose: guessing which of two the writer
+       meant is a decision made on noise, and "unmatched" is the auditable answer.
+    """
+    keys = list(candidates)
+    if wanted in keys:
+        return wanted
+    target = _normalize_key(wanted)
+    if not target:
+        return None
+    normalized = {_normalize_key(k): k for k in keys}
+    if target in normalized:
+        return normalized[target]
+    hits = [k for n, k in normalized.items() if n and (target in n or n in target)]
+    return hits[0] if len(hits) == 1 else None
+
+
 def score_for(criterion: str, scores: dict[str, int]) -> int | None:
-    """The score a judge gave `criterion`, tolerant of key restatement.
+    """The score a judge gave `criterion`, tolerant of key restatement (`_tolerant_match`).
 
     🔴 This tolerance is what keeps the ratchet from being an outage. Under
     `Ratchet.STRICT` an unscored criterion is a shortfall, so a REJECT; with byte-exact
     lookup, a judge answering `"verify command passes"` for the declared
     `"the verify command passes"` would have failed every PASS in the templates that
-    declare a rubric. Three attempts, narrowest first:
-
-    1. exact key;
-    2. normalized key (case, punctuation and spacing collapsed);
-    3. containment — but ONLY when exactly one key contains the criterion or vice versa.
-       An ambiguous partial match is left unscored on purpose: guessing which of two keys
-       the judge meant is a routing decision made on noise, and "not scored" is the
-       auditable answer.
+    declare a rubric. An ambiguous partial match is left unscored: "not scored" is the
+    auditable answer to a key that could be either of two.
     """
-    if criterion in scores:
-        return int(scores[criterion])
-    wanted = _normalize_key(criterion)
-    if not wanted:
-        return None
-    normalized = {_normalize_key(k): v for k, v in scores.items()}
-    if wanted in normalized:
-        return int(normalized[wanted])
-    hits = [v for k, v in normalized.items() if k and (wanted in k or k in wanted)]
-    return int(hits[0]) if len(hits) == 1 else None
+    key = _tolerant_match(criterion, scores)
+    return None if key is None else int(scores[key])
 
 
 def compute_overall(scores: dict[str, int], rubric: list[RubricCriterion]) -> float:
@@ -737,6 +758,11 @@ def validate_verdict(
         regressed=bool(raw.get("regressed") is True),
         done_reason=str(raw.get("done_reason", "")).strip()[:500],
     )
+    # What the judge says the work did that this run forbids. Read on EVERY verdict, so a REJECT
+    # or a refusal that names one carries it to the aggregator (`aggregate_samples` rule 2); only a
+    # PASS is set aside for it, below. None is a report the engine cannot read.
+    reported = reported_forbidden_modes(raw.get("forbidden_modes_found"), hints)
+    result.forbidden_modes_found = list(reported or [])
 
     # Stamp WHICH evidence this verdict judged, and ground its citations against it.
     # Opt-in: both run only when the caller supplied the slice it showed the judge, so callers
@@ -800,9 +826,20 @@ def validate_verdict(
         result.invalid_reason = "PASS below rubric targets: " + "; ".join(shortfalls[:5])
         return result
 
-    forbidden = detect_forbidden_modes(result.reasoning, hints)
-    if forbidden:
-        result.invalid_reason = f"forbidden success mode admitted: {forbidden}"
+    # A forbidden pass is one the judge NAMES (`reported_forbidden_modes`). A report it cannot
+    # read is not "none": whether the judge found one is unknown, so the pass is not taken, and the
+    # reason sends the reader to the judge's answer rather than to the work.
+    if reported is None:
+        result.invalid_reason = "PASS gives its forbidden success modes as neither a list nor text"
+        result.protocol_error = True
+        return result
+    if result.forbidden_modes_found:
+        named = "; ".join(result.forbidden_modes_found)
+        plural = len(result.forbidden_modes_found) > 1
+        result.invalid_reason = (
+            f"PASS names {'forbidden success modes' if plural else 'a forbidden success mode'}: "
+            f"{named}"
+        )
         return result
 
     # The standing cross-check. A judge PASS contradicting the deterministic result
@@ -815,54 +852,45 @@ def validate_verdict(
     return result
 
 
-#: Words that carry no discriminating power inside a forbidden-mode phrase. Stripped
-#: before matching, because a mode is written as a human-readable phrase ("test
-#: deleted or skipped") that enumerates ALTERNATIVES, not a conjunction.
-_MODE_NOISE = frozenset({"and", "the", "was", "were", "been", "with", "that", "this"})
+def reported_forbidden_modes(value: Any, hints: JudgeHints) -> list[str] | None:
+    """The forbidden success modes a judge's ``forbidden_modes_found`` names, or None when it is
+    in a shape the engine cannot read.
 
+    It is the judge's own statement, never an inference from its prose: a judge is told to check
+    these passes did not happen, and its reasoning reports that check in the modes' own words
+    (the module docstring's "A forbidden pass is one the judge NAMES").
 
-def detect_forbidden_modes(text: str, hints: JudgeHints) -> str:
-    """Return the first forbidden success mode the text admits to, or "".
-
-    Matched on the judge's own reasoning: a judge that says "the test was deleted but
-    the code looks right" has stated the disqualifier out loud.
-
-    **The match is subject-AND-any-alternative, not all-words.** Measured: requiring
-    every long word missed "the test was deleted" against "test deleted or skipped",
-    because the phrase lists alternatives — a real admission mentions the subject and
-    ONE of them. All-words matching made the whole denylist inert on the exact
-    phrasing a judge actually produces, which is the worst kind of failure for a
-    control: present, plausible, and doing nothing.
+    Read as the list the contract asks for. Each entry is a mode, in its declared wording when it
+    names one (matched as a rubric key is, `_tolerant_match`) and otherwise in the judge's own
+    words: a forbidden pass named in other words is still one the judge says happened. A lone
+    string is a one-item list, and nothing at all (absent, null, false, empty) is none: a judge
+    that passes the work is told not to pass forbidden work, so its pass is its word that it found
+    none. Any other value (true, a number, an object) is None, and is never read as none.
     """
-    lowered = (text or "").lower()
-    for mode in hints.forbidden_success_modes:
-        signals = {
-            w for w in re.findall(r"[a-z]+", mode.lower()) if len(w) > 2 and w not in _MODE_NOISE
-        }
-        if not signals:
+    if not value:
+        return []
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return None
+    named: list[str] = []
+    for entry in value:
+        said = " ".join(str(entry).split()) if entry is not None and entry is not False else ""
+        if not said:
             continue
-        # Stem to a common prefix so "test"/"tests" and "modified"/"modify" match. A
-        # crude 4-char prefix beats a stemmer here: the vocabulary is a fixed handful
-        # of phrases, and a dependency for six words is not worth its weight.
-        stems = {w[:4] for w in signals}
-        present = {stem for stem in stems if stem in lowered}
-        # TWO distinct signals, not one and not all. One word ("output", "config")
-        # appears in innocent prose constantly; requiring every word made the whole
-        # denylist inert on real phrasing — the worst failure for a control: present,
-        # plausible, and doing nothing.
-        if len(present) >= min(2, len(stems)):
-            return mode
-    return ""
+        mode = _tolerant_match(said, hints.forbidden_success_modes) or said
+        if mode not in named:
+            named.append(mode)
+    return named
 
 
 def aggregate_samples(verdicts: list[JudgeVerdict], hints: JudgeHints) -> JudgeVerdict:
     """Median-aggregate N independent samples for a terminal gate.
 
     Single-run LLM-judge acceptance was measured to be indistinguishable from noise.
-    A terminal PASS therefore requires the sampled MAJORITY to pass **and** no
-    forbidden-mode hit anywhere in the set — one sample spotting a disqualifier
-    outweighs two that missed it, because a disqualifier is a fact rather than an
-    opinion.
+    A terminal PASS therefore requires the sampled MAJORITY to pass **and** no sample
+    in the set naming a forbidden mode — one sample spotting a disqualifier outweighs
+    two that missed it, because a disqualifier is a fact rather than an opinion.
 
     The four rules, in order — this is the ONE aggregator now. `engine.py` used to restate
     them over its own verdict enum (`_aggregate_gate_verdicts`, since deleted),
@@ -873,7 +901,9 @@ def aggregate_samples(verdicts: list[JudgeVerdict], hints: JudgeHints) -> JudgeV
        cannot-judge or a contradicted deterministic check) or from the judge saying ESCALATE
        outright. It names something the other samples did not see, and outvoting it would
        discard the one sample that noticed.
-    2. **Any forbidden-mode hit wins**, for the same reason: a disqualifier is a fact.
+    2. **Any sample that names a forbidden mode wins**, for the same reason: a disqualifier is a
+       fact. Read off what each sample said (`forbidden_modes_found`), whatever its verdict, so a
+       REJECT that names one counts as much as a PASS that does.
     3. **A PASS needs a strict majority** (2 of 3, never 1 of 2).
     4. **Otherwise the majority rejection stands**, preferring a terminal REJECT over a
        spinning RETRY when the samples split — the safe reading of a split is the one that
@@ -888,7 +918,7 @@ def aggregate_samples(verdicts: list[JudgeVerdict], hints: JudgeHints) -> JudgeV
         if candidate.escalated or candidate.verdict is Verdict.ESCALATE:
             return candidate
     for candidate in verdicts:
-        if "forbidden success mode" in candidate.invalid_reason:
+        if candidate.forbidden_modes_found:
             return candidate
 
     passes = [v for v in verdicts if v.passed]
@@ -958,6 +988,10 @@ def judge_instruction(prompt: str, hints: JudgeHints) -> str:
         lines.append("")
         lines.append("These passes are forbidden. Do not PASS if the work did any of them:")
         lines.extend(f"  - {mode}" for mode in hints.forbidden_success_modes)
+        lines.append(
+            "Name each one the work did in `forbidden_modes_found`, copied exactly as written "
+            "above, and leave it [] when it did none: a PASS that names one is set aside."
+        )
     if hints.hidden_validation_commands:
         # Rendered ONLY here. A worker that can read the hidden checks satisfies them
         # specifically, which is the same as not having them.
@@ -976,6 +1010,10 @@ def judge_instruction(prompt: str, hints: JudgeHints) -> str:
         '  "scores": {"<criterion exactly as written above>": 0},',
         '  "proof": "the command you ran, the file you read, the line you checked",',
         '  "evidence_refs": ["the artifact or output you relied on"],',
+    ]
+    if hints.forbidden_success_modes:
+        lines.append('  "forbidden_modes_found": ["a forbidden pass above that the work did"],')
+    lines += [
         '  "cannot_judge": "why you could not judge, or an empty string"',
         "}",
         "",

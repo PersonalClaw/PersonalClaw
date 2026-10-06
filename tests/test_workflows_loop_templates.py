@@ -343,6 +343,42 @@ def test_every_forbidden_mode_appears_in_a_judge_prompt(name):
         assert mode.lower() in prompts, f"{name}: {mode}"
 
 
+def _contract_judges():
+    """Every judge the contract validates, in EVERY bundled template: each `judge_contract`
+    stage and each `judge` gate, with the spec it belongs to."""
+    for name in template_names():
+        spec = _spec(name)
+        for node in _nodes(spec["root"]):
+            cfg = node.get("config") or {}
+            stage = node.get("kind") == "stage" and cfg.get("judge_contract")
+            if stage or (node.get("kind") == "gate" and cfg.get("kind") == "judge"):
+                yield name, spec, node
+
+
+def test_every_contract_judge_is_asked_to_name_the_forbidden_passes_it_found():
+    """A PASS is set aside only for a forbidden pass its judge NAMES in `forbidden_modes_found`
+    (`judge_contract.reported_forbidden_modes`), never for words in its reasoning. So every judge
+    the contract validates is asked for that field in what it reads, with what an empty list
+    means: a stage in its own prompt and its declared schema, a gate in the instruction the engine
+    composes. A judge that was never asked could only ever report none."""
+    kinds: set[str] = set()
+    for name, spec, judge in _contract_judges():
+        hints = hints_from_dict((spec.get("runtime_hints") or {}).get("judge"))
+        if not hints.forbidden_success_modes:
+            continue
+        where = f"{name}:{judge.get('id')}"
+        prompt = _effective_prompt(spec, judge)
+        assert '"forbidden_modes_found"' in prompt, where
+        assert "[] when" in prompt, where
+        assert "set aside" in prompt, where
+        if judge.get("kind") == "stage":
+            schema = (judge.get("config") or {}).get("schema") or {}
+            assert schema.get("forbidden_modes_found") == "array", where
+        kinds.add(str(judge.get("kind")))
+    # Vacuity floor: the bundled library holds judges of both kinds.
+    assert kinds == {"stage", "gate"}, kinds
+
+
 @pytest.mark.parametrize("name", LOOP_TEMPLATES)
 def test_the_escalation_ladder_ends_at_surface(name):
     """A ladder with no terminal rung loops at its top forever."""

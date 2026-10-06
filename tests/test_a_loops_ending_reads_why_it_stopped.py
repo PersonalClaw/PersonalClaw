@@ -194,14 +194,14 @@ def test_the_control_a_judge_that_rejected_still_ends_at_the_budget() -> None:
 
 def test_a_pass_the_contract_set_aside_is_not_read_as_a_judge_that_did_not_accept() -> None:
     """🔴 Before: "the judge did not accept the last one" over a judge that ruled PASS — the run's
-    contract set the pass aside (here its reasoning read as a forbidden success mode), and the
-    ending blamed work the judge had accepted."""
+    contract set the pass aside (here the judge named a forbidden success mode the work did), and
+    the ending blamed work the judge had accepted."""
     controller = _drive(
         _Subagents(
             judge=_judge(
                 "PASS",
-                reasoning="The work claimed is done, and the note is the evidence.",
                 scores={"the step accomplished something real": 2, "evidence is checkable": 2},
+                forbidden_modes_found=["work claimed without evidence"],
             )
         )
     )

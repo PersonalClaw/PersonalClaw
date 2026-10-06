@@ -271,7 +271,7 @@ def _judge_gate_outcome(decision: JudgeVerdict, node: Node) -> tuple[InstanceSta
     rather than inheriting a pass — the same rule `_dual_guard` applies to `GuardOutcome`.
 
     An INVALID verdict is decided before the verdict itself, because that is the teeth: a PASS
-    the contract refused (no cited proof, a rubric shortfall, an admitted forbidden mode) is a
+    the contract refused (no cited proof, a rubric shortfall, a forbidden mode the judge named) is a
     REJECT, not a pass with a note. `protocol_error` splits the two remediations — "the judge
     could not answer in the required shape" sends a reader to the prompt, "the work fell short"
     sends them to the deliverable, and reporting both as one loses the distinction that decides

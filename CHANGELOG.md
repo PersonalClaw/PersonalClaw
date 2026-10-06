@@ -8,6 +8,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+- **A loop whose judge passes the work ends passed: a judge's pass is set aside only for a forbidden success mode the judge itself names, where words in its reasoning such as "workspace", "claims" or its own report that a forbidden pass did not happen set nearly every pass aside and the run read "Stopped at its budget"**
 - **Every upload, Knowledge write and artifact save waits about 0.8 s less for its content scan: the scan's child process imports the scanner and nothing else, where it loaded the whole command line first.**
 - **The code map's grammars are fetched once for every PersonalClaw process on a home, and a language the language pack has no grammar for is answered without a fetch; core's test suite keeps its two downloads, the grammars and the default chat model, in pytest's cache or in the folder `PERSONALCLAW_TEST_DOWNLOADS` names, and fetches each once.**
 - **An optimize-harness search on Linux files its winner, raises it in your Inbox and pre-registers its study: the filing is a step the gateway runs itself (`optimize-file`), where it was a command in the sandbox, which on Linux can neither add a folder at the top of PersonalClaw's home nor replace a file there, so a home with no `learning` folder yet filed nothing and every home lost the Inbox row and the study.**

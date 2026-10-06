@@ -24,11 +24,11 @@ from personalclaw.workflows.judge_contract import (
     adjudicate,
     aggregate_samples,
     compute_overall,
-    detect_forbidden_modes,
     hints_from_dict,
     judge_instruction,
     meets_ratchet,
     parse_judge_json,
+    reported_forbidden_modes,
     score_for,
     validate_verdict,
     verdict_for_cycle,
@@ -166,51 +166,60 @@ def test_an_unavailable_check_does_not_block_a_pass():
 # ── forbidden success modes ──
 
 
-def test_an_admitted_forbidden_mode_invalidates_a_pass():
-    verdict = validate_verdict(
-        passing(reasoning="The test was deleted but the implementation looks correct."), hints()
-    )
+def test_a_named_forbidden_mode_invalidates_a_pass():
+    verdict = validate_verdict(passing(forbidden_modes_found=["test deleted or skipped"]), hints())
     assert not verdict.passed
-    assert "forbidden success mode" in verdict.invalid_reason
+    assert verdict.invalid_reason == "PASS names a forbidden success mode: test deleted or skipped"
+
+
+@pytest.mark.parametrize("mode", DEFAULT_FORBIDDEN_MODES)
+def test_every_default_mode_named_by_the_judge_sets_the_pass_aside(mode):
+    verdict = validate_verdict(passing(forbidden_modes_found=[mode]), JudgeHints(rubric=[]))
+    assert not verdict.passed
+    assert verdict.forbidden_modes_found == [mode]
 
 
 @pytest.mark.parametrize(
-    "admission",
-    [
-        "The test was deleted but the code is fine.",
-        "Tests were skipped for this run.",
-        "The worker modified the gate config to make it pass.",
-        "The validation config was changed during the run.",
-        "Output is stubbed for now but the shape is right.",
-        "The return value is hardcoded to satisfy the assertion.",
-    ],
-)
-def test_every_default_mode_is_detected_on_realistic_phrasing(admission):
-    """An all-words match made the whole denylist INERT on the phrasing a
-    judge actually produces — present, plausible, and doing nothing."""
-    assert detect_forbidden_modes(admission, JudgeHints())
-
-
-@pytest.mark.parametrize(
-    "innocent",
+    "prose",
     [
         "All tests pass and the implementation is complete with real output.",
-        "I added a test for the new branch and it passes.",
-        "The config is unchanged; the fix was in the parser.",
-        "Deleted a stale comment from the docstring.",
+        "No test was deleted or skipped, and the config is unchanged.",
+        "The gate config was not modified; the validation ran as declared.",
+        "Nothing is stubbed and no value is hardcoded to satisfy an assertion.",
     ],
 )
-def test_innocent_prose_is_not_flagged(innocent):
-    """A false positive here blocks legitimate completions, so the matcher needs two
-    distinct signals rather than one."""
-    assert not detect_forbidden_modes(innocent, JudgeHints())
+def test_the_reasoning_is_never_read_for_a_forbidden_mode(prose):
+    """What the judge NAMES decides, not the words its reasoning uses. Matching the modes' words
+    in the prose read a judge's report of the check it was asked to make ("no test was deleted")
+    as an admission, and set aside the passes the check exists to back."""
+    verdict = validate_verdict(
+        passing(reasoning=prose, forbidden_modes_found=[]), JudgeHints(rubric=[])
+    )
+    assert verdict.passed, verdict.invalid_reason
 
 
-def test_the_default_modes_each_carry_two_signal_words():
-    """The matcher requires two; a one-signal phrase would never fire."""
-    for mode in DEFAULT_FORBIDDEN_MODES:
-        words = [w for w in mode.replace("/", " ").split() if len(w) > 2 and w != "or"]
-        assert len(words) >= 2, mode
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, []),
+        ([], []),
+        ("", []),
+        (False, []),
+        (["  test deleted  "], ["test deleted or skipped"]),
+        (["Value hardcoded to satisfy assertion."], ["value hardcoded to satisfy assertion"]),
+        (["test deleted or skipped", "test deleted"], ["test deleted or skipped"]),
+        ("output stubbed or placeholder", ["output stubbed or placeholder"]),
+        (["a mode in other words"], ["a mode in other words"]),
+        ([None, "", False], []),
+        (True, None),
+        (3, None),
+        ({"test deleted or skipped": False}, None),
+    ],
+)
+def test_the_report_is_read_as_the_list_it_was_asked_for(value, expected):
+    """A list of modes, in their declared wording when an entry restates one; a lone string is one
+    entry; nothing is none; any other shape is unreadable (None), which is never read as none."""
+    assert reported_forbidden_modes(value, JudgeHints()) == expected
 
 
 # ── the typed escape hatch ──
@@ -260,13 +269,13 @@ def test_a_minority_pass_does_not():
     assert not aggregate_samples(samples, hints()).passed
 
 
-def test_any_forbidden_mode_hit_outweighs_a_passing_majority():
+def test_any_named_forbidden_mode_outweighs_a_passing_majority():
     """One sample spotting a disqualifier beats two that missed it — a disqualifier is
     a fact, not an opinion."""
     samples = [
         validate_verdict(passing(), hints()),
         validate_verdict(passing(), hints()),
-        validate_verdict(passing(reasoning="the test was deleted"), hints()),
+        validate_verdict(passing(forbidden_modes_found=["test deleted or skipped"]), hints()),
     ]
     assert not aggregate_samples(samples, hints()).passed
 
@@ -430,7 +439,7 @@ _ENFORCEMENT_ENTRY_POINTS = (
 #: intact". Asserted by AST below rather than by grep: a rule that stops being reachable from the
 #: one function production calls is exactly as inert as one with no caller at all, and it looks
 #: fine from every other angle.
-_REACHED_THROUGH_VALIDATION = ("meets_ratchet", "compute_overall", "detect_forbidden_modes")
+_REACHED_THROUGH_VALIDATION = ("meets_ratchet", "compute_overall", "reported_forbidden_modes")
 
 #: The claim the docstring carried while the list had NO caller. Every entry point has one now,
 #: so this phrase reappearing means someone re-stranded the contract — or copied the old
@@ -496,7 +505,7 @@ def test_every_enforcement_entry_point_has_a_production_caller():
 def test_the_rules_under_validate_verdict_are_still_reached_from_it():
     """The chain, not just the entry point.
 
-    `meets_ratchet`, `compute_overall` and `detect_forbidden_modes` have no caller outside this
+    `meets_ratchet`, `compute_overall` and `reported_forbidden_modes` have no caller outside this
     module by design — `validate_verdict` is the one door. That makes them the shape a
     caller-count audit cannot see: still defined, still tested, and unreachable the moment one
     call is dropped from the door.
