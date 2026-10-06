@@ -567,6 +567,8 @@ def call_tool_with_logging(
     inner_fn: Callable[[str, dict[str, Any]], str],
     session_key: str,
     downstream_service: str,
+    *,
+    gateway_makes: Mapping[str, float | None] | None = None,
 ) -> str:
     """Validate args, call inner tool function, and log the invocation.
 
@@ -578,11 +580,22 @@ def call_tool_with_logging(
     ``mcp_workflows._fmt`` writes ``Error [CODE]: …``, and missed ``artifact_delete``'s
     ``Artifact not found: X`` entirely.
 
+    *gateway_makes* names the module's tools whose calls the gateway makes for the tool server an
+    agent CLI runs, each with how long that process waits for it (``None``: as long as any write):
+    their work writes a store at the top of the home, which that process's sandbox lets it change
+    nothing at (``mcp_core.made_by_the_gateway``). There they are admitted here, by this process's
+    own lineage and tier, and made there; a call the gateway recorded in the security log is not
+    recorded here again.
+
     A store file the call needed that could not be read (``record_files.Unreadable``: nothing was
     written to it) is answered here, once for every server's tools, as the call's failure in the
-    refusal's own words — never an exception that ends the server's loop.
+    refusal's own words; a refusal a store raised (``lasting_work.Refused``,
+    ``memory_writes.MemoryWriteRefused``) in its words and under its code; and any other failure
+    the call's work raised, in its own words, as the gateway answers one of these calls that fails:
+    never an exception that ends the server's loop, which took every later call of the agent CLI's
+    turn with it.
     """
-    from personalclaw import record_files
+    from personalclaw import lasting_work, mcp_core, memory_writes, record_files
     from personalclaw.sel import sel
     from personalclaw.tool_providers.base import ToolFailure, tool_failure
 
@@ -600,10 +613,24 @@ def call_tool_with_logging(
         )
         return tool_failure(reason)
 
+    audited_there = False
     try:
-        result = inner_fn(name, args)
+        if gateway_makes and name in gateway_makes and mcp_core.serves_an_agent_cli():
+            result, audited_there = mcp_core.made_by_the_gateway(
+                name, args, timeout=gateway_makes[name]
+            )
+        else:
+            result = inner_fn(name, args)
     except record_files.Unreadable as unreadable:
         result = tool_failure(str(unreadable), code="store_unreadable")
+    except (lasting_work.Refused, memory_writes.MemoryWriteRefused) as refused:
+        result = tool_failure(str(refused), code=refused.code)
+    except Exception as exc:  # noqa: BLE001 - the call's own failure is its answer
+        logger.warning("%s could not finish", name, exc_info=True)
+        result = tool_failure(f"{name} could not finish: {_failure_said(exc)}")
+    if audited_there:
+        # The gateway recorded the call where it made or refused it.
+        return result
     outcome = "failed" if isinstance(result, ToolFailure) else "completed"
     sel().log_tool_invocation(
         session_key=session_key,
@@ -617,6 +644,16 @@ def call_tool_with_logging(
         error=result if outcome == "failed" else "",
     )
     return result
+
+
+def _failure_said(exc: Exception) -> str:
+    """What a call whose work raised *exc* could not do, in the error's words: a file it could not
+    use named from ``~``, with why."""
+    if isinstance(exc, OSError) and isinstance(exc.filename, str) and exc.filename:
+        from personalclaw.home_paths import from_home
+
+        return f"{from_home(exc.filename)}: {exc.strerror or exc}."
+    return f"{exc}." if str(exc) else f"{type(exc).__name__}."
 
 
 def _read_message(stdin) -> dict[str, Any] | None:

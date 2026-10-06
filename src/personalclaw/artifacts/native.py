@@ -75,6 +75,11 @@ def config_dir() -> Path:
     return config_loader.config_dir()
 
 
+def artifacts_root() -> Path:
+    """The folder the native provider keeps the library in, unless it is given another."""
+    return config_dir() / "artifacts"
+
+
 logger = logging.getLogger(__name__)
 
 #: The only companion-file names ``store_version_file`` accepts: ``<stem>@<hex>[.ext]``. Anchored to
@@ -135,7 +140,7 @@ class NativeArtifactProvider(ArtifactProvider):
     """Filesystem-backed artifact provider (the bundled default)."""
 
     def __init__(self, root: Path | str | None = None) -> None:
-        self._root = Path(root) if root else (config_dir() / "artifacts")
+        self._root = Path(root) if root else artifacts_root()
         # Reentrant: update()/record_impression() re-enter via self.get() while
         # already holding the lock (a coarse single-instance guard).
         self._lock = threading.RLock()

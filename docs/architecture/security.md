@@ -665,7 +665,12 @@ wrote, `owner_grants.py`). An agent writes none of them, at three layers that ea
   runs is read-only in that shell until it restarts. So the launcher makes what it fences before it
   fences the home (the memory folders a private chat's command may not change), and PersonalClaw's
   own writes to the stores at the top of its home are made in the gateway, never by a command a run
-  starts (the optimize-harness search files its winner with the `optimize-file` action). On both,
+  starts (the optimize-harness search files its winner with the `optimize-file` action) nor by the
+  tool server an agent CLI runs, which is in the CLI's sandbox: a call of its whose work writes one
+  (an automation, a callback, a tile, a proposal and its Inbox row, the spend a model call is
+  charged) is made by the gateway through `POST /api/tools/invoke`, as the chat's work and held to
+  what a chat's call is held to (`mcp_core.made_by_the_gateway`), and the folders the calls it
+  makes itself write in are made before the CLI starts (`mcp_core.make_its_folders`). On both,
   the home and every folder above it the owner could rename are pinned (a Seatbelt literal on the
   folder's own entry; a mount point on Linux), so the home cannot be moved aside, edited there and
   moved back. This is the kernel refusing, so it holds however the command spells the path.

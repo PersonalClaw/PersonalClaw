@@ -14,10 +14,15 @@ against the real store while this layer stays a translation with nothing to hide
 own — the executor + `SubagentManager.spawn` do. So an immediate run routes through the gateway's
 HTTP `/run` (the shipped `schedule_trigger` pattern) rather than
 executing here; `automation_dry_run` needs no turn and is answered locally.
+
+**The tool server an agent CLI runs makes none of these calls itself** (:func:`_gateway_makes`):
+each is the gateway's, admitted there by that process's own lineage and made by this module's
+handler in the gateway (``mcp_core.made_by_the_gateway``).
 """
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 from typing import Any
@@ -32,9 +37,9 @@ logger = logging.getLogger(__name__)
 def _store() -> Any:
     """The shared trigger store, rooted at the active home.
 
-    Built per call rather than cached: MCP tools run in a separate process writing the same
-    `triggers.json`, and the store's own mtime-`_sync` is what keeps a long-lived handle honest.
-    A module-level singleton would serve a stale view after another process wrote.
+    Built per call rather than cached: the Triggers page, the scheduler's run records and a sync
+    write the same `triggers.json` through stores of their own, and a mutation re-reads under the
+    store's lock. A module-level singleton would serve a stale view after another writer wrote.
     """
     from personalclaw.config.loader import config_dir
     from personalclaw.triggers.store import TriggerStore
@@ -449,28 +454,44 @@ def _http_runner(payload: dict[str, Any]) -> Any:
         return f"could not dispatch: {exc}"
 
 
-def _resolve_resume_target(args: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
-    """The `workflow.resume` target a set_*_task call asked for, or (None, "") when it did not.
+#: The tools a ``resume_run_id`` of ``"self"`` is named for when the call is admitted
+#: (:func:`_named_resume`).
+_RESUMES = ("set_onetime_task", "set_recurring_task")
 
-    `resume_run_id: "self"` resolves from the leaf's lineage (`mcp_shared.leaf_run_id`) — the one
-    reader `mcp_shared.leaf_tool_denial` uses too, which sees the stage's lineage whether its tools
-    run in an agent CLI's tool server or in-process on the native runtime. Resolved HERE, at
-    creation, rather than stored symbolically: a persisted "self" would be re-resolved at fire time
-    by whatever process the scheduler runs in, which is never the run it meant.
-    """
+
+def _is_self(value: Any) -> bool:
+    return str(value or "").strip().lower() == "self"
+
+
+def _named_resume(args: dict[str, Any]) -> dict[str, Any]:
+    """*args* with a ``resume_run_id`` of ``"self"`` named: the run of the leaf the call is
+    admitted for (`mcp_shared.leaf_run_id`), the one reader `mcp_shared.leaf_tool_denial` uses too,
+    which sees the stage's lineage whether its tools run in an agent CLI's tool server or in-process
+    on the native runtime. Named at admission, where that lineage is: the tool server hands the
+    call itself to the gateway (``mcp_core.made_by_the_gateway``), whose own lineage names no run.
+    And never stored symbolically: a persisted "self" would be re-resolved at fire time by whatever
+    process the scheduler runs in, which is never the run it meant. A "self" with no lineage to name
+    it is left as it is, for the call to refuse (:func:`_resolve_resume_target`)."""
+    if not _is_self(args.get("resume_run_id")):
+        return args
+    from personalclaw.mcp_shared import leaf_run_id
+
+    run_id = leaf_run_id()
+    return {**args, "resume_run_id": run_id} if run_id else args
+
+
+def _resolve_resume_target(args: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+    """The `workflow.resume` target a set_*_task call asked for, or (None, "") when it did not:
+    the run its ``resume_run_id`` names, as admitted (:func:`_named_resume`), or the refusal of a
+    "self" that no run lineage named."""
     raw = str(args.get("resume_run_id") or "").strip()
     if not raw:
         return None, ""
-    if raw.lower() == "self":
-        from personalclaw.mcp_shared import leaf_run_id
-
-        run_id = leaf_run_id()
-        if not run_id:
-            return None, tool_failure(
-                "resume_run_id='self' only works from inside a workflow run — this "
-                "session has no run lineage. Pass the explicit run id instead."
-            )
-        return {"run_id": run_id}, ""
+    if _is_self(raw):
+        return None, tool_failure(
+            "resume_run_id='self' only works from inside a workflow run — this "
+            "session has no run lineage. Pass the explicit run id instead."
+        )
     return {"run_id": raw}, ""
 
 
@@ -594,11 +615,13 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
 
 
 def _validate_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
-    """Validate against the shared MCP schema; unschem'd tools pass through unchanged."""
+    """Validate against the shared MCP schema (unschem'd tools pass through unchanged), and name
+    the run a ``resume_run_id`` of ``"self"`` means (:func:`_named_resume`)."""
     from personalclaw.validation import MCP_AUTOMATION_SCHEMAS, validate_tool_args
 
     schema = MCP_AUTOMATION_SCHEMAS.get(name)
-    return validate_tool_args(args, schema) if schema else args
+    checked = validate_tool_args(args, schema) if schema else args
+    return _named_resume(checked) if name in _RESUMES else checked
 
 
 def _preflight(name: str, raw_args: dict[str, Any]) -> Any:
@@ -625,6 +648,30 @@ def _answered(name: str, args: dict[str, Any]) -> str:
         return tool_failure(str(refused), code=refused.code)
 
 
+#: The automation tools whose work may ask a model: a ``when`` that leaves its time to judgement
+#: is read by one (``triggers.tools._read_when``, ``nl_to_cron``).
+_READS_A_SCHEDULE = ("automation_create", "set_onetime_task", "set_recurring_task")
+
+
+@functools.cache
+def _gateway_makes() -> dict[str, float | None]:
+    """Every one of these tools' calls is the gateway's in the tool server an agent CLI runs
+    (``mcp_shared.call_tool_with_logging``, ``mcp_core.made_by_the_gateway``), as every workflow
+    tool's is: the automations are kept in ``triggers.json`` at the top of the home, which that
+    process's sandbox lets it change nothing at, and only the gateway holds the ones apps serve.
+    A call that may ask a model to read its schedule (:data:`_READS_A_SCHEDULE`) is waited for as
+    long as a model's work takes (``mcp_core.GATEWAY_MODEL_WORK_TIMEOUT_SECS``), not as long as a
+    write: a local model can take longer than that to answer, and a call this process stopped
+    waiting for is one the gateway may still make, which an agent that calls it again makes twice.
+    """
+    from personalclaw.mcp_core import GATEWAY_MODEL_WORK_TIMEOUT_SECS
+
+    return {
+        tool["name"]: GATEWAY_MODEL_WORK_TIMEOUT_SECS if tool["name"] in _READS_A_SCHEDULE else None
+        for tool in _list_tools()
+    }
+
+
 def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
     from personalclaw.mcp_shared import call_tool_with_logging
 
@@ -635,4 +682,5 @@ def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
         _answered,
         session_key="mcp_automation",
         downstream_service="personalclaw-automation",
+        gateway_makes=_gateway_makes(),
     )

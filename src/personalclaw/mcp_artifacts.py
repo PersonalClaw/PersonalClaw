@@ -22,7 +22,7 @@ from personalclaw.artifacts.models import (
     is_binary_kind,
     is_valid_slug,
 )
-from personalclaw.mcp_core import _resolve_session_key
+from personalclaw.mcp_core import MODEL_WORK, _resolve_session_key
 from personalclaw.safety_flags import yes_or_no
 from personalclaw.tool_providers.base import BUILDS_META_KEY, ToolFailure, tool_failure
 from personalclaw.validation import decode_json_text
@@ -2271,6 +2271,7 @@ def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
         _call_tool_inner,
         session_key="mcp_core",
         downstream_service="personalclaw-artifacts",
+        gateway_makes=MODEL_WORK,
     )
 
 
