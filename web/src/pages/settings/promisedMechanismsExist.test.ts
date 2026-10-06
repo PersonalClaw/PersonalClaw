@@ -206,7 +206,7 @@ describe('the remaining promise-hints, verified and pinned', () => {
       ['user preferences', /read_preferences\(\)/],
       ['active projects', /read_projects\(\)/],
       ['recent history', /read_recent_history\(days=2\)/],
-      ['recent sessions', /list_sessions\(\)/],
+      ['recent sessions', /list_sessions_with_metadata\(\)/],
       ['active automations', /TriggerStore\(base_dir=config_dir\(\)\)\.load\(\)/],
     ] as const) {
       expect(sug, `"built from your activity" claims ${source}, so the builder must read it`).toMatch(call)

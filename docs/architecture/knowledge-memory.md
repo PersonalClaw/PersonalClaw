@@ -1056,12 +1056,17 @@ item vector).
   channel's row saved before rows named their channel, one saved with no sender.
   So a turn someone else started teaches no lesson, preference, veto or glossary
   line; a row several queued messages run as keeps only the words the owner sent
-  (`own_words.queued_words`); and consolidation shows another sender's row whole
-  and fenced, as `SENT BY SOMEONE OTHER THAN THE USER (not the user's words)`, so
-  its model can follow the conversation without taking what they say about the
-  owner as hers. A row that records no source at all (an imported conversation)
-  reads as before. What you send on a channel counts as yours once
-  the channel knows you as its owner: its Configure page says who that is.
+  (`own_words.queued_words`); and consolidation is shown nothing of a turn someone
+  else asked for (`own_words.her_turns`): not their message, not what the agent did
+  or said for them, only what she sent in it (her part of a row her queued message
+  and theirs run as, a message she sent into it while it ran). A row belongs to the
+  turn the row that started it began (`turn_source.by_turn`), so the agent's answer
+  to them is theirs too. No label stands between their words and her memory, since
+  a model can read past a label: what holds is that the model is never shown them.
+  A row that records no source at all
+  (an imported conversation) reads as before. What you send on a channel counts as
+  yours once the channel knows you as its owner: its Configure page says who that
+  is.
 - Memory changes only on the owner's word. A turn someone else asked for (the row
   that started it, by the same rule: `turn_source.asked_by`; a row several queued
   messages run as is asked for by everyone who sent one, which it records under
@@ -1097,13 +1102,24 @@ item vector).
   (`memory_writes.on_the_owners_word`: a lesson is `user_explicit`); a Deny, an
   ask nobody answered in her approval window and one whose turn was stopped write
   nothing, and each hold and each answer is a security-log row under the route's
-  operation. A skill drafted from such a turn (`skill_remember`) is refused, the
+  operation. Her Deny of a change to her memory holds later too, in any turn: a
+  memory tool's call (`mcp_memory.CHANGES_MEMORY`), or a file tool's or a
+  command's change in the memory folders, read from the approval row the call
+  wrote (`declined_calls.declined_a_memory_change`). That turn teaches nothing
+  (`GateReason.MEMORY_REFUSED`), and consolidation is shown nothing of it, so
+  neither its episodes, the sealed summary, preferences.md nor the daily history
+  holds what she refused to save. A skill drafted from such a turn (`skill_remember`) is refused, the
   agent told to propose it with `skill_promote`, which the owner accepts in the
   review queue; a decision resolved in it says why it kept no lesson.
-  Consolidation is PersonalClaw's own pass over the whole conversation, which
-  takes only the owner's words from it, so it runs as before, whoever asked for
+  Consolidation is PersonalClaw's own pass over the conversation, shown only the
+  turns the owner asked for (`own_words.her_turns`), so it runs whoever asked for
   the turn it follows: its gate is asked as the session's own pass, never as that
-  turn's work (`chat_utils._maybe_consolidate`).
+  turn's work (`chat_utils._maybe_consolidate`). A pass with no turn of hers to
+  read asks no model and keeps nothing; its messages count as consolidated, and the
+  memory's maintenance runs after it as after any pass. A
+  session of lasting work someone else asked for (a loop's, a run's step, a
+  callback's turn: `lasting_work.asker_of`) keeps nothing at all
+  (`HistoryConsolidator.why_nothing_is_kept`).
 - Work such a turn starts that outlives it keeps who asked, for as long as it
   lasts (`lasting_work.py`). A workflow run, a loop and a callback record the
   source of whoever asked on their own record when they are made
@@ -1121,7 +1137,9 @@ item vector).
   (`memory_writes.asked_for`), and so does the turn that hands a subagent's
   report back to its chat, which reads the subagent's mark
   (`memory_writes.asked_for_work`; a report that waits behind a turn carries it
-  in the queue, `chat_queue.ASKED_FOR_BY`). What any of it would change of her
+  in the queue), and the report's row records it (`turn_source.ASKED_FOR_BY`), as
+  a message's row records who sent it: a report handed to an idle chat gets its
+  row too, so the turn it starts reads as theirs. What any of it would change of her
   memory is held for her word, or refused where nobody can be asked (an
   Unattended loop's cycle). A record that cannot be read names someone no record
   names (`turn_source.UNNAMED`), so its work is held as someone else's. The tool
@@ -1132,7 +1150,7 @@ item vector).
   answers `403 asked_by_someone_else`, as a private chat's work is refused them.
 - Every history a model is handed of a conversation names who said each line, by
   the same rule (`turn_source.turn_line`): the owner's line as `User:`, anyone
-  else's shown as consolidation shows it, whole and fenced as
+  else's whole and fenced as
   `SENT BY SOMEONE OTHER THAN THE USER (not the user's words)` (a merged row that
   holds both as `SENT BY THE USER AND SOMEONE ELSE TOGETHER`). That is the turns a
   fresh runtime is given back after a restart (`prior_turns_transcript`,

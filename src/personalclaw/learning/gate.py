@@ -89,8 +89,13 @@ class GateReason(str, Enum):
     #: teaches nothing. A turn's learning reads only your words in its message, so your queued
     #: message run beside someone else's still teaches (``memory_writes.learning_from_words``). A
     #: pass over the whole session is not that turn's work and is asked as the session's own
-    #: (``chat_utils._maybe_consolidate``), so consolidation is never refused for this.
+    #: (``chat_utils._maybe_consolidate``), so consolidation is never refused for this: it reads
+    #: only the turns you asked for (``own_words.her_turns``).
     ASKED_BY_SOMEONE_ELSE = "asked_by_someone_else"
+    #: You refused, in this turn, a call that would have changed your memory
+    #: (``declined_calls.declined_a_memory_change``): what the turn's words and work hold is not
+    #: learned another way, as consolidation keeps nothing of the turn either.
+    MEMORY_REFUSED = "memory_refused"
     #: Permitted, but this cadence's cost threshold wasn't met.
     NOT_WORTHWHILE = "below_threshold"
     #: Permitted, but this specific cadence is disabled by config.
@@ -146,6 +151,7 @@ class LearningGate:
         correction_heuristic: bool = True,
         app_refusal: str = "",
         asked_by_someone_else: bool = False,
+        memory_refused: bool = False,
     ) -> None:
         self.enabled = bool(enabled)
         self.is_ephemeral = bool(is_ephemeral)
@@ -154,14 +160,19 @@ class LearningGate:
         self.app_refusal = str(app_refusal or "")
         #: Someone other than you asked for the turn whose work this is (``memory_writes.asker``).
         self.asked_by_someone_else = bool(asked_by_someone_else)
+        #: You refused a change to your memory in the turn (:data:`GateReason.MEMORY_REFUSED`).
+        self.memory_refused = bool(memory_refused)
         self.min_tool_calls = int(min_tool_calls)
         self.correction_heuristic = bool(correction_heuristic)
 
     # ── Construction from live objects ──
 
     @classmethod
-    def for_session(cls, session: Any, cfg: Any = None) -> LearningGate:
-        """Build a gate for one session, consulting config AND the session's mode.
+    def for_session(
+        cls, session: Any, cfg: Any = None, *, memory_refused: bool = False
+    ) -> LearningGate:
+        """Build a gate for one session, consulting config AND the session's mode. A turn's own
+        gate says whether you refused a change to your memory in it (*memory_refused*).
 
         The mode lookup is the point of this constructor. Suppression for
         incognito/temporary sessions used to depend on each call site
@@ -214,6 +225,7 @@ class LearningGate:
             # A turn someone other than you asked for teaches nothing, as its writes are refused:
             # the answer the stores give the same work (`memory_writes.asker`).
             asked_by_someone_else=bool(memory_writes.asker()),
+            memory_refused=memory_refused,
         )
 
     # ── The decision ──
@@ -244,6 +256,8 @@ class LearningGate:
             return GateDecision(False, False, GateReason.APP_WITHOUT_MEMORY, cadence)
         if self.asked_by_someone_else:
             return GateDecision(False, False, GateReason.ASKED_BY_SOMEONE_ELSE, cadence)
+        if self.memory_refused:
+            return GateDecision(False, False, GateReason.MEMORY_REFUSED, cadence)
 
         # Permitted from here on: a cheap path may proceed even when the
         # expensive threshold below is not met.

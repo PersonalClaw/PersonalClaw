@@ -57,6 +57,7 @@ from personalclaw.dashboard.chat_utils import (
 from personalclaw.own_words import OWN_WORDS, PASTES
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
+from personalclaw.turn_source import STEERED
 
 if TYPE_CHECKING:
     from personalclaw.dashboard.state import DashboardState, _ChatSession
@@ -72,10 +73,6 @@ BINDING_FIELDS = (
     "reasoning_effort",
     "workspace_dir",
 )
-
-#: The ``meta`` key of a row of hers the running turn took while it answered (a steer). Written only
-#: by :func:`take_steer`; a send's own meta never carries it (``chat_handlers`` drops it).
-STEERED = "steered"
 
 #: What the chat says when an agent CLI took a steer into its answer and then refused it: her row is
 #: in the chat already, so the message runs next as its own turn, without a second one.

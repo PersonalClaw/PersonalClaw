@@ -28,7 +28,7 @@ import os
 import re
 import threading
 import time as _time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -49,7 +49,7 @@ from personalclaw.security import (
 )
 from personalclaw.sel import sel
 from personalclaw.skills import AutoSkillProvenance
-from personalclaw.turn_source import arrived_on, model_text, provenance, sent_by_owner, theirs
+from personalclaw.turn_source import arrived_on, model_text, provenance
 
 
 def config_dir() -> Path:
@@ -1250,6 +1250,16 @@ class ConversationLog:
         return dict(head.meta) if head is not None else {}
 
 
+def read_as_asked(log: ConversationLog, key: str) -> Iterator[dict]:
+    """*key*'s messages in *log*, in order, read from its file as they are asked for: a reader that
+    stops early reads no further (``memory_writes.take_back_what_others_turns_left``)."""
+    try:
+        with open(log._path(key), "rb") as f:
+            yield from filter(None, map(_message_line, f))
+    except OSError:
+        return
+
+
 def listed_title(log: ConversationLog, key: str) -> str:
     """The title the chat list shows for *key*, read from its transcript's head alone."""
     path = log._path(key)
@@ -1266,15 +1276,15 @@ def listed_title(log: ConversationLog, key: str) -> str:
 
 
 def consolidation_line(m: dict) -> str:
-    """One transcript row as consolidation reads it.
+    """One row of a turn the owner asked for (``own_words.her_turns``) as consolidation reads it.
 
-    Consolidation learns a person's corrections and preferences from these lines, so a person's row
-    gives the words they typed as theirs (``own_words``) and what else it holds as material that is
-    not: each block they pasted, and the whole text of a row sent in their turn with nothing of
-    theirs in it (an automation's result, plan mode carrying an approved plan back). What else the
-    platform put into their row (the dictation note, a merge's header, plan mode's wrapper around
-    their feedback) is left out, and a saved prompt they ran is named, not quoted. A row someone
-    else sent (``turn_source.sent_by_owner``) is shown whole and fenced, as their words."""
+    Consolidation learns a person's corrections and preferences from these lines, so her row gives
+    the words she typed as hers (``own_words``) and what else it holds as material that is not:
+    each block she pasted, and the whole text of a row sent in her turn with nothing of hers in it
+    (an automation's result, plan mode carrying an approved plan back). What else the platform put
+    into her row (the dictation note, a merge's header, plan mode's wrapper around her feedback) is
+    left out, and a saved prompt she ran is named, not quoted. Nothing someone else sent, nor what
+    the agent did or said for them, is one of these lines: consolidation is not shown it at all."""
     from personalclaw.own_words import RAN_PROMPT, own_words, pasted_blocks
 
     stamp = f"[{str(m.get('ts', '?'))[:16]}]"
@@ -1282,8 +1292,6 @@ def consolidation_line(m: dict) -> str:
     if m.get("role") != "user":
         # A row of words taken in from outside is handed on through the door (`model_text`).
         return f"{stamp} {str(m.get('role', '')).upper()}{tools}: {model_text(m)}"
-    if not sent_by_owner(m):
-        return f"{stamp} {theirs(m)}"
     raw_meta = m.get("meta")
     meta: dict = raw_meta if isinstance(raw_meta, dict) else {}
     typed = own_words(m)
@@ -1552,14 +1560,18 @@ class HistoryConsolidator:
         Incognito and Temporary sessions, and any whose mode cannot be read
         (:func:`~personalclaw.memory_writes.blocks_memory_writes`), answer
         :data:`~personalclaw.memory_writes.REFUSAL`. A conversation an app started answers, in the
-        app's words, when the app was not given your memory (:meth:`_as_its_work`).
+        app's words, when the app was not given your memory (:meth:`_as_its_work`). A session of
+        lasting work someone other than you asked for (a loop's, a run's step, a callback's turn:
+        ``lasting_work.asker_of``) answers who asked: all of it is their work.
         """
-        from personalclaw import memory_writes
+        from personalclaw import lasting_work, memory_writes
 
         with self._as_its_work(key):
             if memory_writes.writes_refused():
                 return memory_writes.REFUSAL
-            return memory_writes.app_change_refusal()
+            refused = memory_writes.app_change_refusal()
+        asked = None if refused else lasting_work.asker_of(key)
+        return refused or (memory_writes.others_refusal(asked) if asked else "")
 
     def _as_its_work(self, key: str) -> "AbstractContextManager[None]":
         """The scope a pass over session ``key`` runs in (``memory_writes.derived_from``): the
@@ -1591,7 +1603,8 @@ class HistoryConsolidator:
         the session is sealed once its messages are consolidated, never before.
 
         An Incognito or Temporary session ends with nothing kept: no pass, no seal. So does a
-        conversation an app started when the app was not given your memory."""
+        conversation an app started when the app was not given your memory, and a session of
+        lasting work someone else asked for (:meth:`why_nothing_is_kept`)."""
         nothing = self.why_nothing_is_kept(key)
         if nothing:
             logger.info("Session %s ended and nothing from it is kept: %s", key, nothing)
@@ -1733,23 +1746,18 @@ class HistoryConsolidator:
 
         Every trigger of a pass ends here, and the pass runs as deriving from ``key``, as the
         work of the app that started it if one did (:meth:`_as_its_work`): a session that keeps
-        nothing (Incognito, Temporary, or a mode that cannot be read), and an app's conversation
-        when the app was not given your memory, is skipped before its transcript is read or a
-        model is called, and the stores refuse every write made in its name
+        nothing (Incognito, Temporary, or a mode that cannot be read), an app's conversation when
+        the app was not given your memory, and a session of work someone else asked for
+        (:meth:`why_nothing_is_kept`), is skipped before its transcript is read or a model is
+        called, and the stores refuse every write made in its name
         (:mod:`personalclaw.memory_writes`). What an app's pass writes names the app.
         """
-        from personalclaw import memory_writes
-
+        nothing = self.why_nothing_is_kept(key)
+        if nothing:
+            logger.info("Not consolidating %s: %s", key, nothing)
+            self._running.discard(key)
+            return
         with self._as_its_work(key):
-            if memory_writes.writes_refused():
-                logger.info("Not consolidating %s: it keeps no memory", key)
-                self._running.discard(key)
-                return
-            app_refused = memory_writes.app_change_refusal()
-            if app_refused:
-                logger.info("Not consolidating %s: %s", key, app_refused)
-                self._running.discard(key)
-                return
             with single_flight(f"consolidate:{key}") as acquired:
                 if not acquired:
                     logger.info(
@@ -1788,11 +1796,17 @@ class HistoryConsolidator:
         A chat deleted while a model answered for it keeps nothing more: its deletion forgot what
         memory held of it, and nothing it would write now is (:meth:`_was_deleted`)."""
         from personalclaw import memory_locality, memory_writes
+        from personalclaw.own_words import her_turns
 
         try:
             unconsolidated, total = self._log.get_unconsolidated(key)
             if not unconsolidated:
                 return
+            # What the model is shown is all it can keep: the turns she asked for, none she refused
+            # to have kept, and nobody else's words, whatever a label would say (`her_turns`). The
+            # rows before the new ones say whose turn the first of them is in; a row sent since the
+            # count waits for the pass that counts it.
+            hers = her_turns(self._log.read_messages(key)[:total], total - len(unconsolidated))
 
             meta = self._log.get_metadata(key)
             folder = memory_locality.chat_folder(meta)
@@ -1801,8 +1815,17 @@ class HistoryConsolidator:
                 logger.info("Not consolidating %s: the folder it worked in is gone", key)
                 return
             memory, svc, vs = kept
+            if not hers:
+                # Nothing to ask a model: the pass keeps nothing and ends as one whose answer
+                # kept nothing does (the end of this method).
+                logger.info("Consolidation of %s: none of its new turns are the owner's", key)
+                if include_history:
+                    self._log.mark_consolidated(key, total)
+                    with memory_writes.as_maintenance():
+                        await self._maintain(key, memory, svc)
+                return
 
-            conversation = "\n".join(consolidation_line(m) for m in unconsolidated)
+            conversation = "\n".join(consolidation_line(m) for m in hers)
 
             current_prefs = memory.read_preferences()
             current_projects = memory.read_projects()
@@ -1888,7 +1911,7 @@ class HistoryConsolidator:
                 include_history
                 and self._auto_skills_enabled
                 and self._skills_loader is not None
-                and _count_tool_call_messages(unconsolidated) >= self._auto_min_tool_calls
+                and _count_tool_call_messages(hers) >= self._auto_min_tool_calls
                 and not _session_touched_sensitive(unconsolidated)
             )
             if auto_skills_eligible:

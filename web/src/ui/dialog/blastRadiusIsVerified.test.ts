@@ -361,7 +361,7 @@ describe('two more bodies: one corrected, one confirmed', () => {
     const writes = py('memory_writes.py')
     const core = writes.slice(writes.indexOf('def forget_what_sessions_left('))
     expect(core.slice(0, 2400), 'from the records, the daily history and the digests').toMatch(
-      /purge_records_from\(keeps_nothing\)[\s\S]*forget_history_entries[\s\S]*rebuild_daily_digests/,
+      /purge_records_from\(keeps_nothing, written_by=written_by\)[\s\S]*forget_history_entries[\s\S]*rebuild_daily_digests/,
     )
     const store = py('vector_memory.py')
     const rule = store.slice(store.indexOf('def purge_records_from('), store.indexOf('def _values_in_history('))

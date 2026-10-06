@@ -15,11 +15,17 @@ is not.
 
 Only her Deny makes one. An ask nobody answered in time, one that ended before anyone answered,
 and one there was nowhere to put to her are not hers (`subagent_tier.SubagentTier.declined`).
+
+Her Deny of a change to her memory is her answer for what its turn would keep, too
+(:func:`declined_a_memory_change`, read from the approval rows the turn wrote): nothing the turn's
+words or work hold is kept, not by the turn's own learning nor by the consolidation that reads the
+conversation later (``own_words.her_turns``), so what she refused to save is not saved another way.
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
@@ -107,3 +113,48 @@ def waits_for_you(noun: str = "loop", stop: str = "stop") -> str:
     """What work that waits for its owner after her Deny asks of her: ``The loop waits for you:
     tell it what to do instead, or resume or stop it.``"""
     return f"The {noun} waits for you: tell it what to do instead, or resume or {stop} it."
+
+
+def changes_memory(title: str, tool_input: object = None) -> bool:
+    """Whether a call, named as its approval card names it (*title*: the tool's own name, or the
+    name an agent CLI gives one of PersonalClaw's tools) with its input, would change her memory:
+    one of the memory tools that changes it (``mcp_memory.CHANGES_MEMORY``), or a call that names a
+    place in the memory folders and does more than read it, as the screen of long-term memory reads
+    a call (``file_scope.call_paths``): a file tool's path, a command's."""
+    from personalclaw.acp.mcp_servers import core_tool_titled
+    from personalclaw.file_scope import call_paths
+    from personalclaw.mcp_memory import CHANGES_MEMORY
+    from personalclaw.memory import in_memory_folders
+
+    if (core_tool_titled(title) or title) in CHANGES_MEMORY:
+        return True
+    args = tool_input
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except ValueError:
+            args = None
+    command = args.get("command") if isinstance(args, Mapping) else None
+    named, reads = call_paths(title, tool_input, command if isinstance(command, str) else "")
+    return not reads and any(in_memory_folders(path) for _word, path in named)
+
+
+def declined_a_memory_change(rows: Iterable[Mapping[str, Any]]) -> bool:
+    """Whether her Deny answered, among *rows* (one turn's), a call that would have changed her
+    memory (:func:`changes_memory`), read from the approval row the call wrote, which records her
+    answer (``resolved``) and what the call carried: an ask nobody answered, or one its turn's
+    Stop ended, is not hers, and a call the card held to be a read changes nothing."""
+    for row in rows:
+        if row.get("role") != "permission":
+            continue
+        try:
+            card = json.loads(str(row.get("cls") or ""))
+        except ValueError:
+            continue
+        if not isinstance(card, dict) or card.get("resolved") != "rejected":
+            continue
+        if card.get("is_read_only") != "1" and changes_memory(
+            str(row.get("content") or ""), card.get("tool_input")
+        ):
+            return True
+    return False

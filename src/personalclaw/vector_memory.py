@@ -2944,9 +2944,16 @@ class VectorMemoryStore(MemoryProvider):
         logger.info("Undid link event %d (%s)", event_id, etype)
         return (True, f"undid {etype} on {edge['from_ref']}")
 
-    def purge_records_from(self, keeps_nothing: "Callable[[str], bool]") -> Purged:
+    def purge_records_from(
+        self,
+        keeps_nothing: "Callable[[str], bool]",
+        *,
+        written_by: "Callable[[str], bool] | None" = None,
+    ) -> Purged:
         """Remove every record filed under a session that keeps nothing here, and bring back what
-        one of them had replaced. Returns what went.
+        one of them had replaced. Returns what went. *written_by*, when given, narrows that to the
+        records a writer it admits wrote, by the source each records: a semantic row's own, an
+        episode's in the event that made it, so one whose event is no longer kept is left.
 
         A record is filed under the session whose work wrote it, stamped as it is written
         (``source_session``, :func:`memory_writes.filed_under`): the chat's consolidation and its
@@ -2980,13 +2987,25 @@ class VectorMemoryStore(MemoryProvider):
             # read for the session it names another way.
             return gone(session) if session is not None else any(gone(key) for key in named)
 
+        def by(source: object) -> bool:
+            return written_by is None or written_by(str(source or ""))
+
+        made_by: dict[str, object] = {}
+        if written_by is not None:
+            made_by = {
+                str(row["memory_key"]): row["source"]
+                for row in self.db.execute(
+                    "SELECT memory_key, source FROM memory_events WHERE event_type = 'create' "
+                    "AND memory_type = 'episodic'"
+                ).fetchall()
+            }
         texts: set[str] = set()
         days: set[str] = set()
         episodic: list[str] = []
         for r in self.db.execute(
             "SELECT id, text, conversation_id, source_session, created_at FROM episodic_memories"
         ).fetchall():
-            if filed_gone(r["source_session"], r["conversation_id"]):
+            if by(made_by.get(r["id"])) and filed_gone(r["source_session"], r["conversation_id"]):
                 episodic.append(r["id"])
                 texts.add(str(r["text"] or ""))
                 days.add(str(r["created_at"] or "")[:10])
@@ -2996,7 +3015,7 @@ class VectorMemoryStore(MemoryProvider):
         ).fetchall():
             consolidated = str(r["source"] or "").partition("consolidation:")[2]
             summary_of = r["scope_ref"] if r["scope"] == "session" else None
-            if filed_gone(r["source_session"], consolidated, summary_of):
+            if by(r["source"]) and filed_gone(r["source_session"], consolidated, summary_of):
                 semantic.append(r["key"])
                 texts.add(_value_text(r["value_json"]))
         texts |= self._values_in_history(semantic)

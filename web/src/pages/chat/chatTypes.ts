@@ -216,7 +216,7 @@ export interface MemoryCitation { n: number; id: string | null; preview?: string
  *  content loaded, so counting it would overstate the turn. */
 export interface SkillUsed { name: string; state: string; loaded_tokens: number }
 
-/** The roles a turn is started with, as the backend's `_TURN_DISPATCH_ROLES` (`chat_persistence`):
+/** The roles a turn is started with, as the backend's `TURN_STARTS` (`turn_source`):
  *  the user's message, and the rows an automation, a subagent's report and a loop's nudge start
  *  one with. */
 const TURN_DISPATCH_ROLES: ReadonlySet<string> = new Set(['user', 'inject', 'subagent', 'nudge'])

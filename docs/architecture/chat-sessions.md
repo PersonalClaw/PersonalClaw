@@ -1074,7 +1074,12 @@ the next message the chat runs, or at once by a `wait` under way, whose check-in
 every few seconds hands it over (`POST /api/session-keepalive`), and the chat's
 Subagents list shows it as declined or not started. A scheduled job's helper, or any
 other session's, starts no turn there either, and its note says how it ended. A
-helper the run budget stopped did run: its report starts its turn, saying so.
+helper the run budget stopped did run: its report starts its turn, saying so. The
+report's turn starts on a row of its own (a `subagent` row, which the chat page does
+not draw as a message), whether the chat was idle or busy when it came, and the row
+records who asked for the helper's work when someone other than you did
+(`turn_source.ASKED_FOR_BY`): Regenerate runs that report's turn again, and memory
+reads the turn as theirs (`own_words.her_turns`).
 
 An agent's JSON-RPC error is said in its own words — its message and data,
 masked like any child's output (`acp/errors.py`, `AcpRequestError`) — and a

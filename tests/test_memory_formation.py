@@ -725,10 +725,11 @@ class TestConsolidationSeam:
     def _consolidator(self, store, tmp_path):
         from personalclaw.history import HistoryConsolidator
 
+        rows = [{"role": "user", "content": "I use emacs now", "ts": "2026-08-15"}]
         log = MagicMock()
-        log.get_unconsolidated = MagicMock(
-            return_value=([{"role": "user", "content": "I use emacs now", "ts": "2026-08-15"}], 1)
-        )
+        log.get_unconsolidated = MagicMock(return_value=(rows, 1))
+        # The pass reads the turn its new rows are in from the whole transcript.
+        log.read_messages = MagicMock(return_value=rows)
         log.get_metadata = MagicMock(return_value={})
         memory = MagicMock()
         memory.read_preferences = MagicMock(return_value="")

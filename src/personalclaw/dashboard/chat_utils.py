@@ -915,8 +915,8 @@ def _maybe_consolidate(state, session) -> None:
     temporary, or learning disabled) is audited with its reason rather than silently skipped.
 
     Asked as the session's own pass, never as the work of the turn that just ended
-    (``memory_writes.as_its_session``): consolidation reads the whole conversation and takes only
-    the owner's words from it, so who asked for that turn (``memory_writes.asker``) decides
+    (``memory_writes.as_its_session``): consolidation is shown only the turns the owner asked for
+    (``own_words.her_turns``), so who asked for that turn (``memory_writes.asker``) decides
     nothing of it. The session's mode and the app that started it still do.
     """
     if not state.consolidator:

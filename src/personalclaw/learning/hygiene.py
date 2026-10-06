@@ -37,7 +37,8 @@ same way (``history.consolidation_line``). Text the user pasted stays trusted fo
 since they pasted it on purpose, but it is material for the answer and not a correction or a
 preference of theirs: no heuristic learns it as one, and consolidation is shown it as material.
 A row someone other than the owner sent holds none of her words (``turn_source.sent_by_owner``):
-another person a channel's door let in, or a program through the OpenAI-compatible door.
+another person a channel's door let in, or a program through the OpenAI-compatible door; and
+consolidation is shown nothing of the turn it started (``own_words.her_turns``).
 """
 
 from __future__ import annotations

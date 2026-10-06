@@ -10,9 +10,9 @@ correction someone else typed was learned as hers.
 
 Each line records who sent it and on which channel (``turn_source``). Whether the owner sent it is
 answered from that record and the owner the channel keeps (``turn_source.sent_by_owner``), and
-every reader of the owner's words asks it (``own_words.own_words``): consolidation shows another
-person's line as theirs, fenced, and a turn's learning takes nothing from it. What the owner sends
-in the same conversation still counts, and so does what she types in the dashboard.
+every reader of the owner's words asks it (``own_words.own_words``): consolidation is shown none of
+another person's turn (``own_words.her_turns``), and a turn's learning takes nothing from it. What
+the owner sends in the same conversation still counts, and so does what she types in the dashboard.
 
 The door, the dashboard state, the conversation log, the trust store and the turn engine are real,
 in this test's home; only the models are stand-ins.
@@ -51,7 +51,7 @@ from personalclaw.llm.events import EVENT_COMPLETE, EVENT_TEXT_CHUNK, EVENT_TOOL
 from personalclaw.memory import MemoryStore
 from personalclaw.memory_record import MemoryKind
 from personalclaw.memory_service import MemoryService
-from personalclaw.own_words import own_words
+from personalclaw.own_words import her_turns, own_words
 from personalclaw.session import SessionManager
 from personalclaw.skills import SkillsLoader
 from personalclaw.tool_providers.base import ToolDefinition, ToolProvider, ToolResult
@@ -181,11 +181,11 @@ def _the_group_chat(state: DashboardState) -> str:
 
 
 @pytest.mark.asyncio
-async def test_consolidation_shows_a_friends_words_in_a_group_as_theirs_and_hers_as_hers(
-    tmp_path,
-):
+async def test_consolidation_is_shown_her_words_in_a_group_and_none_of_a_friends(tmp_path):
     """🔴 Red before: the friend's line reached the consolidation model as ``USER: Rin is allergic
-    to peanuts…``, the user's own statement, and was kept as one. Her own line is the control."""
+    to peanuts…``, the user's own statement, and was kept as one; later it reached it fenced and
+    labelled, which a model can read past. Now the friend's turn is not shown at all. Her own line
+    is the control."""
     state = _plain_state(tmp_path)
     group = _Gateway(state)
     await group.say(OWNER, HERS, turn_runner=_notes_it)
@@ -198,11 +198,8 @@ async def test_consolidation_shows_a_friends_words_in_a_group_as_theirs_and_hers
     )
 
     assert f"USER: {HERS}\n" in conversation
-    assert f"USER: {ABOUT_HER}" not in conversation
-    (line,) = [ln for ln in conversation.splitlines() if "SENT BY SOMEONE OTHER" in ln]
-    assert line.endswith(f"<untrusted_content source=channel:{PROVIDER}:{FRIEND}>")
-    after = conversation.split(line, 1)[1]
-    assert after.lstrip("\n").startswith(f"{ABOUT_HER}\n</untrusted_content>")
+    assert ABOUT_HER not in conversation
+    assert "SENT BY SOMEONE OTHER" not in conversation and FRIEND not in conversation
 
 
 @pytest.mark.asyncio
@@ -227,8 +224,7 @@ async def test_a_channel_that_runs_its_thread_names_itself_and_only_its_owner_is
     conversation = await _consolidation_prompt(log, THREAD, tmp_path)
 
     assert f"USER: {HERS}\n" in conversation
-    assert f"USER: {ABOUT_HER}" not in conversation
-    assert f"<untrusted_content source=channel:{SELF_RUN}:{COLLEAGUE}>" in conversation
+    assert ABOUT_HER not in conversation and COLLEAGUE not in conversation
 
 
 @pytest.mark.asyncio
@@ -601,7 +597,7 @@ def test_a_line_from_a_program_or_a_channel_that_knows_no_owner_holds_none_of_he
     unknown = _line(source_thread="D1", source_user="777", source_channel="otherchat")
     for line in (endpoint, unknown):
         assert own_words(line) == ""
-        assert "SENT BY SOMEONE OTHER THAN THE USER" in consolidation_line(line)
+        assert her_turns([line, {"role": "assistant", "content": "Done."}]) == []
     # The control: a dashboard line and the channel owner's line are hers.
     assert own_words(_line(source_thread="dashboard", source_user="dashboard")) == (
         "keep the plan to three lines"

@@ -8,11 +8,7 @@ from aiohttp import web
 
 from personalclaw.artifacts import retakes
 from personalclaw.dashboard import repeated_steps
-from personalclaw.dashboard.chat_persistence import (
-    _TURN_DISPATCH_ROLES,
-    _redact_meta,
-    save_session_to_history,
-)
+from personalclaw.dashboard.chat_persistence import _redact_meta, save_session_to_history
 from personalclaw.dashboard.chat_runner import run_chat
 from personalclaw.dashboard.chat_utils import _history_key_for, take_in_the_users_links
 from personalclaw.dashboard.state import DashboardState, _ChatSession
@@ -22,6 +18,7 @@ from personalclaw.own_words import PASTES, left_as_marker, pastes_of
 from personalclaw.request_validation import bool_field, json_object_body, string_field
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
+from personalclaw.turn_source import TURN_STARTS
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +95,7 @@ async def api_chat_session_regenerate(request: web.Request) -> web.Response:
         # already-answered question again.
         u_idx = -1
         for i in range(anchor_idx - 1, -1, -1):
-            if msgs[i].get("role") in _TURN_DISPATCH_ROLES:
+            if msgs[i].get("role") in TURN_STARTS:
                 u_idx = i
                 break
         if u_idx < 0:
@@ -258,7 +255,7 @@ def _turn_rows(msgs: list[dict], start: int) -> list[dict]:
     """The rows of the turn ``msgs[start]`` started: every row after it, up to the next row that
     starts a turn."""
     end = next(
-        (i for i in range(start + 1, len(msgs)) if msgs[i].get("role") in _TURN_DISPATCH_ROLES),
+        (i for i in range(start + 1, len(msgs)) if msgs[i].get("role") in TURN_STARTS),
         len(msgs),
     )
     return msgs[start + 1 : end]

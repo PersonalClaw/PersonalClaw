@@ -13,12 +13,7 @@ from typing import Any
 
 from personalclaw.own_words import OWN_WORDS, PASTES
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
-from personalclaw.turn_source import DASHBOARD_SOURCE, source_of
-
-#: The item key of who asked for the work a queued message carries on, when someone other than
-#: the owner did and no message of theirs is in it: a subagent's report (``run_chat``'s
-#: ``asked_for_by``, which its turn runs as).
-ASKED_FOR_BY = "asked_for_by"
+from personalclaw.turn_source import ASKED_FOR_BY, DASHBOARD_SOURCE, source_of
 
 #: The item key of a message whose row is in the chat already: a steer the running turn took that
 #: its agent then refused (``running_turn.end_steers``). It runs on its own, and adds no second row.
@@ -51,7 +46,9 @@ class ChatQueue:
         ``files`` are its attached files, which the message carries when it runs. ``own_words``
         are the words of it its sender typed, when it holds more than them (``own_words``).
         ``source`` is where it came from (``turn_source``), which its row records when it runs.
-        ``asked_for_by`` is who asked for the work it carries on (:data:`ASKED_FOR_BY`).
+        ``asked_for_by`` is who asked for the work it carries on, when someone other than the owner
+        did and no message of theirs is in it: a subagent's report, whose turn runs as asked for by
+        them and whose row records it (``turn_source.ASKED_FOR_BY``).
         ``on_record`` says its row is in the chat already (:data:`ON_RECORD`).
         ``pastes`` are the blocks pasted into it (``own_words.PASTES``), which its row keeps.
         """
@@ -88,7 +85,7 @@ class ChatQueue:
         ``retry`` records where the message came from (``channel``: the chat channel the session is
         linked to, which already shows it; ``here``: anywhere else), and ``hint`` a regenerate's
         hint, so the retry is asked the same way, and ``asked_for_by`` who asked for the work it
-        carries on (:data:`ASKED_FOR_BY`), so it runs as asked for by them again.
+        carries on (``turn_source.ASKED_FOR_BY``), so it runs as asked for by them again.
         """
         qid = uuid.uuid4().hex[:12]
         item: dict[str, Any] = {

@@ -120,6 +120,7 @@ from personalclaw.triggers.nudge import (
     NudgeLoop,
 )
 from personalclaw.triggers.nudge import enabled as autonudge_enabled
+from personalclaw.turn_source import ASKED_FOR_BY
 
 
 def config_dir() -> Path:
@@ -1171,6 +1172,8 @@ class GatewayOrchestrator:
         from personalclaw.memory_locality import settle_at_start
 
         settle_at_start(self.vector_memory, self.conv_log)
+        # And what its consolidation kept of conversations only other people asked anything in.
+        memory_writes.take_back_what_others_turns_left(self.vector_memory, memory, self.conv_log)
 
         # Session manager
         self.sessions = SessionManager(
@@ -4245,7 +4248,14 @@ class GatewayOrchestrator:
                             )
                         return
 
-                    # Session is idle — start run_chat.
+                    # Session is idle — start run_chat, on the report's own row, as a queued
+                    # report's: the turn it starts, and who asked for its work, is the row's.
+                    _injection_session.append(
+                        "subagent",
+                        announce,
+                        "msg msg-u",
+                        meta={ASKED_FOR_BY: dict(asked)} if asked else None,
+                    )
                     _task = asyncio.create_task(
                         turn_deadline.run_within(
                             self.dashboard_state,

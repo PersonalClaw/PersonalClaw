@@ -26,7 +26,7 @@ from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.history import CREATED_BY_APP_META_KEY, listed_title
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.task_modes import VALID_TASK_MODES
-from personalclaw.turn_source import source_of
+from personalclaw.turn_source import TURN_STARTS, source_of
 
 
 def _load_providers_raw() -> list[dict]:
@@ -1138,11 +1138,6 @@ def save_session_to_history(
         raise
 
 
-#: The roles a dispatcher appends a turn's own message under before starting it: the
-#: dashboard's user bubble, a queue drain's inject/subagent row, a goal loop's nudge.
-_TURN_DISPATCH_ROLES = frozenset({"user", "inject", "subagent", "nudge"})
-
-
 def in_flight_index(session: _ChatSession, in_flight: str, *, nested: bool = False) -> int | None:
     """Where in *session*'s buffer the turn now being sent was dispatched, or ``None``.
 
@@ -1162,7 +1157,7 @@ def in_flight_index(session: _ChatSession, in_flight: str, *, nested: bool = Fal
         role = m.get("role", "")
         if role == "assistant":
             return None
-        if role in _TURN_DISPATCH_ROLES and (nested or m.get("content", "") == in_flight):
+        if role in TURN_STARTS and (nested or m.get("content", "") == in_flight):
             return i
     return None
 

@@ -51,10 +51,10 @@ that learning takes from the turn's message is her words alone, so it runs as as
 sent them (:func:`learning_from_words`): her message, queued and run beside someone else's, still
 teaches as hers. A change the agent's memory tools ask for in such a turn is held for her own word
 instead (``dashboard.memory_holds``): she is asked, and what she allows is written as hers
-(:func:`on_the_owners_word`). Memory consolidation is PersonalClaw's own pass over the whole
-conversation, which takes only her words from it, so it runs as the session's own
-(:func:`as_its_session`), whoever asked for the turn it follows. The same answer decides what
-else of hers such work takes: none of her standing grants answers its calls
+(:func:`on_the_owners_word`). Memory consolidation is PersonalClaw's own pass over the
+conversation, shown only the turns she asked for (``own_words.her_turns``), so it runs as the
+session's own (:func:`as_its_session`), whoever asked for the turn it follows. The same answer
+decides what else of hers such work takes: none of her standing grants answers its calls
 (``approval_grants.stands_for_work``), and it searches none of her chats
 (``chat_recall.not_searched_for``).
 
@@ -115,6 +115,7 @@ from personalclaw import session_keys
 if TYPE_CHECKING:
     import asyncio
 
+    from personalclaw.history import ConversationLog
     from personalclaw.memory import MemoryStore
     from personalclaw.memory_reads import Reach
     from personalclaw.vector_memory import VectorMemoryStore
@@ -1135,19 +1136,22 @@ def forget_what_sessions_left(
     store: "VectorMemoryStore",
     markdown: "MemoryStore | None",
     keeps_nothing: "Callable[[str], bool]",
+    *,
+    written_by: "Callable[[str], bool] | None" = None,
 ) -> int:
     """Remove from one memory what is filed under a session that keeps nothing: each record in
     ``store`` (``VectorMemoryStore.purge_records_from``, which also brings back what one of them
     had replaced), each daily history entry in ``markdown`` that repeats one of them word for word,
     and each day's digest that quoted one of their episodes, built again from the episodes left.
     ``keeps_nothing(key)`` names the sessions: an Incognito or Temporary chat, a chat deleted.
-    Returns how many records and history entries went.
+    *written_by*, when given, keeps it to the records a writer it admits made. Returns how many
+    records and history entries went.
 
     It is no session's work, whichever work asks for it, so it runs outside any work's scope.
     """
 
     def forget() -> int:
-        purged = store.purge_records_from(keeps_nothing)
+        purged = store.purge_records_from(keeps_nothing, written_by=written_by)
         removed = purged.records
         if markdown is not None and purged.texts:
             removed += markdown.forget_history_entries(set(purged.texts))
@@ -1180,6 +1184,68 @@ def forget_what_restricted_sessions_left(
     if removed:
         logger.warning(
             "Removed %d memory record(s) an Incognito or Temporary chat had left in memory",
+            removed,
+        )
+    return removed
+
+
+#: The sources what a pass over a conversation and its seal write record, beside an episode's or a
+#: fact's ``consolidation:<key>``: a lesson's, the session's running summary, its sealed summary,
+#: the agent's notes on how it worked with her and a check-in (``history.HistoryConsolidator``).
+_WRITTEN_BY_A_PASS = frozenset(
+    {"consolidation", "working_memory", "seal", "self_persona", "commitment"}
+)
+
+
+def _written_by_a_pass(source: str) -> bool:
+    return source in _WRITTEN_BY_A_PASS or source.startswith("consolidation:")
+
+
+def take_back_what_others_turns_left(
+    store: "VectorMemoryStore", markdown: "MemoryStore | None", log: "ConversationLog"
+) -> int:
+    """Remove from ``store`` and ``markdown`` what a pass over a conversation only other people
+    asked anything in wrote (:func:`forget_what_sessions_left`, kept to what a consolidation and
+    its seal write), with what repeats it in the daily history. Such a conversation, in the
+    transcript ``log`` holds, is one whose every turn was started by a message the channel knows
+    someone other than its owner sent (``turn_source.sent_by_someone_else``): a group or a shared
+    thread she never wrote in. An earlier version showed its turns to the consolidation model,
+    labelled, and kept what the model made of them as hers.
+
+    Nothing else can be told apart, so nothing else is removed: what she allowed herself in such a
+    conversation is no pass's and stays; a conversation she wrote in too keeps what its pass wrote,
+    since no record says which turn it came from; and no line of preferences.md or projects.md
+    says where it came from. Run when the gateway starts, before anything recalls; idempotent.
+    Returns how many records and history entries went."""
+    from personalclaw.history import read_as_asked
+    from personalclaw.turn_source import sent_by_someone_else, starts_a_turn
+
+    def only_others_asked(key: str) -> bool:
+        # Read as far as the first turn that is not theirs: in her own chats, the first line.
+        asked = False
+        for row in read_as_asked(log, key):
+            if starts_a_turn(row):
+                if not sent_by_someone_else(row):
+                    return False
+                asked = True
+            elif not asked:
+                return False  # rows no turn started: nothing says who asked for them
+        return asked
+
+    try:
+        removed = forget_what_sessions_left(
+            store, markdown, only_others_asked, written_by=_written_by_a_pass
+        )
+    except Exception:  # noqa: BLE001 - a failed sweep must not stop the gateway; it runs again
+        logger.warning(
+            "Could not remove what conversations only others wrote in left in memory",
+            exc_info=True,
+        )
+        return 0
+    if removed:
+        logger.warning(
+            "Removed %d memory record(s) consolidation had kept from conversations only "
+            "other people asked anything in",
             removed,
         )
     return removed

@@ -109,6 +109,21 @@ def _core_call(title: str, tool_kind: str, tool_input: object) -> tuple[str, Any
     return "", None, False
 
 
+def core_tool_titled(title: str) -> str:
+    """The ``personalclaw-core`` tool a call's title names as claude-code, codex or kiro-cli titles
+    a call to it (:func:`_core_call`), read from the title alone; ``""`` for any other title. For a
+    record that keeps a call's title and nothing that could check it further (a declined call's)."""
+    title = title or ""
+    for prefix in (
+        f"mcp__{CORE_SERVER_NAME}__",
+        f"mcp.{CORE_SERVER_NAME}.",
+        f"Running: @{CORE_SERVER_NAME}/",
+    ):
+        if title.startswith(prefix):
+            return title[len(prefix) :]
+    return ""
+
+
 def names_core_tool(title: str, tool_input: object) -> bool:
     """Whether a call is to one of the ``personalclaw-core`` server's tools, read where the call's
     kind is not known (``file_scope.memory_named_by_call``): its title names the tool as

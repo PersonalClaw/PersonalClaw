@@ -201,6 +201,16 @@ def _list_tools() -> list[dict[str, Any]]:
     ]
 
 
+#: The memory tools whose call changes her memory: each that does not declare it only reads. Her
+#: Deny of one is her answer that nothing its turn would keep is kept
+#: (``declined_calls.declined_a_memory_change``).
+CHANGES_MEMORY = frozenset(
+    tool["name"]
+    for tool in _list_tools()
+    if not (tool.get("annotations") or {}).get("readOnlyHint")
+)
+
+
 def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     if name == "memory_remember":
         rule = args.get("rule", "")

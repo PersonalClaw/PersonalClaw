@@ -20,6 +20,8 @@ trusts to talk to the agent, in a group, a shared thread, a mailbox or an open d
 a program can send through the OpenAI-compatible door. What they write is theirs, so
 :func:`own_words` reads a row only when the owner sent it (``turn_source.sent_by_owner``, from the
 source the row records); :func:`sender_words` is what a row's sender typed, whoever that was.
+What the agent did and said in a turn someone else asked for is theirs as well, so a pass over the
+whole conversation (memory consolidation) is shown only the turns she asked for (:func:`her_turns`).
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from personalclaw.turn_source import sent_by_owner
+from personalclaw.turn_source import Row, sent_by_owner
 
 #: The ``meta`` key of a message whose text holds more than its sender typed: the words they did
 #: type, ``""`` when none. Written only by the code that composed the row; a send's own meta never
@@ -177,3 +179,36 @@ def sender_words(row: object) -> str:
 
     text, _ = strip_untrusted(typed_text(text, pasted_blocks(meta)))
     return text.strip()
+
+
+def her_turns(rows: Sequence[Row], start: int = 0) -> list[Row]:
+    """The rows of *rows*, a conversation in order, from *start* on, that memory may take anything
+    from: what a pass over the whole conversation is shown (``history.consolidation_line``).
+
+    Every row of each turn the owner asked for, by the row that started it (``turn_source.by_turn``,
+    ``turn_source.asked_by``). A turn someone else asked for gives only what she sent in it, read
+    as her words (:func:`own_words`): her part of a row her queued message and theirs run as, a
+    message she sent into it while it ran. Their message, and what the agent did and said for
+    them, are never given. A turn in which she refused a change to her memory gives nothing
+    (``declined_calls``). So a model shown these is never shown anyone else's words for her to be
+    credited with, nor what she would not keep, whatever it would have made of a label on them.
+    """
+    from personalclaw.declined_calls import declined_a_memory_change
+    from personalclaw.turn_source import asked_by, by_turn, starts_a_turn
+
+    kept: list[tuple[int, Row]] = []
+    first = 0
+    for turn in by_turn(rows):
+        head, end = turn[0], first + len(turn)
+        if end <= start or declined_a_memory_change(turn):
+            pass  # a turn wholly before *start* is not read at all
+        elif not (starts_a_turn(head) and asked_by(head)):
+            kept += enumerate(turn, first)
+        else:
+            kept += [
+                (at, row)
+                for at, row in enumerate(turn, first)
+                if row.get("role") == "user" and own_words(row)
+            ]
+        first = end
+    return [row for at, row in kept if at >= start]

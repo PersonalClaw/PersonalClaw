@@ -49,16 +49,14 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw.dashboard.chat_persistence import (
-    _TURN_DISPATCH_ROLES,
-    _rehydrate_session_from_history,
-)
+from personalclaw.dashboard.chat_persistence import _rehydrate_session_from_history
 from personalclaw.dashboard.chat_utils import _prepare_messages, full_session_messages
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.dashboard.step_notes import NOTE
 from personalclaw.http_errors import json_error
 from personalclaw.llm.events import is_length_stop
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.turn_source import TURN_STARTS
 
 logger = logging.getLogger(__name__)
 
@@ -489,7 +487,7 @@ def _stamp_on_last_assistant(session: Any, key: str, value: Any) -> bool:
     if not value:
         return False
     for msg in reversed(getattr(session, "messages", []) or []):
-        if msg.get("role") in _TURN_DISPATCH_ROLES:
+        if msg.get("role") in TURN_STARTS:
             return False
         if msg.get("role") != "assistant":
             continue
@@ -507,7 +505,7 @@ def turn_answer(session: Any) -> str:
     message that started it, in order, which the chat shows as one reply."""
     parts: list[str] = []
     for msg in reversed(getattr(session, "messages", []) or []):
-        if msg.get("role") in _TURN_DISPATCH_ROLES:
+        if msg.get("role") in TURN_STARTS:
             break
         if msg.get("role") == "assistant":
             parts.append(str(msg.get("content") or ""))

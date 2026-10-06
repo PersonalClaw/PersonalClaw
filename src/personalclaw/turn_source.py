@@ -28,8 +28,9 @@ turn makes waits on (``memory_writes.asker``), what none of her standing grants 
 (``approval_grants.stands_for_work``) and what of her chats it may not search
 (``chat_recall.not_searched_for``), who asked for what that turn learns from its words
 (:func:`taught_by`), and how a model is shown such a line in any history of the conversation
-(:func:`turn_line`): as memory consolidation shows it, whole, fenced, and labelled as someone
-else's words.
+(:func:`turn_line`): whole, fenced, and labelled as someone else's words. Every other row of a
+conversation is its turn's (:func:`by_turn`), so memory consolidation, which reads only the turns
+the owner asked for (``own_words.her_turns``), takes nothing of such a turn at all.
 """
 
 from __future__ import annotations
@@ -37,9 +38,12 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable, Mapping
 from types import MappingProxyType
-from typing import Any
+from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
+
+#: A transcript row, as whichever reader holds it: a chat's buffer, a file's lines, a copy.
+Row = TypeVar("Row", bound=Mapping[str, Any])
 
 #: The fields a row records where it came from: the thread it arrived on, who sent it, and the
 #: chat channel that took it in.
@@ -58,9 +62,25 @@ QUEUED_FROM = "queued_from"
 #: (:func:`model_text`). The row keeps its words as a person reads them.
 FROM_OUTSIDE = "from_outside"
 
+#: The roles of the row a turn starts with: a person's message, and the row an automation's result,
+#: a subagent's report or a loop's nudge starts one with. Every row after it, up to the next such
+#: row, is that turn's (:func:`by_turn`): its calls, its approvals, its answer.
+TURN_STARTS = frozenset({"user", "inject", "subagent", "nudge"})
+
+#: The ``meta`` key of a row of hers the running turn took while it answered (a steer). Written only
+#: by the dashboard's running turn (``running_turn.take_steer``); a send's own meta never carries it
+#: (``chat_handlers`` drops it). Such a row joins the turn it was sent into and starts none.
+STEERED = "steered"
+
+#: The ``meta`` key of a row that starts a turn for work someone other than the owner asked for,
+#: when no message of theirs is in it: the report of a subagent their turn started. It holds their
+#: source (``memory_writes.asked_for_work``), which :func:`asked_by` reads, and a queued message
+#: carries it under the same key until its row is written (``chat_queue``).
+ASKED_FOR_BY = "asked_for_by"
+
 #: How a model is told a user line someone other than the owner sent is not hers, ahead of the
-#: line, fenced (:func:`theirs`): memory consolidation and every history of the conversation a
-#: model is handed show such a line this way.
+#: line, fenced (:func:`theirs`): every history of the conversation a model is handed shows such a
+#: line this way.
 NOT_THE_USERS_WORDS = "SENT BY SOMEONE OTHER THAN THE USER (not the user's words)"
 #: The same for a row the owner's queued message and someone else's were run as together.
 PARTLY_THE_USERS_WORDS = (
@@ -139,6 +159,29 @@ def sent_by_owner(row: object) -> bool:
     return same_user(owner, sender)
 
 
+def sent_by_someone_else(row: object) -> bool:
+    """Whether *row* is a message the channel that took it in knows someone other than its owner
+    sent: it names the channel and its sender, the channel keeps an owner, and the sender is not
+    that owner. Stricter than ``not sent_by_owner``, which is true of a row nothing can place as
+    well (a channel that knows no owner, a row saved before rows named their channel, a row several
+    queued messages run as): what is removed on this ground must be known to be theirs."""
+    if not isinstance(row, Mapping) or row.get("role") != "user" or _queued(row) is not None:
+        return False
+    source = source_of(row)
+    channel, sender = source.get("source_channel", ""), source.get("source_user", "")
+    if not (channel and sender):
+        return False
+    from personalclaw.channel_delivery import same_user
+    from personalclaw.config.credentials import owner_id_for
+
+    try:
+        owner = owner_id_for(channel)
+    except Exception:  # noqa: BLE001 - an owner that cannot be read says nobody is someone else
+        logger.warning("channel %r: its owner could not be read", channel, exc_info=True)
+        return False
+    return bool(owner) and not same_user(owner, sender)
+
+
 def _queued(row: object) -> list[dict[str, str]] | None:
     """The sources a row several queued messages run as records for them (:data:`QUEUED_FROM`),
     or ``None`` for any other row."""
@@ -147,11 +190,20 @@ def _queued(row: object) -> list[dict[str, str]] | None:
     return [source_of(s) for s in queued] if isinstance(queued, list) else None
 
 
+def _asked_for(row: object) -> dict[str, str]:
+    """Who asked for the work the turn a row starts carries on, as the row records it
+    (:data:`ASKED_FOR_BY`), or ``{}``."""
+    meta = row.get("meta") if isinstance(row, Mapping) else None
+    asked = meta.get(ASKED_FOR_BY) if isinstance(meta, Mapping) else None
+    return source_of(asked) if isinstance(asked, Mapping) else {}
+
+
 def provenance(row: object) -> dict[str, Any]:
     """What *row* records of where it came from, for a copy of it that keeps its role and text: its
     source (:func:`source_of`), for a row queued messages from different places run as, theirs,
-    and for a row of words taken in from outside, that (:data:`FROM_OUTSIDE`). A reader the copy
-    reaches tells whose words it holds as it would from the row itself."""
+    for a row of words taken in from outside, that (:data:`FROM_OUTSIDE`), and who asked for the
+    work its turn carries on (:data:`ASKED_FOR_BY`). A reader the copy reaches tells whose words
+    and whose turn it holds as it would from the row itself."""
     kept: dict[str, Any] = source_of(row)
     meta: dict[str, Any] = {}
     queued = _queued(row)
@@ -160,6 +212,8 @@ def provenance(row: object) -> dict[str, Any]:
     outside = _from_outside(row)
     if outside is not None:
         meta[FROM_OUTSIDE] = outside
+    if asked := _asked_for(row):
+        meta[ASKED_FOR_BY] = asked
     if meta:
         kept["meta"] = meta
     return kept
@@ -201,13 +255,40 @@ def model_text(row: Mapping[str, Any], text: str | None = None) -> str:
 
 def asked_by(row: object) -> dict[str, str]:
     """Who asked for the turn *row* starts, when the owner did not: the source of the first of its
-    messages someone other than the owner sent (:func:`sent_by_owner`). ``{}`` when the owner sent
-    all of it: a row with no source reads as hers, as it does for memory. A row several queued
-    messages run as is asked for by everyone who sent one of them (:data:`QUEUED_FROM`)."""
+    messages someone other than the owner sent (:func:`sent_by_owner`), else whoever asked for the
+    work it carries on, as it records (:data:`ASKED_FOR_BY`: a subagent's report). ``{}`` when the
+    owner asked for all of it: a row with no source reads as hers, as it does for memory. A row
+    several queued messages run as is asked for by everyone who sent one of them
+    (:data:`QUEUED_FROM`)."""
     sources = _queued(row)
     if sources is None:
         sources = [source_of(row)]
-    return next((source for source in sources if not sent_by_owner(source)), {})
+    sent = next((source for source in sources if not sent_by_owner(source)), {})
+    return sent or _asked_for(row)
+
+
+def starts_a_turn(row: object) -> bool:
+    """Whether *row* starts a turn of its conversation (:data:`TURN_STARTS`). A message she sent
+    into a running turn (:data:`STEERED`) joins that turn and starts none."""
+    if not isinstance(row, Mapping) or row.get("role") not in TURN_STARTS:
+        return False
+    meta = row.get("meta")
+    return not (isinstance(meta, Mapping) and meta.get(STEERED))
+
+
+def by_turn(rows: Iterable[Row]) -> list[list[Row]]:
+    """*rows*, a conversation's rows in order, as its turns: each from a row that starts one
+    (:func:`starts_a_turn`) up to the next, so a turn's calls, approvals, notices and answer are its
+    own, and whoever asked for it (:func:`asked_by` of its first row) asked for all of them. Rows
+    before the first such row are a turn no row started (a conversation brought over from another
+    tool can open with an answer)."""
+    turns: list[list[Row]] = []
+    for row in rows:
+        if not turns or starts_a_turn(row):
+            turns.append([row])
+        else:
+            turns[-1].append(row)
+    return turns
 
 
 def taught_by(row: object) -> dict[str, str]:
@@ -237,7 +318,8 @@ def theirs(row: object, text: str | None = None) -> str:
     door every text from outside takes into a prompt (``outside_text.admit``): screened, and fenced
     as its sender's. One the screen refuses is a sentence saying it was withheld, never its words.
     A row the owner's queued message and someone else's were run as together is labelled as only
-    partly hers. Memory consolidation and every history a model is handed read such a line so."""
+    partly hers. Every history of the conversation a model is handed reads such a line so; memory
+    consolidation is shown none of it (``own_words.her_turns``)."""
     from personalclaw.outside_text import admit, withheld
 
     said = str(row.get("content") or "") if text is None and isinstance(row, Mapping) else text

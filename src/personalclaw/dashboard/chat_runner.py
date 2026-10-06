@@ -52,7 +52,7 @@ from personalclaw.dashboard.chat_persistence import (
     prior_turns_transcript,
     save_session_to_history,
 )
-from personalclaw.dashboard.chat_queue import ASKED_FOR_BY, ON_RECORD, queued_pastes
+from personalclaw.dashboard.chat_queue import ON_RECORD, queued_pastes
 from personalclaw.dashboard.chat_session_map import (
     build_turn_telemetry,
     stamp_context_fed,
@@ -107,7 +107,7 @@ from personalclaw.dashboard.state import (
 )
 from personalclaw.dashboard.step_notes import note_on_call, note_refusal
 from personalclaw.dashboard.ungated_calls import report_ungated_call
-from personalclaw.declined_calls import declined_step
+from personalclaw.declined_calls import declined_a_memory_change, declined_step
 from personalclaw.guardrails.failure import answer_cut_off, budget_refusal
 from personalclaw.guardrails.loop_breaker import (
     WARN_THRESHOLD,
@@ -178,8 +178,10 @@ from personalclaw.session_pid import tie_to_session
 from personalclaw.skills.allocation import SkillLoadState
 from personalclaw.stats import Stats
 from personalclaw.turn_source import (
+    ASKED_FOR_BY,
     QUEUED_FROM,
     asked_by,
+    by_turn,
     named,
     shared_source,
     source_of,
@@ -369,12 +371,15 @@ def say_how_an_unanswered_turn_ended(
     told.add_done_callback(state._background_tasks.discard)
 
 
-def learning_decision_for_turn(session, user_message: str, tool_calls: int, cfg=None):
+def learning_decision_for_turn(
+    session, user_message: str, tool_calls: int, cfg=None, *, memory_refused: bool = False
+):
     """The turn's single gate decision, for every capture path to share.
 
     ``user_message`` is what the person typed this turn (``own_words``), not the message the model
-    was sent. Exists as its own function so the two reviews in one turn consume ONE object.
-    Threaded as an argument rather than stashed on the session: ``_ChatSession``
+    was sent; ``memory_refused`` says she refused a change to her memory in it (the gate's
+    ``MEMORY_REFUSED``). Exists as its own function so the two reviews in one turn consume ONE
+    object. Threaded as an argument rather than stashed on the session: ``_ChatSession``
     defines ``__slots__``, so an attribute would raise at runtime — and passing it
     explicitly makes the sharing visible at the call site instead of implicit in
     object state.
@@ -385,7 +390,7 @@ def learning_decision_for_turn(session, user_message: str, tool_calls: int, cfg=
 
     if cfg is None:
         cfg = AppConfig.load().learning
-    gate = LearningGate.for_session(session, cfg)
+    gate = LearningGate.for_session(session, cfg, memory_refused=memory_refused)
     # Permission is settled without reading the message at all. Classifying the
     # text of a restricted session — even with a free regex — inspects content
     # that the session's memory_mode promised was out of scope for learning.
@@ -777,17 +782,22 @@ def _learn_from_turn(
     (``turn_source.taught_by``) or the work the turn carries on: a row her queued message and a
     friend's run as together still teaches her correction. What the turn did (its tools' outcomes,
     the answer the ladder drafts from) teaches only when nobody else asked for any of it
-    (``memory_writes.asker``, the turn's own)."""
+    (``memory_writes.asker``, the turn's own). A turn in which she refused a change to her memory
+    teaches nothing, its words or its work (``declined_calls.declined_a_memory_change``)."""
     try:
-        typed = "\n\n".join(w for w in (own_words(r) for r in (row, *steers)) if w)
-        its_work_teaches = not memory_writes.asker()
+        at = next((i for i, m in enumerate(session.messages) if m is row), None)
+        refused = at is not None and declined_a_memory_change(by_turn(session.messages[at:])[0])
+        typed = "" if refused else "\n\n".join(w for w in map(own_words, (row, *steers)) if w)
+        its_work_teaches = not (refused or memory_writes.asker())
         words_from = (taught_by(row) if row is not None else {}) or dict(asked_for_by or {})
     except Exception:  # noqa: BLE001 - fail closed: whose words they are is unknown, so none teach
         logger.debug("the turn's learning could not tell whose words it reads", exc_info=True)
         return
     with memory_writes.learning_from_words(words_from):
         try:
-            decision = learning_decision_for_turn(session, typed, tool_calls)
+            decision = learning_decision_for_turn(
+                session, typed, tool_calls, memory_refused=refused
+            )
         except Exception:
             logger.debug("learning gate evaluation failed", exc_info=True)
             decision = None
@@ -5704,6 +5714,11 @@ async def run_chat(
                 _queued_source = shared_source(consumed)
                 if len(consumed) > 1 and not _queued_source:
                     queued_meta[QUEUED_FROM] = [source_of(item) for item in consumed]
+                # A subagent's report runs alone, as asked for by whoever asked for its work, and
+                # its row says so, as a message's says who sent it.
+                carried = next((i[ASKED_FOR_BY] for i in consumed if i.get(ASKED_FOR_BY)), None)
+                if carried:
+                    queued_meta[ASKED_FOR_BY] = dict(carried)
                 session.append(
                     "subagent" if is_subagent else "inject" if is_cron else "user",
                     next_msg,
@@ -5736,8 +5751,6 @@ async def run_chat(
                 # A message the channel sent while this turn ran is not sent back to it. Merged
                 # with one typed here, the merged text is new to the channel, so it is.
                 from_channel = all(item.get("channel") for item in consumed)
-                # A subagent's report runs alone, as asked for by whoever asked for its work.
-                carried = next((i[ASKED_FOR_BY] for i in consumed if i.get(ASKED_FOR_BY)), None)
                 next_turn = run_chat(
                     state,
                     session,

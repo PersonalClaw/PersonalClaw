@@ -74,6 +74,7 @@ from personalclaw.request_validation import bool_field, json_object_body
 from personalclaw.rooms.turn import SESSION_KEY_PREFIX as ROOM_SESSION_PREFIX
 from personalclaw.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
+from personalclaw.turn_source import STEERED
 from personalclaw.validation import _AGENT_NAME_RE
 
 
@@ -156,7 +157,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         # a prompt that never ran or a steer nobody sent.
         user_meta.pop(OWN_WORDS, None)
         user_meta.pop(RAN_PROMPT, None)
-        user_meta.pop(running_turn.STEERED, None)
+        user_meta.pop(STEERED, None)
         # The blocks she pasted, as many as are whole (`own_words.pastes_of`).
         if _blocks := pastes_of(user_meta):
             user_meta[PASTES] = _blocks

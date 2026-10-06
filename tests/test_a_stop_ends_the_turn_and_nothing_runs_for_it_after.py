@@ -481,6 +481,8 @@ class _Turn:
         self.running = True
         self.title = "Retry libraries"
         self.queue_append = MagicMock()
+        # The row a report's turn starts on, which the delivery writes as a chat's own append does.
+        self.append = MagicMock()
 
     def end(self) -> None:
         self.running = False

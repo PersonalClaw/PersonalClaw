@@ -69,10 +69,12 @@ describe('incognito copy matches the backend contract', () => {
     expect(read('dashboard', 'chat_runner.py')).toMatch(/memory_writes\.answered_by\(turn_model_ref\(client\)\)/)
     expect(read('providers', 'provider_bridge.py')).toMatch(/served = getattr\(runtime, "served_model_ref", None\)/)
     // Every consolidation pass runs as deriving from its session (as the work of the app that
-    // started it, if one did) and is skipped for one: the pass, and the answer to whether one runs.
+    // started it, if one did) and is skipped for one: the answer to whether one runs asks in that
+    // scope, and the pass asks that answer before it runs in the scope.
     const history = read('history.py')
     expect(history).toMatch(/return memory_writes\.derived_from\(\s*key,\s*memory_mode=self\._log\.recorded_memory_mode\(key\),/)
-    expect(history.match(/with self\._as_its_work\(key\):\s*\n\s*if memory_writes\.writes_refused\(\):/g)?.length).toBe(2)
+    expect(history.match(/with self\._as_its_work\(key\):\s*\n\s*if memory_writes\.writes_refused\(\):/g)?.length).toBe(1)
+    expect(history).toMatch(/nothing = self\.why_nothing_is_kept\(key\)\s*\n\s*if nothing:[\s\S]{0,160}?return\s*\n\s*with self\._as_its_work\(key\):\s*\n\s*with single_flight\(/)
     // The tools an agent CLI runs, in a process of their own, run as the chat they serve.
     expect(read('mcp_core.py')).toMatch(/run_mcp_stdio_loop\("personalclaw-core", "1\.0\.0", _aggregated_list_tools, _call_as_its_session\)/)
   })

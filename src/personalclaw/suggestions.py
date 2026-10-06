@@ -20,6 +20,7 @@ from personalclaw.context import ContextBuilder
 from personalclaw.given_details import keep_given
 from personalclaw.llm_helpers import failure_clause, is_model_call_failure, parse_llm_json_list
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.turn_source import asked_by
 
 if TYPE_CHECKING:
     from personalclaw.dashboard.state import DashboardState
@@ -134,15 +135,18 @@ def _build_context(state: "DashboardState") -> str:
     except Exception:
         logger.debug("Failed to read memory for suggestions", exc_info=True)
 
-    # The five newest chats' titles and last messages. An Incognito or Temporary chat is left out:
-    # no background model reads one, and the suggestions made from these are shown on every page.
+    # The five newest chats' titles and her last messages. An Incognito or Temporary chat is left
+    # out: no background model reads one, and the suggestions made from these are shown on every
+    # page. What is written from these goes in her message box as her own words, so a line someone
+    # else sent is left out (`turn_source.asked_by`), and so is the title the chat list makes of a
+    # chat's first message when it has none, whoever sent that message.
     try:
         if state.conversation_log:
             session_parts: list[str] = []
-            for s in state.conversation_log.list_sessions():
+            for s, meta in state.conversation_log.list_sessions_with_metadata():
                 if len(session_parts) >= 5:
                     break
-                title = s.get("title", "")
+                title = str(meta.get("title") or "")
                 key = s.get("key", "")
                 if not key or memory_writes.blocks_background_models(
                     key, memory_mode=s.get("memory_mode")
@@ -154,7 +158,7 @@ def _build_context(state: "DashboardState") -> str:
                     user_msgs = [
                         m["content"][:150]
                         for m in recent
-                        if m.get("role") == "user" and m.get("content")
+                        if m.get("role") == "user" and m.get("content") and not asked_by(m)
                     ][-3:]
                     if user_msgs:
                         line += "\n" + "\n".join(f"  - User: {msg}" for msg in user_msgs)
