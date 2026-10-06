@@ -253,3 +253,69 @@ def test_a_stopped_follower_leaves_no_re_export_waiting(home, monkeypatch):
     finally:
         export_follow.uninstall()
     assert [timer for timer in started if timer.is_alive()] == [], "a re-export still waits"
+
+
+def test_a_stop_that_comes_while_a_retry_is_put_on_its_timer_waits_for_that_timer(
+    home, monkeypatch
+):
+    """A re-export that finds the export busy puts its retry on a timer from its own thread, and a
+    loaded machine takes a moment to start that timer's thread. A stop that came in that moment
+    found a timer that had not started, and waiting for one that has not started raises: the
+    gateway's stop broke off there, its other timers neither taken back nor waited for."""
+    import threading
+    import time
+
+    from personalclaw.concurrency import single_flight
+    from personalclaw.durability.export_follow import ExportFollower
+
+    starting = threading.Event()
+    timers: list[threading.Timer] = []
+
+    class _SlowToStart(threading.Timer):
+        def start(self) -> None:
+            timers.append(self)
+            starting.set()
+            time.sleep(0.2)  # what a loaded machine takes to start a thread
+            super().start()
+
+    monkeypatch.setattr(threading, "Timer", _SlowToStart)
+    follower = ExportFollower(home)
+    with single_flight("durability:export") as holding:
+        assert holding, "premise: the export is held"
+        busy = threading.Thread(target=follower.flush)
+        busy.start()
+        assert starting.wait(5), "premise: the retry is put on a timer"
+        follower.stop()
+    busy.join(5)
+    assert timers and [timer for timer in timers if timer.is_alive()] == []
+
+
+def test_a_stop_waits_for_a_timer_whose_re_export_has_run_until_its_thread_has_ended(
+    home, monkeypatch
+):
+    """A timer's work having run is not its thread having ended. The follower let a timer go once
+    its work had run, so a stop had nothing to wait for while that thread still ran."""
+    import threading
+    import time
+
+    from personalclaw.durability.export_follow import ExportFollower
+
+    ran = threading.Event()
+    timers: list[threading.Timer] = []
+
+    class _SlowToEnd(threading.Timer):
+        def start(self) -> None:
+            timers.append(self)
+            super().start()
+
+        def run(self) -> None:
+            super().run()
+            ran.set()
+            time.sleep(0.2)  # what a loaded machine takes to end a thread
+
+    monkeypatch.setattr(threading, "Timer", _SlowToEnd)
+    follower = ExportFollower(home)
+    follower.catch_up()  # with no export to keep up, its re-export has nothing to write
+    assert ran.wait(5), "premise: the catch-up's timer ran"
+    follower.stop()
+    assert timers and [timer for timer in timers if timer.is_alive()] == []

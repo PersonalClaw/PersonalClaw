@@ -68,14 +68,26 @@ async def _until(predicate, *, seconds: float = 5.0) -> bool:
     return predicate()
 
 
-async def test_a_command_that_has_already_exited_is_not_a_live_session(home):
+async def test_a_command_that_has_already_exited_is_not_a_live_session(home, monkeypatch):
+    """`new_session` asks the panes once tmux has answered, and a command that exits at once can
+    still be running then (a loaded machine starts it late): True is the true answer at that
+    moment. So the panes are asked here once the command has ended, which the server shows by
+    dropping the session whatever the user's configuration keeps."""
     ws = home / "ws"
     ws.mkdir()
     name = tmux_substrate.durable_session_name("proj", "run", "exits")
+    ask = tmux_substrate.has_session
+
+    async def _asked_once_it_ended(session: str) -> bool:
+        ended = await _until(lambda: session not in _sessions())
+        assert ended, "the dead worker stayed on the server"
+        return await ask(session)
+
+    monkeypatch.setattr(tmux_substrate, "has_session", _asked_once_it_ended)
 
     assert await tmux_substrate.new_session(name, workspace=str(ws), command=["false"]) is False
-    assert not await tmux_substrate.has_session(name)
-    assert await _until(lambda: name not in _sessions()), "the dead worker stayed on the server"
+    assert not await ask(name) and not tmux_substrate.has_session_sync(name)
+    assert all(session != name for session, _ in tmux_substrate.pane_paths_sync())
 
 
 async def test_a_session_kept_after_its_command_exited_reads_dead_everywhere(home):

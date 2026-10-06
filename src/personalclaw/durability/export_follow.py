@@ -37,8 +37,8 @@ class ExportFollower:
 
     ``later(delay, work)`` runs *work* after *delay* seconds, off the writer's thread: the retry
     after a busy export, and the catch-up :func:`install` asks for. A test passes one it drives;
-    otherwise each runs on a timer the follower holds until it has run, so :meth:`stop` can take
-    it back.
+    otherwise each runs on a timer the follower holds until the timer's thread has ended, so
+    :meth:`stop` can take it back or wait for it.
     """
 
     def __init__(
@@ -132,9 +132,10 @@ class ExportFollower:
         return pending
 
     def stop(self) -> None:
-        """Stop: a re-export waiting for its time never runs, and one already running is waited
-        for, at most :data:`STOP_WAIT_SECS`. A gateway's stop uninstalls its follower, and a retry
-        the follower left waiting used to run after it, in whatever home was current by then."""
+        """Stop: a re-export waiting for its time never runs, and every timer's thread is waited
+        for, one running a re-export at most :data:`STOP_WAIT_SECS`. A gateway's stop uninstalls
+        its follower, and a retry the follower left waiting used to run after it, in whatever home
+        was current by then."""
         self._stopped.set()
         with self._lock:
             timers = list(self._timers)
@@ -144,23 +145,21 @@ class ExportFollower:
                 timer.join(STOP_WAIT_SECS)
 
     def _on_a_timer(self, delay: float, work: Callable[[], object]) -> None:
-        """Run *work* after *delay* seconds on a timer this follower holds until it has run."""
-        timer: threading.Timer
+        """Run *work* after *delay* seconds on a timer this follower holds until its thread has
+        ended.
 
-        def run() -> None:
-            try:
-                work()
-            finally:
-                with self._lock:
-                    self._timers.discard(timer)
-
-        timer = threading.Timer(delay, run)
+        The timer is started under the lock :meth:`stop` reads the timers under, so a stop never
+        finds one that has not started: waiting for one that has not started raises, and the stop
+        broke off there. It is held until its thread has ended, not until its work has run: the
+        thread runs on a moment after its work, and a stop waits for the thread."""
+        timer = threading.Timer(delay, work)
         timer.daemon = True
         with self._lock:
             if self._stopped.is_set():
                 return
+            timer.start()
+            self._timers = {held for held in self._timers if held.is_alive()}
             self._timers.add(timer)
-        timer.start()
 
     def _flush_quietly(self) -> None:
         if self._stopped.is_set():
