@@ -886,6 +886,12 @@ def _task_cycle_nudge(loop: Loop, task, worktree_dir: str, loop_dir: str) -> str
     )
     pending = loop_files.read_task_guidance(loop.id, task.id)
     finding = loop_files.finding_file(loop_dir, task.id)
+    outside = kinds.outside_blocker_line(
+        loop,
+        subject="task",
+        questions_file=f"{loop_dir}/questions.json" if loop_dir else "questions.json",
+        task_worker=True,
+    )
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
     rendered = render_use_case_prompt(
@@ -901,6 +907,7 @@ def _task_cycle_nudge(loop: Loop, task, worktree_dir: str, loop_dir: str) -> str
             "plan": plan,
             "criteria": crit,
             "guidance": pending.strip(),
+            "outside_rule": outside,
         },
     )
     if rendered is not None:
@@ -933,7 +940,7 @@ def _task_cycle_nudge(loop: Loop, task, worktree_dir: str, loop_dir: str) -> str
         "",
         f"Mark the task in_progress now (task_update {task.id} in_progress). Implement it "
         "end-to-end in this checkout, validate its done-conditions, then mark it done "
-        f"(task_update {task.id} done). Before you end the turn you MUST write "
+        f"(task_update {task.id} done). {outside} Before you end the turn you MUST write "
         f"{finding} (next sequential N) with "
         "{cycle, stage, task_id, summary, key_insight, files_touched, evidence}. Write "
         "real code with your file tools; end the turn.",

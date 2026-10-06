@@ -111,7 +111,11 @@ async def _verify_command_signal(
         return None
     where = effective_dir(loop)
     report = CheckReport()
-    ok = await run_verify_command(command, where or None, label="verify", report=report)
+    # Its test runner is asked to name each test, so a sub-goal about one named test is shown
+    # that test ran, where the exit code says only that all of them passed.
+    ok = await run_verify_command(
+        command, where or None, label="verify", report=report, per_test=True
+    )
     if ok is True:
         outcome = "passed"
     elif ok is False:
@@ -157,7 +161,12 @@ async def _all_criteria_met(
     defer; the watchdog still bounds by budget) — and its answer for the cycle's verdict.
     Conservative: any ambiguity is NOT a pass.
     """
-    from personalclaw.loop.gates import judge_verdict, verdict_is_pass, verdict_rendered
+    from personalclaw.loop.gates import (
+        for_a_judge,
+        judge_verdict,
+        verdict_is_pass,
+        verdict_rendered,
+    )
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
     recent = findings[-6:]
@@ -165,7 +174,17 @@ async def _all_criteria_met(
         f"- cycle {f.get('cycle')}: {str(f.get('summary', '') or f.get('key_insight', ''))[:300]}"
         for f in recent
     )
-    printed = f", printing:\n{check['output']}" if check["output"] else "."
+    printed = (
+        ", printing:\n"
+        + for_a_judge(
+            check["output"],
+            what=f"What `{check['command']}` printed",
+            source="check",
+            source_type="output",
+        )[0]
+        if check["output"]
+        else "."
+    )
     evidence += (
         f"\n\nThe supervisor ran the check `{check['command']}` in {check['dir']} this cycle: "
         f"it passed (exit 0){printed}"

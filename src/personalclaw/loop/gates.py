@@ -34,6 +34,20 @@ VERIFY_TIMEOUT_SECS = 180
 #: failing command its error. Read as it arrives, so a check that prints a lot never holds more.
 CHECK_OUTPUT_TAIL = 2000
 
+#: How much of the rest is kept besides: the lines that name a file its caller watches (a test file
+#: a stage changed, whose tests a long run reports long before its summary), at most this many
+#: lines and characters, the first ones printed.
+CHECK_NAMED_LINES = 80
+CHECK_NAMED_CHARS = 4000
+
+#: What a check is run with when its caller asks for each test to be named: the switch a test runner
+#: reads from its environment for a line per test and how it ended, so the command itself is never
+#: rewritten and a command that runs no such runner is unaffected. Each is added to a value the
+#: check's environment already has. pytest lists every test in its closing summary, the passed
+#: first and the failed last, where the end of its output is kept (``-rpsxXEf``: not ``-rA``,
+#: which also prints what every passing test printed); go prints each test it runs (``-v``).
+PER_TEST_REPORT_ENV = {"PYTEST_ADDOPTS": "-rpsxXEf", "GOFLAGS": "-v"}
+
 
 class CheckRefused(Exception):
     """A check a denylist refuses, raised where the caller's run records a failure (a workflow's
@@ -108,31 +122,92 @@ class CheckReport:
     :func:`run_verify_command` fills one when its caller hands it one; the tristate it returns
     stays the decision. ``exit_code`` is set once the command ran to its end; ``output`` is the end
     of what it printed (its output and its errors as they came), masked as every view masks a
-    child's output; ``not_run`` says why the command could not run, and is ``""`` once it ran."""
+    child's output; ``not_run`` says why the command could not run, and is ``""`` once it ran.
+
+    ``watch`` names the caller cares about (the files a stage changed); ``named`` is every line of
+    the output that mentions one, wherever it came (:data:`CHECK_NAMED_LINES`), masked the same
+    way, so what a long run printed about them is not lost with its middle."""
 
     exit_code: int | None = None
     output: str = ""
     not_run: str = ""
+    watch: tuple[str, ...] = ()
+    named: str = ""
 
 
 def _seconds(n: int) -> str:
     return f"{n} second" if n == 1 else f"{n} seconds"
 
 
-async def _printed_tail(proc) -> bytes:
-    """Everything *proc* prints until it exits, keeping only the last :data:`CHECK_OUTPUT_TAIL`
-    bytes."""
+async def _printed_tail(proc, watch: tuple[bytes, ...] = ()) -> tuple[bytes, bytes]:
+    """Everything *proc* prints until it exits, keeping the last :data:`CHECK_OUTPUT_TAIL` bytes,
+    and the first lines that name one of *watch* (:data:`CHECK_NAMED_LINES`,
+    :data:`CHECK_NAMED_CHARS`)."""
     kept = bytearray()
+    named = bytearray()
+    lines = 0
+    partial = b""
+
+    def _note(line: bytes) -> None:
+        nonlocal lines
+        if lines < CHECK_NAMED_LINES and any(w in line for w in watch):
+            room = CHECK_NAMED_CHARS - len(named)
+            if room > 0:
+                named.extend(line[:room] + b"\n")
+                lines += 1
+
     if proc.stdout is not None:
         while chunk := await proc.stdout.read(65536):
             kept += chunk
             del kept[:-CHECK_OUTPUT_TAIL]
+            if watch:
+                *whole, partial = (partial + chunk).split(b"\n")
+                for line in whole:
+                    _note(line)
+                partial = partial[-CHECK_NAMED_CHARS:]
+    if watch and partial:
+        _note(partial)
     await proc.wait()
-    return bytes(kept)
+    return bytes(kept), bytes(named)
+
+
+def for_a_judge(
+    text: str, *, what: str, source: str, source_type: str = "", source_id: str = ""
+) -> tuple[str, bool]:
+    """*text* from the work a loop's judge rules on (a file in the work folder, git's diff, what a
+    check printed, a worker's finding) as the judge may be handed it, and whether it was withheld.
+
+    Masked as every text a model is handed is (``security.redact_for_model``), then through the
+    door every text from outside takes into a prompt (``outside_text.admit``): read by the
+    injection screen, and fenced as data with its source. What the screen refuses is the door's
+    sentence naming *what* it was (``outside_text.withheld``), so a criterion that turns on it is
+    one its judge cannot tell, never one the text talked it into."""
+    from personalclaw.outside_text import admit, withheld
+    from personalclaw.security import redact_for_model
+
+    admitted = admit(
+        redact_for_model(text), source=source, source_type=source_type, source_id=source_id
+    )
+    if admitted.refused:
+        return withheld(what, admitted.refused), True
+    return admitted.text, False
+
+
+def _per_test_env(env: dict[str, str]) -> dict[str, str]:
+    """*env*, its test runners asked to name each test (:data:`PER_TEST_REPORT_ENV`)."""
+    out = dict(env)
+    for name, ask in PER_TEST_REPORT_ENV.items():
+        out[name] = f"{out.get(name, '')} {ask}".strip()
+    return out
 
 
 async def run_verify_command(
-    cmd: str, cwd: str | None, *, label: str = "verify", report: CheckReport | None = None
+    cmd: str,
+    cwd: str | None,
+    *,
+    label: str = "verify",
+    report: CheckReport | None = None,
+    per_test: bool = False,
 ) -> bool | None:
     """Run a verification command and read its exit code — the deterministic
     done-ness signal the supervisor owns.
@@ -148,7 +223,10 @@ async def run_verify_command(
 
     *cwd* is the folder the command runs in. A caller passes the folder the work is in: with
     none, the command runs wherever the gateway process was started. *report*, when given, is
-    filled with what the run did (:class:`CheckReport`), so its caller can say it in words.
+    filled with what the run did (:class:`CheckReport`), so its caller can say it in words. With
+    *per_test*, a test runner the command starts is asked to name each test it ran and how it
+    ended (:data:`PER_TEST_REPORT_ENV`): what a judge needs to tell that one named test passed,
+    where an exit code says only that all of them did.
 
     Best-effort + bounded; never raises. The loop is an auto-approved unattended run
     within its trust TTL, so the command executes under the host trust boundary —
@@ -201,13 +279,14 @@ async def run_verify_command(
 
         # A check is a run of its own: what it starts (a test suite's server) ends when it exits.
         run = run_processes.own()
+        # The loop's persisted command, so the child allowlist (`build_child_env`), like a cron
+        # script: never a copy of the gateway's environment and the secrets in it.
+        env = build_child_env(site="loop-verify", extra={run_processes.RUN_VARIABLE: run.mark})
         proc = await create_subprocess_limited(
             *argv,
             profile=PROFILE_TOOL,
             cwd=cwd or None,
-            # The loop's persisted command, so the child allowlist (`build_child_env`), like a
-            # cron script: never a copy of the gateway's environment and the secrets in it.
-            env=build_child_env(site="loop-verify", extra={run_processes.RUN_VARIABLE: run.mark}),
+            env=_per_test_env(env) if per_test else env,
             # What it prints and what it reports as an error, as they came, so its report shows
             # the end a person reads (a test runner's summary, a command's error).
             stdout=asyncio.subprocess.PIPE,
@@ -228,8 +307,11 @@ async def run_verify_command(
             else "it could not be started (the gateway log has the error)"
         )
         return None
+    watch = tuple(w.encode("utf-8") for w in report.watch if w)
     try:
-        printed = await asyncio.wait_for(_printed_tail(proc), timeout=VERIFY_TIMEOUT_SECS)
+        printed, named = await asyncio.wait_for(
+            _printed_tail(proc, watch), timeout=VERIFY_TIMEOUT_SECS
+        )
     except asyncio.TimeoutError:
         await kill_timed_out(proc)  # group-signalled + bounded reap (no zombie, no tree)
         logger.warning("loop gate: %s command timed out — `%s`", label, cmd)
@@ -247,6 +329,7 @@ async def run_verify_command(
     rc = proc.returncode
     report.exit_code = rc
     report.output = mask_child_output(printed, limit=CHECK_OUTPUT_TAIL, tail=True, one_line=False)
+    report.named = mask_child_output(named, limit=CHECK_NAMED_CHARS, one_line=False)
     if rc and (note := sandbox.no_network_note(held_to)):
         report.output = f"{report.output}\n{note}".strip()
     if rc == 127:
@@ -321,11 +404,15 @@ def criteria_verdicts(raw: str | None, criteria: list[str]) -> tuple[list[dict],
     The judge answers ``{"criteria": [{"n": 1, "verdict": "pass"|"fail"|"cant_tell", "reason":
     "…"}]}`` (``task-sdlc_stage_gate``). Each criterion gets ``{"criterion", "verdict",
     "reason"}``; one the judge did not answer, or answered with a word outside
-    :data:`CRITERION_VERDICTS`, is ``cant_tell`` and says so. A one-word PASS or FAIL for the
+    :data:`CRITERION_VERDICTS`, is ``cant_tell`` and says so. A fail the judge marks
+    ``"outside": true`` — not met for a reason outside the stage's work, so nothing its workers do
+    will meet it — carries ``"outside": True``. A one-word PASS or FAIL for the
     whole stage still counts as an answer: PASS passes every criterion, a FAIL that names none is
     ``cant_tell`` for each, because nothing says which one failed. No answer at all (an empty or
     unreadable reply: the judge's model was unavailable) is ``cant_tell`` for each, and not
     rendered, so the caller can tell a refusal from an outage (:func:`verdict_rendered`)."""
+    from personalclaw.safety_flags import yes_or_no
+
     text = raw or ""
     found = _criteria_object(text)
     if found is not None:
@@ -343,6 +430,8 @@ def criteria_verdicts(raw: str | None, criteria: list[str]) -> tuple[list[dict],
             if word not in CRITERION_VERDICTS:
                 word, reason = "cant_tell", "the judge's answer was not pass, fail or can't tell"
             answers[n] = {"verdict": word, "reason": reason}
+            if word == "fail" and yes_or_no(item.get("outside")) is True:
+                answers[n]["outside"] = True
         missing = {"verdict": "cant_tell", "reason": "the judge gave no answer for this criterion"}
         return [
             {"criterion": c, **answers.get(i, missing)} for i, c in enumerate(criteria, 1)

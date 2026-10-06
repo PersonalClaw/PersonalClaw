@@ -459,7 +459,11 @@ The supervisor does not take the worker's word for it:
   itself (with a cwd from `effective_dir`); `judge_verdict` renders an LLM
   verdict; `verdict_is_pass` parses it strictly. A caller that passes a
   `CheckReport` gets what the run did as well: the exit code, the end of what it
-  printed (masked), and why it could not run when it could not.
+  printed (masked), why it could not run when it could not, and every line that
+  names a file it `watch`es (the files a stage changed), wherever it came. With
+  `per_test`, a test runner the check starts is asked through its environment to
+  name each test it ran and how it ended (pytest's per-test summary, go's `-v`); the
+  command itself is never rewritten. Every judge-facing check asks for it.
 - A **Verifiable goal's** check (and a General loop's, when it has one) runs in
   `effective_dir` after every cycle, and the worker's brief names that folder, since
   a relative path in the check is a path in it. Each cycle's check is a
@@ -474,15 +478,32 @@ The supervisor does not take the worker's word for it:
 - The **reproduce** pass at completion re-checks a genuine finish before its
   document deliverable graduates to an artifact, and runs only when there is one
   to graduate (a verifiable goal's check is its output).
-- The **SDLC gate** reads the deliverable *content* (not just existence), and
-  the **goal judge** re-runs commands / reads artifacts — ground truth over
-  worker self-report.
-- A Code stage's **exit criteria are judged one by one** (`kinds/sdlc._stage_gate_passed`). The
-  judge is shown the stage's tasks with their status and every finding's summary and recorded
-  evidence (test output, quoted assertions), cut to a budget per finding and in all, which keeps
-  the newest findings; what was cut or left out is said in the prompt, and a criterion the shown
-  record cannot answer is `cant_tell`. Its answer is read by `gates.criteria_verdicts`: pass, fail
-  or can't tell for each criterion, with a reason. Every evaluation is a `judge_verdict` row with `gate: "stage"` (and
+- The **SDLC gate** reads what the stage did (below), and the **goal judge**
+  re-runs its command and reads every file a deliverable names — ground truth over
+  worker self-report. The goal judges are shown the end of what the command printed
+  (each test named), through the same door, and the evidence refs they cite are read
+  from the supervisor's own lines only, never from a line a check printed.
+- A Code stage's **exit criteria are judged one by one** (`kinds/sdlc._stage_gate_passed`), on
+  what the stage did as the supervisor observed it (`loop/stage_evidence.py`): the stage's tasks
+  with their status; in a workspace git tracks, every file that differs from where the loop's run
+  started (`worktree.start_point`, recorded in `kind_config.base_commit` at the run's first poll),
+  with git's diff and each changed file as it is now; in a folder git does not track (or a run
+  that started before a start point was recorded), the files the stage's findings name, read from
+  disk; every file the stage's deliverable names; and the checks it ran, with the end of what they
+  printed and every line naming a changed file, each test named. A stage that changed a test file
+  runs the test command too, as evidence (it decides the gate only at the verification stage). A
+  file is read only from inside the work folder (`files.file_inside`), and the workspace's text,
+  the checks' output and the workers' words reach the judge through the door every text from
+  outside takes (`gates.for_a_judge` → `outside_text.admit`): masked, read by the injection screen
+  and fenced as data, and what the screen refuses is said withheld, never shown. The judge
+  is also shown what the loop's owner told it (their steers), whose word can settle a criterion,
+  and last the workers' findings, their own account and never proof on its own, cut to a budget
+  per finding and in all, which keeps the newest; what was cut or left out is said in the prompt,
+  and a criterion the shown record cannot answer is `cant_tell`. Its answer is read by
+  `gates.criteria_verdicts`: pass, fail or can't tell for each criterion, with a reason, and a fail
+  marked `outside` when what stands in its way was there before the loop and the stage's changes
+  did not cause it. Every evaluation is a `judge_verdict` row with `gate: "stage"`, what it
+  looked at (`observed`) and whether its judge answered (`judged`) (and
   a `gate_check` event labelled "exit criteria"), so the Code loop's page shows the last one for
   the stage at work, and a stall that blocks the loop quotes its unmet criteria. The stall counter
   counts cycles of work toward the stage: a done task's findings count once, so re-checks of
@@ -491,7 +512,14 @@ The supervisor does not take the worker's word for it:
   (`schedule` → `_judge_on_drain`), not at the stage worker's next finding, and when a stage
   passes the next is judged in the same cycle if its own work is already there (a worker that ran
   ahead), so a loop whose tasks are all done ends complete instead of spending turns re-checking
-  them.
+  them. A gate held only by what no worker can change pauses the loop for its owner at once
+  (`_asks_its_owner`): its judge answered, every criterion it did not pass is `cant_tell` or a fail
+  held from `outside`, and every task of the stage is done (or every one of those criteria is held
+  from outside). The Blocked message names each criterion with its reason and what the gate looked
+  at, the stage worker's cycles are switched off, and a steer reaches the gate as the owner's word.
+  Workers are told the same: one that finds a done-condition held by something outside its task
+  asks at once (Attended), or says so in its finding and finishes the rest (Unattended), rather
+  than re-checking it (`kinds.outside_blocker_line`).
 - **`loop/watchdog.py`** detects stalls, and its own first poll re-arms loops left
   RUNNING/PLANNING by a gateway restart so an interrupted loop resumes rather than
   zombifying (`LoopWatchdog._boot_sweep`). A turn running on ANY of a loop's workers — its stage

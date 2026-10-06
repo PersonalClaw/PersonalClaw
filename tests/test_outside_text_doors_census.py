@@ -100,6 +100,11 @@ DOORS: dict[tuple[str, str], Door] = {
         "a helper's report: to the chat it reports to, and as subagent_status reads it",
         via="admit",
     ),
+    ("loop/gates.py", "for_a_judge"): Door(
+        "the work a loop's judge rules on: a workspace's files and diff, what a check printed, "
+        "a worker's finding",
+        via="admit",
+    ),
 }
 
 #: Text fenced where it arrives, and the door that screens it before any model reads it.

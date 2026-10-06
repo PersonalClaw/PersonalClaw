@@ -132,55 +132,9 @@ def _pool_cap(loop: Loop) -> int:
 
 _STALL_FINDINGS = 5  # a stage grinding this many cycles of work w/o clearing its gate is "stuck"
 
-#: How much of a stage's findings its judge is shown (characters), and how much of any one
-#: finding's recorded evidence (test output, say). Over either, the oldest findings and the
-#: middle of a long evidence block are cut, and the judge is told so.
-_GATE_EVIDENCE_BUDGET = 16000
-_GATE_EVIDENCE_PER_FINDING = 2400
-
-
-def _evidence_text(raw) -> str:
-    """A finding's recorded evidence as text: a string as it is, a list or a mapping (a worker
-    may record checks as ``{"pytest": "13 passed"}``) one item per line."""
-    if raw is None:
-        return ""
-    if isinstance(raw, str):
-        return raw.strip()
-    if isinstance(raw, dict):
-        return "\n".join(f"{k}: {v}" for k, v in raw.items()).strip()
-    if isinstance(raw, list):
-        return "\n".join(_evidence_text(v) for v in raw).strip()
-    return str(raw).strip()
-
-
-def _cut_middle(text: str, limit: int) -> tuple[str, bool]:
-    """*text* within *limit* characters, its head and tail kept (a test run's summary and its
-    failures sit at the end), and whether it was cut."""
-    if len(text) <= limit:
-        return text, False
-    head = limit // 4
-    tail = limit - head
-    cut = len(text) - head - tail
-    return f"{text[:head]}\n… [{cut} characters cut] …\n{text[-tail:]}", True
-
-
-def _finding_block(finding: dict, task_titles: dict[str, str]) -> tuple[str, bool]:
-    """One finding as its stage's judge reads it, and whether its evidence was cut."""
-    tid = str(finding.get("task_id") or "")
-    who = f", task \u201c{task_titles.get(tid) or tid}\u201d" if tid else ""
-    summary = " ".join(str(finding.get("summary") or "").split())[:600]
-    lines = [f"- cycle {finding.get('cycle', '?')}{who}: {summary}"]
-    insight = " ".join(str(finding.get("key_insight") or "").split())[:400]
-    if insight:
-        lines.append(f"  key insight: {insight}")
-    files = finding.get("files_touched")
-    if isinstance(files, list) and files:
-        lines.append("  files touched: " + ", ".join(str(f) for f in files[:20]))
-    evidence, cut = _cut_middle(_evidence_text(finding.get("evidence")), _GATE_EVIDENCE_PER_FINDING)
-    if evidence:
-        lines.append("  evidence it recorded:")
-        lines.extend(f"    {ln}" for ln in evidence.splitlines())
-    return "\n".join(lines), cut
+#: Where the loop's run started in its work folder (``worktree.start_point``), recorded in its
+#: ``kind_config`` when the run first starts: what its stages' gates read the run's changes against.
+_BASE_KEY = "base_commit"
 
 
 def _not_judged(criteria: list[str], why: str) -> list[dict]:
@@ -191,7 +145,8 @@ def _not_judged(criteria: list[str], why: str) -> list[dict]:
 
 def _gate_sentence(criteria: list[dict]) -> str:
     """What a stage gate decided, in one sentence a person can act on: which exit criteria are
-    not met and which the record could not show, each with its reason."""
+    not met (and which of those for a reason outside the stage's work) and which the record could
+    not show, each with its reason."""
 
     def _named(rows: list[dict]) -> str:
         return "; ".join(
@@ -199,14 +154,17 @@ def _gate_sentence(criteria: list[dict]) -> str:
             for r in rows
         )
 
-    failed = [r for r in criteria if r.get("verdict") == "fail"]
+    failed = [r for r in criteria if r.get("verdict") == "fail" and not r.get("outside")]
+    outside = [r for r in criteria if r.get("verdict") == "fail" and r.get("outside")]
     unknown = [r for r in criteria if r.get("verdict") == "cant_tell"]
-    if not failed and not unknown:
+    if not failed and not outside and not unknown:
         n = len(criteria)
         return f"All {n} exit criteria are met." if n != 1 else "The exit criterion is met."
     parts = []
     if failed:
         parts.append(f"Not met: {_named(failed)}.")
+    if outside:
+        parts.append(f"Not met for a reason outside this stage's work: {_named(outside)}.")
     if unknown:
         parts.append(f"Can't tell from the record: {_named(unknown)}.")
     return " ".join(parts)
@@ -412,16 +370,34 @@ def command_runnability_view(kind_config: dict, workspace_dir: str) -> dict[str,
     return out
 
 
-def _stage_commands(loop: Loop, stage: str) -> list[tuple[str, str]]:
+def _stage_commands(
+    loop: Loop, stage: str, *, tests_changed: bool = False
+) -> list[tuple[str, str]]:
+    """The checks a stage's gate runs: the build check always, and the tests at the verification
+    stage, where they decide the gate. A stage before it that changed a test file runs the tests
+    too, as evidence for its judge: a criterion that the stage's new test passes is shown that
+    run, rather than nothing a judge could confirm it on (:func:`_decides` says which decide). A
+    test command that is the build check itself runs once."""
     cfg = loop.kind_config or {}
     checks: list[tuple[str, str]] = []
     verify_command = str(cfg.get("verify_command", "") or "").strip()
     test_command = str(cfg.get("test_command", "") or "").strip()
     if verify_command:
         checks.append(("build", verify_command))
-    if stage == "verification" and test_command:
+    if (
+        test_command != verify_command
+        and test_command
+        and (stage == "verification" or tests_changed)
+    ):
         checks.append(("tests", test_command))
     return checks
+
+
+def _decides(label: str, stage: str) -> bool:
+    """Whether a check's failure holds its stage outright, without the judge: the build check at
+    every stage, the tests at the verification stage. A test run another stage makes is evidence
+    its judge reads, and fails only the criteria it bears on."""
+    return label == "build" or stage == "verification"
 
 
 def _refused_stage_check(loop: Loop, phase: dict, stage: str) -> str:
@@ -471,6 +447,9 @@ class CodeKind(LoopKindStrategy):
         # Loops a task's work landed in during this poll's scheduling (:meth:`_reap_merge_done`),
         # so the stage is judged then (:meth:`_judge_on_drain`). Read and cleared by `schedule`.
         self._landed: set[str] = set()
+        # Loops whose run has no start point to record (:meth:`_note_start_point`), so a poll
+        # does not ask git again. In memory: after a restart the next poll asks once more.
+        self._no_start_point: set[str] = set()
 
     def _is_parallel(self, loop: Loop) -> bool:
         """Parallel mode: queued work + a git workspace (worktrees available). Set
@@ -624,7 +603,11 @@ class CodeKind(LoopKindStrategy):
     def stage_directive(self, loop: Loop) -> str:
         """A one-block directive naming the CURRENT stage + objective + exit
         criteria, prepended to the cycle nudge. Empty when there's no plan.
-        Ported faithfully from code.project.stage_directive."""
+        Ported faithfully from code.project.stage_directive.
+
+        Once the stage's gate has held it, the directive says what the gate found, so a worker
+        stood back up works on what was not met rather than re-checking what was
+        (:meth:`_last_gate`; the gate re-arms the message after each evaluation that holds)."""
         plan = loop.plan or []
         idx = self.active_stage_index(loop)
         if idx < 0:
@@ -643,6 +626,7 @@ class CodeKind(LoopKindStrategy):
             f" — {title or stage}" if (title or stage) else ""
         )
         deliverable = str(phase.get("deliverable", "")).strip()
+        gate_said = self._last_gate(loop.id, self.phase_key(phase)) if exit_criteria else ""
         from personalclaw.prompt_providers.runtime import render_snippet_block
 
         rendered = render_snippet_block(
@@ -653,6 +637,7 @@ class CodeKind(LoopKindStrategy):
                 "criteria_joined": "; ".join(exit_criteria),
                 "deliverable": deliverable,
                 "agent_name": agent_name,
+                "gate_said": gate_said,
             },
         )
         if rendered:
@@ -668,6 +653,11 @@ class CodeKind(LoopKindStrategy):
             body += (
                 f" Delegate this stage's work to the `{agent_name}` agent via "
                 "subagent_run, then synthesize its result into your cycle finding."
+            )
+        if gate_said:
+            body += (
+                f" The supervisor's gate last found: {gate_said} Work on what it found not met; "
+                "what it found met needs no re-check."
             )
         return f"[Stage plan — {body}]"
 
@@ -1015,10 +1005,6 @@ class CodeKind(LoopKindStrategy):
                     cause = "binary"
                     break
         self._stall_notified[key] = worked
-        from personalclaw.loop import store
-        from personalclaw.loop.loop import LoopStatus
-        from personalclaw.loop.manager import session_key
-
         title = str((loop.plan[idx] or {}).get("title", "")).strip() or stage
         logger.info(
             "code: stage %r stalled (%s) after %d findings for %s",
@@ -1048,12 +1034,6 @@ class CodeKind(LoopKindStrategy):
             "stage_stalled",
             stall_event,
         )
-        try:  # pause the worker's nudge loop so it stops spinning while it waits on the user
-            nl = ctx.svc.get_by_session(session_key(loop.id))
-            if nl is not None:
-                await ctx.svc.update(nl.id, active=False)
-        except Exception:
-            logger.debug("code: stall-pause of nudge loop failed for %s", loop.id, exc_info=True)
         if missing_command is not None:
             _label, command, runnable = missing_command
             error_message = (
@@ -1075,88 +1055,74 @@ class CodeKind(LoopKindStrategy):
                 "bar — the work meets the exit criteria but keeps scoring below the stage's "
                 "quality gate. Paused to avoid spinning; steer it (or relax the bar), then resume."
             )
-        try:
-            store.update_status(
-                loop.id,
-                LoopStatus.BLOCKED,
-                error_message=error_message,
-            )
-        except (KeyError, store.TransitionError):
-            pass
-        ctx.publish(
-            loop.id, "blocked", {"loop_id": loop.id, "stage": stage, "reason": error_message}
-        )
+        await self._block(loop, stage, ctx, error_message)
         return True
 
-    # Deliverable-labels with no concrete filename → nothing to resolve on disk (the
-    # gate still runs the judge). ``None`` path means "unverifiable label", distinct from
-    # "named a file that's missing" (which blocks) — the caller relies on that distinction.
-    @staticmethod
-    def _resolve_deliverable(workspace_dir: str, deliverable: str) -> tuple[bool, str | None]:
-        """Resolve a stage's declared document deliverable to a concrete on-disk path —
-        the independent ground-truth locator (observe, don't trust the worker's self-report).
-
-        Returns ``(verifiable, path)``:
-          * ``(False, None)`` — the label carries no concrete filename, or the workspace
-            can't be read: nothing to verify here (the judge still gates). NOT a block.
-          * ``(True, "<abs path>")`` — a declared file was found on disk.
-          * ``(True, None)`` — the label names a file that does NOT exist: the gate blocks.
-
-        The deliverable field is a filename (e.g. 'PLAN.md', 'src/engine.ts') or a short
-        phrase mentioning one. A filename may carry a SUBDIRECTORY path (e.g. 'src/engine.ts')
-        — honored relative to the workspace (checking only the basename at the root would
-        miss '<ws>/src/engine.ts' and hard-fail the gate forever). We accept a match at the
-        as-given relative path, OR the basename at the root, OR the basename anywhere under
-        the workspace (a worker may place it in a different but valid dir)."""
-        import os
-        import re
-
-        ws = (workspace_dir or "").strip()
-        if not ws or not os.path.isdir(ws):
-            return (False, None)  # can't verify → don't block (the judge still gates)
-        names = re.findall(r"[\w./-]+\.[A-Za-z0-9]+", deliverable or "")
-        if not names:
-            return (False, None)  # no concrete filename in the label → nothing to verify here
-        for n in names:
-            rel = n.lstrip("./")
-            base = os.path.basename(n)
-            # 1) the path as-given, relative to the workspace (honors 'src/engine.ts').
-            p = os.path.join(ws, rel)
-            if os.path.isfile(p):
-                return (True, p)
-            # 2) the bare basename at the workspace root (the common 'PLAN.md' case).
-            p = os.path.join(ws, base)
-            if os.path.isfile(p):
-                return (True, p)
-        # 3) basename match anywhere under the workspace — the worker may have placed the
-        # file in a valid subdir the label didn't spell out. Bounded walk (skip heavy/vcs
-        # dirs) so a node_modules/.git tree can't make this slow.
-        wanted = {os.path.basename(n) for n in names}
-        skip = {"node_modules", ".git", "dist", "build", ".venv", "__pycache__", ".next"}
-        for root, dirs, files in os.walk(ws):
-            dirs[:] = [d for d in dirs if d not in skip]
-            hit = wanted & set(files)
-            if hit:
-                return (True, os.path.join(root, sorted(hit)[0]))
-        return (True, None)  # a file WAS named but none found → block
-
-    @staticmethod
-    def _read_deliverable(path: str, *, max_chars: int = 6000) -> str:
-        """Read a resolved deliverable's real content for the judge — the observed
-        artifact, not the worker's narration. Bounded (head of the file); binary
-        or unreadable files return ""; a middle-truncation marker shows the cap was hit."""
-        import os
+    async def _block(self, loop: Loop, stage: str, ctx, message: str) -> None:
+        """Pause *loop* for its owner, Blocked with *message*: its stage worker's cycles are
+        switched off so it stops spending turns while it waits (a steer or a resume arms them
+        again), and the loop's page and its bell are told. Never raises into the cycle hook."""
+        from personalclaw.loop import store
+        from personalclaw.loop.manager import session_key
 
         try:
-            if os.path.getsize(path) == 0:
-                return ""
-            with open(path, encoding="utf-8", errors="strict") as fh:
-                text = fh.read(max_chars + 1)
-        except (OSError, UnicodeDecodeError):
-            return ""  # binary / unreadable → nothing textual to feed the judge
-        if len(text) > max_chars:
-            return text[:max_chars] + "\n… (deliverable truncated for the gate)"
-        return text
+            nl = ctx.svc.get_by_session(session_key(loop.id))
+            if nl is not None:
+                await ctx.svc.update(nl.id, active=False)
+        except Exception:
+            logger.debug("code: pausing the stage worker of %s failed", loop.id, exc_info=True)
+        try:
+            store.update_status(loop.id, LoopStatus.BLOCKED, error_message=message)
+        except (KeyError, store.TransitionError):
+            pass
+        ctx.publish(loop.id, "blocked", {"loop_id": loop.id, "stage": stage, "reason": message})
+
+    async def _asks_its_owner(self, loop: Loop, idx: int, stage: str, ctx) -> bool:
+        """Pause for the owner at once when the stage's gate is held only by what no worker of the
+        stage can change, rather than stand its worker back up to re-check finished work until the
+        anti-spin pause. That is: its judge answered, and every criterion it did not pass is one
+        the record cannot show or one held by something outside the stage's work (a fail it marked
+        ``outside``), never a plain fail its workers can fix; and every task of the stage is done,
+        or every one of those criteria is held from outside. Another cycle of its workers shows
+        the gate nothing new; its owner can look at the work, and a steer that says a criterion is
+        met, or what to change, reaches the gate. True iff it paused."""
+        gate = next(
+            (
+                v
+                for v in reversed(loop_files.get_verdicts(loop.id))
+                if v.get("gate") == "stage" and v.get("stage") == stage
+            ),
+            None,
+        )
+        if gate is None or gate.get("passed") or not gate.get("judged"):
+            return False
+        unmet = [c for c in gate.get("criteria") or [] if c.get("verdict") != "pass"]
+        if not unmet or any(c.get("verdict") == "fail" and not c.get("outside") for c in unmet):
+            return False
+        held_from_outside = all(c.get("outside") for c in unmet)
+        if not held_from_outside:
+            from personalclaw.loop import tasks_link
+
+            tasks = await tasks_link.stage_tasks(loop, stage)
+            if not tasks or not all(tasks_link._is_resolved(t.status) for t in tasks):
+                return False
+        title = str((loop.plan[idx] or {}).get("title", "")).strip() or stage
+        held = (
+            f"Stage '{title}' is held at its gate by something outside its work"
+            if held_from_outside
+            else f"Every task of stage '{title}' is done, but its gate can't confirm every exit "
+            "criterion from what it observed"
+        )
+        looked = "; ".join(gate.get("observed") or [])
+        message = (
+            f"{held}, and another cycle of its workers would show it nothing new, so the loop "
+            f"waits for you. {gate.get('done_reason') or ''}"
+            + (f" The gate looked at {looked}." if looked else "")
+            + " Steer the loop to tell it a criterion is met, or what to change, and it checks "
+            "again."
+        )
+        await self._block(loop, stage, ctx, message)
+        return True
 
     def _tick_decide(
         self, loop: Loop, idx: int, findings: list[dict], *, gate_passed: bool, metric: float | None
@@ -1348,6 +1314,14 @@ class CodeKind(LoopKindStrategy):
         finding); applies a STAGE-APPROPRIATE gate; then a conservative judge over the
         exit criteria + evidence. Defaults to NOT passed on any ambiguity.
 
+        The judge is shown what the stage did, as the supervisor observed it
+        (:mod:`personalclaw.loop.stage_evidence`): every file the loop changed in a workspace git
+        tracks (the diff, and each changed file as it is now), or in a folder git does not track
+        the files the stage's findings name, read from disk; every file its deliverable names; and
+        the checks it ran, with what they printed, each test named where the runner can be asked
+        to. A criterion about a second file, or about one named test passing, is judged on that,
+        not on a worker's word for it.
+
         Stage-appropriate gating (the durable fix for the planning-stage hard-fail):
         a build/test command is the done-ness signal for stages that produce buildable
         CODE, NOT for a planning/scaffold-DESIGN stage whose deliverable is a doc and
@@ -1375,66 +1349,64 @@ class CodeKind(LoopKindStrategy):
         # else the project context dir. Reading loop.workspace_dir directly would miss the
         # deliverable for a context-dir loop (no explicit workspace) and silently skip the
         # ground-truth check. `effective_dir` is the one resolver both gate paths share.
+        from personalclaw.loop import stage_evidence, worktree
+        from personalclaw.loop.gates import (
+            CheckReport,
+            criteria_verdicts,
+            judge_verdict,
+            run_verify_command,
+        )
         from personalclaw.loop.loop import effective_dir
 
         ws = effective_dir(loop)
+        observed = stage_evidence.Observed()
+        base = str((loop.kind_config or {}).get(_BASE_KEY) or "")
+        if ws and base and worktree.tracks(ws):
+            stage_evidence.observe_changes(observed, ws, base)
+        elif ws:
+            stage_evidence.observe_named_files(
+                observed,
+                ws,
+                [
+                    str(name)
+                    for f in stage_findings
+                    if isinstance(f.get("files_touched"), list)
+                    for name in f["files_touched"]
+                ],
+            )
         # Independent ground-truth check (no self-report): if the stage declares a
         # document deliverable, it MUST exist on disk before the stage can pass. This
         # gives a doc/planning stage a real gate (not transcript-only) and is the
-        # observe-don't-trust requirement.
+        # observe-don't-trust requirement. Every file it names is read for the judge.
         deliverable = str(phase.get("deliverable", "")).strip()
-        check_evidence = ""
-        if deliverable and ws:
-            verifiable, path = self._resolve_deliverable(ws, deliverable)
-            if verifiable and path is None:
-                # A concrete file was named but does NOT exist → block (ground truth).
-                ctx.publish(
-                    loop.id,
-                    "gate_check",
-                    {
-                        "loop_id": loop.id,
-                        "label": "deliverable",
-                        "deliverable": deliverable,
-                        "ok": False,
-                        "stage": stage,
-                    },
-                )
+        found = stage_evidence.observe_deliverable(observed, ws, deliverable) if ws else None
+        if found is not None:
+            ctx.publish(
+                loop.id,
+                "gate_check",
+                {
+                    "loop_id": loop.id,
+                    "label": "deliverable",
+                    "deliverable": deliverable,
+                    "ok": bool(found),
+                    "stage": stage,
+                    **({"content_bytes": sum(size for _, size in found)} if found else {}),
+                },
+            )
+            if not found:
+                # A concrete file was named and none is in the work folder → block.
                 self._record_gate(
                     loop,
                     stage,
                     findings,
-                    _not_judged(exit_criteria, f"the deliverable `{deliverable}` is not on disk"),
+                    _not_judged(
+                        exit_criteria, f"the deliverable `{deliverable}` is not in the work folder"
+                    ),
+                    observed=observed.seen,
                 )
                 return False
-            if path is not None:
-                # Feed the deliverable's REAL content to the judge, not just an
-                # "exists" note: the gate scores the observed artifact, not the worker's
-                # narration. Read is bounded; binary/empty files add only the exists note.
-                content = self._read_deliverable(path)
-                check_evidence += (
-                    f"\nSupervisor confirmed the deliverable `{deliverable}` exists on disk."
-                )
-                if content:
-                    check_evidence += (
-                        f"\n\n--- Deliverable content ({deliverable}), observed directly by the "
-                        f"supervisor ---\n{content}\n--- end deliverable ---"
-                    )
-                ctx.publish(
-                    loop.id,
-                    "gate_check",
-                    {
-                        "loop_id": loop.id,
-                        "label": "deliverable",
-                        "deliverable": deliverable,
-                        "ok": True,
-                        "stage": stage,
-                        "content_bytes": len(content),
-                    },
-                )
-        from personalclaw.loop.gates import criteria_verdicts, judge_verdict, run_verify_command
-
-        checks = _stage_commands(loop, stage)
-        passed_a_command = False  # a deterministic check actually RAN and PASSED
+        checks = _stage_commands(loop, stage, tests_changed=observed.tests_changed())
+        passed_a_command = False  # a deterministic check that decides the gate RAN and PASSED
         for label, cmd in checks:
             # Two distinct can't-run states both fall through to the judge, exactly as
             # before; only their observable reason differs. A missing binary is an
@@ -1461,9 +1433,19 @@ class CodeKind(LoopKindStrategy):
                         **({"binary": runnable.binary} if runnable.binary else {}),
                     },
                 )
+                stage_evidence.observe_check(
+                    observed, label, cmd, None, CheckReport(not_run=skipped)
+                )
                 continue
-            ok = await run_verify_command(cmd, ws or None, label=label)
-            if ok is False:
+            report = CheckReport(watch=observed.watch())
+            ok = await run_verify_command(
+                cmd, ws or None, label=label, report=report, per_test=True
+            )
+            stage_evidence.observe_check(observed, label, cmd, ok, report)
+            if ok is False and _decides(label, stage):
+                failed = f"the stage's {label} command failed" + (
+                    f" (exit {report.exit_code})" if report.exit_code is not None else ""
+                )
                 ctx.publish(
                     loop.id,
                     "gate_check",
@@ -1473,22 +1455,23 @@ class CodeKind(LoopKindStrategy):
                         "command": redact_for_display(cmd),
                         "ok": False,
                         "stage": stage,
+                        "output": report.output,
                     },
                 )
                 self._record_gate(
                     loop,
                     stage,
                     findings,
-                    _not_judged(exit_criteria, f"the stage's {label} command failed"),
+                    _not_judged(exit_criteria, failed),
+                    observed=observed.seen,
                 )
                 return False
-            if ok is True:
+            # ok is None → couldn't run; the judge is told so, and why.
+            if ok is True and _decides(label, stage):
                 passed_a_command = True
-                check_evidence += f"\nSupervisor ran `{cmd}` ({label}) → PASSED."
-            # ok is None → couldn't run; fall through to the judge.
         if checks:
             ctx.publish(loop.id, "gate_check", {"loop_id": loop.id, "ok": True, "stage": stage})
-        evidence, evidence_note = await self._gate_evidence(loop, stage, stage_findings)
+        evidence, evidence_note = await self._gate_evidence(loop, stage, stage_findings, observed)
         criteria = "\n".join(f"{n}. {c}" for n, c in enumerate(exit_criteria, 1))
         # The stage-gate instruction lives in the prompt system (bundled
         # ``task-sdlc-stage-gate``), rendered with the stage + evidence.
@@ -1501,7 +1484,7 @@ class CodeKind(LoopKindStrategy):
                     "stage_title": phase.get("title", stage),
                     "objective": phase.get("objective", ""),
                     "criteria": criteria,
-                    "evidence": evidence + check_evidence,
+                    "evidence": evidence,
                     "evidence_note": evidence_note,
                 },
             )
@@ -1525,56 +1508,66 @@ class CodeKind(LoopKindStrategy):
             ctx=ctx,
             passed=passed or fallback,
             note="judge unavailable; passed on deterministic checks" if fallback else "",
+            observed=observed.seen,
+            judged=rendered,
         )
         return passed or fallback
 
     async def _gate_evidence(
-        self, loop: Loop, stage: str, stage_findings: list[dict]
+        self, loop: Loop, stage: str, stage_findings: list[dict], observed
     ) -> tuple[str, str]:
-        """What a stage's judge reads, from the loop's own records, and a note on what was cut.
+        """What a stage's judge reads, and a note on what was left out.
 
-        The stage's tasks and their status (observed by the supervisor, not reported), then its
-        findings: each with its summary, key insight, the files it touched and the evidence it
-        recorded (a task worker's test output among it), so a criterion that names a task's
-        output is judged on that output. A record too long for one judge call keeps its newest
-        findings, and the middle of a long evidence block; the note says what is not shown, so a
-        criterion that depends on it is answered can't tell rather than guessed."""
-        from personalclaw.loop import tasks_link
+        First what the supervisor observed: the stage's tasks and their status, then what it
+        observed of the stage's work (*observed*, a ``stage_evidence.Observed``: the changes, the
+        files, the deliverable, the checks it ran); then what the loop's owner told it, in their
+        own words; then the workers' findings, their own account, each with its summary, key
+        insight, the files it says it touched and the evidence it recorded. A record too long for
+        one judge call keeps the newest findings and the middle of a long evidence block, and the
+        note says what is not shown, so a criterion that depends on it is answered can't tell
+        rather than guessed."""
+        from personalclaw.loop import stage_evidence, tasks_link
+        from personalclaw.loop.loop import effective_dir
 
         tasks = await tasks_link.stage_tasks(loop, stage)
         titles = {t.id: str(t.title or "") for t in tasks}
-        lines: list[str] = []
+        parts: list[str] = []
         if tasks:
-            lines.append("Tasks of this stage, from its task list (observed by the supervisor):")
-            lines.extend(f"- [{getattr(t.status, 'value', t.status)}] {t.title}" for t in tasks)
-            lines.append("")
-        blocks = [_finding_block(f, titles) for f in stage_findings]
-        kept: list[str] = []
-        used = 0
-        cut_evidence = False
-        for block, cut in reversed(blocks):
-            if kept and used + len(block) > _GATE_EVIDENCE_BUDGET:
-                break
-            kept.append(block)
-            used += len(block)
-            cut_evidence = cut_evidence or cut
-        left_out = len(blocks) - len(kept)
-        lines.append("Findings of this stage, oldest first:")
-        lines.extend(reversed(kept))
-        notes: list[str] = []
-        if left_out:
-            notes.append(
-                f"The {left_out} earliest finding{'s' if left_out != 1 else ''} of this stage "
-                "are not shown, for length."
+            parts.append(
+                "Tasks of this stage, from its task list (observed by the supervisor):\n"
+                + "\n".join(f"- [{getattr(t.status, 'value', t.status)}] {t.title}" for t in tasks)
             )
-        if cut_evidence:
-            notes.append("Some findings' recorded evidence is cut in the middle, for length.")
+            done = sum(1 for t in tasks if tasks_link._is_resolved(t.status))
+            count = f"{len(tasks)} task" + ("s" if len(tasks) != 1 else "")
+            observed.seen.insert(
+                0,
+                f"the stage's {count}, "
+                + ("all done" if done == len(tasks) else f"{done} of them done"),
+            )
+        seen = list(observed.blocks)
+        if observed.checks:
+            seen.append(
+                f"Checks the supervisor ran itself, in {effective_dir(loop)}:\n"
+                + "\n".join(observed.checks)
+            )
+        if seen:
+            parts.append(
+                "Observed directly by the supervisor (not reported by a worker):\n\n"
+                + "\n\n".join(seen)
+            )
+        owner = stage_evidence.owner_block(loop_files.get_nudges(loop.id))
+        if owner:
+            parts.append(owner)
+        workers, notes = stage_evidence.findings_block(stage_findings, titles)
+        if workers:
+            parts.append(workers)
+        notes = [*observed.cut, *notes]
         if notes:
             notes.append(
                 "If a criterion depends on evidence that is not shown, answer cant_tell and say "
                 "what is missing."
             )
-        return "\n".join(lines), " ".join(notes)
+        return "\n\n".join(parts), " ".join(notes)
 
     def _record_gate(
         self,
@@ -1586,11 +1579,15 @@ class CodeKind(LoopKindStrategy):
         ctx=None,
         passed: bool = False,
         note: str = "",
+        observed: list[str] | None = None,
+        judged: bool = False,
     ) -> None:
         """Record one stage-gate evaluation on the loop's ledger: a verdict for each exit
         criterion (pass, fail or can't tell, each with its reason) and the sentence that sums it
-        up, which the loop's page shows and a Blocked message quotes. With *ctx* it is told to
-        the page live too; without, the evaluation stopped at a check that already said so."""
+        up, which the loop's page shows and a Blocked message quotes; what the gate looked at
+        (*observed*, one line each, which the page and a pause say too); and whether its judge
+        gave an answer (*judged*). With *ctx* it is told to the page live too; without, the
+        evaluation stopped at a check that already said so."""
         from personalclaw.workflows.judge_contract import Verdict
 
         sentence = _gate_sentence(verdicts) if not passed or not note else note
@@ -1602,6 +1599,8 @@ class CodeKind(LoopKindStrategy):
             "done_reason": sentence,
             "criteria": verdicts,
             "shortfalls": [v["criterion"] for v in verdicts if v["verdict"] != "pass"],
+            "observed": list(observed or []),
+            "judged": judged,
         }
         if note:
             record["note"] = note
@@ -1758,6 +1757,7 @@ class CodeKind(LoopKindStrategy):
         ws = (loop.workspace_dir or "").strip()
         if ws and worktree.is_git_repo(ws) and self._asks_for_identity(loop, ws, ctx):
             return True
+        loop = self._note_start_point(loop)
         if loop.autopilot:
             refreshed = await self.autopilot_queue(loop)
             if refreshed is not None:
@@ -1781,6 +1781,29 @@ class CodeKind(LoopKindStrategy):
             loop = store.get(loop.id) or loop
         await self._one_writer(loop, ctx)
         return False
+
+    def _note_start_point(self, loop: Loop) -> Loop:
+        """Record where the loop's run starts in its work folder (``worktree.start_point``), once,
+        at its first poll: its stages' gates read what the run changed against it. Its first
+        cycle has not landed yet then (a worker's first turn waits out its first idle period,
+        longer than a poll), so nothing of the run's work is before it. A loop already at work
+        when it is first asked, or in a folder git does not track, records none: its gates read
+        the files its findings name instead."""
+        if (loop.kind_config or {}).get(_BASE_KEY) or loop.id in self._no_start_point:
+            return loop
+        from personalclaw.loop import store, worktree
+        from personalclaw.loop.loop import effective_dir
+
+        base = (
+            ""
+            if loop_files.cycles_completed(loop.id)
+            else worktree.start_point(effective_dir(loop) or "")
+        )
+        if not base:
+            self._no_start_point.add(loop.id)
+            return loop
+        store.merge_kind_config(loop.id, {_BASE_KEY: base})
+        return store.get(loop.id) or loop
 
     async def _judge_on_drain(self, loop: Loop, idx: int, stage: str, ctx) -> bool:
         """The stage's last task worker was just reaped: judge the stage now, on its tasks' work.
@@ -1936,7 +1959,17 @@ class CodeKind(LoopKindStrategy):
             # HOLD is always a quality-metric hold (the structural gate passed but the
             # metric is below pass); EXECUTE here means the structural gate didn't clear.
             cause = "metric" if decision.action is tick.Action.HOLD else "gate"
-            await self._escalate_stall_if_stuck(loop, idx, stage, findings, ctx, cause=cause)
+            # A gate held only by what no worker can change asks its owner now, rather than
+            # cycles of re-checking finished work until the stall below.
+            if cause == "gate" and await self._asks_its_owner(loop, idx, stage, ctx):
+                return False
+            if not await self._escalate_stall_if_stuck(
+                loop, idx, stage, findings, ctx, cause=cause
+            ):
+                # Its worker's next cycle reads what the gate found (`stage_directive`).
+                from personalclaw.loop.manager import rearm_nudge_message
+
+                await rearm_nudge_message(ctx.svc, loop.id)
         return False
 
     async def _stage_work_is_there(

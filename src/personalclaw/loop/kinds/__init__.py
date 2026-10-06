@@ -265,15 +265,51 @@ def attendedness_lines(loop: Loop, *, subject: str = "task") -> list[str]:
             f"{subject} is genuinely ambiguous in a way that would change your direction, you "
             'MAY write {"question", "why"} to questions.json in the loop\'s own folder and end '
             "the turn: the loop pauses for the user. Keep the bar high; otherwise proceed on a "
-            "best-reasoned assumption and record it.",
+            "best-reasoned assumption and record it. "
+            + outside_blocker_line(loop, subject=subject, questions_file="questions.json"),
         ]
     return [
         "",
         "**Unattended:** nobody is watching, so your calls run without asking, inside the "
         "user's safety rules. Do NOT pause to ask the user: investigate ambiguities yourself, "
         "pick the best-reasoned answer, record the assumption in your finding, and proceed. "
-        "Never write questions.json in this mode.",
+        "Never write questions.json in this mode. "
+        + outside_blocker_line(loop, subject=subject, questions_file="questions.json"),
     ]
+
+
+def outside_blocker_line(
+    loop: Loop, *, subject: str, questions_file: str, task_worker: bool = False
+) -> str:
+    """What a worker does when something outside its *subject* stands in the way of one of its
+    done-conditions: something already so before the loop started, which its own work did not
+    cause and is not asked to change (lint findings or failing tests in code it was not asked to
+    touch). Re-checking it changes nothing, so a worker that re-checked it cycle after cycle spent
+    its turns before it said the one thing worth saying. An Attended worker asks at once (its
+    loop's *questions_file*); an Unattended one says so in its finding and finishes the rest, a
+    *task_worker* marking its task done, so its stage's gate puts the condition to the user."""
+    from personalclaw.loop import posture
+
+    what = (
+        f"If something outside this {subject} stands in the way of one of its done-conditions "
+        "(it was already so before this loop started, such as lint findings or failing tests in "
+        "code you were not asked to change), do not re-check it cycle after cycle: "
+    )
+    if posture.of(loop).asks:
+        return (
+            what + f'ask at once, writing {{"question", "why"}} to {questions_file} with the '
+            "condition and what stands in its way, and end the turn."
+        )
+    finish = (
+        "mark the task done once the rest of it is: its stage's gate puts the condition to the "
+        "user."
+        if task_worker
+        else "carry on with the rest."
+    )
+    return (
+        what + "say in your finding which condition, what stands in its way and that it was "
+        f"so before this loop started, and {finish}"
+    )
 
 
 def workspace_rules_lines() -> list[str]:

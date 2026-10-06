@@ -760,50 +760,51 @@ class TestStageAdvance:
         <ws>/src/engine.ts and hard-fails the gate forever (observed live: a Code loop's
         implementation stage stuck because deliverable was 'src/engine.ts').
 
-        _resolve_deliverable returns (verifiable, path): (True, <path>) when a named file
-        is found, (True, None) when a named file is missing (→ block), (False, None) when
-        the label has no concrete filename (→ nothing to verify)."""
-        from personalclaw.loop import kinds as _k
+        ``stage_evidence.deliverable_files`` returns the files found (each as its path in the
+        folder and its real path) and the names not found; a label with no concrete filename
+        names nothing to look for."""
+        from personalclaw.loop import stage_evidence
 
-        s = type(_k.get("code"))()
         ws = tmp_path / "ws"
         (ws / "src").mkdir(parents=True)
         (ws / "src" / "engine.ts").write_text("export const x = 1\n")
         # as-given subdir path resolves to the concrete file
-        ok, p = s._resolve_deliverable(str(ws), "A complete, DOM-free src/engine.ts plus tests")
-        assert ok is True and p is not None and p.endswith("src/engine.ts")
+        found, missing = stage_evidence.deliverable_files(
+            str(ws), "A complete, DOM-free src/engine.ts plus tests"
+        )
+        assert [rel for rel, _ in found] == ["src/engine.ts"] and missing == []
         # basename-anywhere fallback: label says bare 'engine.ts', file is under src/
-        ok, p = s._resolve_deliverable(str(ws), "deliver engine.ts")
-        assert ok is True and p is not None and p.endswith("engine.ts")
-        # genuinely absent → verifiable but no path (the gate blocks)
-        ok, p = s._resolve_deliverable(str(ws), "ship dist/bundle.js")
-        assert ok is True and p is None
-        # a label with no concrete filename → unverifiable (don't block)
-        ok, p = s._resolve_deliverable(str(ws), "a working prototype")
-        assert ok is False and p is None
+        found, _ = stage_evidence.deliverable_files(str(ws), "deliver engine.ts")
+        assert [rel for rel, _ in found] == ["src/engine.ts"]
+        # genuinely absent → named but not found (the gate blocks)
+        found, missing = stage_evidence.deliverable_files(str(ws), "ship dist/bundle.js")
+        assert found == [] and missing == ["dist/bundle.js"]
+        # a label with no concrete filename → nothing to look for (don't block)
+        assert stage_evidence.deliverable_files(str(ws), "a working prototype") == ([], [])
         # root-level file (the common PLAN.md case) still resolves
         (ws / "PLAN.md").write_text("# plan\n")
-        ok, p = s._resolve_deliverable(str(ws), "PLAN.md")
-        assert ok is True and p is not None and p.endswith("PLAN.md")
+        found, _ = stage_evidence.deliverable_files(str(ws), "PLAN.md")
+        assert [rel for rel, _ in found] == ["PLAN.md"]
 
     def test_read_deliverable_bounded_and_binary_safe(self, tmp_path):
-        """_read_deliverable returns bounded text; binary/empty files return ''."""
-        from personalclaw.loop import kinds as _k
+        """The deliverable's text is shown bounded; a binary or empty file is said, not shown."""
+        from personalclaw.loop import stage_evidence
 
-        s = type(_k.get("code"))()
-        f = tmp_path / "PLAN.md"
-        f.write_text("# Plan\nStep 1\n")
-        assert "Step 1" in s._read_deliverable(str(f))
-        # empty file → ""
+        def _shown(name: str) -> str:
+            observed = stage_evidence.Observed()
+            assert stage_evidence.observe_deliverable(observed, str(tmp_path), name)
+            return "\n".join(observed.blocks)
+
+        (tmp_path / "PLAN.md").write_text("# Plan\nStep 1\n")
+        assert "Step 1" in _shown("PLAN.md")
         (tmp_path / "empty.md").write_text("")
-        assert s._read_deliverable(str(tmp_path / "empty.md")) == ""
-        # binary → "" (undecodable)
+        assert "empty.md is empty." in _shown("empty.md")
         (tmp_path / "b.bin").write_bytes(b"\x89PNG\r\n\x00\xff\xfe")
-        assert s._read_deliverable(str(tmp_path / "b.bin")) == ""
-        # bounded: a big file is truncated with a marker
+        assert "b.bin is not text" in _shown("b.bin")
+        # bounded: a big file is cut in the middle, with a marker
         (tmp_path / "big.md").write_text("x" * 9000)
-        out = s._read_deliverable(str(tmp_path / "big.md"), max_chars=1000)
-        assert len(out) < 2000 and "truncated" in out
+        out = _shown("big.md")
+        assert len(out) < 7500 and "characters cut" in out
 
     def test_implementation_stage_advances_with_subdir_deliverable(self, monkeypatch, tmp_path):
         """End-to-end: an implementation stage whose deliverable is 'src/engine.ts' (file
@@ -892,7 +893,7 @@ class TestStageAdvance:
         assert done is False
         # the judge saw the ACTUAL deliverable content, not just the worker's "wrote the plan"
         assert "UNIQUE_MARKER_XYZ" in seen.get("prompt", "")
-        assert "observed directly by the supervisor" in seen.get("prompt", "")
+        assert "Observed directly by the supervisor" in seen.get("prompt", "")
         # gate_check surfaces the observed content
         assert any(
             e[1] == "gate_check"

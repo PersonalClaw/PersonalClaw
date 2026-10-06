@@ -6630,7 +6630,10 @@ export interface LoopVerdict {
   shortfalls?: string[]; escalated?: boolean; escalation_reason?: string
   // A Code loop's stage gate records each evaluation here too (`gate: 'stage'`), with the stage it
   // judged and a verdict per exit criterion; it carries no scores, so the rail never plots it.
+  // `observed` is what the gate looked at, one line each (the stage's tasks, the files it changed,
+  // the checks it ran and how they ended); `judged` whether its judge gave an answer.
   gate?: 'stage'; stage?: string; criteria?: StageGateCriterion[]; note?: string
+  observed?: string[]; judged?: boolean
   // A cycle decided by a check (`loop/supervisor._record_check`): the command the supervisor ran,
   // where, and what came of it; the judge's answer when one was asked. No scores either.
   check?: LoopCheck; judge?: LoopCheckJudge
@@ -6648,7 +6651,9 @@ export interface LoopCheck {
 /** The judge a verifiable goal with several sub-goals asks once its check passes. */
 export interface LoopCheckJudge { outcome: 'pass' | 'fail' | 'no_answer'; answer?: string; why?: string }
 /** One exit criterion of a stage, as its gate judged it on the loop's records. */
-export interface StageGateCriterion { criterion: string; verdict: 'pass' | 'fail' | 'cant_tell'; reason: string }
+/** One exit criterion as a stage's gate judged it. `outside`: not met for a reason outside the
+ *  stage's work (it was so before the loop started), so no more work on the stage will meet it. */
+export interface StageGateCriterion { criterion: string; verdict: 'pass' | 'fail' | 'cant_tell'; reason: string; outside?: boolean }
 export interface LoopNudge { text: string; sent_at: number; sent_at_cycle: number; applied_cycle: number | null }
 export interface RosterMember { role: string; persona: string; role_hint?: string; agent_name?: string }
 export interface GoalLoop {

@@ -81,6 +81,24 @@ describe('the page names what the gate decided', () => {
     expect(heldAtGate(moved)?.gate.criteria).toEqual(verification.criteria)
   })
 
+  it('🔴 says what the gate looked at, and which criterion is held from outside the stage', () => {
+    const looked: LoopVerdict = {
+      ...held,
+      criteria: [
+        { criterion: 'The fix is in', verdict: 'pass', reason: 'the diff shows it' },
+        { criterion: 'ruff reports no findings', verdict: 'fail', outside: true, reason: '5 findings the change did not touch' },
+      ],
+      observed: ['the stage’s 2 tasks, all done', 'the changes to 2 files in the workspace: digest.py, test_digest.py'],
+    }
+    render(<StageGateVerdict project={project({ verdicts: [looked] })} />)
+    const region = screen.getByRole('region', { name: 'Exit criteria of “Implementation”' })
+    const rows = within(region).getAllByRole('listitem').map((li) => li.textContent)
+    expect(rows[1]).toBe('Not met, for a reason outside this stage’s work: ruff reports no findings (5 findings the change did not touch)')
+    expect(region.textContent).toContain(
+      'It looked at the stage’s 2 tasks, all done; the changes to 2 files in the workspace: digest.py, test_digest.py.',
+    )
+  })
+
   it('a stage not judged yet, or whose last evaluation passed, shows nothing', () => {
     expect(heldAtGate(project({ verdicts: [] }))).toBeNull()
     expect(heldAtGate(project({ verdicts: [{ ...held, passed: true }] }))).toBeNull()

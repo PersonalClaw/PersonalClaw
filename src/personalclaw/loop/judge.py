@@ -89,10 +89,17 @@ async def _observe_ground_truth(
     fallback_dirs: list[str] | None = None,
 ) -> str:
     """Independently observe ground truth for the judge: run the goal's
-    verify command and read the exit code, and read any named deliverable file's real
-    content — rather than trusting the worker's narration. Returns a block to inject into
-    the judge prompt (labeled supervisor-observed), or "" when there's nothing runnable/
-    readable. Best-effort + bounded; never raises.
+    verify command and read its exit code and what it printed, and read the real content of every
+    file a deliverable names — rather than trusting the worker's narration. Returns a block to
+    inject into the judge prompt (labeled supervisor-observed), or "" when there's nothing
+    runnable/readable. Best-effort + bounded; never raises.
+
+    The command is run with its test runner asked to name each test (``per_test``), and the end
+    of what it printed is shown: an exit code says only that the whole of it passed, never that
+    the one test a goal names did. What it printed and what a file holds come through the door
+    every text from outside takes (``gates.for_a_judge``): fenced, the judge reads them as data,
+    and :func:`evidence_refs_from_observation` never reads a line of theirs as one of the
+    supervisor's own.
 
     The deliverable is searched across ``workspace`` PLUS ``fallback_dirs`` (e.g. the loop's
     own dir) — the worker may write the deliverable to the loop dir when no workspace is bound,
@@ -101,17 +108,22 @@ async def _observe_ground_truth(
     for an unbound open-ended loop whose REPORT.md lived in the loop dir (found live)."""
     import os
 
+    from personalclaw.loop.gates import for_a_judge
+
     parts: list[str] = []
     cmd = (verify_command or "").strip()
     if cmd:
-        from personalclaw.loop.gates import refusal, run_verify_command
+        from personalclaw.loop.gates import CheckReport, refusal, run_verify_command
 
         if refused := refusal(cmd, cwd=workspace or ""):
             # Refused, not "could not run": the judge is told no check result exists and why.
             parts.append(f"Did not run `{cmd}`: {refused}")
         else:
+            report = CheckReport()
             try:
-                ok = await run_verify_command(cmd, workspace or None, label="judge-verify")
+                ok = await run_verify_command(
+                    cmd, workspace or None, label="judge-verify", report=report, per_test=True
+                )
             except Exception:
                 ok = None
             if ok is True:
@@ -120,11 +132,21 @@ async def _observe_ground_truth(
                 state = "FAILED (non-zero exit)"
             else:
                 state = "could not run (tool missing / blocked / timed out)"
-            parts.append(f"Ran `{cmd}` → {state}.")
+            ran = f"Ran `{cmd}` → {state}."
+            if report.output:
+                printed, _ = for_a_judge(
+                    report.output,
+                    what=f"What `{cmd}` printed",
+                    source="check",
+                    source_type="output",
+                )
+                ran += f"\nThe end of what it printed:\n{printed}"
+            parts.append(ran)
     search_dirs = [
         d for d in [(workspace or "").strip(), *(fallback_dirs or [])] if d and os.path.isdir(d)
     ]
     if search_dirs:
+        read: set[str] = set()
         for label in deliverables:
             names = re.findall(r"[\w./-]+\.[A-Za-z0-9]+", label or "")
             for n in names:
@@ -132,14 +154,15 @@ async def _observe_ground_truth(
                 # the loop dir); first hit wins. Only a file INSIDE the dir counts: the name is
                 # the loop's deliverable, which the owner can type, and one that climbs out of
                 # the dir is not what the worker wrote, so it is never read into the judge's
-                # prompt (`loop.files.file_inside`, the watchdog's own containment).
+                # prompt (`loop.files.file_inside`, the watchdog's own containment). Every file
+                # a label names is read: "REPORT.md and SOURCES.md" is two deliverables.
                 p = ""
                 for d in search_dirs:
                     found = file_inside(d, n.lstrip("./")) or file_inside(d, os.path.basename(n))
                     if found is not None:
                         p = str(found)
                         break
-                if not p:
+                if not p or p in read or len(read) >= _DELIVERABLE_FILES:
                     continue
                 try:
                     with open(p, encoding="utf-8", errors="strict") as fh:
@@ -148,10 +171,18 @@ async def _observe_ground_truth(
                     continue
                 if not text:
                     continue
+                read.add(p)
                 if len(text) > 4000:
                     text = text[:4000] + "\n… (truncated)"
-                parts.append(f"Read `{n}`:\n{text}")
-                break  # one file per deliverable label is enough
+                shown, withheld = for_a_judge(
+                    text,
+                    what=f"The content of {n}",
+                    source="workspace",
+                    source_type="file",
+                    source_id=n,
+                )
+                # Withheld, it was not observed by the judge, so it is not one it may cite.
+                parts.append(shown if withheld else f"Read `{n}`:\n{shown}")
     if not parts:
         return ""
     body = "\n\n".join(parts)
@@ -161,10 +192,15 @@ async def _observe_ground_truth(
     )
 
 
+#: The most deliverable files one observation reads.
+_DELIVERABLE_FILES = 6
+
 #: The two shapes :func:`_observe_ground_truth` emits, matched so the refs are read back out of
-#: the very block the judge was shown.
+#: the very block the judge was shown; and a fenced span, which is a check's or a file's own text
+#: and is never read for them.
 _OBSERVED_COMMAND_RE = re.compile(r"^Ran `(.+?)` → (.+)$", re.M)
 _OBSERVED_FILE_RE = re.compile(r"^Read `(.+?)`:$", re.M)
+_FENCED_RE = re.compile(r"<untrusted_content\b[^>]*>.*?</untrusted_content>", re.S)
 
 
 def evidence_refs_from_observation(observed: str) -> list[str]:
@@ -181,8 +217,11 @@ def evidence_refs_from_observation(observed: str) -> list[str]:
     Empty for a transcript-only cycle, which is honest: nothing was observed, so nothing is
     cited. That is also why the contract's PASS precondition is not applied to a loop cycle —
     see `judge_contract`'s population measurement.
+
+    What a check printed and what a file holds are fenced in the block, and read past: a line a
+    check printed that looks like one of the two shapes is the check's text, not an observation.
     """
-    text = observed or ""
+    text = _FENCED_RE.sub("", observed or "")
     refs = [
         f"command:{command} → {state.rstrip('.')}"
         for command, state in _OBSERVED_COMMAND_RE.findall(text)

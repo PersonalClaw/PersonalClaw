@@ -10,6 +10,12 @@ const SAID: Record<StageGateCriterion['verdict'], string> = {
   cant_tell: 'Can’t tell from the record',
 }
 
+/** How a criterion's verdict is said: a fail held by something outside the stage's work says so. */
+function said(c: StageGateCriterion): string {
+  if (c.verdict === 'fail' && c.outside) return 'Not met, for a reason outside this stage’s work'
+  return SAID[c.verdict] ?? SAID.cant_tell
+}
+
 type GateView = Pick<CodeProject, 'verdicts' | 'stage_plan' | 'stage_status'> & { status?: CodeProject['status'] }
 
 /** The stage now at work (the first not done) and its gate's last evaluation, or null when that
@@ -26,8 +32,9 @@ export function heldAtGate(p: GateView): { title: string; gate: LoopVerdict & { 
 }
 
 /** What the stage's gate decided the last time it judged the stage: each exit criterion met, not
- *  met, or not answerable from the loop's records, with the judge's reason. A stage held at its
- *  gate, or Blocked by it, says here what to steer or relax. */
+ *  met (and whether for a reason outside the stage's work), or not answerable from the loop's
+ *  records, with the judge's reason, and what the gate looked at. A stage held at its gate, or
+ *  Blocked by it, says here what to steer or relax. */
 export function StageGateVerdict({ project }: { project: GateView }) {
   const held = heldAtGate(project)
   if (!held) return null
@@ -51,13 +58,16 @@ export function StageGateVerdict({ project }: { project: GateView }) {
             <li key={`${i}-${c.criterion}`} className="flex items-start gap-s">
               <Icon size={13} className={`mt-xs shrink-0 ${tone}`} aria-hidden />
               <span className="text-on-surface-var">
-                <span className="text-on-surface">{SAID[c.verdict] ?? SAID.cant_tell}:</span> {c.criterion}
+                <span className="text-on-surface">{said(c)}:</span> {c.criterion}
                 {c.reason && <span className="text-on-surface-low"> ({c.reason})</span>}
               </span>
             </li>
           )
         })}
       </ul>
+      {gate.observed && gate.observed.length > 0 && (
+        <p data-type="caption" className="mt-xs break-words text-on-surface-low">It looked at {gate.observed.join('; ')}.</p>
+      )}
       {gate.note && <p data-type="caption" className="mt-xs text-on-surface-low">{gate.note}</p>}
     </section>
   )

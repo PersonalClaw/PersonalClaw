@@ -557,6 +557,12 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
         category="loop",
         description="Per-cycle trigger for a parallel loop task-worker: work only its task in its own checkout, mark it done, write a finding.",  # noqa: E501
         variables=(
+            PromptVariable(
+                name="outside_rule",
+                type="textarea",
+                default="",
+                description="What the worker does when something outside its task stands in the way of a done-condition: ask at once (Attended), or say so in its finding and mark the task done (Unattended).",  # noqa: E501
+            ),
             PromptVariable(name="loop_id", required=True, description="The parent loop id."),
             PromptVariable(
                 name="worktree_dir",
@@ -1018,7 +1024,7 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
         filename="task-sdlc_stage_gate.md",
         kind="user",
         category="loop",
-        description="Strict SDLC stage gate: a pass, fail or can't-tell verdict, with its reason, for each of a stage's exit criteria, from the loop's own records.",  # noqa: E501
+        description="Strict SDLC stage gate: a pass, fail or can't-tell verdict, with its reason, for each of a stage's exit criteria, on what the supervisor observed of the stage's work.",  # noqa: E501
         variables=(
             PromptVariable(name="stage_title", required=True, description="The stage title."),
             PromptVariable(
@@ -1034,7 +1040,7 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
                 name="evidence",
                 type="textarea",
                 required=True,
-                description="The stage's findings (summaries, files, recorded evidence such as test output), its tasks and their status, and the supervisor's own checks.",  # noqa: E501
+                description="What the supervisor observed of the stage's work (its tasks and their status, the workspace's changes with their diff and content, the deliverable's files, the checks it ran with what they printed), what the loop's owner told it, and the workers' findings.",  # noqa: E501
             ),
             PromptVariable(
                 name="evidence_note",
@@ -1370,6 +1376,12 @@ BUNDLED_SNIPPETS: tuple[BundledSnippet, ...] = (
                 name="agent_name",
                 default="",
                 description="A specialist agent to delegate this stage to, if any.",
+            ),
+            PromptVariable(
+                name="gate_said",
+                type="textarea",
+                default="",
+                description="What the stage's gate found the last time it held the stage (which criteria are not met, and why), or empty.",  # noqa: E501
             ),
         ),
     ),

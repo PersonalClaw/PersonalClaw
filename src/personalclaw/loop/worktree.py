@@ -79,8 +79,11 @@ def git_available() -> bool:
     return not git_problem()
 
 
-def _git(workspace: str, *args: str, timeout: int = _TIMEOUT) -> tuple[int, str]:
-    """Run a git command in ``workspace``; return (returncode, combined output)."""
+def _git(
+    workspace: str, *args: str, timeout: int = _TIMEOUT, errors: bool = True
+) -> tuple[int, str]:
+    """Run a git command in ``workspace``; return (returncode, its output then its errors). With
+    *errors* off, its output alone: a listing a caller parses, which a warning must not join."""
     # Resource ceiling: loop worktree git steps are agent-influenced (a loop
     # run drives them). Deliver the ``build`` ceiling (raised NOFILE for many file
     # handles + OOM bias) via the post-exec shim, prepended to argv. Synchronous run
@@ -102,9 +105,9 @@ def _git(workspace: str, *args: str, timeout: int = _TIMEOUT) -> tuple[int, str]
             check=False,
             env=git_env(site="loop-worktree-git"),
         )
-        out = (p.stdout or b"").decode("utf-8", "replace") + (p.stderr or b"").decode(
-            "utf-8", "replace"
-        )
+        out = (p.stdout or b"").decode("utf-8", "replace")
+        if errors:
+            out += (p.stderr or b"").decode("utf-8", "replace")
         return p.returncode, out
     except (OSError, subprocess.SubprocessError) as e:
         return 1, str(e)
@@ -956,6 +959,142 @@ def merge_review(workspace: str, task_ids) -> dict:
             }
         )
     return {"into": into, "tasks": tasks, "cut": cut}
+
+
+# ── what a loop's run has changed in its workspace (its stage gate reads it) ──
+
+#: How a changed file differs from where the loop's run started.
+CHANGE_ADDED = "added"
+CHANGE_MODIFIED = "modified"
+CHANGE_DELETED = "deleted"
+#: A file git does not track yet (not added, not committed, and not ignored).
+CHANGE_UNTRACKED = "new, not yet added to git"
+_CHANGE_STATES = {"A": CHANGE_ADDED, "D": CHANGE_DELETED}
+
+#: A file whose change is longer than this many lines is listed but its diff is not shown: a
+#: lockfile or a generated bundle would spend a gate's whole budget on nothing a criterion turns on.
+DIFF_LINES_CAP = 1500
+
+
+class Change(NamedTuple):
+    """One file of a workspace that differs from where a loop's run started."""
+
+    path: str  # relative to the workspace
+    state: str  # CHANGE_ADDED | CHANGE_MODIFIED | CHANGE_DELETED | CHANGE_UNTRACKED
+    lines: int | None  # lines added and removed; None when git counts none (binary, untracked)
+
+
+class Changes(NamedTuple):
+    """What differs in a workspace from where a loop's run started (:func:`changes_since`)."""
+
+    files: list[Change]
+    diff: str  # git's diff of the files in ``shown``
+    shown: list[str]
+    error: str = ""  # why git could not say, or ""
+
+
+def tracks(workspace: str) -> bool:
+    """Whether git tracks *workspace*: it is inside a repository that does not ignore it. A loop's
+    own folder in a home that sits inside a checkout is in that checkout's working tree and ignored
+    by it, so nothing in it is a change git would show."""
+    if not is_git_repo(workspace):
+        return False
+    rc, _ = _git(workspace, "check-ignore", "-q", ".")
+    return rc == 1
+
+
+def start_point(workspace: str) -> str:
+    """Where a loop's run starts in *workspace*, to read what it changes there later
+    (:func:`changes_since`): the commit its checked-out branch is at, or git's empty tree when the
+    branch has no commit yet (every file the run adds is then a change). ``""`` when git does not
+    track the folder (:func:`tracks`)."""
+    if not tracks(workspace):
+        return ""
+    rc, out = _git(workspace, "rev-parse", "--verify", "--quiet", "HEAD^{commit}", errors=False)
+    if rc == 0 and out.strip():
+        return out.strip()
+    rc, out = _git(workspace, "hash-object", "-t", "tree", os.devnull, errors=False)
+    return out.strip() if rc == 0 else ""
+
+
+def changes_since(workspace: str, base: str, *, diff_chars: int, max_files: int = 300) -> Changes:
+    """Every file of *workspace* that differs from *base* (:func:`start_point`), committed or not,
+    and every file git does not track yet, in path order; with git's diff of as many of them as
+    *diff_chars* holds, each whole. Paths are relative to the workspace and the changes limited to
+    it (a workspace may be one folder of a larger repository); a rename reads as a deletion and an
+    addition. Read through :func:`_git`, so no program the repository names runs."""
+    rc, _ = _git(workspace, "cat-file", "-e", base, errors=False)
+    if rc != 0:
+        return Changes([], "", [], f"the commit it started from ({base[:12]}) is gone")
+    spec = ("--no-renames", "--relative", base, "--", ".")
+    rc, numstat = _git(
+        workspace, "--literal-pathspecs", "diff", "--numstat", "-z", *spec, errors=False
+    )
+    rc_status, status = _git(
+        workspace, "--literal-pathspecs", "diff", "--name-status", "-z", *spec, errors=False
+    )
+    if rc != 0 or rc_status != 0:
+        return Changes([], "", [], "git could not compare the folder with where the loop started")
+    lines: dict[str, int | None] = {}
+    for record in numstat.split("\0"):
+        added, _, rest = record.partition("\t")
+        removed, _, path = rest.partition("\t")
+        if path:
+            lines[path] = (
+                int(added) + int(removed) if added.isdigit() and removed.isdigit() else None
+            )
+    tokens = status.split("\0")
+    states = {
+        path: _CHANGE_STATES.get(code[:1], CHANGE_MODIFIED)
+        for code, path in zip(tokens[0::2], tokens[1::2])
+        if path
+    }
+    files = [Change(p, states.get(p, CHANGE_MODIFIED), lines.get(p)) for p in sorted(states)]
+    # A folder git does not track is one entry ("build/"), not every file in it.
+    rc, others = _git(
+        workspace,
+        "--literal-pathspecs",
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+        "--directory",
+        "--no-empty-directory",
+        "-z",
+        "--",
+        ".",
+        errors=False,
+    )
+    if rc == 0:
+        files += [
+            Change(p, CHANGE_UNTRACKED, None) for p in sorted(filter(None, others.split("\0")))
+        ]
+    files = files[:max_files]
+    diff, shown = "", []
+    for change in files:
+        if change.state == CHANGE_UNTRACKED or change.lines is None:
+            continue
+        if change.lines > DIFF_LINES_CAP:
+            continue
+        rc, text = _git(
+            workspace,
+            "--literal-pathspecs",
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            *spec[:-1],
+            change.path,
+            errors=False,
+        )
+        if rc != 0 or not text.strip():
+            continue
+        if len(diff) + len(text) > diff_chars:
+            if diff:
+                break
+            text = text[:diff_chars]
+        diff += text if text.endswith("\n") else f"{text}\n"
+        shown.append(change.path)
+    return Changes(files, diff, shown)
 
 
 def conflict_paths(workspace: str) -> list[str]:
