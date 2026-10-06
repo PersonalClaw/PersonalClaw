@@ -71,10 +71,17 @@ def relaunch_argv() -> tuple[str, ...]:
     already; anywhere else it is this interpreter's ``-m personalclaw`` with the same arguments.
     Never ``sys.argv[0]``: a console script's path can be relative, and a build clean may have
     removed it.
+
+    It ends in ``--no-open`` (``env.NO_OPEN``) when the gateway's own arguments do not say it
+    already. The new image keeps the old one's terminal, so a gateway started at one would open
+    the dashboard, and sign the browser in, again at every restart: for the person who pressed
+    Restart in the dashboard, who is looking at it, and for an update applied with nobody there.
     """
+    from personalclaw.env import NO_OPEN
     from personalclaw.self_update import cli_argv
 
-    return (*cli_argv(), *sys.argv[1:])
+    args = sys.argv[1:]
+    return (*cli_argv(), *args, *(() if NO_OPEN in args else (NO_OPEN,)))
 
 
 def _cannot_start(program: str) -> str:

@@ -8,8 +8,9 @@ gateway exited at once with a usage error, and the app had no gateway until it w
 opened again.
 
 The re-launch is now this install's own CLI (``self_update.cli_argv``) with the gateway's own
-arguments: in the bundle, exactly the command line the desktop shell started it with. These drive
-it for each install kind (the frozen bundle, a checkout, a wheel and a tool install) through the
+arguments, and ``--no-open`` when they do not say it already, since a restart opens no browser:
+in the bundle, exactly the command line the desktop shell started it with. These drive it for
+each install kind (the frozen bundle, a checkout, a wheel and a tool install) through the
 request every restart makes and the stop that starts the new image, and parse what a frozen
 restart starts with the real CLI parser. A restart whose program cannot be run is refused before
 anything stops, in words that are true for the install; one that still cannot start its image
@@ -89,7 +90,7 @@ class TestTheRelaunchForEachInstallKind:
         monkeypatch.setattr("sys.executable", python)
         monkeypatch.setattr("sys.argv", [str(root / ".venv/bin/personalclaw"), "gateway"])
         assert self_update.detect_install_kind() == "git"
-        assert _relaunched() == (python, "-m", "personalclaw", "gateway")
+        assert _relaunched() == (python, "-m", "personalclaw", "gateway", "--no-open")
 
     def test_a_wheel_install_relaunches_its_interpreter_with_dash_m(
         self, monkeypatch, tmp_path, environment_made_by
@@ -102,7 +103,15 @@ class TestTheRelaunchForEachInstallKind:
             "sys.argv", [str(tmp_path / "venv/bin/personalclaw"), "gateway", "--port", "10000"]
         )
         assert self_update.detect_install_kind() == "pip"
-        assert _relaunched() == (python, "-m", "personalclaw", "gateway", "--port", "10000")
+        assert _relaunched() == (
+            python,
+            "-m",
+            "personalclaw",
+            "gateway",
+            "--port",
+            "10000",
+            "--no-open",
+        )
 
     def test_a_tool_install_relaunches_its_tool_interpreter_not_the_script_on_path(
         self, monkeypatch, tmp_path, environment_made_by
@@ -115,7 +124,7 @@ class TestTheRelaunchForEachInstallKind:
         monkeypatch.setattr("sys.executable", python)
         monkeypatch.setattr("sys.argv", [str(tmp_path / ".local/bin/personalclaw"), "gateway"])
         assert self_update.detect_install_kind() == "pip"
-        assert _relaunched() == (python, "-m", "personalclaw", "gateway")
+        assert _relaunched() == (python, "-m", "personalclaw", "gateway", "--no-open")
 
 
 def _orchestrator() -> GatewayOrchestrator:

@@ -77,7 +77,7 @@ from personalclaw.dashboard.token_auth import (
     mint_session,
     retire_startup_links,
 )
-from personalclaw.env import _is_wsl, browser_available
+from personalclaw.env import _is_wsl, browser_available, started_at_a_terminal
 from personalclaw.heartbeat import (
     HeartbeatService,
     is_keep_response,
@@ -5368,18 +5368,20 @@ class GatewayOrchestrator:
 
         The link is a live owner session, so it goes only where a person receives it as it is
         made: printed when a person reads this gateway's stdout at a terminal, and opened in the
-        default browser when this start opens one (``--no-open`` and
-        ``dashboard.auto_open_browser`` decide; ``env.browser_available()`` is the predicate
-        ``personalclaw setup`` shares). Anywhere else stdout is a log file or the journal, kept
-        on disk and read later, so the banner there gives the address with no credential in it
-        and says how to get a link; with neither a terminal nor a browser, no link is made. The
-        startup links of earlier starts that no browser opened end first: this one replaces them.
+        default browser when a person started this gateway at a terminal and this start opens one
+        (``--no-open`` and ``dashboard.auto_open_browser`` decide; ``env.browser_available()`` is
+        the predicate ``personalclaw setup`` shares). A service's start opens nothing, whatever
+        its command line says (``env.started_at_a_terminal``). Anywhere else stdout is a log file
+        or the journal, kept on disk and read later, so the banner there gives the address with
+        no credential in it and says how to get a link; with neither a terminal nor a browser, no
+        link is made. The startup links of earlier starts that no browser opened end first.
         """
         retire_startup_links()
         host = resolve_dashboard_host(self._local_only, self._configured_host)
         base_url = f"http://{host}:{self._dashboard_port}"
         shown = _shown_at_a_terminal()
         opens = not self._no_open and self._cfg.dashboard.auto_open_browser
+        opens = opens and started_at_a_terminal()
         headless = opens and not browser_available()
         opens = opens and not headless
         startup = mint_startup_token(ISSUER_STARTUP, self._cfg.auth) if shown or opens else None

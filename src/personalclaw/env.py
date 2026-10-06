@@ -50,6 +50,33 @@ def browser_available() -> bool:
     return has_display or not is_ssh
 
 
+#: The ``gateway`` option that opens no browser. Every gateway command line PersonalClaw writes
+#: for a start that no person makes at a terminal carries it: the launchd plist, the systemd unit,
+#: a detached ``personalclaw restart`` and a restart's new image. One written before it did, a
+#: service file an earlier release installed, is covered by :func:`started_at_a_terminal`.
+NO_OPEN = "--no-open"
+
+
+def started_at_a_terminal() -> bool:
+    """Whether a person started this process at a terminal: it runs in that terminal's session.
+
+    Asked of the process, never of its command line or its output. A command typed in a shell
+    has the shell's terminal as its controlling terminal wherever its output goes (a file, a
+    pipe), and keeps it under ``nohup``, tmux or screen. A process a service manager starts has
+    none: launchd, systemd, a container runtime run without ``-t``, cron. Nor has one started in
+    a session of its own, as a detached ``personalclaw restart`` starts its gateway. So a service
+    file written before it said ``--no-open`` starts a process that reads ``False`` here all the
+    same. ``/dev/tty`` names the controlling terminal and opens only when there is one: it is
+    opened and closed, and nothing is read from it.
+    """
+    try:
+        fd = os.open(os.ctermid(), os.O_RDONLY | os.O_NOCTTY)
+    except OSError:
+        return False
+    os.close(fd)
+    return True
+
+
 #: The environment variables that decide which program, library or code a child process runs:
 #: where commands are found, what the dynamic loader injects, and what an interpreter loads before
 #: the program itself. None of them is ever set by PersonalClaw while it runs: a stored secret with

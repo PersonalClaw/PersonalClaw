@@ -53,8 +53,13 @@ default browser unless `--no-open` (or `dashboard.auto_open_browser: false`) say
 When its output goes to a file instead (a service's log, the `gateway-restart.log` a
 detached `personalclaw restart` writes, a container's logs, a pipe), it prints the
 dashboard's address without a sign-in link and says to run `personalclaw token` for one;
-a link it opens in the browser goes to the browser only. Each start ends the startup link
-of the start before it, when no browser opened that link.
+a link it opens in the browser goes to the browser only. A gateway that nobody started at a
+terminal opens no browser, whatever its command line says, so it makes no link at all: the
+service (at its install, at each login or boot, and at every restart), a detached
+`personalclaw restart`, a container started in the background. Nor does a restart of a
+gateway started at one (the dashboard's Restart, an applied update) open one: the restarted
+gateway starts with `--no-open`. Each start ends the startup link of the start before it,
+when no browser opened that link.
 
 **One gateway serves a home.** Before it does anything else, a gateway takes its home's claim, a
 lock on `gateway.lock` in the home, and it holds it until it exits; the system lets go of it
@@ -350,6 +355,11 @@ also says whether the gateway is running.
 | `service install [--env NAME]… [--no-env NAME]…` | Install and start the gateway service, carrying the variables below from this shell. `--env NAME` carries one more, `--no-env NAME` leaves one out. |
 | `service uninstall` | Stop and remove the gateway service, and stop the tmux server its home's persistent terminals and durable workers run in. |
 | `service status` | Show service status (systemctl/launchctl) and the environment the installed service starts the gateway in. |
+
+No start of the service opens a browser or makes a sign-in link, the one `service install`
+makes included: the unit and the plist start the gateway with `--no-open`, and a gateway that
+no person started at a terminal opens none anyway, so a unit an earlier release installed
+opens none either. `personalclaw token` prints a link that signs a browser in.
 
 On macOS, launchd writes the service's output to `~/Library/Logs/PersonalClaw/gateway.log`
 and `gateway.err`. Both, and their folder, are readable only by you, and neither holds a

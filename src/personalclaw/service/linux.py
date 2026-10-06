@@ -22,6 +22,7 @@ import tempfile
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
+from personalclaw.env import NO_OPEN
 from personalclaw.security import mask_child_output
 from personalclaw.service.common import (
     SERVICE_NAME,
@@ -69,7 +70,8 @@ def render_unit(carried: Mapping[str, str] | None = None) -> str:
     PATH is set explicitly so subprocess invocations of git, agent CLIs,
     etc. resolve the same way they would from an interactive shell, and
     each carried variable (:mod:`personalclaw.service.environment`) is one
-    quoted ``Environment=`` line.
+    quoted ``Environment=`` line. Nobody starts it at a terminal, so it starts the gateway with
+    ``--no-open``: no start of the service opens a browser.
     """
     bin_path = personalclaw_bin()
     user = _current_user()
@@ -94,7 +96,7 @@ def render_unit(carried: Mapping[str, str] | None = None) -> str:
         f"User={user}\n"
         f"Group={group}\n"
         f"WorkingDirectory={home}\n"
-        f"ExecStart={bin_path} gateway\n"
+        f"ExecStart={bin_path} gateway {NO_OPEN}\n"
         "Restart=on-failure\n"
         "RestartSec=10\n"
         "TimeoutStopSec=20\n"

@@ -54,11 +54,15 @@ def _mode(path: Path) -> int:
 # ── the start path ──────────────────────────────────────────────────────────────────────────
 
 
-def _start_gateway(*, no_open: bool, opened: list[str] | None = None) -> None:
+def _start_gateway(
+    *, no_open: bool, opened: list[str] | None = None, started_at_a_terminal: bool = False
+) -> None:
     """Run one gateway start up to its dashboard banner (what it prints, the test captures).
 
     Only what reaches outside the test is faked: the services' boot steps, the update check,
-    the MCP probe and the browser. The banner, the link and the session store are real.
+    the MCP probe and the browser, and whether a person started it at a terminal (a service
+    manager's start, unless *started_at_a_terminal*), so the terminal this test runs in decides
+    nothing. The banner, the link and the session store are real.
     """
     cfg = AppConfig()
     with patch.object(cfg, "load_credentials", return_value={}):
@@ -99,6 +103,11 @@ def _start_gateway(*, no_open: bool, opened: list[str] | None = None) -> None:
             patch("personalclaw.gateway.shutdown_event", stopped),
             patch("personalclaw.gateway.resolve_dashboard_host", return_value="127.0.0.1"),
             patch("personalclaw.gateway.browser_available", return_value=True),
+            patch(
+                "personalclaw.gateway.started_at_a_terminal",
+                return_value=started_at_a_terminal,
+                create=True,
+            ),
             patch("personalclaw.gateway._is_wsl", return_value=False),
             patch("webbrowser.open", _browser),
             patch("personalclaw.session.cleanup_orphaned_sessions"),
@@ -156,9 +165,10 @@ def test_with_no_terminal_and_no_browser_no_link_is_made(capsys) -> None:
 
 
 def test_the_link_opened_in_the_default_browser_goes_to_the_browser_only(capsys) -> None:
-    """Opening the dashboard at start is kept. The link reaches the browser, not the log."""
+    """Opening the dashboard at a start a person made at a terminal is kept, with its output
+    sent to a file: the link reaches the browser, not the file."""
     opened: list[str] = []
-    _start_gateway(no_open=False, opened=opened)
+    _start_gateway(no_open=False, opened=opened, started_at_a_terminal=True)
     out = capsys.readouterr().out
     assert len(opened) == 1 and "?token=" in opened[0], opened
     assert "token=" not in out, out

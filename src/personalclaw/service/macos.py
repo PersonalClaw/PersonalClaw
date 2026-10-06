@@ -6,7 +6,8 @@ and is restarted on crash by ``KeepAlive``. Its environment is ``HOME``, the
 PATH ``service_path`` builds, and what :mod:`personalclaw.service.environment`
 carries from the shell that installed it. launchd appends the gateway's stdout and
 stderr to two files in ``~/Library/Logs/PersonalClaw``, which this module makes before
-each load, the owner's alone (``common.private_output_log``).
+each load, the owner's alone (``common.private_output_log``). Nobody starts it at a terminal,
+so it starts the gateway with ``--no-open``: no start of the service opens a browser.
 """
 
 import os
@@ -16,6 +17,7 @@ import tempfile
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
+from personalclaw.env import NO_OPEN
 from personalclaw.security import mask_child_output
 from personalclaw.service.common import (
     LAUNCHD_LABEL,
@@ -43,7 +45,7 @@ def render_plist(carried: Mapping[str, str] | None = None) -> str:
     environment = {"HOME": home, "PATH": service_path(home), **dict(carried or {})}
     document = {
         "Label": LAUNCHD_LABEL,
-        "ProgramArguments": [personalclaw_bin(), "gateway"],
+        "ProgramArguments": [personalclaw_bin(), "gateway", NO_OPEN],
         "RunAtLoad": True,
         "KeepAlive": {"SuccessfulExit": False},
         "EnvironmentVariables": environment,

@@ -38,6 +38,7 @@ from personalclaw.dashboard.token_auth import (
     duration_words,
     parse_duration,
 )
+from personalclaw.env import NO_OPEN
 from personalclaw.frontend import ensure_dev_dist_symlink
 from personalclaw.gateway import run_gateway
 from personalclaw.history import ConversationLog, HistoryConsolidator
@@ -365,13 +366,14 @@ def _spawn_detached_gateway(port: int) -> None:
     """Start a fresh foreground gateway, detached from this CLI process.
 
     Used by ``personalclaw restart`` when no platform service is installed for this home.
-    ``start_new_session=True`` puts the child in its own session so it survives the CLI exiting
-    (the POSIX ``setsid`` equivalent); stdio is redirected to a log file so the detached process
-    has no controlling TTY, and so prints no sign-in link. The log is the owner's alone, and a
-    link an older gateway printed there is taken out first (``private_output_log``).
+    ``start_new_session=True`` puts the child in its own session, with no controlling terminal,
+    so it survives the CLI exiting (the POSIX ``setsid`` equivalent). Its stdio goes to a log
+    file, so it prints no sign-in link, and it starts with ``--no-open``, so it opens no browser:
+    nobody started it at a terminal. The log is the owner's alone, and a link an older gateway
+    printed there is taken out first (``private_output_log``).
     """
     log_path = config_dir() / "gateway-restart.log"
-    args = [*self_update.cli_argv(), "gateway", "--port", str(port)]
+    args = [*self_update.cli_argv(), "gateway", "--port", str(port), NO_OPEN]
     try:
         private_output_log(log_path)
         log_fh = open_streamed(log_path, "ab")

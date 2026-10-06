@@ -169,13 +169,14 @@ WSL2 automatically forwards `localhost` between Windows and the Linux VM, so the
 dashboard URL the gateway prints (`http://localhost:10000/...`) opens directly
 in a **Windows** browser.
 
-On boot the gateway prints the URL prominently and then tries to open it. Inside
-WSL there is no Linux browser to launch, so PersonalClaw hands the URL to
+Started at a terminal, the gateway prints the URL prominently and then tries to open
+it. Inside WSL there is no Linux browser to launch, so PersonalClaw hands the URL to
 [`wslview`](https://github.com/wslutilities/wslu) (from the `wslu` package),
 which opens it in your Windows default browser. Most WSL distros ship `wslu`; if
 `wslview` is missing, install it (`sudo apt install wslu`) or just click the URL
 the gateway printed. Auto-open never blocks startup — a missing `wslview` is not
-an error.
+an error. The background service below opens no browser: run `personalclaw token`
+for a sign-in link.
 
 ### 4. Background service needs systemd (opt-in on WSL2)
 

@@ -120,15 +120,17 @@ async def test_pending_history_is_committed_before_the_restarted_image_starts(tm
 
 
 @pytest.mark.asyncio
-async def test_the_restarted_image_is_this_gateway_with_its_auth_mode_pinned():
+async def test_the_restarted_image_is_this_gateway_with_its_auth_mode_pinned(monkeypatch):
     """The image is `-m personalclaw` with the same arguments, and the running gateway's auth mode
-    rides into it, so a Restart never changes whether sign-in is required."""
+    rides into it, so a Restart never changes whether sign-in is required. It opens no browser
+    (`--no-open`): the new image keeps the terminal of the start before it."""
     started: list[tuple[str, list[str], dict[str, str]]] = []
 
     def _execve(path, argv, env):  # noqa: ANN001
         started.append((path, list(argv), dict(env)))
         raise _NewImage
 
+    monkeypatch.setattr(sys, "argv", ["personalclaw", "gateway", "--port", "19703"])
     orch = _orchestrator()
     restart_request.request_restart(auth_mode="none")
     with (
@@ -141,7 +143,7 @@ async def test_the_restarted_image_is_this_gateway_with_its_auth_mode_pinned():
     path, argv, env = started[0]
     assert path == sys.executable
     assert argv[:3] == [sys.executable, "-m", "personalclaw"]
-    assert argv[3:] == sys.argv[1:]
+    assert argv[3:] == ["gateway", "--port", "19703", "--no-open"]
     assert env["PERSONALCLAW_AUTH_MODE"] == "none"
 
 

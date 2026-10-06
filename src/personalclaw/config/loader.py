@@ -1792,7 +1792,8 @@ class DashboardConfig:
         default=True,
         metadata=_meta(
             "Auto Open Browser",
-            "Open the dashboard URL in the default browser on gateway startup.",
+            "Open the dashboard in the default browser when the gateway is started at a "
+            "terminal. A service, a container or a restart never opens one.",
         ),
     )
     screen_share_enabled: bool = field(

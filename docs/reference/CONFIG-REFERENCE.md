@@ -124,7 +124,7 @@ children (bash tools, hook and cron-script children, app backends, MCP servers).
 | `timezone` | `""` (system) | IANA timezone (e.g. `Asia/Tokyo`) for schedules, the clock the LLM sees, and the day spend is counted in (Settings → Usage, the daily spend caps, the monthly usage recap). Empty uses this machine's timezone, else UTC. Set by `personalclaw setup`; per-job trigger timezones override it for that job only. |
 | `snapshot_dir` | `""` (default dir) | Where `personalclaw snapshot` writes/reads portability snapshots. |
 | `dashboard.url` | `""` | Advertised dashboard origin (host:port) — written by `personalclaw setup`, consumed by the server bind/origin checks. |
-| `dashboard.auto_open_browser` | `true` | Open the dashboard in a browser on gateway start (`--no-open` overrides per-run). |
+| `dashboard.auto_open_browser` | `true` | Open the dashboard in a browser when the gateway is started at a terminal (`--no-open` overrides per-run). A service, a container or a restart never opens one. |
 | `dashboard.terminal.enabled` | `true` | Kill switch for the built-in terminal (PTY) feature. Read raw with a 30s cache; `dashboard.terminal.persist` (tmux-backed persistence) is editable in the Terminal page. |
 | `dashboard.mcp_probe_timeout_secs` | `15` | Per-server timeout (5–120 s) for MCP tool-discovery probes; the gateway's MCP status sweep budget derives from it (+15 s). PATCH-editable via the config API, no dashboard control. |
 | `memory_stores.<name>.description` | — | Optional description for a named memory store (stores are referenced by agent profiles). |

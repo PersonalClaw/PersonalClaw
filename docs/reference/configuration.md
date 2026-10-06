@@ -329,7 +329,7 @@ Transcription shows the one it found, or where it looked when there is none.
 | `dashboard.show_thinking_inline` | boolean | `false` | Settings → Chat | Show intermediate reasoning between tool calls instead of collapsing it. |
 | `dashboard.simplified_tool_names` | boolean | `false` | Settings → Chat | Inline tool pills show a simplified purpose instead of the exact command. |
 | `dashboard.screen_share_enabled` | boolean | `false` | Settings → Chat | Master opt-in for the composer's "Share screen" control. Off (the default) hides the control **and** makes the server refuse a frame outright. On, a message can carry ONE frame of a screen/window you pick in the browser's own share dialog: held in memory for that single turn, never written to disk, dropped as soon as it is used. Pinning a frame (composer "+" → "Pin shared frame") is the only path to disk, and is refused in temporary/incognito chats. |
-| `dashboard.auto_open_browser` | boolean | `true` | backend-only | Open the dashboard in a browser on gateway start (`--no-open` overrides per-run). |
+| `dashboard.auto_open_browser` | boolean | `true` | backend-only | Open the dashboard in a browser when the gateway is started at a terminal (`--no-open` overrides per-run). A service, a container or a restart never opens one. |
 | `dashboard.terminal` | object | `{"enabled": true}` | `enabled`: backend-only; `persist`: Terminal page | `enabled` is the kill switch for the built-in terminal (PTY) feature, read raw with a 30s cache. `persist` (tmux-backed persistence across gateway restarts) is toggled on the Terminal page. |
 
 ## Background work (`background.*`)

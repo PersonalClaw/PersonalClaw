@@ -110,7 +110,8 @@ def test_restart_with_nothing_running_spawns_without_a_stop(no_service):
 
 
 def test_spawn_detached_gateway_launches_personalclaw_gateway():
-    """The detached spawn invokes `python -m personalclaw gateway --port` in a new session.
+    """The detached spawn invokes `python -m personalclaw gateway --port … --no-open` in a new
+    session: nobody started it at a terminal, so it opens no browser.
 
     Only the spawn is patched. The restart log and the audit row land in the per-test home
     conftest gives every test; patching `builtins.open` for the whole process also handed the
@@ -119,7 +120,7 @@ def test_spawn_detached_gateway_launches_personalclaw_gateway():
         cli_server._spawn_detached_gateway(7777)
     popen.assert_called_once()
     argv = popen.call_args.args[0]
-    assert argv[1:] == ["-m", "personalclaw", "gateway", "--port", "7777"]
+    assert argv[1:] == ["-m", "personalclaw", "gateway", "--port", "7777", "--no-open"]
     assert popen.call_args.kwargs.get("start_new_session") is True
 
 

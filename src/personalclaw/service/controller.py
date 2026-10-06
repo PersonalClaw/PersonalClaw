@@ -43,10 +43,23 @@ def _in_a_container(outcome: str) -> None:
     print(f"{container_host.keeps_running()} {outcome}")
 
 
-def _print_carried(carried: Capture) -> None:
-    """Say what the service's environment carries from this shell, and what it left out."""
+def _print_installed(file: str, path: Path, carried: Capture) -> None:
+    """Say the service is installed, where its file is, what its environment carries from this
+    shell (and what it left out), and the commands that act on it.
+
+    The service opens no browser and makes no sign-in link at any of its starts, the first one
+    included (``gateway._announce_dashboard``), so the person who installed it is told the one
+    command that makes a link: ``personalclaw token``, which signs a browser in when it is opened.
+    """
+    print("✅ personalclaw service installed and started.")
+    print(f"   {file}: {path}")
     for line in summary(carried):
         print(f"   {line}")
+    print()
+    print("   Sign in: personalclaw token")
+    print("   Status:  personalclaw service status")
+    print("   Logs:    personalclaw logs -f")
+    print("   Remove:  personalclaw service uninstall")
 
 
 def install_service(*, extra: Iterable[str] = (), without: Iterable[str] = ()) -> int:
@@ -77,13 +90,7 @@ def install_service(*, extra: Iterable[str] = (), without: Iterable[str] = ()) -
         except linux.ServiceInstallError as exc:
             print(f"❌ {exc}", file=sys.stderr)
             return 1
-        print("✅ personalclaw service installed and started.")
-        print(f"   unit: {linux.UNIT_PATH}")
-        _print_carried(carried)
-        print()
-        print("   Status: personalclaw service status")
-        print("   Logs:   personalclaw logs -f")
-        print("   Remove: personalclaw service uninstall")
+        _print_installed("unit", linux.UNIT_PATH, carried)
         return 0
     if plat == Platform.LAUNCHD:
         try:
@@ -91,13 +98,7 @@ def install_service(*, extra: Iterable[str] = (), without: Iterable[str] = ()) -
         except macos.ServiceInstallError as exc:
             print(f"❌ {exc}", file=sys.stderr)
             return 1
-        print("✅ personalclaw service installed and started.")
-        print(f"   plist: {macos.PLIST_PATH}")
-        _print_carried(carried)
-        print()
-        print("   Status: personalclaw service status")
-        print("   Logs:   personalclaw logs -f")
-        print("   Remove: personalclaw service uninstall")
+        _print_installed("plist", macos.PLIST_PATH, carried)
         return 0
     _unsupported_message()
     return 2
