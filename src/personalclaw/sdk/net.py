@@ -22,12 +22,16 @@ from personalclaw.net import (  # noqa: F401
     EgressPolicy,
     FetchResponse,
     GuardDecision,
+    RequestGuard,
     SyncEndpointRefused,
     egress_policy_for,
     evaluate,
     fetch,
+    http_client,
+    http_session,
     open_url,
     sync_egress_policy,
+    sync_http_client,
 )
 
 # What an app says when the guard refuses one of its requests: the sentence core's own refusals
@@ -68,6 +72,22 @@ __all__ = [
     # each redirect hop included, under the connector policy and the owner's Network egress
     # settings; the app gets a stream and keeps its own reading, bounds and progress.
     "open_url",
+    # The HTTP clients an app sends its own requests with, when it sends more than one buffered
+    # request (a model provider's chat, its stream, its media calls, an app's own API client):
+    # each asks the guard about every request it sends, each redirect hop included, so a host on
+    # Denied hosts is never contacted and every request is audited. `http_client` and
+    # `sync_http_client` are httpx clients and `http_session` an aiohttp session. `RequestGuard`
+    # is the guard itself, for a client library that takes no HTTP client: the app asks its
+    # `ask(url)` from the hook its library runs before each request, and the refusal it raises
+    # stops the request unsent. That hook is the library's own, so the app holds it, not core.
+    # `endpoint=` names the address the owner configured (reachable on their own machine or
+    # network); `model_provider=True` judges a model provider's requests, and
+    # `shared_by_every_run=True` keeps the agent's own model to the owner's settings alone,
+    # never to a run's egress tier.
+    "http_client",
+    "sync_http_client",
+    "http_session",
+    "RequestGuard",
     "CONNECTOR",
     "EgressPolicy",
     "WEBHOOK",

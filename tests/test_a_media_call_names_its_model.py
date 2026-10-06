@@ -65,7 +65,10 @@ def openai_sdk(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
         client.close = AsyncMock()
         return client
 
-    monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(AsyncOpenAI=_client))
+    sdk = types.SimpleNamespace(
+        AsyncOpenAI=_client, OpenAIError=type("OpenAIError", (Exception,), {})
+    )
+    monkeypatch.setitem(sys.modules, "openai", sdk)
     return sent
 
 

@@ -11,6 +11,7 @@ in-test fakes only.
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 
@@ -98,22 +99,19 @@ def test_openai_compatible_helper_returns_empty_without_config():
     assert _run(openai_compatible_list_models(None, None)) == []
 
 
-def test_openai_compatible_discovery_layers_operator_egress(monkeypatch):
-    """Model discovery for a self-hosted OpenAI-compatible endpoint must route
-    through egress_policy_for(CONNECTOR) — NOT raw CONNECTOR — so an operator who
-    allow-lists a private/loopback host (vLLM/LM Studio/Ollama) can actually
-    discover its models. Regression: raw CONNECTOR blocked an allow-listed
-    localhost endpoint, so the picker was always empty."""
-    from personalclaw.net import CONNECTOR
+def test_openai_compatible_discovery_asks_as_the_providers_chat_does(monkeypatch):
+    """Model discovery keeps to the posture of every request a model provider sends
+    (``net.policy.provider_egress_policy``), the one its chat keeps to: the owner's Network
+    egress settings, with the endpoint she configured reachable on her own machine or network.
+    Discovery used to be held to the connector posture alone, which refused her model server on
+    this computer while the same provider's chat reached it."""
+    from personalclaw.config.loader import config_dir
 
-    sentinel = CONNECTOR.with_overrides(allow_hosts=("127.0.0.1",))
+    (config_dir() / "config.json").write_text(
+        json.dumps({"security": {"egress": {"deny_hosts": ["denied.example"]}}}),
+        encoding="utf-8",
+    )
     seen: dict = {}
-
-    def fake_layer(policy):
-        # Prove the helper asks for the operator-layered policy, and hand back a
-        # distinguishable sentinel so we can assert fetch received THAT, not raw.
-        seen["layered_base"] = policy.name
-        return sentinel
 
     class _Resp:
         status = 200
@@ -125,14 +123,12 @@ def test_openai_compatible_discovery_layers_operator_egress(monkeypatch):
         return _Resp()
 
     # Patch at the source module the helper imports from (late import inside fn).
-    monkeypatch.setattr("personalclaw.net.egress_policy_for", fake_layer, raising=False)
-    monkeypatch.setattr("personalclaw.sdk.net.egress_policy_for", fake_layer, raising=False)
-    monkeypatch.setattr("personalclaw.net.client.fetch", fake_fetch, raising=False)
     monkeypatch.setattr("personalclaw.sdk.net.fetch", fake_fetch, raising=False)
 
     out = _run(openai_compatible_list_models("http://127.0.0.1:11434/v1", ""))
-    assert (
-        seen.get("policy") is sentinel
-    ), "discovery must use egress_policy_for(CONNECTOR), not raw CONNECTOR"
+    policy = seen["policy"]
+    assert policy.name == "model_provider"
+    assert "127.0.0.1" in policy.allow_hosts, "her endpoint is reachable on her own machine"
+    assert "denied.example" in policy.deny_hosts, "her Denied hosts are layered on"
     assert seen["url"].endswith("/v1/models")
     assert [m.id for m in out] == ["qwen2.5:0.5b"]

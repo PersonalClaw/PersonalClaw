@@ -293,7 +293,9 @@ class _FakeMessages:
 
 
 class _FakeAsyncAnthropic:
-    def __init__(self, *, api_key: str, base_url: str | None = None) -> None:
+    def __init__(
+        self, *, api_key: str, base_url: str | None = None, http_client: object = None
+    ) -> None:
         self.messages = _FakeMessages()
 
     async def close(self) -> None:  # pragma: no cover - not driven here
@@ -304,6 +306,7 @@ class _FakeAsyncAnthropic:
 def fake_anthropic_module(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     fake = types.ModuleType("anthropic")
     fake.AsyncAnthropic = _FakeAsyncAnthropic  # type: ignore[attr-defined]
+    fake.AnthropicError = type("AnthropicError", (Exception,), {})  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "anthropic", fake)
     return fake
 

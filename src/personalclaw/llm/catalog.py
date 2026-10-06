@@ -606,20 +606,15 @@ async def openai_compatible_discover_models(
 
     The ``GET {base}/models`` discovery call routes through the ``net.fetch`` egress
     chokepoint (host classification, redirect-hop re-check, byte cap, timeout, SEL
-    audit) rather than raw aiohttp — an operator-configured ``endpoint`` is an
-    egress surface, so discovery is guarded the same as every other outbound call.
-    (The inference path is the ``openai`` SDK's own client — a separate,
-    deliberate boundary; this GET is the cleanly-migratable part.)
+    audit) under the posture of every request a model provider sends
+    (``net.policy.provider_egress_policy``): the owner's Network egress settings, with the
+    endpoint they configured reachable on their own machine or network, as the provider's chat
+    is, and never narrowed by a run's tier, since the model list is the provider's, not a run's.
     """
     import json as _json
 
-    from personalclaw.sdk.net import (
-        CONNECTOR,
-        EgressBlocked,
-        egress_policy_for,
-        egress_refusal,
-        fetch,
-    )
+    from personalclaw.net.policy import egress_held_to, provider_egress_policy
+    from personalclaw.sdk.net import EgressBlocked, egress_refusal, fetch
 
     if not api_key and not endpoint:
         raise ModelDiscoveryError(
@@ -630,14 +625,13 @@ async def openai_compatible_discover_models(
     headers: dict[str, str] = {}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-    # Layer the operator's security.egress config onto CONNECTOR so a self-hosted
-    # OpenAI-compatible server on a private/LAN/loopback host (vLLM, LM Studio,
-    # Ollama, …) is reachable for discovery when the operator allow-lists it.
-    # Without this, a localhost/LAN endpoint is blocked as non-public even when
-    # allow-listed, so model discovery silently returns [] (the picker stays empty).
-    policy = egress_policy_for(CONNECTOR)
+    # A self-hosted OpenAI-compatible server on this computer or the owner's network (vLLM,
+    # LM Studio, Ollama, …) is the endpoint she configured, so it is reachable for discovery as
+    # for chat; a host on her Denied hosts is refused, before it is looked up.
+    policy = provider_egress_policy(url)
     try:
-        r = await fetch(url, policy=policy, method="GET", headers=headers)
+        with egress_held_to(""):
+            r = await fetch(url, policy=policy, method="GET", headers=headers)
     except EgressBlocked as exc:
         raise ModelDiscoveryError(egress_refusal(url, exc.decision), url=url) from exc
     except Exception as exc:  # noqa: BLE001 — every transport failure, named not swallowed

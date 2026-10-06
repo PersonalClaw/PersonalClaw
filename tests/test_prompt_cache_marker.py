@@ -267,12 +267,15 @@ def fake_openai_module(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     """
 
     class _FakeAsyncOpenAI:
-        def __init__(self, *, api_key: str, base_url: str | None = None) -> None:
+        def __init__(
+            self, *, api_key: str, base_url: str | None = None, http_client: object = None
+        ) -> None:
             self.api_key = api_key
             self.base_url = base_url
 
     fake = types.ModuleType("openai")
     fake.AsyncOpenAI = _FakeAsyncOpenAI  # type: ignore[attr-defined]
+    fake.OpenAIError = type("OpenAIError", (Exception,), {})  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "openai", fake)
     return fake
 

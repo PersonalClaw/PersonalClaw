@@ -13,6 +13,7 @@ import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -371,6 +372,24 @@ MCP_SERVER = EgressPolicy(
     pin_resolved_ip=False,
 )
 
+# Every request a MODEL PROVIDER sends: chat and its stream, embeddings, transcription, speech,
+# images, video and the model list, each sent by the provider's own client (`net.http_clients`).
+# STRICT's public-only stance, with the metadata service refused by name as for MCP_SERVER. The
+# endpoint the owner configured for the provider is theirs, so :func:`provider_egress_policy` lets
+# its host be on their own machine or network (a model server here or on their LAN); any other
+# host the client is sent to (a redirect, an address an answer names) keeps to the public-only
+# stance and their Allowed hosts, and a host on their Denied hosts is refused before both.
+#
+# A request of the agent's own model (its chat, stream, embeddings and model list) is never
+# narrowed by a run's egress tier (`net.http_clients` asks it with the run held to none): the model
+# is shared by every run, so a run whose tier is `off` still reaches it. A transcription, speech,
+# image or video request keeps to the run's tier, as any request a run makes does.
+#
+# `pin_resolved_ip` stays True: a model list read through `net.fetch` dials the addresses the
+# guard checked. A provider's own client cannot (it resolves the name again for itself), which
+# `net.http_clients` says where it hands one out.
+MODEL_PROVIDER = EgressPolicy(name="model_provider", deny_hosts=METADATA_SERVICE_HOSTS)
+
 _PROFILES: dict[str, EgressPolicy] = {
     p.name: p
     for p in (
@@ -388,6 +407,7 @@ _PROFILES: dict[str, EgressPolicy] = {
         MEDIA,
         MCP_SIGN_IN,
         MCP_SERVER,
+        MODEL_PROVIDER,
     )
 }
 
@@ -703,6 +723,33 @@ def mcp_sign_in_egress_policy(server_host: str) -> EgressPolicy:
     return layered.with_overrides(allow_hosts=tuple(dict.fromkeys([*layered.allow_hosts, host])))
 
 
+def with_endpoint(policy: EgressPolicy, endpoint: str) -> EgressPolicy:
+    """*policy* with the host of *endpoint*, an address the owner configured, reachable on their
+    own machine or network as well as a public one.
+
+    The one host added, as for :func:`mcp_sign_in_egress_policy`: a host on Denied hosts is still
+    refused (the guard reads the deny list first), and the metadata service is refused by address
+    for every policy. *endpoint* without a host (none configured, a provider's built-in address)
+    adds nothing."""
+    try:
+        host = (urlparse(endpoint.strip()).hostname or "").rstrip(".").lower()
+    except ValueError:
+        host = ""
+    if not host:
+        return policy
+    return policy.with_overrides(allow_hosts=tuple(dict.fromkeys([*policy.allow_hosts, host])))
+
+
+def provider_egress_policy(endpoint: str = "") -> EgressPolicy:
+    """The posture of every request a model provider sends (:data:`MODEL_PROVIDER`).
+
+    :func:`egress_policy_for` layers the owner's Network egress settings on, and *endpoint* is the
+    address the owner configured for the provider (:func:`with_endpoint`): a model server on this
+    computer or their network stays reachable, and one on Denied hosts is refused.
+    """
+    return with_endpoint(egress_policy_for(MODEL_PROVIDER), endpoint)
+
+
 class SyncEndpointRefused(ValueError):
     """A sync endpoint that cannot be pinned — so no policy is derived and nothing egresses.
 
@@ -735,8 +782,6 @@ def sync_egress_policy(endpoint: str) -> EgressPolicy:
     the endpoint names a denied host — refusing at derivation is more legible than handing back
     a policy whose only permitted host is one the guard will reject on every request.
     """
-    from urllib.parse import urlparse
-
     raw = (endpoint or "").strip()
     if not raw:
         raise SyncEndpointRefused("no sync endpoint configured — nothing to pin egress to")

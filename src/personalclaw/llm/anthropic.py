@@ -42,6 +42,7 @@ from personalclaw.llm.inflight import InFlightRequests
 from personalclaw.llm.prompt_cache import CACHE_HINT_KEY, VOLATILE_KEY, PromptCache
 from personalclaw.llm.registry import CredentialMissing, require_model
 from personalclaw.llm.stream_end import until_terminal
+from personalclaw.net.http_clients import http_client
 from personalclaw.turn_streams import closing_stream
 
 logger = logging.getLogger(__name__)
@@ -495,7 +496,21 @@ class AnthropicProvider(ModelProvider):
         client_kwargs: dict[str, Any] = {"api_key": credential.secret}
         if base_url:
             client_kwargs["base_url"] = base_url
-        self._client: Any = anthropic.AsyncAnthropic(**client_kwargs)
+        # Every request the SDK sends asks the egress guard first, each redirect hop included,
+        # under the owner's Network egress settings: a host on Denied hosts is never contacted.
+        # The agent's model is shared by every run, so no run's egress tier holds it. The client
+        # follows redirects as the SDK's own does, and a refusal is raised as an
+        # ``AnthropicError`` too, which the SDK treats as final, not as a failed send to retry.
+        self._client: Any = anthropic.AsyncAnthropic(
+            **client_kwargs,
+            http_client=http_client(
+                endpoint=base_url or "",
+                model_provider=True,
+                shared_by_every_run=True,
+                refused_as=anthropic.AnthropicError,
+                follow_redirects=True,
+            ),
+        )
         self._history: list[dict[str, Any]] = []
         # ``None`` until the first usage report: before then this provider has no
         # measurement, and 0.0 would be a fabricated one (see llm/base contract).

@@ -4959,9 +4959,10 @@
  "personalclaw.sdk.features.APPROVAL_ANSWERS": {"kind": "value", "type": "str", "value": "'approval-answers'"},
  "personalclaw.sdk.features.CHAT_TRUST": {"kind": "value", "type": "str", "value": "'chat-trust'"},
  "personalclaw.sdk.features.CLOSING_STREAMS": {"kind": "value", "type": "str", "value": "'closing-streams'"},
- "personalclaw.sdk.features.CORE_FEATURES": {"kind": "value", "type": "frozenset", "value": "frozenset({'approval-answers', 'chat-trust', 'closing-streams', 'cut-off-answers', 'digest-replies', 'guarded-download', 'links-name-their-channel', 'message-instructions', 'messages-run-once', 'paired-owner', 'pre-tool-hooks', 'tool-call-screen', 'turns-name-their-channel', 'turns-name-who-asked'})"},
+ "personalclaw.sdk.features.CORE_FEATURES": {"kind": "value", "type": "frozenset", "value": "frozenset({'approval-answers', 'chat-trust', 'closing-streams', 'cut-off-answers', 'digest-replies', 'guarded-clients', 'guarded-download', 'links-name-their-channel', 'message-instructions', 'messages-run-once', 'paired-owner', 'pre-tool-hooks', 'tool-call-screen', 'turns-name-their-channel', 'turns-name-who-asked'})"},
  "personalclaw.sdk.features.CUT_OFF_ANSWERS": {"kind": "value", "type": "str", "value": "'cut-off-answers'"},
  "personalclaw.sdk.features.DIGEST_REPLIES": {"kind": "value", "type": "str", "value": "'digest-replies'"},
+ "personalclaw.sdk.features.GUARDED_CLIENTS": {"kind": "value", "type": "str", "value": "'guarded-clients'"},
  "personalclaw.sdk.features.GUARDED_DOWNLOAD": {"kind": "value", "type": "str", "value": "'guarded-download'"},
  "personalclaw.sdk.features.LINKS_NAME_THEIR_CHANNEL": {"kind": "value", "type": "str", "value": "'links-name-their-channel'"},
  "personalclaw.sdk.features.MESSAGES_RUN_ONCE": {"kind": "value", "type": "str", "value": "'messages-run-once'"},
@@ -6947,7 +6948,7 @@
  "personalclaw.sdk.model.FailureMode": {
   "bases": ["str", "Enum"],
   "kind": "enum",
-  "members": {"BUDGET_EXCEEDED": "'budget_exceeded'", "CIRCUIT_OPEN": "'circuit_open'", "CONSTRAINT_VIOLATION": "'constraint_violation'", "INJECTION_BLOCKED": "'injection_blocked'", "NONE": "'none'", "OUTPUT_CAP": "'output_cap'", "PROMPT_TOO_LARGE": "'prompt_too_large'", "PROVIDER_ERROR": "'provider_error'", "SCHEMA_VIOLATION": "'schema_violation'", "SECRET_LEAK": "'secret_leak'", "TIMEOUT": "'timeout'", "TOKEN_OVERFLOW": "'token_overflow'"}
+  "members": {"BUDGET_EXCEEDED": "'budget_exceeded'", "CIRCUIT_OPEN": "'circuit_open'", "CONSTRAINT_VIOLATION": "'constraint_violation'", "EGRESS_REFUSED": "'egress_refused'", "INJECTION_BLOCKED": "'injection_blocked'", "NONE": "'none'", "OUTPUT_CAP": "'output_cap'", "PROMPT_TOO_LARGE": "'prompt_too_large'", "PROVIDER_ERROR": "'provider_error'", "SCHEMA_VIOLATION": "'schema_violation'", "SECRET_LEAK": "'secret_leak'", "TIMEOUT": "'timeout'", "TOKEN_OVERFLOW": "'token_overflow'"}
  },
  "personalclaw.sdk.model.FirstTokenTimeout": {
   "bases": ["GuardError"],
@@ -7738,6 +7739,36 @@
   },
   "kind": "dataclass"
  },
+ "personalclaw.sdk.net.RequestGuard": {
+  "bases": ["object"],
+  "init": {
+   "params": [
+    {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "endpoint"},
+    {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "model_provider"},
+    {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "shared_by_every_run"},
+    {"annotation": "str", "default": "'then try again'", "kind": "keyword_only", "name": "then"},
+    {"annotation": "type[Exception] | None", "default": "None", "kind": "keyword_only", "name": "refused_as"}
+   ],
+   "returns": "None"
+  },
+  "kind": "dataclass",
+  "members": {
+   "ask": {
+    "kind": "method",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "url"}
+    ],
+    "returns": "None"
+   },
+   "ask_async": {
+    "kind": "async method",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "url"}
+    ],
+    "returns": "None"
+   }
+  }
+ },
  "personalclaw.sdk.net.SYNC": {"kind": "value", "type": "EgressPolicy", "value": "EgressPolicy(name='sync', allow_schemes=('http', 'https'), allow_private=False, loopback_only=False, allow_hosts=(), deny_hosts=('169.254.169.254', 'metadata.google.internal', 'metadata.goog', '100.100.100.200'), allow_only=True, max_redirects=5, max_bytes=200000000, timeout_s=120.0, pin_resolved_ip=True, on_violation='deny')"},
  "personalclaw.sdk.net.SyncEndpointRefused": {
   "bases": ["ValueError"],
@@ -7785,6 +7816,29 @@
   ],
   "returns": "FetchResponse"
  },
+ "personalclaw.sdk.net.http_client": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "endpoint"},
+   {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "model_provider"},
+   {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "shared_by_every_run"},
+   {"annotation": "str", "default": "'then try again'", "kind": "keyword_only", "name": "then"},
+   {"annotation": "type[Exception] | None", "default": "None", "kind": "keyword_only", "name": "refused_as"},
+   {"annotation": "Any", "kind": "var_keyword", "name": "options"}
+  ],
+  "returns": "httpx.AsyncClient"
+ },
+ "personalclaw.sdk.net.http_session": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "endpoint"},
+   {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "model_provider"},
+   {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "shared_by_every_run"},
+   {"annotation": "str", "default": "'then try again'", "kind": "keyword_only", "name": "then"},
+   {"annotation": "Any", "kind": "var_keyword", "name": "options"}
+  ],
+  "returns": "aiohttp.ClientSession"
+ },
  "personalclaw.sdk.net.open_url": {
   "kind": "function",
   "params": [
@@ -7824,6 +7878,18 @@
    {"annotation": "str", "kind": "positional_or_keyword", "name": "endpoint"}
   ],
   "returns": "EgressPolicy"
+ },
+ "personalclaw.sdk.net.sync_http_client": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "endpoint"},
+   {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "model_provider"},
+   {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "shared_by_every_run"},
+   {"annotation": "str", "default": "'then try again'", "kind": "keyword_only", "name": "then"},
+   {"annotation": "type[Exception] | None", "default": "None", "kind": "keyword_only", "name": "refused_as"},
+   {"annotation": "Any", "kind": "var_keyword", "name": "options"}
+  ],
+  "returns": "httpx.Client"
  },
  "personalclaw.sdk.net.web_extract": {
   "kind": "async function",

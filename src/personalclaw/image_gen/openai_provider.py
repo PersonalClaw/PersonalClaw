@@ -25,6 +25,8 @@ from personalclaw.image_gen.provider import (
     ImageGenProvider,
     ImageResult,
 )
+from personalclaw.net.client import EgressBlocked
+from personalclaw.net.http_clients import http_client
 
 logger = logging.getLogger(__name__)
 
@@ -214,7 +216,17 @@ class OpenAIImageProvider(ImageGenProvider):
             raise ImageGenError(
                 f"No API key configured for image provider {self._provider_name!r}."
             )
-        return openai.AsyncOpenAI(api_key=api_key, base_url=self._endpoint or None)
+        # Each request asks the egress guard first, under the owner's Network egress settings.
+        return openai.AsyncOpenAI(
+            api_key=api_key,
+            base_url=self._endpoint or None,
+            http_client=http_client(
+                endpoint=self._endpoint,
+                model_provider=True,
+                refused_as=openai.OpenAIError,
+                follow_redirects=True,
+            ),
+        )
 
     async def _await(self, run: Any, op: str) -> list[ImageResult]:
         try:
@@ -225,6 +237,9 @@ class OpenAIImageProvider(ImageGenProvider):
             ) from e
         except ImageGenError:
             raise
+        except EgressBlocked as e:
+            # The guard's own sentence: what was not reached, and the setting that decided it.
+            raise ImageGenError(str(e)) from e
         except Exception as e:  # noqa: BLE001 — normalize SDK/HTTP errors to a clean message
             logger.exception("Remote image %s failed for provider %r", op, self._provider_name)
             raise ImageGenError(f"Image {op} failed: {e}") from e

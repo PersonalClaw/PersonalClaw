@@ -46,6 +46,15 @@ DIGEST_REPLIES = "digest-replies"
 #: it does not load.
 GUARDED_DOWNLOAD = "guarded-download"
 
+#: An app sends its requests with HTTP clients the egress guard is inside, from
+#: ``personalclaw.sdk.net``: ``http_client`` and ``sync_http_client`` (httpx) and ``http_session``
+#: (aiohttp), each asking the guard about every request it sends, each redirect hop included, under
+#: the owner's Network egress settings, and raising ``EgressBlocked`` for a refused one before it is
+#: sent. ``RequestGuard`` is that guard for a client library that takes no HTTP client: the app asks
+#: its ``ask(url)`` from the library's own hook before each request. A core without it has none of
+#: the four, so an app that imports them does not load.
+GUARDED_CLIENTS = "guarded-clients"
+
 #: A channel that runs a conversation itself keeps no trust of its own: its approval prompt for a
 #: call of that conversation offers what the chat's card offers, Allow for this chat included
 #: (``approval_brief_for(event, chat=<session key>)``), ``answer_in_chat`` makes the pressed Allow
@@ -150,6 +159,7 @@ CORE_FEATURES: frozenset[str] = frozenset(
         CLOSING_STREAMS,
         CUT_OFF_ANSWERS,
         DIGEST_REPLIES,
+        GUARDED_CLIENTS,
         GUARDED_DOWNLOAD,
         LINKS_NAME_THEIR_CHANNEL,
         MESSAGE_INSTRUCTIONS,

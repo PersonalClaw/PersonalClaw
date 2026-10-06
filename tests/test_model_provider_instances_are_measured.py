@@ -116,19 +116,7 @@ class _VendorCatalog(ModelCatalog):
 
 
 @pytest.fixture()
-def allow_loopback_egress(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Discovery against loopback, as an operator who set ``allow_private`` sees it. Only the
-    POLICY is substituted; the real fetch, guard and host classification all still run."""
-    from personalclaw.net import CONNECTOR
-
-    monkeypatch.setattr(
-        "personalclaw.sdk.net.egress_policy_for",
-        lambda base: CONNECTOR.with_overrides(allow_private=True),
-    )
-
-
-@pytest.fixture()
-def vendor(allow_loopback_egress: None, monkeypatch: pytest.MonkeyPatch) -> Iterator[_Vendor]:
+def vendor(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Vendor]:
     """The vendor server, and a private LLM registry in which the vendor's app is installed."""
     from personalclaw.dashboard.handlers import providers as model_providers
     from personalclaw.llm import registry as llm_registry
@@ -287,7 +275,7 @@ async def test_a_listing_that_swallowed_a_refusal_is_an_error_row_not_an_empty_o
 
 
 def test_the_same_rejected_key_is_logged_once_not_once_per_load(
-    allow_loopback_egress: None, caplog: pytest.LogCaptureFixture
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     srv = _Vendor()
     try:
@@ -409,9 +397,7 @@ def test_a_refused_localhost_in_the_container_names_the_hosts_address(
     )
 
 
-def test_openai_compatible_discovery_gets_the_same_hint(
-    allow_loopback_egress: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_openai_compatible_discovery_gets_the_same_hint(monkeypatch: pytest.MonkeyPatch) -> None:
     """LM Studio / vLLM / llama.cpp on the host are the same trap as Ollama."""
     from personalclaw.llm.catalog import openai_compatible_discover_models
 

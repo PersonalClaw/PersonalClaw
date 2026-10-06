@@ -37,8 +37,10 @@ logger = logging.getLogger(__name__)
 #: answer in time, or its breaker is open. An open breaker is one because a runtime keeps the
 #: model it was built on: a session built while its first model answered fails every turn in
 #: microseconds once that model's breaker opens, while the next model of the chain is never asked.
-#: Not a prompt too large to run (the same prompt is as large for the next model), and not a
-#: guard's refusal (a budget, a secret, an injection: moving to another model defeats it).
+#: Not a prompt too large to run (the same prompt is as large for the next model), not a
+#: guard's refusal (a budget, a secret, an injection: moving to another model defeats it), and not
+#: a request the owner's Network egress settings refused (``egress_refused``): her setting answered
+#: it, and the turn says which one, rather than moving to a model she did not send it to.
 FAILOVER_MODES = frozenset(
     {
         FailureMode.PROVIDER_ERROR,

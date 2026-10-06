@@ -40,6 +40,20 @@ class EgressBlocked(Exception):
         self.risk_level = decision.risk_level
 
 
+def refusal_in(exc: BaseException | None) -> EgressBlocked | None:
+    """The egress guard's refusal that *exc* is or was raised over, or ``None``.
+
+    A client library that cannot send a request wraps the failure in an error of its own and keeps
+    the refusal as its cause, so the chain is read, ``__cause__`` and ``__context__`` alike."""
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        if isinstance(exc, EgressBlocked):
+            return exc
+        seen.add(id(exc))
+        exc = exc.__cause__ or exc.__context__
+    return None
+
+
 @dataclass
 class FetchResponse:
     """A completed, guarded fetch."""

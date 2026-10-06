@@ -98,6 +98,7 @@ from personalclaw.llm.prompt_cache import (
     turn_note_message,
 )
 from personalclaw.llm.tool_use import uses_tools
+from personalclaw.net.client import refusal_in
 from personalclaw.pre_tool_hooks import HOOK_FAILED, HooksSaid
 from personalclaw.routing.rates import CallPrice, summed
 from personalclaw.safety_flags import yes_or_no
@@ -128,15 +129,15 @@ _INFERENCE_RETRY_BACKOFF_SECS = 0.5
 
 
 def _inference_failure_mode(exc: BaseException) -> FailureMode:
-    """Classify a raised inference exception into the guard's taxonomy.
-
-    Typed guard errors carry their mode; a bare timeout maps to ``TIMEOUT``; every
-    vendor SDK exception collapses to ``PROVIDER_ERROR`` — same collapse rule as
-    :mod:`personalclaw.guardrails.failure` documents for the guard itself, so the
-    loop's audit rows and the guard's stay foldable in one taxonomy.
-    """
+    """Classify a raised inference exception into the guard's taxonomy, by the rule
+    :mod:`personalclaw.guardrails.failure` documents for the guard, so the loop's rows and the
+    guard's fold into one: a guard error carries its mode, a request the owner's network settings
+    refused is ``EGRESS_REFUSED`` (refused again, and not for another model to answer), a bare
+    timeout is ``TIMEOUT``, and every vendor SDK exception collapses to ``PROVIDER_ERROR``."""
     if isinstance(exc, GuardError):
         return exc.mode
+    if refusal_in(exc) is not None:
+        return FailureMode.EGRESS_REFUSED
     if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
         return FailureMode.TIMEOUT
     if isinstance(exc, MemoryError):

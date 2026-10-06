@@ -436,7 +436,9 @@ def test_branded_provider_factory_threads_temperature_into_extra_options(monkeyp
     monkeypatch.setattr(
         openai_client,
         "require_sdk",
-        lambda *a, **k: types.SimpleNamespace(AsyncOpenAI=lambda **kw: object()),
+        lambda *a, **k: types.SimpleNamespace(
+            AsyncOpenAI=lambda **kw: object(), OpenAIError=type("OpenAIError", (Exception,), {})
+        ),
     )
     monkeypatch.setattr(provider_helpers, "get_default_registry", lambda: ProviderRegistry())
     spec = provider_helpers.BrandedProviderSpec(

@@ -412,7 +412,14 @@ Content and requests arriving from outside the owner's trust boundary:
   (`codegraph/grammars.py`); in every PersonalClaw process the Hugging Face library is given
   clients that ask the guard first (`net/libraries.py`); and a download too large to buffer
   streams through `net.open_url` (the bundled chat model's weights, an app's model files).
-  Neither of the last two holds the connection to the address the guard checked, as `fetch`
+  So does every request a model provider sends (chat, stream, embeddings, model list,
+  transcription, speech, images, video), and every request a first-party app's provider sends
+  with an HTTP client of its own: each is sent with a client that has the guard inside it
+  (`net/http_clients.py`, handed to apps as `personalclaw.sdk.net`'s `http_client`,
+  `sync_http_client` and `http_session`), or, from a library that takes no HTTP client, asks the
+  guard (`RequestGuard`) from that library's own hook before it is sent, so a host on Denied
+  hosts is never contacted and the turn says so.
+  None of the last three holds the connection to the address the guard checked, as `fetch`
   does, and a process that does not import PersonalClaw (an app's sidecar) gets the libraries'
   settings, not their guarded clients.
 - **What a channel is handed is masked, once, by core** (`channel_delivery.py::MaskedDelivery`).

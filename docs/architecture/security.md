@@ -1266,6 +1266,30 @@ chokepoint:
   nothing and answers in `guard.refusal_for`'s words; the open connection, shared by
   every run, is made for none (`egress_held_to("")`), so a run's refusal never marks
   the server failed.
+- `net/http_clients.py` is the chokepoint for a client library that sends its own
+  requests, a model provider's SDK or an app's own HTTP code: `http_client` and
+  `sync_http_client` (httpx, a request hook) and `http_session` (aiohttp, a connector) put
+  the guard in front of every request the client sends, retries and redirect hops
+  included, and `personalclaw.sdk.net` hands them to apps. A library that takes no HTTP
+  client asks `RequestGuard.ask(url)` from a hook of its own that runs before each
+  request; that glue is the library's, so it lives in the app that uses it (an AWS
+  session's `before-send` handler in `bedrock-models`), never in core. A refusal is raised
+  before anything is sent, as `EgressBlocked` carrying `guard.refusal_for`'s sentence (and
+  as the SDK's own base error, `OpenAIError` or `AnthropicError`, so the SDK does not
+  retry it); each request is an `egress_fetch` row from `net.client:<policy>`; the turn
+  and a relayed failure say the refusal's sentence (`refusal_sentence`), and
+  `FailureMode.EGRESS_REFUSED` is neither retried, failed over nor counted against the
+  provider's breaker. A model provider's requests are judged by `MODEL_PROVIDER` (any
+  public host, the metadata service never) with the owner's settings layered on and the
+  configured endpoint's host allowed (`provider_egress_policy`, which
+  `openai_compatible_discover_models` asks too). The agent's own model (its chat, stream,
+  embeddings and model list) is shared by every run, so its requests are made for none
+  (`egress_held_to("")`); a transcription, speech, image or video request keeps to the
+  run's tier. The client looks a name up again after the guard did, so its connection is
+  not pinned to the address the guard checked.
+  `tests/test_network_clients_ask_the_guard_rail.py` fails a core provider module or a
+  bundled app that opens an HTTP client or an SDK client any other way, or an AWS session
+  with no `before-send` hook that asks the guard registered on it before its first client.
 - A command a run starts is held to the tier where it is launched (`sandbox.wrap_argv`,
   which asks `no_network_for_commands`, the other reader of the tier, through the same
   binding), since nothing it reaches asks the guard. Only a tier of `all`, or no run, keeps

@@ -83,6 +83,7 @@ from personalclaw.sdk.model import (  # noqa: F401
     require_model,
     until_terminal,
 )
+from personalclaw.sdk.net import http_client, http_session
 
 logger = logging.getLogger(__name__)
 
@@ -561,7 +562,13 @@ class OllamaProvider(ModelProvider):
         self.context_window: int | None = declared_context_window(
             self._extra_options.pop("context_window", None)
         )
-        self._client: Any = httpx.AsyncClient(
+        # Every request asks the egress guard first, under the owner's Network egress settings:
+        # her Ollama on this computer or her network is reachable, a host she denied is not. The
+        # agent's model is shared by every run, so no run's egress tier holds it.
+        self._client: Any = http_client(
+            endpoint=self._endpoint,
+            model_provider=True,
+            shared_by_every_run=True,
             base_url=self._endpoint,
             timeout=httpx.Timeout(timeout, connect=min(timeout, _CONNECT_TIMEOUT)),
         )
@@ -1456,7 +1463,9 @@ class OllamaCatalog(ModelManager):
 
         url = f"{self._endpoint}/api/tags"
         try:
-            async with aiohttp.ClientSession() as session:
+            async with http_session(
+                endpoint=self._endpoint, model_provider=True, shared_by_every_run=True
+            ) as session:
                 async with session.get(
                     url, timeout=aiohttp.ClientTimeout(total=_CATALOG_TIMEOUT)
                 ) as r:
@@ -1561,7 +1570,9 @@ class OllamaCatalog(ModelManager):
 
         if not names:
             return {}
-        async with aiohttp.ClientSession() as session:
+        async with http_session(
+            endpoint=self._endpoint, model_provider=True, shared_by_every_run=True
+        ) as session:
             pairs = await asyncio.gather(*(_one(session, n) for n in names))
         return {name: caps for name, caps in pairs if caps is not None}
 
@@ -1594,7 +1605,7 @@ class OllamaCatalog(ModelManager):
         # tags enumeration below. Without this, a full-tag query returns zero results.
         search_q = q.split(":", 1)[0]
         try:
-            async with aiohttp.ClientSession() as session:
+            async with http_session(model_provider=True) as session:
                 async with session.get(
                     "https://ollama.com/search",
                     params={"q": search_q},
@@ -1640,7 +1651,7 @@ class OllamaCatalog(ModelManager):
             except Exception:  # noqa: BLE001
                 return ["latest"]
 
-        async with aiohttp.ClientSession() as sess:
+        async with http_session(model_provider=True) as sess:
             tag_results = await _asyncio.gather(*[_fetch_tags(sess, m) for m in unique_models])
 
         out: list[ModelInfo] = []
@@ -1666,7 +1677,7 @@ class OllamaCatalog(ModelManager):
         if not model:
             raise ValueError("model is required")
 
-        async with aiohttp.ClientSession() as session:
+        async with http_session(endpoint=self._endpoint, model_provider=True) as session:
             async with session.post(
                 f"{self._endpoint}/api/pull",
                 json={"name": model, "stream": True},
@@ -1703,7 +1714,7 @@ class OllamaCatalog(ModelManager):
         model = (model_id or "").strip()
         if not model:
             raise ValueError("model is required")
-        async with aiohttp.ClientSession() as session:
+        async with http_session(endpoint=self._endpoint, model_provider=True) as session:
             async with session.delete(
                 f"{self._endpoint}/api/delete",
                 json={"name": model},
@@ -1725,7 +1736,9 @@ class OllamaCatalog(ModelManager):
         model = (model_id or "").strip()
         if not model:
             raise ValueError("model is required")
-        async with aiohttp.ClientSession() as session:
+        async with http_session(
+            endpoint=self._endpoint, model_provider=True, shared_by_every_run=True
+        ) as session:
             async with session.post(
                 f"{self._endpoint}/api/show",
                 json={"name": model},

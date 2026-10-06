@@ -77,6 +77,7 @@ from personalclaw.llm.prompt_cache import PromptCache
 from personalclaw.llm.registry import served_on_this_machine
 from personalclaw.llm.stream_end import until_terminal
 from personalclaw.llm.tool_use import uses_tools
+from personalclaw.net.client import refusal_in
 from personalclaw.turn_streams import closing_stream
 
 if TYPE_CHECKING:
@@ -843,15 +844,20 @@ class ModelCallGuard(ModelProvider):
                 if not recorded:
                     _mark(call, ABANDONED)
                 raise
-            except Exception:
+            except Exception as exc:
                 # A cut-off answer lands here too (`AnswerCutOff`): the stream ended before its
                 # `EVENT_COMPLETE`, so nothing recorded the call, and it failed.
                 if not recorded:
-                    self._record_failure()
+                    # A request the owner's Network egress settings refused never reached the
+                    # provider, so its breaker is not told: it would read her setting as the
+                    # provider failing, and keep refusing once she changed it.
+                    refused = refusal_in(exc) is not None
+                    if not refused:
+                        self._record_failure()
                     self._audit(
                         audit_id,
                         1,
-                        FailureMode.PROVIDER_ERROR,
+                        FailureMode.EGRESS_REFUSED if refused else FailureMode.PROVIDER_ERROR,
                         now_ms() - started,
                         tokens_in,
                         tokens_out,

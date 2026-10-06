@@ -273,6 +273,7 @@ class _HeldSdkStream:
 
         fake = types.ModuleType("anthropic")
         fake.AsyncAnthropic = AsyncAnthropic  # type: ignore[attr-defined]
+        fake.AnthropicError = type("AnthropicError", (Exception,), {})  # type: ignore[attr-defined]
         return fake
 
 

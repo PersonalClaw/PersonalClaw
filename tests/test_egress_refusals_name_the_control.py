@@ -30,17 +30,39 @@ _SECURITY_PANEL = Path(__file__).resolve().parents[1] / "web/src/pages/settings/
 
 
 @pytest.mark.asyncio
-async def test_a_blocked_model_endpoint_names_allowed_hosts_and_the_host():
+async def test_a_denied_model_endpoint_names_denied_hosts_and_the_host():
+    """A model provider's own endpoint is the owner's, so her server on this computer needs no
+    entry in Allowed hosts; one she put on Denied hosts is refused in the words of that control."""
+    import json
+
+    from personalclaw.config.loader import config_dir
     from personalclaw.llm.catalog import ModelDiscoveryError, openai_compatible_discover_models
 
+    (config_dir() / "config.json").write_text(
+        json.dumps({"security": {"egress": {"deny_hosts": ["127.0.0.1"]}}}), encoding="utf-8"
+    )
     with pytest.raises(ModelDiscoveryError) as caught:
         await openai_compatible_discover_models("http://127.0.0.1:18907/v1", "fv-fake-key")
     said = str(caught.value)
+    assert f"127.0.0.1 is on Denied hosts in {EGRESS_SETTINGS}" in said, said
+    assert not _CONFIG_DIALECT.search(said), said
+
+
+def test_a_model_request_sent_on_to_this_computer_names_allowed_hosts_and_the_host():
+    """A request a model provider's client is sent to that is not its configured endpoint (a
+    redirect, an address its answer names) keeps to the public-only stance, and the refusal names
+    the narrow step: this one host in Allowed hosts, not the switch that opens every private
+    address."""
+    from personalclaw.net.guard import egress_refusal
+    from personalclaw.net.policy import provider_egress_policy
+
+    url = "http://127.0.0.1:18907/v1/models"
+    decision = evaluate(url, provider_egress_policy("https://models.example/v1"))
+    said = egress_refusal(url, decision)
+    assert not decision.allow
     assert "add 127.0.0.1 to Allowed hosts in Settings → Security → Network egress" in said, said
     assert "this computer (127.0.0.1)" in said, said
     assert not _CONFIG_DIALECT.search(said), said
-    # The narrow step, not the switch that opens every private address — an allow-list keeps
-    # the rest of the network unreachable.
     assert "private networks" not in said, said
 
 

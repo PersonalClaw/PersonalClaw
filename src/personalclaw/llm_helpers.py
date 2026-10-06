@@ -1556,11 +1556,17 @@ def _known_failure_sentence(exc: object, *, room_member: str = "") -> str | None
         request_exceeds_window_sentence,
     )
     from personalclaw.llm.registry import ProviderResolutionError
+    from personalclaw.net.http_clients import refusal_sentence
     from personalclaw.tool_providers.portable_schema import ToolSchemaRejected
 
     envelope = getattr(exc, "agent_error", None)
     if isinstance(envelope, AgentError) and envelope.code in ERROR_CODES:
         return envelope.sentence()
+    refused = refusal_sentence(exc if isinstance(exc, BaseException) else None)
+    if refused:
+        # The owner's Network egress settings refused the request before it was sent: the
+        # guard's sentence names what was not reached and the setting that decided it.
+        return refused
     if isinstance(exc, AcpTimeoutError):
         # An agent CLI did not answer within its turn's time limit — the one ending of its turn
         # that is a timeout (a stop, a refusal and a lost connection each say so themselves).

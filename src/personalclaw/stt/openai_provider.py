@@ -13,6 +13,8 @@ import logging
 import os
 
 from personalclaw.llm.registry import ProviderResolutionError, require_model
+from personalclaw.net.client import EgressBlocked
+from personalclaw.net.http_clients import http_client
 from personalclaw.providers.failure_copy import connectivity_guidance, sentence_with_detail
 from personalclaw.stt.provider import SttError, SttProvider
 
@@ -91,7 +93,17 @@ class OpenAISttProvider(SttProvider):
         base_url = self._endpoint or None
 
         async def _run() -> str:
-            client = openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
+            # The upload asks the egress guard first, under the owner's Network egress settings.
+            client = openai.AsyncOpenAI(
+                api_key=api_key,
+                base_url=base_url,
+                http_client=http_client(
+                    endpoint=base_url or "",
+                    model_provider=True,
+                    refused_as=openai.OpenAIError,
+                    follow_redirects=True,
+                ),
+            )
             try:
                 with open(audio_path, "rb") as fh:
                     kwargs: dict = {"model": model_id, "file": fh}
@@ -106,6 +118,9 @@ class OpenAISttProvider(SttProvider):
 
         try:
             return await asyncio.wait_for(_run(), timeout=_REMOTE_TIMEOUT_S)
+        except EgressBlocked as exc:
+            # The guard's own sentence: what was not reached, and the setting that decided it.
+            raise SttError(str(exc)) from exc
         except asyncio.TimeoutError as exc:
             logger.error("Remote STT timed out for provider %r", self._provider_name)
             raise SttError(

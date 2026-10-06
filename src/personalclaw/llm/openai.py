@@ -33,6 +33,7 @@ from personalclaw.llm.prompt_cache import PromptCache
 from personalclaw.llm.registry import CredentialMissing, require_model
 from personalclaw.llm.stream_end import until_terminal
 from personalclaw.llm.stream_tags import KIND_OUTSIDE, make_think_splitter
+from personalclaw.net.http_clients import http_client
 from personalclaw.turn_streams import closing_stream
 
 logger = logging.getLogger(__name__)
@@ -208,9 +209,22 @@ class OpenAIProvider(ModelProvider):
         self.context_window: int | None = _declared_window(
             self._extra_options.pop("context_window", None)
         )
+        # Every request the SDK sends (chat, its stream, embeddings) asks the egress guard first,
+        # each redirect hop included, under the owner's Network egress settings: a host on Denied
+        # hosts is never contacted. The agent's model is shared by every run, so no run's egress
+        # tier holds it. The client follows redirects as the SDK's own does, and a refusal is
+        # raised as an ``OpenAIError`` too, which the SDK treats as final, not as a failed send to
+        # retry.
         self._client: Any = openai.AsyncOpenAI(
             api_key=credential.secret,
             base_url=base_url,
+            http_client=http_client(
+                endpoint=base_url or "",
+                model_provider=True,
+                shared_by_every_run=True,
+                refused_as=openai.OpenAIError,
+                follow_redirects=True,
+            ),
         )
         self._history: list[dict[str, Any]] = []
         # ``None`` until the first usage report: before then this provider has no

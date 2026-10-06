@@ -83,12 +83,19 @@ CONTAINER_LOCALHOST_HINT = (
 def relayed_failure_copy(exc: BaseException, *, endpoint: str = "") -> str:
     """The user-facing text for relaying a provider-operation failure.
 
-    Connectivity classes get their guidance sentence (naming ``endpoint`` when the
-    caller knows it); a program launch the network settings stopped, a model-discovery
-    failure and a ``ValueError`` carrying a message keep their own words (authored copy —
-    "model card missing 'name'" is meant for the user); anything else is an internal
-    crash whose text belongs in the log, so the wire gets :data:`UNEXPECTED_FAILURE_COPY`.
+    A request the owner's Network egress settings refused is said in the guard's sentence (what
+    was not reached, and the setting that decided it); connectivity classes get their guidance
+    sentence (naming ``endpoint`` when the caller knows it); a program launch the network settings
+    stopped, a model-discovery failure and a ``ValueError`` carrying a message keep their own
+    words (authored copy — "model card missing 'name'" is meant for the user); anything else is an
+    internal crash whose text belongs in the log, so the wire gets :data:`UNEXPECTED_FAILURE_COPY`.
     """
+    from personalclaw.net.http_clients import refusal_sentence
+
+    refused = refusal_sentence(exc)
+    if refused:
+        # The owner's Network egress settings refused the request before it was sent.
+        return refused
     guidance = connectivity_guidance(exc, endpoint=endpoint)
     if guidance is not None:
         return guidance

@@ -71,7 +71,9 @@ class _FakeChat:
 
 
 class _FakeAsyncOpenAI:
-    def __init__(self, *, api_key: str, base_url: str | None = None) -> None:
+    def __init__(
+        self, *, api_key: str, base_url: str | None = None, http_client: object = None
+    ) -> None:
         self.api_key = api_key
         self.base_url = base_url
 
@@ -89,6 +91,7 @@ def fake_openai_module(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     """
     fake = types.ModuleType("openai")
     fake.AsyncOpenAI = _FakeAsyncOpenAI  # type: ignore[attr-defined]
+    fake.OpenAIError = type("OpenAIError", (Exception,), {})  # type: ignore[attr-defined]
 
     class _BadRequestError(Exception):
         pass
@@ -135,7 +138,9 @@ class _FakeMessages:
 
 
 class _FakeAsyncAnthropic:
-    def __init__(self, *, api_key: str, base_url: str | None = None) -> None:
+    def __init__(
+        self, *, api_key: str, base_url: str | None = None, http_client: object = None
+    ) -> None:
         self.messages = _FakeMessages()
 
     async def close(self) -> None:  # pragma: no cover - not driven here
@@ -146,6 +151,7 @@ class _FakeAsyncAnthropic:
 def fake_anthropic_module(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     fake = types.ModuleType("anthropic")
     fake.AsyncAnthropic = _FakeAsyncAnthropic  # type: ignore[attr-defined]
+    fake.AnthropicError = type("AnthropicError", (Exception,), {})  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "anthropic", fake)
     return fake
 

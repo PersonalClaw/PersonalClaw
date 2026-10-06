@@ -119,7 +119,9 @@ class _FakeChat:
 class _FakeAsyncOpenAI:
     constructed: list[dict[str, Any]] = []
 
-    def __init__(self, *, api_key: str, base_url: str | None = None) -> None:
+    def __init__(
+        self, *, api_key: str, base_url: str | None = None, http_client: object = None
+    ) -> None:
         type(self).constructed.append({"api_key": api_key, "base_url": base_url})
         self.api_key = api_key
         self.base_url = base_url
@@ -135,6 +137,7 @@ def fake_openai(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     """Install a fake ``openai`` module into ``sys.modules``."""
     fake = types.ModuleType("openai")
     fake.AsyncOpenAI = _FakeAsyncOpenAI  # type: ignore[attr-defined]
+    fake.OpenAIError = type("OpenAIError", (Exception,), {})  # type: ignore[attr-defined]
 
     class _BadRequestError(Exception):
         pass
@@ -187,7 +190,9 @@ class _FakeMessages:
 class _FakeAsyncAnthropic:
     constructed: list[dict[str, Any]] = []
 
-    def __init__(self, *, api_key: str, base_url: str | None = None) -> None:
+    def __init__(
+        self, *, api_key: str, base_url: str | None = None, http_client: object = None
+    ) -> None:
         type(self).constructed.append({"api_key": api_key, "base_url": base_url})
         self.api_key = api_key
         self.base_url = base_url
@@ -203,6 +208,7 @@ def fake_anthropic(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     """Install a fake ``anthropic`` module into ``sys.modules``."""
     fake = types.ModuleType("anthropic")
     fake.AsyncAnthropic = _FakeAsyncAnthropic  # type: ignore[attr-defined]
+    fake.AnthropicError = type("AnthropicError", (Exception,), {})  # type: ignore[attr-defined]
     _FakeAsyncAnthropic.constructed = []
     monkeypatch.setitem(sys.modules, "anthropic", fake)
     return fake

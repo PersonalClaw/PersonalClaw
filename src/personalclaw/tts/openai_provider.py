@@ -18,6 +18,8 @@ import tempfile
 from typing import Any
 
 from personalclaw.llm.registry import ProviderResolutionError, require_model
+from personalclaw.net.client import EgressBlocked
+from personalclaw.net.http_clients import http_client
 from personalclaw.tts.provider import TtsProvider
 
 logger = logging.getLogger(__name__)
@@ -111,7 +113,17 @@ class OpenAITtsProvider(TtsProvider):
             os.close(fd)
 
         async def _run() -> str | None:
-            client = openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
+            # The request asks the egress guard first, under the owner's Network egress settings.
+            client = openai.AsyncOpenAI(
+                api_key=api_key,
+                base_url=base_url,
+                http_client=http_client(
+                    endpoint=base_url or "",
+                    model_provider=True,
+                    refused_as=openai.OpenAIError,
+                    follow_redirects=True,
+                ),
+            )
             try:
                 kwargs: dict = {"model": model_id, "voice": persona, "input": text}
                 if speed and speed != 1.0:
@@ -136,6 +148,9 @@ class OpenAITtsProvider(TtsProvider):
             return result
         except asyncio.TimeoutError:
             logger.error("Remote TTS timed out for provider %r", self._provider_name)
+            return None
+        except EgressBlocked as exc:
+            logger.error("Remote TTS on %r refused: %s", self._provider_name, exc)
             return None
         except Exception:
             logger.exception("Remote TTS failed for provider %r", self._provider_name)

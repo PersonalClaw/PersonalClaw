@@ -167,7 +167,9 @@ class _Chat:
 
 
 class _AsyncOpenAI:
-    def __init__(self, *, api_key: str, base_url: str | None = None) -> None:
+    def __init__(
+        self, *, api_key: str, base_url: str | None = None, http_client: object = None
+    ) -> None:
         self.chat = _Chat(_Completions([]))
 
     async def close(self) -> None:
@@ -181,6 +183,7 @@ def fake_openai(monkeypatch: pytest.MonkeyPatch) -> None:
 
     fake = types.ModuleType("openai")
     fake.AsyncOpenAI = _AsyncOpenAI  # type: ignore[attr-defined]
+    fake.OpenAIError = type("OpenAIError", (Exception,), {})  # type: ignore[attr-defined]
 
     class _BadRequestError(Exception):
         pass

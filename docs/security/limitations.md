@@ -1066,6 +1066,17 @@ agent is told "egress is off for this run", and the refusal is in the audit log.
 no run (your own action in the app, such as a provider's Test or the Tools page's look at a server,
 or a background job) keeps to your Network egress settings alone.
 
+A model provider's requests ask the guard too, each one before it is sent, each redirect hop
+included: the chat and its stream, embeddings, the model list, transcription, speech, images and
+video, from a provider built into PersonalClaw or one a first-party app adds, sent through the
+HTTP clients `personalclaw.sdk.net` hands out with the guard inside them. A host on Denied hosts is never
+contacted: the turn fails in the sentence that names the host and the setting, and the refusal is
+in the audit log, as is each request let through. The agent's own model (its chat, its stream, its
+embeddings, its model list) is shared by every run, and a run whose tier is `off` still thinks with
+it, so those requests keep to your Network egress settings alone; a transcription, speech, an image
+or a video is a request the run makes, and keeps to its tier. The endpoint you set on a provider
+stays reachable on your own machine or network, since you configured it.
+
 A command the run starts is held to the tier where it is launched. It is a program of its own, and
 nothing it reaches asks the guard, so the OS sandbox it runs in (`sandbox.wrap_argv`) is what holds
 it: a bash or a script action, a loop's or a workflow's check, a workflow's setup and teardown
@@ -1097,14 +1108,23 @@ What the tier does not reach:
   worker threads carries the run (the gateway's `run_in_executor` pool and `asyncio.to_thread`
   alike), but a thread code starts by hand, or a pool of its own, does not: a request an app makes
   through the SDK from one is held to your Network egress settings alone.
-- **An app's own HTTP client, and what an MCP server reaches itself.** A request an app makes
-  without the SDK (§2) asks no guard. A remote MCP server's connection is asked about the server's
-  own host, the one host it reaches, but the server then reaches whatever it reaches, as a stdio
+- **An HTTP client an app builds itself, and what an MCP server reaches itself.** A request an app
+  sends without the SDK (§2), or with a client it built rather than one `personalclaw.sdk.net`
+  hands out, asks no guard. The first-party apps are held to the SDK's clients by a check in their
+  repository, except a chat channel's own connection to its service (Slack's, Telegram's,
+  Discord's), the Qdrant vector store's connection to its server, and a connection that is not
+  HTTP (a mail server's IMAP or SMTP, a WebSocket); an app from elsewhere is not held to them at
+  all. PersonalClaw's own push to your phone and its update check also send with clients of their
+  own, which your Denied hosts do not reach. A guarded client looks a host's name up again after
+  the guard did, so its connection is not held to the address the guard checked, and credentials
+  the AWS SDK reads from a cloud instance's metadata service are fetched by the AWS SDK's own
+  client, which asks no guard. A remote MCP server's connection is asked about the server's own
+  host, the one host it reaches, but the server then reaches whatever it reaches, as a stdio
   server, a program on this machine, does (§9). Once a connection is open (your own look on the
-  Tools page opened it, or a run its tier lets reach the server), any run is shown the server's tools
-  and only its calls are refused. A sign-in's renewal, which the connection sends on its own, keeps
-  to your settings alone, and the connection looks the server's name up again for itself, so it is
-  not held to the address the guard checked.
+  Tools page opened it, or a run its tier lets reach the server), any run is shown the server's
+  tools and only its calls are refused. A sign-in's renewal, which the connection sends on its
+  own, keeps to your settings alone, and the connection looks the server's name up again for
+  itself, so it is not held to the address the guard checked.
 - **What a page in the browser loads on its own.** Its images, scripts and frames are not asked of
   the guard; only the navigation is (`net.policy.BROWSE`), and so is a redirect the page takes,
   judged for the run that opened it.

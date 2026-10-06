@@ -49,13 +49,19 @@ class FailureMode(str, Enum):
     #: text or a tool call whose arguments read whole (:func:`answered_mode`); one that spent its
     #: whole cap before it wrote or called anything produced nothing, and reads as failed.
     OUTPUT_CAP = "output_cap"
+    #: The owner's Network egress settings refused the request before it was sent (the
+    #: provider's host is on Denied hosts, say): nothing reached the provider, so it is no
+    #: failure of the provider's, and the same request is refused again until the owner changes
+    #: the setting the refusal names.
+    EGRESS_REFUSED = "egress_refused"
 
 
 # Failure modes that must NEVER be auto-retried. Retrying an injection/secret-leak
 # lets a payload brute-force the scan; retrying an open breaker defeats the point
 # of the breaker (fail in microseconds during an outage instead of stacking
 # timeouts); retrying a budget-exceeded call would spend past the ceiling;
-# retrying a prompt too large to run asks for the same impossible room again.
+# retrying a prompt too large to run asks for the same impossible room again;
+# retrying a request the owner's network settings refused is refused again.
 NON_RETRYABLE: frozenset[FailureMode] = frozenset(
     {
         FailureMode.INJECTION_BLOCKED,
@@ -63,6 +69,7 @@ NON_RETRYABLE: frozenset[FailureMode] = frozenset(
         FailureMode.BUDGET_EXCEEDED,
         FailureMode.CIRCUIT_OPEN,
         FailureMode.PROMPT_TOO_LARGE,
+        FailureMode.EGRESS_REFUSED,
     }
 )
 

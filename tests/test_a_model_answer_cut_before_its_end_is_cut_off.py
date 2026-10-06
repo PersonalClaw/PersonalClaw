@@ -303,6 +303,7 @@ def _anthropic(monkeypatch, events: list) -> Any:
 
     sdk = types.ModuleType("anthropic")
     sdk.AsyncAnthropic = AsyncAnthropic  # type: ignore[attr-defined]
+    sdk.AnthropicError = type("AnthropicError", (Exception,), {})  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "anthropic", sdk)
     from personalclaw.llm.anthropic import AnthropicProvider
 

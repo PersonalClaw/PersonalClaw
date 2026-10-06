@@ -165,7 +165,9 @@ class FakeAnthropicSDK:
         sdk = self
 
         class AsyncAnthropic:
-            def __init__(self, *, api_key: str, base_url: str | None = None) -> None:
+            def __init__(
+                self, *, api_key: str, base_url: str | None = None, http_client: object = None
+            ) -> None:
                 sdk.clients.append({"api_key": api_key, "base_url": base_url})
                 self.messages = FakeMessages(sdk)
 
@@ -174,6 +176,7 @@ class FakeAnthropicSDK:
 
         fake = types.ModuleType("anthropic")
         fake.AsyncAnthropic = AsyncAnthropic  # type: ignore[attr-defined]
+        fake.AnthropicError = type("AnthropicError", (Exception,), {})  # type: ignore[attr-defined]
         return fake
 
 

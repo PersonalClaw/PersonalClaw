@@ -23,6 +23,7 @@ from personalclaw.sdk.features import (
     CORE_FEATURES,
     CUT_OFF_ANSWERS,
     DIGEST_REPLIES,
+    GUARDED_CLIENTS,
     GUARDED_DOWNLOAD,
     LINKS_NAME_THEIR_CHANNEL,
     MESSAGE_INSTRUCTIONS,
@@ -43,6 +44,7 @@ OFFERED_ONCE = {
     "closing-streams",
     "cut-off-answers",
     "digest-replies",
+    "guarded-clients",
     "guarded-download",
     "links-name-their-channel",
     "message-instructions",
@@ -63,6 +65,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
         "CORE_FEATURES",
         "CUT_OFF_ANSWERS",
         "DIGEST_REPLIES",
+        "GUARDED_CLIENTS",
         "GUARDED_DOWNLOAD",
         "LINKS_NAME_THEIR_CHANNEL",
         "MESSAGE_INSTRUCTIONS",
@@ -79,6 +82,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
     assert CLOSING_STREAMS == "closing-streams"
     assert CUT_OFF_ANSWERS == "cut-off-answers"
     assert DIGEST_REPLIES == "digest-replies"
+    assert GUARDED_CLIENTS == "guarded-clients"
     assert GUARDED_DOWNLOAD == "guarded-download"
     assert LINKS_NAME_THEIR_CHANNEL == "links-name-their-channel"
     assert MESSAGE_INSTRUCTIONS == "message-instructions"
@@ -164,6 +168,76 @@ def _approval_answers_hold() -> None:
     bare = {"tool": "write_file", "input": "", "purpose": "", "summary": ""}
     event.tool_meta = {APPROVAL_BRIEF_META_KEY: bare}
     assert offerable(approval_brief_for(event)) == composed
+
+
+def _guarded_clients_hold() -> None:
+    """Each guarded client asks the guard before a request is sent: with the source's host on
+    Denied hosts, the httpx clients and the aiohttp session are each refused and the source is
+    never contacted, and the guard a client library's own hook asks (``RequestGuard``) refuses the
+    same URL in the same words; with the host allowed, the clients reach it and the guard lets it
+    through."""
+    import asyncio
+    import http.server
+    import json
+    import threading
+
+    from personalclaw.config.loader import config_dir
+    from personalclaw.sdk.net import (
+        EgressBlocked,
+        RequestGuard,
+        http_client,
+        http_session,
+        sync_http_client,
+    )
+
+    asked: list[str] = []
+
+    class _Source(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 — http.server's name
+            asked.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Length", "5")
+            self.end_headers()
+            self.wfile.write(b"bytes")
+
+        def log_message(self, *_args: object) -> None:
+            pass
+
+    def _egress(**settings: list[str]) -> None:
+        (config_dir() / "config.json").write_text(
+            json.dumps({"security": {"egress": settings}}), encoding="utf-8"
+        )
+
+    async def _async_reads(url: str) -> list[bytes]:
+        async with http_client() as client:
+            first = (await client.get(url)).content
+        async with http_session() as session:
+            async with session.get(url) as resp:
+                second = await resp.read()
+        return [first, second]
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Source)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_address[1]}/file"
+    try:
+        _egress(deny_hosts=["127.0.0.1"])
+        with pytest.raises(EgressBlocked):
+            asyncio.run(_async_reads(url))
+        with pytest.raises(EgressBlocked) as refused, sync_http_client() as client:
+            client.get(url)
+        with pytest.raises(EgressBlocked) as asked_itself:
+            RequestGuard().ask(url)
+        assert str(asked_itself.value) == str(refused.value)
+        assert asked == [], "a refused source was contacted"
+        _egress(allow_hosts=["127.0.0.1"])
+        assert asyncio.run(_async_reads(url)) == [b"bytes", b"bytes"]
+        with sync_http_client() as client:
+            assert client.get(url).content == b"bytes"
+        assert RequestGuard().ask(url) is None
+        assert asked == ["/file", "/file", "/file"]
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def _guarded_download_holds() -> None:
@@ -742,6 +816,7 @@ WITNESSES = {
     CLOSING_STREAMS: _closing_streams_hold,
     CUT_OFF_ANSWERS: _cut_off_answers_hold,
     DIGEST_REPLIES: _digest_replies_hold,
+    GUARDED_CLIENTS: _guarded_clients_hold,
     GUARDED_DOWNLOAD: _guarded_download_holds,
     LINKS_NAME_THEIR_CHANNEL: _links_name_their_channel_holds,
     MESSAGE_INSTRUCTIONS: _message_instructions_hold,

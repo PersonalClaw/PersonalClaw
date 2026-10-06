@@ -34,7 +34,9 @@ class _FakeAsyncAnthropic:
     builds a real HTTP/SSL client. Records the resolved api_key/base_url, which is
     exactly what the credential-routing tests assert on (``prov._client.api_key``)."""
 
-    def __init__(self, *, api_key: str, base_url: str | None = None) -> None:
+    def __init__(
+        self, *, api_key: str, base_url: str | None = None, http_client: object = None
+    ) -> None:
         self.api_key = api_key
         self.base_url = base_url
         self.messages = types.SimpleNamespace()
@@ -55,6 +57,7 @@ def _fake_anthropic(monkeypatch: pytest.MonkeyPatch) -> None:
     replaces the client cleanly."""
     fake = types.ModuleType("anthropic")
     fake.AsyncAnthropic = _FakeAsyncAnthropic  # type: ignore[attr-defined]
+    fake.AnthropicError = type("AnthropicError", (Exception,), {})  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "anthropic", fake)
 
 

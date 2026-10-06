@@ -34,6 +34,11 @@ message before its own turn (``services.answer_channel_reply``), so the owner's 
 Morning triage digest that DM received is answered as the digest's card answers it. A channel app
 that offers it declares it.
 
+``GUARDED_CLIENTS``: an app sends its requests with HTTP clients the egress guard is inside
+(``personalclaw.sdk.net``'s ``http_client``, ``sync_http_client`` and ``http_session``), each
+asking the guard about every request it sends, or asks the guard itself (``RequestGuard``) from
+its own client library's hook before each request. An app that uses one declares it.
+
 ``GUARDED_DOWNLOAD``: a download streams through the egress guard
 (``personalclaw.sdk.net.open_url``). An app that downloads with it declares it.
 
@@ -86,6 +91,7 @@ from personalclaw.apps.core_features import (
     CORE_FEATURES,
     CUT_OFF_ANSWERS,
     DIGEST_REPLIES,
+    GUARDED_CLIENTS,
     GUARDED_DOWNLOAD,
     LINKS_NAME_THEIR_CHANNEL,
     MESSAGE_INSTRUCTIONS,
@@ -105,6 +111,7 @@ __all__ = [
     "CORE_FEATURES",
     "CUT_OFF_ANSWERS",
     "DIGEST_REPLIES",
+    "GUARDED_CLIENTS",
     "GUARDED_DOWNLOAD",
     "LINKS_NAME_THEIR_CHANNEL",
     "MESSAGE_INSTRUCTIONS",

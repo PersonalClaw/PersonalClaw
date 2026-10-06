@@ -92,90 +92,55 @@ class _Endpoint:
         self._thread.join(timeout=5)
 
 
-@pytest.fixture()
-def allow_loopback_egress(monkeypatch: pytest.MonkeyPatch):
-    """Discovery against a loopback endpoint, as an operator who set
-    ``security.egress.allow_private`` sees it.
-
-    Only the POLICY is substituted, and only in the one direction an operator can already
-    take themselves. ``net.fetch``, ``guard.evaluate``, host classification, IP pinning and
-    the redirect re-check all still run for real — the point of driving a real socket.
-    """
-    from personalclaw.net import CONNECTOR
-
-    monkeypatch.setattr(
-        "personalclaw.sdk.net.egress_policy_for",
-        lambda base: CONNECTOR.with_overrides(allow_private=True),
-    )
-
-
-#: The endpoint the blocked-host case is driven against. Port 9 (discard) on loopback, so a
-#: guard that WRONGLY permits it fails on connection instead of reaching a listener — and named
-#: at module scope because the fixture below asserts the guard refuses THIS url before the test
-#: drives it. Two copies of the string would let the assertion and the drive disagree.
-_BLOCKED_ENDPOINT = "http://127.0.0.1:9/v1"
-_BLOCKED_MODELS_URL = f"{_BLOCKED_ENDPOINT}/models"
+#: The endpoint the denied-host case is driven against. Port 9 (discard) on loopback, so a guard
+#: that WRONGLY permits it fails on connection instead of reaching a listener — and named at module
+#: scope because the fixture below asserts the guard refuses THIS url before the test drives it.
+#: Two copies of the string would let the assertion and the drive disagree.
+_DENIED_ENDPOINT = "http://127.0.0.1:9/v1"
+_DENIED_MODELS_URL = f"{_DENIED_ENDPOINT}/models"
 
 
 @pytest.fixture()
-def default_egress_posture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """The mirror of ``allow_loopback_egress``: pin the DEFAULT public-only posture.
+def denied_endpoint(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The owner has put the endpoint's host on Denied hosts, and the seams discovery reads are
+    the real ones.
 
-    The default IS the code's real default — ``CONNECTOR`` carries ``allow_private=False``
-    (``net/policy.py``) and ``guard.evaluate`` refuses a non-public address for a policy that
-    neither allow-lists the host nor opts into private ranges (``net/guard.py``). So the
-    assertion in the test below is right about the contract. What it did NOT own was its own
-    premise, in TWO places rather than one, and each produced the same ambiguous red (#2938:
-    six matrix shards at once on ``main``, three PRs, passing in isolation, surviving a re-run):
-
-    1. **The config.** ``egress_policy_for`` layers ``security.egress`` over the base profile
-       by calling ``AppConfig.load()`` at call time, so "the default posture" was a fact about
-       whichever config home the process pointed at.
-    2. **The seams themselves.** ``openai_compatible_discover_models`` resolves
-       ``egress_policy_for``/``CONNECTOR``/``fetch`` off ``personalclaw.sdk.net`` *at call
-       time* (a deliberate late import — it is what the sibling ``allow_loopback_egress``
-       fixture substitutes), and ``net.client`` resolves ``evaluate`` off its own module
-       namespace. Pinning the config home pins what the real function READS; it does not pin
-       WHICH function is there. A worker-mate that leaves any of those four names permissive —
-       ``allow_loopback_egress``'s own lambda and ``test_model_catalog_seam``'s sentinel both
-       waive the loopback block — turns this test's refusal into a real socket attempt, which
-       is exactly the ``ClientConnectorError`` this issue kept reporting.
-
-    So own both. Every seam is re-pinned to the REAL production object, never a stub: the real
-    ``egress_policy_for``, the real config read, the real ``guard.evaluate``, the real
-    ``net.client.fetch`` and a real socket all still run, so the test is end-to-end exactly as
-    before — it just no longer asks the process what "default" means. Pinning to the real
-    object is a no-op in a clean process and a repair in a polluted one.
-
-    Then assert the premise twice over, so a violation is named HERE instead of 20 lines later
-    as a transport error: the RESOLVED posture (not merely the config it was read from) must be
-    public-only, and the guard must already refuse the url under test — no socket is reachable
-    from this fixture's state unless the guard itself was bypassed.
+    Discovery's endpoint is the owner's own, so it is reachable on her machine or network without
+    an entry in Allowed hosts (``net.policy.provider_egress_policy``); what refuses it is her Denied
+    hosts. Two premises are owned here, as #2938 taught: the config home (the deny list is read
+    from it at call time), and the call-time seams themselves (``provider_egress_policy`` and
+    ``fetch`` are resolved when discovery runs, and ``net.client`` resolves ``evaluate`` off its own
+    module), each re-pinned to the REAL production object, so a worker-mate that left one
+    permissive cannot turn this refusal into a socket attempt. Then the premise is asserted: the
+    guard must already refuse the url under test.
     """
-    home = tmp_path / "egress-default-home"
+    home = tmp_path / "egress-denied-home"
     home.mkdir()
+    (home / "config.json").write_text(
+        json.dumps({"security": {"egress": {"deny_hosts": ["127.0.0.1"]}}}), encoding="utf-8"
+    )
     monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
 
     from personalclaw.net import client as net_client
     from personalclaw.net import guard as net_guard
     from personalclaw.net import policy as net_policy
 
-    monkeypatch.setattr("personalclaw.sdk.net.egress_policy_for", net_policy.egress_policy_for)
-    monkeypatch.setattr("personalclaw.sdk.net.CONNECTOR", net_policy.CONNECTOR)
+    monkeypatch.setattr(
+        "personalclaw.net.policy.provider_egress_policy", net_policy.provider_egress_policy
+    )
     monkeypatch.setattr("personalclaw.sdk.net.fetch", net_client.fetch)
     monkeypatch.setattr("personalclaw.net.client.evaluate", net_guard.evaluate)
 
-    resolved = net_policy.egress_policy_for(net_policy.CONNECTOR)
-    assert not resolved.allow_private and not resolved.allow_hosts, (
-        "the point of this fixture is a genuinely default egress posture, resolved through "
-        "the seam the call site uses; got "
-        f"allow_private={resolved.allow_private} allow_hosts={resolved.allow_hosts}"
+    resolved = net_policy.provider_egress_policy(_DENIED_ENDPOINT)
+    assert "127.0.0.1" in resolved.deny_hosts, (
+        "the point of this fixture is the owner's Denied hosts, resolved through the seam the "
+        f"call site uses; got deny_hosts={resolved.deny_hosts}"
     )
-    decision = net_guard.evaluate(_BLOCKED_MODELS_URL, resolved)
-    assert not decision.allow, (
-        f"the guard must already refuse {_BLOCKED_MODELS_URL} under the default posture — it "
-        f"allowed it, so the test below would dial a socket instead of exercising the block "
-        f"(policy={resolved.name!r} pinned_ips={decision.pinned_ips})"
+    decision = net_guard.evaluate(_DENIED_MODELS_URL, resolved)
+    assert not decision.allow and decision.category == "deny_list", (
+        f"the guard must already refuse {_DENIED_MODELS_URL} as denied — it said "
+        f"allow={decision.allow} category={decision.category!r}, so the test below would dial a "
+        "socket instead of exercising the refusal"
     )
 
 
@@ -205,7 +170,7 @@ _BASE_SHAPES = [
     ("case", "served_path", "suffix"), _BASE_SHAPES, ids=[r[0] for r in _BASE_SHAPES]
 )
 def test_every_openai_compatible_base_shape_discovers_its_models(
-    case: str, served_path: str, suffix: str, allow_loopback_egress: None
+    case: str, served_path: str, suffix: str
 ) -> None:
     # A case-unique id: a hardcoded or constant model list cannot satisfy all six rows.
     model_id = f"Model-For-{case.replace(' ', '-').replace('/', '-')}"
@@ -271,7 +236,7 @@ _FAILURE_SHAPES = [
     ("case", "status", "body", "fragments"), _FAILURE_SHAPES, ids=[r[0] for r in _FAILURE_SHAPES]
 )
 def test_a_discovery_failure_says_what_happened_and_what_to_do(
-    case: str, status: int, body: str, fragments: tuple[str, ...], allow_loopback_egress: None
+    case: str, status: int, body: str, fragments: tuple[str, ...]
 ) -> None:
     srv = _Endpoint("/v1/models", body, status=status)
     try:
@@ -290,7 +255,7 @@ def test_a_discovery_failure_says_what_happened_and_what_to_do(
     assert "Traceback" not in msg
 
 
-def test_a_wrong_base_url_names_the_404_and_the_base_url(allow_loopback_egress: None) -> None:
+def test_a_wrong_base_url_names_the_404_and_the_base_url() -> None:
     """#955's z.ai symptom, as it looked BEFORE the join was fixed: a 404 must read as a
     404 with the URL that produced it, not as an empty catalog."""
     srv = _Endpoint("/v1/models", '{"object":"list","data":[{"id":"served"}]}')
@@ -303,7 +268,7 @@ def test_a_wrong_base_url_names_the_404_and_the_base_url(allow_loopback_egress: 
     assert "404" in str(caught.value) and "/api/v9/nope/models" in str(caught.value)
 
 
-def test_an_unreachable_endpoint_is_not_an_empty_catalog(allow_loopback_egress: None) -> None:
+def test_an_unreachable_endpoint_is_not_an_empty_catalog() -> None:
     # A loopback port this test bound and let go: nothing listens there, so this exercises the
     # transport-failure arm without a network call leaving the machine, and without reaching
     # whatever the machine itself may serve on a fixed port.
@@ -316,26 +281,22 @@ def test_an_unreachable_endpoint_is_not_an_empty_catalog(allow_loopback_egress: 
     assert caught.value.status is None, "no HTTP status was ever received"
 
 
-def test_a_blocked_host_says_how_to_allow_list_it(default_egress_posture: None) -> None:
-    """No PERMISSIVE egress fixture here on purpose: the default public-only posture must
-    refuse a loopback endpoint with an instruction, not with an empty list.
-
-    ``default_egress_posture`` is not a substitute for that default — it pins it. The real
-    ``egress_policy_for``, config read, ``guard.evaluate`` and ``net.client.fetch`` all still
-    run; the fixture only makes the config home AND the four call-time seams this test's own,
-    so no worker-mate gets to decide what "default" means here (#2938)."""
+def test_a_denied_endpoint_says_so_before_anything_is_sent(denied_endpoint: None) -> None:
+    """The owner's Denied hosts refuse discovery as they refuse the provider's chat: before any
+    socket is dialled, in the sentence that names the setting and the host, not with an empty
+    list."""
     with pytest.raises(ModelDiscoveryError) as caught:
-        _run(openai_compatible_discover_models(_BLOCKED_ENDPOINT, "fake-key-test"))
+        _run(openai_compatible_discover_models(_DENIED_ENDPOINT, "fake-key-test"))
     msg = str(caught.value)
-    assert "network settings refused" in msg, (
-        "the default posture must refuse a loopback endpoint BEFORE any socket is dialled; "
-        f"got {msg!r} — a transport error here means the guard was bypassed, not that the "
-        "host was blocked"
+    assert msg == (
+        f"{_DENIED_MODELS_URL} was not reached: 127.0.0.1 is on Denied hosts in "
+        "Settings → Security → Network egress."
+    ), (
+        f"got {msg!r} — a transport error here means the guard was bypassed, not that the host "
+        "was refused"
     )
-    # The instruction names the control that lifts it, for this one host.
-    assert "to Allowed hosts in Settings → Security → Network egress" in msg, msg
     # A refusal happens pre-flight, so no HTTP status was ever received — the discriminator
-    # between "blocked" and "reached something that answered".
+    # between "refused" and "reached something that answered".
     assert caught.value.status is None
 
 
@@ -348,7 +309,7 @@ def test_an_unconfigured_provider_says_so_rather_than_listing_nothing() -> None:
 # ── An endpoint that genuinely lists nothing is NOT a failure ─────────────────
 
 
-def test_an_empty_but_valid_list_is_an_honest_zero(allow_loopback_egress: None) -> None:
+def test_an_empty_but_valid_list_is_an_honest_zero() -> None:
     """The one case that must stay ``[]``: the endpoint answered, correctly, with no
     models. Vacuity floor for the whole failure half — an implementation that raised on
     everything, or that returned a non-empty list unconditionally, fails here."""
@@ -360,9 +321,7 @@ def test_an_empty_but_valid_list_is_an_honest_zero(allow_loopback_egress: None) 
         srv.close()
 
 
-def test_unknown_fields_and_extra_envelope_keys_are_ignored_not_fatal(
-    allow_loopback_egress: None,
-) -> None:
+def test_unknown_fields_and_extra_envelope_keys_are_ignored_not_fatal() -> None:
     """A compliant server may carry vendor extras (MiniMax's ``base_resp``, per-model
     ``created``/``permission``/anything). None of them may cost a model."""
     srv = _Endpoint(
@@ -399,7 +358,7 @@ def test_unknown_fields_and_extra_envelope_keys_are_ignored_not_fatal(
 
 
 def test_the_fail_soft_wrapper_returns_empty_and_logs_at_warning(
-    allow_loopback_egress: None, caplog: pytest.LogCaptureFixture
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """``openai_compatible_list_models`` keeps its ``[]``-on-failure contract for the
     callers that need it (``OpenAIProvider.start``'s default-model resolution), but the
@@ -419,9 +378,7 @@ def test_the_fail_soft_wrapper_returns_empty_and_logs_at_warning(
     assert "401" in logged and "/v1/models" in logged
 
 
-def test_the_fail_soft_wrapper_logs_nothing_on_success(
-    allow_loopback_egress: None, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_the_fail_soft_wrapper_logs_nothing_on_success(caplog: pytest.LogCaptureFixture) -> None:
     """The floor under the previous test: WARNING means something went wrong. A healthy
     discovery that also warned would train the user to ignore the line."""
     srv = _Endpoint("/v1/models", '{"object":"list","data":[{"id":"fine"}]}')
@@ -456,9 +413,7 @@ def _byo_catalog(endpoint: str, *, default_model: str = "", fallback: tuple = ()
     )
 
 
-def test_a_byo_provider_with_nothing_to_fall_back_on_raises_instead_of_listing_zero(
-    allow_loopback_egress: None,
-) -> None:
+def test_a_byo_provider_with_nothing_to_fall_back_on_raises_instead_of_listing_zero() -> None:
     """The #955 headline. ``/api/model-providers/{name}/models``,
     ``/api/models/available`` and ``/api/models/chat`` each already relay a RAISED
     discovery failure onto the provider row and swallow a returned ``[]``, so for the
@@ -474,7 +429,7 @@ def test_a_byo_provider_with_nothing_to_fall_back_on_raises_instead_of_listing_z
 
 
 def test_a_curated_or_configured_fallback_still_wins_over_raising(
-    allow_loopback_egress: None, caplog: pytest.LogCaptureFixture
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """An empty picker is worse than a stale one: when the instance HAS something to offer
     (a configured Default Model — #955's own workaround — or a branded app's curated list)
@@ -493,9 +448,7 @@ def test_a_curated_or_configured_fallback_still_wins_over_raising(
 
 
 @pytest.mark.parametrize("status", [401, 403])
-def test_a_rejected_key_raises_even_with_a_fallback_to_offer(
-    allow_loopback_egress: None, status: int
-) -> None:
+def test_a_rejected_key_raises_even_with_a_fallback_to_offer(status: int) -> None:
     """A rejected key is not a stale list: every model in the fallback would fail its first
     turn with the same refusal. Settings → Models offered ten Claude models from an instance
     whose key Anthropic had rejected — the fallback, standing in for a list the vendor had
@@ -515,9 +468,7 @@ def test_a_rejected_key_raises_even_with_a_fallback_to_offer(
     assert caught.value.rejected_credential
 
 
-def test_a_reachable_endpoint_beats_the_configured_default_model(
-    allow_loopback_egress: None,
-) -> None:
+def test_a_reachable_endpoint_beats_the_configured_default_model() -> None:
     """The floor under the previous test: the fallback is a degradation, not a short
     circuit. Live discovery, when it works, is what the picker shows."""
     srv = _Endpoint("/v1/models", '{"object":"list","data":[{"id":"live-a"},{"id":"live-b"}]}')
@@ -528,9 +479,7 @@ def test_a_reachable_endpoint_beats_the_configured_default_model(
     assert [m.id for m in got] == ["live-a", "live-b"]
 
 
-def test_the_zai_base_shape_reaches_the_provider_row_end_to_end(
-    allow_loopback_egress: None,
-) -> None:
+def test_the_zai_base_shape_reaches_the_provider_row_end_to_end() -> None:
     """#955's z.ai row, driven through the app's own catalog rather than the raw helper:
     eight models on the wire, eight models on the provider row."""
     ids = [f"glm-4.{n}" for n in range(8)]
@@ -555,7 +504,7 @@ def test_the_zai_base_shape_reaches_the_provider_row_end_to_end(
     ],
 )
 def test_test_connection_names_the_cause_instead_of_one_generic_sentence(
-    case: str, status: int, body: str, fragment: str, allow_loopback_egress: None
+    case: str, status: int, body: str, fragment: str
 ) -> None:
     """Settings → "Test connection" printed "No models available (check key/endpoint)" for
     every one of these. Vacuity floor: each row demands its OWN fragment, so a single
@@ -569,9 +518,7 @@ def test_test_connection_names_the_cause_instead_of_one_generic_sentence(
     assert fragment in res.detail, f"{case}: want {fragment!r} in {res.detail!r}"
 
 
-def test_test_connection_reports_a_reachable_endpoint_that_lists_nothing_honestly(
-    allow_loopback_egress: None,
-) -> None:
+def test_test_connection_reports_a_reachable_endpoint_that_lists_nothing_honestly() -> None:
     srv = _Endpoint("/v1/models", '{"object":"list","data":[]}')
     try:
         res = _run(_byo_catalog(f"{srv.base}/v1").test_connection())
@@ -581,9 +528,7 @@ def test_test_connection_reports_a_reachable_endpoint_that_lists_nothing_honestl
     assert "listed no models" in res.detail and "Default Model" in res.detail
 
 
-def test_test_connection_does_not_credit_a_fallback_it_never_reached(
-    allow_loopback_egress: None,
-) -> None:
+def test_test_connection_does_not_credit_a_fallback_it_never_reached() -> None:
     """A connectivity probe that counted the curated list would answer "connected, 2
     models" for an endpoint it never reached — which is how #955's instances came to read
     ``Configured`` / ``credential_status: ok`` while contributing nothing."""
@@ -598,9 +543,7 @@ def test_test_connection_does_not_credit_a_fallback_it_never_reached(
     assert "401" in res.detail
 
 
-def test_test_connection_still_succeeds_on_a_healthy_endpoint(
-    allow_loopback_egress: None,
-) -> None:
+def test_test_connection_still_succeeds_on_a_healthy_endpoint() -> None:
     """The floor under every failure row above: a working endpoint must still pass."""
     srv = _Endpoint("/v1/models", '{"object":"list","data":[{"id":"a"},{"id":"b"}]}')
     try:
