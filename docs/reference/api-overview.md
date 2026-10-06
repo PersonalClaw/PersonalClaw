@@ -120,6 +120,11 @@ routes all refuse it outright. A route that refuses an app token says so in its 
   predate that convention and return their own shapes; the honest rule is to branch on
   `code` where it is present and on the HTTP status otherwise, and not to assume a single
   envelope across the whole surface.
+- **A fault says whose it is.** A request a route cannot read — a body that is not JSON or
+  not an object, a number that is not one, a field of the wrong type — answers
+  `400 bad_request`. A fault inside PersonalClaw's own code, or an app's, while it answers is
+  `500 internal_error`, which finds no fault in the request; the gateway log keeps the
+  traceback.
 - **A boolean is the JSON `true` or `false`.** A request field that is a switch or a consent
   takes the real boolean and nothing else: the text `"false"`, a number, `null` or any other
   value is refused with `400 field_not_a_boolean`, whose message names the field, and nothing is

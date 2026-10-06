@@ -26,8 +26,23 @@ a list, ``TypeError`` from a coercion), or ``.strip()`` on a non-string scalar. 
 codebase already answers this family ``400`` wherever a handler happened to guard it
 (see ``tests/test_gateway_4xx_not_500.py``); this makes 400 the default for the routes
 that did not. The raw exception is logged, never returned: the client gets the stable
-envelope and its generic sentence, and the traceback stays in ``gateway.log`` — the
-current behavior leaks the internal fault to the client, this one does not.
+envelope and its generic sentence.
+
+**Her request's, or PersonalClaw failing.** The same types are also what PersonalClaw's own
+code raises when it breaks, and read by type alone a broken product blamed her request:
+deactivating an app once torch was loaded raised a ``TypeError`` four calls beneath the route,
+in the scan of the loaded modules, and the Apps page said the request was malformed. So the
+type is not enough, and where it was raised decides:
+
+* a ``TypeError`` or ``AttributeError`` is her request's only when it was raised while the route
+  read the request: in the route's own code, the request reader
+  (:mod:`personalclaw.request_validation`), or a library they called on it (aiohttp reading the
+  body, ``json`` decoding it), with nothing of PersonalClaw's own code or an app's running
+  beneath the route. Raised beneath it, it is PersonalClaw failing: ``500 internal_error``,
+  which says so, logged at ERROR with its traceback.
+* a ``ValueError`` is a value that was refused, wherever it was raised: that is how the
+  product's own code refuses one (a time zone that is not one, a name a store will not take,
+  the dozens of refusals that subclass it), so it stays her request's ``400``.
 
 **A store file that could not be read** is answered here too, once for every route:
 ``record_files.Unreadable`` (a ``ValueError``, so it is caught before the fault family) means a
@@ -66,23 +81,34 @@ unchanged, because a JSON envelope is the wrong answer for a browser and this cl
 **Placement.** Installed just OUTSIDE ``invalid_id_middleware`` in ``server.py``'s
 explicit ordering, so ``invalid_id`` (which maps ``UnsafeRecordId`` — not a
 ``ValueError`` subclass — to its own ``invalid_id`` code) still runs closest to the
-handler and this gate never shadows it. It reuses the already-registered ``bad_request``
-wire code, so no new code is minted and the append-only registry rail is untouched.
+handler and this gate never shadows it. Its codes are ``bad_request`` and ``internal_error``,
+both in the append-only registry.
 """
 
 from __future__ import annotations
 
+import functools
+import inspect
 import logging
+import os
+import traceback
+import types
 from typing import Any, Awaitable, Callable
 
 from aiohttp import web
 
-from personalclaw import record_files
+from personalclaw import app_code, record_files, request_validation
 from personalclaw.durability.home_paths import LinkInTheWay
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import RequestValidationError
 
 logger = logging.getLogger(__name__)
+
+#: Where PersonalClaw's own code is (the package folder, with a trailing separator), as its
+#: frames name their files.
+_PACKAGE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "")
+#: The one reader of request bodies and fields: its frames read her request, as the route's do.
+_REQUEST_READER = request_validation.__file__
 
 
 def request_boundary_middleware() -> Any:
@@ -146,10 +172,22 @@ def request_boundary_middleware() -> Any:
             # a browser. Off /api the fault propagates unchanged (this class is /api-only).
             if not request.path.startswith("/api/"):
                 raise
+            if not isinstance(exc, ValueError) and not _raised_reading_the_request(exc, request):
+                # PersonalClaw's own code, or an app's, broke beneath the route: a 500 that says
+                # the product failed, and the traceback for whoever reads the log.
+                logger.error(
+                    "PersonalClaw failed answering %s %s: %s: %s",
+                    request.method,
+                    request.path,
+                    type(exc).__name__,
+                    exc,
+                    exc_info=exc,
+                )
+                return json_error("internal_error", status=500)
             # The unguarded request-shape fault family (#2861/#2855/#554). WARNING, not
-            # DEBUG: if this ever masks a genuine bug of one of these types, the log line
-            # naming the route and the exception is how it is found. The message is NOT
-            # returned to the client — only the stable envelope and its generic sentence.
+            # DEBUG: the log line naming the route and the exception is how a fault read as
+            # hers is found. The message is NOT returned to the client — only the stable
+            # envelope and its generic sentence.
             logger.warning(
                 "request-shape fault on %s %s: %s: %s",
                 request.method,
@@ -161,3 +199,41 @@ def request_boundary_middleware() -> Any:
 
     _mw._is_request_boundary_gate = True  # type: ignore[attr-defined]
     return _mw
+
+
+def _raised_reading_the_request(exc: BaseException, request: web.Request) -> bool:
+    """Whether *exc* was raised while the route read the request.
+
+    From the route's own frame inward, every frame must be the route's own code, the request
+    reader's, or a library's (aiohttp, ``json``, the standard library): a frame of PersonalClaw's
+    own code or of an app's means the product was at work, and the fault is its own. A route
+    whose code cannot be found is not one a fault can be pinned on.
+    """
+    try:
+        route = _route_file(request)
+        files = [frame.f_code.co_filename for frame, _line in traceback.walk_tb(exc.__traceback__)]
+        if route is None or route not in files:
+            return False
+        return not any(_products(path, route) for path in files[files.index(route) :])
+    except Exception:  # noqa: BLE001 — a fault that cannot be traced is not pinned on her request
+        logger.debug(
+            "could not trace a fault on %s %s", request.method, request.path, exc_info=True
+        )
+        return False
+
+
+def _route_file(request: web.Request) -> str | None:
+    """The file the matched route's handler is written in, through any decorator around it."""
+    handler: Any = request.match_info.handler
+    while isinstance(handler, functools.partial):
+        handler = handler.func
+    handler = inspect.unwrap(getattr(handler, "__func__", handler))
+    code = getattr(handler, "__code__", None)
+    return code.co_filename if isinstance(code, types.CodeType) else None
+
+
+def _products(path: str, route: str) -> bool:
+    """Whether a frame in *path* is PersonalClaw's own code or an app's, not reading the request."""
+    if path in (route, _REQUEST_READER):
+        return False
+    return path.startswith(_PACKAGE) or app_code.loaded_app(path) is not None

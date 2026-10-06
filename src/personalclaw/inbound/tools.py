@@ -27,6 +27,14 @@ logger = logging.getLogger(__name__)
 ToolHandler = Callable[[dict, Any], Awaitable[str]]
 
 
+class UnknownTool(LookupError):
+    """The surface offers no tool of that name.
+
+    Its own type, not ``KeyError``: a ``KeyError`` a tool's own code raises is that tool failing,
+    and read as this it told the caller the tool did not exist.
+    """
+
+
 @dataclass(frozen=True)
 class ToolSpec:
     """One inbound tool: its schema for `tools/list` and its read-only handler."""
@@ -489,8 +497,8 @@ def list_tools() -> list[dict]:
 async def call_tool(name: str, arguments: dict, state: Any, client_id: str = "") -> dict:
     """Dispatch one tool call.
 
-    Raises ``KeyError`` for an unknown tool and ``ValueError`` for bad arguments,
-    which the transport maps to the corresponding JSON-RPC errors. The result is
+    Raises :class:`UnknownTool` for a name the surface does not offer and ``ValueError`` for
+    bad arguments, which the transport maps to the corresponding JSON-RPC errors. The result is
     wrapped HERE rather than in each handler, so fencing cannot be forgotten.
 
     ``client_id`` rides through to the fence attribution so the provenance names the
@@ -498,6 +506,6 @@ async def call_tool(name: str, arguments: dict, state: Any, client_id: str = "")
     """
     spec = TOOLS.get(name)
     if spec is None or spec.handler is None:
-        raise KeyError(name)
+        raise UnknownTool(name)
     text = await spec.handler(arguments, state)
     return wrap_result(text, name, client_id)

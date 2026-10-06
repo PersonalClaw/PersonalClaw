@@ -354,6 +354,7 @@ A client that still sends it is told it was revoked, and when.
 | `{"error": {"code": "auth_bearer_invalid", …}}` (403) | you pointed the client at an `/api/…` path instead of `/mcp`, with this surface's token in the Bearer header. That is the *dashboard's* auth talking, not this surface's. |
 | `{"error": "rate limited"}` (429) | you exceeded the burst of 20. The SDK drops the whole transport on this — reconnect and slow down. |
 | `-32601 unknown tool '…'` | that tool does not exist here. Only the six read-only tools do. |
+| `-32603 tool execution failed` | the tool exists and failed inside PersonalClaw while it ran; the gateway log says why. |
 
 ## Taking your agents into Claude Code
 

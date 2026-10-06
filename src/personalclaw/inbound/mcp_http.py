@@ -412,7 +412,7 @@ async def handle_mcp(request: web.Request) -> web.Response:
             return _done(200, _rpc_result(request_id, {"tools": listed}))
 
         if method == "tools/call":
-            from personalclaw.inbound.tools import call_tool
+            from personalclaw.inbound.tools import UnknownTool, call_tool
 
             name = str(params.get("name", ""))
             arguments = params.get("arguments") or {}
@@ -457,7 +457,7 @@ async def handle_mcp(request: web.Request) -> web.Response:
                     )
             try:
                 result = await call_tool(name, arguments, request.app.get("state"), client_id)
-            except KeyError:
+            except UnknownTool:
                 return _done(
                     200,
                     _rpc_error(request_id, _METHOD_NOT_FOUND, f"unknown tool {name!r}"),

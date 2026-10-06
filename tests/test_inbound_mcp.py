@@ -313,6 +313,29 @@ class TestTransport:
             await client.close()
 
     @pytest.mark.asyncio
+    async def test_a_tool_whose_own_lookup_fails_is_a_failed_tool_not_an_unknown_one(
+        self, monkeypatch
+    ):
+        """A KeyError raised inside a tool is that tool failing; it used to answer the caller
+        that no such tool exists."""
+
+        async def _lookup_fails(arguments, state):
+            return {"by_id": {}}["n-1"]
+
+        spec = tools_mod.ToolSpec(name="probe_lookup", description="probe", handler=_lookup_fails)
+        monkeypatch.setitem(tools_mod.TOOLS, "probe_lookup", spec)
+        _enable(monkeypatch)
+        token = auth.create_surface_token("mcp")
+        client = await _client(monkeypatch)
+        try:
+            resp = await _rpc(client, "tools/call", token=token, name="probe_lookup")
+            error = (await resp.json())["error"]
+            assert error["code"] == -32603, error
+            assert "unknown tool" not in error["message"]
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
     async def test_oversized_body_is_413(self, monkeypatch):
         _enable(monkeypatch)
         token = auth.create_surface_token("mcp")
@@ -668,8 +691,8 @@ class TestResultFencing:
         assert "truncated" in text
 
     @pytest.mark.asyncio
-    async def test_unknown_tool_raises_key_error(self):
-        with pytest.raises(KeyError):
+    async def test_an_unknown_tool_is_refused_as_unknown(self):
+        with pytest.raises(tools_mod.UnknownTool):
             await tools_mod.call_tool("nope", {}, None)
 
     def test_the_table_is_hand_written_and_short(self):
@@ -1041,8 +1064,8 @@ class TestToolBehavior:
         finally:
             session_restrictions.clear("secret-1")
 
-    def test_unknown_tool_still_raises_key_error(self):
-        with pytest.raises(KeyError):
+    def test_an_unknown_tool_is_still_refused_as_unknown(self):
+        with pytest.raises(tools_mod.UnknownTool):
             _call("write_everything", {})
 
 

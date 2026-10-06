@@ -26,6 +26,10 @@ Four calls:
 And one question: :func:`loaded_app` — whose loaded code a file is, which is how the gateway's log
 tells an app's records from a library's (:mod:`personalclaw.log_sinks`).
 
+Every module of the process is read through :mod:`personalclaw.loaded_modules`, which runs none
+of its code: a library's module may answer an attribute read with anything, or raise, and one such
+module must not hold every app in the gateway.
+
 Deliberately standard-library only: the registries that call :func:`keep` sit below the app
 platform, and must be able to import this without importing it.
 """
@@ -46,6 +50,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
+
+from personalclaw import loaded_modules
 
 logger = logging.getLogger(__name__)
 
@@ -170,17 +176,18 @@ def release(app: str) -> Released:
     if not prefixes:
         return out
     compiled: list[str] = []
-    for name, module in list(sys.modules.items()):
+    for name, module in loaded_modules.snapshot():
         origin = _origin(module, prefixes)
         if origin is None:
             continue
-        del sys.modules[name]
+        loaded_modules.forget(name, module)
         out.modules.append(name)
         _drop_bytecode(module)
         if origin.endswith(tuple(importlib.machinery.EXTENSION_SUFFIXES)):
             compiled.append(os.path.basename(origin))
-    for key in [k for k in sys.path_importer_cache if _under(os.path.join(k, ""), prefixes)]:
-        del sys.path_importer_cache[key]
+    for key in sys.path_importer_cache.copy():  # one copy: another thread's import adds to it
+        if type(key) is str and _under(os.path.join(key, ""), prefixes):
+            sys.path_importer_cache.pop(key, None)
     importlib.invalidate_caches()
     if compiled:
         out.left_running.append(
@@ -219,9 +226,9 @@ def alone(app: str) -> Iterator[None]:
     with _lock:
         others = tuple(p for p, a in _roots.items() if a != app)
         mine = _parked.pop(app, {})
-    hidden = {name: m for name, m in list(sys.modules.items()) if _origin(m, others) is not None}
-    for name in hidden:
-        del sys.modules[name]
+    hidden = {name: m for name, m in loaded_modules.snapshot() if _origin(m, others) is not None}
+    for name, module in hidden.items():
+        loaded_modules.forget(name, module)
     for name, module in mine.items():
         sys.modules.setdefault(name, module)
     try:
@@ -229,9 +236,9 @@ def alone(app: str) -> Iterator[None]:
     finally:
         with _lock:
             own = tuple(p for p, a in _roots.items() if a == app)
-            loaded = {n: m for n, m in list(sys.modules.items()) if _origin(m, own) is not None}
-            for name in loaded:
-                del sys.modules[name]
+            loaded = {n: m for n, m in loaded_modules.snapshot() if _origin(m, own) is not None}
+            for name, module in loaded.items():
+                loaded_modules.forget(name, module)
             _parked[app] = loaded
         for name, module in hidden.items():
             sys.modules.setdefault(name, module)
@@ -250,26 +257,21 @@ def _drop_bytecode(module: Any) -> None:
     (``PYTHONPYCACHEPREFIX``, which the test suite sets) the cache lives outside the app's tree
     and outlasts the swap. Measured: v2's one-line ``version.py`` imported as v1's.
     """
-    cached = getattr(module, "__cached__", None)
-    if isinstance(cached, str) and cached:
+    cached = loaded_modules.recorded(module, "__cached__")
+    if cached:
         try:
             os.unlink(cached)
         except OSError:
             pass
 
 
-def _origin(module: Any, prefixes: tuple[str, ...]) -> str | None:
-    """The file *module* was loaded from if that is under *prefixes*, else ``None``.
+def _origin(module: object, prefixes: tuple[str, ...]) -> str | None:
+    """Where *module* was loaded from if that is under *prefixes*, else ``None``.
 
     A namespace package has no file; it is the app's when one of its search locations is.
     """
-    spec = getattr(module, "__spec__", None)
-    candidates = [getattr(module, "__file__", None), getattr(spec, "origin", None)]
-    for path in candidates:
-        if isinstance(path, str) and _under(path, prefixes):
-            return path
-    for location in list(getattr(module, "__path__", None) or []):
-        if isinstance(location, str) and _under(os.path.join(location, ""), prefixes):
+    for location in loaded_modules.locations(module):
+        if _under(os.path.join(location, ""), prefixes):
             return location
     return None
 
@@ -294,7 +296,12 @@ def _threads_running(prefixes: tuple[str, ...]) -> set[str]:
         seen = now if seen is None else seen & now
         if not seen:
             return set()
-    names = {t.ident: t.name for t in threading.enumerate()}
+    names: dict[int | None, str] = {}
+    for thread in threading.enumerate():
+        try:
+            names[thread.ident] = str(thread.name)
+        except Exception:  # noqa: BLE001 — a thread class of a library's that cannot say it
+            continue
     return {names.get(ident, f"thread {ident}") for ident in seen or ()}
 
 
@@ -307,7 +314,9 @@ def _coroutines_suspended_in(prefixes: tuple[str, ...]) -> set[str]:
     gc.collect()
     found: set[str] = set()
     for obj in gc.get_objects():
-        if not isinstance(obj, types.CoroutineType) or obj.cr_frame is None:
+        # The exact type, not `isinstance`: that reads `__class__`, which a proxy answers with
+        # code of its own, and every object the process holds is asked.
+        if type(obj) is not types.CoroutineType or obj.cr_frame is None:
             continue
         if _under(obj.cr_code.co_filename, prefixes):
             found.add(obj.cr_code.co_qualname)

@@ -302,7 +302,11 @@ the app's code made the call; a core module that registers its own type while th
 pulls it in stays core's. `release(name)` runs those take-backs, removes every module loaded from
 the app's directory from `sys.modules` (and its cached bytecode, since the next version's file
 reuses the path), and reports what Python cannot take back; the unload adds what it cannot
-stop:
+stop. It finds the app's modules by reading what the import system stored in each module's own
+namespace (`personalclaw/loaded_modules.py`), in one copy of `sys.modules`, never by attribute
+lookup: a library may keep a module there that answers any attribute with code of its own (torch
+keeps one whose every attribute is a new namespace, `__path__` included), and that must not stop
+any app from being switched off. A value of any other shape is skipped:
 
 | Left in the process | Why it stays | What the owner sees |
 |---|---|---|
@@ -311,6 +315,7 @@ stop:
 | a task suspended in the app's code | it would resume the old code | a restart reason naming it |
 | a package in `app-python` the gateway had loaded, replaced by the update | an interpreter keeps the version it imported first | a restart reason naming the packages |
 | a process of the gateway's tree still running the app's files — above all an MCP server an agent CLI (an ACP session) started for itself | the agent starts the servers its own configuration names when its session starts and keeps them for the session's life; the gateway does not own them | a restart reason: the agent session keeps it until that session restarts |
+| whatever the release could not get past, such as a library's import hook that fails when asked to drop its caches | the release walks objects of the whole process, and the app is switched off all the same | a restart reason: its code could not all be taken out |
 
 A restart reason is the update's `restart_reason` (with `restart_required`), the toast that
 reports the update, and the app panel's "Restart the gateway to finish" notice

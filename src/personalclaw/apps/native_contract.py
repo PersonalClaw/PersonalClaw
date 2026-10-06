@@ -48,7 +48,7 @@ import sys
 from pathlib import Path
 from typing import Any, Iterator
 
-from personalclaw import app_code
+from personalclaw import app_code, loaded_modules
 from personalclaw.apps import launch_egress
 
 # The bundled-app root. ``providers/loader.py`` exposes the same directory as
@@ -163,7 +163,7 @@ def load_bundle_module(ext_dir: Path, app_name: str, module_path: str) -> Any:
     unique_name = namespaced_module_name(app_name, module_path)
     file_path = bundle_module_file(ext_dir, module_path)
     cached = sys.modules.get(unique_name)
-    if cached is not None and file_path is not None and cached.__file__ == str(file_path):
+    if file_path is not None and loaded_modules.recorded(cached, "__file__") == str(file_path):
         return cached
     if file_path is None:
         raise ImportError(f"no bundle-local module {module_path!r} in {ext_dir}")

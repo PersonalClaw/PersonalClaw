@@ -62,6 +62,11 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "invalid_request": "The request was well-formed JSON but failed validation.",
     "invalid_json": "The request body is not valid JSON.",
     "invalid_body": "The request body is valid JSON but not the expected object.",
+    # ── PersonalClaw's own code failed (dashboard/request_boundary.py) ──
+    # 500: a TypeError or AttributeError raised beneath the route, in PersonalClaw's own code or
+    # an app's, while it answered. It is not read as a malformed request: the request was read
+    # without fault. The gateway log keeps the traceback.
+    "internal_error": "PersonalClaw failed while answering this request. The gateway log says why.",
     # ── the shared write-path field checks (personalclaw/request_validation.py) ──
     # Two codes, not one, because the two failures need different fixes on the
     # caller's side: `field_not_a_string` means "you sent the wrong TYPE" (the

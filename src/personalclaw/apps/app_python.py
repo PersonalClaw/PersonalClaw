@@ -60,6 +60,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from personalclaw import loaded_modules
 from personalclaw._app_python_child import PATH_ENV
 from personalclaw.apps import manager as _manager
 from personalclaw.apps.manager import APP_MANIFEST_FILENAME, INSTALLED_META_FILENAME
@@ -652,11 +653,11 @@ def _drop_displaced() -> list[str]:
 def _loaded_from(directory: Path) -> bool:
     """Has this process imported any module from *directory*?"""
     here = str(directory)
-    for module in list(sys.modules.values()):
-        path = getattr(module, "__file__", None)
-        if isinstance(path, str) and _within(path, here):
-            return True
-    return False
+    return any(
+        _within(location, here)
+        for _name, module in loaded_modules.snapshot()
+        for location in loaded_modules.locations(module)
+    )
 
 
 # ── explaining a failure ───────────────────────────────────────────────────────────

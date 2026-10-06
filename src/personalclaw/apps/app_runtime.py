@@ -218,7 +218,7 @@ def unload(name: str, manifest: AppManifest | None, *, forget: bool = False) -> 
         _remove_skills(manifest)
         _deregister_proposal_kinds(manifest)
     _forget_availability(name)
-    left = app_code.release(name).left_running + _processes_left(name)
+    left = _release_code(name) + _processes_left(name)
     if left:
         note_restart(name, left)
         logger.warning(
@@ -227,6 +227,23 @@ def unload(name: str, manifest: AppManifest | None, *, forget: bool = False) -> 
             "; ".join(left),
         )
     return left
+
+
+def _release_code(name: str) -> list[str]:
+    """Take *name*'s code out of this process (:func:`personalclaw.app_code.release`), and say
+    what stays.
+
+    Every other part of an unload is best-effort, and so is this one: the release walks objects
+    of the whole process (its modules, its import hooks, its threads and tasks), and whatever a
+    library left there that it cannot get past must not keep the owner's app on. What the release
+    could not finish is a restart reason, like everything else Python cannot take back
+    in-process.
+    """
+    try:
+        return app_code.release(name).left_running
+    except Exception:  # noqa: BLE001 — the app is switched off whatever the release met
+        logger.exception("app %s: taking its code out of the gateway failed", name)
+        return ["its code could not all be taken out of the gateway, and the gateway log says why"]
 
 
 def stop_processes() -> None:

@@ -13,16 +13,29 @@ envelope in a single place, the peer of ``spa_fallback``'s 404/405 normalization
 The ``without_the_guard`` test is the anti-fabrication proof: the SAME request through
 the SAME handler answers ``500 text/plain`` when the middleware is absent, and the
 coded JSON envelope when it is present.
+
+The same three types are also what PersonalClaw's own code raises when IT breaks, and the
+boundary used to read them all as her malformed request. Deactivating an app once torch was
+loaded raised a ``TypeError`` four calls beneath the route, in the scan of the loaded modules,
+and the Apps page said "The request was malformed or carried an unusable parameter." So a
+``TypeError`` or ``AttributeError`` is her request's only when it was raised while the route
+read the request; raised beneath it, in PersonalClaw's code or an app's, it is a 500 that says
+PersonalClaw failed, and the log keeps its traceback.
 """
 
+import asyncio
+import uuid
 from pathlib import Path
 
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from personalclaw import app_code
+from personalclaw.apps.native_contract import load_bundle_module
 from personalclaw.dashboard.fallbacks import spa_fallback
 from personalclaw.dashboard.request_boundary import request_boundary_middleware
+from personalclaw.http_errors import json_error
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
@@ -51,6 +64,54 @@ async def _raises_http_not_found(_request: web.Request) -> web.Response:
     raise web.HTTPNotFound()
 
 
+async def _strips_a_field(request: web.Request) -> web.Response:
+    # `.strip()` on a field that is not a string: an AttributeError in the route's own code.
+    body = await request.json()
+    return web.json_response({"name": body["name"].strip()})
+
+
+async def _coerces_a_ratio(request: web.Request) -> web.Response:
+    # `float()` on a field that is an object: a TypeError in the route's own code.
+    body = await request.json()
+    return web.json_response({"ratio": float(body["ratio"])})
+
+
+async def _reads_an_id(request: web.Request) -> web.Response:
+    # An id that is not text, parsed by the standard library the route called: the
+    # AttributeError is raised inside `uuid`, with nothing of PersonalClaw's beneath the route.
+    body = await request.json()
+    return web.json_response({"id": str(uuid.UUID(body["id"]))})
+
+
+async def _echoes_the_body(request: web.Request) -> web.Response:
+    # A body that is not JSON: the ValueError is raised in the libraries the route called to
+    # read it (aiohttp, json), with nothing of PersonalClaw's beneath the route.
+    return web.json_response(await request.json())
+
+
+async def _personalclaw_fails_inside(_request: web.Request) -> web.Response:
+    # PersonalClaw's own helper handed a value it cannot take: a TypeError raised inside it,
+    # beneath the route, with nothing to do with the request.
+    return json_error("bad_request", status=400, error_extra=7)
+
+
+async def _personalclaw_fails_inside_a_worker_thread(_request: web.Request) -> web.Response:
+    # The same off the event loop, as the app routes run their work: the thread's frames are in
+    # the fault's traceback, beneath the route.
+    return await asyncio.to_thread(json_error, "bad_request", status=400, error_extra=7)
+
+
+async def _personalclaw_fails_inside_with_an_attribute(_request: web.Request) -> web.Response:
+    # The same with an AttributeError: a folder handed to PersonalClaw as text.
+    app_code.claim("boundary-probe", "a/folder/given/as/text")
+    return web.json_response({})
+
+
+async def _an_apps_code_fails_inside(request: web.Request) -> web.Response:
+    # An app's code, called by the route, breaks: that is not her request either.
+    return web.json_response({"items": request.app["app_provider"].items(None)})
+
+
 def _make_app(*, with_guard: bool) -> web.Application:
     mws: list = [request_boundary_middleware()] if with_guard else []
     mws.append(spa_fallback)  # innermost, exactly as server.py orders them
@@ -59,6 +120,14 @@ def _make_app(*, with_guard: bool) -> web.Application:
     app.router.add_get("/api/thing", _parses_int_query)
     app.router.add_get("/api/boom", _raises_runtime_error)
     app.router.add_get("/api/gone", _raises_http_not_found)
+    app.router.add_post("/api/name", _strips_a_field)
+    app.router.add_post("/api/ratio", _coerces_a_ratio)
+    app.router.add_post("/api/echo", _echoes_the_body)
+    app.router.add_post("/api/id", _reads_an_id)
+    app.router.add_get("/api/inside", _personalclaw_fails_inside)
+    app.router.add_get("/api/inside-a-thread", _personalclaw_fails_inside_a_worker_thread)
+    app.router.add_get("/api/inside-attribute", _personalclaw_fails_inside_with_an_attribute)
+    app.router.add_get("/api/an-apps-code", _an_apps_code_fails_inside)
     # A sibling OFF the /api surface, reachable with the same bad body.
     app.router.add_post("/notapi/thing", _reads_body_as_object)
     return app
@@ -138,6 +207,81 @@ async def test_off_api_route_fault_is_left_as_the_aiohttp_default() -> None:
         resp = await client.post("/notapi/thing", json=[])
         assert resp.status == 500
         assert resp.content_type == "text/plain"
+
+
+# ── what is her request's, and what is PersonalClaw failing ──────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        ("/api/name", {"name": 5}),
+        ("/api/ratio", {"ratio": {"a": 1}}),
+        ("/api/id", {"id": 5}),
+        ("/api/echo", "{not json"),
+    ],
+    ids=["strip-a-number", "float-an-object", "an-id-a-library-cannot-read", "not-json"],
+)
+async def test_a_request_the_route_cannot_read_is_still_a_400(path, body, caplog) -> None:
+    async with TestClient(TestServer(_make_app(with_guard=True))) as client:
+        if isinstance(body, str):
+            resp = await client.post(path, data=body, headers={"Content-Type": "application/json"})
+        else:
+            resp = await client.post(path, json=body)
+        assert resp.status == 400
+        assert (await _envelope(resp))["code"] == "bad_request"
+    assert not [r for r in caplog.records if r.levelname == "ERROR"], "her request is no fault"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    ["/api/inside", "/api/inside-a-thread", "/api/inside-attribute"],
+    ids=["type-error", "type-error-in-a-worker-thread", "attribute-error"],
+)
+async def test_a_fault_raised_inside_personalclaw_is_a_500_that_says_it_failed(
+    path, caplog, monkeypatch
+) -> None:
+    monkeypatch.setattr(app_code, "_roots", {})
+    async with TestClient(TestServer(_make_app(with_guard=True))) as client:
+        resp = await client.get(path)
+        assert resp.status == 500, "PersonalClaw's own fault was blamed on the request"
+        err = await _envelope(resp)
+        assert err["code"] == "internal_error"
+        assert "PersonalClaw" in err["message"] and "malformed" not in err["message"]
+    logged = [r for r in caplog.records if r.name == "personalclaw.dashboard.request_boundary"]
+    assert [r.levelname for r in logged] == ["ERROR"]
+    assert logged[0].exc_info is not None, "the log does not keep the traceback"
+    assert path in logged[0].getMessage()
+
+
+@pytest.mark.asyncio
+async def test_an_apps_code_failing_beneath_the_route_is_a_500(tmp_path, monkeypatch) -> None:
+    for attr, empty in (("_roots", {}), ("_undo", {}), ("_parked", {}), ("_released", set())):
+        monkeypatch.setattr(app_code, attr, empty)
+    monkeypatch.setattr(app_code, "_loaded", ())
+    folder = tmp_path / "apps" / "boundary-probe"
+    folder.mkdir(parents=True)
+    (folder / "provider.py").write_text(
+        "class Catalogue:\n"
+        "    def items(self, filters):\n"
+        "        return [item for item in filters]\n"
+        "\n"
+        "\n"
+        "def create_provider(config=None):\n"
+        "    return Catalogue()\n"
+    )
+    module = load_bundle_module(folder, "boundary-probe", "provider")
+    try:
+        app = _make_app(with_guard=True)
+        app["app_provider"] = module.create_provider()
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/an-apps-code")
+            assert resp.status == 500
+            assert (await _envelope(resp))["code"] == "internal_error"
+    finally:
+        app_code.release("boundary-probe")
 
 
 # ── the gate is actually installed, not merely importable ────────────────────

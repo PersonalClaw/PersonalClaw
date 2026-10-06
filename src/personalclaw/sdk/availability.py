@@ -24,6 +24,9 @@ it should say what is missing and how to get it.
 from __future__ import annotations
 
 import importlib.util
+import sys
+
+_NOT_LOADED = object()
 
 
 def missing_modules(*modules: str) -> list[str]:
@@ -31,14 +34,21 @@ def missing_modules(*modules: str) -> list[str]:
 
     A top-level name (``"sentence_transformers"``) is located by the path finders and nothing
     runs. A dotted name (``"pyannote.audio"``) imports its PARENT package to find the child,
-    but not the child itself — name the top-level module where you can.
+    but not the child itself — name the top-level module where you can. A module this process
+    has already loaded is answered from ``sys.modules`` alone, which ``import`` hands back as it
+    stands (refusing only ``None``): none of its attributes is read, since a library's module may
+    answer that read with code of its own.
     """
     missing: list[str] = []
     for name in modules:
-        try:
-            found = importlib.util.find_spec(name) is not None
-        except (ImportError, ValueError):  # a missing parent package / a spec-less module
-            found = False
+        loaded = sys.modules.get(name, _NOT_LOADED)
+        if loaded is not _NOT_LOADED:
+            found = loaded is not None
+        else:
+            try:
+                found = importlib.util.find_spec(name) is not None
+            except (ImportError, ValueError):  # a dotted name's parent is missing or refused
+                found = False
         if not found:
             missing.append(name)
     return missing
