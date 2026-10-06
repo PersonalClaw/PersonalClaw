@@ -133,7 +133,10 @@ class _Chat:
     async def until(self, condition, what: str, within: float = 90.0) -> None:
         deadline = time.monotonic() + within
         while not condition():
-            assert time.monotonic() < deadline, f"{what} never happened: {self.wire('tool_answer')}"
+            assert time.monotonic() < deadline, (
+                f"{what} never happened: {self.wire('tool_answer')}, "
+                f"the tool server's exit: {self.wire('tool_server_exit')}"
+            )
             await asyncio.sleep(0.05)
 
     async def stop(self) -> dict:

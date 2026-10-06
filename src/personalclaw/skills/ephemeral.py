@@ -81,10 +81,13 @@ class EphemeralSkill:
 def remember(
     session_key: str, title: str, body: str, *, created_at: str = ""
 ) -> EphemeralSkill | None:
-    """Write (or overwrite) a session-live draft. Returns the draft, or None on
-    invalid input. Idempotent per (session, slug): re-remembering a title updates it.
+    """Write (or overwrite) a session-live draft. Returns the draft, or None on invalid input or
+    when a new title would pass the session's draft limit. Idempotent per (session, slug):
+    re-remembering a title updates it.
 
-    Refused first, for the work of an Incognito or Temporary chat (``lasting_work.Refused``)."""
+    Refused first, for the work of an Incognito or Temporary chat (``lasting_work.Refused``). A
+    draft that cannot be written raises the write's ``OSError``, so the caller says the write
+    failed rather than reading it as a full session."""
     lasting_work.refuse(lasting_work.SKILL, lasting_work.CREATE)
     title = (title or "").strip()
     body = (body or "").strip()[:_MAX_BODY]
@@ -106,11 +109,7 @@ def remember(
     draft = EphemeralSkill(
         slug=slug, title=title, body=body, session_key=session_key, created_at=created_at
     )
-    try:
-        atomic_write(sdir / f"{slug}.json", json.dumps(draft.to_dict(), indent=2))
-    except OSError:
-        logger.debug("ephemeral draft write failed", exc_info=True)
-        return None
+    atomic_write(sdir / f"{slug}.json", json.dumps(draft.to_dict(), indent=2))
     return draft
 
 

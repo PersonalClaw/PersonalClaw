@@ -348,6 +348,12 @@ class AcpProcess:
     async def spawn(self) -> None:
         """Start the ACP agent subprocess with stdio pipes + process-group isolation."""
         self._work_dir.mkdir(parents=True, exist_ok=True)
+        # PersonalClaw's tool server, which the CLI starts, runs in the CLI's sandbox, where on
+        # Linux no folder can be added at the top of the home: the folders its tools write in are
+        # made before the sandbox is applied.
+        from personalclaw.mcp_core import make_its_folders
+
+        make_its_folders()
 
         if not self._command:
             raise AcpError("AcpProcess requires a non-empty command argv to spawn an ACP agent")

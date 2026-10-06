@@ -1750,6 +1750,16 @@ def main() -> None:
         from personalclaw.evals.optimize import main as _optimize_step
 
         sys.exit(_optimize_step([args.step]))
+    # So does the tool server an agent CLI starts, which runs wherever the CLI runs. In the Linux
+    # sandbox nothing can be added at the top of the home, and the handler opening a gateway.log
+    # that was not there yet ended the server before it answered a call. It logs to its stderr,
+    # which the CLI keeps, masked as every sink is.
+    if args.command == "mcp-core":
+        from personalclaw.mcp_core import run_mcp_core_server
+
+        log_sinks.attach(_console_log_handler())
+        run_mcp_core_server()
+        return
 
     # A gateway's start reads its command line first, so a start refused for it has touched
     # nothing, and then claims its home. One gateway serves a home: a start on a home that another
@@ -1865,10 +1875,6 @@ def main() -> None:
         _learn(args)
     elif args.command == "memory":
         _memory_cmd(args)
-    elif args.command == "mcp-core":
-        from personalclaw.mcp_core import run_mcp_core_server
-
-        run_mcp_core_server()
     elif args.command == "eval":
         asyncio.run(_run_eval(args))
     elif args.command == "judge-bench":

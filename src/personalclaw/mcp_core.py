@@ -1410,12 +1410,15 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         from personalclaw.skills import ephemeral
 
         session_key = get_current_session_key() or "default"
-        draft = ephemeral.remember(session_key, title, body)
-        if draft is None:
+        try:
+            draft = ephemeral.remember(session_key, title, body)
+        except OSError as exc:
             return tool_failure(
-                "could not save the draft (empty after redaction, or this "
-                "session's draft limit was reached)."
+                "could not save the draft: it could not be written "
+                f"({exc.strerror or type(exc).__name__})."
             )
+        if draft is None:
+            return tool_failure("could not save the draft: this session's draft limit was reached.")
         return (
             f"Saved a session skill draft: '{draft.title}'. It's active for the rest of "
             "this chat now; when the chat ends you'll be asked whether to keep it "
@@ -2269,6 +2272,32 @@ def _call_as_its_session(name: str, raw_args: dict[str, Any]) -> str:
             return _aggregated_call_tool(name, raw_args)
     finally:
         reset_current_session_key(token)
+
+
+def make_its_folders() -> None:
+    """Make the folders at the top of the home this server's tools write in, when one is missing,
+    before an agent CLI that starts this server is launched (``acp.transport.AcpProcess.spawn``).
+
+    The server runs in the CLI's sandbox, and on Linux nothing can be added at the top of the home
+    from inside it, so a folder made after the CLI started is one its tools cannot write for as long
+    as the CLI runs. The skills folder holds what the skill tools save: a session's drafts and the
+    library. A gateway's start seeds the shipped skills into it, and nothing else makes it before
+    the first save. A folder that cannot be made is logged and the CLI still starts: only the tools
+    that write in it fail, and they say so. An existing folder is left as it is.
+    """
+    from personalclaw.atomic_write import PRIVATE_DIR_MODE, ensure_home_for
+    from personalclaw.skills.loader import skills_dir
+
+    folder = skills_dir()
+    try:
+        ensure_home_for(folder)
+        folder.mkdir(mode=PRIVATE_DIR_MODE, exist_ok=True)
+    except OSError as exc:
+        logger.warning(
+            "could not make the home's %s folder for an agent CLI's tools (%s)",
+            folder.name,
+            exc.strerror or type(exc).__name__,
+        )
 
 
 def run_mcp_core_server() -> None:

@@ -72,7 +72,9 @@ to the client as a call the CLI's own settings let run, asking nobody. Each turn
     Answers ``session/cancel`` by ending the turn (``stopReason: cancelled``), then still makes
     the call it had on its way (:data:`TRIED_AFTER`'s first title).
 
-Each answer the tool server gives is recorded as a ``tool_answer`` line.
+Each answer the tool server gives is recorded as a ``tool_answer`` line, and a tool server that
+exits as a ``tool_server_exit`` line naming its exit code and the end of its stderr; every call
+made after that is answered as failed, with the same words.
 
 Every scenario advertises ``loadSession`` and answers ``session/load``, so a resume of a session
 it served is recorded like any other request.
@@ -184,6 +186,9 @@ class Agent:
         #: requests made of it and the calls reported to the client.
         self.declared_servers: list[dict] = []
         self.tool_server: subprocess.Popen | None = None
+        self.tool_server_log = record_path + ".tool-server.log"
+        #: What every call answers once the tool server has exited (:meth:`tool_server_exited`).
+        self.tool_server_exit: dict | None = None
         self.tool_requests = 0
         self.tool_calls = 0
         # Where this process was started: the folder its commands and edits work in.
@@ -346,11 +351,12 @@ class Agent:
     def ask_tool_server(self, method: str, params: dict) -> dict:
         """One request to the declared ``personalclaw-core`` server, started on first use as an
         agent CLI starts it: its declared command and arguments, with its declared environment
-        over this process's own. Returns the request's ``result``."""
+        over this process's own. Returns the request's ``result``, or, once the server has
+        exited, what :meth:`tool_server_exited` answers."""
         if self.tool_server is None:
             (server,) = [s for s in self.declared_servers if s.get("name") == "personalclaw-core"]
             env = {**os.environ, **{e["name"]: e["value"] for e in server.get("env", [])}}
-            log = open(self.record.name + ".tool-server.log", "a", encoding="utf-8")  # noqa: SIM115
+            log = open(self.tool_server_log, "a", encoding="utf-8")  # noqa: SIM115
             self.tool_server = subprocess.Popen(
                 [server["command"], *server.get("args", [])],
                 stdin=subprocess.PIPE,
@@ -360,12 +366,17 @@ class Agent:
                 text=True,
             )
             self.ask_tool_server("initialize", {})
+        if self.tool_server_exit is not None:
+            return self.tool_server_exit
         assert self.tool_server.stdin is not None and self.tool_server.stdout is not None
         self.tool_requests += 1
         request_id = self.tool_requests
         message = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
-        self.tool_server.stdin.write(json.dumps(message) + "\n")
-        self.tool_server.stdin.flush()
+        try:
+            self.tool_server.stdin.write(json.dumps(message) + "\n")
+            self.tool_server.stdin.flush()
+        except BrokenPipeError:
+            return self.tool_server_exited()
         for line in iter(self.tool_server.stdout.readline, ""):
             try:
                 reply = json.loads(line)
@@ -373,7 +384,24 @@ class Agent:
                 continue
             if isinstance(reply, dict) and reply.get("id") == request_id:
                 return reply.get("result") or {}
-        return {"isError": True, "content": [{"type": "text", "text": "the tool server exited"}]}
+        return self.tool_server_exited()
+
+    def tool_server_exited(self) -> dict:
+        """What every call answers once the tool server has exited: a failed call naming its exit
+        code and the end of what it wrote to stderr, recorded once as a ``tool_server_exit`` line
+        so a test that waited for a call can say why it never came."""
+        if self.tool_server_exit is None:
+            assert self.tool_server is not None
+            try:
+                code: object = self.tool_server.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                code = "still running, its output closed"
+            with open(self.tool_server_log, encoding="utf-8", errors="replace") as handle:
+                stderr = handle.read()[-4000:]
+            self.log("tool_server_exit", code=code, stderr=stderr)
+            text = f"the tool server exited ({code}): {stderr.strip()[-1500:]}"
+            self.tool_server_exit = {"isError": True, "content": [{"type": "text", "text": text}]}
+        return self.tool_server_exit
 
     def call_core_tool(self, title: str) -> None:
         """Save the note *title* through the tool server, reported to the client as an agent CLI
