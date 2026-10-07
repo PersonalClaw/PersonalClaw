@@ -193,12 +193,19 @@ def for_a_judge(
     return admitted.text, False
 
 
-def _per_test_env(env: dict[str, str]) -> dict[str, str]:
-    """*env*, its test runners asked to name each test (:data:`PER_TEST_REPORT_ENV`)."""
-    out = dict(env)
-    for name, ask in PER_TEST_REPORT_ENV.items():
-        out[name] = f"{out.get(name, '')} {ask}".strip()
-    return out
+def _check_env(mark: str, *, per_test: bool) -> dict[str, str]:
+    """The environment a check runs with: the child allowlist (``sandbox.build_child_env``), as a
+    cron script gets, because a loop persisted the command. Never a copy of the gateway's
+    environment and the secrets in it. It carries *mark*, the marker of the check's own run
+    (``run_processes.RUN_VARIABLE``), and with *per_test* asks its test runners to name each test
+    (:data:`PER_TEST_REPORT_ENV`), each switch added to a value the allowlist already has."""
+    from personalclaw.sandbox import build_child_env
+
+    env = build_child_env(site="loop-verify", extra={run_processes.RUN_VARIABLE: mark})
+    if per_test:
+        for name, ask in PER_TEST_REPORT_ENV.items():
+            env[name] = f"{env.get(name, '')} {ask}".strip()
+    return env
 
 
 async def run_verify_command(
@@ -275,18 +282,15 @@ async def run_verify_command(
         # shim via an explicit ``/bin/sh -c`` — equivalent to create_subprocess_shell's
         # own shell, but the shim (prepended to argv) needs a real argv to wrap. No
         # preexec_fn: the limit is applied after exec, off the event loop's fork.
-        from personalclaw.sandbox import PROFILE_TOOL, build_child_env, create_subprocess_limited
+        from personalclaw.sandbox import PROFILE_TOOL, create_subprocess_limited
 
         # A check is a run of its own: what it starts (a test suite's server) ends when it exits.
         run = run_processes.own()
-        # The loop's persisted command, so the child allowlist (`build_child_env`), like a cron
-        # script: never a copy of the gateway's environment and the secrets in it.
-        env = build_child_env(site="loop-verify", extra={run_processes.RUN_VARIABLE: run.mark})
         proc = await create_subprocess_limited(
             *argv,
             profile=PROFILE_TOOL,
             cwd=cwd or None,
-            env=_per_test_env(env) if per_test else env,
+            env=_check_env(run.mark, per_test=per_test),
             # What it prints and what it reports as an error, as they came, so its report shows
             # the end a person reads (a test runner's summary, a command's error).
             stdout=asyncio.subprocess.PIPE,

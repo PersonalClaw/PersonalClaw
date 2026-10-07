@@ -146,15 +146,43 @@ def test_a_name_the_owner_passed_through_reaches_the_agents_command(home, tmp_pa
     assert passed == "planted-code-host-token" and reached == ["GITHUB_TOKEN"]
 
 
-def test_a_loops_check_command_runs_without_the_gateways_secrets(home, tmp_path, monkeypatch):
-    """🔴 Red on main: `/bin/sh -c <persisted command>` with the gateway's environment."""
-    from personalclaw.loop.gates import run_verify_command
+@pytest.mark.parametrize("per_test", [False, True])
+def test_a_loops_check_command_runs_without_the_gateways_secrets(
+    home, tmp_path, monkeypatch, per_test
+):
+    """🔴 Red on main: `/bin/sh -c <persisted command>` with the gateway's environment. A check
+    asked to name each test starts from the same allowlist, with only the test runners' switches
+    added."""
+    from personalclaw.loop.gates import PER_TEST_REPORT_ENV, run_verify_command
 
     stub = _Recorder(tmp_path, monkeypatch, "pclaw-env-recorder")
 
-    assert asyncio.run(run_verify_command(f"{stub.path} check", str(home / "workspace"))) is True
+    check = run_verify_command(f"{stub.path} check", str(home / "workspace"), per_test=per_test)
+    assert asyncio.run(check) is True
     (run,) = stub.runs()
     _assert_no_gateway_secret(run, home)
+    asked = {name: run.get(name) for name in PER_TEST_REPORT_ENV}
+    assert asked == (PER_TEST_REPORT_ENV if per_test else dict.fromkeys(PER_TEST_REPORT_ENV))
+
+
+def test_a_switch_the_owner_passes_a_checks_test_runner_stays_when_it_names_each_test(
+    home, tmp_path, monkeypatch
+):
+    """The per-test switch is added to the value the owner passed through, never put in its
+    place."""
+    from personalclaw.loop.gates import PER_TEST_REPORT_ENV, run_verify_command
+
+    (home / "config.json").write_text(
+        json.dumps({"sandbox": {"env_passthrough": ["PYTEST_ADDOPTS"]}})
+    )
+    monkeypatch.setenv("PYTEST_ADDOPTS", "-q")
+    stub = _Recorder(tmp_path, monkeypatch, "pclaw-env-recorder")
+
+    check = run_verify_command(f"{stub.path} check", str(home / "workspace"), per_test=True)
+    assert asyncio.run(check) is True
+    (run,) = stub.runs()
+    _assert_no_gateway_secret(run, home)
+    assert run.get("PYTEST_ADDOPTS") == f"-q {PER_TEST_REPORT_ENV['PYTEST_ADDOPTS']}"
 
 
 def test_a_loop_worktrees_git_runs_without_the_gateways_secrets(home, tmp_path, monkeypatch):
