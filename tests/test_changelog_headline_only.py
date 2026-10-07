@@ -229,11 +229,32 @@ _HEADLINE = "- **A planted headline.**"
 
 def _plant(text: str, lines: list[str], *, under: str = UNRELEASED) -> tuple[str, int]:
     """*text* with *lines* inserted right after the first entry of the section *under*, and the
-    1-based number of the first planted line."""
+    1-based number of the first planted line.
+
+    A section with no entry yet, as ``[Unreleased]`` is right after a release cut, is given one
+    first, so the plant sits after an entry of that section: never in its introduction, and never
+    after the first entry of the release below it."""
     rows = text.split("\n")
     start = next(i for i, row in enumerate(rows) if row.startswith(under))
-    at = next(i for i in range(start + 1, len(rows)) if rows[i].startswith("- ")) + 1
+    end = next((i for i in range(start + 1, len(rows)) if rows[i].startswith("## ")), len(rows))
+    first = next((i for i in range(start + 1, end) if rows[i].startswith("- ")), None)
+    if first is None:
+        rows[start + 1 : start + 1] = ["", _HEADLINE]
+        first = start + 2
+    at = first + 1
     return "\n".join(rows[:at] + lines + rows[at:]), at + 1
+
+
+def test_a_plant_under_an_empty_unreleased_stays_in_it() -> None:
+    """Right after a release cut ``[Unreleased]`` holds no entry. A plant under it still lands
+    there, so the rule for new entries is the one it meets, not the released section's."""
+    release = "## [1.0.0] — 2026-09-01"
+    doc = "\n".join(["## [Unreleased]", "", release, "", "### Added", "", "- **An entry.**"])
+    text, at = _plant(doc, ["- The legacy **shape**, written today."])
+    assert text.split("\n").index(release) + 1 > at, "the plant fell into the release below"
+    assert [(n, why) for n, why, _ in violations(text)] == [
+        (at, "no bold headline: write `- **<headline>**`")
+    ]
 
 
 @pytest.mark.parametrize(

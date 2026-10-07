@@ -414,7 +414,8 @@ defaults flipped, and some routes refuse input they used to accept. Run
   literal `true` only: the string `"true"`, `1` and `yes` are refused. Three destructive
   routes require `confirm: true`, a destructive `POST /api/tools/invoke` needs
   `"confirm_risk": "destructive"`, six orphaned `/api/memory/*` embedding endpoints are
-  gone, and workflow `rewind`/`run-from` require `confirm_cascade=true`.
+  gone, workflow `rewind`/`run-from` require `confirm_cascade=true`, and a model's Test is
+  `POST /api/models/test`, where it was `POST /api/model-providers/{name}/selftest`.
 - **State shapes changed with no migration.** `sessions.json` rows in the old shape are
   discarded on read (one `personalclaw token` re-mint); loop rows written before
   `stop_reason` read as completed; the `runs` table no longer declares `task_list_id`; and
@@ -424,17 +425,14 @@ defaults flipped, and some routes refuse input they used to accept. Run
   `agent_config_dir`: both fail at import. The `kiro` runner id is now `kiro-cli`. Update
   installed apps alongside the core upgrade.
 - **Chat's Activity → Index tab is gone.** The Session Map is the session's index.
-
-### After updating from 0.2.0
-
 - **An agent no chat started asks before it acts, unless its automation or loop was allowed to
   run on its own.** Settings → Agent defaults → Approval mode now ships as Ask each time, so a
   trigger's Invoke Agent agent whose step does not set its own approval, or a subagent started
-  outside a chat, asks you in your Inbox. A config written before keeps what it holds: if it says
-  Auto (one written while Auto was the default usually does), those agents still approve every
-  call they make, and Doctor and Settings → Agent defaults say so. Nothing records whether that Auto was
-  chosen, so it is left for you to keep or change there.
-- **The first start re-embeds your library once.** Knowledge items and memories that 0.2.0
+  outside a chat, asks you in your Inbox. A config 0.1.3 wrote keeps what it holds: if it says
+  Auto (0.1.3's default, which it wrote into the config it saved), those agents still approve
+  every call they make, and Doctor and Settings → Agent defaults say so. Nothing records whether
+  that Auto was chosen, so it is left for you to keep or change there.
+- **The first start re-embeds your library once.** Knowledge items and memories that 0.1.3
   embedded do not record which embedding model wrote their vectors, and nothing else can
   tell one model's vector from another's, so the first start re-embeds them in the
   background with the model bound in Settings → Models. Until an item is re-embedded,
@@ -442,14 +440,10 @@ defaults flipped, and some routes refuse input they used to accept. Run
   and its progress while it runs, and if PersonalClaw stops part way, the next start
   resumes where it stopped. No model bound means nothing is re-embedded until you choose
   one.
-- **A webhook is fired with a token made for it.** A webhook automation's `token_ref`, which
-  nothing read, is gone (the first start takes it out of each one): make the automation a sender
-  token on its page on the Triggers page, or with
-  `personalclaw inbound webhook create <automation-id>`, and give that to the program that fires
-  it. `POST /api/hooks/agent` no longer takes PersonalClaw's internal credential: a program on
-  this machine sends your webhook token, which must now be at least 32 characters
-  (`personalclaw config set hooks.webhook_token <token>`). Both take requests only from programs
-  on this machine; from another, forward a port over SSH
+- **A webhook takes a token of at least 32 characters, and only from this machine.**
+  `POST /api/hooks/agent` refuses every call while `hooks.webhook_token` is shorter than 32
+  characters, so set a longer one with `personalclaw config set hooks.webhook_token <token>`. It
+  takes requests only from programs on this machine; from another, forward a port over SSH
   ([automations](automations.md#when-a-program-starts-one-webhooks)).
 - **An app says what its agent work may use, and its agents approve nothing.** An app's
   `agent` permission now names a tier: `text` (the model is handed only the text the app sends,
@@ -457,20 +451,12 @@ defaults flipped, and some routes refuse input they used to accept. Run
   asking you). An app you installed that still declares `"agent": true` runs no agent tasks
   until you update it to a version that names its tier, and that update asks you again in the
   tier's words. Minutes and Growth declare `text`.
-- **A home other than the default one keeps its keychain secrets under a name of its own.** With
-  Store credentials in the OS keychain on, the default home (`~/.personalclaw`) reads what it
-  stored before, where it is. Any other home now files its items under a namespace of its own,
-  which `personalclaw doctor` and Settings → Secrets name, so what it stored in the keychain
-  before, under the default home's name, it no longer reads. Store those secrets again in
-  Settings → Secrets, or, if Move to keychain put them there, Roll back and move them again. The
-  old copies stay under the default home's name, where the default home's Settings → Secrets
-  lists them: remove them there if that home should not have them.
-- **Trusting an MCP server's read-only labels covers the tools it listed when you trusted it.**
-  A tool it adds later, or one whose description, inputs or labels change, asks until you review
-  it on the Tools page, where the server's card says what changed. A trust given on a build from
-  before this (only builds of the development branch had one) is not carried over, since nothing
-  recorded which tools you saw: the server's tools ask, and Trust on the Tools page gives it again
-  for the tools it lists now.
+- **Slack asks you to pair once more.** Slack Channel no longer makes the first person to
+  message the bot its owner, or keeps an owner id typed into its setup or set in the
+  environment: it forgets such an owner when it next starts, and until you pair, the bot does
+  nothing anyone asks. Pair from Settings → Providers → Slack Channel → Configure →
+  **Pair as owner** and send the bot the code in a direct message, as on Telegram, Discord and
+  email.
 
 ## Where to go next
 
