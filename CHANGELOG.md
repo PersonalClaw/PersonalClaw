@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Fixed
+
+- **A release attaches its Linux AppImage and deb again: the release's check of the deb no longer fails a good package, which in 0.2.0 stopped the GitHub Release from being created.**
+
 ## [0.2.0] — 2026-10-07
 
 The first release since 0.1.3, and its theme is **work that answers to you**. Controls do what

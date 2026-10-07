@@ -616,9 +616,14 @@ jobs:
           test -x "$BACKEND"
           "$GITHUB_WORKSPACE/scripts/smoke_backend_bundle.sh" "$(pwd)/$BACKEND"
           # deb: correct package name + the same two load-bearing paths present.
-          dpkg-deb --info personalclaw-desktop_*.deb | grep -q "Package: personalclaw-desktop"
-          dpkg-deb --contents personalclaw-desktop_*.deb | grep -q "resources/app.asar"
-          dpkg-deb --contents personalclaw-desktop_*.deb | grep -q "backend-dist/personalclaw-backend/personalclaw-backend"
+          # Each listing goes to a file before it is searched: `grep -q` stops reading at its
+          # first match, so under pipefail the tar that dpkg-deb runs fails writing the rest
+          # ("tar: stdout: write error") and the check reds a good package. v0.2.0's run did.
+          dpkg-deb --info personalclaw-desktop_*.deb > "$RUNNER_TEMP/deb-info.txt"
+          dpkg-deb --contents personalclaw-desktop_*.deb > "$RUNNER_TEMP/deb-contents.txt"
+          grep -q "Package: personalclaw-desktop" "$RUNNER_TEMP/deb-info.txt"
+          grep -q "resources/app.asar" "$RUNNER_TEMP/deb-contents.txt"
+          grep -q "backend-dist/personalclaw-backend/personalclaw-backend" "$RUNNER_TEMP/deb-contents.txt"
       - uses: actions/upload-artifact@v7
         with:
           name: desktop-linux
