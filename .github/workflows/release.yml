@@ -82,12 +82,18 @@ jobs:
         # Found by VERSION, not by spelling (`scripts/release_version.py`, the updater's
         # parse), so a heading the cut spelled `0.3.0-rc.1` or `0.3.0rc1` is this tag's
         # either way. Resolved here, where uv is, and handed to `notes` as a file, so the
-        # job whose token can create the release fetches nothing.
+        # job whose token can create the release fetches nothing. GitHub refuses a release
+        # body over 125,000 characters, and `notes` runs after PyPI and the images have
+        # published, so a longer section is cut on an entry boundary here, before anything
+        # ships, and ends with a link to the whole section in the CHANGELOG at this tag.
+        # The link names the tag, not its id: an annotated tag's object id is not its commit.
         env:
           RELEASE_VERSION: ${{ steps.ver.outputs.version }}
         run: |
           uv run --no-project --with packaging python scripts/release_version.py notes \
-            --version "$RELEASE_VERSION" > release-notes.md
+            --version "$RELEASE_VERSION" \
+            --changelog-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/CHANGELOG.md" \
+            > release-notes.md
       - name: SBOM (syft SPDX-JSON over the built dist)
         uses: anchore/sbom-action@v0
         with:

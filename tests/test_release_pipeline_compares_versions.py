@@ -357,6 +357,12 @@ def _notes(tmp_path: Path, ref: str, changelog: str):
     )
     env = dict(os.environ)
     env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    # What the runner sets for a tag push, so a test run inside CI does not read its own run's.
+    env.update(
+        GITHUB_SERVER_URL="https://github.com",
+        GITHUB_REPOSITORY="PersonalClaw/PersonalClaw",
+        GITHUB_REF_NAME=ref,
+    )
     for key, value in step["env"].items():
         env[key] = _expand(str(value), _classified_version(ref))
     result = subprocess.run(
@@ -401,6 +407,155 @@ def test_the_notes_are_this_versions_section_however_its_heading_is_spelled(
 def test_a_version_with_no_section_gets_the_bare_notes(tmp_path) -> None:
     notes = _notes(tmp_path, "v0.3.0-rc.2", _CHANGELOG.format(heading="0.3.0-rc.1"))
     assert notes == "Release 0.3.0-rc.2."
+
+
+# ── the notes fit a GitHub Release ────────────────────────────────────────────────────────
+
+#: GitHub refuses a release body longer than this ("body is too long (maximum is 125000
+#: characters)"), and the job that creates the release runs after PyPI and the images published.
+GITHUB_RELEASE_BODY_LIMIT = 125_000
+
+
+@pytest.fixture
+def release_version():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_release_version", SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _pointer(shown: int, total: int, url: str) -> str:
+    return (
+        f"These notes show {shown:,} of the release's {total:,} entries. "
+        f"All of them are in [CHANGELOG.md]({url})."
+    )
+
+
+def test_a_section_that_fits_is_the_notes_unchanged(tmp_path) -> None:
+    changelog = _CHANGELOG.format(heading="0.3.0-rc.1")
+    section = changelog.split("— 2026-10-01\n", 1)[1].split("\n## [0.2.0]", 1)[0].strip()
+    assert _notes(tmp_path, "v0.3.0-rc.1", changelog) == section
+
+
+#: The sections the oversized section's notes take in turn, and how many entries each holds.
+_OPTIONAL = {"Added": 900, "Removed": 2, "Fixed": 600, "Security": 300}
+
+
+def _oversized() -> tuple[str, dict[str, list[str]]]:
+    """A CHANGELOG whose ``0.3.0-rc.1`` section is far over the budget, and the entries of each
+    section its notes cut."""
+    filler = "in a headline of ordinary length, " * 5
+    entries = {
+        name: [f"- **{name} {n:04d}, {filler}said once.**" for n in range(count)]
+        for name, count in _OPTIONAL.items()
+    }
+    section = [
+        "## [0.3.0-rc.1] — 2026-10-01",
+        "",
+        "What the candidate is about, in a paragraph",
+        "that wraps onto a second line.",
+        "",
+        "### Highlights",
+        "",
+        "- **The first highlight.**",
+        "- **The second highlight.**",
+        "",
+        "### ⚠️ Breaking changes — read before upgrading",
+        "",
+        "- **A break to read first.**",
+    ]
+    for name, lines in entries.items():
+        section += ["", f"### {name}", "", *lines]
+    head = "# Changelog\n\n## [Unreleased]\n\n"
+    return head + "\n".join(section) + "\n\n## [0.2.0] — 2026-09-23\n", entries
+
+
+def test_an_oversized_section_is_cut_on_entries_and_links_the_whole_section(
+    tmp_path, release_version
+) -> None:
+    budget = release_version.NOTES_BUDGET
+    changelog, entries = _oversized()
+    assert len(changelog) > 2 * budget, "not oversized, so the cut would go untested"
+    notes = _notes(tmp_path, "v0.3.0-rc.1", changelog)
+    lines = notes.split("\n")
+
+    assert len(notes) <= budget
+    assert notes.startswith("What the candidate is about, in a paragraph\nthat wraps onto")
+    for whole in ("- **The first highlight.**", "- **The second highlight.**"):
+        assert whole in lines, f"the Highlights lost {whole!r}"
+    assert "- **A break to read first.**" in lines, "the breaking changes were cut"
+    shown = {name: [line for line in lines if line.startswith(f"- **{name} ")] for name in entries}
+    for name, lines_of in shown.items():
+        assert (
+            lines_of == entries[name][: len(lines_of)]
+        ), f"{name} is not cut on an entry, in order"
+    assert shown["Removed"] == entries["Removed"], "a short section is shown whole"
+    open_counts = [len(shown[name]) for name in ("Added", "Fixed", "Security")]
+    assert 0 < min(open_counts) and max(open_counts) - min(open_counts) <= 1, open_counts
+    assert all(c < len(entries[n]) for c, n in zip(open_counts, ("Added", "Fixed", "Security")))
+    total = sum(map(len, entries.values())) + 3
+    count = sum(map(len, shown.values())) + 3
+    url = "https://github.com/PersonalClaw/PersonalClaw/blob/v0.3.0-rc.1/CHANGELOG.md"
+    pointer = _pointer(count, total, f"{url}#030-rc1--2026-10-01")
+    assert lines[-1] == pointer
+    # Filled to the budget: the entry whose turn was next is the one that did not fit, measured
+    # as the fill measures, with the pointer at its longest.
+    turn = min(
+        ("Added", "Fixed", "Security"), key=lambda n: (len(shown[n]), list(entries).index(n))
+    )
+    following = entries[turn][len(shown[turn])]
+    longest = len(notes) - len(pointer) + len(_pointer(total, total, f"{url}#030-rc1--2026-10-01"))
+    assert longest + len(following) + 1 > budget
+
+
+def test_an_entry_is_never_split_and_what_is_kept_whole_must_fit(release_version) -> None:
+    one, three = "- **" + "a" * 100 + "**", "- **" + "c" * 100 + "**"
+    two = "- **" + "b" * 60 + "\n  " + "b" * 60 + "**"  # one entry, written on two lines
+    body = "\n".join(["Intro.", "", "### Fixed", "", one, two, three])
+    url = "https://example.test/changelog#100"
+    expected = "\n".join(["Intro.", "", "### Fixed", "", one, "", _pointer(1, 3, url)])
+    budget = len(expected) + len(two) // 2
+    assert len(body) > budget
+    assert release_version.release_notes(body, full_list=url, budget=budget) == expected
+
+    kept_whole = "### Highlights\n\n- **" + "x" * 200 + "**\n\n### Fixed\n\n- **y**"
+    with pytest.raises(ValueError, match="kept whole"):
+        release_version.release_notes(kept_whole, full_list=url, budget=150)
+
+
+def test_the_anchor_is_the_one_github_gives_a_release_heading(release_version) -> None:
+    # As GitHub renders this CHANGELOG at v0.1.3: `#013--2026-07-30` and `#unreleased`.
+    assert release_version.heading_anchor("## [0.1.3] — 2026-07-30") == "013--2026-07-30"
+    assert release_version.heading_anchor("## [Unreleased]") == "unreleased"
+    assert release_version.heading_anchor("## [0.3.0-rc.1] — 2026-10-01") == "030-rc1--2026-10-01"
+
+
+def test_the_release_being_cut_has_notes_a_github_release_accepts(
+    tmp_path, release_version
+) -> None:
+    """The newest release of the real CHANGELOG, the version pyproject names, as the build job
+    resolves it: within GitHub's limit, opening with its introduction and, when cut, ending with
+    the link to its whole section at its tag."""
+    import tomllib
+
+    project = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    version = project["version"]
+    changelog = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
+    notes = _notes(tmp_path, f"v{version}", changelog)
+    assert notes != f"Release {version}.", f"the CHANGELOG has no section for {version}"
+    assert len(notes) <= GITHUB_RELEASE_BODY_LIMIT, f"{len(notes):,} characters"
+    heading = next(line for line in changelog.split("\n") if line.startswith(f"## [{version}]"))
+    section = changelog.split(heading + "\n", 1)[1].split("\n## [", 1)[0].strip()
+    intro = section.split("\n### ", 1)[0].split("\n- ", 1)[0].strip()
+    assert intro and notes.startswith(intro), "the notes must open with the introduction"
+    if notes != section:
+        url = f"https://github.com/PersonalClaw/PersonalClaw/blob/v{version}/CHANGELOG.md"
+        anchor = release_version.heading_anchor(heading)
+        assert notes.split("\n")[-1].endswith(f"[CHANGELOG.md]({url}#{anchor}).")
 
 
 def test_the_release_job_publishes_the_notes_the_build_resolved() -> None:

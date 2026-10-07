@@ -99,6 +99,14 @@ heading without the brackets, or one naming another version, yields the bare
 fallback text `Release X.Y.Z.` — a published release with no notes, which is not
 something you can edit out of the tag later.
 
+GitHub refuses a release body over 125,000 characters, and the `notes` job runs after
+PyPI and the images have published, so `build` cuts a longer section to fit before
+anything ships: the introduction, Highlights and Breaking changes stay whole, the other
+sections take their entries in turn, each entry whole, and a last line says how many
+entries the notes show and links the whole section in `CHANGELOG.md` at the tag. If the
+introduction and those two sections alone do not fit, `build` fails and nothing is
+published.
+
 That body is the release's introduction, its section headings and its one-line
 headlines. Write the introduction when you cut the release: a short paragraph right
 under the `## [X.Y.Z]` heading, before its first `###` section, saying what the release
