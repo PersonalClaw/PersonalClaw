@@ -10,7 +10,9 @@ What lives here:
   records the folder it works in under one field (:data:`CHAT_FOLDER`), and every reader and
   writer of its memory asks :func:`chat_folder` for it: the turn's own recall, the after-turn
   review, consolidation and its seal, and the memory tools. The gateway's own workspace, where
-  every chat starts, shares the global partition.
+  every chat starts, shares the global partition (:func:`is_the_workspace`), and a chat working
+  there records no folder (:func:`folder_on_record`), so a copy of it in another home, restored or
+  moved, works in that home's workspace and shares that home's global memory.
 * :func:`work_folder` — the folder whose partition work that is not a chat's own turn reads: a
   subagent and a workflow step read the one the chat they work for keeps, and a project's run
   reads its project's (:func:`project_folder`: the folder the project binds, where its chats
@@ -25,11 +27,14 @@ What lives here:
   end. A folder of PersonalClaw's own that sessions run in (a task's git worktree, a loop's
   folder) takes its partition with it when it goes; nothing can run in it again, so a partition
   left behind is memory no session reads, carried by every snapshot.
-* :func:`settle_at_start` — once at the start: what an earlier version filed in the global memory
-  for a chat working in a folder moves to that folder's partition
+* :func:`settle_at_start` — once at the start: a chat that records another home's workspace works
+  in this one's (:func:`take_in_other_homes_chats`), what an earlier version filed in the global
+  memory for a chat working in a folder moves to that folder's partition
   (:func:`move_what_folder_chats_left`), a partition an earlier version left unnamed is named for
-  its folder (:func:`name_partitions`), and what a project's context folder kept moves to its
-  project's memory (:func:`move_what_context_folders_kept`).
+  its folder (:func:`name_partitions`), what an earlier start moved out for a workspace comes back
+  to the global memory (:func:`move_back_what_workspaces_kept`), and what a project's context
+  folder kept moves to its project's memory (:func:`move_what_context_folders_kept`). Each move
+  says in each memory's history what it moved, which the Memory page shows.
 
 **Ordering only, never admission.** The cross-partition half changes only WHERE a hit
 appears in the block (after the local hits) and HOW it is framed (labeled + fenced). It
@@ -42,6 +47,7 @@ recall results, which is indistinguishable from memory loss.
 from __future__ import annotations
 
 import contextlib
+import functools
 import json
 import logging
 import os
@@ -53,7 +59,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from personalclaw.config.loader import memory_dir_for_cwd, resolve_workspace_root
+from personalclaw.config.loader import (
+    CONFIG_DIR_NAME,
+    EARLIER_DEFAULT_WORKSPACE,
+    memory_dir_for_cwd,
+    memory_root,
+    resolve_workspace_root,
+)
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from personalclaw.context import ContextBuilder
@@ -76,6 +88,10 @@ CHAT_FOLDER = "workspace_dir"
 #: get_memory_for``), and at the start for one an earlier version left (:func:`name_partitions`).
 #: Believed only when its folder's partition is that very partition (:func:`recorded_folder`).
 FOLDER_RECORD = "folder.json"
+
+#: The last two parts of the workspace a home at its default place makes, the home's own memory
+#: root (``config.loader.default_config_dir``, ``memory_root``): ``.personalclaw/workspace``.
+_HOMES_WORKSPACE = memory_root(Path(CONFIG_DIR_NAME)).parts
 
 #: The id the global memory is listed and asked for by: none. Every other partition's id is the
 #: name of its directory under the memory root.
@@ -184,15 +200,67 @@ def partition_for(cwd: str | None) -> Path:
     """The memory partition directory a session working in *cwd* reads and writes.
 
     The global one for no folder, and for the gateway's own workspace, where every chat starts
-    (``config.loader.default_workspace_dir``): those chats and the Memory page share one memory.
-    Every other folder has its own. Worked out without making anything.
+    (:func:`is_the_workspace`): those chats and the Memory page share one memory. Every other
+    folder has its own. Worked out without making anything.
     """
-    if not cwd:
+    if not cwd or is_the_workspace(cwd):
         return memory_dir_for_cwd(None)
-    own = memory_dir_for_cwd(cwd)
-    if own == memory_dir_for_cwd(str(resolve_workspace_root())):
-        return memory_dir_for_cwd(None)
-    return own
+    return memory_dir_for_cwd(cwd)
+
+
+def this_homes_workspaces() -> tuple[str, str]:
+    """The folders a chat in this home works in when it works in the gateway's own workspace: the
+    one this home resolves now (``config.loader.resolve_workspace_root``) and the home's own
+    ``workspace`` folder (``config.loader.memory_root``), which is that workspace when the owner
+    chose none, and holds every memory. Each as the file system resolves it, as a chat records a
+    folder. A snapshot and an export archive name them (``snapshot``, ``portability``), so the home
+    a copy is restored into knows which chats worked in the workspace."""
+    return (
+        os.path.realpath(resolve_workspace_root()),
+        os.path.realpath(memory_root()),
+    )
+
+
+def is_the_workspace(folder: str) -> bool:
+    """Whether a chat working in *folder* is in the gateway's own workspace, where every chat
+    starts, as the home or the release that recorded it had it. Such a chat shares the global
+    memory (:func:`partition_for`), wherever its home is now.
+
+    One rule, the default workspace each release makes: this home's
+    (:func:`this_homes_workspaces`); a home's own ``workspace`` folder, this home's or another's
+    (:func:`_a_homes_workspace`); and the folder the releases before the workspace moved into the
+    home made under the user's home (``config.loader.EARLIER_DEFAULT_WORKSPACE``). The set is
+    closed: a chat in the workspace records no folder now (:func:`folder_on_record`), so a later
+    move of the workspace adds nothing to it. A home's ``workspace`` folder on another machine at a
+    place of its own is known to the restore of its snapshot, which has its chats record no folder
+    (:func:`take_in_restored_chats`). Worked out without making anything, from the path and, for a
+    folder named as a home's is, whether it holds a home's memory.
+    """
+    if not folder:
+        return False
+    own = memory_dir_for_cwd(folder).name
+    if own in {memory_dir_for_cwd(path).name for path in this_homes_workspaces()}:
+        return True
+    return _a_homes_workspace(folder) or _tail(folder) == EARLIER_DEFAULT_WORKSPACE
+
+
+def _tail(folder: str) -> tuple[str, ...]:
+    """The last two parts of *folder* as the file system resolves it."""
+    return Path(os.path.realpath(os.path.expanduser(folder))).parts[-2:]
+
+
+def folder_on_record(folder: str) -> str:
+    """The folder a chat working in *folder* records (:data:`CHAT_FOLDER`): none, "", when it is
+    the workspace this home resolves now, where every chat starts, and *folder* itself otherwise.
+
+    The workspace is the home's, not the chat's: recorded as a path it was true only in the home,
+    at the place, that wrote it. A copy of the chat in a home at another path (a snapshot restored
+    on another machine, a home moved) read as a chat working in a folder of its own, and the start
+    moved what it kept out of the global memory (:func:`move_what_folder_chats_left`). Recorded as
+    none, it works in the workspace of whichever home it is in (``chat_persistence``)."""
+    if folder and memory_dir_for_cwd(folder) != memory_dir_for_cwd(this_homes_workspaces()[0]):
+        return folder
+    return ""
 
 
 def is_local_partition(cwd: str | None) -> bool:
@@ -538,19 +606,174 @@ def _hand_over(src: "MemoryStore", dest: "MemoryStore") -> int:
 
 
 def settle_at_start(store: "VectorMemoryStore", log: "ConversationLog") -> None:
-    """What the gateway settles in its memory once, when it starts, before anything recalls: what
-    an earlier version filed in the global memory *store* for a chat working in a folder moves to
-    that folder's memory, the partitions it left unnamed are named for their folders, and what a
+    """What the gateway settles in its memory once, when it starts, before anything recalls and
+    before a chat is opened: a chat that records another home's workspace works in this one's,
+    what an earlier version filed in the global memory *store* for a chat working in a folder
+    moves to that folder's memory, the partitions it left unnamed are named for their folders,
+    what an earlier start moved out for a workspace comes back to the global memory, and what a
     project's context folder kept moves to its project's memory. Never raises: each pass that
     fails is said in the log and runs again at the next start."""
-    move_what_folder_chats_left(store, log)
-    for settle in (name_partitions, move_what_context_folders_kept):
+    for settle in (
+        functools.partial(take_in_other_homes_chats, log),
+        functools.partial(move_what_folder_chats_left, store, log),
+        functools.partial(name_partitions, log),
+        move_back_what_workspaces_kept,
+        functools.partial(move_what_context_folders_kept, log),
+    ):
         try:
-            settle(log)
+            settle()
         except Exception:  # noqa: BLE001 - a failed pass must not stop the gateway
+            name = getattr(getattr(settle, "func", settle), "__name__", "")
+            logger.warning("Could not settle the memory partitions (%s)", name, exc_info=True)
+
+
+def take_in_other_homes_chats(log: "ConversationLog", workspaces: Iterable[str] = ()) -> list[str]:
+    """Have each chat *log* holds that records another home's workspace as the folder it works in
+    record none (:func:`folder_on_record`), so it works in this home's workspace and keeps its
+    memory in this home's global memory. Returns the keys of the chats it changed.
+
+    Another home's workspace is the one a home at its default place makes,
+    ``~/.personalclaw/workspace``, of a home other than this one, and each of *workspaces*: the
+    folders the home a snapshot or an export archive came from worked in as its workspace, which a
+    restore reads from the archive (``snapshot``). A chat there worked in the workspace of the home
+    that recorded it. A copy of it here, restored or moved, would work in the other home's files
+    on the same machine, or in a folder this machine does not have, and was taken for a chat in a
+    folder of its own. A chat recording this home's own workspace is in it already, and is left as
+    it is. Run by a restore once its chats are in, and at the start for what an earlier version
+    restored. Idempotent: a chat that records none is passed over. One whose record cannot be
+    written is said in the log."""
+    theirs = {memory_dir_for_cwd(path).name for path in workspaces if os.path.isabs(path)}
+    ours = {memory_dir_for_cwd(path).name for path in this_homes_workspaces()}
+    verdicts: dict[str, bool] = {}
+
+    def of_another_home(folder: str) -> bool:
+        own = memory_dir_for_cwd(folder).name
+        return own not in ours and (own in theirs or _a_homes_workspace(folder))
+
+    changed: list[str] = []
+    for entry, meta in log.list_sessions_with_metadata():
+        folder = chat_folder(meta)
+        if not folder:
+            continue
+        if folder not in verdicts:
+            verdicts[folder] = of_another_home(folder)
+        if not verdicts[folder]:
+            continue
+        try:
+            log.update_metadata(entry["key"], {CHAT_FOLDER: ""})
+        except OSError:
             logger.warning(
-                "Could not settle the memory partitions (%s)", settle.__name__, exc_info=True
+                "memory: could not move chat %s to this home", entry["key"], exc_info=True
             )
+            continue
+        changed.append(entry["key"])
+    if changed:
+        logger.info(
+            "memory: %d chat(s) from another home work in this home's workspace", len(changed)
+        )
+    return changed
+
+
+def take_in_restored_chats(snap: Path, home: Path) -> list[str]:
+    """Once a restore or an import has put the chats of the unpacked archive *snap* into the home
+    at *home*: have each that worked in the workspace of the home *snap* came from record none, so
+    it works in this home's workspace (:func:`take_in_other_homes_chats`). Returns their keys.
+
+    The archive names its home's workspace (:func:`this_homes_workspaces`, written into its
+    manifest). One made before it did names its home (``personalclaw_dir``), whose own
+    ``workspace`` folder was its workspace unless ``personalclaw setup`` saved another, which the
+    archive carries too (``workspace_dir``). The chats are left as they are when the home keeps
+    them behind a link (``durability.home_paths``)."""
+    from personalclaw.durability import home_paths
+    from personalclaw.history import SESSIONS_DIR_NAME, ConversationLog
+
+    sessions = home_paths.landing(home, SESSIONS_DIR_NAME, [])
+    if sessions is None or not sessions.is_dir():
+        return []
+    return take_in_other_homes_chats(ConversationLog(base_dir=sessions), _archive_workspaces(snap))
+
+
+def _archive_workspaces(snap: Path) -> list[str]:
+    """The folders the home the unpacked archive *snap* came from worked in as its workspace."""
+    try:
+        manifest = json.loads((snap / "MANIFEST.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        manifest = {}
+    if not isinstance(manifest, dict):
+        manifest = {}
+    named = manifest.get("workspaces")
+    found = [p for p in named if isinstance(p, str)] if isinstance(named, list) else []
+    came_from = manifest.get("personalclaw_dir")
+    if isinstance(came_from, str) and came_from:
+        found.append(str(memory_root(Path(came_from))))
+    try:
+        found.append((snap / "workspace_dir").read_text(encoding="utf-8").strip())
+    except OSError:
+        pass
+    return found
+
+
+def _a_homes_workspace(folder: str) -> bool:
+    """Whether *folder* is a PersonalClaw home's own ``workspace`` folder: the workspace a home
+    makes when the owner chose none (``config.loader.default_workspace_root``), which holds every
+    memory of that home (``config.loader.memory_root``), so no chat works there as in a folder of
+    its own. Known by its place, ``~/.personalclaw/workspace`` on whichever machine recorded it, or
+    on this machine by what a home keeps there: its memory's documents (``memory.MEMORY_DIR_NAME``)
+    in it, and its chats' transcripts (``history.SESSIONS_DIR_NAME``) beside it."""
+    real = Path(os.path.realpath(os.path.expanduser(folder)))
+    if real.parts[-2:] == _HOMES_WORKSPACE:
+        return True
+    if real.name != _HOMES_WORKSPACE[-1]:
+        return False
+    from personalclaw.history import SESSIONS_DIR_NAME
+    from personalclaw.memory import MEMORY_DIR_NAME
+
+    return (real / MEMORY_DIR_NAME).is_dir() and (real.parent / SESSIONS_DIR_NAME).is_dir()
+
+
+def move_back_what_workspaces_kept() -> int:
+    """Move into the global memory everything a folder's memory holds whose folder is the
+    gateway's own workspace (:func:`is_the_workspace`), and remove that memory, once at the start.
+    Returns how many records moved.
+
+    No chat keeps a memory of its own there: the workspace shares the global memory. Such a memory
+    is what an earlier start left. It took a chat in a copy of another home's workspace (a home
+    restored at another path) or in an earlier release's workspace for a chat in a folder of its
+    own, and moved what that chat kept into a memory named for the workspace, which no chat here
+    reads and the Memory page does not show as the global memory
+    (:func:`move_what_folder_chats_left`). Or it is the memory of a folder the owner has since
+    made the workspace. A folder's memory is
+    the memory of the one folder its record names (:func:`recorded_folder`), so the memory of a
+    folder that is not the workspace is never taken. What it holds moves whole, as a context
+    folder's does (:func:`move_what_context_folders_kept`): a fact or lesson the global memory
+    holds too keeps the newer of the two, and the move is said in the global memory's history.
+    Idempotent: a memory that moved is gone, and one whose records could not all move stays, said
+    in the log, for a later start."""
+    from personalclaw.context import ContextBuilder, memory_at
+
+    moved = 0
+    for part in partitions():
+        if part.is_global or not is_the_workspace(part.folder):
+            continue
+        try:
+            dest = ContextBuilder.get_memory_for(None, writes=True)
+            count = _hand_over(memory_at(part.path), dest)
+        except Exception:  # noqa: BLE001 - a failed move leaves the memory for a later start
+            logger.warning("Could not move back the memory kept for %s", part.folder, exc_info=True)
+            continue
+        _remove(part.path)
+        if count and dest.vector_store is not None:
+            dest.vector_store.note_move(f"{_records(count)} back from the memory of {part.shown}")
+        moved += count
+    if moved:
+        logger.warning(
+            "Moved %d memory record(s) kept for the workspace back to the global memory", moved
+        )
+    return moved
+
+
+def _records(count: int) -> str:
+    return f"{count} record" if count == 1 else f"{count} records"
 
 
 #: What a ``*`` in a folder glob stands for: one id, the way PersonalClaw names the folders it makes
@@ -656,20 +879,28 @@ def move_what_folder_chats_left(store: "VectorMemoryStore", log: "ConversationLo
     (:func:`chat_folder`). A fact names only the last chat that stated it (every chat that learns
     the same thing writes the same row), and a lesson, a persona note and the daily history name
     none, so they stay where they are; so does what a chat left whose folder was one of
-    PersonalClaw's own and is gone (:func:`folder_is_gone`). Run when the gateway starts, before
-    anything recalls. Idempotent: a moved record is no longer here, and one already in the
-    partition is not copied over it.
+    PersonalClaw's own and is gone (:func:`folder_is_gone`), and what a chat in the workspace left
+    (:func:`is_the_workspace`). Run when the gateway starts, before anything recalls. Each move is
+    said in the history of both memories, which the Memory page shows: what moved and where.
+    Idempotent: a moved record is no longer here, and one already in the partition is not copied
+    over it.
     """
     from personalclaw.context import ContextBuilder
+    from personalclaw.home_paths import from_home
 
     moved = 0
     try:
-        moves: list[tuple[VectorMemoryStore, list[str]]] = []
+        moves: list[tuple[str, VectorMemoryStore, list[str]]] = []
         for folder, keys in _folder_chats_in(store, log):
             dest = ContextBuilder.get_memory_for(folder, writes=True).vector_store
             if dest is not None and dest is not store:
-                moves.append((dest, keys))
-        moved = store.hand_over_chat_records(moves) if moves else 0
+                moves.append((folder, dest, keys))
+        counts = store.hand_over_chat_records([(dest, keys) for _, dest, keys in moves])
+        for (folder, dest, _keys), count in zip(moves, counts):
+            if count:
+                store.note_move(f"{_records(count)} to the memory of {from_home(folder)}")
+                dest.note_move(f"{_records(count)} from the shared memory")
+        moved = sum(counts)
     except Exception:  # noqa: BLE001 - a failed pass must not stop the gateway; it runs again
         logger.warning("Could not move what folder chats left in the global memory", exc_info=True)
     if moved:

@@ -744,9 +744,14 @@ item vector).
   `_ext/_default` partition. `context.py::ContextBuilder.get_memory_for` resolves
   and caches one store per partition through `memory_locality.partition_for`, which
   gives the gateway's own workspace, where every chat starts, the global partition
-  (so a dashboard chat and the Memory UI share one main store), worked out without
-  making anything (`config.loader.resolve_workspace_root`), so a process with no
-  context builder (`personalclaw consolidate`) agrees with the gateway. A
+  (so a dashboard chat and the Memory UI share one main store), worked out from the
+  path alone (`memory_locality.is_the_workspace`), so a process with no context
+  builder (`personalclaw consolidate`) agrees with the gateway. The workspace is the
+  default workspace each release makes, as the home or release that recorded the
+  chat had it: this home's (the one `config.loader.resolve_workspace_root` resolves,
+  and the home's own `workspace` folder), the `workspace` folder of a home at its
+  default place (`~/.personalclaw/workspace`) on whichever machine recorded it, and
+  the folder releases up to 0.1.3 made, `~/workplace/personalclaw-workspace`. A
   partition gets its vector index once an embedding model is bound, asked at each
   use, so the first binding reaches a directory already open, or once it holds
   memories one wrote, so a clear leaves them searchable by keyword. A writer is
@@ -759,7 +764,15 @@ item vector).
   place that is read for its memory: the turn's own recall, the after-turn review,
   consolidation and its seal, and `memory_recall`. A project chat records there the
   folder its project binds, when it binds one, a loop's worker the folder its loop
-  binds, and a Code loop's task worker its task's worktree.
+  binds, and a Code loop's task worker its task's worktree. A chat in the workspace
+  records no folder (`memory_locality.folder_on_record`): the workspace is the
+  home's, and a path for it was true only in the home, at the place, that wrote it.
+  A chat that records none works in the workspace of whichever home it is in, as a
+  new chat does, and shares that home's global memory. A restore or an archive
+  import has each chat it brings that worked in the workspace of the home the
+  archive came from record none (`memory_locality.take_in_restored_chats`): the
+  archive's manifest names that home's workspace (`workspaces`), and an older one
+  names the home (`personalclaw_dir`).
 - **Work done for a chat reads that chat's memory** (`memory_locality.work_folder`, up
   the chain `memory_reads.reach_of` walks): a subagent's first prompt and its
   `memory_recall` read the partition of the session it works for, a workflow step's
@@ -799,7 +812,10 @@ item vector).
 - **What an earlier version filed in the global memory for a folder chat moves** to
   its folder's partition at each start (`memory_locality.move_what_folder_chats_left`,
   idempotent), before anything recalls (`memory_locality.settle_at_start` runs it,
-  then the naming pass and the project pass below). An episode is filed under the conversation it
+  after a chat recording another home's workspace is made to record none, and before
+  the naming pass, the pass below that brings back what a workspace kept, and the
+  project pass). Each move is one line in the history of both memories (Settings →
+  Memory → Audit): how many records moved, and to or from where. An episode is filed under the conversation it
   came from (consolidation and the seal set it to the chat's key) and a session
   summary under its session, so each moves whole (id, text, vector, dates) to the
   folder the chat's transcript names. A fact names only the last chat that stated it
@@ -810,6 +826,15 @@ item vector).
   home's saved listing is loaded), and removes what moved from the global memory in one
   go, its vector index rebuilt once; a folder whose memory cannot take its records
   leaves them in the global memory for the next start.
+- **What an earlier start moved out for a workspace comes back** to the global memory
+  at each start (`memory_locality.move_back_what_workspaces_kept`, idempotent): the
+  partition of a folder that is the workspace (`is_the_workspace`) is the memory of no
+  chat of its own, so everything it holds moves whole into the global memory, as a
+  context folder's does, and the partition is removed. Such a partition was left by a
+  start that took a chat of a home restored at another path, or of an earlier
+  release, for a chat in a folder of its own, or it is the memory of a folder since
+  made the workspace. A partition is the memory of the one folder its record names,
+  so the memory of any other folder is never taken.
 - A partition's `memory_index.db` holds that folder's memories (its vector store and
   its full-text index share the file), so the state manifest declares it a partition
   of `memory.db` (`StateEntry.partitions`): a snapshot and an export copy it through

@@ -5,10 +5,11 @@ import logging
 import re
 import time
 
+from personalclaw import memory_locality
 from personalclaw.agent import agents_dir
 from personalclaw.atomic_write import atomic_write
 from personalclaw.chat_traces import TEMPORARY
-from personalclaw.config.loader import AppConfig
+from personalclaw.config.loader import AppConfig, default_workspace_dir
 from personalclaw.constants import DASHBOARD_SESSION_PREFIX
 from personalclaw.dashboard.chat_forget import (
     forget_ended_temporary_chats,
@@ -436,8 +437,9 @@ def _restore_runtime_binding(state: DashboardState, session: _ChatSession, meta:
             session.acp_provider = _acp_prov
             _acp_pa = meta.get("acp_provider_agent")
             session.acp_provider_agent = _acp_pa if isinstance(_acp_pa, str) else ""
-    if meta.get("workspace_dir"):
-        session.workspace_dir = meta["workspace_dir"]
+    # A chat in the workspace records no folder (`memory_locality.folder_on_record`): it works in
+    # the workspace of the home it is in, as a new chat does (`api_chat_session_create`).
+    session.workspace_dir = memory_locality.chat_folder(meta) or default_workspace_dir()
     # The project this chat belongs to (issue 314). Restored HERE rather than in either caller,
     # for the reason this helper exists at all: the two restore paths had already drifted once over
     # `acp_provider`, and a gateway restart goes through the BULK path — which is precisely the
@@ -968,8 +970,9 @@ def save_session_to_history(
             meta_line["reasoning_effort"] = session.reasoning_effort
         if session.mode:
             meta_line["mode"] = session.mode
-        if session.workspace_dir:
-            meta_line["workspace_dir"] = session.workspace_dir
+        folder = memory_locality.folder_on_record(session.workspace_dir)
+        if folder:
+            meta_line[memory_locality.CHAT_FOLDER] = folder
         # The project this chat belongs to (issue 314). Omitted here, it was in-memory only, so
         # every project↔chat binding died on restart: `/api/projects/<id>/linked` scans
         # `state._sessions` rather than storage (`tasks/hierarchy_handlers.py`), so the project's

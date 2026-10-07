@@ -695,11 +695,16 @@ def create_export_zip(domains: Sequence[str] | None = None) -> tuple[bytes, dict
             key=lambda m: str(m["path"]),
         )
         excluded = _excluded_entry_paths()
+        from personalclaw.memory_locality import this_homes_workspaces
+
         manifest = {
             "version": MANIFEST_VERSION,
             "format": "zip",
             "schema_version": _shard_schema_version(),
             "machine_id": _machine_id(pc),
+            # The folders its chats worked in as the workspace, so an import into a home at another
+            # path has them work in that home's (`memory_locality.take_in_restored_chats`).
+            "workspaces": list(this_homes_workspaces()),
             "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "hostname": socket.gethostname(),
             "user": os.environ.get("USER", "unknown"),
@@ -1238,5 +1243,9 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
             from personalclaw import embedding_arrivals
 
             embedding_arrivals.arrived()
+            # Its chats that worked in its home's workspace work in this one's, as a replace's do.
+            from personalclaw.memory_locality import take_in_restored_chats
+
+            take_in_restored_chats(snap, pc)
 
     return summary

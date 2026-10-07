@@ -203,7 +203,9 @@ _LOCK_FILENAME = ".pclaw-lock.json"
 
 
 def _old_default_workspace() -> Path:
-    return Path.home() / "workplace" / "personalclaw-workspace"
+    from personalclaw.config.loader import EARLIER_DEFAULT_WORKSPACE
+
+    return Path.home().joinpath(*EARLIER_DEFAULT_WORKSPACE)
 
 
 def _links(directory: str, names: list[str]) -> list[str]:

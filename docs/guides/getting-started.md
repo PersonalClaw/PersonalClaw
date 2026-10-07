@@ -492,6 +492,8 @@ defaults flipped, and some routes refuse input they used to accept. Run
   restore onto a new machine asks you to enter the keys again. A replace restore also brings your
   automations back paused, so a new machine does not send the same briefs and digests as the one
   it replaces: resume them on the Triggers page (**Resume all**) once the old one is retired.
+  Wherever the new home is, a chat that worked in the old home's workspace works in the new
+  home's, and what it kept stays in the shared memory every chat reads.
 
 ## Reference docs
 

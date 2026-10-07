@@ -3107,30 +3107,41 @@ class VectorMemoryStore(MemoryProvider):
 
     def hand_over_chat_records(
         self, moves: Iterable[tuple["VectorMemoryStore", Iterable[str]]]
-    ) -> int:
+    ) -> list[int]:
         """Move the live records sessions left here to the stores they belong in: for each
         ``(dest, chats)``, each episode filed under one of *chats* and each one's session-scoped
-        records (its summary). Returns how many moved.
+        records (its summary). Returns how many moved to each, in the order of *moves*.
 
         Copied as they were written (id, text, vector, tags, dates, who wrote it and the session it
         derives from), linked in the destination's graph as a record written there is, and then
         removed here as :meth:`purge_records_from` removes one, all at once, so this store's vector
         index is rebuilt once. A record a destination already holds keeps its copy there. One that
-        cannot take its records, said in the log, leaves them here.
+        cannot take its records, said in the log, leaves them here, and took none.
         """
         episodes: list[str] = []
         semantic: list[str] = []
+        counts: list[int] = []
         for dest, chats in moves:
             try:
                 copied = self._copy_chat_records(dest, chats)
             except sqlite3.Error:
                 dest.db.rollback()
                 logger.warning("Could not move chat records into %s", dest.db_path, exc_info=True)
+                counts.append(0)
                 continue
             episodes += copied[0]
             semantic += copied[1]
+            counts.append(len(copied[0]) + len(copied[1]))
         self._drop_records(episodes, semantic)
-        return len(episodes) + len(semantic)
+        return counts
+
+    def note_move(self, what: str) -> None:
+        """Say in this store's history (``memory_events``, the Memory page's audit) that records
+        moved in or out, as *what* says: how many, and where to or from. A record moved between two
+        memories goes without its history (:meth:`_drop_records`), so without this the move is in
+        neither memory's history, and the counts on the Memory page change with nothing to say
+        why. One line for each move, not one for each record."""
+        self._record_event("move", "records", what, None, None, "start")
 
     def _copy_chat_records(
         self, dest: "VectorMemoryStore", chats: Iterable[str]

@@ -54,6 +54,7 @@ from personalclaw.dashboard.chat_utils import (
     _redact_for_display,
     persisted_history_key,
 )
+from personalclaw.memory_locality import folder_on_record
 from personalclaw.own_words import OWN_WORDS, PASTES
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
@@ -134,8 +135,11 @@ def to_folder(folder: str) -> Rebinding:
     """The change that has a chat work in *folder*: its runtime's tools, its shell and the
     relative paths they read and write, and the memory the folder keeps (``memory_locality``).
     Persisted with it, so a restart before her next message does not put the chat back where it
-    was."""
-    return Rebinding(fields={"workspace_dir": folder}, persisted={"workspace_dir": folder})
+    was: as the folder it records, which is none for the workspace
+    (``memory_locality.folder_on_record``)."""
+    return Rebinding(
+        fields={"workspace_dir": folder}, persisted={"workspace_dir": folder_on_record(folder)}
+    )
 
 
 def once_moved(session: _ChatSession, name: str) -> Any:

@@ -122,6 +122,12 @@ DASHBOARD_PORT: int = int(os.environ.get("PERSONALCLAW_PORT", _DEFAULT_PORT))
 # folder (``PERSONALCLAW_WORKSPACE``, or the path ``personalclaw setup`` saves in
 # ``<home>/workspace_dir``).
 
+#: The folder under the user's home that the releases before the workspace moved into the
+#: PersonalClaw home made as the workspace when none was chosen,
+#: ``~/workplace/personalclaw-workspace``. What those releases recorded is still read by it
+#: (``memory_locality.is_the_workspace``, ``outside_home.settle_previous_locations``).
+EARLIER_DEFAULT_WORKSPACE = ("workplace", "personalclaw-workspace")
+
 
 def _workspace_dir_file() -> Path:
     """Return the path to the saved workspace_dir file, respecting PERSONALCLAW_HOME. A path in

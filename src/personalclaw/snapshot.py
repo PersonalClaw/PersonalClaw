@@ -755,6 +755,8 @@ def snapshot_main(
         from personalclaw.skills.loader import iter_skill_files
 
         sk_count = len(iter_skill_files(stage / "skills"))
+        from personalclaw.memory_locality import this_homes_workspaces
+
         manifest = {
             # v3 adds `domains` — the per-domain counts the archive browser shows. The
             # `contents` block is unchanged: `_print_manifest` and the settings panel
@@ -768,6 +770,9 @@ def snapshot_main(
             # The home that took it, so a replace restore can tell this home's own snapshot from
             # another's, whose automations may still be running there (`triggers.restore_hold`).
             "machine_id": _home_id(pc),
+            # The folders its chats worked in as the workspace, so a restore into a home at another
+            # path has them work in that home's (`memory_locality.take_in_restored_chats`).
+            "workspaces": list(this_homes_workspaces()),
             "contents": {
                 "memory_db": _fsize(stage / "memory.db"),
                 "memory_index_db": _fsize(stage / "memory_index.db"),
@@ -1723,6 +1728,9 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
                 kept = _keep_app_engines(backup / rel, live)
         restore_items.said("stores", left, since)
     held = _hold_what_was_in_flight(pc, restored)
+    from personalclaw.memory_locality import take_in_restored_chats
+
+    take_in_restored_chats(snap, pc)
 
     kept_names = [_app_display_name(pc / "apps" / name) for name in kept]
     if kept_names:
@@ -2302,6 +2310,9 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
         from personalclaw import embedding_arrivals
 
         embedding_arrivals.arrived()
+    from personalclaw.memory_locality import take_in_restored_chats
+
+    take_in_restored_chats(snap, pc)
     print(restore_items.left_unchanged_line(left) if left else "✅ Merge complete.")
     return left
 
