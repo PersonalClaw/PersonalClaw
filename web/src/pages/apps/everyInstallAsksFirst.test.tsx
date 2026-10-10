@@ -226,7 +226,7 @@ describe('scanner findings say whether the app can even run them', () => {
     expect(text(runs), 'test files are not presented as what the app runs').not.toMatch(/test_provider\.py|test_sync\.py/)
 
     const notRun = within(dialog).getByTestId('scan-not-run')
-    expect(text(notRun)).toMatch(/2 the app cannot run/)
+    expect(text(notRun)).toMatch(/2 findings the app cannot run/)
     expect(text(notRun)).toMatch(/test_provider\.py/)
     expect(text(notRun)).toMatch(/Inert text: the app holds this string, but nothing in it can run it/)
     expect(text(notRun)).toMatch(/tests\/test_sync\.py/)
