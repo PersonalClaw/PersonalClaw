@@ -418,6 +418,33 @@ def test_doctor_reports_the_keychain_when_the_keychain_is_the_one_answering(
     assert issues == []
 
 
+@pytest.mark.asyncio
+async def test_both_doctor_surfaces_name_the_store_the_same_way(
+    home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """One name for the store on every doctor surface — never the library's name.
+
+    The CLI row once said ``OS keychain (keyring)``; the probe and Settings > Security say
+    "OS keychain". The store a user knows is the OS keychain; the Python library behind it
+    is an implementation detail no surface needs to print.
+    """
+    from personalclaw.cli_doctor import _doctor_credentials
+    from personalclaw.resilience.doctor import DoctorContext
+
+    _install_stub_keyring(monkeypatch)
+    monkeypatch.setenv(CREDENTIAL_BACKEND_ENV, "keychain")
+
+    issues = _doctor_credentials()
+    out = capsys.readouterr().out
+    result = await _credential_probe().run(DoctorContext(home=home))
+
+    assert issues == []
+    assert "OS keychain" in out
+    assert "(keyring)" not in out, "the library name must not leak into a user surface"
+    assert "OS keychain" in result.detail
+    assert "keyring" not in result.detail
+
+
 def test_the_doctor_actually_calls_the_credential_line() -> None:
     """A reported backend nobody prints is an inert control. Assert the CALL SITE."""
     import personalclaw.cli_doctor as cd
