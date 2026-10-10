@@ -405,7 +405,7 @@ def _doctor_credentials() -> list[str]:
     """
     state = credential_store_state()
     if state.backend == "keychain":
-        print("  credentials: 🔐 OS keychain (keyring)")
+        print("  credentials: 🔐 OS keychain")
     elif not state.env_readable:
         print(f"  credentials: ⏭  could not read {state.env_path} — its mode is unknown")
     elif not state.env_exists:
