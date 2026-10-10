@@ -7,7 +7,7 @@
  * Each scheme provides {dark, light} for the accent-driving tokens. The keys map
  * 1:1 to tokenRegistry color varNames; the appearance store applies them as
  * overrides (so a scheme = a known override set, and "reset" = the default
- * scheme 'lavender').
+ * scheme, `DEFAULT_SCHEME` (coral today)).
  */
 
 export interface Scheme {
