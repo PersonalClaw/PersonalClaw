@@ -329,8 +329,9 @@ grants, is refused before its message is sent, and the owner is told why.
 
 ## Command screening (`security.py`)
 
-- **Deny list** — `BUILTIN_DENIED_COMMAND_PATTERNS` (112 shell patterns) is
-  merged with user-configured `security.denied_commands` **at read time**
+- **Deny list** — `BUILTIN_DENIED_COMMAND_PATTERNS` (116 shell patterns, from
+  the packaged `baseline_denylist.json`) is merged with user-configured
+  `security.denied_commands` **at read time**
   (`denied_command_patterns()`), so config edits apply immediately, and the
   Security panel shows the same list. `denied_command` is the one check every
   path that runs a command someone wrote asks before it runs it, matched
