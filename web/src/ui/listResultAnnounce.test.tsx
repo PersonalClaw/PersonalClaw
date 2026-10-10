@@ -207,6 +207,15 @@ describe('a filtered list announces its result count', () => {
     )
     expect(container.querySelector('[role="status"]')!.textContent).toBe('1 match')
   })
+
+  it('an "-ies" noun announces the supplied singular, not the stripped stem', () => {
+    // The naive strip of "memories" yields "1 memorie" — the Settings › Memory Studio bug this
+    // guard exists for. Surfaces ending a noun in "-ies" must pass `singular`.
+    const { container } = render(
+      <ResultAnnouncement count={1} noun="memories" singular="memory" active />,
+    )
+    expect(container.querySelector('[role="status"]')!.textContent).toBe('1 memory')
+  })
 })
 
 // ── The call-site half ────────────────────────────────────────────────────────────────

