@@ -589,7 +589,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
           <SearchField value={q} onChange={setQ} placeholder="Search memories" ariaLabel="Search memories" size="sm" />
           {/* Two dimensions again — the query and the kind chips below — and `shown` is the memo the
               explorer list renders. */}
-          <ResultAnnouncement count={shown.length} noun="memories"
+          <ResultAnnouncement count={shown.length} noun="memories" singular="memory"
             active={!!q.trim() || kindFilter !== 'all'} />
           {/* 🔴 One-of-N, and the chosen chip was an `accentChip` background and nothing else. The
               dimension goes on the GROUP, not into each chip's name: each chip's visible text ends in a
