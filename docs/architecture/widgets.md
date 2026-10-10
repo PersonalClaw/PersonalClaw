@@ -187,7 +187,7 @@ is part of L0, agent-written UI cannot brick the app.
 | the wire: validator, consumers | `web/src/ui/widget/useWidgetActionBridge.ts` |
 | the `[UI]` turn dialect (prefix, clip, publisher) — a LEAF both paths import | `web/src/ui/widget/actionTurn.ts` |
 | genui dual payloads + producer routing | `web/src/ui/genui/actions.ts` |
-| the surface-layer ceiling + safe mode | `web/src/ui/surfaces/layers.ts`, `personalclaw/dashboard/surface_layers.py` |
+| the surface-layer ceiling + safe mode | `web/src/ui/surfaces/layers.ts`, `personalclaw/surface_layers.py` |
 | the tile re-fire fence | `personalclaw/dashboard/tile_actions.py` |
 | the child document + its `isTrusted` gates | `web/src/ui/widget/widgetSrcdoc.ts` |
 | HTML widget host (chat, tile band) | `web/src/ui/widget/WidgetFrame.tsx` |
