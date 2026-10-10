@@ -596,6 +596,33 @@ describe('the hand-laid bars reach the same idiom', () => {
     expect(tag, 'and the count-1 form the strip mangles').toContain('singular="match"')
   })
 
+  it('the count-1 form reads correctly for every noun in use', () => {
+    // 🪤 "1 memorie" is what Settings › Memory announced. The count-1 form strips a trailing "s",
+    // which mangles every noun ending in "-ies", "-ches", "-shes", "-sses", "-xes" or "-zes", so a
+    // tag with such a noun must say its own `singular`. `ListControls` takes no `singular` in its
+    // `results`, so a bar must not be handed such a noun at all. Read from every call site.
+    const MANGLED = /(?:ies|[cs]hes|sses|xes|zes)$/
+    const tags = walk(SRC).flatMap((abs) =>
+      [...code(abs).matchAll(/<ResultAnnouncement\b[\s\S]*?\/>/g)].map((m) => ({
+        rel: abs.replace(SRC + '/', ''), tag: m[0], noun: m[0].match(/\bnoun="([^"]+)"/)?.[1],
+      })))
+    const named = tags.filter((t) => t.noun !== undefined)
+    expect(named.length, 'the census must find the announcement tags').toBeGreaterThanOrEqual(10)
+    const unsaid = named
+      .filter(({ tag, noun }) => MANGLED.test(noun!) && !/\bsingular="[^"]+"/.test(tag))
+      .map(({ rel, noun }) => `${rel}: noun="${noun}"`)
+    expect(unsaid, 'a noun the strip mangles must carry its own singular').toEqual([])
+
+    const bars = consumers()
+      .map(({ rel, tag }) => ({ rel, noun: tag.match(/\bnoun:\s*'([^']+)'/)?.[1] }))
+      .filter((b) => b.noun !== undefined)
+    expect(bars.length, 'the census must find the bars that name a noun').toBeGreaterThanOrEqual(10)
+    expect(
+      bars.filter(({ noun }) => MANGLED.test(noun!)).map(({ rel, noun }) => `${rel}: '${noun}'`),
+      'a bar cannot pass a singular, so its noun must survive the strip',
+    ).toEqual([])
+  })
+
   it('scans real files (not vacuously green)', () => {
     expect(walk(SRC).length).toBeGreaterThan(200)
   })
