@@ -184,7 +184,7 @@ export function ScanReport({ scan }: { scan: AppScanReport }) {
       {notRun.length > 0 && (
         <details className="mt-s" data-testid="scan-not-run" open={runs.length === 0}>
           <summary data-type="label-m" className="cursor-pointer text-on-surface">
-            {notRun.length} the app cannot run
+            {notRun.length} finding{notRun.length === 1 ? '' : 's'} the app cannot run
           </summary>
           <div data-type="body-s" className="mt-xs text-on-surface-low">
             Inert text, or files nothing the app runs loads — usually its own tests and fixtures.
