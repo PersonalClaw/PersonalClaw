@@ -1199,7 +1199,7 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
 
 
 async def api_incident(request: web.Request) -> web.Response:
-    """GET /api/incident — current state; POST /api/incident — activate.
+    """GET /api/incident — current state. POST /api/incident — activate.
 
     POST body: ``{reason?: str}``. Activation is SEL-audited and suspends all
     unattended work within one poll interval; interactive chat is untouched.

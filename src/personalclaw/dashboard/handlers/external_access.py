@@ -215,7 +215,7 @@ async def api_external_access(request: web.Request) -> web.Response:
 
 
 async def api_external_access_client(request: web.Request) -> web.Response:
-    """POST /api/external-access/clients — create; DELETE …/{client_id} — revoke.
+    """POST /api/external-access/clients — create. DELETE …/{client_id} — revoke.
 
     The token is in the CREATE response and nowhere else, ever: only its hash is
     stored, so this is the single moment it can be shown. Revocation deletes the

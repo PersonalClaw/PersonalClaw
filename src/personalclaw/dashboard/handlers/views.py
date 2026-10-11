@@ -155,12 +155,12 @@ async def api_dashboard_view_tile_binding(request: web.Request) -> web.Response:
 
 async def api_dashboard_view_tile_refresh(request: web.Request) -> web.Response:
     """POST .../tiles/refresh {ref, force?} — run one chatless refresh.
-    GET  .../tiles/refresh?ref=… — the tile's newest ledger row (the freshness/chip source,
-    and the deep-link target).
+    GET  .../tiles/refresh?ref=… — the tile's newest ledger row.
 
-    The POST is TTL-GATED unless ``force`` is set: a rendered dashboard polling this must not
-    turn a cadence into a fetch-per-paint. ``force`` is the tile's own refresh button — a human
-    asked, so the gate does not apply.
+    The GET's row is the tile's freshness/chip source and its deep-link target. The POST is
+    TTL-GATED unless ``force`` is set: a rendered dashboard polling this must not turn a cadence
+    into a fetch-per-paint. ``force`` is the tile's own refresh button — a human asked, so the
+    gate does not apply.
     """
     from personalclaw.dashboard import tile_refresh
 

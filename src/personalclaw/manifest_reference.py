@@ -74,21 +74,63 @@ _REFERENCE_PKG = "personalclaw.reference"
 #: their own drift guards, so neither can drift from the code or from the other.
 PUBLISHED_ROUTE_REFERENCE = "docs/reference/api-routes.md"
 
-# Many handler docstrings open by restating the route signature
-# (``GET /api/foo — does X`` or ``GET/PUT /api/foo — does X``). The reference
-# already prints ``{method} {path}`` before the summary, so that prefix is pure
-# duplication — strip it for the markdown, leaving the human description (which
-# may be empty, honestly rendered as "no summary").
-_ROUTE_SIG_PREFIX = re.compile(
-    r"^(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)"
-    r"(?:/(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS))*"
-    r"\s+/\S*\s*[—:-]?\s*"
-)
+_VERB = r"(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)"
+
+#: A route signature as a handler docstring restates one: a verb or a ``/``-joined verb list,
+#: spaced or not (``GET/PUT``, ``GET / POST``), then the path, whole or shortened
+#: (``/api/foo``, ``.../tiles/refresh``, ``…/{client_id}``). The reference already prints
+#: ``{method} {path}`` before each summary, so a restated signature is pure duplication.
+_ROUTE_SIG = rf"(?P<verbs>{_VERB}(?:\s*/\s*{_VERB})*)\s+(?:/|\.{{3}}|\u2026)\S*"
+
+#: A summary line that opens with a signature: stripped, leaving the human description,
+#: body shape included (which may be empty, honestly rendered as "no summary").
+_ROUTE_SIG_PREFIX = re.compile(rf"^{_ROUTE_SIG}\s*[—:-]?\s*")
+
+#: One method's clause: a signature, the body it takes if the docstring names one
+#: (``{ref, force?}``), an em dash, then what that method does. A handler registered for
+#: several methods gives each its own clause, on its first line
+#: (``GET /api/incident — current state. POST /api/incident — activate.``) or on a line of
+#: its own (``GET …/review — the list.`` then ``POST …/review — decide one.``).
+_ROUTE_CLAUSE = re.compile(rf"{_ROUTE_SIG}(?:\s+(?P<body>\{{[^{{}}]*\}}))?\s*—\s*")
 
 
-def _clean_summary(summary: str) -> str:
-    """Drop a leading route-signature restatement from a handler docstring summary."""
-    return _ROUTE_SIG_PREFIX.sub("", summary).strip()
+def _route_clauses(line: str) -> list[tuple[set[str], str]]:
+    """The ``(methods, text)`` clauses of a docstring line that opens with one.
+
+    A clause's text runs to the next clause's signature, less a trailing ``;``, and keeps
+    the body shape it names (``{ref, force?} — run one refresh.``), as a single-method
+    summary does. A line that does not open with a clause has none.
+    """
+    heads = list(_ROUTE_CLAUSE.finditer(line))
+    if not heads or heads[0].start() != 0:
+        return []
+    ends = [h.start() for h in heads[1:]] + [len(line)]
+    clauses = []
+    for head, end in zip(heads, ends):
+        text = line[head.end() : end].strip().rstrip(";").rstrip()
+        if head["body"]:
+            text = f"{head['body']} — {text}"
+        clauses.append((set(re.split(r"\s*/\s*", head["verbs"])), text))
+    return clauses
+
+
+def _summary_for_method(doc: str, method: str) -> str:
+    """The summary a route row shows: what the handler's docstring says of *method*.
+
+    A docstring whose first line opens with a method's clause speaks per method, so the row
+    takes the clause that names its own method, from any line that opens with one, and none
+    when no clause names it (another method's summary would say the route does what it does
+    not). Any other first line is the summary for every method, less a restated signature.
+    """
+    lines = [line.strip() for line in doc.splitlines()]
+    first = lines[0] if lines else ""
+    if not _route_clauses(first):
+        return _ROUTE_SIG_PREFIX.sub("", first).strip()
+    for line in lines:
+        for methods, text in _route_clauses(line):
+            if method in methods:
+                return text
+    return ""
 
 
 def reference_dir() -> Path:
@@ -154,7 +196,7 @@ def _routes_from_ast() -> list[dict[str, Any]]:
     """Every literal HTTP route registered in the package, with its summary.
 
     Same AST walk as the drift test's ``_literal_route_paths`` (no boot), extended
-    to pair each path with the handler's docstring first line. Excluded routes
+    to pair each path with its summary (:func:`_summary_for_method`). Excluded routes
     (UI transport / app proxy — :data:`MANIFEST_EXCLUDE`) are dropped, matching the
     live ``/api/manifest`` walk. Scans the whole package (see
     :func:`_route_source_files`) so entity families registered from outside
@@ -188,7 +230,7 @@ def _routes_from_ast() -> list[dict[str, Any]]:
             handler_idx = path_idx + 1
             handler = node.args[handler_idx] if len(node.args) > handler_idx else None
             doc = docs.get(_handler_name(handler), "")
-            summary = _clean_summary(doc.splitlines()[0].strip() if doc else "")
+            summary = _summary_for_method(doc, method)
             out.append(
                 {
                     "method": method,
@@ -389,8 +431,11 @@ def _render_published_routes(routes: list[dict[str, Any]]) -> str:
         "or bridge, not a single verb).",
         "- **Path** — `{name}` is a path parameter. Paths are shown in aiohttp's canonical "
         "form, so a segment declared with a regex (`{tail:.*}`) appears without it.",
-        "- **Summary** — the first line of the handler's own docstring, verbatim. Where a "
-        "handler has none, the cell says so rather than inventing one; where the first "
+        "- **Summary** — the first line of the handler's own docstring, less any route "
+        "signature it restates. A handler that serves several methods says what each does "
+        "in a clause of its own (`GET /x — …; POST /x — …`, on its first line or on a line "
+        "each), and each row shows its own method's clause. Where a handler says nothing "
+        "of a row's method, the cell says so rather than inventing a summary; where the "
         "line runs on, it is shown cut off rather than paraphrased. The docstring in the "
         "source is the authoritative per-route contract.",
         "",

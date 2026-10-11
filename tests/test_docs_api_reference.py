@@ -33,10 +33,13 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from personalclaw.manifest_reference import (
     PUBLISHED_ROUTE_REFERENCE,
     _render_published_routes,
     _routes_from_ast,
+    _summary_for_method,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -148,6 +151,77 @@ def test_route_family_index_accounts_for_every_registration():
         f"family index sums to {sum(counts)} but the census has {len(routes)} "
         "registrations — a route is being grouped into no family, or into two"
     )
+
+
+#: A summary that still restates a route signature. The reference prints
+#: ``{method} {path}`` before the summary, so a verb followed by a path fragment
+#: (``/``, ``...`` or the ellipsis) inside the summary is duplication — and on a
+#: handler shared by two methods, the wrong method's signature tells the reader the
+#: row does something it does not.
+_SIGNATURE_IN_SUMMARY = re.compile(
+    r"(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)"
+    r"(?:\s*/(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS))*"
+    r"\s+(?:/|\.\.\.|\u2026)\S*"
+)
+
+
+def test_no_route_summary_restates_a_route_signature():
+    """No row's summary restates a route signature.
+
+    A handler shared by two methods used to give BOTH rows its whole first line, so the
+    DELETE row of a create/revoke pair read "create; DELETE …/{client_id} — revoke." Each
+    row now takes its own method's clause (the cases below); this leg fails on any row whose
+    summary still carries a verb-plus-path signature, its own method's or another's.
+    """
+    routes, _ = _census()
+    offenders = [
+        f"{r['method']} {r['path']}: {r['summary']!r}"
+        for r in routes
+        if _SIGNATURE_IN_SUMMARY.search(r["summary"])
+    ]
+    assert (
+        not offenders
+    ), f"{len(offenders)} route summaries still restate a route signature:\n" + "\n".join(
+        offenders[:15]
+    )
+
+
+@pytest.mark.parametrize(
+    ("doc", "method", "summary"),
+    [
+        # Each method takes its own clause of a shared first line, whichever separator.
+        (
+            "GET /api/incident — current state; POST /api/incident — activate.",
+            "GET",
+            "current state",
+        ),
+        ("GET /api/incident — current state; POST /api/incident — activate.", "POST", "activate."),
+        ("POST /api/x — create. DELETE …/{client_id} — revoke.", "DELETE", "revoke."),
+        # A method's clause may open a later line of the docstring.
+        ("GET /api/x — the whole store;\nPOST /api/x — record one.", "POST", "record one."),
+        (
+            "GET /api/x — the list.\n\nPOST /api/x {name} — create one.",
+            "POST",
+            "{name} — create one.",
+        ),
+        # A spaced verb list and a shortened path are a signature too.
+        ("GET / POST …/review — what is left to decide.", "POST", "what is left to decide."),
+        # A clause keeps the body shape it names, as a single-method summary does.
+        ("POST .../tiles/refresh {ref, force?} — run one.", "POST", "{ref, force?} — run one."),
+        ("POST /api/rooms {title} — create a room.", "POST", "{title} — create a room."),
+        # A clause's own semicolons are its text, not a clause boundary.
+        ("GET /api/a — rows; ``q`` searches the body.", "GET", "rows; ``q`` searches the body."),
+        # No clause names the method: nothing truthful to show, rather than a sibling's text.
+        ("GET /api/x — every view.\n\nThe list, presets first.", "POST", ""),
+        # A first line that is not a clause is every method's summary, less its signature.
+        ("GET/PUT /api/config: read or write it.", "PUT", "read or write it."),
+        ("Liveness probe; auth-exempt.", "GET", "Liveness probe; auth-exempt."),
+        ("", "GET", ""),
+    ],
+)
+def test_a_route_row_summarises_its_own_method(doc: str, method: str, summary: str):
+    """The summary a row shows is what the handler's docstring says of the row's method."""
+    assert _summary_for_method(doc, method) == summary
 
 
 def test_generated_route_reference_warns_against_hand_editing():

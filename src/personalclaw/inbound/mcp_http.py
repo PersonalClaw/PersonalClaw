@@ -119,9 +119,10 @@ def _json(payload: dict, status: int = 200) -> web.Response:
 
 
 async def handle_mcp_get(request: web.Request) -> web.Response:
-    """`GET /mcp` → 405 while the surface serves (no SSE stream in v1, spec-permitted), and the
-    POST's own admission answer — 404, or 503 in an incident — while it does not, so a switched-off
-    surface does not confirm its own existence to a GET either."""
+    """GET /mcp — 405 while the surface serves (no SSE stream in v1, spec-permitted).
+
+    While it does not serve, a GET gets the POST's own admission answer (404, or 503 in an
+    incident), so a switched-off surface does not confirm its own existence to a GET either."""
     from personalclaw.inbound.gate import admission_problem
 
     problem, status = admission_problem(SURFACE)
