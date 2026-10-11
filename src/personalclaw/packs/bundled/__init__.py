@@ -1,12 +1,14 @@
 """Bundled first-party Domain OS packs — the authoring path.
 
-Two packs ship in the wheel: **Personal CFO** (budget-review template + a spending-digest
-trigger + finance skills + a finance-category connector requirement + a CFO roster) and
-**Health OS** (checkup-cadence trigger + journaling template + health skills + a health
-roster). They are the reference for third-party authors and the acceptance test for the whole
-mechanism: each one exports, wipes, and imports onto a fresh
-``PERSONALCLAW_HOME`` with its skills locked, its template runnable, its trigger DISABLED,
-its connector prompting configure-or-substitute, and its setup interview asking for a folder.
+The packs under this folder ship in the wheel — currently **Personal CFO** (budget-review
+template + a spending-digest trigger + finance skills + a finance-category connector
+requirement + a CFO roster), **Health OS** (checkup-cadence trigger + journaling template +
+health skills + a health roster), and **Infra Ops** (two review skills + a reviewer agent +
+a change-review template). They are the reference for third-party authors and the acceptance
+test for the whole mechanism: every one exports, wipes, and imports onto a fresh
+``PERSONALCLAW_HOME`` with its skills locked and its template runnable; a pack that declares
+a trigger imports with it DISABLED, one that declares a connector prompts
+configure-or-substitute, and one that declares a setup interview asks for a folder.
 
 **Why a source tree and not a checked-in ``.pclaw``.** A binary ZIP in the repo is a file
 nobody can review in a diff and nobody can regenerate from anything. So the packs live as

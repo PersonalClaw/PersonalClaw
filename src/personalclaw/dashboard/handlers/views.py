@@ -154,9 +154,8 @@ async def api_dashboard_view_tile_binding(request: web.Request) -> web.Response:
 
 
 async def api_dashboard_view_tile_refresh(request: web.Request) -> web.Response:
-    """POST .../tiles/refresh {ref, force?} — run one chatless refresh.
-    GET  .../tiles/refresh?ref=… — the tile's newest ledger row (the freshness/chip source,
-    and the deep-link target).
+    """GET /api/dashboard/views/{view_id}/tiles/refresh — the tile's newest ledger row.
+    POST /api/dashboard/views/{view_id}/tiles/refresh/force=true — run one chatless refresh.
 
     The POST is TTL-GATED unless ``force`` is set: a rendered dashboard polling this must not
     turn a cadence into a fetch-per-paint. ``force`` is the tile's own refresh button — a human
@@ -190,7 +189,7 @@ async def api_dashboard_view_tile_refresh(request: web.Request) -> web.Response:
 
 
 async def api_dashboard_view_tile_action(request: web.Request) -> web.Response:
-    """POST .../tiles/action {ref, action, payload?} — a genui control re-firing this tile.
+    """a genui control re-firing this tile.
 
     The action name is MODEL-AUTHORED (a tile's body is generated), so it is checked against
     the tile's frozen capability set before anything dispatches. A refusal is a normal
