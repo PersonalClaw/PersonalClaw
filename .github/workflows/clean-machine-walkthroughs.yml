@@ -60,6 +60,16 @@ on:
         type: string
         required: false
         default: ""
+      # A CALLER WANTS ONE LEG, NOT FOUR. An input a called workflow does not declare is null,
+      # so the guards' `inputs.which || 'all'` fallback would run EVERY leg on every call — a
+      # release-verify caller pinning a wheel would also pull container images and self-update a
+      # checkout it never asked for. Hence a call default of `v1-wheel`, unlike the dispatch
+      # default of `all`: the fallback still admits a scheduled run, and a caller gets one leg.
+      which:
+        description: "Which walkthrough to run (default v1-wheel for callers)"
+        type: string
+        required: false
+        default: v1-wheel
 
 # THE `which` INPUT HAS NO VALUE ON A SCHEDULED RUN, AND THAT IS THE TRAP THE SCHEDULE WALKS
 # INTO. The `inputs` context is populated only for `workflow_dispatch` / `workflow_call`; on a
