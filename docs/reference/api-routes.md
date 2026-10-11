@@ -219,24 +219,24 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/apps/{name}/token` | the app-scoped identity token this app should use. |
 | `GET` | `/api/apps/{name}/uninstall-preview` | classify shared deps and report what the app's ``data/`` holds. |
 | `POST` | `/api/apps/{name}/update` | atomic update from ``{source, consent?}``. |
-| `GET` | `/api/artifacts` | metadata-only rows; ``q`` searches metadata and body. |
+| `GET` | `/api/artifacts` | metadata-only rows |
 | `POST` | `/api/artifacts` | create (or bump an existing file-backed artifact). |
 | `GET` | `/api/artifacts/deployed` | the deployed-app listing (slug + in-gateway URL). |
 | `GET` | `/api/artifacts/folders` | the library folder tree (flat, parent_id-linked). |
 | `POST` | `/api/artifacts/folders` | create a folder (``{name, parent_id?, icon?}``). |
-| `DELETE` | `/api/artifacts/folders/{id}` | members fall back to unfiled; nothing is destroyed. |
+| `DELETE` | `/api/artifacts/folders/{id}` | members fall back to unfiled |
 | `PATCH` | `/api/artifacts/folders/{id}` | rename / re-nest / reorder. No artifact is touched. |
 | `GET` | `/api/artifacts/pinned` | the dashboard pin list. |
 | `DELETE` | `/api/artifacts/{slug}` | _(no summary)_ |
 | `GET` | `/api/artifacts/{slug}` | full content (live-pointer read for file-backed). |
-| `PATCH` | `/api/artifacts/{slug}` | save (silent) or snapshot; or metadata-only. |
+| `PATCH` | `/api/artifacts/{slug}` | save (silent) or snapshot |
 | `POST` | `/api/artifacts/{slug}/changed` | another PersonalClaw process wrote this artifact. |
 | `DELETE` | `/api/artifacts/{slug}/deploy` | tear the deployment down. |
 | `POST` | `/api/artifacts/{slug}/deploy` | publish the artifact at a serve URL of its own. |
 | `GET` | `/api/artifacts/{slug}/events` | activity timeline (drops dashboard:ui). |
 | `POST` | `/api/artifacts/{slug}/events` | record a 'referenced' impression. |
 | `GET` | `/api/artifacts/{slug}/extract` | extracted text for a binary document artifact. |
-| `PATCH` | `/api/artifacts/{slug}/folder` | file an artifact (``{folder_id}``; "" = unfiled). |
+| `PATCH` | `/api/artifacts/{slug}/folder` | file an artifact (``{folder_id}`` |
 | `GET` | `/api/artifacts/{slug}/model` | the parsed document model + its loss report. |
 | `PUT` | `/api/artifacts/{slug}/model` | re-render a posted model into the artifact. |
 | `POST` | `/api/artifacts/{slug}/pin` | pin or unpin (``{"pinned": bool}``). |
@@ -372,7 +372,7 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `PATCH` | `/api/chat/tag-columns/{id}` | rename / retag / reorder. |
 | `GET` | `/api/chat/tags` | list all tag definitions. |
 | `POST` | `/api/chat/tags` | create a new tag. |
-| `DELETE` | `/api/chat/tags/{id}` | delete a tag; strip it from all sessions. |
+| `DELETE` | `/api/chat/tags/{id}` | delete a tag |
 | `PATCH` | `/api/chat/tags/{id}` | rename / recolor / reorder. |
 | `POST` | `/api/chat/task-mode` | set the per-session TASK mode. |
 | `GET` | `/api/companion/discovery` | the live state of the LAN advertiser. |
@@ -390,22 +390,22 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/dashboard/config` | read or write dashboard settings. |
 | `PUT` | `/api/dashboard/config` | read or write dashboard settings. |
 | `GET` | `/api/dashboard/views` | every view (locked presets first, then user views). |
-| `POST` | `/api/dashboard/views` | every view (locked presets first, then user views). |
+| `POST` | `/api/dashboard/views` | _(no summary)_ |
 | `DELETE` | `/api/dashboard/views/{view_id}` | read, edit, or delete a view. |
 | `GET` | `/api/dashboard/views/{view_id}` | read, edit, or delete a view. |
 | `PUT` | `/api/dashboard/views/{view_id}` | read, edit, or delete a view. |
 | `POST` | `/api/dashboard/views/{view_id}/tiles` | {slug, size?} — pin an artifact tile. |
-| `POST` | `/api/dashboard/views/{view_id}/tiles/action` | POST .../tiles/action {ref, action, payload?} — a genui control re-firing this tile. |
+| `POST` | `/api/dashboard/views/{view_id}/tiles/action` | a genui control re-firing this tile. |
 | `PUT` | `/api/dashboard/views/{view_id}/tiles/binding` | {ref, mode, ttl_secs?, skeleton?, data?} |
-| `GET` | `/api/dashboard/views/{view_id}/tiles/refresh` | POST .../tiles/refresh {ref, force?} — run one chatless refresh. |
-| `POST` | `/api/dashboard/views/{view_id}/tiles/refresh` | POST .../tiles/refresh {ref, force?} — run one chatless refresh. |
+| `GET` | `/api/dashboard/views/{view_id}/tiles/refresh` | the tile's newest ledger row. |
+| `POST` | `/api/dashboard/views/{view_id}/tiles/refresh` | _(no summary)_ |
 | `POST` | `/api/dashboard/views/{view_id}/tiles/resolve` | {ref, keep} — accept/dismiss/unpin. |
 | `GET` | `/api/design/tokens/default` | PersonalClaw's canonical |
 | `GET` | `/api/desktop/capabilities/{cap}` | one capability, gateway-mediated. |
 | `POST` | `/api/desktop/register` | the shell announces itself, gets a session token. |
 | `GET` | `/api/desktop/state` | what the desktop shell can actually do, right now. |
 | `POST` | `/api/desktop/state` | the shell pushes a refreshed capability manifest. |
-| `POST` | `/api/desktop/unregister` | the shell is quitting; forget its capabilities. |
+| `POST` | `/api/desktop/unregister` | the shell is quitting |
 | `GET` | `/api/devices` | every device and token signed in to this gateway. |
 | `GET` | `/api/devices/integrations` | every integration token that can reach this gateway. |
 | `POST` | `/api/devices/integrations/{id}/revoke` | revoke one integration's token. |
@@ -450,8 +450,8 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/evals/studies/{study_id}` | one study's verdict, agreement and per-run rows. |
 | `GET` | `/api/external-access` | the whole operator view of the inbound seam. |
 | `POST` | `/api/external-access/bridge/confirmations/{id}` | your answer to a control-bridge action. |
-| `POST` | `/api/external-access/clients` | create; DELETE …/{client_id} — revoke. |
-| `DELETE` | `/api/external-access/clients/{client_id}` | create; DELETE …/{client_id} — revoke. |
+| `POST` | `/api/external-access/clients` | create. |
+| `DELETE` | `/api/external-access/clients/{client_id}` | revoke. |
 | `POST` | `/api/external-access/clients/{client_id}/disabled` | kill-switch layer (c). |
 | `POST` | `/api/external-access/clients/{client_id}/persistent-sessions` | keep its conversation. |
 | `POST` | `/api/feedback` | record one verdict. |
@@ -476,8 +476,8 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/file-watch` | SSE stream of file content changes. |
 | `POST` | `/api/file-write` | write file content from the markdown panel. |
 | `GET` | `/api/genui/library` | the generative-UI component catalog + the mechanically |
-| `GET` | `/api/guardrails/project-trust` | the whole store; |
-| `POST` | `/api/guardrails/project-trust` | the whole store; |
+| `GET` | `/api/guardrails/project-trust` | the whole store |
+| `POST` | `/api/guardrails/project-trust` | _(no summary)_ |
 | `GET` | `/api/healthz` | Liveness probe — auth-exempt, returns 200 once gateway is serving HTTP. |
 | `GET` | `/api/heartbeat/tasks` | every task in HEARTBEAT.md, and whether the owner allowed it. |
 | `POST` | `/api/heartbeat/tasks/allow` | the owner's yes to one queued task. |
@@ -506,8 +506,8 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/inbox/{id}/pair` | let someone new talk to your agent on the channel they wrote on. |
 | `POST` | `/api/inbox/{id}/restore` | undo a verification filter. |
 | `POST` | `/api/inbox/{id}/sort` | sort a message again, after its sorting failed. |
-| `GET` | `/api/incident` | current state; POST /api/incident — activate. |
-| `POST` | `/api/incident` | current state; POST /api/incident — activate. |
+| `GET` | `/api/incident` | current state. |
+| `POST` | `/api/incident` | activate. |
 | `POST` | `/api/incident/resume` | turn incident mode OFF. |
 | `POST` | `/api/investigate` | _(no summary)_ |
 | `DELETE` | `/api/knowledge/annotations/{id}` | drop one highlight. |
@@ -641,7 +641,7 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/loops/{id}/plan/start` | begin (or resume) the walkthrough. |
 | `POST` | `/api/loops/{id}/queue` | {task_ids, action: queue\|unqueue} — queue tasks for |
 | `GET` | `/api/loops/{id}/report` | the document deliverable + working log. ``report`` |
-| `GET` | `/api/loops/{id}/stream` | per-loop live SSE; replays a snapshot on connect. |
+| `GET` | `/api/loops/{id}/stream` | per-loop live SSE |
 | `GET` | `/api/manifest` | the machine-readable self-description of this instance. |
 | `GET` | `/api/mcp` | list configured MCP servers with enabled state. |
 | `GET` | `/api/mcp/active` | return MCP servers for the current agent. |
@@ -806,12 +806,12 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/packs/{name}/update` | The ``pack_owned`` update flow. DRY-RUN unless ``confirm`` is true. |
 | `GET` | `/api/proactive/digest` | the digest card, assembled from the last digest run. |
 | `POST` | `/api/proactive/digest/reply` | one tap or one typed reply. Body ``{run_id, text}``. |
-| `POST` | `/api/proactive/install` | the pack card. Idempotent; also the reconcile. |
+| `POST` | `/api/proactive/install` | the pack card. Idempotent |
 | `GET` | `/api/projects` | _(no summary)_ |
 | `POST` | `/api/projects` | _(no summary)_ |
 | `POST` | `/api/projects/import` | import a project archive (multipart `file`). |
 | `GET` | `/api/projects/settings` | the user's default project (`""` when none). |
-| `PUT` | `/api/projects/settings` | set the default project; `""` or null clears it. |
+| `PUT` | `/api/projects/settings` | set the default project |
 | `DELETE` | `/api/projects/{project_id}` | _(no summary)_ |
 | `GET` | `/api/projects/{project_id}` | _(no summary)_ |
 | `PUT` | `/api/projects/{project_id}` | _(no summary)_ |
@@ -981,16 +981,16 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/triggers/doctor` | structural problems across every trigger. |
 | `GET` | `/api/triggers/history` | the run feed across every kind. |
 | `POST` | `/api/triggers/restore-hold/resume` | Resume all: every automation a restore holds. |
-| `GET` | `/api/triggers/review` | POST /api/triggers/review — what a restart left for you to decide. |
-| `POST` | `/api/triggers/review` | POST /api/triggers/review — what a restart left for you to decide. |
+| `GET` | `/api/triggers/review` | list. |
+| `POST` | `/api/triggers/review` | _(no summary)_ |
 | `GET` | `/api/triggers/variables` | the ``$variables`` each trigger kind exposes. |
 | `POST` | `/api/triggers/view/render` | the `view` kind's production render caller. |
 | `GET` | `/api/triggers/week` | the week-grid projection, from `?start=`. |
-| `DELETE` | `/api/triggers/{id}` | DELETE /api/triggers/{id}. |
-| `PUT` | `/api/triggers/{id}` | DELETE /api/triggers/{id}. |
+| `DELETE` | `/api/triggers/{id}` | delete. |
+| `PUT` | `/api/triggers/{id}` | update. |
 | `POST` | `/api/triggers/{id}/answer` | answer the question a trigger's action stopped on. |
 | `POST` | `/api/triggers/{id}/fire` | fire a webhook automation for an outside program. |
-| `GET` | `/api/triggers/{id}/history` | run records; other kinds answer `supported: false`. |
+| `GET` | `/api/triggers/{id}/history` | run records |
 | `GET` | `/api/triggers/{id}/history/{run_id}` | one full run record. |
 | `POST` | `/api/triggers/{id}/run` | run it now. |
 | `POST` | `/api/triggers/{id}/test` | execute a lifecycle trigger's action once. |
@@ -1094,7 +1094,7 @@ The remaining 7 registrations: real-time transport and the loopback control brid
 | `GET` | `/api/ws` | single multiplexed WebSocket for all real-time events. |
 | `GET` | `/api/ws/terminal/{session_id}` | WebSocket PTY for the built-in CLI panel. |
 | `POST` | `/confirm` | refused, always: only you confirm a control-bridge action. |
-| `GET` | `/mcp` | `GET /mcp` → 405 while the surface serves (no SSE stream in v1, spec-permitted), and the |
+| `GET` | `/mcp` | 405 while the surface serves (no SSE stream in v1, spec-permitted), and the |
 | `POST` | `/mcp` | _(no summary)_ |
 
 ---

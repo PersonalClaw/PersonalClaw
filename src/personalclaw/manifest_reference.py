@@ -78,12 +78,67 @@ PUBLISHED_ROUTE_REFERENCE = "docs/reference/api-routes.md"
 # (``GET /api/foo — does X`` or ``GET/PUT /api/foo — does X``). The reference
 # already prints ``{method} {path}`` before the summary, so that prefix is pure
 # duplication — strip it for the markdown, leaving the human description (which
-# may be empty, honestly rendered as "no summary").
+# may be empty, honestly rendered as "no summary"). The verb list may be spaced
+# (``GET / POST /api/foo``) and the path may be shortened (``.../tiles/refresh``,
+# ``…/{client_id}``).
 _ROUTE_SIG_PREFIX = re.compile(
     r"^(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)"
     r"(?:/(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS))*"
     r"\s+/\S*\s*[—:-]?\s*"
 )
+
+#: One clause of a multi-method docstring first line: ``VERB path — text``. A
+#: handler shared by two methods writes its first line as clauses separated by
+#: ``;``; each registered method takes its own clause.
+_ROUTE_CLAUSE = re.compile(
+    r"(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)"
+    r"(?:\s*/\s*(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS))*"
+    r"\s+(?:/|\.{3}|\u2026)\S*\s*—\s*"
+)
+
+
+def _split_summary_clauses(line: str) -> list[tuple[list[str], str]]:
+    """Split a docstring first line into ``(methods, text)`` clauses.
+
+    ``"GET / POST /api/triggers/review — what a restart left"`` becomes
+    ``(["GET", "POST"], "what a restart left")``. A line without a recognized
+    clause shape yields a single ``([], line)`` entry, which callers treat as
+    "no per-method split available".
+    """
+    clauses: list[tuple[list[str], str]] = []
+    for m in _ROUTE_CLAUSE.finditer(line):
+        head = m.group(0).split("\u2014")[0]
+        head_verbs = head.split(None, 1)[0]
+        verbs = [v for v in head_verbs.split("/") if v]
+        # The text after the em dash ends at the next clause's verb (the next
+        # regex match) or at a ``;`` separator, whichever comes first.
+        nxt = _ROUTE_CLAUSE.search(line, m.end())
+        next_start = nxt.start() if nxt else len(line)
+        semi = line.find(";", m.end(), next_start)
+        edge = semi if semi != -1 else next_start
+        clauses.append((verbs, line[m.end() : edge].strip()))
+    if not clauses:
+        return [([], line)]
+    return clauses
+
+
+def _summary_for_method(first_line: str, method: str) -> str:
+    """The summary a route row shows for its own method.
+
+    A multi-clause line gives each method its own clause's text; a single-clause
+    or clause-less line is cleaned as a whole. Both cases then drop any leading
+    route-signature restatement.
+    """
+    clauses = _split_summary_clauses(first_line)
+    if clauses and clauses[0][0]:
+        for verbs, text in clauses:
+            if method in verbs:
+                return text
+        # A clause-shaped line whose verbs name no other method: the method's
+        # own clause is on a later docstring line (the handler's first line
+        # opens with its sibling's clause). Nothing truthful to show.
+        return ""
+    return _ROUTE_SIG_PREFIX.sub("", first_line).strip()
 
 
 def _clean_summary(summary: str) -> str:
@@ -188,7 +243,8 @@ def _routes_from_ast() -> list[dict[str, Any]]:
             handler_idx = path_idx + 1
             handler = node.args[handler_idx] if len(node.args) > handler_idx else None
             doc = docs.get(_handler_name(handler), "")
-            summary = _clean_summary(doc.splitlines()[0].strip() if doc else "")
+            first_line = doc.splitlines()[0].strip() if doc else ""
+            summary = _summary_for_method(first_line, method)
             out.append(
                 {
                     "method": method,

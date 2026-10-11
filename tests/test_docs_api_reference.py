@@ -150,6 +150,39 @@ def test_route_family_index_accounts_for_every_registration():
     )
 
 
+#: A summary that still restates a route signature. The reference prints
+#: ``{method} {path}`` before the summary, so a verb followed by a path fragment
+#: (``/``, ``...`` or the ellipsis) inside the summary is duplication — and on a
+#: handler shared by two methods, the wrong method's signature tells the reader the
+#: row does something it does not.
+_SIGNATURE_IN_SUMMARY = re.compile(
+    r"(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)"
+    r"(?:\s*/(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS))*"
+    r"\s+(?:/|\.\.\.|\u2026)\S*"
+)
+
+
+def test_no_route_summary_restates_a_route_signature():
+    """Every row's summary describes its own method — no signature text survives.
+
+    A handler docstring shared by two methods (``GET / POST /path — ...``) used to give
+    BOTH rows one summary, so the DELETE row of a create/revoke pair read "create". The
+    renderer now splits multi-clause summaries per method; this leg fails on any row
+    whose summary still carries a verb-plus-path signature.
+    """
+    routes, _ = _census()
+    offenders = [
+        f"{r['method']} {r['path']}: {r['summary']!r}"
+        for r in routes
+        if _SIGNATURE_IN_SUMMARY.search(r["summary"])
+    ]
+    assert (
+        not offenders
+    ), f"{len(offenders)} route summaries still restate a route signature:\n" + "\n".join(
+        offenders[:15]
+    )
+
+
 def test_generated_route_reference_warns_against_hand_editing():
     """The file says it is generated, before the rail has to say it.
 
