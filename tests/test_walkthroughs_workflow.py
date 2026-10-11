@@ -327,6 +327,11 @@ def test_the_workflow_is_callable_with_a_version_input() -> None:
         inputs["version"].get("required") is False
     ), "`version` must be optional: an empty value keeps the newest-release behaviour"
 
+    assert inputs.get("which", {}).get("default") == "v1-wheel", (
+        "an undeclared `which` is null on a call, so the guards' `inputs.which || 'all'` "
+        "fallback would run every leg; a caller pinning the wheel must get one leg"
+    )
+
 
 def test_the_v1_wheel_leg_reads_the_version_input() -> None:
     """The `version` input must actually reach the install step, not just be declared."""
