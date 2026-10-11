@@ -323,9 +323,9 @@ def test_the_workflow_is_callable_with_a_version_input() -> None:
         "workflow_call declares no `version` input, so a caller cannot pin the wheel it "
         "is verifying"
     )
-    assert inputs["version"].get("required") is False, (
-        "`version` must be optional: an empty value keeps the newest-release behaviour"
-    )
+    assert (
+        inputs["version"].get("required") is False
+    ), "`version` must be optional: an empty value keeps the newest-release behaviour"
 
 
 def test_the_v1_wheel_leg_reads_the_version_input() -> None:
