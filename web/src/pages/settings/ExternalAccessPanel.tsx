@@ -316,8 +316,9 @@ export function ExternalAccessPanel() {
               control an operator would hunt for. The endpoint refuses a write to it. */}
           <div className="mt-1">
             This and each surface’s “allow remote” are the boundary for anything off this
-            machine, so they are not editable here — they are deliberately a `config.json`
-            edit. Tokens are not shown at all; only their hashes are stored.
+            machine, so they are not editable here — they are deliberately a{' '}
+            <code>config.json</code> edit. Tokens are not shown at all; only their hashes are
+            stored.
           </div>
         </div>
       </Section>

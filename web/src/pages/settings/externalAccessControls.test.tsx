@@ -231,6 +231,39 @@ describe('the external-access controls reach the backend', () => {
     // parent — the claim is "the explanation is present", not "it appears exactly once".
     expect(screen.getAllByText(/not editable here/i).length).toBeGreaterThan(0)
   })
+
+  // ── The "deliberately a `config.json` edit" note ─────────────────────────────────────────────
+  //
+  // JSX text is not Markdown: a backticked span in plain text renders the backticks literally
+  // (a `` `config.json` `` reads as a literal backtick-config.json-backtick), not as code. The
+  // sibling note in the "Remote access" section below already gets this right
+  // (`<code>config.json</code>`); the note under "Limits" used to read literally. Render the
+  // panel, find the note that names `config.json`, and assert two things at once:
+  //   1. the note contains a `<code>` element with text `config.json` (the Markdown intent), and
+  //   2. the note's rendered text has NO backtick character at all (the Markdown-impostor test).
+  it('renders `config.json` as a <code> element in the Limits note, never a literal backtick', async () => {
+    render(<ExternalAccessPanel />)
+    // The Limits note's first sentence names `config.json` and is the only prose span that does —
+    // `getAllByText` because the Remote access section below ALSO names it (correctly), so
+    // finding the ONE that fails would not be the assertion.
+    const matches = await screen.findAllByText(/not editable here/i)
+    expect(matches.length).toBeGreaterThan(0)
+    // Walk each matching container's `<code>` descendants: at least one must contain the
+    // literal `config.json` text, and the union of all text in those containers must be
+    // backtick-free. jsdom keeps whitespace between elements, so we read `textContent` and
+    // assert no `` ` `` appears anywhere — a backtick in any sibling would fail the second
+    // half of the assertion even if the first half passed.
+    let foundCode = false
+    for (const root of matches) {
+      const container = root.closest('div') ?? root
+      const codes = container.querySelectorAll('code')
+      for (const c of codes) {
+        if ((c.textContent ?? '').trim() === 'config.json') foundCode = true
+      }
+      expect(container.textContent ?? '').not.toContain('`')
+    }
+    expect(foundCode, 'a <code>config.json</code> element must render where the Limits note is').toBe(true)
+  })
 })
 
 // ── A token's lifetime is stated where the surface and the client are ────────────────────────────
