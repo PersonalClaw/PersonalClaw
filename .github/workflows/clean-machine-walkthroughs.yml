@@ -50,6 +50,16 @@ on:
         type: choice
         default: all
         options: [all, v1-wheel, v3-container, v4-selfupdate]
+  # CALLABLE, so the release-verify workflow can reuse the V1 wheel leg instead of
+  # keeping a second copy of it. The `version` input pins the wheel to install; when it is
+  # empty the leg keeps its historical behaviour of installing the newest release.
+  workflow_call:
+    inputs:
+      version:
+        description: "Wheel version to install (empty = newest release)"
+        type: string
+        required: false
+        default: ""
 
 # THE `which` INPUT HAS NO VALUE ON A SCHEDULED RUN, AND THAT IS THE TRAP THE SCHEDULE WALKS
 # INTO. The `inputs` context is populated only for `workflow_dispatch` / `workflow_call`; on a
@@ -118,9 +128,24 @@ jobs:
       # Verified against PyPI: personalclaw-0.1.3-py3-none-any.whl carries
       # `personalclaw/static/dist/index.html` plus 212 hashed JS assets.
       - name: Install the RELEASED wheel from PyPI — a stranger's documented path
+        env:
+          # Empty on every trigger except `workflow_call`, where release-verify pins the
+          # version it is verifying. An empty value keeps the newest-release behaviour.
+          WHEEL_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          pip install --quiet personalclaw
+          # A pinned version may not be on the index the instant the release publishes, so
+          # retry for ten minutes while the index propagates. The unpinned path is unchanged.
+          if [ -n "$WHEEL_VERSION" ]; then
+            for i in $(seq 1 60); do
+              pip install --quiet "personalclaw==$WHEEL_VERSION" && break
+              echo "attempt $i: personalclaw==$WHEEL_VERSION not on the index yet"
+              sleep 10
+            done
+            pip install --quiet "personalclaw==$WHEEL_VERSION"
+          else
+            pip install --quiet personalclaw
+          fi
           python -c "import personalclaw, sys; print('installed', personalclaw.__version__ if hasattr(personalclaw,'__version__') else '(version attr absent)')"
 
       - name: The released wheel must bundle the built SPA
