@@ -1401,7 +1401,7 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
 
 
 async def api_trigger_detail(request: web.Request) -> web.Response:
-    """PUT / DELETE /api/triggers/{id}."""
+    """PUT /api/triggers/{id} — update. DELETE /api/triggers/{id} — delete."""
     state: DashboardState = request.app["state"]
     kind, raw = _split_id(request.match_info["id"])
 
@@ -2466,7 +2466,9 @@ async def api_trigger_history_all(request: web.Request) -> web.Response:
 
 
 async def api_trigger_review(request: web.Request) -> web.Response:
-    """GET / POST /api/triggers/review — what a restart left for you to decide.
+    """GET /api/triggers/review — list.
+
+    POST /api/triggers/review — what a restart left for you to decide.
 
     GET lists the cards `triggers/review.py` keeps: each automation's missed runs, and each run a
     restart interrupted. POST ``{trigger_id, kind, action}`` decides one: ``run_now`` runs the
