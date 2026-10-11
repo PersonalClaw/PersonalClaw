@@ -231,6 +231,29 @@ describe('the external-access controls reach the backend', () => {
     // parent — the claim is "the explanation is present", not "it appears exactly once".
     expect(screen.getAllByText(/not editable here/i).length).toBeGreaterThan(0)
   })
+
+  // ── The "deliberately a `config.json` edit" note ─────────────────────────────────────────────
+  //
+  // JSX text is not Markdown: a backticked name in plain text renders its backticks on screen,
+  // not as code. The note under "Limits" read that way; the "Remote access" note already used
+  // `<code>config.json</code>`. Render the panel, find the note that says the limits are "not
+  // editable here", and assert that it renders `config.json` in a `<code>` element and that its
+  // text carries no backtick at all.
+  it('renders `config.json` as a <code> element in the Limits note, never a literal backtick', async () => {
+    render(<ExternalAccessPanel />)
+    const matches = await screen.findAllByText(/not editable here/i)
+    expect(matches.length).toBeGreaterThan(0)
+    let foundCode = false
+    for (const root of matches) {
+      const container = root.closest('div') ?? root
+      const codes = container.querySelectorAll('code')
+      for (const c of codes) {
+        if ((c.textContent ?? '').trim() === 'config.json') foundCode = true
+      }
+      expect(container.textContent ?? '').not.toContain('`')
+    }
+    expect(foundCode, 'a <code>config.json</code> element must render where the Limits note is').toBe(true)
+  })
 })
 
 // ── A token's lifetime is stated where the surface and the client are ────────────────────────────
