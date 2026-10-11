@@ -110,11 +110,12 @@ def test_reference_has_the_four_expected_files():
 
 def test_route_signature_prefix_is_stripped():
     """A docstring that restates the route signature is de-duplicated in the summary."""
-    assert ref_mod._clean_summary("GET /api/foo — does a thing") == "does a thing"
-    assert ref_mod._clean_summary("GET/PUT /api/agent/config — read or write") == "read or write"
-    assert ref_mod._clean_summary("POST /api/x/:id/activate") == ""
+    summary = ref_mod._summary_for_method
+    assert summary("GET /api/foo — does a thing", "GET") == "does a thing"
+    assert summary("GET/PUT /api/agent/config — read or write", "PUT") == "read or write"
+    assert summary("POST /api/x/:id/activate", "POST") == ""
     # A plain sentence with no route signature is left untouched.
-    assert ref_mod._clean_summary("List all scheduled jobs.") == "List all scheduled jobs."
+    assert summary("List all scheduled jobs.", "GET") == "List all scheduled jobs."
 
 
 def test_tools_reference_lists_every_provider():

@@ -10,11 +10,11 @@ the offline reference shipped in the wheel and the live ``GET /api/manifest``.
 
     python scripts/generate_api_route_reference.py
 
-Run it whenever a route is added, removed, or has its handler docstring's first line
-changed — and run ``python -m personalclaw.manifest_reference`` too, because the wheel's
-copy embeds the same summaries. ``tests/test_docs_api_reference.py`` byte-compares the
-committed file against a fresh render, so a missed regeneration reds CI rather than
-publishing a stale route list.
+Run it whenever a route is added, removed, or has the summary in its handler docstring
+changed (the first line, or a method's clause on a later one) — and run
+``python -m personalclaw.manifest_reference`` too, because the wheel's copy embeds the same
+summaries. ``tests/test_docs_api_reference.py`` byte-compares the committed file against a
+fresh render, so a missed regeneration reds CI rather than publishing a stale route list.
 
 **Why this refuses to run against a foreign tree.** The repo's ``.venv`` is an editable
 install of the MAIN checkout, so a bare run from a git worktree imports ``personalclaw``

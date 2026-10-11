@@ -16,7 +16,7 @@ Read [the API overview](api-overview.md) first for the things every route shares
 
 - **Method** — `*` means the route is registered for every HTTP method (a mount or bridge, not a single verb).
 - **Path** — `{name}` is a path parameter. Paths are shown in aiohttp's canonical form, so a segment declared with a regex (`{tail:.*}`) appears without it.
-- **Summary** — the first line of the handler's own docstring, verbatim. Where a handler has none, the cell says so rather than inventing one; where the first line runs on, it is shown cut off rather than paraphrased. The docstring in the source is the authoritative per-route contract.
+- **Summary** — the first line of the handler's own docstring, less any route signature it restates. A handler that serves several methods says what each does in a clause of its own (`GET /x — …; POST /x — …`, on its first line or on a line each), and each row shows its own method's clause. Where a handler says nothing of a row's method, the cell says so rather than inventing a summary; where the line runs on, it is shown cut off rather than paraphrased. The docstring in the source is the authoritative per-route contract.
 
 ## Route families
 
@@ -390,15 +390,15 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/dashboard/config` | read or write dashboard settings. |
 | `PUT` | `/api/dashboard/config` | read or write dashboard settings. |
 | `GET` | `/api/dashboard/views` | every view (locked presets first, then user views). |
-| `POST` | `/api/dashboard/views` | every view (locked presets first, then user views). |
+| `POST` | `/api/dashboard/views` | {name, icon?} — create a user view (presets are code-only). |
 | `DELETE` | `/api/dashboard/views/{view_id}` | read, edit, or delete a view. |
 | `GET` | `/api/dashboard/views/{view_id}` | read, edit, or delete a view. |
 | `PUT` | `/api/dashboard/views/{view_id}` | read, edit, or delete a view. |
 | `POST` | `/api/dashboard/views/{view_id}/tiles` | {slug, size?} — pin an artifact tile. |
-| `POST` | `/api/dashboard/views/{view_id}/tiles/action` | POST .../tiles/action {ref, action, payload?} — a genui control re-firing this tile. |
+| `POST` | `/api/dashboard/views/{view_id}/tiles/action` | {ref, action, payload?} — a genui control re-firing this tile. |
 | `PUT` | `/api/dashboard/views/{view_id}/tiles/binding` | {ref, mode, ttl_secs?, skeleton?, data?} |
-| `GET` | `/api/dashboard/views/{view_id}/tiles/refresh` | POST .../tiles/refresh {ref, force?} — run one chatless refresh. |
-| `POST` | `/api/dashboard/views/{view_id}/tiles/refresh` | POST .../tiles/refresh {ref, force?} — run one chatless refresh. |
+| `GET` | `/api/dashboard/views/{view_id}/tiles/refresh` | the tile's newest ledger row. |
+| `POST` | `/api/dashboard/views/{view_id}/tiles/refresh` | {ref, force?} — run one chatless refresh. |
 | `POST` | `/api/dashboard/views/{view_id}/tiles/resolve` | {ref, keep} — accept/dismiss/unpin. |
 | `GET` | `/api/design/tokens/default` | PersonalClaw's canonical |
 | `GET` | `/api/desktop/capabilities/{cap}` | one capability, gateway-mediated. |
@@ -450,8 +450,8 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/evals/studies/{study_id}` | one study's verdict, agreement and per-run rows. |
 | `GET` | `/api/external-access` | the whole operator view of the inbound seam. |
 | `POST` | `/api/external-access/bridge/confirmations/{id}` | your answer to a control-bridge action. |
-| `POST` | `/api/external-access/clients` | create; DELETE …/{client_id} — revoke. |
-| `DELETE` | `/api/external-access/clients/{client_id}` | create; DELETE …/{client_id} — revoke. |
+| `POST` | `/api/external-access/clients` | create. |
+| `DELETE` | `/api/external-access/clients/{client_id}` | revoke. |
 | `POST` | `/api/external-access/clients/{client_id}/disabled` | kill-switch layer (c). |
 | `POST` | `/api/external-access/clients/{client_id}/persistent-sessions` | keep its conversation. |
 | `POST` | `/api/feedback` | record one verdict. |
@@ -476,8 +476,8 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/file-watch` | SSE stream of file content changes. |
 | `POST` | `/api/file-write` | write file content from the markdown panel. |
 | `GET` | `/api/genui/library` | the generative-UI component catalog + the mechanically |
-| `GET` | `/api/guardrails/project-trust` | the whole store; |
-| `POST` | `/api/guardrails/project-trust` | the whole store; |
+| `GET` | `/api/guardrails/project-trust` | the whole store |
+| `POST` | `/api/guardrails/project-trust` | record a Trust/Preview decision. |
 | `GET` | `/api/healthz` | Liveness probe — auth-exempt, returns 200 once gateway is serving HTTP. |
 | `GET` | `/api/heartbeat/tasks` | every task in HEARTBEAT.md, and whether the owner allowed it. |
 | `POST` | `/api/heartbeat/tasks/allow` | the owner's yes to one queued task. |
@@ -506,8 +506,8 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/inbox/{id}/pair` | let someone new talk to your agent on the channel they wrote on. |
 | `POST` | `/api/inbox/{id}/restore` | undo a verification filter. |
 | `POST` | `/api/inbox/{id}/sort` | sort a message again, after its sorting failed. |
-| `GET` | `/api/incident` | current state; POST /api/incident — activate. |
-| `POST` | `/api/incident` | current state; POST /api/incident — activate. |
+| `GET` | `/api/incident` | current state. |
+| `POST` | `/api/incident` | activate. |
 | `POST` | `/api/incident/resume` | turn incident mode OFF. |
 | `POST` | `/api/investigate` | _(no summary)_ |
 | `DELETE` | `/api/knowledge/annotations/{id}` | drop one highlight. |
@@ -981,13 +981,13 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/triggers/doctor` | structural problems across every trigger. |
 | `GET` | `/api/triggers/history` | the run feed across every kind. |
 | `POST` | `/api/triggers/restore-hold/resume` | Resume all: every automation a restore holds. |
-| `GET` | `/api/triggers/review` | POST /api/triggers/review — what a restart left for you to decide. |
-| `POST` | `/api/triggers/review` | POST /api/triggers/review — what a restart left for you to decide. |
+| `GET` | `/api/triggers/review` | what a restart left for you to decide. |
+| `POST` | `/api/triggers/review` | decide one of them. |
 | `GET` | `/api/triggers/variables` | the ``$variables`` each trigger kind exposes. |
 | `POST` | `/api/triggers/view/render` | the `view` kind's production render caller. |
 | `GET` | `/api/triggers/week` | the week-grid projection, from `?start=`. |
-| `DELETE` | `/api/triggers/{id}` | DELETE /api/triggers/{id}. |
-| `PUT` | `/api/triggers/{id}` | DELETE /api/triggers/{id}. |
+| `DELETE` | `/api/triggers/{id}` | delete a trigger. |
+| `PUT` | `/api/triggers/{id}` | update a trigger. |
 | `POST` | `/api/triggers/{id}/answer` | answer the question a trigger's action stopped on. |
 | `POST` | `/api/triggers/{id}/fire` | fire a webhook automation for an outside program. |
 | `GET` | `/api/triggers/{id}/history` | run records; other kinds answer `supported: false`. |
@@ -1094,7 +1094,7 @@ The remaining 7 registrations: real-time transport and the loopback control brid
 | `GET` | `/api/ws` | single multiplexed WebSocket for all real-time events. |
 | `GET` | `/api/ws/terminal/{session_id}` | WebSocket PTY for the built-in CLI panel. |
 | `POST` | `/confirm` | refused, always: only you confirm a control-bridge action. |
-| `GET` | `/mcp` | `GET /mcp` → 405 while the surface serves (no SSE stream in v1, spec-permitted), and the |
+| `GET` | `/mcp` | 405 while the surface serves (no SSE stream in v1, spec-permitted). |
 | `POST` | `/mcp` | _(no summary)_ |
 
 ---
