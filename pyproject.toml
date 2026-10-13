@@ -4,7 +4,7 @@
 # `uv.lock` resolves (CI's test environment, where the packaging tests drive the backend
 # in-process), and `tests/test_verify_wheel_contract.py` keeps the two equal. `wheel` is gone
 # because setuptools has carried `bdist_wheel` itself since 70.1.
-requires = ["setuptools==83.0.0"]
+requires = ["setuptools==84.0.0"]
 build-backend = "setuptools.build_meta"
 
 # ── Project metadata (PEP 621) ────────────────────────────────────────────────
@@ -240,7 +240,7 @@ slack = ["slack-sdk>=3.27,<4"]
 # its decode_audio passes to `av.open` on every call (1.0 through 1.2.1, the newest), so
 # every transcription fails. The ceiling is ours to carry; `tests/test_dependency_bounds.py`
 # holds it and asks for it to be re-derived when faster-whisper stops passing the keyword.
-stt   = ["faster-whisper>=1.0", "av<19"]    # substrate for apps/faster-whisper (in-process Whisper STT)
+stt   = ["faster-whisper>=1.0", "av<20"]    # substrate for apps/faster-whisper (in-process Whisper STT)
 tts   = ["huggingface-hub>=0.23", "piper-tts>=1.2"]  # substrate for apps/piper-tts: voice downloads (ONNX from rhasspy/piper-voices) + the piper synthesis runtime (provides the `piper` binary)
 eval  = ["jinja2>=3.0"]
 # sentence-transformers 5.6 is the oldest release checked for the local-only model card the
