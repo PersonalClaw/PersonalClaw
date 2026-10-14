@@ -31,7 +31,6 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
-import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -52,6 +51,7 @@ from personalclaw.history import ConversationLog, HistoryConsolidator
 from personalclaw.memory import MemoryStore
 from personalclaw.memory_service import MemoryService, normalize_workspace_ref, service_for
 from personalclaw.skills import SkillsLoader
+from personalclaw.sqlite_compat import sqlite3
 from personalclaw.vector_memory import VectorMemoryStore
 
 #: What the consolidation model keeps from a chat about the garden notes. Invented content.
@@ -525,6 +525,9 @@ def test_a_folder_whose_memory_cannot_take_its_records_keeps_them_until_it_can(
 
     def refuse_the_locked_one(self, dest, chats):
         if dest is locked:
+            # The store's own driver's error, as a real lock raises. Where pysqlite3 is the
+            # driver (Linux x86_64), the stdlib module's OperationalError is another class, and
+            # the store's handler would not catch it.
             raise sqlite3.OperationalError("database is locked")
         return copy(self, dest, chats)
 
