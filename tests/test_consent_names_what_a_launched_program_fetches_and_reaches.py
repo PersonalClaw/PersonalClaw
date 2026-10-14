@@ -139,6 +139,10 @@ def test_the_package_npx_runs_its_hosts_and_a_program_you_name_round_trip():
         ({**GIT, "hosts": ["git.example.org:443"]}, "is not a host name"),
         ({**GIT, "hosts": ["git.example.org/repo"]}, "is not a host name"),
         ({**GIT, "hosts": ["Git.Example.org"]}, "is not a host name"),
+        # A declared host is matched as an allow-list entry is (`net.guard.host_matches`): a bare
+        # name covers its subdomains and there is no glob, so a wildcard would never match a host
+        # the program reaches, and consent would show a host that allows nothing.
+        ({**GIT, "hosts": ["*.example.org"]}, "is not a host name"),
         ({**GIT, "hosts": ["git.example.org", "git.example.org"]}, "a host more than once"),
         ({**GIT, "hosts": [f"h{i}.example.org" for i in range(11)]}, "at most 10"),
     ],
