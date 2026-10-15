@@ -114,3 +114,21 @@ describe("electron-builder Linux target", () => {
     assert.strictEqual(pkg.name, "personalclaw-desktop");
   });
 });
+
+describe("electron-builder never publishes", () => {
+  // Without `--publish`, electron-builder decides for itself: a build on a git tag publishes
+  // "onTag" (v0.2.0's desktop jobs logged "Implicit publishing triggered by git tag") and any
+  // other CI build "onTagOrDraft", to wherever a GH_TOKEN or GITHUB_TOKEN in the environment
+  // points. Those jobs hold no token today, which is the only reason nothing was uploaded. The
+  // release attaches the installers itself, in its `notes` job, so the builds are told never to.
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
+
+  for (const name of ["dist", "dist:linux"]) {
+    it(`${name} passes --publish never`, () => {
+      const script = pkg.scripts[name];
+      assert.ok(script, `scripts['${name}'] missing`);
+      assert.match(script, /^electron-builder\s/);
+      assert.match(script, /\s--publish never(\s|$)/, `${name} leaves publishing to electron-builder`);
+    });
+  }
+});

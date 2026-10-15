@@ -548,12 +548,12 @@ jobs:
         uses: astral-sh/setup-uv@v7
       - name: Create .venv for the bundled backend build
         # Same reasoning as desktop-linux: the spec collect_submodules()s
-        # openai/anthropic/slack_sdk, which are extras and must be importable here, and the
-        # venv is synced from uv.lock.
+        # openai/anthropic/slack_sdk, which are extras and must be importable here, the
+        # venv is synced from uv.lock, and PyInstaller is pinned to what desktop-linux pins.
         run: |
           uv python install 3.12
           uv sync --locked --no-editable --python 3.12 --extra anthropic --extra openai --extra slack
-          uv pip install --python .venv/bin/python pyinstaller
+          uv pip install --python .venv/bin/python pyinstaller==6.22.3 pyinstaller-hooks-contrib==2026.8
       - name: Build the dmg (ad-hoc signed, not notarized)
         # make desktop-dist = web-build (SPA) -> pyinstaller (the bundled
         # personalclaw-backend the shell spawns) -> stage into desktop/backend-dist
@@ -643,10 +643,14 @@ jobs:
         # Synced from uv.lock, so the bundle freezes the versions CI tested: a
         # `uv pip install '.[…]'` resolves pyproject's ranges on release day instead.
         # `--no-editable` installs the package itself, as the frozen bundle needs.
+        # PyInstaller is not in uv.lock, so it is pinned here, both halves of it: its banner
+        # names the two ("PyInstaller: 6.22.3, contrib hooks: 2026.8" on v0.2.0's run), and
+        # the hooks decide what each third-party package brings into the bundle. Unpinned,
+        # a tag froze the bundle with whatever PyInstaller was newest that day.
         run: |
           uv python install 3.12
           uv sync --locked --no-editable --python 3.12 --extra anthropic --extra openai --extra slack
-          uv pip install --python .venv/bin/python pyinstaller
+          uv pip install --python .venv/bin/python pyinstaller==6.22.3 pyinstaller-hooks-contrib==2026.8
       - name: Build unsigned AppImage + deb
         # make desktop-dist-linux = web-build (SPA) -> pyinstaller (the bundled
         # personalclaw-backend the shell spawns) -> stage into desktop/backend-dist
