@@ -521,8 +521,8 @@
   "built_web_groups": [
     {
       "id": "katex-fonts",
-      "source": "https://github.com/KaTeX/KaTeX/tree/v0.18.7/fonts",
-      "version": "0.18.7",
+      "source": "https://github.com/KaTeX/KaTeX/tree/v0.19.0/fonts",
+      "version": "0.19.0",
       "license": "OFL-1.1",
       "ownership": "third-party",
       "required_notice": "web/public/THIRD_PARTY_NOTICES.txt",
@@ -597,16 +597,16 @@
     {
       "id": "editor-icon-font",
       "source": "https://github.com/microsoft/vscode-codicons",
-      "version": "0.0.46-21",
+      "version": "0.0.46-40",
       "license": "CC-BY-4.0",
       "ownership": "third-party",
       "required_notice": "web/public/THIRD_PARTY_NOTICES.txt",
       "copyright": [
         "Copyright (c) Microsoft Corporation."
       ],
-      "note": "monaco-editor 0.56.0 ships this font, byte-identical to dist/codicon.ttf in @vscode/codicons 0.0.46-21. The icons' own repository and npm package license them under CC BY 4.0 (the repository's code is MIT, under LICENSE-CODE), so this record follows that licence rather than monaco-editor's package-level MIT. The font carries no copyright or licence metadata of its own, so the attribution lives in the notice.",
+      "note": "monaco-editor 0.57.0 ships this font, byte-identical to dist/codicon.ttf in @vscode/codicons 0.0.46-40. The icons' own repository and npm package license them under CC BY 4.0 (the repository's code is MIT, under LICENSE-CODE), so this record follows that licence rather than monaco-editor's package-level MIT. The font carries no copyright or licence metadata of its own, so the attribution lives in the notice.",
       "files": {
-        "node_modules/monaco-editor/esm/vs/base/browser/ui/codicons/codicon/codicon.ttf": "cc2472e239e17062e7760af87f8f5997720cc0d94aa014a615c418baaf6333a8"
+        "node_modules/monaco-editor/esm/vs/base/browser/ui/codicons/codicon/codicon.ttf": "77f902557231f95c4c71ae517d09a1a842753656f5f665086b3e5ad8095538da"
       }
     }
   ]
