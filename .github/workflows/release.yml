@@ -762,9 +762,17 @@ jobs:
     # with its own enforcement (a strict parity job on every PR/push plus the daily
     # watchdog), so a missing token or a dispatch hiccup must never fail or hold up
     # a core release. Requires a PAT with `actions: write` on personalclaw.dev in
-    # the `WEBSITE_DISPATCH_TOKEN` secret; without it this logs and moves on.
+    # the `WEBSITE_DISPATCH_TOKEN` secret of the `website-follow` environment;
+    # without it this logs and moves on.
+    #
+    # An ENVIRONMENT secret, not a repository one. A repository secret reaches every
+    # workflow a branch of this repository runs, a pull request's included; an
+    # environment's reaches only a job that names the environment and passes its
+    # deployment rule. The maintainer creates `website-follow` with a rule that admits
+    # `v*` tags only, so the token is readable by a tag's release run and nothing else.
     needs: [notes]
     runs-on: ubuntu-latest
+    environment: website-follow
     continue-on-error: true
     steps:
       - name: Ask personalclaw.dev to re-check release parity

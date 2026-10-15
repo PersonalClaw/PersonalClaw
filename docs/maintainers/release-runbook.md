@@ -22,7 +22,7 @@ and runs ten jobs:
 | `desktop-mac` | `PersonalClaw-X.Y.Z-arm64.dmg`, ad-hoc signed, not notarized (Apple silicon only) | boots the bundled backend from inside the mounted dmg |
 | `desktop-linux` | unsigned `PersonalClaw-X.Y.Z.AppImage` + `personalclaw-desktop_X.Y.Z_amd64.deb` (x86-64) | boots the bundled backend out of the extracted AppImage |
 | `notes` | the GitHub Release, notes lifted from `CHANGELOG.md`; attaches the wheel, the sdist, the wheel's SBOM, four image SBOMs and the three desktop files | needs `build`, `pypi`, `images`, `desktop-linux`, `desktop-mac` |
-| `website-follow` | nudges personalclaw.dev to re-check its pins | best-effort, `continue-on-error` |
+| `website-follow` | nudges personalclaw.dev to re-check its pins | best-effort, `continue-on-error`; runs in the `website-follow` environment, which holds its token |
 | `attest` | build-provenance attestation on the wheel and the sdist (OIDC, no keys) | needs only `build`, so it runs whether or not the Release is created |
 
 The desktop bundles are frozen with a pinned PyInstaller (`pyinstaller==6.22.3`,
@@ -397,9 +397,21 @@ A published core release is an **obligation on the other two repos**, and the or
   get apps from the default branch, not from a tag. It exists for the website's pin.
 - **`personalclaw.dev`** — bump `sources/personalclaw.sources.json` (tag **and**
   dereferenced commit for core + apps), bump `package.json`, and refresh anything
-  the release changed. `release.yml` nudges its `release-follow.yml`; if the
-  `WEBSITE_DISPATCH_TOKEN` secret is absent the nudge is skipped and the
-  website's own daily watchdog catches it instead.
+  the release changed. `release.yml`'s `website-follow` job nudges its
+  `release-follow.yml`; if the `website-follow` environment holds no
+  `WEBSITE_DISPATCH_TOKEN` secret the nudge is skipped and the website's own daily
+  watchdog catches it instead.
+
+The nudge's token is an **environment** secret, so only a tag's release run can read it:
+a repository secret reaches every workflow a branch of this repository runs, a pull
+request's included. To turn the nudge on, create the environment once, as the maintainer:
+Settings → Environments → **New environment** `website-follow`; under *Deployment branches
+and tags* choose **Selected branches and tags** and add one rule, the **tag** pattern `v*`;
+add no required reviewers (the nudge is best-effort and must never hold a release); then add
+`WEBSITE_DISPATCH_TOKEN` as a secret of that environment, never of the repository, a token
+with Actions read and write on `PersonalClaw/personalclaw.dev`. Until then the job finds no token, says so and exits 0. The
+first release run that names the environment creates it empty if it does not exist yet; it
+then still holds no secret, and adding the rule and the secret afterwards is the same step.
 
 ## If something goes wrong
 
@@ -410,7 +422,7 @@ A published core release is an **obligation on the other two repos**, and the or
 | `build` fails at "Verify the wheel contract" on the tag | the tag was cut before the bump merged | nothing has published: **delete the tag**, merge the bump, tag its merge commit |
 | `build` fails at "SBOM of the wheel as installed" | `uv.lock` is stale (no re-lock in the bump), or syft cataloged less than the venv holds | nothing has published: fix on `main`, then **delete and re-push the tag** |
 | Website parity job red | its pins point at the wrong SHA | almost always the annotated-tag dereference above |
-| `website-follow` skipped | no `WEBSITE_DISPATCH_TOKEN` | harmless; the daily watchdog covers it |
+| `website-follow` skipped the nudge | the `website-follow` environment holds no `WEBSITE_DISPATCH_TOKEN` | harmless; the daily watchdog covers it |
 
 **A published version is immutable.** PyPI does not allow re-uploading a
 version, so a bad release is fixed by publishing the next patch — never by trying
