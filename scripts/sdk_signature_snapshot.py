@@ -11,7 +11,8 @@ that a published signature had changed at all.
 This module renders every published symbol — each name in each ``sdk`` submodule's ``__all__``
 — to a JSON record: a function's parameters (name, kind, default, annotation as text) and return
 annotation; a class's bases, constructor and public methods and properties; an enum's members; a
-constant's type and value. The records live in ``src/personalclaw/sdk/signatures.json``, and
+constant's type and value, except for a value that is the release itself (``__version__``), whose
+type alone is recorded. The records live in ``src/personalclaw/sdk/signatures.json``, and
 ``tests/test_sdk_signature_snapshot.py`` fails until the file matches the code. Because the file
 sits in ``src/personalclaw/sdk/``, a change to a re-exported core function (#3599 touched only
 ``context.py``) still touches the SDK directory, which is what ``ci.yml``'s ``apps-contract`` job
@@ -58,6 +59,13 @@ REGENERATE = (
 )
 
 _ADDRESS = re.compile(r" at 0x[0-9a-fA-F]+")
+
+#: Published names whose value is the release itself, so every release changes it. An app can rely
+#: on such a name being there, and on its type, and on nothing else, so that is what is recorded.
+#: Recording ``personalclaw.sdk.channel.__version__``'s value made every version bump a change
+#: that was not additive, which the apps' contract job (``scripts/apps_sdk_contract.py``) answers
+#: by asking the release's CHANGELOG to name every app that reads it.
+RELEASE_VALUED = frozenset({"__version__"})
 
 _POSITIONAL = ("positional_only", "positional_or_keyword")
 _KEYWORD = ("positional_or_keyword", "keyword_only")
@@ -206,8 +214,8 @@ def _members(cls: type) -> dict[str, Any]:
     return out
 
 
-def record(obj: Any) -> dict[str, Any]:
-    """The JSON record for one published object."""
+def record(obj: Any, *, name: str = "") -> dict[str, Any]:
+    """The JSON record for the object an SDK module publishes as *name*."""
     if isinstance(obj, types.ModuleType):
         return {"kind": "module", "module": obj.__name__}
     if isinstance(obj, type) and issubclass(obj, enum.Enum):
@@ -234,7 +242,10 @@ def record(obj: Any) -> dict[str, Any]:
         return {"kind": "type alias", "value": render_annotation(obj)}
     if callable(obj):
         return {"kind": f"callable {type(obj).__qualname__}", **(signature_record(obj) or {})}
-    return {"kind": "value", "type": type(obj).__qualname__, "value": render_value(obj)}
+    rec: dict[str, Any] = {"kind": "value", "type": type(obj).__qualname__}
+    if name not in RELEASE_VALUED:
+        rec["value"] = render_value(obj)
+    return rec
 
 
 def published() -> dict[str, Any]:
@@ -266,7 +277,7 @@ def snapshot() -> dict[str, Any]:
                 out[key] = {"kind": "alias", "of": first[id(obj)]}
                 continue
             first[id(obj)] = key
-        out[key] = record(obj)
+        out[key] = record(obj, name=key.rsplit(".", 1)[-1])
     return out
 
 

@@ -86,6 +86,26 @@ def test_the_snapshot_reaches_the_whole_surface():
     assert records["personalclaw.sdk.channel.CRED_OWNER_ID"]["value"] == "'PERSONALCLAW_OWNER_ID'"
 
 
+def test_a_release_moves_no_published_record(monkeypatch):
+    """``personalclaw.sdk.channel.__version__`` is the release, so every release changes its value.
+
+    Its record keeps what an app can rely on: that it is there and is a string. With the value
+    recorded, every version bump was an SDK change that was not additive, and the apps' contract
+    job then asked the release's CHANGELOG to name `slack-channel`, which shows the version on its
+    Home tab. Replayed against the live walk: a new version moves no record, and a version that
+    stopped being a string still does."""
+    from personalclaw.sdk import channel
+
+    symbol = "personalclaw.sdk.channel.__version__"
+    assert snap.load()[symbol] == {"kind": "value", "type": "str"}
+    before = snap.snapshot()
+    monkeypatch.setattr(channel, "__version__", "99.0.0")
+    assert snap.diff(before, snap.snapshot()) == []
+    monkeypatch.setattr(channel, "__version__", (99, 0, 0))
+    (change,) = snap.diff(before, snap.snapshot())
+    assert change.symbol == symbol and not change.additive, change.describe()
+
+
 def test_the_snapshot_is_deterministic_across_processes(tmp_path):
     """Set members are sorted and addresses dropped, so hash randomization cannot move a byte."""
     assert _rendered_by_a_fresh_interpreter(tmp_path, "12345") == (
