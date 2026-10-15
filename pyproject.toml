@@ -206,6 +206,12 @@ dependencies = [
     # load-bearing too: a remote server's OAuth sign-in reaches its connection as the `auth`
     # of `streamablehttp_client` and `sse_client`, which both gained that parameter in 1.10.0.
     "mcp>=1.10,<2",
+    # A floor and nothing else: core imports no urllib3, and trafilatura (above) and botocore
+    # (the bedrock extra) bring it with ranges that admit releases with published advisories.
+    # An update (`pip install -U personalclaw==<release>`) keeps an installed dependency that
+    # still satisfies every range, so only a floor declared here moves an existing install onto
+    # the patched release. tests/test_dependency_bounds.py holds it, here and in the lock.
+    "urllib3>=2.8.0",
 ]
 
 # Project URLs — surfaced by `pip show personalclaw` and the PyPI project page.

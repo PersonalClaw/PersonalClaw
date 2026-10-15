@@ -195,14 +195,20 @@ def test_python_classifiers_name_exactly_the_verified_interpreters() -> None:
     )
 
 
-#: A distribution whose floor a behaviour needs, wherever pyproject declares it: the floor, a
-#: version just below it, and why.
+#: A distribution whose floor a behaviour or a published advisory needs, wherever pyproject
+#: declares it: the floor, a version just below it, and why.
 _MUST_KEEP_A_FLOOR = {
     "sentence-transformers": (
         "5.6",
         "5.5.99",
         "5.6 is the oldest release checked for the local-only model card the sentence-transformers "
         "app hands a model it loads (SentenceTransformerModelCardData(local_files_only=True))",
+    ),
+    "urllib3": (
+        "2.8.0",
+        "2.7.99",
+        "2.8.0 is the first release outside GHSA-8988-9cw3-xx77, GHSA-vxq7-64xx-v4gw and "
+        "GHSA-gh4c-6fx4-qh6g, and an update keeps an installed urllib3 that every range admits",
     ),
 }
 
