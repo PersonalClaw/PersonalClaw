@@ -29,6 +29,7 @@ Security. It installs over 0.2.0 with nothing to do first.
 - **Settings → External access shows `config.json` as code, not between literal backticks.**
 - **`personalclaw doctor` names the credential store "OS keychain", the name Settings → Security gives it.**
 - **The API route reference gives each method of a route its own summary, where two methods used to share one line.**
+- **A deleted artifact leaves Knowledge's search even when Knowledge is being written at that moment, instead of staying searchable.**
 
 ### Changed
 

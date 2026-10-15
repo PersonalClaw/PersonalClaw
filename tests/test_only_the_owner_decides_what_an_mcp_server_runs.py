@@ -382,12 +382,22 @@ def _provider_card(monkeypatch) -> None:
 async def test_the_provider_card_asks_before_it_creates_or_changes_what_a_server_runs(
     tmp_path, monkeypatch
 ):
-    """🔴 Red on main: the card wrote the server with nothing shown, and it ran."""
+    """🔴 Red on main: the card wrote the server with nothing shown, and it ran.
+
+    Once the owner says yes, the card probes the server as saved, in the background, as every
+    write that changes a server does (`instance_routes._mcp_changed`): that is the one start here.
+    Each count waits for the card's probes first. Counted at the end without waiting, the server
+    read as never started whenever the test ended before that probe had started it."""
     from personalclaw.providers import instance_routes
 
     _provider_card(monkeypatch)
+    monkeypatch.setattr(mcp_discovery, "_probe_cache", {})
+    monkeypatch.setattr(mcp_discovery, "_probing", {})
     server = _Server(tmp_path)
     app = web.Application()
+    # The card's probes are held where the dashboard holds its background work, so they are
+    # waited for (`_settled`).
+    app["state"] = types.SimpleNamespace(_background_tasks=set())
     app.router.add_post("/api/providers/{name}/instances", instance_routes.handle_create_instance)
     app.router.add_put(
         "/api/providers/{name}/instances/{id}", instance_routes.handle_update_instance
@@ -399,6 +409,8 @@ async def test_the_provider_card_asks_before_it_creates_or_changes_what_a_server
         assert asked.status == 400, await asked.text()
         assert f"{server.script} --fixture" in (await asked.json())["error"]["detail"]["consent"]
         assert "card" not in _mcp_json()
+        await _settled(http)
+        assert server.launches == 0, "the card started it before the owner said yes"
 
         made = await http.post(
             path, json={"display_name": "card", "config": config, "confirm": True}
@@ -406,6 +418,8 @@ async def test_the_provider_card_asks_before_it_creates_or_changes_what_a_server
         assert made.status == 201, await made.text()
         assert _grants().allowed(_as_configured("card"))
         revision = (await made.json())["instance"]["revision"]
+        await _settled(http)
+        assert server.launches == 1, "the yes did not probe the server as saved"
 
         changed = {**config, "args": "--fixture --other"}
         asked = await http.put(
@@ -416,8 +430,9 @@ async def test_the_provider_card_asks_before_it_creates_or_changes_what_a_server
         # Switching it off and on is not a question: what it runs is unchanged.
         toggled = await http.put(f"{path}/card", json={"enabled": False})
         assert toggled.status == 200, await toggled.text()
+        await _settled(http)
 
-    assert server.launches == 0
+    assert server.launches == 1, "a change it asked about, or switching it off, started it"
 
 
 # ── 🔴 every other way in writes a server that waits ──

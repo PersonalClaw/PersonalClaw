@@ -26,7 +26,7 @@ on:
 # runs to completion, so a merge can no longer erase the answer it was computing.
 #
 # 🪤 WHY NOT A PER-SHA GROUP, which is the obvious way to verify EVERY commit and is wrong here.
-# It removes the cap: at today's cadence (main moved 6 times in two hours) it fans a 24-leg
+# It removes the cap: at today's cadence (main moved 6 times in two hours) it fans a 36-leg
 # matrix out per merge, and the runner concurrency this repo actually has is what made ci.yml's
 # duplicate runs the binding constraint on merge rate in the first place (#2595). GitHub holds at
 # most ONE pending run per concurrency group, so `false` bounds the cost at roughly today's
@@ -72,13 +72,20 @@ jobs:
     # arm is scoped to the non-PR path for budget, so two extra legs prove the
     # arch while four would double this workflow's arm cost for no new signal.
     #
-    # ── Sharded 4 ways, same mechanism as ci.yml's `test-shard` ───────────────────────────────
-    # Each leg is also split into N=4 disjoint shards (pytest-split `--splits/--group`), so every
-    # leg runs ~1/4 of the suite. Beyond wall-clock, this directly attacks #2720: the macOS
-    # runners OOM-killed the full-suite step mid-run and truncated the log, and a quarter-suite
-    # shard has a proportionally smaller peak RSS and log. The stable `matrix` id
+    # ── Sharded 6 ways, same mechanism as ci.yml's `test-shard` ───────────────────────────────
+    # Each leg is also split into N=6 disjoint shards (pytest-split `--splits/--group`), so every
+    # leg runs ~1/6 of the suite. Beyond wall-clock, this directly attacks #2720: the macOS
+    # runners OOM-killed the full-suite step mid-run and truncated the log, and a smaller shard
+    # has a proportionally smaller peak RSS and log. The stable `matrix` id
     # is preserved by the aggregation gate job below. This is the main/nightly
     # path (not the PR gate), so the extra jobs cost budget only off the critical path.
+    #
+    # Why six and not four, MEASURED 2026-10-14: a macOS leg ran its quarter in up to 43 min of
+    # pytest on its two workers (run 38644372126), against the 45-min cap below, and the
+    # nightlies of 10-13 and 10-14 had six macOS legs cancelled at that cap, one with 92% of its
+    # quarter done. A third worker is not the lever: three workers on a quarter peaked at 4.3 GB
+    # together (1.9 GB each, measured on an Apple-silicon Mac), too near the 7 GB of a macOS
+    # runner. A sixth takes ~29 min there.
     #
     # The arm `include` legs carry an explicit `shard` each (GitHub adds an include entry that
     # omits a base-matrix key as a job with that key UNSET — which would pass `--group` an empty
@@ -88,7 +95,7 @@ jobs:
       matrix:
         python: ["3.12", "3.13"]
         os: [ubuntu-latest, macos-latest]
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
         include:
           # linux arm64 + macOS Apple-silicon. macos-14 is the arm64 image
           # (macos-latest is arm64 too, but pinning keeps the arch explicit here).
@@ -96,10 +103,14 @@ jobs:
           - { python: "3.13", os: ubuntu-24.04-arm, shard: 2 }
           - { python: "3.13", os: ubuntu-24.04-arm, shard: 3 }
           - { python: "3.13", os: ubuntu-24.04-arm, shard: 4 }
+          - { python: "3.13", os: ubuntu-24.04-arm, shard: 5 }
+          - { python: "3.13", os: ubuntu-24.04-arm, shard: 6 }
           - { python: "3.13", os: macos-14, shard: 1 }
           - { python: "3.13", os: macos-14, shard: 2 }
           - { python: "3.13", os: macos-14, shard: 3 }
           - { python: "3.13", os: macos-14, shard: 4 }
+          - { python: "3.13", os: macos-14, shard: 5 }
+          - { python: "3.13", os: macos-14, shard: 6 }
     runs-on: ${{ matrix.os }}
     # ── Every job here carries a timeout (#3318) ─────────────────────────────────────────────
     # `cancel-in-progress: false` above is deliberate (#2946), so a hung job does not just waste
@@ -108,16 +119,17 @@ jobs:
     # `false` keeps main's verification uncancellable, and these caps keep one wedged job from
     # starving the lane.
     #
-    # Each cap must clear the job's OWN measured runtime, and the two jobs are not comparable:
-    # `matrix-shard` runs a quarter of the suite per leg, while `coverage` runs all of it in one
-    # job under `--cov` (the four xdist workers of `-n auto`, no `--splits`), so coverage is the
-    # long pole. MEASURED 2026-09-22 (#3326): coverage's only green run took 47.5 min, and it was
-    # separately observed wedged past 55 min on run 35689470217 — so 40 was below its floor and
-    # killed every push to main. MEASURED 2026-09-28: the suite's runtime grew by about half in
-    # five days (each platform's four shards together took 41-68% longer than on 2026-09-23), and
-    # run 36427251927's coverage was cancelled at its 70-min cap with 80% of the suite done: about
-    # 90 min for the whole job, against 63.6 min on 2026-09-23. Its cap is 130 (~45% headroom over
-    # 90); this shard cap stays at 45 for the smaller job, whose slowest leg took 25 min.
+    # Each cap must clear the job's OWN measured runtime. `coverage` once ran all of the suite in
+    # one job under `--cov` and was the long pole. MEASURED 2026-09-22 (#3326): coverage's only
+    # green run took 47.5 min, and it was separately observed wedged past 55 min on run
+    # 35689470217 — so 40 was below its floor and killed every push to main. MEASURED
+    # 2026-09-28: the suite's runtime grew by about half in five days (each platform's four
+    # shards together took 41-68% longer than on 2026-09-23), and run 36427251927's coverage was
+    # cancelled at its 70-min cap with 80% of the suite done: about 90 min for the whole job,
+    # against 63.6 min on 2026-09-23. Raised to 130, it was outgrown again by 2026-10-13, so it
+    # now runs in sixths on runners of its own (`coverage-shard`), capped at 60. This shard cap
+    # stays at 45: when a quarter of the suite outgrew it on macOS, the suite was split in sixths
+    # (above), not the cap raised.
     timeout-minutes: 45
     # No PERSONALCLAW_HOME — the suite runs under the no-global-home contract; a global
     # value defeats the Path.home()/default-.personalclaw tests (see ci.yml test job).
@@ -151,17 +163,17 @@ jobs:
             *) echo "no tmux installer known for RUNNER_OS=$RUNNER_OS" >&2; exit 1 ;;
           esac
           tmux -V
-      - name: pytest (shard ${{ matrix.shard }} of 4)
+      - name: pytest (shard ${{ matrix.shard }} of 6)
         # The frontend URL-doctrine + config round-trip tests are part of this suite;
         # named here for legibility in the job summary.
         # #2720: the memory-limited macOS runners OOM-killed this step mid-suite — a
         # varying silent truncation (PASSED stream, then no summary, no assertion, no
         # traceback). The levers, none of which weakens a test:
-        #   --no-cov  — coverage is measured once by the dedicated `coverage` job; the
+        #   --no-cov  — coverage is measured once by the dedicated `coverage-shard` legs; the
         #               --cov payload (from addopts) is pure redundant memory here.
         #   -n 2 on macOS — cap xdist workers so peak RSS stays under the runner ceiling.
         #               ubuntu keeps -n auto from addopts.
-        #   --splits/--group — each leg now runs ~1/4 of the suite, so peak RSS AND log
+        #   --splits/--group — each leg now runs ~1/6 of the suite, so peak RSS AND log
         #               size shrink proportionally (the direct cause of the truncation).
         #               `least_duration` splits evenly by count until a `.test_durations`
         #               is committed. -q keeps the per-shard log small.
@@ -171,13 +183,13 @@ jobs:
         # This leg proves cross-platform correctness, not coverage or raw speed.
         run: |
           if [ "$RUNNER_OS" = "macOS" ]; then
-            uv run pytest --no-cov -n 2 -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration --junitxml=reports/junit-matrix.xml
+            uv run pytest --no-cov -n 2 -q --splits 6 --group ${{ matrix.shard }} --splitting-algorithm least_duration --junitxml=reports/junit-matrix.xml
           else
-            uv run pytest --no-cov -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration --junitxml=reports/junit-matrix.xml
+            uv run pytest --no-cov -q --splits 6 --group ${{ matrix.shard }} --splitting-algorithm least_duration --junitxml=reports/junit-matrix.xml
           fi
       # Same argument as ci.yml's `test-shard` upload step: a red must name the failing case
-      # without a log read or a blind re-run. This grid is 24 legs, so the artifact NAME carries
-      # python × os × shard — artifact names are unique per run, and a fixed one would let 24
+      # without a log read or a blind re-run. This grid is 36 legs, so the artifact NAME carries
+      # python × os × shard — artifact names are unique per run, and a fixed one would let 36
       # uploads collide down to whichever finished last. The on-disk filename can stay generic:
       # every leg is its own runner.
       - name: Upload JUnit results (py${{ matrix.python }} · ${{ matrix.os }} · shard ${{ matrix.shard }})
@@ -292,12 +304,36 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  coverage:
-    # No `permissions:` of its own: it runs the whole suite, third-party packages included, so it
-    # holds the workflow's read-only token and publishes nothing but its artifacts.
+  coverage-shard:
+    # The whole suite under `--cov`, in six disjoint shards (pytest-split `--splits/--group`, as
+    # `matrix-shard` splits it), one runner each. `coverage` below combines their data into the
+    # one report.
+    #
+    # ── Why split (measured 2026-10-14 and 2026-10-15) ──────────────────────────────────────────
+    # This was one job running all of the suite: 53,856 tests, 22,658 s of test time on the four
+    # workers of `-n auto`. That took 100 min on the faster runners GitHub hands out (run
+    # 38566551730), and the slower ones run the same tests ~1.5x slower: runs 38417574194 and
+    # 38644372126 were cancelled at the 130-min cap with 85% and 83% of the suite done. So whether
+    # `coverage` was green depended on the machine it drew, and its cap had already gone
+    # 40 → 70 → 130 as the suite grew (see matrix-shard). In quarters it took 26-48 min a
+    # quarter (run 38702123774), too near this cap: splitting by count left one quarter with 60%
+    # more test time than another. A sixth takes about two thirds of that.
+    #
+    # 🪤 IT NEVER HUNG. Read through `gh run view --log`, which stops at the first line too long
+    # for it, each of those runs went quiet at 51-53%: at a test id of 359,560 characters, the
+    # first of three that carried a whole test file (fixed in
+    # tests/test_every_upload_route_scans_what_it_stores.py). The job's own log, read from the
+    # API, runs on to the end.
+    #
+    # No `permissions:` of its own: it runs the suite, third-party packages included, so it holds
+    # the workflow's read-only token and publishes nothing but its artifacts.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
     runs-on: ubuntu-latest
-    # Above the job's own ~90-min measured runtime — see the cap rationale on matrix-shard.
-    timeout-minutes: 130
+    # Above a sixth's measured share — see the cap rationale on matrix-shard.
+    timeout-minutes: 60
     # No PERSONALCLAW_HOME — see the matrix job / ci.yml test job.
     env:
       PERSONALCLAW_SKIP_APP_BACKENDS: "1"
@@ -305,6 +341,9 @@ jobs:
       # run containers and start the Compose stack run here (tests/container_runtime.py). A
       # developer's machine runs them only when it sets this too.
       PERSONALCLAW_TEST_CONTAINER_RUNTIME: "1"
+      # Each shard's data under a name of its own (pytest-cov combines its workers' into it), so
+      # all six land side by side in `coverage`, which combines them.
+      COVERAGE_FILE: .coverage.shard${{ matrix.shard }}
     steps:
       - uses: actions/checkout@v7
       - name: Install uv
@@ -315,20 +354,88 @@ jobs:
         run: uv python install 3.12
       - name: Install (locked)
         run: uv sync --locked --extra dev
-      - name: pytest with coverage XML
-        run: uv run pytest --cov=personalclaw --cov-report=xml --junitxml=reports/junit-coverage.xml
-      # Its OWN upload step, deliberately not folded into "Upload coverage artifacts" below:
-      # that one is `success()`-gated by default (a broken run has no meaningful coverage
-      # number), and the whole point of the JUnit report is that it survives the red. Same
-      # argument as ci.yml's `test-shard` upload step.
-      - name: Upload JUnit results (coverage run)
+      # The suite's own 120 s a test, as on the plain legs. Not raised here: the Compose stack's
+      # test gives its image build what `--timeout` leaves (tests/test_deployment_parity.py), so
+      # at 300 s every shard spent 235 s building beside its tests and slowed all of them (run
+      # 38737327546). A test that coverage's tracer slows past 120 s gets a mark of its own.
+      - name: pytest with coverage (shard ${{ matrix.shard }} of 6)
+        run: uv run pytest --cov=personalclaw --splits 6 --group ${{ matrix.shard }} --splitting-algorithm least_duration --junitxml=reports/junit-coverage-shard${{ matrix.shard }}.xml
+      # Its OWN upload step, deliberately not folded into the data upload below: that one is
+      # `success()`-gated by default (a broken run has no meaningful coverage number), and the
+      # whole point of the JUnit report is that it survives the red. Same argument as ci.yml's
+      # `test-shard` upload step, and named per shard for matrix-shard's reason.
+      - name: Upload JUnit results (coverage shard ${{ matrix.shard }})
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: junit-coverage
-          path: reports/junit-coverage.xml
+          name: junit-coverage-shard${{ matrix.shard }}
+          path: reports/junit-coverage-shard${{ matrix.shard }}.xml
           if-no-files-found: ignore
           retention-days: 7
+      # A dotfile, so it is uploaded only when asked for by name.
+      - name: Upload coverage data (shard ${{ matrix.shard }})
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-data-shard${{ matrix.shard }}
+          path: .coverage.shard${{ matrix.shard }}
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+  coverage:
+    # ── Combines the shards into the one report, and carries the stable `coverage` id ────────
+    # Green only when every shard passed, as `matrix` is for `matrix-shard`, and `!cancelled()`
+    # for the reason it gives (#2946). It keeps the whole suite's report or none: with a shard red
+    # there is no meaningful coverage number, so the steps after the gate do not run.
+    needs: [coverage-shard]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: every coverage shard passed
+        run: |
+          result='${{ needs.coverage-shard.result }}'
+          # Reachable only when a shard was cancelled while the run lived on: part of the
+          # suite was measured by nothing, so it is red (matrix's doctrine).
+          if [ "$result" = "cancelled" ]; then
+            echo "::error title=coverage shards unproven::a coverage shard was cancelled while" \
+                 "this run was still live, so part of the suite was measured by nothing. Re-run."
+            exit 1
+          fi
+          if [ "$result" != "success" ]; then
+            echo "::error title=coverage shards failed::the coverage shards' result was" \
+                 "'$result' (expected 'success'). Open the red 'coverage-shard (...)' leg(s) above."
+            exit 1
+          fi
+          echo "all coverage shards passed"
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: Download the coverage data of every shard
+        uses: actions/download-artifact@v8
+        with:
+          pattern: coverage-data-shard*
+          path: coverage-data/
+          merge-multiple: true
+      - name: Combine the shards into coverage XML
+        run: |
+          set -eu
+          # All six or no report: a shard's data missing would publish a smaller number as the
+          # suite's, with nothing to say part of it was never counted.
+          found=$(find coverage-data -name '.coverage.shard*' -type f | wc -l)
+          if [ "$found" -ne 6 ]; then
+            echo "::error title=coverage data incomplete::found the data of $found of 6 shards."
+            exit 1
+          fi
+          uv run coverage combine coverage-data
+          uv run coverage xml -o coverage.xml
+          echo "coverage of the whole suite: $(uv run coverage report --format=total)%"
       - name: Upload coverage artifacts
         uses: actions/upload-artifact@v7
         with:

@@ -437,6 +437,11 @@ async def test_a_refiners_claimed_score_is_not_the_candidates_score(space: Path)
 # ── the cycle limit ──────────────────────────────────────────────────────────
 
 
+# Thirteen cycles of the search as it ships, each running its bash steps as `personalclaw`
+# processes of their own: 42-69 s on CI's plain legs, 64-120 s under coverage, where the suite's
+# 120 s stopped it (2026-10-15). A search asking for more than 12 is the point, so the timeout is
+# raised, not the work cut.
+@pytest.mark.timeout(300)
 @pytest.mark.anyio
 async def test_max_iterations_is_the_number_of_candidates_the_search_tries(space: Path) -> None:
     """🔴 Red before: the loop stopped at 12 cycles whatever ``max_iterations`` said, and a

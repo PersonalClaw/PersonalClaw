@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import io
 import json
-import sqlite3
 import tarfile
 import tempfile
 import threading
@@ -47,6 +46,7 @@ import pytest
 
 from personalclaw.durability import inventory
 from personalclaw.snapshot import restore_main, snapshot_main
+from personalclaw.sqlite_compat import sqlite3
 
 APP = "field-notes"
 APP_DB = f"apps/{APP}/data/notes.db"
@@ -90,7 +90,13 @@ def _install_app(home: Path) -> Path:
 class _LiveDatabase:
     """A database a running store holds open in WAL mode, as an app's backend does: every row is
     committed, and sits in the write-ahead log, where a reader still reading an older state keeps
-    it (no checkpoint can move a row past what that reader sees into the database file)."""
+    it (no checkpoint can move a row past what that reader sees into the database file).
+
+    Its connections use the SQLite the gateway's own do (``personalclaw.sqlite_compat``). The
+    backend is a process of its own, whose locks the gateway's SQLite sees. Standing in for it in
+    this process, a second copy of SQLite (Linux x86_64 has two) sees none of them: the backup's
+    connection took itself for the database's only one, reset the log's index under the writer,
+    and the writer's thread died of a bus error, or the copy read as malformed."""
 
     def __init__(self, path: Path, tag: str, rows: int = 300) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

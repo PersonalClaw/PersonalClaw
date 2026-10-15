@@ -221,6 +221,9 @@ def _census() -> dict[str, list[KeychainCall]]:
 # ── the tree ─────────────────────────────────────────────────────────────────
 
 
+# A census of the tree: under coverage on CI it took 55-90 s of the suite's 120 s (2026-10-14/15).
+# It gets the 300 s the inert-surface census's tests have (tests/test_inert_surface_baseline.py).
+@pytest.mark.timeout(300)
 def test_every_keychain_call_names_the_homes_own_namespace():
     wrong = [
         f"{rel}:{call.line}: {call.text}"
@@ -234,6 +237,9 @@ def test_every_keychain_call_names_the_homes_own_namespace():
     )
 
 
+# A census of the tree: under coverage on CI it took 90-98 s of the suite's 120 s (2026-10-14/15).
+# It gets the 300 s the inert-surface census's tests have (tests/test_inert_surface_baseline.py).
+@pytest.mark.timeout(300)
 def test_the_census_reads_the_real_keychain_calls():
     """Vacuity: the census finds the store's reads, writes, deletes and index entries — a census
     that found no call would pass the test above whatever the tree held."""

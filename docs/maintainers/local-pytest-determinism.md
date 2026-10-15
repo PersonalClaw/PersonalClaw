@@ -21,9 +21,11 @@ addopts: coverage, `-n auto`, `--dist worksteal`, and a 120-second timeout.
 The worker cap resolves `auto` to three workers for these measurements.
 
 The Full workflow does not run the same shape. Its matrix partitions the suite
-into four disjoint pytest-split groups, disables coverage for each group, and
+into six disjoint pytest-split groups, disables coverage for each group, and
 caps macOS groups at two xdist workers. It also sets
-`PERSONALCLAW_SKIP_APP_BACKENDS=1`. The dedicated coverage job runs separately.
+`PERSONALCLAW_SKIP_APP_BACKENDS=1`. Coverage is measured separately, in six
+groups of its own (`coverage-shard`), and the `coverage` job combines their data
+into one report.
 
 ## Measurement protocol
 

@@ -21,10 +21,18 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts import generate_config_baseline as config_gen
 from scripts import generate_docs_lint_baseline as docs_gen
 from scripts import generate_inert_surface_baseline as inert_gen
 from scripts.gate_report import GateResult, main, render_report, run_all_gates
+
+#: For a test that runs every gate on the real tree. One of them is the inert-surface census,
+#: which its own tests are allowed 300 s for (tests/test_inert_surface_baseline.py). Under
+#: coverage on the slower CI runners such a test was stopped at the suite's 120 s (2026-10-14) and
+#: took 194 s (2026-10-15).
+_EVERY_REAL_GATE = pytest.mark.timeout(300)
 
 # The three drift/inert gates this module seeds failures for.
 _GATE_NAMES = ["config-baseline", "inert-surface", "docs-lint"]
@@ -152,6 +160,7 @@ def test_a_raising_gate_is_captured_and_does_not_stop_the_others(monkeypatch):
     assert [r.name for r in results] == _ALL_GATE_NAMES
 
 
+@_EVERY_REAL_GATE
 def test_all_gates_pass_on_a_clean_tree(capsys):
     """On the real (clean) tree every gate passes, ``main()`` exits 0, and the table shows one
     PASS row per registered gate."""
@@ -189,6 +198,7 @@ def test_report_renders_every_failure_in_one_table():
     assert "SUMMARY: 3 of 3 gate(s) FAILED, 3 failure(s) total." in report
 
 
+@_EVERY_REAL_GATE
 def test_report_is_deterministic():
     """Same results in → byte-identical report out (fixed columns, pre-sorted lines, no
     timestamps or absolute paths)."""
@@ -196,6 +206,7 @@ def test_report_is_deterministic():
     assert render_report(results) == render_report(results)
 
 
+@_EVERY_REAL_GATE
 def test_gateresult_ok_matches_emptiness_of_failures():
     """The one normalized shape: a passing gate carries no failures; a failing gate carries
     at least one. run_all_gates() always returns exactly the registered gates, in order."""

@@ -456,25 +456,32 @@ def _text(size: int) -> bytes:
     return (CLEAN_TEXT * (size // len(CLEAN_TEXT) + 1))[:size]
 
 
+# Each case's id is its name. An id pytest built from the bytes carried the whole file, up to
+# 894,546 characters, into every line of a run's log that named the test; `gh run view --log`
+# reads a log a line at a time and stopped at the first such line, so a run that went on to
+# finish read as one that hung at 51%.
 @pytest.mark.parametrize(
     "name, data, read",
     [
-        ("a small binary file", _text(4 * _KB) + b"\x00", None),
-        (
-            "a 300 KB file binary in its first 256 KB",
-            b"\x00" + _text(SCAN_WINDOW - 1) + _text(44 * _KB),
-            _text(44 * _KB),
-        ),
-        (
-            "a 300 KB file binary past its first 256 KB",
-            _text(SCAN_WINDOW) + _text(40 * _KB) + b"\x00" + _text(4 * _KB),
-            _text(SCAN_WINDOW),
-        ),
-        (
-            "a 600 KB file binary in its last 256 KB",
-            _text(SCAN_WINDOW) + _text(88 * _KB) + b"\x00" + _text(SCAN_WINDOW - 1),
-            _text(SCAN_WINDOW),
-        ),
+        pytest.param(*case, id=case[0])
+        for case in (
+            ("a small binary file", _text(4 * _KB) + b"\x00", None),
+            (
+                "a 300 KB file binary in its first 256 KB",
+                b"\x00" + _text(SCAN_WINDOW - 1) + _text(44 * _KB),
+                _text(44 * _KB),
+            ),
+            (
+                "a 300 KB file binary past its first 256 KB",
+                _text(SCAN_WINDOW) + _text(40 * _KB) + b"\x00" + _text(4 * _KB),
+                _text(SCAN_WINDOW),
+            ),
+            (
+                "a 600 KB file binary in its last 256 KB",
+                _text(SCAN_WINDOW) + _text(88 * _KB) + b"\x00" + _text(SCAN_WINDOW - 1),
+                _text(SCAN_WINDOW),
+            ),
+        )
     ],
 )
 def test_a_window_that_holds_a_nul_byte_is_not_read_and_the_other_still_is(

@@ -256,6 +256,10 @@ def test_forbidden_to_raise_doc_line_is_present():
 # ── Reporting through the aggregate ──────────────────────────────────────────
 
 
+# Every gate runs on the real tree here, the inert-surface census among them, which its own tests
+# are allowed 300 s for: under coverage on the slower CI runners (2026-10-14) this was stopped at
+# the suite's 120 s.
+@pytest.mark.timeout(300)
 def test_three_simultaneous_structural_violations_report_as_three(monkeypatch, tmp_path):
     """The ratchets report THROUGH the aggregate, so one red does not hide
     four — proven, not asserted, and registration proven in the same breath (a ratchet that

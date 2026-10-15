@@ -211,6 +211,9 @@ def test_no_test_drives_a_container_runtime_without_asking_the_opt_in():
     )
 
 
+# A census of the tree: under coverage on CI it took 77-91 s of the suite's 120 s (2026-10-14/15).
+# It gets the 300 s the inert-surface census's tests have (tests/test_inert_surface_baseline.py).
+@pytest.mark.timeout(300)
 def test_the_census_sees_the_modules_that_drive_a_runtime():
     """The control: each module that drives a runtime is found asking, so a census that read
     nothing, or stopped recognising a start, cannot pass by finding nothing."""
