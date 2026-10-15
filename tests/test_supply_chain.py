@@ -340,6 +340,22 @@ def test_the_release_attaches_the_wheels_sbom_and_pypi_never_sees_it() -> None:
     assert "wheel-sbom/*" in create.split("gh release create", 1)[1].split("--title", 1)[0]
 
 
+def test_the_wheels_provenance_needs_only_the_build_it_attests() -> None:
+    """`attest` attests `build`'s `dist`, so nothing else may stand between them.
+
+    It used to need `notes` too. v0.2.0's desktop-linux failed, `notes` was skipped, `attest`
+    with it, and the wheel and sdist PyPI had published have no build provenance on GitHub."""
+    attest = _jobs()["attest"]
+    needs = attest.get("needs")
+    assert (needs if isinstance(needs, list) else [needs]) == ["build"], needs
+    downloads = [
+        step["with"]
+        for step in attest["steps"]
+        if step.get("uses") == "actions/download-artifact@v8"
+    ]
+    assert downloads == [{"name": "dist", "path": "dist/"}], downloads
+
+
 def test_readme_supply_chain_claim_matches_the_release_outputs() -> None:
     """Each promise in the README's supply-chain paragraph, held to the job that keeps it.
 
