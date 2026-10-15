@@ -50,6 +50,26 @@ on:
         type: choice
         default: all
         options: [all, v1-wheel, v3-container, v4-selfupdate]
+  # CALLABLE, so the release-verify workflow can reuse the V1 wheel leg instead of
+  # keeping a second copy of it. The `version` input pins the wheel to install; when it is
+  # empty the leg keeps its historical behaviour of installing the newest release.
+  workflow_call:
+    inputs:
+      version:
+        description: "Wheel version to install (empty = newest release)"
+        type: string
+        required: false
+        default: ""
+      # A CALLER WANTS ONE LEG, NOT FOUR. An input a called workflow does not declare is null,
+      # so the guards' `inputs.which || 'all'` fallback would run EVERY leg on every call — a
+      # release-verify caller pinning a wheel would also pull container images and self-update a
+      # checkout it never asked for. Hence a call default of `v1-wheel`, unlike the dispatch
+      # default of `all`: the fallback still admits a scheduled run, and a caller gets one leg.
+      which:
+        description: "Which walkthrough to run (default v1-wheel for callers)"
+        type: string
+        required: false
+        default: v1-wheel
 
 # THE `which` INPUT HAS NO VALUE ON A SCHEDULED RUN, AND THAT IS THE TRAP THE SCHEDULE WALKS
 # INTO. The `inputs` context is populated only for `workflow_dispatch` / `workflow_call`; on a
@@ -86,7 +106,7 @@ jobs:
     # Bounded like every other workflow here (#3318/#3320), and sized ABOVE measured
     # runtime rather than near it (#3326 was the cost of the other mistake). Measured 30s
     # in run 35814995463.
-    timeout-minutes: 20
+    timeout-minutes: 30  # a pinned call may retry its install for ten minutes first
     container: python:3.12-slim
     steps:
       - uses: actions/checkout@v7
@@ -118,9 +138,24 @@ jobs:
       # Verified against PyPI: personalclaw-0.1.3-py3-none-any.whl carries
       # `personalclaw/static/dist/index.html` plus 212 hashed JS assets.
       - name: Install the RELEASED wheel from PyPI — a stranger's documented path
+        env:
+          # Empty on every trigger except `workflow_call`, where release-verify pins the
+          # version it is verifying. An empty value keeps the newest-release behaviour.
+          WHEEL_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          pip install --quiet personalclaw
+          # A pinned version may not be on the index the instant the release publishes, so
+          # retry for ten minutes while the index propagates. The unpinned path is unchanged.
+          if [ -n "$WHEEL_VERSION" ]; then
+            for i in $(seq 1 60); do
+              pip install --quiet "personalclaw==$WHEEL_VERSION" && break
+              echo "attempt $i: personalclaw==$WHEEL_VERSION not on the index yet"
+              sleep 10
+            done
+            pip install --quiet "personalclaw==$WHEEL_VERSION"
+          else
+            pip install --quiet personalclaw
+          fi
           python -c "import personalclaw, sys; print('installed', personalclaw.__version__ if hasattr(personalclaw,'__version__') else '(version attr absent)')"
 
       - name: The released wheel must bundle the built SPA

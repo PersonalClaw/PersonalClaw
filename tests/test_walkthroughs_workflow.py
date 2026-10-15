@@ -301,3 +301,46 @@ def test_every_job_is_bounded() -> None:
     jobs = _workflow()["jobs"]
     unbounded = [name for name in EXPECTED_JOBS if "timeout-minutes" not in jobs[name]]
     assert not unbounded, f"jobs with no `timeout-minutes`: {unbounded}"
+
+
+# ---------------------------------------------------------------------------
+# The release-verify reuse: the V1 wheel leg must be callable with a pinned version.
+# ---------------------------------------------------------------------------
+
+
+def test_the_workflow_is_callable_with_a_version_input() -> None:
+    """release-verify reuses the V1 wheel leg instead of keeping a second copy.
+
+    Without ``workflow_call`` the release-verify workflow would have to duplicate the
+    Node-absent wheel walkthrough, and the two copies would drift. The ``version`` input is
+    what lets the caller pin the wheel it is verifying; an empty value keeps the historical
+    newest-release behaviour.
+    """
+    call = _triggers(_workflow()).get("workflow_call")
+    assert call, "the walkthroughs are not callable, so release-verify cannot reuse V1"
+    inputs = call.get("inputs") or {}
+    assert "version" in inputs, (
+        "workflow_call declares no `version` input, so a caller cannot pin the wheel it "
+        "is verifying"
+    )
+    assert (
+        inputs["version"].get("required") is False
+    ), "`version` must be optional: an empty value keeps the newest-release behaviour"
+
+    assert inputs.get("which", {}).get("default") == "v1-wheel", (
+        "an undeclared `which` is null on a call, so the guards' `inputs.which || 'all'` "
+        "fallback would run every leg; a caller pinning the wheel must get one leg"
+    )
+
+
+def test_the_v1_wheel_leg_reads_the_version_input() -> None:
+    """The `version` input must actually reach the install step, not just be declared."""
+    jobs = _workflow()["jobs"]
+    steps = jobs["v1-wheel"]["steps"]
+    install = [s for s in steps if "Install the RELEASED wheel" in str(s.get("name", ""))]
+    assert install, "the V1 wheel install step was renamed or removed"
+    env = install[0].get("env") or {}
+    assert "inputs.version" in str(env.get("WHEEL_VERSION", "")), (
+        "the install step does not read `inputs.version`, so a pinned call would still "
+        "install the newest release"
+    )
