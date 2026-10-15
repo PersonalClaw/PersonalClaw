@@ -1046,6 +1046,22 @@ jobs:
       # PERSONALCLAW_HOME — consistent with this job's no-global-home contract.
       - name: gate aggregate (make gates)
         run: uv run python scripts/gate_report.py
+      # The npm advisory floors read package-lock.json, which `test` already covers, and then the
+      # INSTALLED tree, for the copies of a floored library that a package keeps inside its own
+      # files (monaco-editor ships its own DOMPurify). No lockfile entry lists those, and the
+      # `test` shards install no node_modules, so there that half skips. Here the tree is installed
+      # and PERSONALCLAW_REQUIRE_NPM_TREE turns a missing one into a failure: a skip reads as a pass.
+      # npm from the REPO ROOT (single-root workspace lockfile — npm/cli#4828).
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+      - name: npm ci (root)
+        run: npm ci
+      - name: npm advisory floors, copies kept inside packages included
+        env:
+          PERSONALCLAW_REQUIRE_NPM_TREE: "1"
+        run: uv run pytest tests/test_npm_advisory_floors.py -n0 --junitxml=reports/junit-npm-floors.xml
       # Same argument as `test-shard`'s upload step. Placed after the aggregate so a red gate
       # still publishes the residue sweep's report (`always()`, not `success()`).
       - name: Upload JUnit results (rails)
@@ -1054,6 +1070,14 @@ jobs:
         with:
           name: junit-rails
           path: reports/junit-rails.xml
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload JUnit results (npm advisory floors)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-npm-floors
+          path: reports/junit-npm-floors.xml
           if-no-files-found: ignore
           retention-days: 7
 
