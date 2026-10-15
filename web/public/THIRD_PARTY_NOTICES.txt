@@ -74,11 +74,11 @@ compressed to WOFF2. Its glyphs and tables are unchanged but for the flag WOFF2 
 in the head table to mark its lossless transform.
 
 ------------------------------------------------------------------------------
-KaTeX fonts 0.18.7 (math in rendered messages)
+KaTeX fonts 0.19.0 (math in rendered messages)
 
 Files:   assets/KaTeX_*.woff2, .woff and .ttf. The build adds a content hash to each
          name and inlines the smallest face into the stylesheet.
-Source:  https://github.com/KaTeX/KaTeX/tree/v0.18.7/fonts
+Source:  https://github.com/KaTeX/KaTeX/tree/v0.19.0/fonts
 Licence: SIL Open Font License 1.1, with Reserved Font Names
 
 Copyright (c) 2009-2010, Design Science, Inc. (<www.mathjax.org>)
@@ -91,10 +91,10 @@ Reserved Font Name, in its metadata.
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 
 ------------------------------------------------------------------------------
-Codicons 0.0.46-21 (the code editor's icon font)
+Codicons 0.0.46-40 (the code editor's icon font)
 
 Files:   assets/codicon-*.ttf. The build adds a content hash to the name.
-Source:  https://github.com/microsoft/vscode-codicons, shipped inside monaco-editor 0.56.0
+Source:  https://github.com/microsoft/vscode-codicons, shipped inside monaco-editor 0.57.0
 Licence: Creative Commons Attribution 4.0 International (CC BY 4.0),
          https://creativecommons.org/licenses/by/4.0/legalcode
 
@@ -102,7 +102,7 @@ Copyright (c) Microsoft Corporation.
 
 The Codicons are licensed by Microsoft Corporation and its contributors under
 CC BY 4.0. This file is byte-identical to dist/codicon.ttf in @vscode/codicons
-0.0.46-21, so it has not been modified. It is provided as is, with no warranties;
+0.0.46-40, so it has not been modified. It is provided as is, with no warranties;
 see Section 5 of the licence, reproduced in full below.
 
 Git Logo by Jason Long (https://bsky.app/profile/jasonlong.me) is licensed under
