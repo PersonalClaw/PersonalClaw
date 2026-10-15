@@ -453,6 +453,6 @@ rehearsal (step 5) does not run them either: the next tag is their first run.
   OIDC attestation (`attest`, which needs only `build`, so a failure later in the run
   no longer costs the wheel its provenance, as it did v0.2.0's), and PyPI uses
   trusted publishing, so there are no long-lived tokens to rotate or lose. Artifact
-  **signing** (minisign/Sigstore) is the S2, unbuilt as of v0.1.3.
+  **signing** (minisign/Sigstore) is not built yet.
 - The `release` and `release-client` environments exist precisely so a tag push
   cannot publish unattended. Do not remove that approval gate to save a click.

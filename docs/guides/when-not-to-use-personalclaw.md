@@ -126,7 +126,7 @@ vaguely: a [native-Windows audit](../research/windows-native-audit.md) ruled the
 port *no-go* because it would silently weaken file-permission and sandbox guarantees the
 rest of the system depends on. There is also no Windows desktop shell, and none is
 planned until both that audit flips and Windows code-signing secrets exist
-([The desktop app → Windows](desktop.md#windows--deferred-2026-09-05)).
+([The desktop app → Windows](desktop.md#windows--deferred)).
 
 What does work on Windows is **WSL2** or **Docker Desktop**, both documented walkthroughs
 in [Platforms](platforms.md#windows-via-wsl2). Honest nuance: the WSL2 path is a checklist
