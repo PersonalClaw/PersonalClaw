@@ -136,14 +136,16 @@ program" is a hard requirement, stop here.
 
 ## 6. You want a signed, auto-updating desktop app
 
-**Walk away if:** an unsigned build or a manual build step is unacceptable.
+**Walk away if:** an app without a publisher's signature, or an update you download and
+install yourself, is unacceptable.
 
-The macOS Electron shell is explicitly experimental. It is **not built, signed, or
-released by CI, and has no auto-update channel** — the README's tech-stack note says
-exactly that. The `.dmg` is not attached to releases because Apple Developer signing and
-notarization credentials do not exist in CI; until they do you build it yourself with
-`make desktop-dist`, and macOS Gatekeeper charges you one approval step per installed
-version ([The desktop app → macOS](desktop.md)).
+The Electron desktop shell is explicitly experimental, and it **has no auto-update
+channel** — the README's tech-stack note says exactly that. CI builds it for every
+release, which attaches an Apple-silicon `.dmg` and an x86-64 Linux AppImage and `.deb`.
+None carries a publisher's signature. The dmg is ad-hoc signed and not notarized, because
+notarization needs a paid Apple Developer account the project has deliberately not taken
+on, so macOS Gatekeeper charges you one approval step per installed version; the Linux
+files are unsigned, the platform norm ([The desktop app → Platforms](desktop.md#platforms)).
 
 The gateway itself updates fine (`personalclaw update`, plus **Settings → Updates**).
 It is the desktop *shell* that has no update channel. If you only need a window, the

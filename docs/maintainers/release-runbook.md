@@ -14,16 +14,25 @@ and runs ten jobs:
 
 | Job | What it produces | Gate |
 |---|---|---|
-| `build` | sdist + wheel (SPA bundled inside), SBOM | inspects the wheel's contents and metadata against the checkout, then installs it alone into a scratch venv and requires the SPA served, every bundled app enabled and the default model offered |
+| `build` | sdist + wheel (SPA bundled inside), and the wheel's SBOM | refuses a ref that is not a release tag at its first step; inspects the wheel's contents and metadata against the checkout, then installs it alone into a scratch venv and requires the SPA served, every bundled app enabled and the default model offered; fails unless the SBOM lists the wheel and every package installed with it |
 | `pypi` | core package on PyPI | environment `release` — **needs your approval** |
 | `pypi-client` | `personalclaw-client` on PyPI | environment `release-client` — **needs your approval** |
 | `gateway-dashboard` | nothing; it is purely a gate | boots the gateway image built from this commit and requires a **served bundle**, not a status — `images` needs it, so a dashboard-less image is never pushed |
 | `images` | `ghcr.io/personalclaw/personalclaw-{gateway,web}`, multi-arch — tags per [the scheme below](#what-a-tag-publishes) | needs `build` and `gateway-dashboard`; then pulls each arch and runs the image's own liveness command inside it |
-| `desktop-mac` | unsigned `.dmg` (Apple silicon only) | boots the bundled backend from inside the mounted dmg |
-| `desktop-linux` | unsigned `.AppImage` + `.deb` (x86-64) | boots the bundled backend out of the extracted AppImage |
-| `notes` | the GitHub Release, notes lifted from `CHANGELOG.md` | needs `build`, `pypi`, `images`, `desktop-linux`, `desktop-mac` |
+| `desktop-mac` | `PersonalClaw-X.Y.Z-arm64.dmg`, ad-hoc signed, not notarized (Apple silicon only) | boots the bundled backend from inside the mounted dmg |
+| `desktop-linux` | unsigned `PersonalClaw-X.Y.Z.AppImage` + `personalclaw-desktop_X.Y.Z_amd64.deb` (x86-64) | boots the bundled backend out of the extracted AppImage |
+| `notes` | the GitHub Release, notes lifted from `CHANGELOG.md`; attaches the wheel, the sdist, the wheel's SBOM, four image SBOMs and the three desktop files | needs `build`, `pypi`, `images`, `desktop-linux`, `desktop-mac` |
 | `website-follow` | nudges personalclaw.dev to re-check its pins | best-effort, `continue-on-error` |
-| `attest` | build-provenance attestation on the wheel (OIDC, no keys) | — |
+| `attest` | build-provenance attestation on the wheel and the sdist (OIDC, no keys) | needs only `build`, so it runs whether or not the Release is created |
+
+The desktop bundles are frozen with a pinned PyInstaller (`pyinstaller==6.22.3`,
+`pyinstaller-hooks-contrib==2026.8`, what v0.2.0 used), and electron-builder runs with
+`--publish never`: the `notes` job is the only thing that attaches files to a Release.
+
+The wheel's SBOM is a scan of the wheel installed into a scratch venv over the **locked**
+versions of its dependencies (`uv export --locked`, the way the gateway image installs them). It
+records what CI tested; a later `pip install personalclaw` may resolve newer versions inside the
+wheel's ranges.
 
 Two consequences worth knowing before you start:
 
@@ -62,10 +71,12 @@ release candidate therefore needs no special flag or manual step: tag
 
 ## Before you tag
 
-### 1. Bump the version in all six places
+### 1. Bump the version in all seven places
 
-These are enforced by `tests/test_version_consistency.py` — miss one and CI goes
-red *after* you have already pushed the tag, which is the annoying way to find out.
+These are enforced by `tests/test_version_consistency.py`, which runs in PR CI, so a
+missed one turns the bump PR red before anything is tagged. `release.yml` runs no
+tests: on the tag, only `build`'s `verify_wheel.py --release-version` compares
+`pyproject.toml` with the tag.
 
 | File | Field |
 |---|---|
@@ -75,6 +86,25 @@ red *after* you have already pushed the tag, which is the annoying way to find o
 | `src/personalclaw/acp/client.py` | `CLIENT_VERSION = "X.Y.Z"` — sent in the ACP handshake |
 | `README.md` | the pre-1.0 banner's `PersonalClaw is at **vX.Y.Z**` |
 | `CHANGELOG.md` | a heading of exactly the form `## [X.Y.Z] …`, as the newest entry |
+| `desktop/package.json` | `"version": "X.Y.Z"` — electron-builder names the dmg, AppImage and deb from it |
+
+The same test also requires `package-lock.json`'s record of the desktop workspace
+(`packages.desktop.version`) to say what `desktop/package.json` says; `npm ci` does not
+check it. From the repo root, `npm install --package-lock-only --ignore-scripts` moves
+exactly that line.
+
+**Three more files move on every bump, and this gate reads none of them:**
+
+| File | What moves | What fails without it |
+|---|---|---|
+| `uv.lock` | the `personalclaw` package's own `version` | every `uv sync --locked` and `uv export --locked`: all of CI, the gateway image, both desktop jobs and the wheel's SBOM (step 2) |
+| `deploy/website/install.sh` | `PC_MIN_VERSION`, the installer's floor, becomes the **previous** release | `tests/test_website_installer.py` |
+| `deploy/website/install.sh.sha256` | the installer's digest: `cd deploy/website && shasum -a 256 install.sh > install.sh.sha256` | `tests/test_website_installer.py`, then `full.yml`'s `install-smoke` drift leg until the website's mirror follows ([the cross-repo obligation](#the-cross-repo-obligation)) |
+
+`src/personalclaw/sdk/signatures.json` does not move: it records
+`personalclaw.sdk.channel.__version__` as a string, not as a release's value. If
+`make sdk-snapshot` shows a change on a bump, that change is an SDK change of its own,
+and CI's `apps-contract` job asks for its CHANGELOG headline.
 
 **A release candidate** is written in its tag's spelling in every one of them —
 `0.3.0-rc.1` for the tag `v0.3.0-rc.1`: `version = "0.3.0-rc.1"`, `## [0.3.0-rc.1] …`,
@@ -86,11 +116,12 @@ smoke and the notes lookup — compares them as versions, through
 the one the updater uses). Tag after the bump: the `build` job refuses a wheel that is not the
 tagged version before anything is published.
 
-All six are enforced by `tests/test_version_consistency.py`. The last two were added
-to it on 2026-07-31 after both had silently drifted — `CLIENT_VERSION` sat at `0.1.2`
-through the 0.1.3 release (so every ACP agent was told the wrong version), and the
-README banner still said `v0.1.0` three releases later, in the very paragraph warning
-users their data may break.
+All seven are enforced by `tests/test_version_consistency.py`. `CLIENT_VERSION` and the
+README banner were added to it on 2026-07-31 after both had silently drifted —
+`CLIENT_VERSION` sat at `0.1.2` through the 0.1.3 release (so every ACP agent was told the
+wrong version), and the README banner still said `v0.1.0` three releases later, in the very
+paragraph warning users their data may break. `desktop/package.json` followed after it had
+sat at `0.1.0` while core reached `0.1.3`.
 
 The `## [X.Y.Z]` form matters: the `build` job finds the release's section as the
 body under the `## [<version>]` heading whose version is the tag's, compared as a
@@ -119,17 +150,24 @@ goes in [Updating](../guides/getting-started.md#updating) before you tag.
 Confirm before committing:
 
 ```bash
-.venv/bin/python -m pytest tests/test_version_consistency.py -q
+.venv/bin/python -m pytest tests/test_version_consistency.py tests/test_website_installer.py -q
 ```
 
-### 2. Re-lock if dependencies changed
+### 2. Re-lock on every bump
 
-CI runs `uv sync --locked`. A `pyproject.toml` dependency change without a
-re-locked `uv.lock` **in the same commit** reddens everything downstream.
+`uv.lock` records the project's own version, so a bump changes it even when no
+dependency did. CI runs `uv sync --locked`, and a bump without a re-locked `uv.lock`
+**in the same commit** fails every CI job ("The lockfile at `uv.lock` needs to be
+updated"), the gateway image's `uv export --locked`, both desktop jobs and the wheel's
+SBOM. A dependency change needs the same.
 
 ```bash
 uv lock
 ```
+
+Re-lock with the uv the gateway image pins (`uvx --from 'uv==0.12.19' uv lock`, the
+`uv` version in `deploy/docker/Dockerfile.backend`) to keep the diff to the lines that
+moved: a newer uv also rewrites the lockfile's `revision`.
 
 ### 3. Run the full local gate
 
@@ -149,7 +187,37 @@ make build                      # the distribution, inspected and rebuilt byte-i
 and never force-push it: release tags are cut from `main`, and the git kind's
 `nightly` channel fast-forwards it, so both depend on its linear history.
 
+### 5. Rehearse the tag-only jobs (no publish)
+
+No PR or `main` workflow builds the dmg, the AppImage or the deb, so the first time a
+desktop dependency bump is packaged would otherwise be the tag. Dispatch the release
+workflow on `main` after the bump lands:
+
+```bash
+gh workflow run release.yml -R PersonalClaw/PersonalClaw --ref main
+```
+
+`gateway-dashboard`, `desktop-mac` and `desktop-linux` need no other job, so they run.
+`build` refuses `main` at its first step after the checkout ("Classify the release
+tag"), so every job that publishes (`pypi`, `pypi-client`, `images`, `notes`, `attest`,
+`website-follow`) is skipped, nothing is published and no approval is asked. The run
+therefore ends red, on `build`, and that is the expected result. What to check:
+
+- the three jobs are green, and the desktop artifacts carry the bumped version in their
+  file names;
+- each desktop log shows `PyInstaller: 6.22.3, contrib hooks: 2026.8` and no
+  `Implicit publishing` line from electron-builder.
+
+`tests/test_a_release_dispatched_on_a_branch_publishes_nothing.py` holds the wiring that
+makes this safe.
+
 ## Tagging
+
+**Nothing in `release.yml` can be fixed for a tag once you push it.** The tag's run, a
+re-run of any of its jobs and a dispatch on the tag all use the workflow file as it is
+at the tag: a dispatch builds the ref it runs on, and has no input to point it anywhere
+else. A workflow fix merged afterwards helps the next tag only. So land release-path
+fixes, and rehearse (step 5), before you tag.
 
 Tag the **merge commit on `main`**, not your branch tip:
 
@@ -173,7 +241,13 @@ git push origin v0.1.3
 4. `gateway-dashboard`, `images`, the two `desktop-*` jobs, `notes` and `attest`
    finish on their own. If `gateway-dashboard` reds, **no image was pushed** and
    the fault is in the image, not the tag: read its log for which of healthz, `/`
-   or the first bundle failed, fix the image, and re-run the tag.
+   or the first bundle failed. A fix is a new commit, which this tag does not
+   contain: if PyPI has not published yet, delete the tag, land the fix and tag
+   again; once it has, the fix ships as the next patch.
+5. If a job fails on something a retry can clear, use **Re-run failed jobs**, never
+   "Re-run all jobs": that re-pushes `:X.Y.Z`, `:X.Y` and `:latest` with new digests.
+   Do not create the GitHub Release by hand while `notes` can still run:
+   `gh release create` fails on a tag that already has one.
 
 ## After it finishes
 
@@ -196,11 +270,17 @@ docker pull ghcr.io/personalclaw/personalclaw-gateway:X.Y.Z
 docker manifest inspect ghcr.io/personalclaw/personalclaw-gateway:X.Y.Z \
   | grep -c architecture        # expect >1 for multi-arch
 
-# 4. The GitHub Release exists with real notes
+# 4. The GitHub Release exists with real notes and every asset: the wheel, the sdist,
+#    personalclaw-wheel.spdx.json, four image SBOMs, the dmg, the AppImage and the deb
 gh release view vX.Y.Z
+
+# 5. The wheel carries GitHub's build provenance
+gh release download vX.Y.Z -R PersonalClaw/PersonalClaw -p '*.whl' -D /tmp/relcheck-dl
+gh attestation verify /tmp/relcheck-dl/personalclaw-X.Y.Z-py3-none-any.whl \
+  -R PersonalClaw/PersonalClaw
 ```
 
-Then clean up: `rm -rf /tmp/relcheck`.
+Then clean up: `rm -rf /tmp/relcheck /tmp/relcheck-dl`.
 
 ### Convenience-channel smoke (Homebrew · Nix)
 
@@ -296,11 +376,25 @@ row — do not leave it claiming support it did not earn.
 
 ### The cross-repo obligation
 
-A published core release is an **obligation on the other two repos**:
+A published core release is an **obligation on the other two repos**, and the order matters:
 
+- **Before you push a core or apps tag, merge whatever the website still needs.** From
+  the moment either repository has a semver tag newer than the website's pin, the
+  website's required check "Static build and publication contract" fails on every
+  website PR (`scripts/validate-release-parity.mjs` reads both repositories' tags), until
+  the pins PR below lands. A website dependency PR waiting at that moment waits for the
+  pins. Keep the window between the tags and the pins PR short.
+- **The installer mirror, right after the bump PR merges (no tag needed).** The website
+  serves the installer from its own `public/install`, which must be byte for byte
+  `deploy/website/install.sh` (`cmp`). A bump moves `PC_MIN_VERSION`, so it needs a
+  website PR that copies the file. Until that deploys, `full.yml`'s `install-smoke`
+  drift leg ("served bytes must equal the staged file") is red, and so is the
+  getting-started verify recipe for users.
 - **`PersonalClawApps`** — tag it at the matching commit. The website's
   `released` channel requires *both* a core tag and an apps tag to resolve, and
-  will fail closed without them.
+  will fail closed without them. The apps tag **triggers nothing**: apps CI runs
+  only on PRs and pushes to `main`, there is no apps release workflow, and users
+  get apps from the default branch, not from a tag. It exists for the website's pin.
 - **`personalclaw.dev`** — bump `sources/personalclaw.sources.json` (tag **and**
   dereferenced commit for core + apps), bump `package.json`, and refresh anything
   the release changed. `release.yml` nudges its `release-follow.yml`; if the
@@ -312,7 +406,9 @@ A published core release is an **obligation on the other two repos**:
 | Symptom | What it means | Action |
 |---|---|---|
 | `pypi` job fails on "already exists" | shouldn't happen — `skip-existing` is set | check you are not publishing a *different* build of a published version |
-| Version consistency test red | one of the six files was missed | fix, PR, then **delete and re-push the tag** |
+| Version consistency test red on the bump PR | one of the seven files was missed | fix it on the PR; nothing is tagged yet |
+| `build` fails at "Verify the wheel contract" on the tag | the tag was cut before the bump merged | nothing has published: **delete the tag**, merge the bump, tag its merge commit |
+| `build` fails at "SBOM of the wheel as installed" | `uv.lock` is stale (no re-lock in the bump), or syft cataloged less than the venv holds | nothing has published: fix on `main`, then **delete and re-push the tag** |
 | Website parity job red | its pins point at the wrong SHA | almost always the annotated-tag dereference above |
 | `website-follow` skipped | no `WEBSITE_DISPATCH_TOKEN` | harmless; the daily watchdog covers it |
 
@@ -333,11 +429,18 @@ and `src/personalclaw/static/dist` is the symlinked SPA path the wheel check use
 Not verified from a dev machine: the GHCR image pull (needs `docker login` or a
 `read:packages` token). Treat step 3 as the one item to confirm by hand.
 
+Revised before v0.2.1 from the code and from v0.2.0's release run, the only `release.yml`
+run on record: there `desktop-linux` failed, so `notes`, `attest` and `website-follow`
+were skipped and the Release was made by hand. `notes` in its current form, `attest`
+with only `build` before it, and `website-follow` have still never run, and the
+rehearsal (step 5) does not run them either: the next tag is their first run.
+
 ## Notes
 
 - Releases have no separate signing step today: provenance comes from GitHub's
-  OIDC attestation (`attest`), and PyPI uses trusted publishing, so there are no
-  long-lived tokens to rotate or lose. Artifact **signing** (minisign/Sigstore)
-  is the S2, unbuilt as of v0.1.3.
+  OIDC attestation (`attest`, which needs only `build`, so a failure later in the run
+  no longer costs the wheel its provenance, as it did v0.2.0's), and PyPI uses
+  trusted publishing, so there are no long-lived tokens to rotate or lose. Artifact
+  **signing** (minisign/Sigstore) is the S2, unbuilt as of v0.1.3.
 - The `release` and `release-client` environments exist precisely so a tag push
   cannot publish unattended. Do not remove that approval gate to save a click.

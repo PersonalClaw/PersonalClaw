@@ -168,7 +168,7 @@ means a design boundary we expect to still hold at 1.0**, not a backlog item:
 | need accounts for more than one person | **never** | single-user by construction — *"no hub in core, ever"* |
 | want a native phone app | **no** | the phone is the dashboard installed as a PWA, not a store app |
 | need a native Windows install | **no** | WSL2 or Docker Desktop only; a native port was audited and found no-go |
-| want a signed, auto-updating desktop app | **no** | macOS-only, unsigned, built from a checkout, no update channel |
+| want a signed, auto-updating desktop app | **no** | each release's Apple-silicon dmg and x86-64 Linux AppImage/deb carry no publisher's signature (the dmg is ad-hoc signed, not notarized), and there is no update channel |
 | want it to live in Telegram / Discord / email | **no** | core registers exactly one channel: the web dashboard |
 | expect web search to work out of the box | **no** | no search provider ships bundled — it is a seam you fill |
 | plan to install apps you do not trust | **no** | the platform *vets* what you install; it does not confine it after |
@@ -316,9 +316,10 @@ its own, and it can be switched off — see [Privacy](#privacy). Per-platform de
 [desktop](docs/guides/desktop.md#updating).
 
 > **Tech stack:** Python 3.12–3.13 · aiohttp gateway · React + Vite SPA · SQLite · MIT.
-> **Run modes:** local process · Docker Compose · systemd/launchd service. (A macOS-only
-> Electron desktop shell exists but is experimental — not built, signed, or released by CI,
-> and has no auto-update channel.)
+> **Run modes:** local process · Docker Compose · systemd/launchd service. (An Electron
+> desktop shell is experimental: every release attaches an Apple-silicon dmg, ad-hoc signed
+> and not notarized, and an x86-64 Linux AppImage and deb, unsigned, built by CI. It has no
+> auto-update channel.)
 
 **Platform support.** Every row names what proves it — `CI:<job>` is a workflow job,
 `checklist:<section>` is a documented manual walkthrough, `community` is user-reported
