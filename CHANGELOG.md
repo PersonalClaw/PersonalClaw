@@ -16,6 +16,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **On Linux, an agent on an agent CLI can make, change and delete your automations, and its callbacks, overview tiles, proposals and model spend are kept, instead of each save ending its PersonalClaw tools with "Read-only file system".**
 - **Math in replies and documents is drawn as written again: overlines, underlines, boxed and numbered equations, the ruled lines of an array, accents, a root's index and size changes were missing or out of place, because the math and its stylesheet came from different KaTeX releases.**
 
+### Changed
+
+- **`personalclaw.sdk.channel.__version__` is part of the SDK as a string, the version of the PersonalClaw an app runs on, and no longer as one release's value, so a new release is not an SDK change (no app has to change for it; `slack-channel` shows it on its Home tab).**
+
 ## [0.2.0] — 2026-10-07
 
 The first release since 0.1.3, and its theme is **work that answers to you**. Controls do what

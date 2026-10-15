@@ -3720,7 +3720,7 @@
   },
   "kind": "dataclass"
  },
- "personalclaw.sdk.channel.__version__": {"kind": "value", "type": "str", "value": "'0.2.0'"},
+ "personalclaw.sdk.channel.__version__": {"kind": "value", "type": "str"},
  "personalclaw.sdk.channel.active_voice_params": {
   "kind": "function",
   "params": [
