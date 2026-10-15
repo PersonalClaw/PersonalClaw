@@ -775,8 +775,11 @@ jobs:
             || echo "Dispatch failed; the website's daily watchdog will still catch it."
 
   attest:
-    # Build-provenance attestations on the wheel (zero key management — GitHub OIDC).
-    needs: [build, notes]
+    # Build-provenance attestations on the wheel and the sdist (zero key management — GitHub
+    # OIDC). It needs only `build`, whose `dist` it attests. It used to need `notes` as well,
+    # so when v0.2.0's desktop-linux failed and `notes` was skipped, this was skipped with it,
+    # and the wheel PyPI had already published got no build provenance on GitHub.
+    needs: [build]
     runs-on: ubuntu-latest
     permissions:
       id-token: write
