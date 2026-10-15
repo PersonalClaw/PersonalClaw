@@ -94,12 +94,71 @@ jobs:
             --version "$RELEASE_VERSION" \
             --changelog-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/CHANGELOG.md" \
             > release-notes.md
-      - name: SBOM (syft SPDX-JSON over the built dist)
-        uses: anchore/sbom-action@v0
+      # The wheel's SBOM is a scan of the wheel INSTALLED. syft catalogs installed packages, and
+      # v0.2.0's step scanned `dist/`, where the wheel and the sdist are two files: it recorded
+      # one package, the directory itself, and the release had no SBOM for the wheel. So the
+      # wheel goes into a scratch venv over the locked versions of its dependencies, installed
+      # the way the gateway image installs them (`uv export --locked`, hash-checked, no
+      # resolver), and that venv is what syft reads. The step fails unless the SBOM lists the
+      # wheel and every package installed with it. It is written outside `dist/`: the `pypi`
+      # job uploads every `personalclaw-*` file there to PyPI.
+      - name: Install syft
+        id: syft
+        uses: anchore/sbom-action/download-syft@v0
+      - name: SBOM of the wheel as installed (syft SPDX-JSON)
+        env:
+          SYFT: ${{ steps.syft.outputs.cmd }}
+          RELEASE_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          venv="$RUNNER_TEMP/wheel-sbom-venv"
+          uv venv --python 3.12 "$venv"
+          uv export --locked --no-emit-project --output-file "$RUNNER_TEMP/wheel-requirements.txt"
+          uv pip install --python "$venv/bin/python" --require-hashes --no-deps \
+            -r "$RUNNER_TEMP/wheel-requirements.txt"
+          uv pip install --python "$venv/bin/python" --no-deps dist/*.whl
+          mkdir -p wheel-sbom
+          "$SYFT" scan "dir:$venv" --source-name personalclaw --source-version "$RELEASE_VERSION" \
+            -o spdx-json=wheel-sbom/personalclaw-wheel.spdx.json
+          "$venv/bin/python" -I - wheel-sbom/personalclaw-wheel.spdx.json <<'PY'
+          import importlib.metadata
+          import json
+          import re
+          import sys
+          from urllib.parse import unquote
+
+
+          def key(name):
+              return re.sub(r"[-_.]+", "-", name).lower()
+
+
+          path = sys.argv[1]
+          with open(path, encoding="utf-8") as fh:
+              packages = json.load(fh).get("packages") or []
+          listed = set()
+          for package in packages:
+              for ref in package.get("externalRefs") or []:
+                  locator = ref.get("referenceLocator", "")
+                  if ref.get("referenceType") == "purl" and locator.startswith("pkg:pypi/"):
+                      coordinates = re.split(r"[?#]", locator.removeprefix("pkg:pypi/"))[0]
+                      name, _, version = coordinates.partition("@")
+                      listed.add((key(unquote(name)), unquote(version)))
+          installed = {(key(d.metadata["Name"]), d.version) for d in importlib.metadata.distributions()}
+          wheel = (key("personalclaw"), importlib.metadata.version("personalclaw"))
+          if len(packages) <= 1:
+              raise SystemExit(f"{path}: {len(packages)} package(s), so syft cataloged nothing")
+          if wheel not in listed:
+              raise SystemExit(f"{path}: does not list the wheel, pkg:pypi/{wheel[0]}@{wheel[1]}")
+          missing = sorted(f"{name}@{version}" for name, version in installed - listed)
+          if missing:
+              raise SystemExit(f"{path}: does not list what the wheel installs: {', '.join(missing)}")
+          print(f"{path}: the wheel and the {len(installed) - 1} packages installed with it")
+          PY
+      - uses: actions/upload-artifact@v7
         with:
-          path: dist/
-          format: spdx-json
-          artifact-name: personalclaw-sbom.spdx.json
+          name: wheel-sbom
+          path: wheel-sbom/personalclaw-wheel.spdx.json
+          if-no-files-found: error
       - uses: actions/upload-artifact@v7
         with:
           name: dist
@@ -645,6 +704,11 @@ jobs:
         with:
           name: dist
           path: dist/
+      # The wheel's SBOM, which `build` keeps out of `dist/` so it never reaches PyPI.
+      - uses: actions/download-artifact@v8
+        with:
+          name: wheel-sbom
+          path: wheel-sbom/
       - uses: actions/download-artifact@v8
         with:
           pattern: image-sbom-*
@@ -678,7 +742,7 @@ jobs:
           # Unquoted on purpose: GH_RELEASE_FLAGS is a closed set of whole flags
           # (`--latest` | `--prerelease`) from the parser above and MUST word-split.
           # shellcheck disable=SC2086
-          gh release create "$GITHUB_REF_NAME" dist/* image-sboms/* desktop-dist/* \
+          gh release create "$GITHUB_REF_NAME" dist/* wheel-sbom/* image-sboms/* desktop-dist/* \
             --title "$GITHUB_REF_NAME" \
             --notes-file release-notes.md \
             $GH_RELEASE_FLAGS

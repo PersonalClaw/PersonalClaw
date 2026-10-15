@@ -1,10 +1,16 @@
-"""Rails for lock refresh and release image attestations."""
+"""Rails for lock refresh, the release's SBOMs and its provenance attestations."""
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -35,6 +41,12 @@ def _workflow() -> dict[str, object]:
     workflow = yaml.safe_load(RELEASE_WORKFLOW.read_text(encoding="utf-8"))
     assert isinstance(workflow, dict)
     return workflow
+
+
+def _jobs() -> dict[str, dict]:
+    jobs = _workflow().get("jobs")
+    assert isinstance(jobs, dict)
+    return jobs
 
 
 def _full_workflow() -> dict[str, object]:
@@ -122,11 +134,237 @@ def test_both_image_architectures_export_spdx_json_to_the_release() -> None:
     assert "image-sboms/*" in release_script
 
 
+# ---------------------------------------------------------------------------
+# The wheel's SBOM lists what the wheel installs, and the Release attaches it
+# ---------------------------------------------------------------------------
+#
+# v0.2.0's `build` handed syft `dist/`. syft catalogs INSTALLED packages, and `dist/` holds the
+# wheel and the sdist as two files, so its SBOM recorded one package (the directory itself) and
+# no job attached even that to the Release, while the README promised an SBOM for the wheel.
+# The step is dry-run here: its own `run:` script, with `uv` and syft replaced by stand-ins that
+# do to a real venv what each does, so what is checked is what the release runs.
+
+_WHEEL_SBOM_STEP = "SBOM of the wheel as installed (syft SPDX-JSON)"
+_WHEEL_SBOM = "wheel-sbom/personalclaw-wheel.spdx.json"
+
+#: `uv venv`, `uv export` and `uv pip install`, done to a real venv: an install writes the
+#: distribution's metadata into the venv's site-packages, which is what syft and
+#: `importlib.metadata` both read. Each call is logged, and the lock's flags are required.
+_FAKE_UV = """
+    import os, subprocess, sys
+    from pathlib import Path
+
+    args = sys.argv[1:]
+    with open(os.environ["DRY_RUN_LOG"], "a", encoding="utf-8") as log:
+        log.write("uv " + " ".join(args) + "\\n")
+
+
+    def install(python, name, version):
+        site = subprocess.run(
+            [python, "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        dist = Path(site) / f"{name.replace('-', '_')}-{version}.dist-info"
+        dist.mkdir(parents=True)
+        (dist / "METADATA").write_text(
+            f"Metadata-Version: 2.1\\nName: {name}\\nVersion: {version}\\n", encoding="utf-8"
+        )
+
+
+    if args[0] == "venv":
+        made = subprocess.run([sys.executable, "-m", "venv", "--without-pip", args[-1]])
+        sys.exit(made.returncode)
+    if args[0] == "export":
+        assert "--locked" in args and "--no-emit-project" in args, args
+        out = Path(args[args.index("--output-file") + 1])
+        out.write_text("aiohttp==3.14.3\\nPyYAML==6.0.3\\n", encoding="utf-8")
+        sys.exit(0)
+    if args[:2] == ["pip", "install"]:
+        python = args[args.index("--python") + 1]
+        assert "--no-deps" in args, args
+        if "-r" in args:
+            assert "--require-hashes" in args, args
+            listed = Path(args[args.index("-r") + 1]).read_text(encoding="utf-8")
+            for line in listed.splitlines():
+                install(python, *line.split("=="))
+        else:
+            (wheel,) = [arg for arg in args if arg.endswith(".whl")]
+            install(python, *Path(wheel).name.split("-")[:2])
+        sys.exit(0)
+    sys.exit(f"this dry run does not model: uv {' '.join(args)}")
+"""
+
+#: syft's python cataloger: the scanned root, then one package per installed distribution under
+#: it, named by its purl. `SYFT_DROPS` names distributions a broken scan leaves out ("*" for
+#: all, the v0.2.0 SBOM).
+_FAKE_SYFT = """
+    import json, os, re, sys
+    from pathlib import Path
+
+    args = sys.argv[1:]
+    with open(os.environ["DRY_RUN_LOG"], "a", encoding="utf-8") as log:
+        log.write("syft " + " ".join(args) + "\\n")
+    assert args[0] == "scan" and args[1].startswith("dir:"), args
+    root = Path(args[1].removeprefix("dir:"))
+    (out,) = [arg.removeprefix("spdx-json=") for arg in args if arg.startswith("spdx-json=")]
+    drops = os.environ.get("SYFT_DROPS", "").split(",")
+    packages = [{"name": root.name, "SPDXID": "SPDXRef-Root", "primaryPackagePurpose": "FILE"}]
+    for metadata in sorted(root.rglob("*.dist-info/METADATA")):
+        fields = dict(
+            line.split(": ", 1) for line in metadata.read_text(encoding="utf-8").splitlines()
+        )
+        if "*" in drops or fields["Name"] in drops:
+            continue
+        purl = f"pkg:pypi/{re.sub(r'[-_.]+', '-', fields['Name']).lower()}@{fields['Version']}"
+        packages.append(
+            {
+                "name": fields["Name"],
+                "versionInfo": fields["Version"],
+                "externalRefs": [{"referenceType": "purl", "referenceLocator": purl}],
+            }
+        )
+    document = {"spdxVersion": "SPDX-2.3", "SPDXID": "SPDXRef-DOCUMENT", "packages": packages}
+    Path(out).write_text(json.dumps(document), encoding="utf-8")
+"""
+
+
+def _stand_in(path: Path, body: str) -> None:
+    path.write_text(f"#!{sys.executable}\n" + textwrap.dedent(body), encoding="utf-8")
+    path.chmod(0o755)
+
+
+def _wheel_sbom(tmp_path: Path, drops: str = "") -> tuple[subprocess.CompletedProcess, Path]:
+    """Run the build job's wheel-SBOM step in a checkout holding a built wheel and sdist."""
+    step = _step(_jobs()["build"], name=_WHEEL_SBOM_STEP)
+    checkout = tmp_path / "checkout"
+    (checkout / "dist").mkdir(parents=True)
+    for name in ("personalclaw-9.9.9-py3-none-any.whl", "personalclaw-9.9.9.tar.gz"):
+        (checkout / "dist" / name).write_bytes(b"")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stand_in(bin_dir / "uv", _FAKE_UV)
+    _stand_in(bin_dir / "syft", _FAKE_SYFT)
+    (tmp_path / "runner-temp").mkdir()
+    expressions = {
+        "${{ steps.syft.outputs.cmd }}": str(bin_dir / "syft"),
+        "${{ steps.ver.outputs.version }}": "9.9.9",
+    }
+    env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+    env.update({key: expressions[value] for key, value in step["env"].items()})
+    env.update(
+        RUNNER_TEMP=str(tmp_path / "runner-temp"),
+        DRY_RUN_LOG=str(tmp_path / "calls.log"),
+        SYFT_DROPS=drops,
+    )
+    result = subprocess.run(
+        ["bash", "-e", "-c", step["run"]], cwd=checkout, env=env, capture_output=True, text=True
+    )
+    return result, checkout
+
+
+def test_the_wheels_sbom_lists_the_wheel_and_what_it_installs(tmp_path: Path) -> None:
+    result, checkout = _wheel_sbom(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "the wheel and the 2 packages installed with it" in result.stdout
+
+    document = json.loads((checkout / _WHEEL_SBOM).read_text(encoding="utf-8"))
+    purls = {
+        ref["referenceLocator"]
+        for package in document["packages"]
+        for ref in package.get("externalRefs", [])
+    }
+    assert purls == {
+        "pkg:pypi/personalclaw@9.9.9",
+        "pkg:pypi/aiohttp@3.14.3",
+        "pkg:pypi/pyyaml@6.0.3",
+    }
+    # syft read the venv the wheel and its locked dependencies went into, and nothing else.
+    calls = (tmp_path / "calls.log").read_text(encoding="utf-8").splitlines()
+    installs = [call for call in calls if call.startswith("uv pip install")]
+    assert len(installs) == 2, calls
+    venv = installs[0].split("--python ", 1)[1].split()[0].removesuffix("/bin/python")
+    assert all(f"--python {venv}/bin/python" in call for call in installs), calls
+    (scan,) = [call for call in calls if call.startswith("syft scan")]
+    assert scan.startswith(f"syft scan dir:{venv} "), scan
+    # Written outside `dist/`: the `pypi` job uploads every `personalclaw-*` file in it.
+    assert not _WHEEL_SBOM.startswith("dist/")
+    assert sorted(p.name for p in (checkout / "dist").iterdir()) == [
+        "personalclaw-9.9.9-py3-none-any.whl",
+        "personalclaw-9.9.9.tar.gz",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("drops", "says"),
+    [
+        ("*", "1 package(s), so syft cataloged nothing"),  # v0.2.0's SBOM
+        ("personalclaw", "does not list the wheel, pkg:pypi/personalclaw@9.9.9"),
+        ("PyYAML", "does not list what the wheel installs: pyyaml@6.0.3"),
+    ],
+)
+def test_a_wheel_sbom_that_misses_what_was_installed_fails_the_build(
+    tmp_path: Path, drops: str, says: str
+) -> None:
+    result, _ = _wheel_sbom(tmp_path, drops)
+    assert result.returncode != 0, result.stdout
+    assert says in result.stderr, result.stderr
+
+
+def test_the_release_attaches_the_wheels_sbom_and_pypi_never_sees_it() -> None:
+    jobs = _jobs()
+    build = jobs["build"]
+    uploads = {
+        step["with"]["name"]: step["with"]
+        for step in build["steps"]
+        if step.get("uses") == "actions/upload-artifact@v7"
+    }
+    assert uploads["wheel-sbom"]["path"] == _WHEEL_SBOM
+    assert uploads["wheel-sbom"].get("if-no-files-found") == "error"
+    assert uploads["dist"]["path"] == "dist/", "the SBOM must stay out of the `dist` artifact"
+
+    pypi_downloads = [
+        step["with"]["name"]
+        for step in jobs["pypi"]["steps"]
+        if step.get("uses") == "actions/download-artifact@v8"
+    ]
+    assert pypi_downloads == ["dist"], "PyPI is handed the distributions and nothing else"
+
+    notes = jobs["notes"]
+    downloads = [
+        step["with"]
+        for step in notes["steps"]
+        if step.get("uses") == "actions/download-artifact@v8"
+    ]
+    assert {"name": "wheel-sbom", "path": "wheel-sbom/"} in downloads
+    create = _step(notes, name="Create GitHub Release")["run"]
+    assert "wheel-sbom/*" in create.split("gh release create", 1)[1].split("--title", 1)[0]
+
+
 def test_readme_supply_chain_claim_matches_the_release_outputs() -> None:
+    """Each promise in the README's supply-chain paragraph, held to the job that keeps it.
+
+    v0.2.0's README already promised an SBOM for the wheel. Checking only that the sentence
+    existed kept this green while the SBOM was empty and the Release never attached it."""
     readme = README.read_text(encoding="utf-8")
     assert "syft\nSPDX-JSON SBOMs" in readme
     assert "both architectures of each image" in readme
     assert "build-provenance attestations** for the wheel and images" in readme
+
+    jobs = _jobs()
+    create = _step(jobs["notes"], name="Create GitHub Release")["run"]
+    attached = create.split("gh release create", 1)[1].split("--title", 1)[0].split()
+    assert {"dist/*", "wheel-sbom/*", "image-sboms/*"} <= set(attached), attached
+    _step(jobs["build"], name=_WHEEL_SBOM_STEP)
+    export = _step(jobs["images"], name="Export image SBOM attestations (SPDX-JSON)")["run"]
+    assert '"linux/amd64", "linux/arm64"' in export
+    attest = [
+        step
+        for step in jobs["attest"]["steps"]
+        if "attest-build-provenance" in step.get("uses", "")
+    ]
+    assert attest and attest[0]["with"]["subject-path"] == "dist/*"
+    push = _step(jobs["images"], name="Build and push image with supply-chain attestations")
+    assert push["with"]["provenance"] == "mode=max"
 
 
 def _jobs_that_run_the_suite() -> list[tuple[str, str, object]]:
