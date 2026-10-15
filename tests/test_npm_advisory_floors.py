@@ -55,6 +55,11 @@ _FLOORS: dict[str, tuple[tuple[int, ...], str]] = {
         (11, 1, 1),
         "GHSA-w5hq-g745-h8pq (missing buffer bounds check in v3/v5/v6 when buf is provided)",
     ),
+    "source-map-js": (
+        (1, 2, 2),
+        "GHSA-68fv-2mgg-jv7q (event-loop denial of service through indexed source-map section "
+        "offsets)",
+    ),
 }
 
 
@@ -97,8 +102,9 @@ def test_the_lockfile_is_the_thing_that_is_parsed():
         f"{sorted(_FLOORS)} in package-lock.json. Either the finder broke or these packages left "
         "the tree; in both cases the floors below are vacuous and this ratchet must be re-derived."
     )
-    # All three are reachable from the web bundle (mermaid, monaco-editor) and the mobile CLI
-    # (xcode), so a tree missing any of them means the finder, not the tree, changed.
+    # Every floored package is installed for a dependent that is still here (mermaid and
+    # monaco-editor, the mobile CLI's xcode, postcss and the CSS toolchain), so a tree missing
+    # any of them means the finder, not the tree, changed.
     assert {name for _, name, _ in rows} == set(_FLOORS), (
         "the floored packages present in the lockfile are "
         f"{sorted({n for _, n, _ in rows})}, expected {sorted(_FLOORS)}"
