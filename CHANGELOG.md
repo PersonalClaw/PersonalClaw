@@ -12,6 +12,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A release attaches its Linux AppImage and deb again: the release's check of the deb no longer fails a good package, which in 0.2.0 stopped the GitHub Release from being created.**
 - **On Linux, an agent on an agent CLI can make, change and delete your automations, and its callbacks, overview tiles, proposals and model spend are kept, instead of each save ending its PersonalClaw tools with "Read-only file system".**
+- **Math in replies and documents is drawn as written again: overlines, underlines, boxed and numbered equations, the ruled lines of an array, accents, a root's index and size changes were missing or out of place, because the math and its stylesheet came from different KaTeX releases.**
 
 ## [0.2.0] — 2026-10-07
 

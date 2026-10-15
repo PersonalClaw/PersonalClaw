@@ -60,6 +60,10 @@ _FLOORS: dict[str, tuple[tuple[int, ...], str]] = {
         "GHSA-68fv-2mgg-jv7q (event-loop denial of service through indexed source-map section "
         "offsets)",
     ),
+    "katex": (
+        (0, 18, 2),
+        "GHSA-238p-pmpm-9mq7 (existing prototype pollution can bypass trust restrictions)",
+    ),
 }
 
 
@@ -102,9 +106,9 @@ def test_the_lockfile_is_the_thing_that_is_parsed():
         f"{sorted(_FLOORS)} in package-lock.json. Either the finder broke or these packages left "
         "the tree; in both cases the floors below are vacuous and this ratchet must be re-derived."
     )
-    # Every floored package is installed for a dependent that is still here (mermaid and
-    # monaco-editor, the mobile CLI's xcode, postcss and the CSS toolchain), so a tree missing
-    # any of them means the finder, not the tree, changed.
+    # Every floored package is installed for a dependent that is still here (the web workspace
+    # itself, mermaid and monaco-editor, the mobile CLI's xcode, postcss and the CSS toolchain),
+    # so a tree missing any of them means the finder, not the tree, changed.
     assert {name for _, name, _ in rows} == set(_FLOORS), (
         "the floored packages present in the lockfile are "
         f"{sorted({n for _, n, _ in rows})}, expected {sorted(_FLOORS)}"
@@ -122,7 +126,9 @@ def test_no_copy_of_an_advisory_package_is_below_its_floor(package: str):
         f"nested duplicates. These are below the floor:\n"
         + "\n".join(f"    {path}  {ver}" for path, ver in below)
         + f"\n  Unpatched advisories: {advisories}\n"
-        "  A nested duplicate appears when a parent pins an exact version the hoisted copy "
-        "cannot satisfy, so `npm update` will not shift it. Add or raise the entry in the root "
-        "package.json `overrides` block, then re-run `npm install` — do not edit this floor."
+        "  A nested duplicate appears when a parent's range (an exact pin, or a caret range on "
+        "an older 0.x) cannot reach the hoisted copy, so `npm update` will not shift it. Add or "
+        "raise the entry in the root package.json `overrides` block, then run `npm update "
+        f"{package}` from the repository root (`npm install` keeps a locked copy the new override "
+        "no longer admits) — do not edit this floor."
     )
