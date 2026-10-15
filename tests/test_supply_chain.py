@@ -356,6 +356,29 @@ def test_the_wheels_provenance_needs_only_the_build_it_attests() -> None:
     assert downloads == [{"name": "dist", "path": "dist/"}], downloads
 
 
+def test_both_desktop_bundles_are_frozen_by_one_pinned_pyinstaller() -> None:
+    """PyInstaller is not in uv.lock, so each desktop job installed whatever PyInstaller was
+    newest on the day of the tag. Both of its halves are pinned exactly, as its banner names
+    them ("PyInstaller: 6.22.3, contrib hooks: 2026.8" on v0.2.0's run), and the macOS and
+    Linux bundles are frozen by the same pair."""
+    pins: dict[str, list[str]] = {}
+    for name in ("desktop-mac", "desktop-linux"):
+        installs = [
+            line.strip()
+            for step in _jobs()[name]["steps"]
+            for line in str(step.get("run", "")).splitlines()
+            if "pip install" in line and "pyinstaller" in line and not line.lstrip().startswith("#")
+        ]
+        assert len(installs) == 1, f"{name} installs PyInstaller {len(installs)} times: {installs}"
+        pins[name] = [token for token in installs[0].split() if token.startswith("pyinstaller")]
+    for name, tokens in pins.items():
+        names = sorted(token.split("==")[0] for token in tokens)
+        assert names == ["pyinstaller", "pyinstaller-hooks-contrib"], f"{name}: {tokens}"
+        unpinned = [token for token in tokens if not re.fullmatch(r"[a-z-]+==\d[\w.]*", token)]
+        assert not unpinned, f"{name} installs PyInstaller from a range: {unpinned}"
+    assert pins["desktop-mac"] == pins["desktop-linux"], pins
+
+
 def test_readme_supply_chain_claim_matches_the_release_outputs() -> None:
     """Each promise in the README's supply-chain paragraph, held to the job that keeps it.
 
