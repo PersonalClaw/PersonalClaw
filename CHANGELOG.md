@@ -8,6 +8,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-10-15
+
+A patch release on 0.2.0. On Linux an agent on an agent CLI can save your automations,
+callbacks and overview tiles, math is drawn as written again, and a few labels and counts say
+what they mean. The release attaches its Linux AppImage, its deb and an SBOM of the wheel, and
+its wheel and sdist get GitHub's build-provenance attestation, none of which 0.2.0 had. The
+dependencies are up to date, and the updates that close published advisories are listed under
+Security. It installs over 0.2.0 with nothing to do first.
+
 ### Fixed
 
 - **A release attaches its Linux AppImage and deb: the release's check of the deb no longer fails a good package, which in 0.2.0 stopped the GitHub Release from being created.**
@@ -15,10 +24,24 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A release's wheel and sdist get GitHub's build-provenance attestation even when the GitHub Release cannot be created; 0.2.0's have none.**
 - **On Linux, an agent on an agent CLI can make, change and delete your automations, and its callbacks, overview tiles, proposals and model spend are kept, instead of each save ending its PersonalClaw tools with "Read-only file system".**
 - **Math in replies and documents is drawn as written again: overlines, underlines, boxed and numbered equations, the ruled lines of an array, accents, a root's index and size changes were missing or out of place, because the math and its stylesheet came from different KaTeX releases.**
+- **Filtering Settings → Memory down to one record announces "1 memory", not "1 memorie".**
+- **An app's install review counts what its scanner found: "2 findings the app cannot run", and "1 finding" for one.**
+- **Settings → External access shows `config.json` as code, not between literal backticks.**
+- **`personalclaw doctor` names the credential store "OS keychain", the name Settings → Security gives it.**
+- **The API route reference gives each method of a route its own summary, where two methods used to share one line.**
 
 ### Changed
 
 - **`personalclaw.sdk.channel.__version__` is part of the SDK as a string, the version of the PersonalClaw an app runs on, and no longer as one release's value, so a new release is not an SDK change (no app has to change for it; `slack-channel` shows it on its Home tab).**
+
+### Security
+
+- **urllib3 moves to 2.8.0, and PersonalClaw now requires at least that release (`urllib3>=2.8.0`), so an update brings an existing install up to it.**
+- **PyJWT moves to 2.15.1.**
+- **DOMPurify moves to 3.4.17.**
+- **Every copy of KaTeX moves to 0.19.0.**
+- **source-map-js moves to 1.2.2.**
+- **The three copies of undici move to 6.29.0, 7.30.0 and 8.11.2.**
 
 ## [0.2.0] — 2026-10-07
 
