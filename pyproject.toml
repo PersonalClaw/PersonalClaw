@@ -229,7 +229,12 @@ Issues        = "https://github.com/PersonalClaw/PersonalClaw/issues"
 [project.optional-dependencies]
 # Provider SDK extras — install only what your provider requires
 anthropic = ["anthropic>=0.20"]
-openai    = ["openai>=1.0"]
+# Bounded to the major uv.lock holds, for the reason the dev tools in [dev] are: the documented
+# `pip install -e ".[dev]"` ignores the lock. openai 3 declares AsyncOpenAI's `http_client` as an
+# `httpx2.AsyncClient`, and the openai providers hand it the egress-guarded `httpx.AsyncClient`, so
+# whole-tree mypy goes red where pip resolved 3.x while CI's locked environment passes. Moving to
+# openai 3 is a migration: the lock and this bound move together (tests/test_dependency_bounds.py).
+openai    = ["openai>=1.0,<3"]
 bedrock   = ["boto3>=1.34"]        # Amazon Bedrock Converse provider
 httpx     = ["httpx>=0.27"]        # Ollama + vLLM providers
 

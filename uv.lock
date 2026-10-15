@@ -1700,7 +1700,7 @@ requires-dist = [
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=2,<3" },
     { name = "nh3", specifier = ">=0.2" },
     { name = "numpy", specifier = ">=1.21,<3" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.0" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.0,<3" },
     { name = "openpyxl", specifier = ">=3.1,<4" },
     { name = "packaging", specifier = ">=23.0" },
     { name = "pdfplumber", specifier = ">=0.11,<1" },

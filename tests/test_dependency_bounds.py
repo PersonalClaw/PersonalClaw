@@ -9,9 +9,10 @@ not see it either**. Only a fresh install of what was then `personalclaw[mcp]` r
 and broke, which is the one path a new user takes.
 
 This rail asserts an upper bound on the dependencies whose modules are imported for a *named*
-attribute, wherever pyproject declares them. It deliberately does not police every dependency:
-a bound costs real maintenance (someone must widen it), so it is spent where a rename is known
-to break an import rather than everywhere as a matter of style.
+attribute, or whose next major changes a type this repo hands them, wherever pyproject declares
+them. It deliberately does not police every dependency: a bound costs real maintenance (someone
+must widen it), so it is spent where a major is known to break what the code relies on rather
+than everywhere as a matter of style.
 
 `requires-python` is the same defect with a bigger blast radius, and it collected too: an
 open `>=3.12` promised every future interpreter while `full.yml` verified two, so 3.14
@@ -43,6 +44,11 @@ _MUST_BE_BOUNDED = {
         "mcp 2.0.0 renamed mcp.client.streamable_http.streamablehttp_client, which "
         "src/personalclaw/mcp_client.py imports by name"
     ),
+    "openai": (
+        "openai 3 declares AsyncOpenAI's http_client as an httpx2.AsyncClient, and the openai "
+        "providers pass the egress-guarded httpx.AsyncClient, so whole-tree mypy fails where an "
+        "unlocked install resolved 3.x"
+    ),
 }
 
 
@@ -67,9 +73,9 @@ def test_import_sensitive_dependencies_declare_an_upper_bound() -> None:
             if "<" not in spec and "==" not in spec and "~=" not in spec:
                 unbounded.append(f"{where}: {spec!r} — {reason}")
     assert not unbounded, (
-        "these specs would let a FRESH install resolve a major release that renamed an "
-        "imported symbol (CI installs from the lockfile and will not catch it): "
-        + "; ".join(unbounded)
+        "these specs would let a FRESH install resolve a major release that breaks what this "
+        "repo relies on, a symbol it imports or a type it passes (CI installs from the lockfile "
+        "and will not catch it): " + "; ".join(unbounded)
     )
 
 
@@ -83,6 +89,21 @@ def test_the_streamable_http_symbol_this_bound_protects_is_still_imported_by_nam
     assert "from mcp.client.streamable_http import streamablehttp_client" in source, (
         "mcp_client.py no longer imports streamablehttp_client by name — re-derive whether "
         "the mcp<2 bound is still needed instead of carrying it on faith"
+    )
+
+
+def test_the_client_the_openai_bound_protects_is_still_handed_to_the_sdk() -> None:
+    """Vacuity floor for the openai bound: it argues from the providers passing core's own HTTP
+    client to ``AsyncOpenAI``. If none does any more, re-derive the bound instead of keeping it."""
+    passing = [
+        path.relative_to(_REPO_ROOT).as_posix()
+        for path in sorted((_REPO_ROOT / "src" / "personalclaw").rglob("*.py"))
+        if "openai.AsyncOpenAI(" in (text := path.read_text(encoding="utf-8"))
+        and "http_client=http_client(" in text
+    ]
+    assert passing, (
+        "no module hands AsyncOpenAI the egress-guarded http_client() any more — re-derive "
+        "whether the openai<3 bound is still needed instead of carrying it on faith"
     )
 
 
