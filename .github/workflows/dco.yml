@@ -46,7 +46,7 @@ jobs:
     # dependabot branch (rebase, lockfile regen), which changes github.actor to a
     # human and would otherwise re-fail on dependabot's own unsigned commit.
     if: github.event_name == 'pull_request_target'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       pull-requests: write   # post the remediation comment on failure

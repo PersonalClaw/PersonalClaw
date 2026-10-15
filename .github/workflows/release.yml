@@ -23,7 +23,7 @@ jobs:
     # The wheel MUST carry web/dist: run the web build FIRST, then `uv build`
     # (setup.py's BuildWithWeb copies web/dist into the package). `make build` is the same
     # build plus the proof that the sdist rebuilds a byte-identical wheel.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.ver.outputs.version }}
       gh_release_flags: ${{ steps.ver.outputs.gh_release_flags }}
@@ -174,7 +174,7 @@ jobs:
     # personalclaw → PyPI via Trusted Publishing. Owner-approved via the `release`
     # environment gate. No stored token (OIDC).
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release
     permissions:
       id-token: write  # OIDC for Trusted Publishing
@@ -208,7 +208,7 @@ jobs:
     # belt-and-suspenders for re-runs of a tag whose client already published:
     # an already-on-PyPI version no-ops instead of failing the job.
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release-client
     permissions:
       id-token: write
@@ -269,7 +269,7 @@ jobs:
     # amd64 ONLY, stated rather than implied: this boots a real gateway, and arm64 under QEMU
     # is a far slower, different measurement. `images`' per-arch `--entrypoint ''` smoke
     # remains the arm64 evidence and is untouched.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The gateway image build is the long pole — a CPU-only torch install, four bundled ACP
     # adapter CLIs, and a Node stage for the SPA. Same bound as the PR-side job, because it is
     # the same build, and set well above its measured cost rather than tightly (#3326 was the
@@ -303,7 +303,7 @@ jobs:
     # commit is proven to serve a dashboard — `personalclaw-web` included, because
     # `deploy/compose/compose.yaml` pulls both and half a published pair is worse than none.
     needs: [build, gateway-dashboard]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -627,7 +627,7 @@ jobs:
     # "unsigned" is the platform norm, not a downgrade — docs/guides/desktop.md says
     # what that means for users. x86-64 only (this runner's arch); arm64 desktop is
     # not claimed anywhere until a job proves it.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -700,7 +700,7 @@ jobs:
     # desktop-linux is in `needs` so its AppImage/deb attach here and a broken
     # Linux desktop build blocks the release (the images-smoke precedent).
     needs: [build, pypi, images, desktop-linux, desktop-mac]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
@@ -771,7 +771,7 @@ jobs:
     # deployment rule. The maintainer creates `website-follow` with a rule that admits
     # `v*` tags only, so the token is readable by a tag's release run and nothing else.
     needs: [notes]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: website-follow
     continue-on-error: true
     steps:
@@ -793,7 +793,7 @@ jobs:
     # so when v0.2.0's desktop-linux failed and `notes` was skipped, this was skipped with it,
     # and the wheel PyPI had already published got no build provenance on GitHub.
     needs: [build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       id-token: write
       attestations: write

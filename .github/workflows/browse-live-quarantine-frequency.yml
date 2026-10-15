@@ -21,7 +21,7 @@ jobs:
     # Its matching pull_request run still triggers this observer; running on both would make
     # the alert workflow itself noisy even though the script groups the data by head SHA.
     if: github.event.workflow_run.conclusion != 'cancelled'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       # workflow_run executes trusted default-branch code, never the PR head. The downloaded

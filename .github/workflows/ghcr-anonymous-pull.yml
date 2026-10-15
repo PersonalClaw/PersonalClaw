@@ -27,7 +27,7 @@ permissions: {}
 
 jobs:
   anonymous-pull:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Four HTTP requests plus a checkout; the run measures well under a minute. Bounded
     # with wide headroom on purpose: #3318/#3320 established that every job here carries a
     # bound, and #3326 was the cost of setting one BELOW a job's own measured runtime.
