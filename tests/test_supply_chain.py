@@ -379,6 +379,69 @@ def test_both_desktop_bundles_are_frozen_by_one_pinned_pyinstaller() -> None:
     assert pins["desktop-mac"] == pins["desktop-linux"], pins
 
 
+def test_every_secret_the_release_reads_is_held_by_an_environment() -> None:
+    """A repository secret reaches every workflow a branch of this repository runs, a pull
+    request's included. An environment's reaches only a job that names the environment and
+    passes its deployment rule, which for `website-follow` admits `v*` tags only. So no release
+    job reads a secret outside an environment (`GITHUB_TOKEN` is the run's own token)."""
+    jobs = _jobs()
+    readers = {
+        name: sorted(set(re.findall(r"secrets\.(\w+)", json.dumps(job))) - {"GITHUB_TOKEN"})
+        for name, job in jobs.items()
+    }
+    readers = {name: secrets for name, secrets in readers.items() if secrets}
+    assert readers == {"website-follow": ["WEBSITE_DISPATCH_TOKEN"]}, readers
+    unheld = [name for name in readers if not jobs[name].get("environment")]
+    assert not unheld, f"these jobs read a repository secret: {unheld}"
+    assert jobs["website-follow"]["environment"] == "website-follow"
+
+
+def _website_nudge(tmp_path: Path, token: str, gh_exit: int = 0) -> subprocess.CompletedProcess:
+    """Run website-follow's step with *token* as its secret and a `gh` that exits *gh_exit*."""
+    step = _step(_jobs()["website-follow"], name="Ask personalclaw.dev to re-check release parity")
+    assert step["env"] == {"GH_TOKEN": "${{ secrets.WEBSITE_DISPATCH_TOKEN }}"}
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True)
+    _stand_in(
+        bin_dir / "gh",
+        f"""
+        import os, sys
+        with open(os.environ["DRY_RUN_LOG"], "a", encoding="utf-8") as log:
+            log.write("gh " + " ".join(sys.argv[1:]) + "\\n")
+        sys.exit({gh_exit})
+        """,
+    )
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "GH_TOKEN": token,
+        "DRY_RUN_LOG": str(tmp_path / "calls.log"),
+    }
+    return subprocess.run(
+        ["bash", "-e", "-c", step["run"]], env=env, capture_output=True, text=True, cwd=tmp_path
+    )
+
+
+def test_the_website_nudge_without_its_token_skips_and_never_fails_the_release(
+    tmp_path: Path,
+) -> None:
+    result = _website_nudge(tmp_path, token="")
+    assert result.returncode == 0, result.stderr
+    assert "No WEBSITE_DISPATCH_TOKEN configured" in result.stdout
+    assert not (tmp_path / "calls.log").exists(), "nothing is dispatched without the token"
+    assert _jobs()["website-follow"].get("continue-on-error") is True
+
+
+def test_the_website_nudge_with_its_token_dispatches_the_websites_check(tmp_path: Path) -> None:
+    result = _website_nudge(tmp_path, token="fake-website-dispatch-token")
+    assert result.returncode == 0, result.stderr
+    calls = (tmp_path / "calls.log").read_text(encoding="utf-8").splitlines()
+    assert calls == ["gh workflow run release-follow.yml --repo PersonalClaw/personalclaw.dev"]
+    failed = _website_nudge(tmp_path / "failing", token="fake-website-dispatch-token", gh_exit=1)
+    assert failed.returncode == 0, failed.stderr
+    assert "the website's daily watchdog will still catch it" in failed.stdout
+
+
 def test_readme_supply_chain_claim_matches_the_release_outputs() -> None:
     """Each promise in the README's supply-chain paragraph, held to the job that keeps it.
 
