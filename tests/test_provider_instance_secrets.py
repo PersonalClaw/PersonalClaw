@@ -1047,6 +1047,9 @@ def test_values_the_census_cannot_classify_do_not_grow():
     )
 
 
+# A census of the tree: under coverage on CI it took 80-97 s of the suite's 120 s (2026-10-14/15).
+# It gets the 300 s the inert-surface census's tests have (tests/test_inert_surface_baseline.py).
+@pytest.mark.timeout(300)
 def test_every_config_bearing_surface_also_preserves_secrets_if_it_writes():
     """Masking a read without guarding the matching write is a worse bug than the leak.
 

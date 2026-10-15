@@ -11,8 +11,8 @@ a daemon by a double fork with ``setsid`` and returns once it is up, as a server
 does: the daemon is in a session and a group of its own and its parent has exited, so nothing of the
 command's process tree holds it. Each test then reads the OS's process table: the daemon is alive
 before, and gone after, the ending that ends its run. The daemon is this test's own Python, whose
-environment the OS shows on macOS as on Linux; a background job of one of macOS's own programs,
-whose environment it withholds, is the group backstop's test.
+environment the OS shows on macOS as on Linux; the group backstop's test hides a background job's
+environment, as macOS withholds that of its own programs.
 """
 
 from __future__ import annotations
@@ -272,10 +272,12 @@ async def test_a_turn_that_ends_ends_the_daemon_its_command_left_running(tmp_pat
 async def test_a_background_job_the_os_hides_ends_with_its_turn_through_its_group(
     tmp_path, monkeypatch
 ):
-    """A background job that stays in its command's process group, of one of the system's own
-    programs: on macOS the kernel withholds its environment, so the marker cannot be read and the
-    group its command led is how it is found. On Linux the marker is read as well. The turn's
-    sweep is held until the premise is read on the live job."""
+    """A background job that stays in its command's process group, of a program whose environment
+    cannot be read: macOS withholds that of its own programs (``sleep`` among them) while System
+    Integrity Protection is on, so the marker cannot be read and the group its command led is how
+    it is found. The job's environment is hidden here as macOS hides it, on every system, since a
+    host may show it: GitHub's macOS runners turn the protection off. The turn's sweep is held
+    until it is hidden."""
     held = threading.Event()
     sweep = run_processes.sweep
 
@@ -294,8 +296,13 @@ async def test_a_background_job_the_os_hides_ends_with_its_turn_through_its_grou
         assert _alive(sleeper), "the premise: the job outlived its command"
         facts = process_facts.process(sleeper)
         assert facts is not None and facts.pgid != os.getpgrp()
-        if sys.platform == "darwin":
-            assert _marker(sleeper) is None, "the premise: macOS shows no environment for it"
+        shown = process_facts.environment_value
+        monkeypatch.setattr(
+            process_facts,
+            "environment_value",
+            lambda pid, name: None if pid == sleeper else shown(pid, name),
+        )
+        assert _marker(sleeper) is None, "the job's environment is still read"
         held.set()
         await _until(lambda: not _alive(sleeper), "the background job to end with its turn")
     finally:
@@ -497,14 +504,25 @@ async def test_at_the_gateways_start_what_no_run_holds_ends_and_a_running_loops_
     me = run_processes._runner()
     running, stopped = _running_loop(), _running_loop()
     loop_store.update_status(stopped.id, LoopStatus.STOPPED)
+    # A gateway process that has ended: its pid and its start, read while it ran. One made up can
+    # name a process that runs: "1.1" did on GitHub's Linux arm64 runners, whose pid 1 starts one
+    # clock tick after boot.
+    ended = subprocess.Popen(
+        [sys.executable, "-c", "import sys; sys.stdin.read()"], stdin=subprocess.PIPE
+    )
+    ended_stamp = process_facts.process(ended.pid)
+    ended.communicate()
     live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
     try:
         stamp = process_facts.process(live.pid)
-        assert stamp is not None
+        assert stamp is not None and ended_stamp is not None
         another = f"{live.pid}.{stamp.started}"
+        gone = f"{ended.pid}.{ended_stamp.started}"
         pids = {
             "this gateway's turn": _outside(tmp_path, daemons, "t1", f"{tag}:turn:{me}-aa"),
-            "a gone gateway's command": _outside(tmp_path, daemons, "t2", f"{tag}:command:1.1-bb"),
+            "a gone gateway's command": _outside(
+                tmp_path, daemons, "t2", f"{tag}:command:{gone}-bb"
+            ),
             "a stopped loop's": _outside(
                 tmp_path, daemons, "l1", f"{tag}:loop-{stopped.id}:{me}-cc"
             ),

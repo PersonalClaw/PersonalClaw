@@ -268,6 +268,9 @@ def test_the_module_walk_is_not_vacuous() -> None:
     assert "tests/browse_chrome.py" not in modules, "the lookup module is not a test module"
 
 
+# A census of the tree: under coverage on CI it took 84-99 s of the suite's 120 s (2026-10-14/15).
+# It gets the 300 s the inert-surface census's tests have (tests/test_inert_surface_baseline.py).
+@pytest.mark.timeout(300)
 def test_every_browse_proof_module_runs_on_the_merge_gate() -> None:
     """A module that imports the browser gate but runs on no leg skips forever."""
     name, block = the_leg(_CI.read_text(encoding="utf-8"))

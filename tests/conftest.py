@@ -841,6 +841,13 @@ def _restore_personalclaw_logging():
     list — the same reason the registry guards above snapshot rather than enumerate), any
     descendant created during the test reset to ``NOTSET``, and handlers a test added to
     the ``personalclaw`` logger itself removed.
+
+    And logging's lock is given back if this thread still holds it once the levels are restored.
+    Python 3.12 releases it without a ``finally`` in the cache clear every ``setLevel`` makes
+    (``Manager._clear_cache``), so the suite's timeout, landing there in this teardown, left the
+    lock held for good, and every later test in that worker whose thread logged hung (2026-10-15:
+    a timed-out teardown, then three failed tests, one stuck for seven minutes). Nothing holds the
+    lock across a teardown on purpose.
     """
     import logging
 
@@ -866,23 +873,28 @@ def _restore_personalclaw_logging():
 
     yield
 
-    for name, lg in _pclaw_loggers().items():
-        lg.setLevel(levels_before.get(name, logging.NOTSET))
-    root.setLevel(levels_before["personalclaw"])
-    added = [h for h in root.handlers if h not in handlers_before]
-    for handler in added:
-        root.removeHandler(handler)
-    log_sinks.set_level(sinks_level_before)
-    top.setLevel(top_level_before)
-    for handler in list(top.handlers):
-        if log_sinks._FILTER in handler.filters and handler not in sinks_before:
-            log_sinks.detach(handler)
-            added.append(handler)
-    for handler in added:
-        try:
-            handler.close()
-        except Exception:  # pragma: no cover - close() is best-effort cleanup
-            pass
+    try:
+        for name, lg in _pclaw_loggers().items():
+            lg.setLevel(levels_before.get(name, logging.NOTSET))
+        root.setLevel(levels_before["personalclaw"])
+        added = [h for h in root.handlers if h not in handlers_before]
+        for handler in added:
+            root.removeHandler(handler)
+        log_sinks.set_level(sinks_level_before)
+        top.setLevel(top_level_before)
+        for handler in list(top.handlers):
+            if log_sinks._FILTER in handler.filters and handler not in sinks_before:
+                log_sinks.detach(handler)
+                added.append(handler)
+        for handler in added:
+            try:
+                handler.close()
+            except Exception:  # pragma: no cover - close() is best-effort cleanup
+                pass
+    finally:
+        lock = logging._lock  # type: ignore[attr-defined]
+        while lock._is_owned():
+            lock.release()
 
 
 @pytest.fixture(autouse=True)

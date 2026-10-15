@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import http.server
+import importlib.machinery
 import io
 import json
 import os
@@ -340,8 +341,17 @@ def test_releases_is_the_address_the_pack_itself_would_use():
     moves its releases reds here, rather than leaving the code map without grammars."""
     import tree_sitter_language_pack
 
-    native = next(Path(tree_sitter_language_pack.__file__).parent.glob("_native*"))
-    assert grammars.RELEASES.encode() in native.read_bytes(), "the pack publishes elsewhere now"
+    # The compiled module the interpreter loads, in the order it looks for one, and never the type
+    # stub beside it (``_native.pyi``): a folder lists its files in no set order, and on a Linux
+    # arm64 runner the stub came first.
+    package = Path(tree_sitter_language_pack.__file__).parent
+    native = [
+        package / f"_native{suffix}"
+        for suffix in importlib.machinery.EXTENSION_SUFFIXES
+        if (package / f"_native{suffix}").is_file()
+    ]
+    assert native, f"the pack has no compiled module in {package}"
+    assert grammars.RELEASES.encode() in native[0].read_bytes(), "the pack publishes elsewhere now"
 
 
 # ── the real pack, in a fresh interpreter with no route off this machine ───────────────────────

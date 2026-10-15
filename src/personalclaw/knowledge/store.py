@@ -1924,24 +1924,26 @@ class KnowledgeStore:
         atomic. A watched folder asks it too, for a note an earlier scan took in through a link
         out of the folder (``DirSourceProvider._withdraw``): that sighting should never have
         happened either. Returns True when an item was actually removed.
+
+        The transaction takes the database's write lock before it reads anything
+        (``SharedConnection.transaction``). Begun deferred, it read the item first and asked for
+        the lock at its first delete, and when another connection had written the store in
+        between, as the store's compaction does from one of its own, SQLite refused that delete
+        at once ("database is locked") rather than wait: the artifact was gone and stayed
+        searchable.
         """
         if not (source_id and guid):
             return False
-        row = self.db.execute(
-            "SELECT id FROM items WHERE source_id = ? AND guid = ?", (source_id, guid)
-        ).fetchone()
-        self.db.execute("BEGIN")
-        try:
+        with self.db.transaction():
+            row = self.db.execute(
+                "SELECT id FROM items WHERE source_id = ? AND guid = ?", (source_id, guid)
+            ).fetchone()
             if row:
                 self._delete_item_cascade(row["id"])
                 self._drop_orphan_entities()
             self.db.execute(
                 "DELETE FROM source_seen WHERE source_id = ? AND guid = ?", (source_id, guid)
             )
-            self.db.execute("COMMIT")
-        except Exception:
-            self.db.execute("ROLLBACK")
-            raise
         if row:
             self._load_graph()
             # Same delete as `delete_item`, reached from a source poll instead of the

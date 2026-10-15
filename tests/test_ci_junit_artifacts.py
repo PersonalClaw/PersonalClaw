@@ -226,7 +226,7 @@ def test_the_pytest_step_scan_finds_every_known_leg(workflows: dict[str, dict[st
     ci = set(_pytest_jobs(workflows["ci.yml"]))
     full = set(_pytest_jobs(workflows["full.yml"]))
     assert ci >= {"lint", "test-shard", "browse-live", "rails", "client"}, sorted(ci)
-    assert full >= {"matrix-shard", "security-corpus", "coverage"}, sorted(full)
+    assert full >= {"matrix-shard", "security-corpus", "coverage-shard"}, sorted(full)
 
 
 def test_the_command_parser_normalizes_all_three_run_forms() -> None:

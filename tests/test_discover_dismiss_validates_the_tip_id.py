@@ -60,7 +60,7 @@ JUNK = (
 #: ~200 KB node id. MEASURED 2026-09-18: 200,043 chars on one console line under `--verbose`
 #: (which ``pyproject.toml`` addopts sets) and 200,393 bytes in the `--junitxml` report, twice
 #: over — once per decorator below. `-q` hides it on the sharded CI legs but NOT in the
-#: `coverage` job (`.github/workflows/full.yml`), which runs the full suite without `-q`, nor in
+#: `coverage-shard` legs (`.github/workflows/full.yml`), which run the suite without `-q`, nor in
 #: any local run. An AST scan of all 947 parametrize decorators on main found this the only
 #: remaining un-`ids=`'d case over 500 chars; the two already-fixed siblings are at 100k.
 JUNK_IDS = (

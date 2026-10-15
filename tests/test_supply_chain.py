@@ -503,19 +503,38 @@ def test_no_job_that_runs_the_suite_holds_a_token_that_can_write() -> None:
 
 
 def test_the_coverage_job_still_measures_and_keeps_only_its_report() -> None:
+    """The suite is measured in quarters, each under ``--cov`` on its own runner, and the
+    ``coverage`` job combines every quarter's data into the one report it keeps."""
     workflow = _full_workflow()
     jobs = workflow.get("jobs")
     assert isinstance(jobs, dict)
-    coverage = jobs.get("coverage")
-    assert isinstance(coverage, dict)
-    steps = coverage.get("steps")
-    assert isinstance(steps, list)
-    runs = [str(step.get("run", "")) for step in steps if isinstance(step, dict)]
-    assert any("--cov=personalclaw" in run and "--cov-report=xml" in run for run in runs)
+    shard, coverage = jobs.get("coverage-shard"), jobs.get("coverage")
+    assert isinstance(shard, dict) and isinstance(coverage, dict)
+    matrix = shard.get("strategy", {}).get("matrix", {})
+    shards = matrix.get("shard") if isinstance(matrix, dict) else None
+    assert isinstance(shards, list) and len(shards) > 1, shards
+
+    def runs(job: dict[str, object]) -> list[str]:
+        steps = job.get("steps")
+        assert isinstance(steps, list)
+        return [str(step.get("run", "")) for step in steps if isinstance(step, dict)]
+
+    measured = [run for run in runs(shard) if "--cov=personalclaw" in run]
+    assert measured, "no shard of the suite is measured"
+    for run in measured:
+        assert (
+            f"--splits {len(shards)}" in run and "--group ${{ matrix.shard }}" in run
+        ), f"each shard must measure its own share of the suite, all {len(shards)} of them: {run}"
+    assert coverage.get("needs") == ["coverage-shard"]
+    combine = [run for run in runs(coverage) if "coverage combine" in run and "coverage xml" in run]
+    assert combine, "no step combines the shards' data into coverage.xml"
+    assert f'"$found" -ne {len(shards)}' in combine[0], "the report waits for every shard's data"
     upload = _step(coverage, name="Upload coverage artifacts").get("with")
     assert isinstance(upload, dict)
     assert upload.get("path") == "coverage.xml"
-    assert not any("git push" in run for run in runs), "the coverage job publishes nothing"
+    assert not any(
+        "git push" in run for run in runs(shard) + runs(coverage)
+    ), "the coverage jobs publish nothing"
 
 
 def test_the_readme_shows_no_badge_that_nothing_publishes() -> None:

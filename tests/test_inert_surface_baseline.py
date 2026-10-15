@@ -534,6 +534,9 @@ def test_iterating_one_enum_does_not_clear_a_same_named_enum_elsewhere(tmp_path)
     assert inert == {"Shadow.A_ONLY"}, sorted(inert)
 
 
+# A census of the tree: under coverage on CI it took 85-95 s of the suite's 120 s (2026-10-14/15).
+# It gets the 300 s this file's other census tests have.
+@pytest.mark.timeout(300)
 def test_the_lineage_false_red_is_gone_and_its_iteration_site_is_seen():
     """The finding itself, on the real tree: ``Lineage`` is recognised as iterated (its
     validation set in ``workflows/publish.py``) and no ``Lineage`` member is reported.

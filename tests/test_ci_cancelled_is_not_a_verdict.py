@@ -27,7 +27,8 @@ a failing shard report *skipped* instead of red, hiding real failures) and a per
 (which stops the cancellation by fanning a 24-leg matrix out per merge). So each relation is
 stated on its own:
 
-1. neither aggregate gate is gated on bare ``always()``;
+1. no aggregate gate is gated on bare ``always()`` (``full.yml``'s ``coverage`` became a third
+   when coverage was split into quarters);
 2. each is gated on ``!cancelled()`` — a failing shard still reaches the gate and reds, because
    ``fail-fast: false`` means a shard failure never cancels the run;
 3. each gate script handles ``cancelled`` as its OWN branch, so a shard cancelled on a live run
@@ -57,6 +58,7 @@ FULL_YML = WORKFLOWS / "full.yml"
 AGGREGATE_GATES: tuple[tuple[Path, str, str], ...] = (
     (CI_YML, "test", "test-shard"),
     (FULL_YML, "matrix", "matrix-shard"),
+    (FULL_YML, "coverage", "coverage-shard"),
 )
 
 
@@ -167,7 +169,7 @@ def test_the_gate_script_treats_cancelled_as_its_own_case(
     """Relation 3 — 'no answer' and 'a failing answer' must not share one message.
 
     The job-level ``!cancelled()`` covers a cancelled RUN. A single leg cancelled while the run
-    lives on is a different state: the run is real, and one quarter of the suite produced no
+    lives on is a different state: the run is real, and one shard of the suite produced no
     answer. That must red (an unanswered question is never a passing answer — the doctrine
     ``full.yml``'s install-smoke legs already state) but with a message that says *unproven*
     rather than sending the reader hunting for a failing test that does not exist.
