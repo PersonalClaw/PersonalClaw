@@ -40,9 +40,10 @@ version being released ([#3562](https://github.com/PersonalClaw/PersonalClaw/iss
 Worth stating plainly, because it generalises past this page: **a gate that has never
 executed is not evidence, however precisely it is cited.**
 
-The matrix above is the **backend**. The desktop *shell* is narrower: unsigned Linux
-x86-64 AppImage/deb on every release (`CI:release/desktop-linux smoke`), macOS from a
-checkout only until signing credentials exist, and no Windows build — see
+The matrix above is the **backend**. The desktop *shell* is narrower: every release
+attaches an unsigned Linux x86-64 AppImage and deb (`CI:release/desktop-linux smoke`)
+and an Apple-silicon macOS dmg, ad-hoc signed and not notarized
+(`CI:release/desktop-mac smoke`), and there is no Windows build — see
 [the desktop guide](desktop.md#platforms) for the per-OS signing story and the dated
 Windows deferral.
 

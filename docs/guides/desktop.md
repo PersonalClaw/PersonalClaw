@@ -368,8 +368,8 @@ build — see below for exactly why and what would change that.
 
 ### macOS — .dmg, not notarized, and one approval on first launch
 
-Every release attaches `PersonalClaw-<version>.dmg`, built by CI on a macOS runner from
-the same tree as the release tag. Open it and drag **PersonalClaw** to Applications.
+Every release attaches `PersonalClaw-<version>-arm64.dmg`, built by CI on a macOS runner
+from the same tree as the release tag. Open it and drag **PersonalClaw** to Applications.
 
 **Do not use the one-click Install button — it cannot work on this build.** Recent macOS
 versions offer an **Install** affordance when you open a `.dmg`. Clicking it here fails
@@ -448,12 +448,12 @@ closing the window then quits for real instead of hiding, exactly as described u
 "Closing the window is not quitting", so you can never strand a running app you
 cannot reach.
 
-### macOS — built from a checkout, for now
+### Building it yourself
 
-The dmg is not attached to releases yet: that step waits on Apple Developer
-signing + notarization credentials that do not exist in CI today. Until they do,
-build from a checkout with `make desktop-dist`. A locally-built, unsigned app gets
-macOS's normal Gatekeeper treatment on first launch.
+From a checkout, `make desktop-dist` builds the dmg on an Apple-silicon Mac and
+`make desktop-dist-linux` builds the AppImage and .deb on x86-64 Linux: the targets the
+release's `desktop-mac` and `desktop-linux` jobs run, in the venv those jobs make
+(`.github/workflows/release.yml`).
 
 ### Windows — deferred
 
