@@ -106,7 +106,7 @@ jobs:
     # Bounded like every other workflow here (#3318/#3320), and sized ABOVE measured
     # runtime rather than near it (#3326 was the cost of the other mistake). Measured 30s
     # in run 35814995463.
-    timeout-minutes: 20
+    timeout-minutes: 30  # a pinned call may retry its install for ten minutes first
     container: python:3.12-slim
     steps:
       - uses: actions/checkout@v7
