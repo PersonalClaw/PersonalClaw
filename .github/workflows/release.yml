@@ -8,11 +8,12 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # A dispatch builds the ref it is run on: every job reads `$GITHUB_REF_NAME`. On a branch it
+  # is the no-publish rehearsal (`gh workflow run release.yml --ref main`): `build` refuses the
+  # branch at its first step, so no job that publishes runs, while gateway-dashboard and the
+  # two desktop builds, which need nothing, do. On a tag it is that tag's release, run with the
+  # workflow as it is at the tag.
   workflow_dispatch:
-    inputs:
-      ref:
-        description: "Tag/ref to build (manual runs)"
-        required: false
 
 permissions:
   contents: read
