@@ -18,7 +18,7 @@ one, and the token points at something you can go read or re-run:
 
 | Platform | Support | Proof |
 |---|---|---|
-| Linux x86-64 | first-class | `CI:full/matrix (ubuntu-latest)` + `CI:release/images smoke (linux/amd64)` |
+| Linux x86-64 | first-class | `CI:full/matrix (ubuntu-24.04)` + `CI:release/images smoke (linux/amd64)` |
 | Linux arm64 | first-class | `CI:full/matrix (ubuntu-24.04-arm)` + `CI:release/images smoke (linux/arm64)` |
 | macOS Apple silicon | first-class | `CI:full/matrix (macos-14, macos-latest)` |
 | macOS Intel | best-effort | `community` — no Intel runner in CI; the x86-64 Python/wheel path is the same as Linux x86-64 |

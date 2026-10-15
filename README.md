@@ -328,7 +328,7 @@ and not verified by us. Details and the `[models]`-extra per-arch reality:
 
 | Platform | Support | Proof |
 |---|---|---|
-| Linux x86-64 | first-class | `CI:full/matrix (ubuntu-latest)` + release smoke |
+| Linux x86-64 | first-class | `CI:full/matrix (ubuntu-24.04)` + release smoke |
 | Linux arm64 | first-class | `CI:full/matrix (ubuntu-24.04-arm)` + release smoke |
 | macOS Apple silicon | first-class | `CI:full/matrix (macos-14)` |
 | macOS Intel | best-effort | `community` |

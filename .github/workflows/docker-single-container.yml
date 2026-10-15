@@ -82,7 +82,7 @@ permissions:
 
 jobs:
   single-container:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The image build is the long pole: a CPU-only torch install, the bundled ACP adapter
     # CLIs, and now a Node stage for the SPA. Bounded well above its measured cost rather
     # than tightly — #3326 was the cost of setting a bound BELOW a job's own runtime.

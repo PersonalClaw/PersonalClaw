@@ -96,13 +96,13 @@ jobs:
   # ── V1 ─────────────────────────────────────────────────────────────────────────────────
   # Wheel install -> onboarding -> first chat, on a machine with NO Node.
   #
-  # The container is the whole point. `ubuntu-latest` runners ship Node (Actions itself needs
+  # The container is the whole point. `ubuntu-24.04` runners ship Node (Actions itself needs
   # it), so running V1 directly on the runner would prove the opposite of what V1 asks. A
   # bare `python:3.12-slim` has no Node at all, and the job asserts that before it begins —
   # otherwise the Node-absent claim is an assumption rather than a precondition.
   v1-wheel:
     if: ${{ (inputs.which || 'all') == 'all' || inputs.which == 'v1-wheel' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Bounded like every other workflow here (#3318/#3320), and sized ABOVE measured
     # runtime rather than near it (#3326 was the cost of the other mistake). Measured 30s
     # in run 35814995463.
@@ -284,7 +284,7 @@ jobs:
   # survive `compose down` / `up`. That is the assertion, not the bring-up.
   v3-container:
     if: ${{ (inputs.which || 'all') == 'all' || inputs.which == 'v3-container' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Measured 1m14s pulling published images (run 35810180530) and 3m22s when the images
     # were built from source (run 35814995463), so this bound clears the slower of the two
     # shapes by an order of magnitude.
@@ -432,11 +432,11 @@ jobs:
       matrix:
         include:
           - kind: git
-            os: ubuntu-latest
+            os: ubuntu-24.04
           - kind: pip
-            os: ubuntu-latest
+            os: ubuntu-24.04
           - kind: container
-            os: ubuntu-latest
+            os: ubuntu-24.04
           - kind: desktop
             os: macos-latest
     runs-on: ${{ matrix.os }}
@@ -508,7 +508,7 @@ jobs:
   record:
     needs: [v1-wheel, v3-container, v4-selfupdate]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Measured 3s; it writes a step summary and nothing else.
     timeout-minutes: 10
     steps:

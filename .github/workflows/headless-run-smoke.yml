@@ -26,7 +26,7 @@ permissions:
 
 jobs:
   smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A turn boots a transient gateway and waits on a model round-trip; the default
     # 360-minute budget would let a wedged provider hold a runner for hours.
     timeout-minutes: 20

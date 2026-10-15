@@ -94,7 +94,7 @@ jobs:
       fail-fast: false
       matrix:
         python: ["3.12", "3.13"]
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-24.04, macos-latest]
         shard: [1, 2, 3, 4, 5, 6]
         include:
           # linux arm64 + macOS Apple-silicon. macos-14 is the arm64 image
@@ -215,7 +215,7 @@ jobs:
     # verdict at all, which is the honest statement: nothing was measured.
     needs: [matrix-shard]
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: every matrix shard passed
@@ -239,7 +239,7 @@ jobs:
   audit:
     # Report-only supply-chain scan — visibility, not a merge gate (substrate, not
     # bureaucracy). Dependabot drives the actual update PRs.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     continue-on-error: true
     steps:
@@ -272,7 +272,7 @@ jobs:
     # Its own job, not a line in the matrix, so a corpus regression is legible on its
     # own; `-n 0` keeps the integrity-race output readable. Published methodology:
     # docs/security/scanner-testing.md.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     # No PERSONALCLAW_HOME — see the matrix job. The corpus writes only to tmp_path.
     env:
@@ -331,7 +331,7 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4, 5, 6]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Above a sixth's measured share — see the cap rationale on matrix-shard.
     timeout-minutes: 60
     # No PERSONALCLAW_HOME — see the matrix job / ci.yml test job.
@@ -389,7 +389,7 @@ jobs:
     # there is no meaningful coverage number, so the steps after the gate do not run.
     needs: [coverage-shard]
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: every coverage shard passed
@@ -478,7 +478,7 @@ jobs:
     # says setup configures "your name + first model provider"; core corrected that in 72e43db3b
     # / #1642 because setup collects neither). The drift leg is SUPPOSED to be red until the
     # website-repo mirror is re-applied. That red is the rail working, not the rail failing.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A bare image, deliberately: the one-liner's whole promise is that it works on a machine
     # with nothing on it. A GitHub runner has python, uv-adjacent tooling and a warm PATH, so
     # running there would prove something easier than what we ship.

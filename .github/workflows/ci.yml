@@ -81,7 +81,7 @@ jobs:
     # SPA "renders the ONBOARDING screen for every route… axe then reports a clean tree for 96
     # surfaces it never actually visited." Sixteen of eighteen routes in web/e2e/routes.ts are
     # `needsData: true`. A backend diff can change scanned DOM, so a backend diff pays.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       pull-requests: read   # `pulls/{n}/files` below. READ only, and a fork PR's token is
@@ -171,7 +171,7 @@ jobs:
     # core PR.
     needs: [changes]
     if: ${{ needs.changes.outputs.sdk == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -203,7 +203,7 @@ jobs:
           --base-ref "${{ steps.base.outputs.ref }}" --install-deps
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read   # NOT pull-requests: write — a fork PR is handed a read-only token
                        # regardless, so asking for write here only looked like it worked.
@@ -403,7 +403,7 @@ jobs:
     # split when it is not (this repo commits none yet — measured clean: 31 359 tests → 4 groups
     # with zero overlap and zero gaps). Commit a `.test_durations` later for duration-balanced
     # shards; nothing in this workflow changes.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       # fail-fast:false so one red shard does not cancel the others — you want every failing
       # shard's report in one push, not a fix-push-rediscover loop (same reason full.yml's matrix
@@ -536,7 +536,7 @@ jobs:
     # arrival of the other). Re-check this if `test` is ever made a required check.
     needs: [test-shard]
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: every test shard passed
         run: |
@@ -564,7 +564,7 @@ jobs:
           echo "all 4 test shards passed"
 
   web:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -661,7 +661,7 @@ jobs:
     # defaults to TRUE and why `src/personalclaw/**` is not ignorable.
     needs: [changes]
     if: ${{ needs.changes.outputs.frontend == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -729,7 +729,7 @@ jobs:
     # Gated on `changes` (#3110) — see that job's header.
     needs: [changes]
     if: ${{ needs.changes.outputs.frontend == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -896,7 +896,7 @@ jobs:
     # Gated on `changes` (#3110) — see that job's header for why the verdict defaults to TRUE.
     needs: [changes]
     if: ${{ needs.changes.outputs.frontend == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -952,7 +952,7 @@ jobs:
     #     environment, where the suite's own js-render capability probes can see it.
     # It reuses `e2e-pwa`'s install pattern verbatim, and runs in parallel, so it adds a runner
     # rather than wall-clock. Measured locally: 30 cases, 0 skips, 38s.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A wedged Chromium must not hold a runner for the default 360 minutes. The suite's own
     # launch waits cap at 30s each and pytest's addopts cap a case at 120s, so 15 is slack.
     timeout-minutes: 15
@@ -1012,7 +1012,7 @@ jobs:
   rails:
     # Cheap anti-regression rails: machine-checked invariants.
     # Today: provider-boundary residue sweep (present on main).
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # No PERSONALCLAW_HOME (see the test job) — the residue sweep is a static
     # import-boundary check and the suite runs under the no-global-home contract.
     steps:
@@ -1089,7 +1089,7 @@ jobs:
     # the boundary scanner over the PR's changed lines and fails on any ERROR finding
     # (WARNINGs stay advisory). The harness/ unit tests themselves ride the `test` job
     # (they live under tests/, which is on pytest's testpaths).
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1116,7 +1116,7 @@ jobs:
     # gets its own job: build the wheel and run its test suite so a break is caught
     # pre-merge. No PERSONALCLAW_HOME — the runner's $HOME is ephemeral, so the
     # data-dir test resolves ~/.personalclaw as intended.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - name: Install uv
