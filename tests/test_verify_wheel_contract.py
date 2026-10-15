@@ -601,7 +601,10 @@ def test_a_relative_wheel_from_the_checkout_root_reaches_the_installed_probe(
     ``PYTHONPATH``, which the probe's ``-I`` would ignore.
     """
     root = tmp_path / "checkout"
-    wheel_name = "personalclaw-0.2.0-py3-none-any.whl"
+    # `_assert_versions` holds the wheel to the version this checkout's pyproject.toml names.
+    project = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    version = project["project"]["version"]
+    wheel_name = f"personalclaw-{version}-py3-none-any.whl"
     (root / "dist").mkdir(parents=True)
     with zipfile.ZipFile(root / "dist" / wheel_name, "w") as zf:
         zf.writestr("personalclaw/__init__.py", "")
@@ -623,7 +626,7 @@ def test_a_relative_wheel_from_the_checkout_root_reaches_the_installed_probe(
     monkeypatch.setattr(
         verify_wheel,
         "inspect_wheel",
-        lambda wheel, root=None: handed.update(inspected=wheel) or "0.2.0",
+        lambda wheel, root=None: handed.update(inspected=wheel) or version,
     )
     monkeypatch.setattr(sys, "argv", ["verify_wheel.py", "--wheel", f"dist/{wheel_name}"])
 

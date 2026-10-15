@@ -20,6 +20,10 @@ If any of them drift, this test goes red — that is the guardrail that keeps
 `pip show`, `personalclaw --version`, the in-app "what's new" panel, and the names
 of the desktop artifacts a release publishes honest.
 
+It also reads one file a bump must move that no release shows: ``package-lock.json``'s
+record of the desktop workspace (``packages.desktop.version``), which must say what
+``desktop/package.json`` says. ``npm ci`` does not check it.
+
 They are compared as VERSIONS, with the one comparison the product uses
 (``personalclaw.versions``), never as text. A release candidate is written ``0.3.0-rc.1``
 everywhere a release cut writes it — the tag's spelling — and the installed package reports
@@ -198,6 +202,28 @@ def test_desktop_shell_version_tracks_core() -> None:
         f"artifact filenames from this field (PersonalClaw-{_desktop_shell_version()}"
         f"-<arch>.dmg), so leaving it stale ships a dmg misnamed for the release; bump "
         "it in the release-prep commit"
+    )
+
+
+def _locked_desktop_shell_version() -> str:
+    lock = json.loads((_REPO_ROOT / "package-lock.json").read_text(encoding="utf-8"))
+    return str(lock["packages"]["desktop"]["version"])
+
+
+def test_the_lockfile_records_the_desktop_shells_version() -> None:
+    """``package-lock.json`` records each workspace's version, the desktop's included.
+
+    A bump that leaves it behind passes ``npm ci``, which does not compare the two (measured with
+    npm 11.16), so nothing failed on it: the next ``npm install`` anywhere rewrites the line, in a
+    diff nobody asked for. It is compared as text, unlike the surfaces above, because npm copies
+    the field as ``desktop/package.json`` writes it, a candidate's spelling included:
+    ``npm install --package-lock-only --ignore-scripts`` from the root moves exactly this line.
+    """
+    assert _locked_desktop_shell_version() == _desktop_shell_version(), (
+        f"package-lock.json packages.desktop.version={_locked_desktop_shell_version()!r} is not "
+        f"desktop/package.json's version={_desktop_shell_version()!r} — run "
+        "`npm install --package-lock-only --ignore-scripts` from the repo root in the "
+        "release-prep commit"
     )
 
 
