@@ -84,6 +84,14 @@ Settings → Security renders it beside the read-only pattern list.
   The panel says the baseline "matches what shipped", or that the packaged file no longer
   matches — never "secure" and never "tamper-proof".
 
+The baseline also refuses the agent's way around the dashboard's owner-only security settings:
+the command-line config command typed into its shell. `personalclaw config set|unset` on a
+security setting or a section holding one, `config set --file` and `config edit` are refused on
+every path that runs a command for the agent or an automation (`CLI_SECURITY_CONFIG_PATTERNS`);
+the owner's own terminal runs no screen, so it still changes them.
+
+The owner's Settings → Security → Git push switch (`security.allow_git_push`, off by default) is applied where the baseline's push pattern is matched, never by removing it: the packaged file, its `sha256` and the healing above are the same whichever way the switch is set. While it is on, that one pattern (and the built-in tool-name rule for pushes) lets through a command the push reader (`branch_publish.plain_push`) reads as one ordinary push of a branch; every other pattern still checks the same command, and the reader refuses anything it does not know. A push let through is audited as a `deny_exception` and refused if that row cannot be written, and it still reaches the network, so the approval path asks each time in a chat and refuses it unattended. Turning the switch on or off is audited as `security_setting_changed`. The switch changes what is enforced, not what an owner-edited `safety-rules` snippet tells the model: an edited copy is never re-seeded, so its push wording is the owner's to keep true.
+
 The threat this closes is drift inside a running process, most concretely an agent asked
 to relax its own guardrails: the model can write files and run commands, so it can reach
 the list, but it cannot make a shortened list stick and it cannot make the shortening

@@ -3603,6 +3603,9 @@ CONFIG_ON_DISCARDED_READ: dict[str, Any] = {
     # turned it on asked for nothing unproven to run while nobody is watching, and a file we
     # cannot parse must not answer that request with "never mind".
     "agent.unattended_requires_verified_adapter": True,
+    # Off by default too, so a discard changes nothing for most homes; listed because an owner who
+    # turned it on chose a config we can read, and an unreadable one must not keep it on.
+    "security.allow_git_push": False,
 }
 
 
@@ -4952,6 +4955,9 @@ class AppConfig:
                 # turned the keychain ON is not. Only a real JSON `true` opts in — the
                 # fail-closed direction is `.env` at 0600.
                 credential_keychain=security_data.get("credential_keychain") is True,
+                # `is True` for the same reason: this switch lets a command past the baseline,
+                # and a hand-edited `"allow_git_push": "false"` must not turn it on.
+                allow_git_push=security_data.get("allow_git_push") is True,
                 egress=EgressConfig(
                     allow_hosts=[
                         str(h)

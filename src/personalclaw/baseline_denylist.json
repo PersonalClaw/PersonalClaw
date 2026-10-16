@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "description": "Baseline bash denied-command regexes, always enforced. Categories, in order: credential exfiltration (S3/env/wire), cloud metadata SSRF, pipe-to-shell, destructive filesystem, destructive cloud, disk/partition writes, reverse shells, credential env export, destructive SQL, unreviewed pushes, credential-file reads, and self-tampering with the running gateway. User config may only ADD to this set.",
-  "sha256": "bb4f562c966bfa7a81ad71134f6a861761a5e785e8ac3201c3abef39af1a876b",
+  "description": "Baseline bash denied-command regexes, always enforced. Categories, in order: credential exfiltration (S3/env/wire), cloud metadata SSRF, pipe-to-shell, destructive filesystem, destructive cloud, disk/partition writes, reverse shells, credential env export, destructive SQL, unreviewed pushes, credential-file reads, self-tampering with the running gateway, and changes to a security setting through the command-line config command. User config may only ADD to this set.",
+  "sha256": "70132df0a1e7a9fdcaef741cc36d46d1f94e9c1bce5844b8cd6e74c7ae051ece",
   "patterns": [
     "aws s3 cp .* s3://.*",
     "aws s3 mv .* s3://.*",
@@ -118,6 +118,9 @@
     ".*personal.?claw restart.*",
     ".*personal.?claw update.*",
     ".*personal.?claw gateway restart.*",
-    ".*\\b(kill|pkill|killall)\\b.*\\bpersonal[-.]?claw\\b.*"
+    ".*\\b(kill|pkill|killall)\\b.*\\bpersonal[-.]?claw\\b.*",
+    "(?:^|[;&|(`\\s/]|\\$\\()personal.?claw\\s+(?:-\\S+\\s+)*config\\s+edit\\b.*",
+    "(?:^|[;&|(`\\s/]|\\$\\()personal.?claw\\s+(?:-\\S+\\s+)*config\\s+set\\s+(?:[^;&|\\n]*\\s)?--?f.*",
+    "(?:^|[;&|(`\\s/]|\\$\\()personal.?claw\\s+(?:-\\S+\\s+)*config\\s+(?:set|unset)\\s+(?:-\\S+\\s+)*[\\\"']?(?:(?:auth|security|sandbox|guardrails|external_access|hooks)(?=[.\\s\\\"']|$)|(?:agent\\.(?:approval_mode|yolo|subagent_cwd_allowed_roots|unattended_requires_verified_adapter|self_qa\\.fix_branch_enabled)|browse\\.user_browser_enabled|durability\\.sync_(?:enabled|transport|encrypt)|proactive\\.(?:auto_execute_enabled|max_auto_actions_per_run)|agent|agent\\.self_qa|browse|durability|proactive)(?=[\\s\\\"']|$)).*"
   ]
 }

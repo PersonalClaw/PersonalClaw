@@ -224,6 +224,7 @@ LOOSENING_WRITES = [
         {"allow_hosts": [], "deny_hosts": [], "allow_private": False},
     ),
     ("security.credential_keychain", {"security": {"credential_keychain": True}}, False),
+    ("security.allow_git_push", {}, True),
     ("security.denied_commands", {"security": {"denied_commands": ["^rm "]}}, []),
     ("security.mcp_elicitation_servers", {}, ["some-server"]),
     ("security.outside_home", {}, ["agent-skills"]),

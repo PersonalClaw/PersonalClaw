@@ -33,7 +33,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 #: The baseline content, pinned. A change to the shipped patterns must be a deliberate
 #: edit to this line — a drive-by edit to the data file turns this red.
-EXPECTED_BASELINE_SHA256 = "bb4f562c966bfa7a81ad71134f6a861761a5e785e8ac3201c3abef39af1a876b"
+EXPECTED_BASELINE_SHA256 = "70132df0a1e7a9fdcaef741cc36d46d1f94e9c1bce5844b8cd6e74c7ae051ece"
 
 
 @pytest.fixture(autouse=True)
@@ -79,7 +79,7 @@ class TestPackagedSource:
         version, declared, patterns = security._read_packaged_baseline()
         assert version == security.BASELINE_DENYLIST_VERSION == 1
         assert declared == security._baseline_digest(patterns) == EXPECTED_BASELINE_SHA256
-        assert len(patterns) == len(set(patterns)) == 116
+        assert len(patterns) == len(set(patterns)) == 119
 
     def test_the_loaded_list_is_the_packaged_file(self):
         _, _, patterns = security._read_packaged_baseline()
@@ -164,14 +164,14 @@ class TestSelfHealing:
 
         effective = security.denied_command_patterns()
 
-        assert len(effective) == 116
+        assert len(effective) == 119
         assert set(effective) == set(security._BASELINE_PATTERNS)
         # healed in place, so every consumer holding the list object sees the repair
         assert list(security.BUILTIN_DENIED_COMMAND_PATTERNS) == list(security._BASELINE_PATTERNS)
         events = _sel_events(tmp_path, "baseline_denylist_reasserted")
         assert len(events) == 1
         assert events[0]["outcome"] == "healed"
-        assert events[0]["metadata"]["restored_count"] == 116
+        assert events[0]["metadata"]["restored_count"] == 119
         assert events[0]["metadata"]["expected_sha256"] == EXPECTED_BASELINE_SHA256
 
     def test_removing_one_pattern_is_healed_and_named_in_the_event(self, tmp_path):
@@ -202,7 +202,7 @@ class TestSelfHealing:
 
         effective = security.denied_command_patterns()
 
-        assert len(effective) == 116
+        assert len(effective) == 119
         assert "only-this-one" not in effective
         assert security._BASELINE_PATTERNS == tuple(effective)
 
@@ -261,7 +261,7 @@ class TestPeriodicReverify:
         assert report == {
             "version": 1,
             "sha256": EXPECTED_BASELINE_SHA256,
-            "count": 116,
+            "count": 119,
             "file_verified": True,
             "detail": "",
         }
@@ -285,7 +285,7 @@ class TestPeriodicReverify:
         report = security.verify_baseline_denylist()
 
         assert report["file_verified"] is False
-        assert report["count"] == 116
+        assert report["count"] == 119
         assert security.denied_command("mkfs.ext4 /dev/sda1") is not None
         assert len(_sel_events(tmp_path, "baseline_denylist_tamper_attempt")) == 1
 
@@ -299,8 +299,8 @@ class TestPeriodicReverify:
 
         assert report["file_verified"] is False
         assert "unreadable" in report["detail"]
-        assert report["count"] == 116
-        assert len(security.denied_command_patterns()) == 116
+        assert report["count"] == 119
+        assert len(security.denied_command_patterns()) == 119
 
     @pytest.mark.asyncio
     async def test_the_doctor_probe_reports_the_verified_state(self):
@@ -312,7 +312,7 @@ class TestPeriodicReverify:
         res = await probe.run(doctor.DoctorContext())
 
         assert res.ok is True
-        assert res.evidence["patterns"] == 116
+        assert res.evidence["patterns"] == 119
         assert res.evidence["version"] == 1
         assert EXPECTED_BASELINE_SHA256.startswith(res.evidence["sha256"])
 
@@ -329,7 +329,7 @@ class TestPeriodicReverify:
         res = await probe.run(doctor.DoctorContext())
 
         assert res.ok is False
-        assert res.evidence["patterns"] == 116
+        assert res.evidence["patterns"] == 119
 
 
 def _write_config(home: Path, security_section: dict) -> None:
@@ -400,7 +400,7 @@ class TestStrictlyAdditiveUserConfig:
         effective = security.denied_command_patterns()
 
         assert effective[-2:] == ["my-secret-tool .*", "another .*"]
-        assert len(effective) == 118
+        assert len(effective) == 121
         assert security.denied_command("my-secret-tool --dump") is not None
 
     def test_a_shadow_key_cannot_remove_a_baseline_entry(self, tmp_path):
@@ -419,7 +419,7 @@ class TestStrictlyAdditiveUserConfig:
         effective = security.denied_command_patterns()
 
         assert "mkfs.*" in effective
-        assert len(effective) == 116
+        assert len(effective) == 119
         assert security.denied_command("mkfs.ext4 /dev/sda1") is not None
 
 
@@ -458,7 +458,7 @@ class TestSharedSource:
 
         assert decision.blocked is True
         assert "mkfs" in decision.reason
-        assert len(security.BUILTIN_DENIED_COMMAND_PATTERNS) == 116
+        assert len(security.BUILTIN_DENIED_COMMAND_PATTERNS) == 119
 
     def test_no_module_keeps_a_second_in_code_copy_of_the_baseline(self):
         """Two copies is how the two paths drift. Only ``security.py`` may name the
@@ -589,11 +589,11 @@ class TestSecurityPanelPayload:
         assert body["baseline"] == {
             "version": 1,
             "sha256": EXPECTED_BASELINE_SHA256,
-            "count": 116,
+            "count": 119,
             "verified": True,
             "detail": "",
         }
-        assert len(body["builtin"]) == 116
+        assert len(body["builtin"]) == 119
         assert body["user"] == []
         assert body["user_additions"] == 0
 
@@ -623,8 +623,8 @@ class TestSecurityPanelPayload:
         # adopted, so the panel must not start advertising the attacker's version 7.
         assert after["baseline"]["version"] == 1
         assert after["baseline"]["sha256"] == EXPECTED_BASELINE_SHA256
-        assert after["baseline"]["count"] == 116
-        assert len(after["builtin"]) == 116
+        assert after["baseline"]["count"] == 119
+        assert len(after["builtin"]) == 119
 
     @pytest.mark.asyncio
     async def test_a_missing_file_also_flips_the_indicator(self, monkeypatch):
@@ -637,7 +637,7 @@ class TestSecurityPanelPayload:
 
         assert body["baseline"]["verified"] is False
         assert "unreadable" in body["baseline"]["detail"]
-        assert body["baseline"]["count"] == 116
+        assert body["baseline"]["count"] == 119
 
     @pytest.mark.asyncio
     async def test_user_additions_counts_the_patterns_that_widen_the_set(self, tmp_path):
@@ -668,7 +668,7 @@ class TestSecurityPanelPayload:
         # Three entries in config, exactly one of which widens the effective set.
         assert len(body["user"]) == 3
         assert body["user_additions"] == 1
-        assert len(body["builtin"]) == 116
+        assert len(body["builtin"]) == 119
 
     @pytest.mark.asyncio
     async def test_the_payload_offers_no_write_path_for_the_baseline(self):

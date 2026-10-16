@@ -96,6 +96,7 @@ export function SecurityPanel() {
           baseline={denied.baseline} userAdditions={denied.user_additions}
           onChange={onDeniedChange} />
       ) : null}
+      <BranchPublishSwitch />
       <CredentialStoreEditor />
       <ChildProcessCeilings note={s.child_ceilings?.note ?? ''} onScopesSaved={refreshStats} />
       <EgressPolicyEditor />
@@ -490,6 +491,56 @@ function ChildProcessCeilings({ note, onScopesSaved }: {
               <StrListField label="Child environment passthrough" cfg={cfg} field="env_passthrough" editList={editList}
                 placeholder="Add name…"
                 hint="Extra environment VARIABLE NAMES a child may inherit, on top of the minimal base (PATH, locale, home, proxy/CA settings). A child is anything PersonalClaw starts to run code it didn't write: an agent's command, a hook, a script, and an app's installs, hooks and servers. Everything else is withheld, and a proxy address reaches a child without its password. A name added here is passed as it is, password included. Names matching the credential floor (AWS secrets, SSH agent socket, GPG home, git askpass) are refused even when declared here." />
+            </RowGroup>
+          )}
+    </Section>
+  )
+}
+
+/** What the Git push switch's dialog says before it turns on: what an agent may then do, what still
+ *  asks, and what stays refused. Exported so its test reads the words the owner is shown. */
+export const BRANCH_PUBLISH_CONSENT = {
+  title: 'Let agents push a branch?',
+  body: 'An ordinary push of a branch, written as one command, will no longer be refused by the '
+    + 'built-in denylist. Each push still asks you first in a chat, and is refused in a run nobody '
+    + 'watches unless your own rules allow it. A force push without an explicit lease, --mirror, '
+    + 'deletes, --all, --tags, --prune and --no-verify stay refused.',
+  confirmLabel: 'Allow pushes',
+}
+
+/** Settings → Security → Git push: the owner's switch that lets an agent push a branch
+ *  (`security.allow_git_push`, off by default). Turning it on asks first here, and the gateway
+ *  asks the same consent itself of any writer that does not; turning it off never asks. */
+export function BranchPublishSwitch() {
+  const [cfg, setCfg] = useState<Record<string, unknown> | null>(null)
+  const { data, error: loadErr, refresh } = useQuery('settings:branch-publish', () =>
+    api.personalclawConfig().then((c) => ({
+      allow_git_push: (c.security ?? {}).allow_git_push === true,
+    }) as Record<string, unknown>),
+  )
+  useEffect(() => { if (data) setCfg(data) }, [data])
+
+  const patch = (key: string, value: unknown, onSaved?: () => void, label?: string, confirmed = false) => {
+    const prev = (cfg ?? {})[key]
+    setCfg((c) => ({ ...c, [key]: value }))
+    api.patchConfig(`security.${key}`, value, confirmed).then(() => onSaved?.()).catch((e) => {
+      setCfg((c) => ({ ...c, [key]: prev }))
+      if (e instanceof ConsentDeclined) return
+      notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
+    })
+  }
+
+  return (
+    <Section title="Git push"
+      hint="Off by default: no agent may push. When on, an agent may push a branch with an ordinary push written as one command (git -C <dir> push … from another folder; cd <dir> && … is refused). Each push still asks you first in a chat, and is refused in a run nobody watches unless your own rules allow it. A force push without an explicit lease (--force-with-lease=<ref>:<expected-sha>), --mirror, deletes, :<ref> and +<ref> refspecs, --all, --tags, --prune and --no-verify stay refused. Only you can change this, here or from your own terminal.">
+      {!data && loadErr
+        ? <LoadError what="Git push switch" error={loadErr} onRetry={refresh} />
+        : !cfg
+          ? <CardGridSkeleton cards={1} cols={1} what="Git push switch" />
+          : (
+            <RowGroup>
+              <ToggleRow label="Let agents push a branch" cfg={cfg} field="allow_git_push" patch={patch} danger
+                confirmOn={BRANCH_PUBLISH_CONSENT} />
             </RowGroup>
           )}
     </Section>

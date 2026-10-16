@@ -888,6 +888,7 @@ What the patterns do not see:
 
 - **What a command runs without naming it.** A script file (`python3 probe.py`), a library an
   interpreter imports, or a command a script builds as it runs is not in the text a pattern reads.
+- **What a push the Git push switch allows will send.** With Settings → Security → Git push on, the reader of a push reads its text: it lets an ordinary push of the named branch through, and it cannot see what the repository's configuration makes of it (a remote's push refspecs, or `push.default`). Each push still asks you, and the card shows the command.
 - **An agent CLI's own tools when the CLI does not ask first.** The host screens what a CLI asks
   it to run; a command the CLI runs without asking stays inside the CLI (§1, §11).
 
