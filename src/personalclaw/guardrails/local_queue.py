@@ -61,6 +61,7 @@ BUSY_WITH: dict[str, str] = {
     "conflict_merge": "merging a sync conflict",
     "inbox_triage": "sorting your inbox",
     "knowledge": "knowledge processing",
+    "knowledge_maintenance": "maintaining your knowledge library",
     "nl_to_cron": "reading a schedule",
     "skill_ladder": "reviewing a chat for skills",
     "triage_gate": "your triage digest",

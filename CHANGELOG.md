@@ -20,6 +20,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **On a macOS service, `personalclaw logs` also shows what the gateway printed, such as where the dashboard is, as the Linux service's journal does, where a healthy service showed nothing.**
 - **A chat open in the dashboard shows its notices as they happen while another client, such as one on the OpenAI-compatible endpoint, streams its turn, not only after a reload.**
 - **`personalclaw-client` signs in with the token it is given: it sends it as `Authorization: Bearer`, where it sent a cookie the gateway never reads, so every call was refused.**
+- **Knowledge consolidation's background check no longer sends your items to the embedding model: it groups them by the vectors they already have, runs at most once per the minimum hours you set (your own consolidation is never held back by it), and the call log names knowledge maintenance as the caller of the embeddings it makes.**
 
 ### Changed
 
