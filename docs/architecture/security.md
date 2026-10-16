@@ -620,13 +620,24 @@ served through `git http-backend` behind Basic auth.
 This is a **credential-hiding sandbox, not a confinement sandbox** — a precise distinction
 that the rest of this section, and any public claim, must respect. The macOS Seatbelt profile
 is allow-by-default (`(version 1)\n(allow default)`) with targeted `deny file-read*` rules over
-credential paths (`~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.azure`, `~/.docker`, `~/.kube`,
-`.npmrc`, `.pypirc`, `.netrc`, `.git-credentials`, and the credential store's `.env` in the home in
-use and the default one, plus `~/.ssh` in `strict`; the single files only in `cc` and `strict`,
-`_hidden_files`); the Linux path is equivalent (bind-mount empty dirs over those paths). It raises the
-cost of credential theft. The places it confines writes are the home's owner-only paths and, on
-macOS, the owner's own git settings and shell startup files (below); it does not stop an agent from
-doing anything else.
+credential paths; the Linux path is equivalent (bind-mount empty dirs over those paths). Which
+paths depends on the level a launch asks for (`sandbox.wrap_argv`'s `mode`), and no Settings
+control or `sandbox` config field selects it. The `standard` level hides `~/.gnupg`, `~/.gpg`,
+`~/.config/gcloud`, `~/.azure` and `~/.docker`. It is what `auto` means and what nearly every
+sandboxed launch runs at: the native agent's shell, an agent CLI's session (unless its app says
+the CLI sandboxes itself, which runs it unwrapped), a bash action and a scheduled script. So at
+that level `~/.aws`, `~/.kube`, `~/.ssh` and the single credential files below are not hidden,
+and the AWS CLI, kubectl and git over ssh work: only the shell's screen and the file tools' checks
+stand between an agent and their contents, and the screen is defence in depth, not a fence; an
+agent CLI meets them only for the calls it asks about
+([limitations §13](../security/limitations.md#13-the-agents-shell-is-screened-not-fenced-from-your-credential-files)).
+`strict`, which a connector pack's parse script runs at, also hides `~/.aws`, `~/.kube`, `~/.ssh`
+(all but `known_hosts`) and the single files: `.npmrc`, `.pypirc`, `.netrc`, `.git-credentials`
+and the credential store's `.env` in the home in use and the default one (`_hidden_files`). `cc`
+hides what `strict` does except `~/.ssh`, and keeps `~/.aws/config` readable (on macOS all of
+`~/.aws`); nothing that ships runs at it. The sandbox raises the cost of credential theft. The
+places it confines writes are the home's owner-only paths and, on macOS, the owner's own git
+settings and shell startup files (below); it does not stop an agent from doing anything else.
 
 | It **does** | It does **not** |
 |---|---|

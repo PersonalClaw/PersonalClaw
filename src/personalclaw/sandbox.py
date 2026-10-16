@@ -1,8 +1,10 @@
 """OS-level sandbox for agent child processes.
 
-Hides sensitive credential paths (``~/.aws``, ``~/.gnupg``, etc.) from the
-ACP agent subprocess tree and exposes ``~/.ssh/known_hosts`` while hiding
-other SSH files (keys, config, etc.), using platform-native isolation:
+Hides sensitive credential paths from an agent child's subprocess tree, by the level a launch
+asks for (:func:`wrap_argv`): ``standard``, which ``auto`` means, hides ``~/.gnupg``, ``~/.gpg``,
+``~/.config/gcloud``, ``~/.azure`` and ``~/.docker``; ``strict`` also hides ``~/.aws``,
+``~/.kube``, the single credential files and ``~/.ssh``, exposing ``~/.ssh/known_hosts`` while
+hiding the other SSH files (keys, config, etc.). It uses platform-native isolation:
 
 - **Linux**: fork → ``unshare(CLONE_NEWUSER)`` → parent writes identity
   UID/GID map → ``unshare(CLONE_NEWNS)`` → bind-mount empty dirs → exec.
