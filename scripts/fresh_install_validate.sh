@@ -164,12 +164,13 @@ leg_nix() {
   local staged
   staged="$(mktemp -d)"
 
-  # Ship the flake and its derivation, not the whole tree: `nix run .` copies the flake
-  # directory into the store, and .git plus a populated node_modules/.venv turns a 2-second
-  # copy into minutes. Nothing else in the repo is a flake input.
-  mkdir -p "$staged/checkout"
+  # Ship the flake, its derivation and the smoke its checks run, not the whole tree: `nix run .`
+  # copies the flake directory into the store, and .git plus a populated node_modules/.venv
+  # turns a 2-second copy into minutes. Nothing else in the repo is a flake input.
+  mkdir -p "$staged/checkout/scripts"
   cp "$REPO_ROOT/flake.nix" "$staged/checkout/"
   cp -R "$REPO_ROOT/nix" "$staged/checkout/"
+  cp "$REPO_ROOT/scripts/nix_smoke.py" "$staged/checkout/scripts/"
   [[ -f "$REPO_ROOT/flake.lock" ]] && cp "$REPO_ROOT/flake.lock" "$staged/checkout/"
 
   cat >"$staged/leg.sh" <<'GUEST'

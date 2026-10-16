@@ -1,0 +1,103 @@
+# The Nix channel, built and run: the flake's package and checks, the pins it builds from, and
+# this checkout's next release on the same package set.
+#
+# WHY IT EXISTS. flake.nix packages the PUBLISHED wheel (its header says why), and nothing in a
+# tag push builds it, so the channel once broke without a sound: 0.2.0 and 0.2.1 shipped bounds
+# nixpkgs could not meet (croniter<3, sqlite-vec>=0.1, tree-sitter-language-pack>=1.15.7,
+# urllib3>=2.8.0) and the flake stayed on 0.1.3 until a check by hand after a release found it.
+# Those bounds live in pyproject.toml and uv.lock, so a change to either runs this as surely as a
+# change to the flake does, and the `next release` step is what fails such a change before a
+# release ships it, rather than at the bump after.
+#
+# WEEKLY TOO. Nothing in the tree moves then, but what the flake fetches from outside it can:
+# cache.nixos.org's paths, PyPI's files, the installer. A week is how long a vanished input can
+# go unnoticed here, and the first user to install would otherwise be the one who notices.
+#
+# NO TOKEN. Nothing here needs one: the checkout is of a public repository and every fetch is
+# anonymous. And the Nix installer writes whatever token the job holds into /etc/nix/nix.conf,
+# where the gateway this job boots could read it, so the job holds none.
+name: Nix
+
+on:
+  pull_request:
+    paths:
+      - flake.nix
+      - flake.lock
+      - nix/**
+      - pyproject.toml
+      - uv.lock
+      - scripts/nix_pins.py
+      - scripts/nix_smoke.py
+      - .github/workflows/nix.yml
+  push:
+    branches: [main]
+    paths:
+      - flake.nix
+      - flake.lock
+      - nix/**
+      - pyproject.toml
+      - uv.lock
+      - scripts/nix_pins.py
+      - scripts/nix_smoke.py
+      - .github/workflows/nix.yml
+  schedule:
+    # Tuesdays, off the hour and away from the slots full.yml, ghcr-anonymous-pull.yml,
+    # headless-run-smoke.yml and clean-machine-walkthroughs.yml already hold.
+    - cron: "17 5 * * 2"
+  workflow_dispatch:
+
+# Same branch-keyed dedupe as ci.yml — see the two traps documented in its `concurrency`
+# block for why this is keyed on the branch rather than on `github.ref` or the head SHA.
+concurrency:
+  group: nix-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  flake:
+    runs-on: ubuntu-24.04
+    # A run fetches the closure from cache.nixos.org and builds only the pins and what runs on
+    # them (nix/python.nix), then boots one gateway. Bounded with wide headroom on purpose:
+    # #3326 was the cost of setting a bound BELOW a job's own measured runtime.
+    timeout-minutes: 45
+    permissions: {}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Build the package and run the flake's checks
+        # On this runner's x86_64-linux: `version-prints`, and `serves` (scripts/nix_smoke.py),
+        # which boots the installed gateway on a scratch home and reads it as a user would.
+        # `--fallback`, measured: on this job's second run cache.nixos.org answered a resumed
+        # download of pip with HTTP 416, and with no way to build the path the run went red on a
+        # change that touched nothing it builds. A path the cache fails to hand over is built
+        # from its source instead, which is the same derivation, only slower.
+        run: nix flake check --print-build-logs --fallback
+
+      - name: Every system the flake lists evaluates
+        # The other systems are not built here. Evaluating them still picks each pin's wheel for
+        # that platform out of the lock, and fails on a pin with none.
+        run: nix flake check --all-systems --no-build
+
+      - name: nix/pins.toml is uv.lock at the packaged release's tag
+        run: |
+          version="$(nix eval --raw .#personalclaw.version)"
+          git fetch --no-tags --depth=1 origin "refs/tags/v${version}:refs/tags/v${version}"
+          python3 scripts/nix_pins.py --check
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: The next release builds on the same package set
+        # nix/next-release.nix: this checkout's wheel, against nixpkgs as flake.lock pins it
+        # and the pins from this checkout's uv.lock, judged by the check a release bump meets.
+        run: |
+          uv build --wheel --out-dir "$RUNNER_TEMP/next"
+          wheels=("$RUNNER_TEMP"/next/personalclaw-*.whl)
+          nix build --impure --no-link --print-build-logs --fallback \
+            --file nix/next-release.nix --argstr wheel "${wheels[0]}"
