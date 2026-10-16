@@ -53,7 +53,7 @@ from personalclaw.channel_history import ChannelHistory
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import CRED_OWNER_ID
-from personalclaw.constants import CHAT_TURN_TIMEOUT, DATA_WARNING
+from personalclaw.constants import CHAT_TURN_IDLE_LIMIT, DATA_WARNING
 from personalclaw.context import ContextBuilder
 from personalclaw.dashboard import chat_persistence, start_dashboard, turn_deadline
 from personalclaw.dashboard.chat_runner import run_chat
@@ -182,10 +182,10 @@ _SHUTDOWN_SECS = 10.0
 # one that does not is left to the rest of the stop.
 _END_TURNS_SECS = 3.0
 
-# Upper bound for a single autonudge-driven goal loop turn. Loop cycles run long
-# (subagent fan-out, 15-20 min), so this is generous — it only fires to free a
-# genuinely-wedged turn (e.g. an ACP turn that hung and never emitted turn-end).
-# Mirrors the watchdog's _MAX_TURN_SECS so the two agree.
+# How long a single autonudge-driven goal loop turn may show no work before it is stopped
+# (`turn_deadline`). Loop cycles run long (subagent fan-out, 15-20 min), so this is generous —
+# it only fires to free a genuinely-wedged turn (e.g. an ACP turn that hung and never emitted
+# turn-end). The same number as the watchdog's own cap on a turn (_MAX_TURN_SECS).
 _NUDGE_TURN_TIMEOUT = 1800.0
 
 # A loop cycle's deliverable is its finding file (`loop.files.finding_file`: a stage worker's
@@ -3187,10 +3187,10 @@ class GatewayOrchestrator:
                     return 0
 
             async def _run_one(_sess, _msg, turn_timeout: float) -> None:
-                # The bound is on the turn's own work: while one of its calls waits on the
-                # owner's answer (an Attended loop's worker asks about each), the clock stops —
-                # the approval's window is what bounds that wait. Past it, the turn is stopped and
-                # ends saying so (`turn_deadline`).
+                # The bound is on the turn's silence: each step it shows starts the clock again,
+                # and while one of its calls runs or waits on the owner's answer (an Attended
+                # loop's worker asks about each) the clock stops. Quiet for all of it, the turn
+                # is stopped and ends saying so (`turn_deadline`).
                 await turn_deadline.run_within(
                     dstate, _sess, run_chat(dstate, _sess, _msg), turn_timeout
                 )
@@ -3216,7 +3216,7 @@ class GatewayOrchestrator:
                 # Bound each turn so a wedged worker turn can't hold the session
                 # `running` forever. Loop cycles run long (subagent fan-out,
                 # 15-20 min), so a generous bound (matches the watchdog cap).
-                turn_timeout = _NUDGE_TURN_TIMEOUT if _is_loop else CHAT_TURN_TIMEOUT
+                turn_timeout = _NUDGE_TURN_TIMEOUT if _is_loop else CHAT_TURN_IDLE_LIMIT
                 if not _is_loop:
                     await _run_one(_sess, _msg, turn_timeout)
                     return
@@ -4234,8 +4234,8 @@ class GatewayOrchestrator:
                             info.id,
                             _session_name,
                         )
-                        # Bounded by CHAT_TURN_TIMEOUT (~600s): run_chat's
-                        # finally block drains session._queue on any exit path.
+                        # run_chat's finally drains the queue on any exit path, and runs the
+                        # report bounded by its silence (`turn_deadline`): nobody typed it.
                         _injection_session.queue_append(announce, asked_for_by=asked)
                         self.dashboard_state.push_sessions_update()
                         logger.info("Subagent %s → queued in %s", info.id, _session_name)
@@ -4266,7 +4266,7 @@ class GatewayOrchestrator:
                                 announce,
                                 asked_for_by=asked,
                             ),
-                            CHAT_TURN_TIMEOUT,
+                            CHAT_TURN_IDLE_LIMIT,
                         )
                     )
                     _injection_session.task = _task

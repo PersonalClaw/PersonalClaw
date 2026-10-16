@@ -34,7 +34,7 @@ from personalclaw.answer_rules import over_limit_notice
 from personalclaw.approval_brief import call_blast_radius
 from personalclaw.audit_subject import FILE_CHANGE_KINDS, log_title
 from personalclaw.config.loader import AppConfig, resolve_agent_bindings
-from personalclaw.constants import CHAT_TURN_TIMEOUT
+from personalclaw.constants import CHAT_TURN_IDLE_LIMIT
 from personalclaw.context_engine import assemble_context, check_headroom
 from personalclaw.context_headroom import HeadroomState, resolve_window
 from personalclaw.dashboard import (
@@ -52,7 +52,7 @@ from personalclaw.dashboard.chat_persistence import (
     prior_turns_transcript,
     save_session_to_history,
 )
-from personalclaw.dashboard.chat_queue import ON_RECORD, queued_pastes
+from personalclaw.dashboard.chat_queue import ATTENDED, ON_RECORD, queued_pastes
 from personalclaw.dashboard.chat_session_map import (
     build_turn_telemetry,
     stamp_context_fed,
@@ -2378,6 +2378,8 @@ async def run_chat(
             from_channel=arrived_from_channel,
             regenerate_hint=regenerate_hint,
             asked_for_by=asked_for_by,
+            # Bounded again only if this attempt was (`turn_deadline.bounded`).
+            attended=not turn_deadline.bounded(),
         )
 
     # The turn checkpoint: open a numbered turn and
@@ -2775,6 +2777,7 @@ async def run_chat(
         """Refuse *event*'s call without running it (``turn_endings.refuse``, with a *screen*'s
         ``why`` and ``kind``), and end its progress line on the channel with how (*ended_as*)."""
         _calls_refused.add(str(event.tool_call_id or ""))
+        turn_deadline.call_ended(str(event.tool_call_id or ""))
         await turn_endings.refuse(client, event.request_id, ended_as, **screen)
         await _end_mirror_line(event.tool_call_id or "", ended_as)
 
@@ -3692,6 +3695,8 @@ async def run_chat(
                 _tcid, _ = redact_exfiltration_urls(event.tool_call_id)
                 _tcid, _ = redact_credentials(_tcid)
                 event.tool_call_id = _tcid
+            # What a bounded turn shows of its work starts its quiet clock again (`turn_deadline`).
+            turn_deadline.saw(event.kind, str(getattr(event, "tool_call_id", "") or ""))
 
             # A refusal covers the requests the agent had already sent when it was decided, which
             # wait right behind it in the stream. Anything else the agent reports first (the
@@ -5585,7 +5590,7 @@ async def run_chat(
             turn_endings.say_the_turn_has_no_answer(
                 state,
                 session,
-                turn_endings.past_limit_notice(_past_limit, asked_by_person=_asked_by_person),
+                turn_endings.past_limit_notice(_past_limit, steps=_steps_made()),
             )
         session._batch_rejected = ""
         # Clear this turn from the active-job tracker — the
@@ -5770,9 +5775,14 @@ async def run_chat(
                     arrived_from_channel=from_channel,
                     asked_for_by=carried,
                 )
-            task = asyncio.create_task(
-                turn_deadline.run_within(state, session, next_turn, CHAT_TURN_TIMEOUT)
-            )
+            # The owner's own messages run until they are done, as one typed into an idle chat
+            # does; a turn that carries anything else is bounded by its silence (`turn_deadline`).
+            if all(item.get(ATTENDED) for item in consumed):
+                task = asyncio.create_task(next_turn)
+            else:
+                task = asyncio.create_task(
+                    turn_deadline.run_within(state, session, next_turn, CHAT_TURN_IDLE_LIMIT)
+                )
             session.task = task
             state._background_tasks.add(task)
             task.add_done_callback(state._background_tasks.discard)

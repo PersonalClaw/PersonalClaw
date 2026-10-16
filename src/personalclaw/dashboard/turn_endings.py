@@ -61,15 +61,22 @@ def refused_turn_notice(agent: str) -> str:
     return f"{_sentence_case(agent)} refused to continue and wrote no answer."
 
 
-def past_limit_notice(limit_secs: float, *, asked_by_person: bool) -> str:
-    """Said when a turn that runs on its own ran past its time limit and was stopped
-    (`turn_deadline`): what ended it, which no fault did and no one pressed. A turn an automation,
-    a subagent's report or a loop's nudge started has no message of hers to send again; the chat's
-    Retry runs it again."""
-    minutes = int(limit_secs // 60)
-    limit = f"{minutes}-minute" if minutes else f"{int(limit_secs)}-second"
-    retry = "Send your message again to retry." if asked_by_person else "Retry it from the chat."
-    return f"This turn ran past its {limit} limit and was stopped. {retry}"
+def past_limit_notice(limit_secs: float, *, steps: int) -> str:
+    """Said when a turn nobody is watching showed no work for its whole limit and was stopped
+    (`turn_deadline`): what ended it, which no fault did and no one pressed, how far it got (the
+    *steps* it made that nobody refused), and that the chat is free again. What it did stays above
+    the notice, and the chat's Retry runs it again."""
+    minutes, secs = int(limit_secs // 60), int(limit_secs)
+    quiet = (
+        f"{minutes} minute{'' if minutes == 1 else 's'}"
+        if minutes
+        else f"{secs} second{'' if secs == 1 else 's'}"
+    )
+    got = f"{steps} step{'' if steps == 1 else 's'} in" if steps else "before its first step"
+    return (
+        f"This turn was stopped after {quiet} with no progress, {got}. What it did is above, "
+        "and the chat is free for your next message."
+    )
 
 
 def lost_after_steps_notice(agent: str, steps: int) -> str:
