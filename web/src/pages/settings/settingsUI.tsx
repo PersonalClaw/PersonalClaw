@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { AlertTriangle, Plus, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -298,6 +298,21 @@ export function SavedToast({ show }: { show: boolean }) {
   )
 }
 
+/** A row's "Saved" confirmation: `saved` reads true for 1.5 s after `flash()`. The timer is
+ *  cleared when the row unmounts, so a row that goes away mid-confirmation never sets state
+ *  afterwards (in a test, after the page and its `window` are already gone). */
+function useSavedFlash(): [boolean, () => void] {
+  const [saved, setSaved] = useState(false)
+  const timer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(timer.current), [])
+  const flash = () => {
+    setSaved(true)
+    window.clearTimeout(timer.current)
+    timer.current = window.setTimeout(() => setSaved(false), 1500)
+  }
+  return [saved, flash]
+}
+
 /** A labelled config switch that patches one key and flashes its own "Saved ✓".
  *
  *  Five panels had declared this privately — Sources, Legibility, Ambient, Packs and
@@ -339,8 +354,7 @@ export function ToggleRow({ label, hint, cfg, field, patch, danger, confirmOn }:
    *  Cancel leaves the switch untouched and writes nothing; turning it back OFF never prompts. */
   confirmOn?: { title: string; body: React.ReactNode; confirmLabel?: string }
 }) {
-  const [saved, setSaved] = useState(false)
-  const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
+  const [saved, flash] = useSavedFlash()
   const on = Boolean(cfg[field])
   const onChange = async (next: boolean) => {
     const asks = next && confirmOn !== undefined
@@ -412,8 +426,7 @@ export function NumberRow({ label, hint, cfg, field, min, max, step = 1, patch }
    *  `false` (`NumberField`): a declined consent must not leave the unsaved number in the box. */
   patch: (k: string, v: never, cb: () => void, label?: string) => unknown
 }) {
-  const [saved, setSaved] = useState(false)
-  const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
+  const [saved, flash] = useSavedFlash()
   // A key the backend has not written yet reads as NaN through Number(); fall back to `min` so the
   // stepper starts at a legal value instead of showing NaN.
   const raw = Number(cfg[field])
@@ -458,8 +471,7 @@ export function SegRow<T extends string>({ label, hint, cfg, field, options, fal
   /** `(key, value, onSaved, label)` — the panel's own config PATCH, typed at its widest shape. */
   patch: (k: string, v: never, cb: () => void, label?: string) => void
 }) {
-  const [saved, setSaved] = useState(false)
-  const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
+  const [saved, flash] = useSavedFlash()
   const raw = cfg[field]
   const value = options.some((o) => o.key === raw) ? (raw as T) : fallback
   return (
@@ -495,8 +507,7 @@ export function SelectRow<T extends string>({ label, hint, cfg, field, options, 
   /** `(key, value, onSaved, label)` — the panel's own config PATCH, typed at its widest shape. */
   patch: (k: string, v: never, cb: () => void, label?: string) => void
 }) {
-  const [saved, setSaved] = useState(false)
-  const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
+  const [saved, flash] = useSavedFlash()
   const raw = cfg[field]
   const value = options.some((o) => o.value === raw) ? (raw as T) : fallback
   return (
@@ -544,8 +555,7 @@ export function TextRow({ label, hint, cfg, field, patch, placeholder, mono }: {
   /** Monospace for a value with meaningful punctuation (a time window, a path). */
   mono?: boolean
 }) {
-  const [saved, setSaved] = useState(false)
-  const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
+  const [saved, flash] = useSavedFlash()
   const stored = typeof cfg[field] === 'string' ? (cfg[field] as string) : ''
   // A commit the server REFUSES must not leave the refused text in the box: the panel's `patch`
   // rolls `cfg` back, and the draft follows `stored` back with it. Keeping a refused value is
@@ -594,8 +604,7 @@ export function StrListField({ label, hint, cfg, field, editList, placeholder = 
   editList: (k: string, next: string[], cb: () => void, label?: string) => void
   placeholder?: string
 }) {
-  const [saved, setSaved] = useState(false)
-  const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
+  const [saved, flash] = useSavedFlash()
   const list = Array.isArray(cfg[field]) ? (cfg[field] as string[]) : []
   const [adding, setAdding] = useState('')
   const addId = `list-add-${useId()}`
