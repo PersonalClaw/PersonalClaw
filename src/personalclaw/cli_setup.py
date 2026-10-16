@@ -149,12 +149,15 @@ def _setup(
     credential: str = "",
     only_app: str = "",
 ) -> None:
-    """Install agent config and optionally configure credentials.
+    """Run the setup wizard, or, given ``mode``, ``provider`` or ``credential``, only those.
 
-    ``mode`` selects the deployment model: ``service`` (systemd/launchd, default),
-    ``docker`` (Compose-based), or ``none`` (manual / CI).
-    ``provider`` wires a named registry entry as the default chat provider.
-    ``credential`` registers a named credential in the credential store.
+    ``mode`` prints a deployment hint and changes nothing: ``service`` (the
+    ``personalclaw service install`` command), ``docker`` (the one-container ``docker run``)
+    or ``none`` (no hint); empty, the default, prints none either.
+    ``provider`` sets ``agent.provider``, the runtime an agent that names none runs on.
+    ``credential`` saves a secret under a name in the credential store.
+    Given any of those three, setup applies them (:func:`_setup_noninteractive`) and runs no
+    other step, so it asks nothing; with ``agent_only`` it then installs the agent config too.
     ``only_app`` runs ONLY that installed app's ``cli.setup`` step, skipping the
     core steps and every other app (``personalclaw setup --app <name>``).
 
