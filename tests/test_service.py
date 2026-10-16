@@ -17,7 +17,20 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from personalclaw.service.common import LAUNCHD_LABEL, SERVICE_NAME, Platform, current_platform
+from personalclaw.service.common import (
+    LAUNCHD_LABEL,
+    SERVICE_NAME,
+    Platform,
+    current_platform,
+    service_path,
+)
+
+
+def _launched_with_path(monkeypatch, value):
+    """Make *value* the ``$PATH`` the installing command was launched with (``None``: none)."""
+    import personalclaw.env
+
+    monkeypatch.setattr(personalclaw.env, "startup_path", lambda: value)
 
 
 class TestPlatformDetection:
@@ -63,6 +76,25 @@ class TestPlatformDetection:
             assert current_platform() == Platform.UNSUPPORTED
 
 
+class TestServicePath:
+    """The service's PATH is the installing shell's, in its order: a program is found where that
+    shell finds it, and the directories every service needs are added after it, never ahead."""
+
+    def test_the_service_path_keeps_the_installers_order(self, monkeypatch):
+        _launched_with_path(monkeypatch, "/opt/homebrew/bin:/usr/bin:/bin")
+        assert service_path("/home/u") == (
+            "/opt/homebrew/bin:/usr/bin:/bin:/home/u/.local/bin:/usr/local/bin"
+        )
+
+    def test_a_required_directory_already_there_keeps_its_place(self, monkeypatch):
+        _launched_with_path(monkeypatch, "/home/u/.local/bin:/opt/x")
+        assert service_path("/home/u") == "/home/u/.local/bin:/opt/x:/usr/local/bin:/usr/bin:/bin"
+
+    def test_no_startup_path_leaves_the_required_directories(self, monkeypatch):
+        _launched_with_path(monkeypatch, None)
+        assert service_path("/home/u") == "/home/u/.local/bin:/usr/local/bin:/usr/bin:/bin"
+
+
 class TestLinuxUnitRendering:
     """The rendered systemd unit should reference the resolved personalclaw bin."""
 
@@ -99,6 +131,24 @@ class TestLinuxUnitRendering:
         # not default.target (which is user-session-scoped and only used
         # by `systemctl --user`).
         assert "WantedBy=multi-user.target" in unit
+
+    def test_render_unit_path_starts_with_the_installers_path(self, monkeypatch):
+        from personalclaw.service import linux as svc_linux
+        from personalclaw.service.environment import systemd_environment
+
+        monkeypatch.setenv("USER", "tester")
+        _launched_with_path(monkeypatch, "/opt/tools/bin:/usr/bin")
+        gid_result = MagicMock(returncode=0, stdout="staff\n", stderr="")
+        with (
+            patch(
+                "personalclaw.service.common.shutil.which",
+                return_value="/home/u/.local/bin/personalclaw",
+            ),
+            patch("personalclaw.service.linux.subprocess.run", return_value=gid_result),
+        ):
+            unit = svc_linux.render_unit()
+        path = systemd_environment(unit)["PATH"]
+        assert path.startswith("/opt/tools/bin:/usr/bin:"), path
 
     def test_render_unit_falls_back_to_argv0_when_personalclaw_not_on_path(self, monkeypatch):
         from personalclaw.service import linux as svc_linux
@@ -219,6 +269,20 @@ class TestMacOSPlistRendering:
         assert "<string>gateway</string>" in plist
         assert "<key>RunAtLoad</key>" in plist
         assert "<key>KeepAlive</key>" in plist
+
+    def test_render_plist_path_starts_with_the_installers_path(self, monkeypatch):
+        import plistlib
+
+        from personalclaw.service import macos as svc_macos
+
+        _launched_with_path(monkeypatch, "/opt/homebrew/bin:/usr/bin")
+        with patch(
+            "personalclaw.service.common.shutil.which",
+            return_value="/opt/homebrew/bin/personalclaw",
+        ):
+            plist = svc_macos.render_plist()
+        path = plistlib.loads(plist.encode())["EnvironmentVariables"]["PATH"]
+        assert path.startswith("/opt/homebrew/bin:"), path
 
     def test_render_plist_xml_escapes_special_chars(self):
         from personalclaw.service import macos as svc_macos

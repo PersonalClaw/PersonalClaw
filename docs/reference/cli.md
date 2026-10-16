@@ -382,7 +382,9 @@ shell running it sets it, and prints what it carried:
 | Where agent CLIs and model tools keep their files | `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `HF_HOME`, `HF_HUB_CACHE`, `HF_TOKEN_PATH`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME` |
 | Proxies and TLS trust | `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY`, `https_proxy`, `http_proxy`, `all_proxy`, `no_proxy`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, `GIT_SSL_CAINFO`, `GIT_SSL_CAPATH` |
 
-The service file sets `HOME` and `PATH` itself (and `USER` on Linux). Anything
+The service file sets `HOME` and `PATH` itself (and `USER` on Linux). Its `PATH` is
+the `PATH` of the shell that ran `service install`, in the same order, with `~/.local/bin`,
+`/usr/local/bin`, `/usr/bin` and `/bin` added at the end when it lacks them. Anything
 that widens who can reach the gateway, such as `PERSONALCLAW_BIND_HOST`, is carried
 only when you ask for it with `--env`.
 
