@@ -35,6 +35,11 @@ SRC = Path(pricing.__file__).resolve().parent
 #: by where the entry's endpoint is); one elsewhere takes a rate set or declared for it.
 _PRICED_WHERE_THEY_RUN = ("llama3.1", "llama3.2", "qwen2.5", "mistral", "phi3")
 
+#: Priced by the prompt's size: the vendor bills a request whose prompt is over 100,000 tokens at
+#: a second, higher rate, and a row holds one rate per kind. So the table has no row for it, and
+#: it takes a rate set or declared for it.
+_PRICED_BY_PROMPT_SIZE = ("claude-haiku-5.5",)
+
 
 def _census() -> list[str]:
     """The live catalog census: every id model_tokens.json knows about."""
@@ -48,12 +53,15 @@ class TestTheRail:
     def test_every_catalog_id_resolves_to_a_price_row(self) -> None:
         """The rail: an id the app serves but cannot price is a regression.
 
-        Every id but an open-weight family's, which has no list price to carry, so absence
-        always means 'someone added a model and forgot the price table'.
+        Every id but an open-weight family's, which has no list price to carry, and a model
+        priced by its prompt's size, whose price no row can carry, so absence always means
+        'someone added a model and forgot the price table'.
         """
         census = _census()
         assert set(_PRICED_WHERE_THEY_RUN) <= set(census), "premise: the families are catalogued"
-        unresolved = [m for m in census if m not in _PRICED_WHERE_THEY_RUN and not has_pricing(m)]
+        assert set(_PRICED_BY_PROMPT_SIZE) <= set(census), "premise: the models are catalogued"
+        unpriced = (*_PRICED_WHERE_THEY_RUN, *_PRICED_BY_PROMPT_SIZE)
+        unresolved = [m for m in census if m not in unpriced and not has_pricing(m)]
         assert not unresolved, (
             "catalog ids with no resolvable price row (add a row to "
             f"model_pricing.json or fix _canonical): {unresolved}"
@@ -79,6 +87,12 @@ class TestTheRail:
             assert not has_pricing(m), f"{m} has a row, which prices it the same on any machine"
         for billed in ("mistral-large-latest", "mistral-small-2503", "qwen2.5-72b-instruct"):
             assert not has_pricing(billed), f"{billed} matched a free family's row by prefix"
+
+    def test_no_row_prices_a_model_priced_by_its_prompts_size(self) -> None:
+        """A row would price every prompt at one of the model's rates: at its short-prompt rate,
+        a long prompt counts at a fifth of what it costs against a dollar ceiling."""
+        for m in _PRICED_BY_PROMPT_SIZE:
+            assert not has_pricing(m), f"{m} has a row, which prices every prompt size alike"
 
 
 class TestTheNormalizationPin:
