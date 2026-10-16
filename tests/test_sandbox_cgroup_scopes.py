@@ -255,10 +255,10 @@ def test_spawn_shim_argv_wraps_the_shim_in_the_scope(monkeypatch):
     # The NOFILE shim is still there, intact, inside the scope — NOT replaced by it.
     sep = out.index("--")
     inner = out[sep + 1 :]
-    assert inner[:3] == [sys.executable, "-m", sandbox._SHIM_MODULE]
-    assert "RLIMIT_NOFILE" in inner[3], "the shim must still carry the NOFILE floor"
-    assert inner[4] == "--"
-    assert inner[5:] == list(_ARGV)
+    assert inner[:4] == [sys.executable, "-P", "-m", sandbox._SHIM_MODULE]
+    assert "RLIMIT_NOFILE" in inner[4], "the shim must still carry the NOFILE floor"
+    assert inner[5] == "--"
+    assert inner[6:] == list(_ARGV)
     assert out.index("systemd-run") < out.index(sys.executable)
 
 
@@ -267,7 +267,7 @@ def test_spawn_shim_argv_is_shim_only_without_the_tier(monkeypatch):
     _force_probe(monkeypatch, True)
     ceilings = ResourceCeilings(nofile=4096, max_pids=64, max_rss_mb=512, cgroup_scopes=False)
     out = spawn_shim_argv(list(_ARGV), PROFILE_TOOL, ceilings)
-    assert out[:3] == [sys.executable, "-m", sandbox._SHIM_MODULE]
+    assert out[:4] == [sys.executable, "-P", "-m", sandbox._SHIM_MODULE]
     assert "systemd-run" not in out
 
 

@@ -609,7 +609,10 @@ that installs its packages, the venv and pip of its engine, the npm that install
 adapter, its setup hooks, backend, worker, sidecar and MCP servers. None of them inherits a
 credential you did not pass through by name in `sandbox.env_passthrough`, and a proxy address
 reaches them without its login. A backend and an MCP server both run under the
-resource-ceiling shim (`sandbox.py::spawn_shim_argv`).
+resource-ceiling shim (`sandbox.py::spawn_shim_argv`). The shim, like every child PersonalClaw
+starts from one of its own modules, starts with Python's `-P`, so a `personalclaw` package in the
+folder it starts in is never imported in place of this install's
+(`self_update.py::python_child_argv`); what the shim then runs still finds its own folder first.
 
 **What is not enforced:** anything about the code itself. A backend that names no
 sandbox, a provider module, an MCP server, a setup hook and a CLI step have your files and

@@ -142,8 +142,8 @@ async def test_the_restarted_image_is_this_gateway_with_its_auth_mode_pinned(mon
         await orch._finish()
     path, argv, env = started[0]
     assert path == sys.executable
-    assert argv[:3] == [sys.executable, "-m", "personalclaw"]
-    assert argv[3:] == ["gateway", "--port", "19703", "--no-open"]
+    assert argv[:4] == [sys.executable, "-P", "-m", "personalclaw"]
+    assert argv[4:] == ["gateway", "--port", "19703", "--no-open"]
     assert env["PERSONALCLAW_AUTH_MODE"] == "none"
 
 

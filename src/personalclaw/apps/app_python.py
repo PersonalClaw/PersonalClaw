@@ -163,7 +163,9 @@ def child_env() -> dict[str, str]:
 
 def child_argv(entry: Path) -> list[str]:
     """How to start an app's Python entry script so it sees the app packages after its own."""
-    return [sys.executable, "-m", CHILD_MODULE, str(entry)]
+    from personalclaw.self_update import python_child_argv
+
+    return python_child_argv(CHILD_MODULE, str(entry))
 
 
 def app_packages_env() -> dict[str, str]:

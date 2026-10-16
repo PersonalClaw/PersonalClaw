@@ -120,7 +120,7 @@ def test_spawn_detached_gateway_launches_personalclaw_gateway():
         cli_server._spawn_detached_gateway(7777)
     popen.assert_called_once()
     argv = popen.call_args.args[0]
-    assert argv[1:] == ["-m", "personalclaw", "gateway", "--port", "7777", "--no-open"]
+    assert argv[1:] == ["-P", "-m", "personalclaw", "gateway", "--port", "7777", "--no-open"]
     assert popen.call_args.kwargs.get("start_new_session") is True
 
 

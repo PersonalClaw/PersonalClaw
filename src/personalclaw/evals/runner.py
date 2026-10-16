@@ -33,7 +33,6 @@ import json
 import logging
 import os
 import subprocess
-import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -60,6 +59,7 @@ from personalclaw.evals.matrix import (
 from personalclaw.llm import registry as registry_lib
 from personalclaw.security import mask_child_output
 from personalclaw.sel import sel
+from personalclaw.self_update import python_child_argv
 
 logger = logging.getLogger(__name__)
 
@@ -249,7 +249,7 @@ def _spawn_cell(
         env = cell_provider.spawn_env_for(env, provider_binding)
         try:
             proc = subprocess.run(
-                [sys.executable, "-m", "personalclaw.evals.child", str(descriptor_path)],
+                python_child_argv("personalclaw.evals.child", str(descriptor_path)),
                 env=env,
                 timeout=timeout_secs,
                 capture_output=True,

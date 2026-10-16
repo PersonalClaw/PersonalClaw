@@ -57,7 +57,6 @@ import asyncio
 import json
 import logging
 import os
-import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -201,7 +200,9 @@ def scan_argv() -> list[str]:
     """The child's argv: this interpreter running :data:`CHILD_MODULE`, never a console script on
     PATH, so the child is this install. In the desktop app the interpreter is the bundle, whose
     entry runs the module as ``python -m`` does (``_frozen_child``)."""
-    return [sys.executable, "-m", CHILD_MODULE]
+    from personalclaw.self_update import python_child_argv
+
+    return python_child_argv(CHILD_MODULE)
 
 
 async def scan_upload(upload: Path | bytes, category: str, *, surface: str) -> None:

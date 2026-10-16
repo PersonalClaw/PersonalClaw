@@ -2183,8 +2183,10 @@ def spawn_shim_argv(
 
     ``none`` (or an empty policy) returns *argv* unchanged — no shim, no interpreter
     startup cost. Otherwise the result is
-    ``[sys.executable, "-m", _SHIM_MODULE, <policy-json>, "--", *argv]``; the shim applies
-    the limits in the exec'd child and ``execv``s ``argv``.
+    ``[sys.executable, "-P", "-m", _SHIM_MODULE, <policy-json>, "--", *argv]``
+    (``self_update.python_child_argv``); the shim applies the limits in the exec'd child and
+    ``execv``s ``argv``. ``-P`` keeps the working folder, the agent's own, off the shim's import
+    path, so a ``personalclaw`` package there is never what runs ahead of the sandbox.
 
     When the cgroup-scope tier is opted in and available, that shim invocation is itself
     wrapped in a ``systemd-run --user --scope`` (see :func:`cgroup_scope_argv`) so the scope
@@ -2200,14 +2202,11 @@ def spawn_shim_argv(
     if not policy:
         return list(argv)
     _warn_unenforced_ceilings(cel)
-    shimmed = [
-        sys.executable,
-        "-m",
-        _SHIM_MODULE,
-        json.dumps(policy, separators=(",", ":")),
-        "--",
-        *argv,
-    ]
+    from personalclaw.self_update import python_child_argv
+
+    shimmed = python_child_argv(
+        _SHIM_MODULE, json.dumps(policy, separators=(",", ":")), "--", *argv
+    )
     return cgroup_scope_argv(shimmed, cel)
 
 

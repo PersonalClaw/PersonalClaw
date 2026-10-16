@@ -320,6 +320,58 @@ def test_a_python_child_of_an_app_sees_the_packages_after_its_own(tmp_path):
     assert argv == [str(script), "--flag"] and path0 == str(tmp_path)
 
 
+def test_a_python_child_of_an_app_keeps_its_interpreters_whole_path(tmp_path):
+    """🔴 The child starts with ``-P``, so its first path entry is not the working folder but the
+    interpreter's own (the standard library's zip). Replacing that entry with the script's folder
+    took it away; the script's folder goes in front of it instead."""
+    from personalclaw.self_update import python_child_argv
+
+    app = tmp_path / "app"
+    app.mkdir()
+    script = app / "entry.py"
+    script.write_text("import json, sys\nprint(json.dumps(sys.path))\n", encoding="utf-8")
+    env = {**os.environ, "PERSONALCLAW_HOME": str(manager.config_dir())}
+    env.pop("PYTHONPATH", None)
+    env.pop(_ap().PATH_ENV, None)
+
+    def _path(argv: list[str]) -> list[str]:
+        done = subprocess.run(
+            argv, capture_output=True, text=True, env=env, cwd=str(tmp_path), timeout=60
+        )
+        assert done.returncode == 0, done.stderr
+        return json.loads(done.stdout)
+
+    child = _path(python_child_argv("personalclaw._app_python_child", str(script)))
+    plain = _path([sys.executable, "-P", "-c", "import sys, json; print(json.dumps(sys.path))"])
+    assert child[0] == str(app)
+    assert [entry for entry in plain if entry not in child] == []
+
+
+def test_a_frozen_child_of_an_app_keeps_the_bundles_whole_path(monkeypatch, tmp_path):
+    """In the desktop app the bundle runs the child in place (``_frozen_child.run``), with the path
+    its bootloader set: the first entry is the bundle's own, so it stays and the script's folder
+    goes in front of it."""
+    import runpy
+
+    from personalclaw import _app_python_child as child
+
+    bundle_path = [
+        "/app/_internal/base_library.zip",
+        "/app/_internal/lib-dynload",
+        "/app/_internal",
+    ]
+    monkeypatch.setattr("sys.frozen", True, raising=False)
+    monkeypatch.setattr("sys.path", list(bundle_path))
+    monkeypatch.setattr("sys.argv", list(sys.argv))
+    monkeypatch.delenv(child.PATH_ENV, raising=False)
+    seen: list[list[str]] = []
+    monkeypatch.setattr(runpy, "run_path", lambda *_a, **_k: seen.append(list(sys.path)))
+    script = tmp_path / "app" / "entry.py"
+
+    assert child.main([str(script)]) == 0
+    assert seen == [[str(script.parent), *bundle_path]]
+
+
 def test_a_backend_starts_through_the_child_bootstrap_only_when_its_app_declares_packages():
     from personalclaw.apps.backend_runtime import BackendSupervisor
 
@@ -327,6 +379,7 @@ def test_a_backend_starts_through_the_child_bootstrap_only_when_its_app_declares
     assert BackendSupervisor._launch_cmd("python", entry) == [sys.executable, str(entry)]
     assert BackendSupervisor._launch_cmd("python", entry, app_packages=True) == [
         sys.executable,
+        "-P",
         "-m",
         "personalclaw._app_python_child",
         str(entry),

@@ -90,7 +90,7 @@ class TestTheRelaunchForEachInstallKind:
         monkeypatch.setattr("sys.executable", python)
         monkeypatch.setattr("sys.argv", [str(root / ".venv/bin/personalclaw"), "gateway"])
         assert self_update.detect_install_kind() == "git"
-        assert _relaunched() == (python, "-m", "personalclaw", "gateway", "--no-open")
+        assert _relaunched() == (python, "-P", "-m", "personalclaw", "gateway", "--no-open")
 
     def test_a_wheel_install_relaunches_its_interpreter_with_dash_m(
         self, monkeypatch, tmp_path, environment_made_by
@@ -105,6 +105,7 @@ class TestTheRelaunchForEachInstallKind:
         assert self_update.detect_install_kind() == "pip"
         assert _relaunched() == (
             python,
+            "-P",
             "-m",
             "personalclaw",
             "gateway",
@@ -124,7 +125,7 @@ class TestTheRelaunchForEachInstallKind:
         monkeypatch.setattr("sys.executable", python)
         monkeypatch.setattr("sys.argv", [str(tmp_path / ".local/bin/personalclaw"), "gateway"])
         assert self_update.detect_install_kind() == "pip"
-        assert _relaunched() == (python, "-m", "personalclaw", "gateway", "--no-open")
+        assert _relaunched() == (python, "-P", "-m", "personalclaw", "gateway", "--no-open")
 
 
 def _orchestrator() -> GatewayOrchestrator:
