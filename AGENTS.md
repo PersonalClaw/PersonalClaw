@@ -173,8 +173,9 @@ stays true.
 - **Branch, never commit to `main`:** `feature-<slug>` / `bugfix-<slug>` /
   `improvement-<slug>`, one concern per branch, off `main`.
 - **One conceptual commit per branch:** amend + `git push --force-with-lease` as
-  it iterates. **`main` is append-only and NEVER force-pushed** (the self-updater
-  `git pull`s it).
+  it iterates. **`main` is append-only and NEVER force-pushed** (release tags are
+  cut from it, and a source checkout on the nightly channel updates by
+  fast-forwarding it).
 - **DCO required:** `git commit -s` on every commit (CI enforces it).
 - **Clean authorship:** owner is the sole author + committer — no agent
   co-author or session trailers.
