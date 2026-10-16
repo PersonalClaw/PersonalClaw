@@ -1300,7 +1300,7 @@ a pre-1.0 clean break with no automatic migration: run `personalclaw snapshot` a
 - **The documented `config get > f.json` → edit → `config set --file f.json` loop no longer deletes every provider you have configured.**
 - **`personalclaw config get` no longer prints your provider API keys and Slack tokens, and the fix does not delete them instead.**
 - **Launching a loop from Plan Review no longer wipes every `kind_config` field that screen doesn't render.**
-- **`personalclaw snapshot` now carries your provider API keys, and the durability census stopped counting decisions that had already been made as debt.**
+- **The durability census stopped counting decisions that had already been made as debt.**
 - **`personalclaw config set` no longer deletes every configured model provider.**
 - **A tool call's input has one owner, so a persisted chat renders the same as a live one.**
 - **The health strip no longer goes coral just because you set a login password.**
