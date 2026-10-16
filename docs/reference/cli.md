@@ -277,6 +277,9 @@ Install agent config and configure credentials (interactive wizard).
 | `--credential NAME[=VALUE]` | Save a secret under `NAME` in the credential store Settings → Secrets lists, where `{{secret:NAME}}` and a provider's `credential` read it. The value comes after `=`, else from the environment variable `NAME`. |
 | `--app NAME` | Run only the named installed app's setup step. |
 
+With `--mode`, `--provider` or `--credential`, `setup` applies those flags and runs none of its
+other steps, so it asks nothing; add `--agent-only` to install the agent config as well.
+
 A step that fails never ends on "Done!". It says why on stderr and `setup` goes on to the
 next step, then ends on a summary naming each failed step with the command that runs it
 again (`personalclaw setup`, `personalclaw setup --agent-only`, or
