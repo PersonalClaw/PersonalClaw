@@ -1142,20 +1142,19 @@ def _load_existing_config(path: Path) -> tuple[dict, bool]:
 
 
 def rebuild_agent_config(*, clean: bool = False) -> Path:
-    """Rebuild and write the merged personalclaw.json to ~/.personalclaw/agents/.
+    """Rebuild and write the merged personalclaw.json to ``<home>/agents/``.
 
     This is the single authoritative function for producing the agent config.
-    It reads all source files, merges with correct priority, resolves commands,
-    and injects fresh marketplace skill paths.
+    It reads its sources, merges them in the priority below, and resolves each
+    stdio server's command to an absolute path, dropping a server whose command
+    is not found.
 
     Merge priority (highest wins):
-      1. ~/.personalclaw/mcp.json (agent-specific overrides)
-      2. ~/.personalclaw/mcp.json (user global, fills gaps)
-      3. Existing personalclaw.json (preserves user customizations)
-      4. Bundled defaults (security, managed servers)
-
-    --skill-paths are always resolved fresh from marketplace manifests regardless
-    of what any source file contains.
+      1. ``<home>/mcp.json``, the owner's MCP servers: its definition of a server
+         replaces the copy's whole, and the copy keeps only the state it adds
+         (``autoApprove``, …). Managed servers are never taken from it.
+      2. The existing personalclaw.json (preserves user customizations).
+      3. Bundled defaults (security, managed servers).
 
     When the config already exists and *clean* is False, the existing file
     is used as the base so that **all** user customizations are preserved.
