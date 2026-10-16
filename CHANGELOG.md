@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Fixed
+
+- **Settings → Updates' release notes and changelog scroll from the keyboard, and a screen reader names each box instead of reading all of it out as its name.**
+
 ## [0.2.1] — 2026-10-15
 
 A patch release on 0.2.0. On Linux an agent on an agent CLI can save your automations,
