@@ -57,7 +57,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sys
 import time
 import uuid
 from dataclasses import dataclass
@@ -418,7 +417,9 @@ def _driver_argv() -> list[str]:
     from a venv whose ``bin`` is not on ``PATH``, and a driver that silently resolved to a
     *different* interpreter's PersonalClaw would read the wrong home — the wrong keystone.
     """
-    return [sys.executable, "-m", DRIVER_CHILD_MODULE]
+    from personalclaw.self_update import python_child_argv
+
+    return python_child_argv(DRIVER_CHILD_MODULE)
 
 
 async def _run_driver(op: str, payload: dict[str, Any], *, tool: str) -> dict[str, Any]:

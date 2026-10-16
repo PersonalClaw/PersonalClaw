@@ -208,6 +208,25 @@ def is_frozen() -> bool:
     return bool(getattr(sys, "frozen", False)) or hasattr(sys, "_MEIPASS")
 
 
+def python_child_argv(module: str, *args: str) -> list[str]:
+    """The command that runs the package's own *module* as a child, as ``python -m`` runs it.
+
+    From an interpreter it carries ``-P``: ``-m`` alone puts the child's working folder first on
+    its import path, so a folder holding a ``personalclaw`` package (a checkout's ``src/``, a
+    project with one at its top) ran its own code in place of this install's. The resource-ceiling
+    shim starts in the folder an agent works in, ahead of the sandbox it then starts, so that code
+    ran outside the sandbox. The flag is on the command line, never ``PYTHONSAFEPATH`` in the
+    environment: the shim hands its environment on to the owner's own command, whose imports must
+    not change. A frozen bundle's executable takes ``-m <module>`` as its first words
+    (``_frozen_child.child_module``), and its bootloader puts no working folder on the path.
+    """
+    import sys
+
+    if is_frozen():
+        return [sys.executable, "-m", module, *args]
+    return [sys.executable, "-P", "-m", module, *args]
+
+
 def cli_argv() -> list[str]:
     """The command that runs THIS install's own ``personalclaw`` CLI, before its subcommand.
 
@@ -218,14 +237,14 @@ def cli_argv() -> list[str]:
     ``<bundle> gateway …``), so the subcommand follows it directly: an interpreter's ``-m`` is
     not an argument its parser accepts, and a gateway re-launched with one exited at once.
     Every other install (a checkout, a wheel, a ``uv tool`` or ``pipx`` install) runs it as this
-    interpreter's ``-m personalclaw``, never as a console script found on ``PATH``, which can
-    belong to another install.
+    interpreter's ``-P -m personalclaw`` (:func:`python_child_argv`), never as a console script
+    found on ``PATH``, which can belong to another install.
     """
     import sys
 
     if is_frozen():
         return [sys.executable]
-    return [sys.executable, "-m", "personalclaw"]
+    return python_child_argv("personalclaw")
 
 
 def detect_install_kind() -> InstallKind:

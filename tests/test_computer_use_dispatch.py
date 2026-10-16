@@ -862,7 +862,7 @@ def test_the_driver_argv_names_the_child_module_and_this_interpreter():
     PersonalClaw — a different home, and therefore a different keystone."""
     import sys
 
-    assert service._driver_argv() == [sys.executable, "-m", service.DRIVER_CHILD_MODULE]
+    assert service._driver_argv() == [sys.executable, "-P", "-m", service.DRIVER_CHILD_MODULE]
     assert service.DRIVER_CHILD_MODULE == driver_host.__name__
 
 

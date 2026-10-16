@@ -265,8 +265,8 @@ def test_the_ceiling_shim_wraps_the_sandbox_and_not_the_reverse(
         f"something other than the cron runner spawned here: {seen}"
     )
     argv = seen[0]
-    # The shim prefix leads: <python> -m personalclaw._spawn_exec_shim <policy> -- <rest>
-    assert argv[1:3] == ["-m", "personalclaw._spawn_exec_shim"], argv[:4]
+    # The shim prefix leads: <python> -P -m personalclaw._spawn_exec_shim <policy> -- <rest>
+    assert argv[1:4] == ["-P", "-m", "personalclaw._spawn_exec_shim"], argv[:5]
     sep = argv.index("--")
     inner = argv[sep + 1 :]
     assert inner, "nothing after the shim's '--' separator"
@@ -330,4 +330,4 @@ def test_the_tool_policy_is_never_empty_so_the_site_cannot_silently_unshim() -> 
 
     off = ResourceCeilings(nofile=0, max_pids=0, max_rss_mb=0)
     wrapped = spawn_shim_argv(["/bin/true"], PROFILE_TOOL, off)
-    assert wrapped[1:3] == ["-m", "personalclaw._spawn_exec_shim"], wrapped
+    assert wrapped[1:4] == ["-P", "-m", "personalclaw._spawn_exec_shim"], wrapped

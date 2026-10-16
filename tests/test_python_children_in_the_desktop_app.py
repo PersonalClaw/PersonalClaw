@@ -11,16 +11,22 @@ So there are two ways a child starts, and each call site takes one:
 
 * **this install's CLI**, through ``self_update.cli_argv`` (the bundle's executable, or this
   interpreter's ``-m personalclaw``), and nowhere else;
-* **one of the package's own child modules** as ``<sys.executable> -m <module>``, which the
-  bundle's entry script runs the way ``python -m`` does, for exactly the modules
-  ``_frozen_child.CHILD_MODULES`` declares (and which the bundle therefore carries).
+* **one of the package's own child modules** through ``self_update.python_child_argv``
+  (``<sys.executable> -P -m <module>``), which the bundle's entry script runs the way
+  ``python -m`` does, for exactly the modules ``_frozen_child.CHILD_MODULES`` declares (and which
+  the bundle therefore carries).
+
+From an interpreter every one of them carries ``-P``: ``-m`` alone puts the child's working folder
+first on its import path, so a folder holding a ``personalclaw`` package (a checkout's ``src/``,
+any project with one at its top) ran its own code in place of this install's, and in the folder an
+agent works in, ahead of the sandbox the ceiling shim then starts.
 
 What is left needs a real Python interpreter, which the desktop app does not have, and is named
 below with the reason and where the desktop app refuses it before it starts (``python_children``,
 whose sentence each refusal says; ``test_the_desktop_app_refuses_python_children`` holds each
 one to it), or why the desktop app never reaches it. The census is an AST walk over every list or
-tuple whose first item is ``sys.executable``: a new one reds
-:func:`test_every_interpreter_child_is_classified` until its author says which kind it is.
+tuple whose first item is ``sys.executable``, and every call of ``python_child_argv``: a new one
+reds :func:`test_every_interpreter_child_is_classified` until its author says which kind it is.
 """
 
 from __future__ import annotations
@@ -45,6 +51,7 @@ _SRC = _REPO / "src" / "personalclaw"
 #: ``cli`` is this install's CLI (one place only); ``module`` a declared child module; anything
 #: else is a child that needs a Python interpreter, with why, and does not start in the desktop app.
 _CLASSIFIED: dict[str, str] = {
+    "self_update.py::python_child_argv": "helper",
     "self_update.py::cli_argv": "cli",
     "sandbox.py::spawn_shim_argv": "module",
     "computer_use/service.py::_driver_argv": "module",
@@ -118,9 +125,33 @@ def _module_constants(tree: ast.Module) -> dict[str, str]:
     return found
 
 
+#: The one helper that starts a Python child running one of the package's modules.
+_HELPER = "python_child_argv"
+
+
+def _is_helper_call(node: ast.AST) -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+    return name == _HELPER
+
+
+def _module_of(argv: list[str]) -> str | None:
+    """The module an interpreter's argv runs with ``-m``, after any flags before it."""
+    for flag, module in zip(argv, argv[1:]):
+        if flag == "-m":
+            return module
+        if not flag.startswith("-"):
+            return None
+    return None
+
+
 def _census() -> dict[str, list[list[str]]]:
     """Every list or tuple in ``src/personalclaw`` that starts with ``sys.executable``, by the
-    ``file::qualname`` it sits in, as the text of its next two items (a module name resolved)."""
+    ``file::qualname`` it sits in, as the text of its next three items (a module name resolved).
+    A call of ``python_child_argv(<module>, …)`` is the argv it makes from an interpreter,
+    ``-P -m <module>``."""
     sites: dict[str, list[list[str]]] = {}
     for path in sorted(_SRC.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -153,11 +184,17 @@ def _census() -> dict[str, list[list[str]]]:
             def _argv(self, node: ast.List | ast.Tuple) -> None:
                 if node.elts and _is_sys_executable(node.elts[0]):
                     key = f"{rel}::{'.'.join(scope)}"
-                    sites.setdefault(key, []).append([_text(e) for e in node.elts[1:3]])
+                    sites.setdefault(key, []).append([_text(e) for e in node.elts[1:4]])
                 self.generic_visit(node)
 
             visit_List = _argv
             visit_Tuple = _argv
+
+            def visit_Call(self, node: ast.Call) -> None:
+                if _is_helper_call(node) and node.args:
+                    key = f"{rel}::{'.'.join(scope)}"
+                    sites.setdefault(key, []).append(["-P", "-m", _text(node.args[0])])
+                self.generic_visit(node)
 
         _Visitor().visit(tree)
     return sites
@@ -168,6 +205,7 @@ def test_the_census_is_not_vacuous():
     sites = _census()
     assert "sandbox.py::spawn_shim_argv" in sites
     assert "self_update.py::cli_argv" in sites
+    assert "self_update.py::python_child_argv" in sites
     assert len(sites) >= 10, sorted(sites)
 
 
@@ -176,7 +214,8 @@ def test_every_interpreter_child_is_classified():
     assert sorted(sites) == sorted(_CLASSIFIED), (
         "a child started with this interpreter is either new (classify it in _CLASSIFIED: this "
         "install's CLI through self_update.cli_argv, a module declared in "
-        "_frozen_child.CHILD_MODULES, or a child that needs an interpreter, and say why) or gone "
+        "_frozen_child.CHILD_MODULES started through self_update.python_child_argv, or a child "
+        "that needs an interpreter, and say why) or gone "
         f"(drop it): census-only {sorted(set(sites) - set(_CLASSIFIED))}, "
         f"classified-only {sorted(set(_CLASSIFIED) - set(sites))}"
     )
@@ -187,15 +226,32 @@ def test_only_cli_argv_spells_out_this_installs_cli():
     spelled = sorted(
         key
         for key, argvs in _census().items()
-        if any(argv[:2] == ["-m", "personalclaw"] for argv in argvs)
+        if any(_module_of(argv) == "personalclaw" for argv in argvs)
     )
     assert spelled == ["self_update.py::cli_argv"]
+
+
+def test_every_package_module_child_ignores_its_working_folder():
+    """🔴 ``-m`` alone puts the child's working folder first on its import path, so a folder
+    holding a ``personalclaw`` package ran its code instead of this install's. Every child that
+    runs one of the package's modules carries ``-P`` from an interpreter; only the helper itself
+    spells the bundle's form, which has no working folder on its path to drop."""
+    unsafe = sorted(
+        key
+        for key, argvs in _census().items()
+        if key != f"self_update.py::{_HELPER}"
+        for argv in argvs
+        if (module := _module_of(argv)) is not None
+        and (module == "personalclaw" or module.startswith("personalclaw."))
+        and "-P" not in argv[: argv.index("-m")]
+    )
+    assert not unsafe, f"start these through self_update.{_HELPER}: {unsafe}"
 
 
 def test_every_module_child_is_one_the_bundle_runs():
     """A child module the bundle's entry does not run reaches its CLI parser instead."""
     modules = {
-        key: [argv[1] for argv in argvs if argv[:1] == ["-m"]]
+        key: [module for argv in argvs if (module := _module_of(argv)) is not None]
         for key, argvs in _census().items()
         if _CLASSIFIED.get(key) == "module"
     }
@@ -381,6 +437,21 @@ def test_the_frozen_entry_still_refuses_what_is_not_declared(tmp_path):
     assert "invalid choice: 'personalclaw.cli'" in done.stderr
 
 
+class TestAModuleChildStartsInTheBundleAndAnInterpreter:
+    def test_the_bundle_runs_it_as_its_entry_reads_it(self, frozen):
+        """The entry runs a declared child only when ``-m`` is its first word
+        (``_frozen_child.child_module``), and the bootloader puts no working folder on the path."""
+        from personalclaw import _frozen_child
+
+        argv = self_update.python_child_argv("personalclaw._spawn_exec_shim", "{}", "--", "x")
+        assert argv == [frozen, "-m", "personalclaw._spawn_exec_shim", "{}", "--", "x"]
+        assert _frozen_child.child_module(argv) == "personalclaw._spawn_exec_shim"
+
+    def test_an_interpreter_runs_it_without_its_working_folder(self):
+        argv = self_update.python_child_argv("personalclaw.evals.child", "cell.json")
+        assert argv == [sys.executable, "-P", "-m", "personalclaw.evals.child", "cell.json"]
+
+
 @pytest.fixture
 def frozen(monkeypatch, tmp_path):
     """This process reads as the desktop app's frozen bundle, with an executable to name."""
@@ -404,7 +475,7 @@ class TestEveryCliChildStartsInTheBundle:
         assert self_update.cli_argv() == [frozen]
 
     def test_an_interpreter_runs_it_as_a_module(self):
-        assert self_update.cli_argv() == [sys.executable, "-m", "personalclaw"]
+        assert self_update.cli_argv() == [sys.executable, "-P", "-m", "personalclaw"]
 
     def test_the_availability_probe(self, frozen):
         from personalclaw.providers import availability

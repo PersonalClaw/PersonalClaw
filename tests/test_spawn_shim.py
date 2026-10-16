@@ -186,12 +186,12 @@ def test_spawn_shim_argv_wraps_with_shim_module():
     cel = ResourceCeilings(nofile=1024, max_pids=64)
     wrapped = spawn_shim_argv(["bash", "-lc", "echo hi"], PROFILE_TOOL, ceilings=cel)
     assert wrapped[0] == sys.executable
-    assert wrapped[1:3] == ["-m", "personalclaw._spawn_exec_shim"]
+    assert wrapped[1:4] == ["-P", "-m", "personalclaw._spawn_exec_shim"]
     assert "--" in wrapped
     sep = wrapped.index("--")
     assert wrapped[sep + 1 :] == ["bash", "-lc", "echo hi"]
     # The policy is valid JSON carrying the tool ceiling.
-    policy = json.loads(wrapped[3])
+    policy = json.loads(wrapped[4])
     assert policy["limits"]["RLIMIT_NOFILE"] == [1024, "hard"]
 
 
@@ -306,3 +306,59 @@ def test_from_config_reads_live_sandbox(tmp_path, monkeypatch):
     assert cel.nofile == 777
     assert cel.max_pids == 42
     assert cel.max_rss_mb == 0
+
+
+# ── the shim never imports PersonalClaw from the folder it starts in ──────────
+
+
+def _folder_with_a_personalclaw_package(tmp_path) -> tuple[str, str]:
+    """A working folder holding a ``personalclaw`` package that leaves a marker when imported,
+    as a checkout's ``src/`` or any project with such a package at its top does."""
+    folder = tmp_path / "work"
+    (folder / "personalclaw").mkdir(parents=True)
+    marker = tmp_path / "imported-from-the-working-folder"
+    (folder / "personalclaw" / "__init__.py").write_text(
+        f"open({str(marker)!r}, 'w').close()\n", encoding="utf-8"
+    )
+    return str(folder), str(marker)
+
+
+async def _run_limited(*argv: str, cwd: str) -> tuple[int, str]:
+    import asyncio
+
+    from personalclaw.sandbox import create_subprocess_limited
+
+    proc = await create_subprocess_limited(
+        *argv,
+        profile=PROFILE_TOOL,
+        ceilings=ResourceCeilings(nofile=1024),
+        cwd=cwd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    out, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
+    return proc.returncode or 0, out.decode()
+
+
+def test_the_shim_ignores_a_personalclaw_package_in_its_working_folder(tmp_path):
+    """🔴 ``-m`` alone put the working folder first on the shim's import path, so the folder's
+    own ``personalclaw/__init__.py`` ran, as the gateway's user and before any sandbox the shim
+    then starts, on every command an agent ran there."""
+    import asyncio
+
+    folder, marker = _folder_with_a_personalclaw_package(tmp_path)
+    code, _ = asyncio.run(_run_limited(sys.executable, "-c", "pass", cwd=folder))
+    assert code == 0
+    assert not os.path.exists(marker), "the shim imported the working folder's package"
+
+
+def test_what_the_shim_runs_still_imports_from_its_working_folder(tmp_path):
+    """The control: the flag is the shim's alone. The owner's own ``python -c`` still finds its
+    folder first, as it does without PersonalClaw in front of it."""
+    import asyncio
+
+    folder, _ = _folder_with_a_personalclaw_package(tmp_path)
+    code, out = asyncio.run(
+        _run_limited(sys.executable, "-c", "import sys; print(repr(sys.path[0]))", cwd=folder)
+    )
+    assert (code, out) == (0, "''\n")
