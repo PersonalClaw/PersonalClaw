@@ -143,13 +143,22 @@ def safety_rules(values: dict[str, Any] | None = None) -> str:
     snippet missing, or emptied), the snippet's shipped text answers, because these are the rules
     no agent's turn may go without. A shipped file that cannot be read is a broken install, and
     that error is raised rather than answered with no rules.
+
+    The push rule follows the owner's Settings → Security → Git push switch
+    (``allow_git_push``), read here on every render unless *values* names it, so no path can
+    hand an agent a rule that says pushing is forbidden while the owner allows it, or allowed
+    while they do not.
     """
+    from personalclaw.branch_publish import switch_on
+
+    values = {"allow_git_push": switch_on(), **(values or {})}
     rules = render_snippet_block(SAFETY_RULES_SNIPPET, values).strip()
     if rules:
         return rules
     from pathlib import Path
 
     from personalclaw.prompt_providers.catalog import BUNDLED_SNIPPETS
+    from personalclaw.prompt_providers.engine import render
 
     logger.warning(
         "The %r snippet is missing or empty in the prompt store; using its shipped text",
@@ -157,7 +166,7 @@ def safety_rules(values: dict[str, Any] | None = None) -> str:
     )
     (entry,) = (e for e in BUNDLED_SNIPPETS if e.name == SAFETY_RULES_SNIPPET)
     shipped = Path(__file__).resolve().parent.parent / "config" / "prompt_snippets"
-    return (shipped / entry.filename).read_text(encoding="utf-8").strip()
+    return render((shipped / entry.filename).read_text(encoding="utf-8"), [], values).strip()
 
 
 def with_safety_rules(prompt: str, values: dict[str, Any] | None = None) -> str:

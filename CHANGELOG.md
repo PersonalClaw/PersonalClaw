@@ -8,6 +8,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Added
+
+- **Settings → Security can let agents push a branch, each push still asking you.**
+
+### Security
+
+- **An agent can no longer change a security setting by running `personalclaw config` in its shell; your own terminal still can.**
+
 ### Fixed
 
 - **Best-of-n on Claude Haiku 5.5 gets an answer from every candidate, where each one asked for a temperature other than 1 failed: the model refuses a custom temperature, top_p or top_k, so none is sent and best-of-n says so.**

@@ -71,6 +71,8 @@ def test_config_round_trips_security_section(tmp_path: Path, monkeypatch):
     c = AppConfig()
     assert isinstance(c.security, SecurityConfig)
     assert c.to_dict()["security"] == {
+        # The owner's Git push switch. Default False = every push refused, as before.
+        "allow_git_push": False,
         "denied_commands": [],
         "egress": {"allow_hosts": [], "deny_hosts": [], "allow_private": False},
         # The credential-store gate. Default False = `.env` at 0600, the fail-closed side.

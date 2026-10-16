@@ -1046,6 +1046,13 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
 
     _log_sel("success", f"{path_key}={value}")
 
+    # The owner turning the Git push switch on or off is a security event of its own, so the
+    # security log names it as one, not only as a config write.
+    if path_key == "security.allow_git_push":
+        from personalclaw.branch_publish import log_change
+
+        log_change(value is True, caller="dashboard:config", source="dashboard")
+
     # An open chat reads `voice.*` once and keeps it, so it is told (the ``refresh`` frame naming
     # ``voice``) and reads again: a hands-free phrase removed here must stop firing in a chat that
     # is already listening, and one added must start.

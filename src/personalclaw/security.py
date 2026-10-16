@@ -2094,6 +2094,37 @@ def verify_baseline_denylist() -> dict:
     }
 
 
+#: The baseline patterns that refuse a change to a security setting through the command-line config
+#: command: `personalclaw config set|unset` on a security setting, a whole file applied with
+#: `config set --file`, and `config edit`. An agent's shell could otherwise reach every security
+#: setting the dashboard keeps to the owner (`config.edit_spec.app_write_refusal`) by typing the
+#: command. Only the commands PersonalClaw runs are screened, so the owner's own terminal is
+#: unaffected.
+CLI_SECURITY_CONFIG_PATTERNS: tuple[str, ...] = tuple(
+    p for p in _BASELINE_PATTERNS if r"claw\s+(?:-\S+\s+)*config\s+" in p
+)
+if len(CLI_SECURITY_CONFIG_PATTERNS) != 3:  # pragma: no cover - a packaging error
+    raise ValueError("packaged baseline denylist does not carry the three config-command patterns")
+
+#: The baseline pattern that refuses a push. Kept in the verified baseline whatever the owner's
+#: Settings → Security → Git push switch says: with the switch on, :func:`denied_command` skips it
+#: for one plain push (`branch_publish.allowed`) and asks every other pattern as before, so the
+#: baseline's content and digest never change with the switch.
+GIT_PUSH_BASELINE_PATTERN = r".*git\s+(-\S+\s+[^-]\S*\s+|-\S+\s+)*push(\s.*|$)"
+if GIT_PUSH_BASELINE_PATTERN not in _BASELINE_PATTERNS:  # pragma: no cover - a packaging error
+    raise ValueError("packaged baseline denylist does not carry its push pattern")
+
+#: The tool-name pattern that refuses a push (:data:`BUILTIN_DENY_PATTERNS`), exempted the same
+#: way by :func:`is_denied`.
+GIT_PUSH_TOOL_PATTERN = "*git*push*"
+
+#: What a refusal by one of :data:`CLI_SECURITY_CONFIG_PATTERNS` adds: why, and who may.
+CLI_SECURITY_CONFIG_REASON = (
+    "a security setting is changed only by the owner, in Settings → Security or by running the "
+    "config command in their own terminal"
+)
+
+
 @dataclass(frozen=True)
 class DeniedCommand:
     """The shell denylist's refusal of one command: the pattern it matched, and whose it is.
@@ -2119,6 +2150,12 @@ class DeniedCommand:
             if self.added
             else "one of the shell denylist's built-in patterns"
         )
+        if not self.added and self.pattern in CLI_SECURITY_CONFIG_PATTERNS:
+            return f"the command matches `{self.pattern}`, {whose}: {CLI_SECURITY_CONFIG_REASON}"
+        if not self.added and self.pattern == GIT_PUSH_BASELINE_PATTERN:
+            from personalclaw.branch_publish import refusal_clause
+
+            return f"the command matches `{self.pattern}`, {whose}: {refusal_clause()}"
         return f"the command matches `{self.pattern}`, {whose}"
 
     def refusal(self) -> str:
@@ -2139,6 +2176,11 @@ def denied_command(command: str) -> DeniedCommand | None:
     then the added patterns), first match wins; a pattern that does not compile matches
     nothing. Fail-closed: when the added patterns cannot be read, every command is refused
     with that reason, rather than judged by the baseline alone as though nothing were added.
+
+    The one exemption is the owner's Settings → Security → Git push switch: while it is on, the
+    baseline's push pattern (:data:`GIT_PUSH_BASELINE_PATTERN`) does not refuse one plain push of
+    a branch (``branch_publish.allowed``). Every other pattern, an added one included, is asked
+    of it as of any command.
     """
     try:
         patterns = denied_command_patterns()
@@ -2148,11 +2190,21 @@ def denied_command(command: str) -> DeniedCommand | None:
     baseline = set(baseline_denied_command_patterns())
     for pat in patterns:
         try:
-            if re.search(pat, command, re.IGNORECASE):
-                return DeniedCommand(pattern=pat, added=pat not in baseline)
+            if not re.search(pat, command, re.IGNORECASE):
+                continue
         except re.error:
             continue
+        if pat == GIT_PUSH_BASELINE_PATTERN and _push_allowed(command):
+            continue
+        return DeniedCommand(pattern=pat, added=pat not in baseline)
     return None
+
+
+def _push_allowed(command: str) -> bool:
+    """Whether the owner's switch lets *command*, one plain push, past a push rule."""
+    from personalclaw.branch_publish import allowed
+
+    return allowed(command)
 
 
 def redact(text: str) -> str:
@@ -2418,6 +2470,17 @@ def is_denied(tool_name: str, extra_patterns: list[str] | None = None) -> str | 
     all_patterns = BUILTIN_DENY_PATTERNS + (extra_patterns or [])
     for pattern in all_patterns:
         if fnmatch.fnmatch(lower, pattern.lower()):
+            refused = (
+                _push_refusal(pattern)
+                if pattern == GIT_PUSH_TOOL_PATTERN
+                else f"Blocked by security policy: {pattern}"
+            )
+            # The owner's Settings → Security → Git push switch: one plain push of a branch,
+            # recorded as the exception it is, and refused if that record cannot be written.
+            if pattern == GIT_PUSH_TOOL_PATTERN and _push_allowed(_command_in(tool_name)):
+                if not _emit_deny_exception_event(tool_name, pattern, mechanism=_SWITCH):
+                    return refused
+                continue
             exceptions = _DENY_EXCEPTIONS.get(pattern, [])
             if (
                 exceptions
@@ -2425,13 +2488,34 @@ def is_denied(tool_name: str, extra_patterns: list[str] | None = None) -> str | 
                 and one_command(lower) is not None
             ):
                 if not _emit_deny_exception_event(tool_name, pattern):
-                    return f"Blocked by security policy: {pattern}"
+                    return refused
                 continue
-            return f"Blocked by security policy: {pattern}"
+            return refused
     return None
 
 
-def _emit_deny_exception_event(tool_name: str, deny_pattern: str) -> bool:
+#: The ``mechanism`` a deny-exception event names when the owner's push switch let it through.
+_SWITCH = "security.allow_git_push"
+
+#: The display prefix a shell call's title carries (``hooks._TOOL_TITLE_PREFIXES``).
+_RUNNING = "Running: "
+
+
+def _command_in(tool_name: str) -> str:
+    """The command a tool name says it runs: the name, without a ``Running: `` title prefix."""
+    return tool_name[len(_RUNNING) :] if tool_name.startswith(_RUNNING) else tool_name
+
+
+def _push_refusal(pattern: str) -> str:
+    """The tool-name refusal of a push, with where the switch is and the one-command form."""
+    from personalclaw.branch_publish import refusal_clause
+
+    return f"Blocked by security policy: {pattern} ({refusal_clause()})"
+
+
+def _emit_deny_exception_event(
+    tool_name: str, deny_pattern: str, *, mechanism: str = "_DENY_EXCEPTIONS"
+) -> bool:
     """Emit an SEL audit event when a deny exception is applied.
 
     Returns True if the event was logged successfully, False otherwise.
@@ -2450,7 +2534,7 @@ def _emit_deny_exception_event(tool_name: str, deny_pattern: str) -> bool:
                 operation=tool_name,
                 outcome="allowed",
                 resources=f"deny_pattern={deny_pattern}",
-                metadata={"deny_pattern": deny_pattern, "mechanism": "_DENY_EXCEPTIONS"},
+                metadata={"deny_pattern": deny_pattern, "mechanism": mechanism},
             )
         )
         return True

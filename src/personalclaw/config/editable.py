@@ -377,6 +377,19 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "checkpoints.max_mb": {"type": "int", "min": 0, "max": 100_000},
     "checkpoints.max_turns": {"type": "int", "min": 1, "max": 1_000},
     "checkpoints.max_file_mb": {"type": "int", "min": 0, "max": 10_000},
+    # Lets one ordinary branch push past the baseline's push rule (`branch_publish`). The
+    # approval path still asks for each push, since it reaches the network.
+    "security.allow_git_push": {
+        "type": "bool",
+        "security": SecurityControl(
+            loosens_when(True),
+            "Agents may push a branch: an ordinary push, written as one command, is no longer "
+            "refused by the built-in denylist. Each push still asks you first in a chat, and is "
+            "refused in a run nobody watches unless your own rules allow it. Force pushes "
+            "without an explicit lease, mirrors, deletes, --all, --tags, --prune and "
+            "--no-verify stay refused.",
+        ),
+    },
     "security.denied_commands": {
         "type": "str_list",
         "max_items": 100,

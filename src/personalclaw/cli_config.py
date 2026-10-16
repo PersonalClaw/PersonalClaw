@@ -123,6 +123,28 @@ def _refuse(operation: str, resources: str, message: str, outcome: str = "error"
 def _config_cmd(args: argparse.Namespace) -> None:
     """Get or set config values."""
     action = getattr(args, "config_action", None)
+    # Every write below may change the Git push switch (a key, a section, a whole file or an
+    # edit), so the switch is read before and after, and a change is logged as the security
+    # event it is. A refused write exits before the second read.
+    switch_before = _push_switch() if action in ("set", "unset", "edit") else None
+    _run_config_action(args, action)
+    if switch_before is not None:
+        switch_after = _push_switch()
+        if switch_after != switch_before:
+            from personalclaw.branch_publish import log_change
+
+            log_change(switch_after, caller="cli", source="cli")
+
+
+def _push_switch() -> bool:
+    """The Git push switch as the config holds it now."""
+    from personalclaw.branch_publish import switch_on
+
+    return switch_on()
+
+
+def _run_config_action(args: argparse.Namespace, action: str | None) -> None:
+    """Run one `config` action: get, set, unset or edit."""
     if action == "get":
 
         cfg = AppConfig.load()

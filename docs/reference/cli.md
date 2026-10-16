@@ -484,6 +484,14 @@ canonicalisation. An existing non-empty target is refused unless `--force`.
 
 Get or set configuration values (see the [configuration reference](configuration.md)).
 
+A security setting is yours to change, here or in Settings → Security, and never an agent's. The
+shell denylist's baseline therefore refuses any command PersonalClaw runs for an agent or an
+automation that would change one this way: `config set` or `config unset` on a security setting
+(the `auth`, `security`, `sandbox`, `guardrails`, `external_access` and `hooks` sections, and each
+security setting kept in another section, such as `agent.yolo`), on a section that holds one, a
+whole file applied with `config set --file`, and `config edit`. The command you type in your own
+terminal runs no screen and is not affected.
+
 | Subcommand | What it does |
 |---|---|
 | `config get [KEY]` | Get a value by dot-separated key, or the whole config with no key. **Credentials are withheld**: any field whose name marks it as a secret (`api_key`, `bot_token`, `client_secret`, …) prints as `••••••••`, and a note on stderr names what was withheld. |

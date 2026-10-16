@@ -355,6 +355,20 @@ class SecurityConfig:
     hold: `personalclaw.mcp_read_only_trust`.)
     """
 
+    allow_git_push: bool = field(
+        default=False,
+        metadata=_meta(
+            "Let Agents Push a Branch",
+            "Off by default. When on, the shell denylist's built-in push rule lets one ordinary "
+            "push of a branch through, written as one command (`git -C <dir> push ...` from "
+            "another folder). A push reaches the network, so it still asks you each time in a "
+            "chat and is refused in a run nobody watches unless your own rules allow it. A force "
+            "push without an explicit lease (`--force-with-lease=<ref>:<sha>`), --mirror, "
+            "--delete, a `:<ref>` or `+<ref>` refspec, --all, --tags, --prune and --no-verify "
+            "stay refused. Only you can change it, in Settings → Security or from your own "
+            "terminal.",
+        ),
+    )
     denied_commands: list[str] = field(
         default_factory=list,
         metadata=_meta(

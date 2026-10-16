@@ -1265,10 +1265,14 @@ class ContextBuilder:
         ``window`` is the window this turn is served with (``Window.budget_tokens``), resolved
         once per turn by the caller; ``None`` means no window was resolved, which budgets as an
         unknown window does."""
+        from personalclaw.branch_publish import switch_on
+
         return {
             "bot_name": self._bot_name,
             "user_name": self._user_name(),
             "widget_block": self._widget_block(session_key, window=window),
+            # The safety rules' push wording follows the owner's switch (`safety_rules`).
+            "allow_git_push": switch_on(),
         }
 
     def _apply_runtime_vars(
