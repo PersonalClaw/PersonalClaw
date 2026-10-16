@@ -1059,11 +1059,17 @@ def _tick_graph_maintenance() -> None:
     Kept as a named module function rather than a lambda so the tick's own test can call
     exactly what the loop calls — a lambda would force the test to re-implement the body and
     then it would be asserting its own copy.
+
+    Every model call the tick makes is attributed to ``knowledge_maintenance``. Bound HERE, on
+    the worker thread the loop hands this to, because the executor does not carry the loop's
+    context variables across: a binding made around ``run_in_executor`` would not reach it.
     """
+    from personalclaw.guardrails.audit import caller_scope
     from personalclaw.knowledge import maintenance
 
     try:
-        result = maintenance.run_maintenance()
+        with caller_scope("knowledge_maintenance"):
+            result = maintenance.run_maintenance()
     except Exception:  # noqa: BLE001 — the guard belongs at the SEAM, not only at the caller
         # `run_maintenance` documents "never raises" and guards itself, so reaching here means
         # the host's own guard was bypassed (a patched internal, an import-time failure). The

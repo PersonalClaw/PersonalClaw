@@ -223,9 +223,15 @@ class KnowledgeConsolidateActionProvider(ActionProvider):
         cfg_min_hours, cfg_min_cluster = _config_gate_defaults()
         items = _load_items(store)
         unprocessed = [i for i in items if not i.consolidated and not i.is_archived]
+        unattended = _is_unattended(ctx)
+        hours_since_last = _hours_since_last_pass(store)
+        if unattended:
+            # Only the unattended tick is held back by its own last dry run. The owner's
+            # consolidation, opened from the panel or a workflow, reads only the applied passes.
+            hours_since_last = min(hours_since_last, _hours_since_unattended_dry_run())
         gate = consolidation.check_gates(
             unprocessed=len(unprocessed),
-            hours_since_last=_hours_since_last_pass(store),
+            hours_since_last=hours_since_last,
             lock_held=False,
             min_new_items=_int(cfg.get("min_new_items"), consolidation.MIN_NEW_ITEMS),
             # The USER'S floor is the default; an explicit `min_hours` on the node overrides it.
@@ -247,7 +253,7 @@ class KnowledgeConsolidateActionProvider(ActionProvider):
 
         plan = consolidation.plan_consolidation(
             items,
-            similarity=_similarity_for(store),
+            vector_of=_vector_lookup(store),
             # Same precedence as `min_hours` above, and the same bug before it:
             # `knowledge.consolidate_min_cluster` had no reader either.
             min_size=_int(cfg.get("min_cluster_size"), cfg_min_cluster),
@@ -255,9 +261,12 @@ class KnowledgeConsolidateActionProvider(ActionProvider):
 
         summaries = cfg.get("summaries")
         if not _truthy(cfg.get("apply")) or not isinstance(summaries, list) or not summaries:
+            if unattended:
+                _record_unattended_dry_run()
             payload = {
                 "ran": True,
                 "applied": False,
+                "sat_out": len(plan.sat_out),
                 "plan": plan.to_dict(),
                 "doctrine": consolidation.CONSOLIDATION_DOCTRINE,
                 "prompts": [
@@ -278,6 +287,7 @@ class KnowledgeConsolidateActionProvider(ActionProvider):
                 {
                     "ran": True,
                     "applied": True,
+                    "sat_out": len(plan.sat_out),
                     "summaries_written": applied,
                     "issues": issues,
                     "plan": plan.to_dict(),
@@ -466,44 +476,114 @@ def _hours_since_last_pass(store: Any) -> float:
     return max(0.0, (time.time() - stamp) / 3600.0)
 
 
-def _similarity_for(store: Any) -> Any:
-    """A cosine metric over the store's embeddings, or None for the token floor.
+def _vector_lookup(store: Any) -> consolidation.VectorLookup | None:
+    """A lookup of an item's STORED vector by id, or None when no embedding model is selected.
 
-    None is a supported configuration, and the caller's threshold follows the metric — mixing a
-    cosine threshold with token similarity clusters nothing at all.
+    The vectors ingest already wrote, never a fresh embedding: a pass that embedded every item
+    on every run sent whole documents to the model once per comparison, and a document the model
+    refused as too long was sent again on every run. So this makes no model call at all. An
+    item's own vector is used when it has one, otherwise the mean of its chunk vectors, and only
+    vectors the embedding model selected NOW wrote are read (the fingerprint predicates), because
+    a cosine across two models means nothing. Per item rather than the whole library at once:
+    the planner asks only for the items one pass can cluster, which is bounded.
     """
-    try:
-        from personalclaw.embedding_providers.registry import get_active_embed_fn
+    from personalclaw.knowledge.embedder import bytes_to_floats
+    from personalclaw.knowledge.embedding_fingerprint import (
+        FRESH_PREDICATE,
+        ITEM_FRESH_PREDICATE,
+        active_fingerprint,
+    )
 
-        embed = get_active_embed_fn()
-    except Exception:
+    fingerprint = active_fingerprint()
+    if fingerprint is None:
         return None
-    if embed is None:
-        return None
+    params = fingerprint.params
 
-    from personalclaw.knowledge.retrieval import HybridRetriever
-
-    cache: dict[str, list[float]] = {}
-
-    def similarity(left: str, right: str) -> float:
+    def vector_of(item_id: str) -> list[float] | None:
         try:
-            for text in (left, right):
-                if text not in cache:
-                    vector = embed(text)
-                    if not vector:
-                        # An embedder that returns nothing for one item is not a pass-ending
-                        # error, but it MUST NOT be cached as an empty vector: a cosine against
-                        # [] is either a crash or a meaningless 0.0, and a 0.0 silently means
-                        # "unrelated" — so that item would never cluster with anything, forever.
-                        return consolidation.token_similarity(left, right)
-                    cache[text] = vector
-            return HybridRetriever._cosine_similarity(cache[left], cache[right])
+            own = store.db.execute(
+                "SELECT embedding FROM items WHERE id = ? "  # noqa: S608 - constant predicate
+                f"AND embedding IS NOT NULL AND {ITEM_FRESH_PREDICATE}",
+                (item_id, *params),
+            ).fetchone()
+            if own is not None and own["embedding"]:
+                vector = bytes_to_floats(own["embedding"])
+                if vector:
+                    return vector
+            chunks = [
+                bytes_to_floats(r["embedding"])
+                for r in store.db.execute(
+                    "SELECT c.embedding AS embedding FROM chunks c "  # noqa: S608
+                    f"WHERE c.item_id = ? AND c.embedding IS NOT NULL AND {FRESH_PREDICATE}",
+                    (item_id, *params),
+                )
+                if r["embedding"]
+            ]
         except Exception:
-            # Degrade to the token metric for THIS pair rather than failing the pass. A pass that
-            # dies because one embedding call failed has thrown away the whole sweep.
-            return consolidation.token_similarity(left, right)
+            # An unreadable row is an item without a vector for this pass, not a failed pass.
+            logger.debug("stored vector unreadable for %s", item_id, exc_info=True)
+            return None
+        chunks = [c for c in chunks if c and len(c) == len(chunks[0])] if chunks else []
+        if not chunks:
+            return None
+        return [sum(column) / len(chunks) for column in zip(*chunks)]
 
-    return similarity
+    return vector_of
+
+
+#: Where the unattended dry run records when it last ran, under the PersonalClaw home.
+_UNATTENDED_STATE_FILENAME = "knowledge_consolidation.json"
+
+#: The provenance `_pass_context` gives an unattended maintenance run, which is the only run the
+#: unattended stamp holds back.
+_UNATTENDED_SOURCE = "graph_maintenance"
+
+
+def _unattended_state_path() -> Any:
+    from personalclaw.config.loader import config_dir
+
+    return config_dir() / _UNATTENDED_STATE_FILENAME
+
+
+def _is_unattended(ctx: ActionContext) -> bool:
+    payload = ctx.payload if isinstance(ctx.payload, dict) else {}
+    return payload.get("source") == _UNATTENDED_SOURCE
+
+
+def _hours_since_unattended_dry_run() -> float:
+    """Hours since the unattended dry run last ran, or a very large number when it never has.
+
+    A dry run marks nothing consolidated, so `_hours_since_last_pass` alone never closes the
+    min-hours gate for the unattended tick, and the tick re-planned the whole store every time
+    anything was written. Fails open: a missing or unreadable stamp lets the next pass run, which
+    costs one plan, never a held-back owner.
+    """
+    from datetime import datetime
+
+    from personalclaw.instants import as_instant
+
+    try:
+        raw = json.loads(_unattended_state_path().read_text(encoding="utf-8"))
+        stamp = datetime.fromisoformat(as_instant(str(raw["last_dry_run"]))).timestamp()
+    except FileNotFoundError:
+        return 10_000.0
+    except Exception:  # noqa: BLE001 - see the docstring
+        logger.debug("consolidation dry-run stamp unreadable; treating as never", exc_info=True)
+        return 10_000.0
+    return max(0.0, (time.time() - stamp) / 3600.0)
+
+
+def _record_unattended_dry_run() -> None:
+    from personalclaw.atomic_write import atomic_write
+    from personalclaw.instants import utc_now_iso
+
+    try:
+        atomic_write(
+            _unattended_state_path(),
+            json.dumps({"last_dry_run": utc_now_iso()}, indent=2) + "\n",
+        )
+    except Exception:  # noqa: BLE001 - losing the stamp costs one extra plan, never a pass
+        logger.warning("consolidation dry-run stamp not written", exc_info=True)
 
 
 async def _apply(

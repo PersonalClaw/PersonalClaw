@@ -33,8 +33,11 @@ import hashlib
 import json
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
+
+from personalclaw.knowledge.dedup import cosine_similarity
 
 logger = logging.getLogger(__name__)
 
@@ -299,10 +302,36 @@ class Cluster:
         return round(summary_chars / total, 4)
 
 
+#: An item's stored vector by its id, or None when it has none the active model wrote.
+VectorLookup = Callable[[str], list[float] | None]
+
+
+def _pool(items: list[Item]) -> list[Item]:
+    """The items one pass may cluster: reflection-eligible, not archived, not consolidated."""
+    return [
+        i
+        for i in items
+        if not i.is_archived and not i.consolidated and i.reflection_count < MAX_REFLECTION_COUNT
+    ][:MAX_ITEMS_PER_PASS]
+
+
+def _pooled_vectors(pool: list[Item], vector_of: VectorLookup | None) -> dict[str, list[float]]:
+    """The stored vector of each pooled item that has one, asked once per item."""
+    if vector_of is None:
+        return {}
+    out: dict[str, list[float]] = {}
+    for item in pool:
+        vector = vector_of(item.id)
+        if vector:
+            out[item.id] = vector
+    return out
+
+
 def cluster_items(
     items: list[Item],
     *,
     similarity: Any = None,
+    vector_of: VectorLookup | None = None,
     threshold: float | None = None,
     min_size: int = MIN_CLUSTER_SIZE,
     max_clusters: int = MAX_CLUSTERS_PER_PASS,
@@ -322,25 +351,41 @@ def cluster_items(
     unrelated pairs together to reach the floor produces a summary about nothing, which reads as
     authoritative and is not.
 
+    `vector_of` clusters on the vectors the items already have, and makes no model call. When any
+    pooled item has one, the pass is cosine over vectors with the cosine threshold, and a pooled
+    item without one SITS OUT: it is left unclustered for this pass rather than compared on the
+    token scale against a cosine threshold, because one pass on two scales clusters either
+    everything or nothing. Only when no pooled item has a vector does the pass fall back to the
+    token floor. It takes the place of `similarity`, so passing both is refused.
+
     Only reflection-eligible, non-archived, unconsolidated items are considered — the filter is
     here rather than at the caller so no path can skip it.
     """
-    metric = similarity or token_similarity
-    cut = (
-        threshold
-        if threshold is not None
-        else (TOKEN_CLUSTER_SIMILARITY if similarity is None else CLUSTER_SIMILARITY)
-    )
-    pool = [
-        i
-        for i in items
-        if not i.is_archived and not i.consolidated and i.reflection_count < MAX_REFLECTION_COUNT
-    ][:MAX_ITEMS_PER_PASS]
+    if similarity is not None and vector_of is not None:
+        raise TypeError("cluster_items takes a similarity metric or a vector lookup, not both")
+    pool = _pool(items)
+    vectors = _pooled_vectors(pool, vector_of)
+    text_metric = similarity or token_similarity
+
+    def by_vector(left: Item, right: Item) -> float:
+        return cosine_similarity(vectors[left.id], vectors[right.id])
+
+    def by_text(left: Item, right: Item) -> float:
+        return float(text_metric(left.text, right.text))
+
+    metric: Callable[[Item, Item], float]
+    if vectors:
+        pool = [i for i in pool if i.id in vectors]
+        metric, default_cut = by_vector, CLUSTER_SIMILARITY
+    else:
+        metric = by_text
+        default_cut = TOKEN_CLUSTER_SIMILARITY if similarity is None else CLUSTER_SIMILARITY
+    cut = threshold if threshold is not None else default_cut
 
     clusters: list[list[Item]] = []
     for item in pool:
         for group in clusters:
-            if any(metric(member.text, item.text) >= cut for member in group):
+            if any(metric(member, item) >= cut for member in group):
                 group.append(item)
                 break
         else:
@@ -369,6 +414,8 @@ class ConsolidationPlan:
     pre_dedup_merges: list[tuple[str, str]] = field(default_factory=list)
     skipped_protected: list[str] = field(default_factory=list)
     skipped_lineage: list[str] = field(default_factory=list)
+    #: Pooled items left out of a vector pass because they have no stored vector.
+    sat_out: list[str] = field(default_factory=list)
 
     @property
     def empty(self) -> bool:
@@ -383,6 +430,7 @@ class ConsolidationPlan:
             "pre_dedup_merges": [{"kept": k, "dropped": d} for k, d in self.pre_dedup_merges],
             "skipped_protected": list(self.skipped_protected),
             "skipped_lineage": list(self.skipped_lineage),
+            "sat_out": list(self.sat_out),
             "items_affected": sum(c.size for c in self.clusters) + len(self.pre_dedup_merges),
         }
 
@@ -395,11 +443,22 @@ def plan_consolidation(items: list[Item], **kwargs: Any) -> ConsolidationPlan:
     # retrievable and unarchived. Excluding them here is what makes that promise true.
     candidates = [i for i in items if not i.protected]
     survivors, merges = pre_dedup(candidates)
+    vector_of = kwargs.get("vector_of")
+    sat_out: list[str] = []
+    if vector_of is not None:
+        # Asked once here and handed on as a plain lookup, so each pooled item's vector is read
+        # once per pass however many comparisons it takes part in.
+        pool = _pool(survivors)
+        vectors = _pooled_vectors(pool, vector_of)
+        kwargs["vector_of"] = vectors.get
+        if vectors:
+            sat_out = [i.id for i in pool if i.id not in vectors]
     return ConsolidationPlan(
         clusters=cluster_items(survivors, **kwargs),
         pre_dedup_merges=merges,
         skipped_protected=protected,
         skipped_lineage=lineage,
+        sat_out=sat_out,
     )
 
 

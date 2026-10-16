@@ -74,12 +74,12 @@ def _no_store_or_embedder(monkeypatch):
     """Stub the store seam so the gate, not sqlite, is what these tests measure.
 
     `_load_items` and `_open_store` are the provider's only two doors to the database, and
-    `_similarity_for` is its only door to an embedder — pinned to None so clustering uses the
-    deterministic token floor and no test can reach a real embedding backend.
+    `_vector_lookup` is its only door to stored vectors — pinned to None so clustering uses the
+    deterministic token floor.
     """
     monkeypatch.setattr(kmp, "_open_store", lambda: object())
     monkeypatch.setattr(kmp, "_load_items", lambda store: _items())
-    monkeypatch.setattr(kmp, "_similarity_for", lambda store: None)
+    monkeypatch.setattr(kmp, "_vector_lookup", lambda store: None)
     # Nothing has ever been consolidated, so the min-hours gate cannot bind by default.
     # Individual tests override this to put a recent pass on the clock.
     monkeypatch.setattr(kmp, "_hours_since_last_pass", lambda store: 10_000.0)

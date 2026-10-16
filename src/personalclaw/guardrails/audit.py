@@ -71,10 +71,14 @@ def _audit_path() -> Path:
 #: `knowledge` is the knowledge library's processing of an item (its pipeline's model nodes and
 #: its worker pool), which is also what a busy local model is busy with when a person waits
 #: behind it (``guardrails.local_queue.BUSY_WITH`` names every caller here in those words).
+#: `knowledge_maintenance` is the knowledge library's unattended maintenance tick (its graph
+#: passes and the vector backfill), apart from `knowledge` so a call log can tell the work a
+#: person's own item started from the work the store does to itself on a cadence.
 CALLERS: tuple[str, ...] = (
     "conflict_merge",
     "inbox_triage",
     "knowledge",
+    "knowledge_maintenance",
     "nl_to_cron",
     "skill_ladder",
     "triage_gate",
