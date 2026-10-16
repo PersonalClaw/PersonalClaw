@@ -97,6 +97,27 @@ describe('SavedToast announces the save', () => {
     }
   })
 
+  it('a row that goes away mid-confirmation leaves no timer behind', () => {
+    // 🔴 Red before: flash() started a 1500ms timer nothing cleared. A test that ended within it left
+    // the timer to fire after its page was torn down, and setSaved threw "window is not defined":
+    // an unhandled error that failed the whole web run though every test passed.
+    vi.useFakeTimers()
+    try {
+      let onSaved: (() => void) | undefined
+      const { container, unmount } = render(
+        <ToggleRow label="LAN discovery" cfg={{ discovery_enabled: false }} field="discovery_enabled"
+          patch={(_k, _v, cb) => { onSaved = cb as () => void }} />,
+      )
+      act(() => { container.querySelector('button')!.click() })
+      act(() => { onSaved!() })
+      expect(document.querySelector('[role="status"]')!.textContent).toBe('Saved')
+      unmount()
+      expect(vi.getTimerCount(), 'the confirmation timer must not outlive its row').toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('the pre-fix shape does not come back', () => {
     const src = settingsUI()
     // The region must be in SavedToast, not bolted onto the animated span (AnimatePresence
