@@ -1057,8 +1057,8 @@ class MobileConfig:
         default="",
         metadata=_meta(
             "Push relay URL",
-            "Full https URL of a push-relay instance (self-deployed, or the hosted "
-            "convenience). Only used when the backend is 'relay'. The relay is "
+            "Full https URL of the push-relay instance you deployed. Only used when the "
+            "backend is 'relay'. The relay is "
             "stateless and forwards ids-only pings to the vendor push services — it never sees "
             "content.",
         ),

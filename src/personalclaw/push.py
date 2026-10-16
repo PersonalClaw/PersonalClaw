@@ -39,10 +39,9 @@ builds the payload rather than trusted to each caller's discipline.
 * ``relay`` — POST the same ids-only JSON, wrapped with a routing envelope
   (``{platform, token, payload}``), to a user-configured push-relay instance
   (``mobile.relay_url``) which forwards it to the vendor push services for the store app. The
-  relay is
-  stateless and open-source (deployable by anyone); the hosted instance is a
-  convenience, never a dependency. Device tokens are registered per device id by the
-  Capacitor shell, exactly as webpush subscriptions are by the browser.
+  relay is stateless and open-source, deployed by whoever holds the app's push credentials.
+  Device tokens are registered per device id by the Capacitor shell, exactly as webpush
+  subscriptions are by the browser.
 * ``none`` — deliver nothing. Not an error, just off.
 
 Delivery is **fail-open with respect to the notification it accompanies**: a push that
