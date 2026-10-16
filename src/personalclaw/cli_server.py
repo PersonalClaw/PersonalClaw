@@ -1302,11 +1302,14 @@ def _logs_cmd(args: argparse.Namespace) -> None:
 
     Order of preference:
       1. systemd journal (if the system service is installed on Linux)
-      2. launchd's stderr file (macOS): the console stream the gateway logs to, which also holds
-         anything it wrote before its logging started. Its stdout file has only what it printed.
+      2. launchd's two files (macOS), when its stderr file is there, each under the name ``tail``
+         heads it with: the stdout file, what the gateway printed (where the dashboard is and how
+         to get a sign-in link), and the stderr file, the console stream it logs to, which also
+         holds anything it wrote before its logging started. The systemd journal holds both
+         streams the same way.
       3. ``~/.personalclaw/gateway.log`` (foreground gateway)
 
-    Each shows the same log lines (``log_sinks``): the gateway's own, its apps', and any
+    The log lines are the same everywhere (``log_sinks``): the gateway's own, its apps', and any
     library's warnings.
     """
     follow = bool(getattr(args, "follow", False))
@@ -1366,6 +1369,8 @@ def _logs_cmd(args: argparse.Namespace) -> None:
         cmd = ["tail", "-n", str(lines)]
         if follow:
             cmd.append("-f")
+        if svc_macos.STDOUT_LOG.exists():
+            cmd.append(str(svc_macos.STDOUT_LOG))
         cmd.append(str(svc_macos.STDERR_LOG))
         os.execvp("tail", cmd)
 
