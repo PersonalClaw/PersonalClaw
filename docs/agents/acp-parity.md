@@ -295,12 +295,13 @@ missing shape":**
   turn mid-tool-call, the ≥10 s in-flight window). The host was **saturated** for
   the whole pass — worse than during the first pass. *An `ACP prompt timed out` on a saturated host is
   a host artifact, not a capability verdict.* **Unblocked by:** an idle host, nothing else.
-- **The permission/approval-authority cells.** A **freshly created** home defaults to
+- **The permission/approval-authority cells.** A **freshly created** home then defaulted to
   `agent.approval_mode: "auto"` (`agent.yolo` is `false`), so the host handed claude-code
   `--permission-mode auto --allow-dangerously-skip-permissions` and **0** host cards were raised on
   claude and codex, while kiro — which has no permission-mode axis to forward — raised **2** anyway.
   That asymmetry is explained by the config, so no gate verdict is claimed from it. **Unblocked by:**
   flipping `approval_mode` off `auto` *before* the turn (the trap the claude residual already paid for).
+  Since 0.2.0 a fresh home defaults to `"interactive"` instead (read from source, not re-driven).
 - **Every native-axis cell** (memory consolidation, auto-nudge re-arm, skill-ladder review): still no
   host model provider, and the refusal was reproduced 4× in this pass's log —
   `no model provider resolves for use case 'background'`. **Unblocked by:** binding one model provider
@@ -420,11 +421,11 @@ re-driven on claude-code.
 
 | Axis | Capability | Why it does not work | Watch — what must change, where | Measured against |
 |---|---|---|---|---|
-| Approvals / safety | Host gate coverage is **contingent, not structural** | Coverage measured total (44 events, all surfaced) only because config isolation is off by default and the measuring host's real `~/.claude` happened to auto-approve nothing. The spawned CLI loaded that real config, enumerated every MCP server configured in it and wrote into `~/.claude/plans/` and `~/.claude/projects/…/memory/`. An operator with `permissions.allow` entries gets silent execution with no host card | **Bundle + host seam** — make the isolated CLI config the default for host-managed sessions. The opt-in hardening flag already exists and is OFF by default | adapter `0.60.0`, `claude 2.1.233.669` |
+| Approvals / safety | Host gate coverage is **contingent, not structural** | Coverage measured total (44 events, all surfaced) only because config isolation was off by default and the measuring host's real `~/.claude` happened to auto-approve nothing. The spawned CLI loaded that real config, enumerated every MCP server configured in it and wrote into `~/.claude/plans/` and `~/.claude/projects/…/memory/`. An operator with `permissions.allow` entries gets silent execution with no host card | **Bundle + host seam** — make the isolated CLI config the default for host-managed sessions. Landed in the Claude Code app's 0.2.0, not re-driven: its *Isolated Claude settings* (`isolated_config`) defaults on | adapter `0.60.0`, `claude 2.1.233.669` |
 | Tools | The CLI's file and shell tools are not confined to the session's workspace | `Read`/`Write`/`Terminal` ran in `~/.personalclaw/workspace` regardless of the session's `workspace_dir`, and reached `/Volumes/…`, `~/.claude` and `~/.personalclaw` freely. The cwd does reach the pool and is dropped below it | **Host seam**. A later kiro measurement found this fixed for a directly-bound session and **still live for an agent-profile-bound one**; claude-code has **not** been re-driven since, so its rows here predate that fix | adapter `0.60.0`, `claude 2.1.233.669` |
 | Tools | `AskUserQuestion` card | ~~The card fires only if the CLI exposes an identically-named tool; the CLI's full tool list contains none~~ — **a host change, NOT re-driven on a real CLI**: the tool was absent because the adapter lists `AskUserQuestion` as disallowed for a client that does not advertise form elicitation, and asks each of its questions with `elicitation/create` for one that does (read from the adapter's own source at `0.70.0`). PersonalClaw now advertises it for a chat's own attended session and answers the form from the chat's question card (`acp/elicitation.py`, `owner_questions.py`), and the card is then that call's gate rather than a call run without asking her; an unattended session, or another host's, is not told, so its model is not offered the tool | **Re-drive** on the current adapter: the tool listed, a question carded, her answer reaching the tool | adapter `0.60.0` measured; `0.70.0` read |
 | Tools | Per-turn tool retrieval / progressive disclosure | The CLI enumerated only its OWN tools, including its own retrieval tool; no host-injected `tool_search`/`tool_schema` appeared | **Host seam** via the MCP surface | adapter `0.60.0` |
-| Tools | External MCP servers are the **user's own**, not PersonalClaw's | The spawned CLI enumerated the user's own servers from the real `~/.claude`; nothing from PersonalClaw's `mcp.json`. Still true: with no config isolation, every tool and MCP server the user configured for claude outside PersonalClaw, in the real `~/.claude.json`, is live in its sessions | **Bundle + host seam** — the isolation half of the row above. The seeding half is gone (deleted 2026-08-23), so closing this means passing PersonalClaw's own external servers over the protocol array, not writing into the user's own CLI config | adapter `0.60.0` |
+| Tools | External MCP servers are the **user's own**, not PersonalClaw's | The spawned CLI enumerated the user's own servers from the real `~/.claude`; nothing from PersonalClaw's `mcp.json`. True whenever *Isolated Claude settings* is off, as it was by default before the Claude Code app's 0.2.0: every tool and MCP server the user configured for claude outside PersonalClaw, in the real `~/.claude.json`, is live in its sessions | **Bundle + host seam** — the isolation half of the row above. The seeding half is gone (deleted 2026-08-23), so closing this means passing PersonalClaw's own external servers over the protocol array, not writing into the user's own CLI config | adapter `0.60.0` |
 | Prompt-side context | `project_id` → artifact stamping | Absent in the stronger sense: `artifact_save` was not reachable at all, so there was nothing to stamp | **Host seam** — closes with the `personalclaw-core` surface (landed, not re-driven here) plus `project_id` threading | adapter `0.60.0` |
 | Session mechanics | Concurrent sessions on one adapter process | Two concurrently-bound sessions held two different adapter PIDs; the dialect declares no concurrency support | **Adapter** would have to interleave sessions; the flag stays false until a spike proves it | adapter `0.60.0` |
 | Session mechanics | Persona / agent selection | Discovery returns exactly one agent with `provider_agent: ""` — one base agent per adapter, so the picker has no persona rows to offer, and there is no dead UI | **Adapter / CLI** | adapter `0.60.0` |
@@ -447,8 +448,11 @@ What closing it cost, because each item is a trap the next column would otherwis
 - **kiro's `echo AUTOFLOOR-OK` probe does not port to claude-code** — it executes `echo` itself
   without asking the host, so the probe never reaches the gate. `cat /nonexistent-*` gates reliably
   and is what the claude drives used.
-- **Two API mechanics cost real time.** `GET /api/approvals` **never** shows an ACP chat card — it
-  returns `[]` while `pending_approval` is `true`. The working path is `GET /api/chat/sessions/{s}`
+- **Two API mechanics cost real time.** `GET /api/approvals` **never** showed an ACP chat card then
+  — it returned `[]` while `pending_approval` was `true` (since 0.2.0 it lists every chat's pending
+  approval, an agent CLI chat's included: read from source and unit-proven by
+  `tests/test_pending_approval_every_surface.py`, not re-driven). The working path is
+  `GET /api/chat/sessions/{s}`
   → the **`permission` message's** `meta.approval_id` → `POST /api/chat/sessions/{s}/approve`, and
   the verb is the past-tense **`approved`**, not `approve` (until that was fixed, the sibling
   surface's `approve` silently **DENIED** the tool while returning `200 {"ok": true}`). And
@@ -867,7 +871,7 @@ wrong for another, and a conclusion drawn from two columns was false on the thir
 | Concurrent sessions | Declared false, absent | Declared false, absent | **Declared true**, absent |
 | Persona axis | None — one base agent | None — one base agent | kiro's built-in agents plus every agent the user has defined for kiro-cli |
 | Reasoning effort | Adapter advertises five; honoring unobservable | None advertised; host still accepts a value | None advertised; host still accepts a value |
-| Config isolation | Opt-in flag exists, **off** by default | None, by design | None |
+| Config isolation | A flag, **off** when measured; on by default since the Claude Code app's 0.2.0, not re-driven | None, by design | None |
 | Process model | New adapter process per turn; pool cold | New process per turn; pool cold; 31 descendants | One process reused per session — the only warm reuse measured |
 | Fork message copying | All 24 messages | All 14 messages | 8 of 42 messages |
 | Can the provider validate a prompt-side cell? | Yes — it quotes its injected context | **No** — it refuses to disclose its context, which is why three cells stayed open | Yes — and doing so is how the framing-goes-stale defect was found |
