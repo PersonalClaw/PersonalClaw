@@ -19,6 +19,12 @@ from personalclaw.turn_source import ASKED_FOR_BY, DASHBOARD_SOURCE, source_of
 #: its agent then refused (``running_turn.end_steers``). It runs on its own, and adds no second row.
 ON_RECORD = "on_record"
 
+#: The item key of a message the owner typed in a surface they are at (the dashboard's chat, the
+#: terminal's, the Inbox), or the retry of a turn that ran unbounded. A turn made only of such
+#: messages runs until it is done, as one typed into an idle chat does; any other is bounded
+#: (``turn_deadline``).
+ATTENDED = "attended"
+
 
 class ChatQueue:
     """The queue helpers of a chat session, over the session's own ``_queue``."""
@@ -38,6 +44,7 @@ class ChatQueue:
         asked_for_by: Mapping[str, str] | None = None,
         on_record: bool = False,
         pastes: Sequence[Mapping[str, Any]] = (),
+        attended: bool = False,
     ) -> str:
         """Append a message to the queue. Returns the generated queue ID.
 
@@ -51,6 +58,7 @@ class ChatQueue:
         them and whose row records it (``turn_source.ASKED_FOR_BY``).
         ``on_record`` says its row is in the chat already (:data:`ON_RECORD`).
         ``pastes`` are the blocks pasted into it (``own_words.PASTES``), which its row keeps.
+        ``attended`` says the owner typed it where they are (:data:`ATTENDED`).
         """
         qid = uuid.uuid4().hex[:12]
         item: dict[str, Any] = {"id": qid, "content": content, **source_of(source)}
@@ -66,6 +74,8 @@ class ChatQueue:
             item[ASKED_FOR_BY] = dict(asked_for_by)
         if on_record:
             item[ON_RECORD] = True
+        if attended:
+            item[ATTENDED] = True
         self._queue.append(item)
         return qid
 
@@ -76,6 +86,7 @@ class ChatQueue:
         from_channel: bool = False,
         regenerate_hint: str = "",
         asked_for_by: Mapping[str, str] | None = None,
+        attended: bool = False,
     ) -> str:
         """Queue the turn that just ended to run again, ahead of everything. Returns the queue ID.
 
@@ -86,6 +97,8 @@ class ChatQueue:
         linked to, which already shows it; ``here``: anywhere else), and ``hint`` a regenerate's
         hint, so the retry is asked the same way, and ``asked_for_by`` who asked for the work it
         carries on (``turn_source.ASKED_FOR_BY``), so it runs as asked for by them again.
+        ``attended`` says the attempt it repeats ran unbounded (:data:`ATTENDED`), so it runs
+        unbounded again; a bounded attempt's retry is bounded the same.
         """
         qid = uuid.uuid4().hex[:12]
         item: dict[str, Any] = {
@@ -97,6 +110,8 @@ class ChatQueue:
             item["hint"] = regenerate_hint
         if asked_for_by:
             item[ASKED_FOR_BY] = dict(asked_for_by)
+        if attended:
+            item[ATTENDED] = True
         self._queue.insert(0, item)
         return qid
 

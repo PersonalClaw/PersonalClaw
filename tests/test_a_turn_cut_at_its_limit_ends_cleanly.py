@@ -84,7 +84,7 @@ def test_a_planner_turn_past_its_limit_is_stopped_without_a_crash() -> None:
         with (
             patch("personalclaw.gateway.autonudge_enabled", return_value=True),
             patch("personalclaw.gateway.AutoNudgeService", _FakeNudgeService),
-            patch("personalclaw.gateway.CHAT_TURN_TIMEOUT", 0.2),
+            patch("personalclaw.gateway.CHAT_TURN_IDLE_LIMIT", 0.2),
             patch("personalclaw.dashboard.chat.run_chat", _wedged_run_chat),
         ):
             await orch._init_autonudge()

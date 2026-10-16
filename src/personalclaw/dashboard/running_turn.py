@@ -277,6 +277,7 @@ def end_steers(
                 own_words=said.get(OWN_WORDS),
                 on_record=on_record,
                 pastes=said.get(PASTES) or (),
+                attended=True,  # the owner's steer, typed where they are
             )
         except Exception:
             logger.warning("failed to requeue an undelivered steer", exc_info=True)

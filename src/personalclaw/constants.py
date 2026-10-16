@@ -21,7 +21,10 @@ DATA_WARNING = (
     "   before entering sensitive information."
 )
 
-CHAT_TURN_TIMEOUT = 600.0
+#: How long a chat turn nobody is watching may show no work before it is stopped, in seconds
+#: (``dashboard.turn_deadline``). Past the longest a shell call may run (10 minutes), so a turn
+#: whose call has just returned still has room to read the result.
+CHAT_TURN_IDLE_LIMIT = 900.0
 
 #: JSON-RPC 2.0's "the peer does not implement this method" code. Lives here, not in a
 #: protocol module, because THREE unrelated subsystems speak JSON-RPC and each needs the

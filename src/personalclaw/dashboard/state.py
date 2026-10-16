@@ -758,6 +758,7 @@ class _ChatSession(ChatQueue):
         state: "DashboardState",
         *,
         own_words: str | None = None,
+        attended: bool = False,
     ) -> bool:
         """Queue *prompt* if busy, otherwise start an agent turn.
 
@@ -766,6 +767,8 @@ class _ChatSession(ChatQueue):
         Always registers :func:`_log_task_exception` to prevent silent failures.
         ``own_words`` says which of *prompt*'s words a person typed, when the caller composed
         more around them (``""`` when nobody did), so no learning path reads the rest as theirs.
+        ``attended`` says the owner typed it where they are, so queued it runs unbounded as it
+        would have run had the chat been idle (``chat_queue.ATTENDED``).
 
         Returns ``True`` if the prompt started an agent turn, ``False`` if
         it was queued. Lets callers gate UI-visible side-effects (notifications,
@@ -777,7 +780,7 @@ class _ChatSession(ChatQueue):
         ``running == False`` within a single loop iteration.
         """
         if self.running:
-            self.queue_append(prompt, own_words=own_words)
+            self.queue_append(prompt, own_words=own_words, attended=attended)
             return False
         meta = None if own_words is None else {OWN_WORDS: own_words}
         self.append("user", prompt, "msg msg-u", meta=meta)

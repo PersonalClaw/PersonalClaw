@@ -331,7 +331,9 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
             return web.json_response({"ok": True, "steered": True})
         # followup / collect / steer-when-not-native → queue as before.
         if message:
-            qid = session.queue_append(message, own_words=_own_recorded, pastes=_kept_pastes)
+            qid = session.queue_append(
+                message, own_words=_own_recorded, pastes=_kept_pastes, attended=True
+            )
             state.broadcast_ws(
                 "queue_push",
                 {
@@ -539,7 +541,7 @@ async def _maybe_cancel_and_replace(
         outcome = await state.sessions.stop_turn(
             _history_key_for(session.key), force=False, preserve_queue=True
         )
-        qid = session.queue_append(message, own_words=own_words, pastes=pastes)
+        qid = session.queue_append(message, own_words=own_words, pastes=pastes, attended=True)
         # The superseded turn was stopped by the message that replaced it.
         state.broadcast_ws(
             "chat_done",

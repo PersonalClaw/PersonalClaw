@@ -883,7 +883,8 @@ async def api_inbox_send(request: web.Request) -> web.Response:
         if session is not None:
             from personalclaw.dashboard.chat_runner import run_chat
 
-            session.enqueue_or_run_prompt(text, run_chat, state)
+            # The owner's reply, typed here: queued behind a running turn, it runs until it is done.
+            session.enqueue_or_run_prompt(text, run_chat, state, attended=True)
             delivered = True
         status_before = item.status
         inbox.update(item_id, draft=recorded, replied_at=time.time())
