@@ -311,6 +311,68 @@ def test_personalclaw_logs_on_a_macos_service_reads_the_stream_the_gateway_logs_
     assert execs and execs[0][-1] == str(svc_macos.STDERR_LOG), execs
 
 
+@pytest.mark.parametrize(
+    ("follow", "lines", "options"), [(False, 20, ["-n", "20"]), (True, 5, ["-n", "5", "-f"])]
+)
+def test_personalclaw_logs_on_a_macos_service_shows_what_it_printed_too(
+    tmp_path, monkeypatch, follow: bool, lines: int, options: list[str]
+) -> None:
+    """What a service printed (where the dashboard is, how to get a sign-in link) is launchd's
+    stdout file, which no command showed: a healthy service logs nothing at the default level, so
+    ``personalclaw logs`` showed nothing at all. It shows both files, as the journal does."""
+    from personalclaw import cli_server
+    from personalclaw.service import macos as svc_macos
+    from personalclaw.service.common import Platform
+
+    log_dir = tmp_path / "Logs"
+    log_dir.mkdir()
+    monkeypatch.setattr(svc_macos, "STDOUT_LOG", log_dir / "gateway.log")
+    monkeypatch.setattr(svc_macos, "STDERR_LOG", log_dir / "gateway.err")
+    svc_macos.STDOUT_LOG.write_text("Dashboard:\n", encoding="utf-8")
+    svc_macos.STDERR_LOG.write_text("", encoding="utf-8")
+    monkeypatch.setattr(cli_server, "current_platform", lambda: Platform.LAUNCHD)
+    execs: list[list[str]] = []
+
+    def _exec(_file: str, argv: list[str]) -> None:
+        execs.append(argv)
+        raise SystemExit(0)
+
+    monkeypatch.setattr(cli_server.os, "execvp", _exec)
+    with pytest.raises(SystemExit):
+        cli_server._logs_cmd(type("Args", (), {"follow": follow, "lines": lines})())
+    assert execs == [
+        ["tail", *options, str(svc_macos.STDOUT_LOG), str(svc_macos.STDERR_LOG)]
+    ], execs
+
+
+def test_personalclaw_logs_on_a_macos_service_leaves_out_a_stdout_file_that_is_not_there(
+    tmp_path, monkeypatch
+) -> None:
+    """``tail`` handed a file that is not there says it cannot open it and exits 1, though the
+    log lines are in the other file, so without launchd's stdout file the stderr file is shown
+    alone."""
+    from personalclaw import cli_server
+    from personalclaw.service import macos as svc_macos
+    from personalclaw.service.common import Platform
+
+    log_dir = tmp_path / "Logs"
+    log_dir.mkdir()
+    monkeypatch.setattr(svc_macos, "STDOUT_LOG", log_dir / "gateway.log")
+    monkeypatch.setattr(svc_macos, "STDERR_LOG", log_dir / "gateway.err")
+    svc_macos.STDERR_LOG.write_text("12:00:00 WARNING log_probe: a line\n", encoding="utf-8")
+    monkeypatch.setattr(cli_server, "current_platform", lambda: Platform.LAUNCHD)
+    execs: list[list[str]] = []
+
+    def _exec(_file: str, argv: list[str]) -> None:
+        execs.append(argv)
+        raise SystemExit(0)
+
+    monkeypatch.setattr(cli_server.os, "execvp", _exec)
+    with pytest.raises(SystemExit):
+        cli_server._logs_cmd(type("Args", (), {"follow": False, "lines": 20})())
+    assert execs == [["tail", "-n", "20", str(svc_macos.STDERR_LOG)]], execs
+
+
 #: The one module that attaches a sink, and the one process that is not the gateway and
 #: keeps its own console (the availability probe's child, which must not open gateway.log).
 _ATTACHES_ITS_OWN = {"log_sinks.py", "providers/availability_probe.py"}
