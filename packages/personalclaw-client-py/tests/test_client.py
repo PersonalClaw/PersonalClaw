@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 from personalclaw_client import PersonalClawClient, PersonalClawError
 from personalclaw_client.errors import ErrorCode, http_error, http_status_to_code
 
@@ -55,6 +57,31 @@ class TestAuthCheck:
     def test_remote_with_token_ok(self):
         pc = PersonalClawClient(base_url="http://example.com:7777", token="test")
         pc._check_auth()  # should not raise
+
+
+class TestAuthCarrier:
+    """The gateway takes a program's token from ``Authorization: Bearer``. It never reads a cookie
+    named ``pc_token``, which is what the client sent, so it refused every call."""
+
+    @pytest.mark.asyncio
+    async def test_the_token_travels_as_a_bearer_header(self):
+        seen: dict[str, str | None] = {}
+
+        async def status(request: web.Request) -> web.Response:
+            seen["authorization"] = request.headers.get("Authorization")
+            seen["cookie"] = request.headers.get("Cookie")
+            if request.headers.get("Authorization") != "Bearer t":
+                return web.json_response({"error": "Token required"}, status=401)
+            return web.json_response({"ok": True})
+
+        app = web.Application()
+        app.router.add_get("/api/status", status)
+        async with TestServer(app, host="127.0.0.1") as server:
+            async with PersonalClawClient(
+                base_url=str(server.make_url("/")), token="t", max_retries=0
+            ) as pc:
+                assert await pc.get_status() == {"ok": True}
+        assert seen == {"authorization": "Bearer t", "cookie": None}
 
 
 class TestMessageValidation:

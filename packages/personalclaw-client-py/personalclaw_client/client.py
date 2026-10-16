@@ -171,7 +171,8 @@ class PersonalClawClient:
     def _auth_headers(self) -> dict[str, str]:
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self.token:
-            headers["Cookie"] = f"pc_token={self.token}"
+            # A program's carrier for the token; the browser's is the pc_token_<port> cookie.
+            headers["Authorization"] = f"Bearer {self.token}"
         return headers
 
     def _check_auth(self) -> None:
