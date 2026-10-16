@@ -362,6 +362,30 @@ personalclaw snapshot
 personalclaw update --to 0.1.3
 ```
 
+**Store apps are not pinned with PersonalClaw.** The Store's first-party apps install from the
+default branch of the [PersonalClawApps](https://github.com/PersonalClaw/PersonalClawApps)
+repository whatever release the gateway runs, and an app's update comes from there too:
+`updates.channel` and `updates.pin` do not reach them. An app that declares it needs a newer
+PersonalClaw than yours (a higher `minPersonalClawVersion`, or a core feature in
+`requiresCoreFeatures` your release lacks) is refused at install and update, with a sentence
+saying what it needs. To hold the apps at your release as well, clone the apps repository at
+the tag that names your release (`personalclaw --version` says which), point
+`PERSONALCLAW_FIRST_PARTY_APPS_DIR` at the clone, and turn **Bundled app source** off
+(Settings → Apps → Store sources, or `apps.bundled_source_enabled`):
+
+```bash
+tag="v$(personalclaw --version | cut -d' ' -f2)"
+git clone --depth 1 --branch "$tag" https://github.com/PersonalClaw/PersonalClawApps.git "$HOME/PersonalClawApps-$tag"
+export PERSONALCLAW_FIRST_PARTY_APPS_DIR="$HOME/PersonalClawApps-$tag"
+personalclaw config set apps.bundled_source_enabled false
+```
+
+The gateway reads the variable from its own environment: restart it from that shell, or, for a
+service, run `personalclaw service install` there again, which carries the variable into
+[the service](../reference/cli.md#the-services-environment). The Store then lists the
+first-party apps from the clone, and offers an app an update only when the clone holds a newer
+version of it.
+
 **Applying automatically is opt-in, and only a source checkout can** (`updates.auto`). The
 default `off` only notifies you. On a source checkout, set it to `staged` and an available
 update installs itself at the next safe point — it holds while a session or subagent is
