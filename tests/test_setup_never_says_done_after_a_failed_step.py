@@ -256,6 +256,35 @@ def test_a_second_run_keeps_what_the_first_saved_and_finishes(monkeypatch, capsy
     assert [path.read_bytes() for path in kept] == before
 
 
+@pytest.mark.parametrize(
+    ("platform", "named"),
+    [("LAUNCHD", True), ("SYSTEMD", True), ("CONTAINER", False), ("UNSUPPORTED", False)],
+)
+def test_the_closing_lines_name_the_service_where_one_can_be_installed(
+    platform, named, monkeypatch, capsys
+):
+    """`setup` ends on how to run the gateway. Where a service can keep it running, it names the
+    command that installs one; in a container, or with no service manager, that command changes
+    nothing, so it is not named there."""
+    from personalclaw.service import common as service_common
+
+    monkeypatch.setattr(
+        service_common, "current_platform", lambda: service_common.Platform[platform]
+    )
+    _answer(monkeypatch, {})
+
+    cli_setup._setup()
+
+    lines = capsys.readouterr().out.splitlines()
+    done = lines.index("Done! Try: personalclaw doctor && personalclaw gateway")
+    service_line = (
+        "  To keep the gateway running in the background, through reboots: "
+        "personalclaw service install"
+    )
+    assert (lines[done + 1 : done + 2] == [service_line]) is named, lines[done:]
+    assert any("service install" in line for line in lines[done:]) is named, lines[done:]
+
+
 def test_a_failure_on_stderr_lands_after_what_was_printed_before_it(tmp_path):
     """`personalclaw setup 2>&1 | tee setup.log` — both streams in one pipe.
 

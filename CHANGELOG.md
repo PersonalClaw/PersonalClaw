@@ -16,6 +16,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A gateway installed as a service passes Claude Code and Gemini CLI the provider, region and model your shell chose for them, so Claude Code on Amazon Bedrock or Google Vertex AI keeps that provider under the service once `personalclaw service install` runs again.**
 - **On a macOS service, `personalclaw logs` also shows what the gateway printed, such as where the dashboard is, as the Linux service's journal does, where a healthy service showed nothing.**
 
+### Changed
+
+- **`personalclaw setup` ends by naming `personalclaw service install`, which keeps the gateway running in the background and through reboots, on a Mac or on Linux with systemd.**
+
 ## [0.2.1] — 2026-10-15
 
 A patch release on 0.2.0. On Linux an agent on an agent CLI can save your automations,

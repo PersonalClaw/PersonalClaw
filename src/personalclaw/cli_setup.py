@@ -135,10 +135,26 @@ def _print_dashboard_pointer() -> None:
 
     Printed only where a browser can actually reach it: on a headless remote box the
     line would be an instruction the user cannot follow, so it is suppressed there and
-    the ``doctor``/``gateway`` next-step line stands on its own.
+    the next steps printed before it stand on their own.
     """
     if browser_available():
         print("  Guided first run — model provider, then a first success — is in the dashboard.")
+
+
+def _print_service_pointer() -> None:
+    """Name the command that keeps the gateway running in the background — one line.
+
+    Printed only where ``personalclaw service install`` installs a service (systemd or launchd).
+    In a container the container runtime keeps the gateway running, and anywhere else there is no
+    service to install, so there the line would name a command that changes nothing.
+    """
+    from personalclaw.service.common import Platform, current_platform
+
+    if current_platform() in (Platform.SYSTEMD, Platform.LAUNCHD):
+        print(
+            "  To keep the gateway running in the background, through reboots: "
+            "personalclaw service install"
+        )
 
 
 def _setup(
@@ -230,6 +246,7 @@ def _setup(
 
     _end_if_failed(failures)
     print("\nDone! Try: personalclaw doctor && personalclaw gateway")
+    _print_service_pointer()
     _print_dashboard_pointer()
 
 
