@@ -208,9 +208,10 @@ not its sha256, so compare the digest with the record first. From a source check
 Model providers are installable apps — nothing is hardwired to a vendor.
 
 1. Open **Apps** (the Store) in the dashboard sidebar.
-2. Install the provider app for your vendor (e.g. *Anthropic Models*,
-   *OpenAI Models*, *Bedrock Models*, *Ollama Models*, or *OpenAI-compatible*
-   for any compatible endpoint). The app installs its own SDK dependency.
+2. Install the provider app for your vendor (e.g. *Anthropic*, *OpenAI*,
+   *OpenRouter*, or *OpenAI-Compatible* for any compatible endpoint). The app
+   installs its own SDK dependency. A local Ollama needs no install: its
+   provider, *Ollama*, ships with PersonalClaw.
 3. The provider appears under **Settings → Providers** — add your API key /
    endpoint there and hit **Test** to verify connectivity.
 4. Go to **Settings → Models** and bind a model to the **chat** use case
