@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from personalclaw.sandbox import _STANDARD_DIRS
 from personalclaw.security import BUILTIN_DENIED_COMMAND_PATTERNS
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -39,6 +40,19 @@ def test_the_security_doc_states_the_denylists_real_size():
         f"security.md says {stated} shell patterns; "
         f"BUILTIN_DENIED_COMMAND_PATTERNS holds {expected}"
     )
+
+
+def test_the_security_doc_names_what_the_standard_sandbox_level_hides():
+    """What the security doc says the `standard` level hides is that level's list.
+
+    It listed `~/.aws` and `~/.kube` among the folders the sandbox hides, and the `standard`
+    level the agent's shell runs at hides neither.
+    """
+    names = [f"`~/{d}`" for d in _STANDARD_DIRS]
+    listed = ", ".join(names[:-1]) + " and " + names[-1]
+    sentence = f"The `standard` level hides {listed}."
+    text = " ".join((DOCS_DIR / "security.md").read_text(encoding="utf-8").split())
+    assert sentence in text, f"security.md does not say {sentence!r}"
 
 
 def test_every_file_an_architecture_doc_names_is_in_the_tree():

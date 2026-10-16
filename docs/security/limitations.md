@@ -838,9 +838,11 @@ depth, not a fence:
   The screen refuses known command forms before they run; it does not run an unknown command and
   decide afterward whether its output was a credential.
 - **The OS sandbox hides the credential store at its `cc` and `strict` levels only.** The native
-  agent's shell runs at the standard level, which hides no single file, and where the operating
-  system offers no sandbox none runs. An agent CLI's own sign-in stays readable inside its sandbox,
-  because the CLI reads it to sign in.
+  agent's shell, an agent CLI's session (unless its app says the CLI sandboxes itself, which then
+  runs in its own sandbox instead), a bash action and a scheduled script run at the standard
+  level, which hides no single file and none of `~/.aws`, `~/.kube` and `~/.ssh`, and where the
+  operating system offers no sandbox none runs. An agent CLI's own sign-in stays readable inside
+  its sandbox, because the CLI reads it to sign in.
 - **An agent CLI's own shell and file tools are screened only when the CLI asks first.** One it
   runs without asking reads inside the CLI (§1, §11).
 
