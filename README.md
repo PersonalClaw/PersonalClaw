@@ -232,7 +232,10 @@ something away and the row above cannot say what:
   is the most reproducible path here — but it packages the **published wheel**, not your
   checkout. `nix run .#personalclaw` from a clone runs the release named in
   `nix/personalclaw.nix`, not your working tree; for that, use the development install in
-  [CONTRIBUTING](CONTRIBUTING.md#development-setup).
+  [CONTRIBUTING](CONTRIBUTING.md#development-setup). The few dependencies nixpkgs cannot
+  supply at a version the release accepts are the exact wheels the release's `uv.lock` pins
+  (`nix/pins.toml` names them and says why), so they move with the lock at each release. The
+  flake is offered for Linux (x86_64 and ARM) and Apple Silicon Macs.
 
 These are exercised on a genuinely clean machine rather than a dev box, and no single harness
 covers them all, so here is which one covers what: `scripts/fresh_install_validate.sh` drives
@@ -240,7 +243,9 @@ covers them all, so here is which one covers what: `scripts/fresh_install_valida
 `.github/workflows/full.yml` drives the **bootstrap one-liner** on a bare `ubuntu:latest` with
 neither curl nor CA roots preinstalled; `.github/workflows/docker-single-container.yml` builds
 the image and drives the **Docker** one-liner all the way to a *rendered dashboard*, not just a
-`200` from `/api/healthz`; and the per-release checklist in the
+`200` from `/api/healthz`; `.github/workflows/nix.yml` builds the **Nix** flake, boots its
+gateway and reads its dashboard on every change to the flake, `pyproject.toml` or `uv.lock`, and
+weekly; and the per-release checklist in the
 [release runbook](docs/maintainers/release-runbook.md#convenience-channel-smoke-homebrew--nix)
 walks Homebrew and Nix by hand. **pipx has no leg of its own** — it installs the same wheel
 every other Python path installs, which is what "the same release artifact" above buys.

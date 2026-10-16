@@ -285,9 +285,9 @@ Then clean up: `rm -rf /tmp/relcheck /tmp/relcheck-dl`.
 ### Convenience-channel smoke (Homebrew · Nix)
 
 The two convenience channels are the only install paths that live **outside** the release
-pipeline, so nothing in a tag push updates or verifies them. Run this checklist once per
-release, after PyPI has the new version — both channels point at a *published* artifact, so
-neither can be bumped before then.
+pipeline, so nothing in a tag push updates them. Run this checklist once per release, after
+PyPI has the new version — both channels point at a *published* artifact, so neither can be
+bumped before then.
 
 Every step runs in a throwaway container, because a dev box cannot test the claim these
 channels make: that they work on a machine that does not already have the dependency. One
@@ -311,7 +311,15 @@ Then the per-channel work a release actually requires:
 - [ ] `brew upgrade personalclaw` on a machine that already had the previous version — a
       fresh install and an upgrade take different code paths through the keg.
 
-**Nix** — `flake.nix` + `nix/personalclaw.nix` in this repository:
+**Nix** — `flake.nix` + `nix/` in this repository. A release moves it by moving the lock: the
+dependencies nixpkgs cannot supply at a version the release accepts are built from the
+release's own `uv.lock` entries, which `nix/pins.toml` copies, so the bump below carries them
+to the new lock and never relaxes a bound. Between releases the
+[`nix` workflow](../../.github/workflows/nix.yml) guards the channel: on every change to the
+flake, `pyproject.toml` or `uv.lock`, and weekly, it builds the flake and boots its gateway,
+checks `nix/pins.toml` against the packaged release's tag, and builds this checkout's own wheel
+on the same package set, so a bound nixpkgs cannot meet fails the change that adds it rather
+than this checklist.
 
 - [ ] Bump `version` and the wheel `hash` in `nix/personalclaw.nix`
       (`nix store prefetch-file --json <wheel url>`).
@@ -320,13 +328,19 @@ Then the per-channel work a release actually requires:
       where `pyproject.toml` now says `croniter<3` and `reportlab<6`, and the wheel declares
       no `sqlite-vec`, `cryptography` or `jsonschema` at all.
       `unzip -p <wheel> personalclaw-X.Y.Z.dist-info/METADATA | grep '^Requires-Dist'`
+- [ ] `python3 scripts/nix_pins.py` rewrites `nix/pins.toml` from `uv.lock` at `vX.Y.Z`
+      (`git fetch origin tag vX.Y.Z` first), so the pinned packages are the release's own files.
 - [ ] Re-check the `nixpkgs` pin in `flake.nix` satisfies those bounds. This is the step that
       actually breaks: `nixos-unstable` carried reportlab 5.0.1 against `reportlab<5`, and
       `nixos-25.11` carried tree-sitter-language-pack 0.10.0 against `>=1.0` — the two
       failures point in opposite directions, so neither "track unstable" nor "pin older" is a
       standing answer. `pythonRuntimeDepsCheckHook` fails the build and names the offending
-      specifier, so measure rather than guess.
-- [ ] `nix flake check` passes (it runs `personalclaw --version` and greps for the version).
+      specifier, so measure rather than guess. A bound nixpkgs cannot meet is answered by
+      building that package from the lock, never by `pythonRelaxDeps`: add it to `PINS` in
+      `scripts/nix_pins.py`, with its reason, and run the script again.
+- [ ] `nix flake check` passes: it runs `personalclaw --version`, and `serves` boots the
+      gateway on a scratch home and reads it as a user would (`scripts/nix_smoke.py`). The
+      `nix` workflow runs it on the bump's pull request too.
 
 A failure in either channel is **not** release-blocking for PyPI or the containers — the
 convenience channels lag by design, since they can only reference a published artifact. It is
@@ -339,8 +353,8 @@ Coverage this checklist does **not** give you, stated so nobody reads it as more
 |---|---|---|
 | Homebrew on macOS | the tap's CI, on a clean macOS runner, every push | arm64 only (`macos-latest`); no Intel Mac |
 | Homebrew on Linux | `fresh_install_validate.sh brew` (linuxbrew in a container) | host architecture only. Do **not** try `--platform linux/amd64` on Apple Silicon: Homebrew refuses an x86_64 CPU without SSSE3, it reads `/proc/cpuinfo` (which shows the host's ARM CPU), and `QEMU_CPU=max` does not help |
-| Nix | `fresh_install_validate.sh nix` | the container's architecture only |
-| pip | `fresh_install_validate.sh pip` | ditto |
+| Nix | the `nix` workflow on x86_64 Linux (built, booted, its dashboard read), every change to the flake, `pyproject.toml` or `uv.lock` and weekly; `fresh_install_validate.sh nix` | ARM Linux only in that container; Apple Silicon is evaluated (each pin has a wheel for it) but built nowhere; no Intel Mac, which the flake does not offer |
+| pip | `fresh_install_validate.sh pip` | the container's architecture only |
 
 ### Windows smoke (rung 1 — Docker Desktop)
 
