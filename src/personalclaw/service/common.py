@@ -90,11 +90,11 @@ def personalclaw_bin() -> str:
 def service_path(home: str) -> str:
     """Build the PATH for the gateway's service environment.
 
-    Snapshots the installer's current ``$PATH`` so subprocesses spawned
-    by the gateway (git, agent CLIs, etc.) resolve the same way they did
-    in the interactive shell that ran ``personalclaw service install``.
-    Always-required user dirs (``~/.local/bin``) and POSIX defaults are
-    prepended in case the installer's ``$PATH`` is missing them.
+    The ``$PATH`` the installing command was launched with (``env.startup_path``), in its
+    order, so subprocesses spawned by the gateway (git, agent CLIs, etc.) resolve the same
+    way they did in the interactive shell that ran ``personalclaw service install``.
+    Always-required user dirs (``~/.local/bin``) and POSIX defaults are appended when that
+    ``$PATH`` lacks them, never ahead of it.
     Duplicates are removed while preserving order.
     """
     required = [
@@ -108,7 +108,7 @@ def service_path(home: str) -> str:
     env_path = [p for p in (startup_path() or "").split(":") if p]
     seen: set[str] = set()
     out: list[str] = []
-    for entry in required + env_path:
+    for entry in env_path + required:
         if entry not in seen:
             seen.add(entry)
             out.append(entry)
