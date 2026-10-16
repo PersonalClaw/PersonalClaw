@@ -443,6 +443,90 @@ def refused_sampling(model_id: str, requested: tuple[str, ...] | list[str]) -> d
     return {}
 
 
+# ── Reasoning request shapes (provider-agnostic model knowledge) ───────────────
+#
+# How a model takes a reasoning effort is a fact about the model family, of the same class as the
+# sampling table above: the vendor answers 400 when a request configures thinking in a shape the
+# model does not accept. Consulted by id when the Anthropic-compatible wire client builds a request.
+
+#: The effort levels adaptive thinking takes on Opus 4.6 and Sonnet 4.6, and with ``xhigh`` on
+#: every later model that thinks adaptively.
+_ADAPTIVE_EFFORTS = ("low", "medium", "high", "max")
+_ADAPTIVE_EFFORTS_XHIGH = ("low", "medium", "high", "xhigh", "max")
+
+#: ``claude-<family>-<major>[-<minor>]``. A minor is one or two digits, so a date suffix
+#: (``-20250514``) is never read as one.
+_CLAUDE_NAMED = re.compile(r"claude-(opus|sonnet|haiku|fable|mythos)-(\d+)(?:-(\d{1,2}))?(?!\d)")
+#: The older spelling, version first: ``claude-3-7-sonnet-20250219``.
+_CLAUDE_VERSION_FIRST = re.compile(r"claude-(\d+)(?:-(\d{1,2}))?-(opus|sonnet|haiku)(?![a-z])")
+
+
+@dataclass(frozen=True)
+class ThinkingShape:
+    """How a model is asked to reason. ``adaptive``: ``thinking: {type: adaptive}`` with the depth
+    as an effort level, one of ``efforts``. Otherwise a ``budget_tokens`` budget."""
+
+    adaptive: bool
+    efforts: tuple[str, ...] = ()
+
+
+_BUDGET_SHAPE = ThinkingShape(adaptive=False)
+
+
+def _claude_version(model_id: str) -> tuple[str, tuple[int, int]] | None:
+    """``(family, (major, minor))`` of a Claude model id in any of its spellings (dotted, with a
+    regional or vendor prefix, with a date suffix), or ``None`` for any other id."""
+    mid = (model_id or "").strip().lower().replace(".", "-").replace("_", "-")
+    named = _CLAUDE_NAMED.search(mid)
+    if named:
+        return named.group(1), (int(named.group(2)), int(named.group(3) or 0))
+    first = _CLAUDE_VERSION_FIRST.search(mid)
+    if first:
+        return first.group(3), (int(first.group(1)), int(first.group(2) or 0))
+    return None
+
+
+def thinking_shape(model_id: str) -> ThinkingShape:
+    """How ``model_id`` takes a reasoning effort.
+
+    Adaptive with ``xhigh``: the Fable and Mythos lines, Opus 4.7 and later, Sonnet 5 and later and
+    Haiku 5 and later, which all refuse ``budget_tokens``. Adaptive without ``xhigh``: Opus 4.6 and
+    Sonnet 4.6, where a budget is deprecated. Every other model, including an id this does not
+    recognise, keeps the budget shape.
+    """
+    parsed = _claude_version(model_id)
+    if parsed is None:
+        return _BUDGET_SHAPE
+    family, version = parsed
+    if family in ("fable", "mythos"):
+        return ThinkingShape(adaptive=True, efforts=_ADAPTIVE_EFFORTS_XHIGH)
+    newest = {"opus": (4, 7), "sonnet": (5, 0), "haiku": (5, 0)}[family]
+    if version >= newest:
+        return ThinkingShape(adaptive=True, efforts=_ADAPTIVE_EFFORTS_XHIGH)
+    if family in ("opus", "sonnet") and version == (4, 6):
+        return ThinkingShape(adaptive=True, efforts=_ADAPTIVE_EFFORTS)
+    return _BUDGET_SHAPE
+
+
+def returns_thinking(model_id: str) -> bool:
+    """Whether a request to ``model_id`` may carry back the thinking blocks that model wrote.
+
+    False on the models that bind a thinking block to everything before it (Opus, Sonnet and Haiku
+    5.5 and later, Fable 5.1 and later): the runtime edits earlier turns between requests, and such
+    a model refuses a block whose prefix changed. False on an id this does not recognise and on the
+    Mythos line too, since a request that leaves every thinking block out is always valid.
+    """
+    parsed = _claude_version(model_id)
+    if parsed is None:
+        return False
+    family, version = parsed
+    if family in ("opus", "sonnet", "haiku"):
+        return version < (5, 5)
+    if family == "fable":
+        return version < (5, 1)
+    return False
+
+
 # ── Shared OpenAI-compatible protocol helper ──────────────────────────────────
 #
 # The GET /v1/models client is the same for every OpenAI-compatible endpoint —

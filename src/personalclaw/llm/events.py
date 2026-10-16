@@ -344,3 +344,9 @@ class AgentEvent:
     #: again. False from an agent CLI, whose calls meet them at the host's gate. Last, so no field
     #: moves.
     hooks_asked: bool = False
+    #: On a provider's terminal EVENT_COMPLETE, the reasoning its model wrote for this answer as
+    #: opaque model data, never content: ``{"model": <id>, "blocks": [...]}``
+    #: (``llm.reasoning_record``). The native loop keeps it on the assistant message and hands it
+    #: back only to a provider that reads it. ``None`` when the provider has none to carry. Last,
+    #: so no field moves.
+    reasoning: dict[str, Any] | None = None
