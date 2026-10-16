@@ -1,6 +1,7 @@
 """Tests for dashboard chat session — session management, pagination, history persistence."""
 
 import asyncio
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -16,6 +17,7 @@ from chat_test_helpers import (
 )
 
 from personalclaw.dashboard.state import DashboardState, _ChatSession
+from personalclaw.dashboard.step_notes import ABOUT_CALL, NOT_RUN, NOTE, note_on_call
 from personalclaw.history import ConversationLog
 
 # ── Session unit tests ──
@@ -133,6 +135,43 @@ class TestApiChatDrainOnDisconnect:
 
         assert session._pending == []
         assert session._has_reader is False
+
+
+@pytest.mark.asyncio
+async def test_an_sse_turn_announces_its_rows_to_the_page(tmp_path, monkeypatch):
+    """A page open on a chat another client streams gets each row the turn writes, as it is
+    written, and the stream still gets it once.
+
+    The row here is a step note, written as a gate writes one when it refuses a call: the page
+    shows its sentence on the call's card only from the row's frame. While a stream was attached
+    the page got no such frame, so it learned why the call did not run only on a reload.
+    """
+    monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+    state = _make_state(tmp_path)
+    session = state.get_or_create_session("s1")
+    announced: list[dict] = []
+    session._on_message = lambda key, msg: announced.append(msg)
+    why = f"{NOT_RUN}Plan mode — inspection only, nothing is executed."
+    note = f"bash — {why}"
+
+    async def fake_run_chat(st, sl, msg):
+        note_on_call(sl, call_id="call-1", title="bash", note=why)
+        sl.signal_done()
+
+    monkeypatch.setattr("personalclaw.dashboard.chat_handlers.run_chat", fake_run_chat)
+
+    async with TestClient(TestServer(_make_app(state))) as client:
+        resp = await client.post("/api/chat", json={"message": "hello", "session": "s1"})
+        assert resp.status == 200
+        body = await resp.text()
+
+    frames = [frame.removeprefix("data: ") for frame in body.split("\n\n")]
+    streamed = [json.loads(frame)["content"] for frame in frames if frame.startswith("{")]
+    assert streamed.count(note) == 1
+    # The user row is not echoed, and the note's frame names the call whose card shows it.
+    assert [(m["content"], m.get("meta")) for m in announced] == [
+        (note, {NOTE: why, ABOUT_CALL: "call-1"})
+    ]
 
 
 # ── Session detail pagination (HTTP) ──
@@ -550,13 +589,15 @@ class TestFullPaginationWalk:
             assert data["has_more"] is False
 
 
-# ── SSE broadcast: _has_reader mutual exclusion ──
+# ── Row announcements beside a stream reader ──
 
 
 class TestHasReaderFlag:
-    """Verify _has_reader prevents duplicate message delivery."""
+    """A stream reader drains `_pending`; the chat's pages hear each row once either way."""
 
-    def test_broadcast_skipped_when_reader_active(self, tmp_path, monkeypatch):
+    def test_a_row_reaches_the_page_and_the_stream_while_a_reader_drains(
+        self, tmp_path, monkeypatch
+    ):
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         session = state.get_or_create_session("s1")
@@ -564,8 +605,9 @@ class TestHasReaderFlag:
         session._on_message = lambda key, msg: received.append(msg)
 
         session._has_reader = True
-        session.append("assistant", "should not broadcast")
-        assert len(received) == 0
+        session.append("tool", "✅ bash")
+        assert [m["content"] for m in received] == ["✅ bash"]
+        assert [m["content"] for m in session.drain()] == ["✅ bash"]
 
     def test_broadcast_fires_when_no_reader(self, tmp_path, monkeypatch):
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)

@@ -4754,10 +4754,8 @@ async def run_chat(
                 approval_window = state.approval_window_secs()
                 try:
                     # ONE registration for every surface — inside the try, so a turn torn
-                    # down mid-publication still leaves nothing listed. The live chat page
-                    # consumes this turn via the HTTP stream, so session.append's SSE
-                    # broadcast is suppressed (_has_reader); the registry's `approval` frame
-                    # is what renders the card LIVE, and it is the same entry
+                    # down mid-publication still leaves nothing listed. The registry's
+                    # `approval` frame is what renders the card LIVE, and it is the same entry
                     # `GET /api/approvals` lists, Home counts, To triage and the phone offer
                     # to answer, and the Inbox row is raised from. A chat approval used to
                     # broadcast a frame of its own and register nowhere else, so it was
