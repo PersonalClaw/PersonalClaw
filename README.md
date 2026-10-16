@@ -169,7 +169,7 @@ means a design boundary we expect to still hold at 1.0**, not a backlog item:
 | want a native phone app | **no** | the phone is the dashboard installed as a PWA, not a store app |
 | need a native Windows install | **no** | WSL2 or Docker Desktop only; a native port was audited and found no-go |
 | want a signed, auto-updating desktop app | **no** | each release's Apple-silicon dmg and x86-64 Linux AppImage/deb carry no publisher's signature (the dmg is ad-hoc signed, not notarized), and there is no update channel |
-| want it to live in Telegram / Discord / email | **no** | core registers exactly one channel: the web dashboard |
+| want it to live in a chat app other than Slack, Telegram, Discord or email | **no** | those four are channel apps in the Store; any other is a channel app you would build |
 | expect web search to work out of the box | **no** | no search provider ships bundled — it is a seam you fill |
 | plan to install apps you do not trust | **no** | the platform *vets* what you install; it does not confine it after |
 | want a spend cap that works out of the box | **no** | the three ceilings are real but default to *unlimited*, and today meter unattended runs only — not the chat window |
