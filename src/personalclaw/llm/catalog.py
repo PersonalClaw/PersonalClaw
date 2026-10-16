@@ -408,12 +408,13 @@ SAMPLING_PARAMETERS = ("temperature", "top_p", "top_k")
 
 #: Model families that refuse a custom ``temperature``, ``top_p`` and ``top_k``: the vendor
 #: answers 400 on Claude Opus 4.7 and later, the Claude Fable and Mythos 5 lines, and — for any
-#: non-default value — Claude Sonnet 5.
+#: non-default value — Claude Sonnet 5 and Claude Haiku 5.5.
 _FIXED_SAMPLING_MARKERS = (
     "claude-opus-4-7",
     "claude-opus-4-8",
     "claude-opus-5",
     "claude-sonnet-5",
+    "claude-haiku-5",
     "claude-fable-5",
     "claude-mythos-5",
 )
