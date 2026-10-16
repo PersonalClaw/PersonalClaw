@@ -412,9 +412,11 @@ Two real constraints, stated rather than discovered:
 - **iOS needs the PWA installed.** Safari will not hold a push subscription for an ordinary tab.
   Add the dashboard to your home screen first (Share → Add to Home Screen), then turn push on from
   the installed app. The companion screen says so instead of showing a button that cannot work.
-- **A service worker needs a secure context.** Over a tailnet hostname or a TLS tunnel you are
-  fine. Over plain `http://` at a LAN address there is no service worker, so no push and no install
-  — Settings → Companion apps → *Install & offline* names that as the reason.
+- **A service worker needs a secure context: an `https` page, or `localhost` on the gateway's own
+  machine.** Plain `http://` is not one, at a LAN address or at the tailnet address the steps above
+  open, so there is no service worker there: no web push and no install. Settings → Companion apps
+  → *Install & offline* names that as the reason. On the plain-`http` tailnet path, use the ntfy
+  backend above for push: it needs no service worker.
 
 Rotating the keypair (`personalclaw push init --force`) invalidates every existing subscription,
 because each browser bound its subscription to the old public key. Only do it if a key leaked, and
