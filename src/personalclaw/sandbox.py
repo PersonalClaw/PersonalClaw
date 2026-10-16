@@ -117,10 +117,10 @@ _SENSITIVE_ENV_PREFIXES: list[str] = [
 
 # Additional credential names scrubbed only in cc/strict modes (LLM-controlled
 # agent subprocesses). Mirrors the file-level deny list for ~/.personalclaw/.env:
-# config/loader.py seeds these into os.environ so trusted children (gateway,
-# MCP servers, cron) inherit them, but a sandboxed Claude Code agent must not
-# see them via env any more than via the bind-mounted file. Use exact-name
-# matches by virtue of the prefix iteration's startswith check.
+# `AppConfig.load_credentials` (config/loader.py) mirrors these into os.environ for the
+# gateway and the children it starts with its own environment (such as an MCP server of the
+# owner's own), but a sandboxed agent must not see them via env any more than via the
+# bind-mounted file. Use exact-name matches by virtue of the prefix iteration's startswith check.
 _AGENT_DENIED_ENV_KEYS: list[str] = [
     "SLACK_BOT_TOKEN",
     "SLACK_APP_TOKEN",
@@ -139,9 +139,9 @@ _AGENT_DENIED_ENV_KEYS: list[str] = [
 #: of them inherited from whatever the launching shell had grown to include (terminal,
 #: tooling, agent-CLI and cloud-SDK variables). A denylist can only refuse the credential
 #: shapes it already knows about; the set a child legitimately NEEDS is small and stable.
-#: `config/loader.py:4008` also seeds `.env` credentials into `os.environ` deliberately so
-#: "trusted children" inherit them — which is exactly the inheritance a hook or cron script
-#: must not get for free.
+#: `AppConfig.load_credentials` (`config/loader.py`) also mirrors `.env` credentials into
+#: `os.environ` deliberately, for the gateway and the children it starts with its own
+#: environment — which is exactly the inheritance a hook or cron script must not get for free.
 #:
 #: Widening this set is a security decision. The seam for a script that needs one more
 #: variable is `sandbox.env_passthrough` in `config.json` — an OPERATOR surface. It is

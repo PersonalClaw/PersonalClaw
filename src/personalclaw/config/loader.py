@@ -5268,14 +5268,16 @@ class AppConfig:
             if val and (key in _CREDENTIAL_KEYS or key.startswith(f"{CRED_OWNER_ID}_")):
                 creds[key] = val
 
-        # Propagate NAMED credentials into the process environment so spawned children
-        # (sandboxed agents, MCP servers, cron-fired subprocesses) inherit them
-        # via Popen's default env=os.environ.copy() — even when their view of
-        # ~/.personalclaw/.env is a bind-mounted empty file. setdefault() preserves
-        # any value the caller already set explicitly. An OWNED key (a provider's or an
-        # app setting's secret) is read only through its settings reference, so it is
-        # never exported — see `config.credentials.OWNED_KEY_PREFIX` — and neither is a name
-        # that decides which programs run (`mirrored_into_the_environment`).
+        # Mirror NAMED credentials into the process environment, for this process and for a
+        # child it starts with its own environment (`env.gateway_env`), such as an MCP server
+        # of the owner's own from `mcp.json`. An agent CLI, the agent's shell, a hook, a cron
+        # script, and an app's programs and MCP servers are started with the child allowlist
+        # instead (`sandbox.build_child_env`), so they get none of these unless the owner
+        # passes the name through in `sandbox.env_passthrough`. setdefault() preserves any
+        # value the caller already set explicitly. An OWNED key (a provider's or an app
+        # setting's secret) is read only through its settings reference, so it is never
+        # exported — see `config.credentials.OWNED_KEY_PREFIX` — and neither is a name that
+        # decides which programs run (`mirrored_into_the_environment`).
         from personalclaw.config.credentials import mirrored_into_the_environment
 
         for k, v in creds.items():
