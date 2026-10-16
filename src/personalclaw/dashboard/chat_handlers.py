@@ -349,7 +349,8 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     # WS mode: return JSON immediately, chunks delivered via WebSocket
     ws_mode = request.query.get("ws") == "1"
 
-    session._has_reader = not ws_mode  # Only block SSE broadcast if HTTP SSE reader
+    # Outside WS mode this request's stream drains the turn's rows, chunks and end from `_pending`.
+    session._has_reader = not ws_mode
     if user_meta:
         user_meta = _redact_meta(user_meta)
     if _own_recorded is not None:

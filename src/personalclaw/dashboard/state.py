@@ -410,7 +410,7 @@ class _ChatSession(ChatQueue):
         self._suppress_autonudge_rearm: bool = False
         self._titled: bool = False  # True once a title has been assigned
         self._resumed_count: int = 0  # messages loaded from history on resume
-        # Callback for broadcasting messages via global SSE
+        # Callback announcing each new row to the chat's open pages (the dashboard socket)
         self._on_message: object | None = None  # Callable[[str, dict], None] | None
         self._has_reader: bool = False  # True when HTTP SSE stream is draining
         self._stop_state_now: str = "idle"  # see `_stop_state`
@@ -630,9 +630,11 @@ class _ChatSession(ChatQueue):
         self._dirty = True
         self._pending.append(msg)
         self.event.set()
-        # Broadcast via global SSE when no HTTP stream reader is active. A user entry is
+        # Announced to every open page of the chat (the dashboard socket) whether or not an HTTP
+        # stream also drains this turn: that stream reads `_pending`, never the socket, so a page
+        # watching a chat another client drives gets its rows as they are written. A user entry is
         # not echoed: the frontend adds it optimistically.
-        if broadcast and self._on_message and msg["role"] != "user" and not self._has_reader:
+        if broadcast and self._on_message and msg["role"] != "user":
             self._on_message(self.key, msg)  # type: ignore[operator]
 
     def _stream_index(self) -> int | None:

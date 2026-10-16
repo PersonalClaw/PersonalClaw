@@ -665,9 +665,9 @@ async def handle_chat_completions(request: web.Request) -> web.StreamResponse:
         return _session_busy(client_id, persistent)
     # The session is this request's from here until its answer has been read out. The reader
     # slot is claimed in the same step as the check, before anything below awaits, so no other
-    # request can start in between; `_ChatSession.append` then routes this turn's rows to
-    # `_pending` for this request to drain instead of broadcasting them at the dashboard's SSE
-    # listeners. Every way out of the request releases it (`_finish`).
+    # request can start in between; `_ChatSession` then queues this turn's rows and chunks on
+    # `_pending` for this request to drain; a dashboard page open on the chat still gets its rows
+    # over the socket. Every way out of the request releases it (`_finish`).
     session._has_reader = True
     try:
         if not _answered_by(session, agent):

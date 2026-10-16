@@ -17,6 +17,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A service from `personalclaw service install` finds `git`, `python3` and every other program where the shell that installed it does, instead of the system's copies first, once it is installed again.**
 - **A gateway installed as a service passes Claude Code and Gemini CLI the provider, region and model your shell chose for them, so Claude Code on Amazon Bedrock or Google Vertex AI keeps that provider under the service once `personalclaw service install` runs again.**
 - **On a macOS service, `personalclaw logs` also shows what the gateway printed, such as where the dashboard is, as the Linux service's journal does, where a healthy service showed nothing.**
+- **A chat open in the dashboard shows its notices as they happen while another client, such as one on the OpenAI-compatible endpoint, streams its turn, not only after a reload.**
 
 ### Changed
 
