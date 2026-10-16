@@ -18,6 +18,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A gateway installed as a service passes Claude Code and Gemini CLI the provider, region and model your shell chose for them, so Claude Code on Amazon Bedrock or Google Vertex AI keeps that provider under the service once `personalclaw service install` runs again.**
 - **On a macOS service, `personalclaw logs` also shows what the gateway printed, such as where the dashboard is, as the Linux service's journal does, where a healthy service showed nothing.**
 - **A chat open in the dashboard shows its notices as they happen while another client, such as one on the OpenAI-compatible endpoint, streams its turn, not only after a reload.**
+- **`personalclaw-client` signs in with the token it is given: it sends it as `Authorization: Bearer`, where it sent a cookie the gateway never reads, so every call was refused.**
 
 ### Changed
 

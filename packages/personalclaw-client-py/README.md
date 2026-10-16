@@ -20,13 +20,19 @@ uv pip install personalclaw-client
 ## Usage
 
 ```python
+import os
+
 from personalclaw_client import PersonalClawClient
 
-async with PersonalClawClient(app_name="my-app") as pc:
+# The owner token: the value after `?token=` in the link `personalclaw token` prints.
+async with PersonalClawClient(token=os.environ["PERSONALCLAW_TOKEN"]) as pc:
     ok = await pc.ping()
     status = await pc.get_status()
+    await pc.create_session("session-1")
     await pc.send_message("session-1", "hello")
 ```
+
+The client sends the token as `Authorization: Bearer`.
 
 ## Errors
 
