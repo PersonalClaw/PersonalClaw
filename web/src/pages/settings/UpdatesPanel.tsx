@@ -553,8 +553,12 @@ export function UpdatesPanel() {
       <Section title="Release notes" hint={verdict === 'pin_miss'
         ? `No published release is version ${info.pin}, so there are no notes to show.`
         : info.pin ? `What is in the pinned release ${info.pin}.` : `What is in the newest ${channelName} release.`}>
+        {/* This box and the changelog's below scroll with real data, so each is a tab stop named by
+            its section (`design/scrollRegionNamed.test.tsx`): 0.2.1's notes are 34 lines with no
+            link in them, and this box scrolled with nothing in it a keyboard could reach. */}
         {releaseNotes.trim()
-          ? <div data-type="body-s" className="max-h-96 overflow-auto rounded-lg bg-surface-container px-4 py-3">
+          ? <div data-type="body-s" tabIndex={0} role="group" aria-label="Release notes"
+              className="max-h-96 overflow-auto rounded-lg bg-surface-container px-4 py-3">
               <Markdown>{changelogBody(`## ${info.latest ? `v${info.latest}` : channelName}\n\n${releaseNotes}`)}</Markdown>
             </div>
           : <p data-type="body-s" className="text-on-surface-low italic">
@@ -567,7 +571,8 @@ export function UpdatesPanel() {
       <Section title="Changelog" hint="What's changed recently." right={upgradeNotes}>
         {changelog.trim()
           // CHANGELOG.md is markdown — render it (headings/lists/links), not a raw <pre>.
-          ? <div data-type="body-s" className="max-h-96 overflow-auto rounded-lg bg-surface-container px-4 py-3">
+          ? <div data-type="body-s" tabIndex={0} role="group" aria-label="Changelog"
+              className="max-h-96 overflow-auto rounded-lg bg-surface-container px-4 py-3">
               <Markdown>{changelogBody(changelog)}</Markdown>
             </div>
           : <p data-type="body-s" className="text-on-surface-low italic">No changelog available.</p>}
