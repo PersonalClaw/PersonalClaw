@@ -428,10 +428,9 @@ The iOS/Android store app cannot hold a web-push subscription — Apple and Goog
 deliver to it through their own push services, and only whoever holds the app's signing
 credentials can send there. Relay users route the same ids-only ping through a
 **stateless, open-source relay** ([`personalclaw-push-relay`](https://github.com/PersonalClaw/personalclaw-push-relay))
-that forwards it to APNs/FCM. Deploy it yourself with your own credentials, or use the
-hosted convenience instance — the relay stores nothing, retries nothing, and refuses any
-body that is not exactly the two ids, so it is a dumb pipe by construction, not a cloud
-middle tier.
+that forwards it to APNs/FCM. Deploy it yourself, with the push credentials of the app it
+sends for. The relay stores nothing, retries nothing, and refuses any body that is not
+exactly the two ids, so it is a dumb pipe by construction, not a cloud middle tier.
 
 1. Settings → Companion apps → **Push backend → relay**, and paste the relay's **https**
    URL (plain `http` is refused at the sender, same as ntfy).
