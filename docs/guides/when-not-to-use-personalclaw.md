@@ -151,19 +151,18 @@ The gateway itself updates fine (`personalclaw update`, plus **Settings → Upda
 It is the desktop *shell* that has no update channel. If you only need a window, the
 dashboard in an ordinary browser tab is the supported path and always current.
 
-## 7. You want it to live in Telegram, Discord, or your email
+## 7. You want it to live in a chat app it has no channel for
 
-**Walk away if:** a specific chat app *is* the product for you.
+**Walk away if:** the chat app you live in is not Slack, Telegram, Discord or email.
 
 Core registers exactly one channel transport by default: the **Web UI**. That is the
 whole of `register_default_transports()` in
-`src/personalclaw/channel_transports/__init__.py`. Slack is not in core either — its
-lifecycle is owned by the extension system, so it arrives as an app you install. Telegram
-and Discord are named in that module's own docstring as *future*; they do not exist
-today, and neither does an email channel.
+`src/personalclaw/channel_transports/__init__.py`. Every other channel is an app you
+install from the Store: Slack, Telegram, Discord and email each have one, and installing
+or enabling it registers its transport through the extension system. So on a fresh
+install the dashboard is the only channel until you install one.
 
-So the inbox that watches channels and drafts replies is real, but on a fresh install the
-only channel it has to watch is the dashboard. Bringing a new one is a documented,
+For any other chat app there is no channel app today. Bringing one is a documented,
 supported job — [Build a channel app](build-a-channel-app.md) ships the transport and
 delivery obligations plus a conformance kit — but it is work you would be doing, not a
 setting you would be toggling.
