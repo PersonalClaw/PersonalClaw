@@ -17,6 +17,7 @@ from personalclaw.model_windows import (
     LOCAL_SERVED_CONTEXT_WINDOW,
     declared_context_window,
     model_context_window,
+    resolved_context_window,
 )
 
 
@@ -59,6 +60,32 @@ class TestFallbacks:
 
     def test_custom_default_is_honoured_for_an_unknown_model(self):
         assert model_context_window("no-such-model", default=4096) == 4096
+
+
+class TestClaudeHaiku55:
+    """Claude Haiku 5.5's 1M-token window resolves under every id a service calls it by.
+
+    The table had no row for it, so the measured gauge read unmeasured (``None``) and a budget
+    fell back to the 200k default.
+    """
+
+    @pytest.mark.parametrize(
+        "model_id",
+        [
+            "claude-haiku-5-5",
+            "claude-haiku-5.5",
+            "anthropic.claude-haiku-5-5",
+            "global.anthropic.claude-haiku-5-5",
+            "Anthropic:claude-haiku-5-5",
+        ],
+    )
+    def test_every_spelling_resolves_its_window(self, model_id):
+        assert resolved_context_window(model_id) == 1_000_000
+        assert model_context_window(model_id) == 1_000_000
+
+    @pytest.mark.parametrize("model_id", ["claude-haiku-4-5", "claude-haiku-4-5-20251001"])
+    def test_its_predecessor_keeps_its_own_window(self, model_id):
+        assert resolved_context_window(model_id) == 200_000
 
 
 class TestLocalServedWindow:
