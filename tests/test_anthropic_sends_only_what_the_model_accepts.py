@@ -135,13 +135,16 @@ async def test_a_model_the_table_does_not_name_is_sent_everything(sdk):
 
 
 @pytest.mark.anyio
-async def test_a_thinking_turn_drops_the_temperature(sdk):
-    provider = _provider("claude-sonnet-4-6", temperature=0.7)
+@pytest.mark.parametrize(
+    ("model", "shape"), [("claude-sonnet-4-6", "adaptive"), ("claude-haiku-4-5", "enabled")]
+)
+async def test_a_thinking_turn_drops_the_temperature(sdk, model, shape):
+    provider = _provider(model, temperature=0.7)
 
     await _drain(provider.complete([{"role": "user", "content": "hi"}], reasoning_effort="low"))
 
     sent = _sent_fields(sdk.calls[0])
-    assert sent["thinking"]["type"] == "enabled"
+    assert sent["thinking"]["type"] == shape
     assert "temperature" not in sent
 
 

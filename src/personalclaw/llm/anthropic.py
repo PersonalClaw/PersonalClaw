@@ -36,10 +36,16 @@ from personalclaw.llm.base import (
     ModelProvider,
     wire_temperature,
 )
-from personalclaw.llm.catalog import SAMPLING_PARAMETERS, refused_sampling
+from personalclaw.llm.catalog import (
+    SAMPLING_PARAMETERS,
+    refused_sampling,
+    returns_thinking,
+    thinking_shape,
+)
 from personalclaw.llm.credentials import Credential
 from personalclaw.llm.inflight import InFlightRequests
 from personalclaw.llm.prompt_cache import CACHE_HINT_KEY, VOLATILE_KEY, PromptCache
+from personalclaw.llm.reasoning_record import REASONING_KEY
 from personalclaw.llm.registry import CredentialMissing, require_model
 from personalclaw.llm.stream_end import until_terminal
 from personalclaw.net.http_clients import http_client
@@ -55,15 +61,83 @@ _MAX_HISTORY = 50
 _ADAPTER = "Anthropic-compatible"
 _STOP = "a stop_reason"
 
-# Reasoning effort → Anthropic extended-thinking token budget. "" / unknown =
-# no thinking (model default). Clamped to < max_tokens at request time. These are
-# the native effort levels; ACP backends declare + map their own values.
+# Reasoning effort → a thinking token budget, for a model that still takes ``budget_tokens``
+# (``catalog.thinking_shape``). "" / unknown = no thinking (model default). Clamped to below
+# max_tokens at request time. These are the native effort levels; ACP backends declare and map
+# their own values.
 _THINKING_BUDGETS: dict[str, int] = {
     "low": 4_096,
     "medium": 10_240,
     "high": 24_576,
+    "xhigh": 40_960,
     "max": 63_999,
 }
+
+#: The level sent in place of one an adaptive model does not take: ``xhigh`` exists from Opus 4.7
+#: on, so Opus 4.6 and Sonnet 4.6 are sent ``high``.
+_EFFORT_STEP_DOWN: dict[str, str] = {"xhigh": "high"}
+
+#: The content blocks a model writes its reasoning in. They go back exactly as received.
+_THINKING_BLOCK_TYPES = ("thinking", "redacted_thinking")
+
+
+def _thinking_request(model: str, effort: str, max_tokens: int) -> dict[str, Any]:
+    """The request fields that ask ``model`` to reason at ``effort``: ``{}`` for no effort.
+
+    A model that thinks adaptively (``catalog.thinking_shape``) is sent
+    ``thinking: {type: adaptive}`` and the depth as ``output_config.effort``, with a level it does
+    not take sent as the nearest lower one. Every other model is sent a ``budget_tokens`` budget,
+    which must stay below ``max_tokens`` and leave room for the answer.
+    """
+    effort = (effort or "").strip().lower()
+    if effort not in _THINKING_BUDGETS:
+        return {}
+    shape = thinking_shape(model)
+    if shape.adaptive:
+        if effort not in shape.efforts:
+            effort = _EFFORT_STEP_DOWN.get(effort, "high")
+        return {"thinking": {"type": "adaptive"}, "output_config": {"effort": effort}}
+    budget = min(_THINKING_BUDGETS[effort], max(1024, max_tokens - 1024))
+    return {"thinking": {"type": "enabled", "budget_tokens": budget}}
+
+
+def _thinking_blocks(message: dict, model: str) -> list[dict]:
+    """The thinking blocks a request to ``model`` carries back on assistant ``message``: copies of
+    those its reasoning record holds when ``model`` wrote them, else none."""
+    if not model:
+        return []
+    record = message.get(REASONING_KEY)
+    if not isinstance(record, dict) or record.get("model") != model:
+        return []
+    blocks = record.get("blocks")
+    if not isinstance(blocks, list):
+        return []
+    return [
+        dict(b) for b in blocks if isinstance(b, dict) and b.get("type") in _THINKING_BLOCK_TYPES
+    ]
+
+
+def _continues_without_thinking(out: list[dict]) -> bool:
+    """Whether ``out`` continues a tool call (a user turn after its last assistant turn carries a
+    ``tool_result``, steers and notes beside it included) whose assistant turn does not begin with
+    a thinking block. A budget-shape request with thinking on is refused then, so that request
+    goes without thinking."""
+    last = next((i for i in range(len(out) - 1, -1, -1) if out[i].get("role") == "assistant"), -1)
+    if last < 0:
+        return False
+    answered = any(
+        isinstance(m.get("content"), list)
+        and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in m["content"])
+        for m in out[last + 1 :]
+        if m.get("role") == "user"
+    )
+    if not answered:
+        return False
+    first = out[last].get("content")
+    if not isinstance(first, list) or not first:
+        return True
+    return not (isinstance(first[0], dict) and first[0].get("type") in _THINKING_BLOCK_TYPES)
+
 
 # The context gauge, in ONE place for every adapter — including the rule that an
 # unresolvable window reports NOTHING rather than a percentage of an adapter-local
@@ -263,8 +337,17 @@ def _lay_system_notes(out: list[dict], notes: list[str]) -> None:
     out.append({"role": "user", "content": blocks})
 
 
-def _translate_messages(messages: list[dict]) -> tuple[str | list[dict], list[dict]]:
+def _translate_messages(
+    messages: list[dict], *, thinking_from: str = ""
+) -> tuple[str | list[dict], list[dict]]:
     """Split OpenAI-shaped ``messages`` into ``(system_prompt, anthropic_messages)``.
+
+    * An assistant message whose reasoning record
+      (:data:`~personalclaw.llm.reasoning_record.REASONING_KEY`) was written by the model
+      ``thinking_from`` names begins with those thinking blocks, exactly as received, ahead of its
+      text and ``tool_use`` blocks. A record from any other model, and every record when
+      ``thinking_from`` is ``""``, is left off: a request without thinking blocks is always valid.
+      The key itself never reaches the wire.
 
     * ``role: "system"`` messages are concatenated into the returned system
       string (Anthropic carries the system prompt out-of-band, so it leads the
@@ -368,8 +451,10 @@ def _translate_messages(messages: list[dict]) -> tuple[str | list[dict], list[di
                 out.append({"role": "user", "content": [block]})
             continue
 
+        thinking = _thinking_blocks(msg, thinking_from) if role == "assistant" else []
+
         if role == "assistant" and msg.get("tool_calls"):
-            blocks: list[dict] = []
+            blocks: list[dict] = list(thinking)
             if content:
                 blocks.append({"type": "text", "text": str(content)})
             for call in msg["tool_calls"]:
@@ -398,6 +483,21 @@ def _translate_messages(messages: list[dict]) -> tuple[str | list[dict], list[di
         # become Anthropic image blocks before anything else looks at the list.
         if isinstance(content, list):
             content = _translate_parts(content)
+
+        own = (
+            list(content)
+            if isinstance(content, list)
+            else ([{"type": "text", "text": str(content)}] if content else [])
+        )
+        if thinking and own:
+            # A plain assistant answer its model reasoned for: the thinking blocks lead, then its
+            # text, so the turn reads back as the model wrote it. A turn with no text of its own
+            # is sent as before: an assistant turn of thinking alone is no answer.
+            blocks = [*thinking, *own]
+            if hinted:
+                blocks[-1] = _mark_block(dict(blocks[-1]))
+            out.append({"role": role, "content": blocks})
+            continue
 
         # Plain user / assistant text message — pass through unchanged UNLESS hinted,
         # in which case it must become block-shaped to carry the marker.
@@ -456,6 +556,10 @@ class AnthropicProvider(ModelProvider):
     # supports_tools) and `_translate_messages` above turns that hint into
     # ``cache_control``. A provider that leaves this NONE never sees a marker.
     prompt_cache: PromptCache = PromptCache.EXPLICIT
+
+    # Its model's thinking blocks are handed back on later requests (``llm.reasoning_record``), so
+    # the native loop leaves the reasoning record on the messages it sends here.
+    reads_reasoning: bool = True
 
     def __init__(
         self,
@@ -779,12 +883,16 @@ class AnthropicProvider(ModelProvider):
         the tool name, and ``tool_input`` = the accumulated JSON argument string.
         A stream that ends before that raises ``AnswerCutOff`` and emits none.
         """
-        # Stage the image BEFORE translation so the block rides through as a plain
-        # list-content user message (which `_translate_messages` passes through).
-        system_prompt, anth_messages = _translate_messages(messages)
+        served_model = require_model(model or self._model)
+        # Thinking blocks go back only to the model that wrote them, and never to a model that
+        # binds them to an exact prefix (``catalog.returns_thinking``): the runtime edits earlier
+        # turns between requests, and leaving every block off is always a valid request.
+        system_prompt, anth_messages = _translate_messages(
+            messages, thinking_from=served_model if returns_thinking(served_model) else ""
+        )
 
         request_kwargs: dict[str, Any] = {
-            "model": require_model(model or self._model),
+            "model": served_model,
             "messages": anth_messages,
             "max_tokens": self._max_tokens,
         }
@@ -792,19 +900,26 @@ class AnthropicProvider(ModelProvider):
             request_kwargs["system"] = system_prompt
         if tools:
             request_kwargs["tools"] = _translate_tools(tools)
-        # Extended thinking: map the session's reasoning effort → a thinking token
-        # budget. Anthropic requires budget_tokens < max_tokens, so clamp. "" =
-        # no thinking (model default). budget must leave room for the answer.
-        budget = _THINKING_BUDGETS.get(reasoning_effort or "")
-        if budget:
-            budget = min(budget, max(1024, self._max_tokens - 1024))
-            request_kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget}
-        # Extended thinking requires temperature unset (or 1), so a thinking turn drops it too.
-        unsent = self._unsent(model or self._model, thinking="thinking" in request_kwargs)
+        # The session's reasoning effort, in the shape this model takes it (``_thinking_request``).
+        # "" = no thinking fields at all: a model that thinks adaptively then does so at its own
+        # default. A budget-shape request that continues a tool call whose assistant turn carries
+        # no thinking block of this model's is refused with thinking on, so that request goes
+        # without it.
+        reasoning = _thinking_request(served_model, reasoning_effort, self._max_tokens)
+        if reasoning.get("thinking", {}).get("type") == "enabled" and _continues_without_thinking(
+            anth_messages
+        ):
+            reasoning = {}
+        request_kwargs.update(reasoning)
+        # A thinking request takes no custom temperature, so a thinking turn drops it too.
+        unsent = self._unsent(served_model, thinking="thinking" in request_kwargs)
         self._add_options(request_kwargs, unsent=unsent)
 
         # Per content-block-index accumulators for tool_use blocks.
         tool_blocks: dict[int, dict[str, str]] = {}
+        # Per content-block-index thinking blocks, built as the model writes them and kept as
+        # received, an empty thinking text included: the signature carries the reasoning.
+        thinking_blocks: dict[int, dict[str, Any]] = {}
         #: The provider's own reason the message ended — see the note at the streaming twin.
         stop_reason = ""
 
@@ -848,8 +963,20 @@ class AnthropicProvider(ModelProvider):
                             "name": str(getattr(block, "name", "") or ""),
                             "arguments": "",
                         }
+                    elif block_type == "thinking":
+                        thinking_blocks[index] = {
+                            "type": "thinking",
+                            "thinking": str(getattr(block, "thinking", "") or ""),
+                            "signature": str(getattr(block, "signature", "") or ""),
+                        }
+                    elif block_type == "redacted_thinking":
+                        thinking_blocks[index] = {
+                            "type": "redacted_thinking",
+                            "data": str(getattr(block, "data", "") or ""),
+                        }
 
                 elif event_type == "content_block_delta":
+                    index = getattr(event, "index", 0) or 0
                     delta = getattr(event, "delta", None)
                     delta_type = getattr(delta, "type", None) if delta is not None else None
                     if delta_type == "text_delta":
@@ -857,15 +984,21 @@ class AnthropicProvider(ModelProvider):
                         if text:
                             yield LLMEvent(kind=EVENT_TEXT_CHUNK, text=text)
                     elif delta_type == "input_json_delta":
-                        index = getattr(event, "index", 0) or 0
                         partial = getattr(delta, "partial_json", "") or ""
                         bucket = tool_blocks.get(index)
                         if bucket is not None and partial:
                             bucket["arguments"] += partial
                     elif delta_type == "thinking_delta":
                         thinking = getattr(delta, "thinking", "") or ""
+                        held = thinking_blocks.get(index)
+                        if held is not None and held["type"] == "thinking":
+                            held["thinking"] += thinking
                         if thinking:
                             yield LLMEvent(kind=EVENT_THINKING_CHUNK, text=thinking)
+                    elif delta_type == "signature_delta":
+                        held = thinking_blocks.get(index)
+                        if held is not None and held["type"] == "thinking":
+                            held["signature"] += str(getattr(delta, "signature", "") or "")
 
                 elif event_type == "message_delta":
                     reason = _stop_reason_of(event)
@@ -879,6 +1012,15 @@ class AnthropicProvider(ModelProvider):
 
         for event in _tool_call_events(tool_blocks, stop_reason):
             yield event
+
+        # The answer's reasoning, as opaque model data stamped with the model that wrote it
+        # (``llm.reasoning_record``): the native loop keeps it on the assistant message and hands
+        # it back, and ``_translate_messages`` decides which requests carry it.
+        reasoning_record = (
+            {"model": served_model, "blocks": [b for _i, b in sorted(thinking_blocks.items())]}
+            if thinking_blocks
+            else None
+        )
 
         context_pct: float | None = None
         if input_tokens > 0:
@@ -899,6 +1041,7 @@ class AnthropicProvider(ModelProvider):
             cache_read_tokens=cache_read_tokens,
             context_usage_pct=context_pct,
             cost_usd=0.0,
+            reasoning=reasoning_record,
         )
 
     # ── Tool approval (no-op) ─────────────────────────────────────────

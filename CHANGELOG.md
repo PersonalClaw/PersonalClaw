@@ -12,6 +12,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **Best-of-n on Claude Haiku 5.5 gets an answer from every candidate, where each one asked for a temperature other than 1 failed: the model refuses a custom temperature, top_p or top_k, so none is sent and best-of-n says so.**
 - **The context ring measures Claude Haiku 5.5 against its 1M-token window, where it said no window was declared for the model.**
+- **A reasoning effort on a current Claude model over the Anthropic API no longer fails every turn with an error.**
 - **The Nix flake installs 0.2.1, where it was still on 0.1.3, and under it the agent's own tools, app installs and `personalclaw doctor` find PersonalClaw's packages; it no longer offers Intel Macs, where it could not build.**
 - **Settings → Updates' release notes and changelog scroll from the keyboard, and a screen reader names each box instead of reading all of it out as its name.**
 - **A service from `personalclaw service install` finds `git`, `python3` and every other program where the shell that installed it does, instead of the system's copies first, once it is installed again.**

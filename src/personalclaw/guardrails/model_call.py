@@ -75,6 +75,7 @@ from personalclaw.llm.base import (
     ModelSubstitution,
 )
 from personalclaw.llm.prompt_cache import PromptCache
+from personalclaw.llm.reasoning_record import REASONING_KEY
 from personalclaw.llm.registry import served_on_this_machine
 from personalclaw.llm.stream_end import until_terminal
 from personalclaw.llm.tool_use import uses_tools
@@ -200,7 +201,9 @@ def request_chars(messages: list[dict], tools: list[dict] | None = None) -> int:
         for key, value in message.items():
             if key == "content":
                 total += _content(value)
-            elif key != "role" and value:
+            elif key not in ("role", REASONING_KEY) and value:
+                # The reasoning record is opaque model data the wire already counted when the
+                # model wrote it, not text this request is weighed by (`llm.reasoning_record`).
                 total += len(json.dumps(value, default=str))
     if tools:
         total += len(json.dumps(tools, default=str))
@@ -471,6 +474,12 @@ class ModelCallGuard(ModelProvider):
         learns its model takes no tools (a server that refused a request for them) says so here
         too. A copy taken when the guard was built kept answering yes for it."""
         return uses_tools(self._inner)
+
+    @property
+    def reads_reasoning(self) -> bool:  # type: ignore[override]
+        """Explicit pass-through: the ABC's False default would answer for every guarded model,
+        and the native loop would strip the reasoning a guarded model needs handed back."""
+        return getattr(self._inner, "reads_reasoning", False) is True
 
     @property
     def compacts_in_process(self) -> bool:

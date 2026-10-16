@@ -97,6 +97,7 @@ from personalclaw.llm.prompt_cache import (
     mark_cacheable_prefix,
     turn_note_message,
 )
+from personalclaw.llm.reasoning_record import REASONING_KEY, without_reasoning
 from personalclaw.llm.tool_use import uses_tools
 from personalclaw.net.client import refusal_in
 from personalclaw.pre_tool_hooks import HOOK_FAILED, HooksSaid
@@ -247,9 +248,9 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # bind_tool_context so artifact_save can stamp its project_id (to tie work
         # created during a project's session/loop back to that Project).
         self._project_id = project_id or ""
-        # Per-turn reasoning effort ("" | low | medium | high | max) forwarded to
-        # the model's complete() — providers whose model supports extended thinking
-        # map it (Anthropic thinking budget / OpenAI reasoning_effort); others ignore.
+        # Per-turn reasoning effort ("" | low | medium | high | xhigh | max) forwarded to
+        # the model's complete() — a provider whose model reasons maps it to the shape that
+        # model takes (an effort level, or a thinking token budget); others ignore it.
         self._reasoning_effort = reasoning_effort or ""
         self._tool_providers = list(tool_providers or [])
         self._tool_surface = tool_surface  # read again when the tools change (`catalog_refresh`)
@@ -1257,8 +1258,15 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
 
                 agg_tool_calls += len(tool_calls)
 
-                # Record the assistant turn (text + any tool calls) into history.
-                self._messages.append(self._assistant_msg(assistant_text, tool_calls))
+                # Record the assistant turn (text + any tool calls, and the reasoning record its
+                # model wrote, stamped with that model) into history.
+                self._messages.append(
+                    self._assistant_msg(
+                        assistant_text,
+                        tool_calls,
+                        usage.reasoning if usage is not None else None,
+                    )
+                )
 
                 # 2) STOP — a model turn with no tool calls ends the agent turn…
                 #    …UNLESS the user steered while that text was streaming. The steer
@@ -2280,8 +2288,14 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
 
     # ── message shaping (OpenAI wire format; Anthropic provider re-maps) ──
     @staticmethod
-    def _assistant_msg(text: str, tool_calls: list[AgentEvent]) -> dict:
+    def _assistant_msg(
+        text: str, tool_calls: list[AgentEvent], reasoning: dict | None = None
+    ) -> dict:
         msg: dict[str, Any] = {"role": "assistant", "content": text or ""}
+        if reasoning:
+            # Opaque model data, never content (`llm.reasoning_record`): kept for the provider that
+            # wrote it, stripped from every request to one that does not read it.
+            msg[REASONING_KEY] = reasoning
         if tool_calls:
             tc_list = []
             for c in tool_calls:
@@ -2475,6 +2489,10 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 out[idx] = {**target, "content": parts}
         if self._owed.pending:
             out = [*out, self._owed.note_message()]
+        if getattr(self._model, "reads_reasoning", False) is not True:
+            # The reasoning record is opaque data of the provider that wrote it: a provider that
+            # does not declare it reads one (an app's, a fallback of another kind) never sees it.
+            out = without_reasoning(out)
         return out
 
     def announce_failover(self) -> None:

@@ -15,7 +15,7 @@ const APPROVAL: { id: ApprovalMode; label: string; hint: string }[] = [
   { id: 'trust', label: 'Trust', hint: 'Auto-approve in this chat' },
   { id: 'yolo', label: 'YOLO', hint: 'Auto-approve everywhere — auto-expires, re-enable to extend' },
 ]
-// Native effort levels (map to Anthropic thinking budget / OpenAI reasoning_effort).
+// Native effort levels; each native provider maps them to the shape its model takes.
 // ACP agents override this with their backend-declared supported_efforts.
 const NATIVE_EFFORTS: { value: string; label: string }[] = [
   { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' }, { value: 'high', label: 'High' }, { value: 'max', label: 'Max' },

@@ -115,6 +115,12 @@ class ModelProvider(ABC):
     # sets AUTOMATIC (stable-prefix, no marker) or EXPLICIT (per-request marker).
     prompt_cache: PromptCache = PromptCache.NONE
 
+    # Whether this provider reads the reasoning record its own model wrote on an earlier answer
+    # (``llm.reasoning_record.REASONING_KEY`` on an assistant message). False by default: the
+    # native loop strips that key from every request to a provider that does not declare it, so
+    # opaque model data never reaches a wire that does not know it.
+    reads_reasoning: bool = False
+
     # Whether this provider hands its model ONLY the user's request, never the assembled
     # context (identity, memory, skills, instructions). True for a model too small to follow a
     # long instruction block — it continues the instructions instead of answering — so the
@@ -355,9 +361,14 @@ class ModelProvider(ABC):
         (it does NOT execute them — the loop does).
 
         ``reasoning_effort`` is the session's chosen effort (``"" | low | medium |
-        high | max`` for native providers). Providers whose model supports extended
-        thinking / reasoning map it to their request (Anthropic ``thinking`` budget,
-        OpenAI ``reasoning_effort``); others ignore it. "" = model default.
+        high | xhigh | max`` for native providers). A provider whose model reasons maps it
+        to the shape that model takes (an effort level, or a thinking token budget on a
+        model that takes one), sending a level the model lacks as the nearest one it has;
+        others ignore it. "" = model default.
+
+        An assistant message may carry the reasoning record its model wrote
+        (:data:`~personalclaw.llm.reasoning_record.REASONING_KEY`). Only a provider that
+        declares :attr:`reads_reasoning` is handed it: it is opaque model data, never content.
 
         A user message's ``content`` is either a string or a list of neutral parts:
         ``{"type": "text", "text": ...}`` and ``{"type": "image_url", "image_url": {"url":
