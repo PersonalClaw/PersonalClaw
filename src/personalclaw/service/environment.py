@@ -30,8 +30,9 @@ from dataclasses import dataclass, field
 
 #: What ``personalclaw service install`` carries from its shell into the service, grouped by
 #: what needs it. Only names, and only non-secret ones: each is a location, a name that points at
-#: credentials held elsewhere (``AWS_PROFILE``), or network plumbing. ``docs/reference/cli.md``
-#: lists the same set; ``tests/test_service_keeps_its_environment.py`` holds the two together.
+#: credentials held elsewhere (``AWS_PROFILE``), the provider, region or model an agent CLI is set
+#: to run on, or network plumbing. ``docs/reference/cli.md`` lists the same set;
+#: ``tests/test_service_keeps_its_environment.py`` holds the two together.
 CARRIED: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "PersonalClaw",
@@ -73,6 +74,28 @@ CARRIED: tuple[tuple[str, tuple[str, ...]], ...] = (
             "XDG_DATA_HOME",
             "XDG_CACHE_HOME",
             "XDG_STATE_HOME",
+        ),
+    ),
+    # The names, besides the AWS ones above, that the Claude Code and Gemini CLI apps pass their
+    # CLI from the gateway's environment.
+    (
+        "Which provider, region and model an agent CLI runs on",
+        (
+            "CLAUDE_CODE_USE_BEDROCK",
+            "CLAUDE_CODE_USE_VERTEX",
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_SMALL_FAST_MODEL",
+            "ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLOUD_ML_REGION",
+            "ANTHROPIC_VERTEX_PROJECT_ID",
+            "GOOGLE_GENAI_USE_VERTEXAI",
+            "GOOGLE_GENAI_USE_GCA",
+            "GOOGLE_CLOUD_PROJECT",
+            "GOOGLE_CLOUD_LOCATION",
+            "GEMINI_MODEL",
         ),
     ),
     (

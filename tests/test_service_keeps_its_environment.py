@@ -150,6 +150,25 @@ def test_gits_own_ca_settings_reach_both_service_files(shell, launchd, systemd):
         assert env.get("GIT_SSL_CAPATH") == "/etc/ssl/example-corp-certs", sorted(env)
 
 
+def test_an_agent_clis_provider_choice_reaches_both_service_files(shell, launchd, systemd):
+    """An agent CLI app hands its CLI the provider, region and model it reads from the gateway's
+    environment, so the service has to carry them to the gateway, or an agent CLI the shell set to
+    run on another provider runs on its default one as a service."""
+    chosen = {
+        "CLAUDE_CODE_USE_BEDROCK": "1",
+        "ANTHROPIC_MODEL": "example-bedrock-model-id",
+        "GOOGLE_CLOUD_PROJECT": "example-project",
+    }
+    for name, value in chosen.items():
+        shell.setenv(name, value)
+
+    svc_macos.install()
+    svc_linux.install()
+
+    for env in (_plist_environment(launchd), _unit_environment(systemd[-1])):
+        assert {name: env.get(name) for name in chosen} == chosen, sorted(env)
+
+
 def test_status_shows_the_environment_the_service_starts_with(shell, launchd, capsys):
     svc_macos.install()
     capsys.readouterr()
