@@ -9,8 +9,8 @@ Two defects, measured:
   ``tests/anthropic_sdk_fake.py`` declares the real 1.8.0 signature, so Python raises the same
   ``TypeError`` here.
 * It sent a custom temperature to models that refuse one: Claude Opus 4.7 and later, the Fable
-  and Mythos 5 lines and Sonnet 5 answer 400, and every other Claude 4 model refuses a
-  temperature together with a top_p. What a model refuses is classified by
+  and Mythos 5 lines, Sonnet 5 and Haiku 5.5 answer 400, and every other Claude 4 model refuses
+  a temperature together with a top_p. What a model refuses is classified by
   ``llm.catalog.refused_sampling``; the provider leaves it off and says why
   (``unsent_options``), and best-of-N reports that reason instead of only "not sent".
 """
@@ -93,7 +93,8 @@ async def test_complete_keeps_its_own_fields_authoritative(sdk):
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
-    "model", ["claude-opus-4-8", "claude-opus-5", "claude-sonnet-5", "claude-fable-5-1"]
+    "model",
+    ["claude-opus-4-8", "claude-opus-5", "claude-sonnet-5", "claude-fable-5-1", "claude-haiku-5-5"],
 )
 async def test_a_model_that_refuses_sampling_is_sent_none_and_says_why(sdk, model):
     provider = _provider(model, temperature=0.7, top_p=0.9)
