@@ -1,6 +1,14 @@
-# CI — PR + feature-branch push. Fast verification gate (≤10-min budget).
+# CI — every pull request, every branch push, and every push to main.
 # Jobs are stable ids that tests in this repo reference:
-# lint · test · web · rails · harness · client. Heavier matrix/coverage/audit live in full.yml (main + nightly).
+# lint · test · web · rails · harness · client. Platform breadth (other Pythons, arm64,
+# coverage, the installer smoke, the audit) is breadth.yml's, nightly.
+#
+# A PUSH TO MAIN REPEATS NO WORK ITS PULL REQUEST DID ON THE SAME TREE. `tree-check` asks
+# whether a green pull-request run already tested the tree the push lands
+# (tools/ci/tree_tested.py, the previous main commit's copy). Yes: every job that run did is
+# skipped, and only the always-run set runs — `tree-check`, `changes`, `security-corpus`, and
+# `apps-contract` when the SDK changed. No, or no answer: every job runs on the pushed tree,
+# `test-macos` included, as that tree's one execution.
 #
 # The three browser-driven jobs (e2e-a11y · e2e-walkthrough · e2e-pwa) take a `needs:` on the
 # cheap `changes` job, so a diff that cannot reach a rendered pixel does not pay for a Chromium
@@ -23,7 +31,9 @@ name: CI
 on:
   pull_request:
   push:
-    branches-ignore: [main]  # main runs full.yml; feature branches run this
+    # Every branch, main included. A tag is not a branch, so a tag push starts no run here:
+    # tags are release.yml's.
+    branches: ["**"]
 
 # One in-flight run per BRANCH, across BOTH triggers this file enables — a new push cancels
 # the superseded run, AND a `pull_request` run cancels the duplicate `push` run sitting on the
@@ -48,19 +58,80 @@ on:
 # not cancel one another. For a same-repo PR it equals `github.repository`, and `github.head_ref`
 # equals `github.ref_name` — which is precisely what makes the `pull_request` and `push` keys
 # collide. That collision IS the dedupe.
+#
+# ON MAIN, ONE GROUP PER COMMIT, AND NOTHING IS CANCELLED. A push to main is that commit's
+# check, and for a tree no pull-request run tested it is the only execution that tree gets.
+# A per-branch group with `cancel-in-progress: false` is still not enough: GitHub keeps one
+# PENDING run per group and replaces it with the next, so under a fast merge cadence an
+# untested merge's run could be dropped before it started, and nothing would ever check that
+# tree. Keyed on the commit, every push to main gets its own run. A tested push is a few
+# minutes of the always-run set, so a group per commit costs little.
 concurrency:
-  group: ci-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
+  group: ci-${{ github.ref == 'refs/heads/main' && github.sha || github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
 
 env:
   # Every uv step uses a uv-managed CPython, never the runner image's own: an installed Python
-  # that is exactly the version asked for wins over a download by default (see full.yml's env).
+  # that is exactly the version asked for wins over a download by default (see breadth.yml's env).
   UV_PYTHON_PREFERENCE: only-managed
 
 jobs:
+  tree-check:
+    # ── Did a green pull-request run already test this tree? (#3913) ──────────────────────
+    # Answers `tested=true|false` for a push to main, and `false` at once for anything else.
+    # The check is the PREVIOUS main commit's copy of tools/ci/tree_tested.py, read from the
+    # API at `github.event.before`, never this checkout's: a pull request that edits the
+    # check is judged by the copy it replaces, and where that copy does not exist yet the
+    # answer is no. It is standard-library Python, run on the image's own python3, so nothing
+    # this push brings is installed or run. Its docstring states what yes needs.
+    #
+    # 🪤 THE ANSWER IS VALIDATED BEFORE IT IS PUBLISHED, as `changes` does with its verdict.
+    # Anything but exactly `tested=true` or `tested=false` becomes `false`, and every gated
+    # job reads `!= 'true'`, so a crashed or missing check runs the whole gate. The summary
+    # is a pointer for people; no gate reads it.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read   # `commits/{sha}/pulls`
+      actions: read         # the pull request's runs and their first attempts
+      issues: read          # the pull request's events: whether its base was changed
+    outputs:
+      tested: ${{ steps.answer.outputs.tested }}
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - name: did a green pull-request run already test this tree
+        id: answer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -u
+          answer=""
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            check="$RUNNER_TEMP/tree_tested.py"
+            if gh api -H "Accept: application/vnd.github.raw" \
+                 "repos/${GITHUB_REPOSITORY}/contents/tools/ci/tree_tested.py?ref=${BEFORE}" \
+                 > "$check"; then
+              GITHUB_OUTPUT="$RUNNER_TEMP/answer.txt" python3 "$check" --workflow ci.yml || true
+              answer=$(cat "$RUNNER_TEMP/answer.txt" 2>/dev/null || true)
+            else
+              echo "the previous main commit ${BEFORE} has no tree check, so every job runs" \
+                | tee -a "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          case "$answer" in
+            tested=true|tested=false) ;;
+            *) answer="tested=false" ;;
+          esac
+          echo "$answer"
+          printf '%s\n' "$answer" >> "$GITHUB_OUTPUT"
+
   changes:
     # ── The browser gates' admission decision (#3110) ─────────────────────────────────────────
     # `e2e-a11y`, `e2e-walkthrough` and `e2e-pwa` each boot a real gateway, build the SPA and
@@ -108,6 +179,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.sha }}
+          BEFORE: ${{ github.event.before }}
         run: |
           set -uo pipefail
           # NOT `set -e`: a failed enumeration must fall through to the empty-file case, which
@@ -120,6 +192,13 @@ jobs:
             # read-only fork token never has to resolve it.
             gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
               --jq '.[].filename' > /tmp/changed.txt || : > /tmp/changed.txt
+          elif [ "$GITHUB_REF" = "refs/heads/main" ] && [ -n "${BEFORE:-}" ] \
+               && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            # A push to main: what this push changed, against the commit it replaced. The
+            # default branch here would be this very commit, and an empty diff.
+            echo "base: the previous main commit $BEFORE"
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/compare/${BEFORE}...${HEAD_SHA}" \
+              --jq '.files[].filename' > /tmp/changed.txt || : > /tmp/changed.txt
           else
             # A `push` run on a feature branch. Compared against the DEFAULT branch rather than
             # `github.event.before`, which is all-zeros on a branch's first push and would
@@ -195,10 +274,17 @@ jobs:
         id: base
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
         run: |
           if [ -n "${BASE_SHA:-}" ]; then
             git fetch --no-tags --depth=1 origin "$BASE_SHA"
             echo "ref=$BASE_SHA" >> "$GITHUB_OUTPUT"
+          elif [ "$GITHUB_REF" = "refs/heads/main" ] && [ -n "${BEFORE:-}" ] \
+               && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            # A push to main: the commit it replaced, since origin/main is this commit.
+            echo "base: the previous main commit $BEFORE"
+            git fetch --no-tags --depth=1 origin "$BEFORE"
+            echo "ref=$BEFORE" >> "$GITHUB_OUTPUT"
           else
             git fetch --no-tags --depth=1 origin "+refs/heads/main:refs/remotes/origin/main"
             echo "ref=origin/main" >> "$GITHUB_OUTPUT"
@@ -217,6 +303,8 @@ jobs:
           --base-ref "${{ steps.base.outputs.ref }}" --install-deps
 
   lint:
+    needs: [tree-check]
+    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read   # NOT pull-requests: write — a fork PR is handed a read-only token
@@ -360,7 +448,7 @@ jobs:
       # runs on a stranger's machine, and its header advertised "shellcheck-clean" plus a weekly
       # container smoke. MEASURED 2026-09-06: no workflow mentioned the file at all — grepping
       # .github/workflows/ for `website/install`, `install.sh` or `personalclaw.dev/install`
-      # returned nothing, and full.yml's four jobs (matrix/audit/security-corpus/coverage)
+      # returned nothing, and the main-push workflow's four jobs (matrix/audit/security-corpus/coverage)
       # touched none of it. The advertised coverage was the only artifact of itself.
       #
       # `!cancelled()` rather than the default success(): the lint step above ends in
@@ -415,20 +503,22 @@ jobs:
     # check — and goes green only
     # when every shard passed.
     #
-    # Coverage is deliberately NOT measured on the shards: it stays owned by full.yml's dedicated
-    # `coverage` job. Each shard runs `--no-cov` (its addopts `--cov` payload is pure redundant
-    # memory here — the same #2720 lever full.yml's matrix already uses).
+    # Coverage is deliberately NOT measured on the shards: it is measured nightly by breadth.yml's
+    # `coverage` legs. Each shard runs `--no-cov` (its addopts `--cov` payload is pure redundant
+    # memory here — the same #2720 lever breadth.yml's legs use).
     #
     # pytest-split partitions the collected items completely and disjointly; `least_duration`
     # balances by a committed `.test_durations` when present and degrades to an even by-count
     # split when it is not (this repo commits none yet — measured clean: 31 359 tests → 4 groups
     # with zero overlap and zero gaps). Commit a `.test_durations` later for duration-balanced
     # shards; nothing in this workflow changes.
+    needs: [tree-check]
+    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     strategy:
       # fail-fast:false so one red shard does not cancel the others — you want every failing
-      # shard's report in one push, not a fix-push-rediscover loop (same reason full.yml's matrix
-      # sets it). N is exactly the `shard` list below: extend it to re-shard, nothing else moves.
+      # shard's report in one push, not a fix-push-rediscover loop (same reason breadth.yml's legs
+      # set it). N is exactly the `shard` list below: extend it to re-shard, nothing else moves.
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
@@ -476,8 +566,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends tmux
           tmux -V
       - name: pytest (shard ${{ matrix.shard }} of 4 — xdist within the shard, no coverage)
-        # --no-cov: coverage is measured once by full.yml's `coverage` job; the addopts `--cov`
-        #   payload is redundant memory here (#2720). full.yml's matrix already runs this way.
+        # --no-cov: coverage is measured by breadth.yml's `coverage` legs; the addopts `--cov`
+        #   payload is redundant memory here (#2720). breadth.yml's legs run this way too.
         # -q: with the addopts `--verbose` this nets to NORMAL verbosity — a progress summary,
         #   not one line per test — so each shard's log stays small (the #2720 truncation class).
         # --splits/--group select this shard's disjoint slice; xdist (`-n auto`, from addopts)
@@ -560,8 +650,8 @@ jobs:
     # most recent, which is the winner (measured above: the survivor's `test` started 11:36:16Z,
     # the loser's 11:15:00Z — the loser is always the earlier one, since it is cancelled BY the
     # arrival of the other). Re-check this if `test` is ever made a required check.
-    needs: [test-shard]
-    if: ${{ !cancelled() }}
+    needs: [tree-check, test-shard]
+    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - name: Runner identity
@@ -572,7 +662,7 @@ jobs:
           result='${{ needs.test-shard.result }}'
           # Reachable only when a SHARD was cancelled while this run itself lived on — the job
           # above is skipped outright when the run is cancelled. A missing answer on a live run
-          # is red, never green: same doctrine as full.yml's install-smoke legs.
+          # is red, never green: same doctrine as breadth.yml's install-smoke legs.
           if [ "$result" = "cancelled" ]; then
             echo "::error title=test shards unproven::a test shard was cancelled while this run" \
                  "was still live, so the suite measured nothing. This is NOT the superseded-run" \
@@ -592,7 +682,71 @@ jobs:
           fi
           echo "all 4 test shards passed"
 
+  test-macos:
+    # ── The suite on macOS, before the merge (#3913) ────────────────────────────────────────
+    # Every change that merges has then run both operating systems and both Pythons once:
+    # Ubuntu on 3.12 (`test-shard`) and macOS on 3.13 (here). Same split as `test-shard`, four
+    # disjoint shards, so the four JUnit reports list the same node ids as `test-shard`'s.
+    # `-n 2`: two xdist workers keep a macOS runner's peak memory under its 7 GB (#2720).
+    # Four shards take 4 of the 5 macOS runners a run can hold, so concurrent pull requests
+    # queue on macOS; the cap is above a quarter's measured share on these runners.
+    #
+    # On pull requests into main, and on a push to main whose tree no green pull-request run
+    # tested. Not on a branch push: that branch's pull request runs it.
+    needs: [tree-check]
+    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && ((github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
+    runs-on: macos-26
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      # As `test-shard`: no PERSONALCLAW_HOME, app backends off, and Docker where the runner
+      # has one.
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+      PERSONALCLAW_TEST_CONTAINER_RUNTIME: "1"
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.13.1"
+          python-version: "3.13.16"
+          enable-cache: true
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: Install tmux (durable sessions — real-daemon test leg)
+        run: |
+          if command -v tmux >/dev/null 2>&1; then tmux -V; exit 0; fi
+          brew install tmux
+          tmux -V
+      - name: pytest (macOS shard ${{ matrix.shard }} of 4 — two workers, no coverage)
+        run: uv run pytest --no-cov -n 2 -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration --junitxml=reports/junit-test-macos-${{ matrix.shard }}.xml
+      # Same argument as `test-shard`'s upload steps.
+      - name: Upload JUnit results (macOS shard ${{ matrix.shard }})
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-test-macos-${{ matrix.shard }}
+          path: reports/junit-test-macos-${{ matrix.shard }}.xml
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload real-home guard report (macOS shard ${{ matrix.shard }})
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: real-home-guard-macos-${{ matrix.shard }}
+          path: reports/real-home-guard.txt
+          if-no-files-found: ignore
+          retention-days: 7
+
   web:
+    needs: [tree-check]
+    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - name: Runner identity
@@ -711,8 +865,8 @@ jobs:
     # Gated on `changes` (#3110): this spec builds and serves the SPA, so a diff that cannot
     # reach a rendered pixel cannot reach it either. See that job's header for why the verdict
     # defaults to TRUE and why `src/personalclaw/**` is not ignorable.
-    needs: [changes]
-    if: ${{ needs.changes.outputs.frontend == 'true' }}
+    needs: [changes, tree-check]
+    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && needs.changes.outputs.frontend == 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - name: Runner identity
@@ -784,8 +938,8 @@ jobs:
     # broke"; a step cannot do that, only a job can.
     #
     # Gated on `changes` (#3110) — see that job's header.
-    needs: [changes]
-    if: ${{ needs.changes.outputs.frontend == 'true' }}
+    needs: [changes, tree-check]
+    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && needs.changes.outputs.frontend == 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - name: Runner identity
@@ -956,8 +1110,8 @@ jobs:
     # ruleset or budget changes — the spec is untouched.
     #
     # Gated on `changes` (#3110) — see that job's header for why the verdict defaults to TRUE.
-    needs: [changes]
-    if: ${{ needs.changes.outputs.frontend == 'true' }}
+    needs: [changes, tree-check]
+    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && needs.changes.outputs.frontend == 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - name: Runner identity
@@ -1019,6 +1173,8 @@ jobs:
     #     environment, where the suite's own js-render capability probes can see it.
     # It reuses `e2e-pwa`'s install pattern verbatim, and runs in parallel, so it adds a runner
     # rather than wall-clock. Measured locally: 30 cases, 0 skips, 38s.
+    needs: [tree-check]
+    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     # A wedged Chromium must not hold a runner for the default 360 minutes. The suite's own
     # launch waits cap at 30s each and pytest's addopts cap a case at 120s, so 15 is slack.
@@ -1068,7 +1224,7 @@ jobs:
       # specific files. test_browse_live_legs_run_in_ci.py asserts this line names every module
       # that imports browse_chrome, and that each path it names exists.
       - name: browse behavioural proof in a REAL browser (safety script · redirect re-eval)
-        run: uv run pytest tests/test_browse_safety_script.py tests/test_browse_cdp_live.py tests/test_browse_behavioural_proof_is_reachable.py -n0 --junitxml=reports/junit-browse-live.xml
+        run: uv run pytest tests/test_browse_safety_script.py tests/test_browse_cdp_live.py tests/test_browse_behavioural_proof_is_reachable.py -n0 --no-cov --junitxml=reports/junit-browse-live.xml
       # Same argument as `test-shard`'s upload step. It bites hardest here: this leg's whole
       # purpose is that a missing browser must RED instead of skip, and "exit code 1" cannot
       # tell a broken safety-script assertion apart from an unlaunchable Chromium. The XML can.
@@ -1081,9 +1237,53 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  security-corpus:
+    # The adversarial scanner corpus (five attack classes, the scanned-bytes==installed-bytes
+    # race invariant, and the red-on-weakness meta-test), on every push to main whatever
+    # tree-check says: security evidence is never reused from a pull request's run. A pull
+    # request already runs these modules inside `test-shard`. breadth.yml runs it nightly too.
+    # `-n 0` keeps the integrity-race output readable. Published methodology:
+    # docs/security/scanner-testing.md.
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    # No PERSONALCLAW_HOME — see `test-shard`. The corpus writes only to tmp_path.
+    env:
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.13.1"
+          python-version: "3.12.15"
+          enable-cache: true
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: pytest (adversarial scanner corpus)
+        run: >
+          uv run pytest -n 0 --no-cov
+          --junitxml=reports/junit-security-corpus.xml
+          tests/security
+          tests/test_supply_chain_scanner.py
+          tests/test_supply_chain_gates.py
+      - name: Upload JUnit results (security corpus)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-security-corpus
+          path: reports/junit-security-corpus.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
   rails:
     # Cheap anti-regression rails: machine-checked invariants.
     # Today: provider-boundary residue sweep (present on main).
+    needs: [tree-check]
+    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     # No PERSONALCLAW_HOME (see the test job) — the residue sweep is a static
     # import-boundary check and the suite runs under the no-global-home contract.
@@ -1104,7 +1304,7 @@ jobs:
       # addopts intact — `-p no:xdist` would break because addopts injects
       # -n/--dist, which pytest then can't parse with the xdist plugin disabled.
       - name: provider-boundary residue sweep
-        run: uv run pytest tests/test_provider_boundary_residue.py -n0 --junitxml=reports/junit-rails.xml
+        run: uv run pytest tests/test_provider_boundary_residue.py -n0 --no-cov --junitxml=reports/junit-rails.xml
       # Every tracked font, image, binary and fixture has a recorded source, licence and notice
       # in ASSET_LICENSES.json. tests/test_asset_licenses.py asserts the same thing inside the
       # suite; this step prints the checker's own list of what is missing.
@@ -1138,7 +1338,7 @@ jobs:
       - name: npm advisory floors, copies kept inside packages included
         env:
           PERSONALCLAW_REQUIRE_NPM_TREE: "1"
-        run: uv run pytest tests/test_npm_advisory_floors.py -n0 --junitxml=reports/junit-npm-floors.xml
+        run: uv run pytest tests/test_npm_advisory_floors.py -n0 --no-cov --junitxml=reports/junit-npm-floors.xml
       # Same argument as `test-shard`'s upload step. Placed after the aggregate so a red gate
       # still publishes the residue sweep's report (`always()`, not `success()`).
       - name: Upload JUnit results (rails)
@@ -1166,6 +1366,8 @@ jobs:
     # the boundary scanner over the PR's changed lines and fails on any ERROR finding
     # (WARNINGs stay advisory). The harness/ unit tests themselves ride the `test` job
     # (they live under tests/, which is on pytest's testpaths).
+    needs: [tree-check]
+    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - name: Runner identity
@@ -1189,13 +1391,19 @@ jobs:
       # A pull request names its base, so the scan diffs against that commit. `--base` fails when
       # the named commit does not resolve, where the default falls back to `main` and then
       # `HEAD~1`, either of which can scan a different change from this one. A branch push
-      # carries no base and keeps the default. Through `env:`, never `${{ }}` inside `run:`.
+      # carries no base and keeps the default; a push to main diffs against the commit it
+      # replaced. Through `env:`, never `${{ }}` inside `run:`.
       - name: harness scan (static boundary scanner over the diff)
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
         run: |
           if [ -n "${BASE_SHA:-}" ]; then
             uv run python -m harness scan --diff --base "$BASE_SHA"
+          elif [ "$GITHUB_REF" = "refs/heads/main" ] && [ -n "${BEFORE:-}" ] \
+               && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            echo "base: the previous main commit $BEFORE"
+            uv run python -m harness scan --diff --base "$BEFORE"
           else
             uv run python -m harness scan --diff
           fi
@@ -1208,6 +1416,8 @@ jobs:
     # gets its own job: build the wheel and run its test suite so a break is caught
     # pre-merge. No PERSONALCLAW_HOME — the runner's $HOME is ephemeral, so the
     # data-dir test resolves ~/.personalclaw as intended.
+    needs: [tree-check]
+    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - name: Runner identity

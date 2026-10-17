@@ -347,7 +347,7 @@ def test_every_path_the_leg_names_exists() -> None:
 
 
 def test_the_leg_runs_on_the_pull_request_gate() -> None:
-    """ci.yml, not full.yml: a proof that only runs after merge is not a merge gate."""
+    """ci.yml, not breadth.yml: a proof that only runs after merge is not a merge gate."""
     header = _CI.read_text(encoding="utf-8").split("jobs:")[0]
     assert re.search(r"^\s*pull_request:", header, re.M), (
         "ci.yml no longer triggers on pull_request, so the browse proof moved off the merge "

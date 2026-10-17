@@ -812,10 +812,10 @@ class TestCorpusIsComplete:
         assert "pytest" in text
 
     def test_nightly_job_runs_the_corpus(self):
-        wf = REPO_ROOT / ".github" / "workflows" / "full.yml"
+        wf = REPO_ROOT / ".github" / "workflows" / "breadth.yml"
         assert wf.is_file(), f"missing workflow: {wf}"
         text = wf.read_text(encoding="utf-8")
-        assert "security-corpus:" in text, "no security-corpus job in full.yml"
+        assert "security-corpus:" in text, "no security-corpus job in breadth.yml"
         assert "tests/security" in text, "the nightly job does not run the corpus"
         assert "schedule:" in text and "cron:" in text
 

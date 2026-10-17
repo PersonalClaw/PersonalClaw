@@ -41,7 +41,7 @@ on:
       - scripts/nix_smoke.py
       - .github/workflows/nix.yml
   schedule:
-    # Tuesdays, off the hour and away from the slots full.yml, ghcr-anonymous-pull.yml,
+    # Tuesdays, off the hour and away from the slots breadth.yml, ghcr-anonymous-pull.yml,
     # headless-run-smoke.yml and clean-machine-walkthroughs.yml already hold.
     - cron: "17 5 * * 2"
   workflow_dispatch:
@@ -56,7 +56,7 @@ permissions: {}
 
 env:
   # Every uv step uses a uv-managed CPython, never the runner image's own: an installed Python
-  # that is exactly the version asked for wins over a download by default (see full.yml's env).
+  # that is exactly the version asked for wins over a download by default (see breadth.yml's env).
   UV_PYTHON_PREFERENCE: only-managed
 
 jobs:

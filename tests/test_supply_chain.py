@@ -18,7 +18,7 @@ MAKEFILE = REPO_ROOT / "Makefile"
 README = REPO_ROOT / "README.md"
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 RELEASE_WORKFLOW = WORKFLOWS / "release.yml"
-FULL_WORKFLOW = WORKFLOWS / "full.yml"
+BREADTH_WORKFLOW = WORKFLOWS / "breadth.yml"
 
 
 def _action(step: object) -> str:
@@ -55,8 +55,8 @@ def _jobs() -> dict[str, dict]:
     return jobs
 
 
-def _full_workflow() -> dict[str, object]:
-    workflow = yaml.safe_load(FULL_WORKFLOW.read_text(encoding="utf-8"))
+def _breadth_workflow() -> dict[str, object]:
+    workflow = yaml.safe_load(BREADTH_WORKFLOW.read_text(encoding="utf-8"))
     assert isinstance(workflow, dict)
     return workflow
 
@@ -507,7 +507,7 @@ def test_no_job_that_runs_the_suite_holds_a_token_that_can_write() -> None:
 def test_the_coverage_job_still_measures_and_keeps_only_its_report() -> None:
     """The suite is measured in quarters, each under ``--cov`` on its own runner, and the
     ``coverage`` job combines every quarter's data into the one report it keeps."""
-    workflow = _full_workflow()
+    workflow = _breadth_workflow()
     jobs = workflow.get("jobs")
     assert isinstance(jobs, dict)
     shard, coverage = jobs.get("coverage-shard"), jobs.get("coverage")
@@ -768,7 +768,7 @@ def test_every_smoked_image_declares_the_output_its_smoke_must_produce() -> None
 def test_a_non_cancelling_workflow_bounds_every_job() -> None:
     """A serialized lane needs per-job caps, because the group will not evict a hung job.
 
-    `cancel-in-progress: false` is deliberate on full.yml (#2946) so a merge cannot kill
+    `cancel-in-progress: false` is deliberate on breadth.yml (#2946) so a merge cannot kill
     the previous commit's verification. The cost is that a wedged job no longer wastes only
     its own slot — it HOLDS the lane, and every later push queues behind it until GitHub's
     360-minute default fires. MEASURED 2026-09-22 (#3318): `coverage` hung past 55 minutes
