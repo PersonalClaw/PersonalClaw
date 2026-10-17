@@ -633,6 +633,483 @@ PER_TEST_TEMPORARY_FOLDERS = Row(
 )
 
 
+# ── The trust boundary (docs/maintainers/ci.md, "Trust boundary") ─────────────────────────────
+#
+# A trusted workflow is one GitHub runs from the default branch: `pull_request_target`,
+# `workflow_run`, `schedule`, and pushes or dispatches on `main`. Candidate code is any job of a
+# workflow a pull request or a feature-branch push runs, since GitHub takes that workflow from
+# the candidate, and any workflow such a job calls.
+
+_WORKFLOWS = ".github/workflows"
+_TRUSTED_TRIGGERS = {"pull_request_target", "workflow_run"}
+_PR_REF_MARKERS = ("pull_request.head", "workflow_run.head", "head_ref", "refs/pull/", "/pull/")
+_PUBLISHING_SCOPES = {"contents", "packages", "id-token", "attestations", "deployments"}
+_RELEASE_WORKFLOW = "release.yml"
+
+
+def _trust_workflows(root: Path) -> list[tuple[str, dict]]:
+    found: list[tuple[str, dict]] = []
+    for path in sorted((root / _WORKFLOWS).glob("*.y*ml")):
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        found.append((path.name, data if isinstance(data, dict) else {}))
+    return found
+
+
+def _triggers(workflow: dict) -> dict[str, object]:
+    # PyYAML reads the bare key `on` as the boolean True.
+    raw = workflow.get("on", workflow.get(True))
+    if isinstance(raw, str):
+        return {raw: None}
+    if isinstance(raw, list):
+        return {str(name): None for name in raw}
+    return {str(k): v for k, v in raw.items()} if isinstance(raw, dict) else {}
+
+
+def _trust_jobs(workflow: dict) -> dict[str, dict]:
+    jobs = workflow.get("jobs")
+    if not isinstance(jobs, dict):
+        return {}
+    return {str(name): job for name, job in jobs.items() if isinstance(job, dict)}
+
+
+def _main_or_tags_only(filters: object) -> bool:
+    """A push filter that admits only `main` and tags, so the run is not a candidate's."""
+    if not isinstance(filters, dict):
+        return False
+    branches = filters.get("branches")
+    if branches is None:
+        return "tags" in filters and "branches-ignore" not in filters
+    return isinstance(branches, list) and set(branches) <= {"main"}
+
+
+def _runs_candidate_code(workflows: list[tuple[str, dict]]) -> set[str]:
+    """The workflows whose jobs run a candidate's code."""
+    candidates = set()
+    for name, wf in workflows:
+        triggers = _triggers(wf)
+        if "pull_request" in triggers or (
+            "push" in triggers and not _main_or_tags_only(triggers["push"])
+        ):
+            candidates.add(name)
+    changed = True
+    while changed:
+        changed = False
+        for name, wf in workflows:
+            if name not in candidates:
+                continue
+            for job in _trust_jobs(wf).values():
+                callee = str(job.get("uses", ""))
+                if callee.startswith(f"./{_WORKFLOWS}/"):
+                    called = callee.split("/")[-1].split("@")[0]
+                    if called not in candidates:
+                        candidates.add(called)
+                        changed = True
+    return candidates
+
+
+def _trust_steps(job: dict) -> list[dict]:
+    steps = job.get("steps")
+    return [s for s in steps if isinstance(s, dict)] if isinstance(steps, list) else []
+
+
+def _checks_out_candidate(step: dict) -> str | None:
+    """Why this step puts a candidate's code on disk, or None."""
+    with_ = step.get("with")
+    if str(step.get("uses", "")).startswith("actions/checkout@") and isinstance(with_, dict):
+        for key in ("ref", "repository"):
+            value = str(with_.get(key, ""))
+            if any(marker in value for marker in _PR_REF_MARKERS):
+                return f"checks out {key}: {value}"
+    run = str(step.get("run", ""))
+    if "gh pr checkout" in run:
+        return "runs gh pr checkout"
+    for line in run.splitlines():
+        if re.search(r"\bgit\b.*\b(fetch|checkout|switch|pull|worktree)\b", line) and any(
+            marker in line for marker in _PR_REF_MARKERS
+        ):
+            return f"runs {line.strip()}"
+    return None
+
+
+def _no_trusted_workflow_checks_out_candidate_code(root: Path) -> list[str]:
+    found: list[str] = []
+    for name, wf in _trust_workflows(root):
+        if not _TRUSTED_TRIGGERS & set(_triggers(wf)):
+            continue
+        for job_name, job in _trust_jobs(wf).items():
+            for step in _trust_steps(job):
+                why = _checks_out_candidate(step)
+                if why:
+                    found.append(f"{name}:{job_name} runs from the default branch and {why}")
+    return found
+
+
+def _grants_write(permissions: object) -> bool:
+    if permissions is None:
+        return True  # the repository's default, which a workflow file cannot show
+    if isinstance(permissions, str):
+        return permissions != "read-all"
+    return not isinstance(permissions, dict) or "write" in permissions.values()
+
+
+def _no_candidate_job_holds_a_write_or_a_secret(root: Path) -> list[str]:
+    workflows = _trust_workflows(root)
+    candidates = _runs_candidate_code(workflows)
+    found: list[str] = []
+    for name, wf in workflows:
+        if name not in candidates:
+            continue
+        default = wf.get("permissions")
+        for job_name, job in _trust_jobs(wf).items():
+            held = job.get("permissions", default)
+            if _grants_write(held):
+                found.append(f"{name}:{job_name} runs candidate code holding {held!r}")
+            if job.get("secrets") is not None:
+                found.append(f"{name}:{job_name} passes secrets on ({job['secrets']!r})")
+            # Comments are gone once the YAML is parsed, so a match here is a real reference.
+            if "secrets." in json.dumps(job):
+                found.append(f"{name}:{job_name} runs candidate code and references a secret")
+    return found
+
+
+def _publishing(permissions: object) -> list[str]:
+    if permissions == "write-all":
+        return ["write-all"]
+    if not isinstance(permissions, dict):
+        return []
+    return sorted(k for k, v in permissions.items() if k in _PUBLISHING_SCOPES and v == "write")
+
+
+def _only_the_release_controller_publishes(root: Path) -> list[str]:
+    found: list[str] = []
+    for name, wf in _trust_workflows(root):
+        if name == _RELEASE_WORKFLOW:
+            continue
+        held = _publishing(wf.get("permissions"))
+        if held:
+            found.append(f"{name} grants every job {held}")
+        for job_name, job in _trust_jobs(wf).items():
+            held = _publishing(job.get("permissions"))
+            if held:
+                found.append(f"{name}:{job_name} holds {held} outside {_RELEASE_WORKFLOW}")
+            if job.get("environment") is not None:
+                found.append(
+                    f"{name}:{job_name} deploys to {job['environment']!r} outside "
+                    f"{_RELEASE_WORKFLOW}"
+                )
+    return found
+
+
+_CANDIDATE_WORKFLOW = """\
+name: CI
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+permissions:
+  contents: read
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+      - run: make lint
+        env:
+          GH_TOKEN: ${{ github.token }}
+"""
+
+_FEEDBACK_WORKFLOW = """\
+name: PR feedback
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  relay:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts/relay.mjs
+"""
+
+_DCO_WORKFLOW = """\
+name: DCO
+on:
+  pull_request_target:
+    types: [opened]
+jobs:
+  dco:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - run: gh api "repos/$REPO/pulls/$PR/commits"
+        env:
+          PR: ${{ github.event.pull_request.number }}
+"""
+
+_RELEASE = """\
+name: Release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: read
+jobs:
+  pypi:
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      id-token: write
+    steps:
+      - run: echo publish
+        env:
+          TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
+"""
+
+_MAIN_ONLY = """\
+name: Full
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 7 * * *"
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: ./smoke.sh
+        env:
+          CREDENTIAL: ${{ secrets.SMOKE_CREDENTIAL }}
+"""
+
+
+def _trust_scaffold(root: Path) -> None:
+    """Today's shapes: a candidate CI, two trusted relays, a release and a main-only run."""
+    _write(root, f"{_WORKFLOWS}/ci.yml", _CANDIDATE_WORKFLOW)
+    _write(root, f"{_WORKFLOWS}/pr-feedback.yml", _FEEDBACK_WORKFLOW)
+    _write(root, f"{_WORKFLOWS}/dco.yml", _DCO_WORKFLOW)
+    _write(root, f"{_WORKFLOWS}/release.yml", _RELEASE)
+    _write(root, f"{_WORKFLOWS}/full.yml", _MAIN_ONLY)
+
+
+def _replace(workflow: str, old: str, new: str) -> Callable[[Path], None]:
+    def plant(root: Path) -> None:
+        path = root / _WORKFLOWS / workflow
+        text = path.read_text(encoding="utf-8")
+        assert old in text, f"the plant's anchor is not in {workflow}: {old!r}"
+        path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+    return plant
+
+
+def _both(*plants: Callable[[Path], None]) -> Callable[[Path], None]:
+    def plant(root: Path) -> None:
+        for each in plants:
+            each(root)
+
+    return plant
+
+
+def _nothing(root: Path) -> None:
+    """The scaffold as it is: a positive control for a shape it already holds."""
+
+
+_SPARSE = "          sparse-checkout: scripts/relay.mjs\n"
+
+
+def _feedback_checkout(key: str, value: str) -> Callable[[Path], None]:
+    return _replace("pr-feedback.yml", _SPARSE, f"          {key}: {value}\n")
+
+
+def _feedback_run(script: str) -> Callable[[Path], None]:
+    return _replace("pr-feedback.yml", _SPARSE, f"{_SPARSE}      - run: {script}\n")
+
+
+def _ci_checkout(key: str, value: str) -> Callable[[Path], None]:
+    checkout = "      - uses: actions/checkout@v7\n"
+    return _replace("ci.yml", checkout, f"{checkout}        with:\n          {key}: {value}\n")
+
+
+def _ci_job(text: str) -> Callable[[Path], None]:
+    return _replace("ci.yml", "jobs:\n", f"jobs:\n{text}")
+
+
+def _add_to_job(workflow: str, text: str) -> Callable[[Path], None]:
+    runs_on = "    runs-on: ubuntu-24.04\n"
+    return _replace(workflow, runs_on, f"{runs_on}{text}")
+
+
+_LINT_PERMISSIONS = "    permissions:\n      contents: read\n      pull-requests: read\n"
+_CALLS_REUSABLE = "  called:\n    uses: ./.github/workflows/reusable.yml\n"
+
+NO_TRUSTED_CHECKOUT_OF_CANDIDATE_CODE = Row(
+    name="no pull_request_target or workflow_run workflow checks out candidate code",
+    check=_no_trusted_workflow_checks_out_candidate_code,
+    scaffold=_trust_scaffold,
+    controls=(
+        Control(
+            "ref: the pull request's head sha fails",
+            _feedback_checkout("ref", "${{ github.event.pull_request.head.sha }}"),
+        ),
+        Control(
+            "ref: the workflow run's head sha fails",
+            _feedback_checkout("ref", "${{ github.event.workflow_run.head_sha }}"),
+        ),
+        Control("ref: refs/pull/<n>/merge fails", _feedback_checkout("ref", "refs/pull/7/merge")),
+        Control("ref: github.head_ref fails", _feedback_checkout("ref", "${{ github.head_ref }}")),
+        Control(
+            "repository: the run's head repository fails",
+            _feedback_checkout(
+                "repository", "${{ github.event.workflow_run.head_repository.full_name }}"
+            ),
+        ),
+        Control("gh pr checkout fails", _feedback_run("gh pr checkout 7")),
+        Control(
+            "a git fetch of the pull request's ref fails",
+            _feedback_run("git fetch origin refs/pull/7/head && git checkout FETCH_HEAD"),
+        ),
+        Control(
+            "the head checkout under pull_request_target fails",
+            _replace(
+                "dco.yml",
+                "    steps:\n",
+                "    steps:\n      - uses: actions/checkout@v7\n        with:\n"
+                "          ref: ${{ github.event.pull_request.head.sha }}\n",
+            ),
+        ),
+        Control(
+            "a candidate workflow checking out its own head passes",
+            _ci_checkout("ref", "${{ github.event.pull_request.head.sha }}"),
+            fails=False,
+        ),
+        Control(
+            "reading the run's id from the event passes",
+            _feedback_run('echo "${{ github.event.workflow_run.id }}"'),
+            fails=False,
+        ),
+    ),
+)
+
+NO_CANDIDATE_JOB_HOLDS_A_WRITE_OR_A_SECRET = Row(
+    name="no job that runs candidate code holds a write permission or a secret",
+    check=_no_candidate_job_holds_a_write_or_a_secret,
+    scaffold=_trust_scaffold,
+    controls=(
+        Control(
+            "a job-level write grant fails",
+            _replace("ci.yml", "      pull-requests: read\n", "      pull-requests: write\n"),
+        ),
+        Control(
+            "permissions: write-all fails",
+            _replace("ci.yml", _LINT_PERMISSIONS, "    permissions: write-all\n"),
+        ),
+        Control(
+            "a job with no permissions anywhere fails: the default is not known here",
+            _both(
+                _replace("ci.yml", _LINT_PERMISSIONS, ""),
+                _replace("ci.yml", "permissions:\n  contents: read\njobs:", "jobs:"),
+            ),
+        ),
+        Control(
+            "a secrets. reference in env: fails",
+            _replace("ci.yml", "${{ github.token }}", "${{ secrets.SMOKE_CREDENTIAL }}"),
+        ),
+        Control(
+            "a secrets. reference in with: fails",
+            _ci_checkout("token", "${{ secrets.WEBSITE_DISPATCH_TOKEN }}"),
+        ),
+        Control("secrets: inherit fails", _ci_job(f"{_CALLS_REUSABLE}    secrets: inherit\n")),
+        Control(
+            "a write in a workflow a candidate calls fails",
+            _both(
+                _ci_job(_CALLS_REUSABLE),
+                lambda root: _write(
+                    root,
+                    f"{_WORKFLOWS}/reusable.yml",
+                    "on: workflow_call\njobs:\n  it:\n    runs-on: ubuntu-24.04\n"
+                    "    permissions:\n      contents: write\n    steps:\n      - run: true\n",
+                ),
+            ),
+        ),
+        Control(
+            "a secret in a feature-branch push workflow fails",
+            lambda root: _write(
+                root,
+                f"{_WORKFLOWS}/branch.yml",
+                "on:\n  push:\n    branches-ignore: [main]\njobs:\n  it:\n"
+                "    runs-on: ubuntu-24.04\n    permissions:\n      contents: read\n"
+                "    steps:\n      - run: echo ${{ secrets.ANY }}\n",
+            ),
+        ),
+        Control("a secret in a workflow that runs only on main passes", _nothing, fails=False),
+        Control(
+            "permissions: {} passes",
+            _replace("ci.yml", _LINT_PERMISSIONS, "    permissions: {}\n"),
+            fails=False,
+        ),
+    ),
+)
+
+ONLY_THE_RELEASE_CONTROLLER_PUBLISHES = Row(
+    name="only the release controller holds a publishing permission or a deployment environment",
+    check=_only_the_release_controller_publishes,
+    scaffold=_trust_scaffold,
+    controls=(
+        Control(
+            "contents: write in a ci.yml job fails",
+            _replace("ci.yml", "      contents: read\n", "      contents: write\n"),
+        ),
+        Control(
+            "a top-level id-token: write fails",
+            _replace(
+                "full.yml", "permissions:\n  contents: read\n", "permissions:\n  id-token: write\n"
+            ),
+        ),
+        Control(
+            "environment: release outside release.yml fails",
+            _add_to_job("full.yml", "    environment: release\n"),
+        ),
+        Control(
+            "an environment in its mapping form fails",
+            _add_to_job("dco.yml", "    environment:\n      name: release-client\n"),
+        ),
+        Control(
+            "any new environment outside release.yml fails",
+            _add_to_job("full.yml", "    environment: smoke\n"),
+        ),
+        Control(
+            "packages: write in a trusted job fails",
+            _replace("dco.yml", "      pull-requests: write\n", "      packages: write\n"),
+        ),
+        Control(
+            "permissions: write-all fails",
+            _replace("full.yml", "permissions:\n  contents: read\n", "permissions: write-all\n"),
+        ),
+        Control("pull-requests: write in a trusted workflow passes", _nothing, fails=False),
+        Control(
+            "release.yml's own publishing jobs pass",
+            _replace(
+                "release.yml",
+                "      id-token: write\n",
+                "      id-token: write\n      attestations: write\n",
+            ),
+            fails=False,
+        ),
+    ),
+)
+
+
 ROWS: tuple[Row, ...] = (
     SECURITY_MARKER,
     _toolchain_row(
@@ -818,6 +1295,9 @@ ROWS: tuple[Row, ...] = (
         ),
     ),
     PER_TEST_TEMPORARY_FOLDERS,
+    NO_TRUSTED_CHECKOUT_OF_CANDIDATE_CODE,
+    NO_CANDIDATE_JOB_HOLDS_A_WRITE_OR_A_SECRET,
+    ONLY_THE_RELEASE_CONTROLLER_PUBLISHES,
 )
 
 

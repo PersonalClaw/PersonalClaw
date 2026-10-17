@@ -13,6 +13,8 @@ TESTS   := tests
 HARNESS := harness
 # Repo-inner dev scripts: linted to the same bar, not shipped (packages.find scopes to src/).
 SCRIPTS := scripts
+# The CI controller code (docs/maintainers/ci.md, "Trust boundary"): typed, under every tool.
+CI_TOOLS := tools/ci
 
 # Docker / Podman / Finch — the runtime is auto-detected (override with COMPOSE=...)
 COMPOSE ?= $(shell \
@@ -48,8 +50,8 @@ help:
 
 ## format: auto-format source and tests with black + isort
 format:
-	$(PYTHON) -m black $(PKG) $(TESTS) $(HARNESS) $(SCRIPTS)
-	$(PYTHON) -m isort $(PKG) $(TESTS) $(HARNESS) $(SCRIPTS)
+	$(PYTHON) -m black $(PKG) $(TESTS) $(HARNESS) $(SCRIPTS) $(CI_TOOLS)
+	$(PYTHON) -m isort $(PKG) $(TESTS) $(HARNESS) $(SCRIPTS) $(CI_TOOLS)
 
 ## lock: refresh uv.lock from the declared project dependencies
 lock:
@@ -63,10 +65,10 @@ lock:
 # measured; 13 in generate_inert_surface_baseline.py alone), so adding it here would wire a
 # red gate. Annotating that tree is its own change; until then this line is the honest scope.
 lint:
-	$(PYTHON) -m black --check $(PKG) $(TESTS) $(HARNESS) $(SCRIPTS)
-	$(PYTHON) -m isort --check-only $(PKG) $(TESTS) $(HARNESS) $(SCRIPTS)
-	$(PYTHON) -m flake8 $(PKG) $(TESTS) $(HARNESS) $(SCRIPTS)
-	$(PYTHON) -m mypy $(PKG) $(HARNESS)
+	$(PYTHON) -m black --check $(PKG) $(TESTS) $(HARNESS) $(SCRIPTS) $(CI_TOOLS)
+	$(PYTHON) -m isort --check-only $(PKG) $(TESTS) $(HARNESS) $(SCRIPTS) $(CI_TOOLS)
+	$(PYTHON) -m flake8 $(PKG) $(TESTS) $(HARNESS) $(SCRIPTS) $(CI_TOOLS)
+	$(PYTHON) -m mypy $(PKG) $(HARNESS) $(CI_TOOLS)
 	$(PYTHON) scripts/lint_bundled_apps.py $(PYTHON)
 
 ## test: run pytest
