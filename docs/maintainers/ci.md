@@ -144,22 +144,21 @@ on macOS.
 
 The rest of the platform breadth runs nightly (09:37 UTC) and on dispatch:
 
-- **`freshness`** runs first. It reads the newest `breadth-evidence-<sha256>` record from an
-  earlier run, refuses it unless its bytes hash to that digest, and follows a carried entry
-  once, to the run that executed it. On `main` it reads only `main`'s runs. On another ref (a
-  release gate's tag) it reads that ref's own runs first, so a red there is carried rather than
-  run again on the same inputs. A key whose newest entry measured nothing (a shard that wrote
-  no entry, a green whose issue could not be read, a green that ran without its earlier
-  results) is looked for in older records, so a red behind it is still carried. When there are
-  no earlier results on `main`, every shard runs. On another ref, unreadable earlier results
-  fail `freshness`: every shard then runs without them, and each green it records is red,
-  marked `unread`, because off `main` no issue holds a red's inputs and only the carry keeps a
-  red red. `freshness` also publishes the run's night: the date of the 09:37 UTC slot at or
-  before the run's `created_at`, which every attempt of a run keeps.
+- **`freshness`** runs first. On `main` it reads the newest `breadth-evidence-<sha256>` record
+  of an earlier `main` run, refuses it unless its bytes hash to that digest, and follows a
+  carried entry once, to the run that executed it. Every record a run holds is read (a rerun
+  of failed jobs adds one per attempt, listed across every page and ordered by artifact id),
+  and a measured red beats a later attempt's green on the same inputs. A key whose newest
+  entry measured nothing (a shard that wrote no entry, a green whose issue could not be read)
+  is looked for in older records, so a red behind it is still carried. A run with no record
+  (cancelled, or its report wrote none) is skipped. A key whose carried origin cannot be read
+  is left out, and its shard runs. When there are no earlier results, every shard runs. It
+  also publishes the run's night: the date of the 09:37 UTC slot at or before the run's
+  `created_at`, which every attempt of a run keeps.
 - **Tree-keyed legs:** Ubuntu 24.04 on 3.13, macOS 26 on 3.12 (six shards, two at a time),
   Ubuntu 24.04 on arm64 on 3.13, and coverage. Each shard reads its own runner's image,
-  architecture and toolchain. It skips pytest and carries the earlier result, red or green,
-  only when every input matches.
+  architecture and toolchain. On `main` it skips pytest and carries the earlier result, red
+  or green, only when every input matches.
 - **Legs that run every night:** the security corpus, a canary on the next Ubuntu image
   (advisory), the installer smoke, and the dependency audit. `NON_REUSABLE` in
   `tools/ci/breadth_evidence.py` names them.
@@ -177,13 +176,41 @@ The rest of the platform breadth runs nightly (09:37 UTC) and on dispatch:
   next scheduled night is a changed input. It holds `issues: write` and writes issues only on
   `main`.
 - **A shard that writes no entry is red,** never absent. Its runner was lost, or it failed
-  before it recorded anything. It ran on no inputs, so its red never hides the inputs an earlier
-  red ran on, and it runs the next night. A leg whose issue cannot be read has its greens
-  recorded red, marked `unsettled`, which no later run carries; a red it measured stays a red
-  and opens the issue. The record is still written.
+  before it recorded anything. It ran on no inputs, so its red never hides the inputs an
+  earlier red ran on, and no later run carries it: the next run looks past it to the shard's
+  last measured result. A leg whose issue cannot be read has its greens recorded red, marked
+  `unsettled`, which no later run carries; a red it measured stays a red and opens the issue.
+  The record is still written. The issues step tries every leg, and fails at the end naming
+  each one it could not write.
 
 A record satisfies a release alone only when it holds every shard, none of them carried, and
 all of them green.
+
+### Off `main`, nothing is reused
+
+On a tag or a release branch, no earlier result is read or carried. `freshness` writes an
+empty map and makes no API call, every `decide` says run whatever map it is handed, and every
+leg executes on every dispatch. The record a release reads is what that dispatch measured.
+
+Why: the reuse on `main` rests on the leg issues, which hold every red's inputs and turn a
+green on them into a flake. Off `main` no issue is written, so reuse there had to rebuild that
+memory from earlier records. Each round of that (blind keys, a window over a tag's own runs
+and `main`'s, a check of the never-reused legs against every red in it) opened a new way for a
+red to come back green, or for a key to stay blind across dispatches. A release is rare and
+the full breadth is affordable for it, so off `main` it is measured, not reconstructed.
+
+Two rules hold within one run:
+
+- **A red stays red on a rerun.** On attempt N > 1, `report` reads the run's earlier attempts'
+  records. A key red on any of them is red on this one, whatever its inputs, marked
+  `red_on_an_earlier_attempt`. With fewer than N-1 readable earlier records, what a missing
+  attempt measured is not known, so every key is red, marked `earlier_attempt_unread`.
+- **A release refuses any red attempt.** A release accepts a run only when its newest record
+  satisfies a release alone and no attempt of it recorded a red (`satisfies_release`).
+
+A re-dispatch is a new run, and so a new measurement: dispatch 1 red, then dispatch 2 green,
+gives dispatch 2 an all-green record. Whether a release may proceed while an earlier dispatch
+of the same commit was red is the release gate's question (#3911), not this workflow's.
 
 ### The rows that hold it
 
@@ -216,8 +243,8 @@ all of them green.
   exits red after its inputs are written; the installer smoke and the audit record freshness's
   night, read from the run's `created_at` and tied to the cron slot; and a failed coverage
   download is a failure;
-- `freshness` passes its ref, and every tree-keyed shard's record passes the ref and its
-  decision's history;
+- off `main` nothing is reused: `freshness` and every `decide` pass the ref, `report` passes
+  the ref and the run attempt, and no never-reused leg downloads `freshness`'s map;
 - `docker-single-container.yml` checks the tree before it builds on `main`.
 
 The rows check the edits a maintainer plausibly makes: a respelled flag, a new leg, a moved

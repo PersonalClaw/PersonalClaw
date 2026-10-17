@@ -10,11 +10,16 @@
 # Whatever relies on a record names it by run id and digest, and a reader refuses a record that
 # does not hash to that digest. The release gate reads records, never this run's summary.
 #
-# A TREE-KEYED SHARD SKIPS ONLY ON IDENTICAL INPUTS. `freshness` reads the newest record on main,
-# verified under its digest, and each shard compares it with its own runner's inputs: equal in
-# every one, it carries that result forward, red or green, naming the record; any difference,
-# and it runs. A red is never run again on the same inputs to turn it green (#3904). A run whose
-# shards were carried does not satisfy a release on its own: the gate follows the record named.
+# ON MAIN, A TREE-KEYED SHARD SKIPS ONLY ON IDENTICAL INPUTS. `freshness` reads the newest record
+# on main, verified under its digest, and each shard compares it with its own runner's inputs:
+# equal in every one, it carries that result forward, red or green, naming the record; any
+# difference, and it runs. A red is never run again on the same inputs to turn it green (#3904).
+#
+# OFF MAIN NOTHING IS REUSED. On a tag or a release branch no earlier result is read or carried:
+# every leg executes on every dispatch, so the record is what that dispatch measured. Within one
+# run, a key red on any attempt stays red on a rerun, whatever its inputs, and a release accepts
+# a run only when no attempt of it recorded a red. A re-dispatch is a new measurement; whether an
+# earlier dispatch of the same commit was red is the release gate's question (#3911).
 #
 # LEGS THAT MAY NOT BE REUSED RUN EVERY NIGHT: the security corpus, the next-Ubuntu canary, the
 # installer smoke and the audit. A TTL, once the catalogue declares one (#3909), is per job.
@@ -47,8 +52,9 @@ env:
 
 jobs:
   freshness:
-    # The newest record on main, verified under its digest, as the map each shard reads. A
-    # record that does not verify, or none, is an empty map: every shard runs.
+    # On main, the newest record on main, verified under its digest, as the map each shard
+    # reads; a record that does not verify, or none, is an empty map, and every shard runs. Off
+    # main the map is always empty: nothing is reused there.
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -75,8 +81,7 @@ jobs:
         run: |
           created=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)
           python3 tools/ci/breadth_evidence.py night --created-at "$created"
-      # On main, main's earlier runs; on another ref (a release gate's tag), that ref's own
-      # first, so a red there is carried rather than run again on the same inputs.
+      # On main, main's earlier runs. Off main none is read: every leg executes.
       - name: the newest earlier record
         env:
           GH_TOKEN: ${{ github.token }}
@@ -147,7 +152,7 @@ jobs:
         run: >-
           "$(uv python find "$PY")" tools/ci/breadth_evidence.py decide --key "ubuntu-24.04-3.13/${{ matrix.shard }}"
           --inputs "$RUNNER_TEMP/inputs.json"
-          --previous "$RUNNER_TEMP/previous/previous.json"
+          --previous "$RUNNER_TEMP/previous/previous.json" --ref "$GITHUB_REF_NAME"
           --out "$RUNNER_TEMP/entry/ubuntu-24.04-3.13__${{ matrix.shard }}.json"
       - name: Install (locked)
         if: ${{ steps.decide.outputs.run != 'false' }}
@@ -180,9 +185,8 @@ jobs:
         if: ${{ always() && steps.decide.outputs.run != 'false' }}
         env:
           OUTCOME: ${{ steps.pytest.outcome }}
-          HISTORY: ${{ steps.decide.outputs.history }}
         run: |
-          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --history "$HISTORY" --ref "$GITHUB_REF_NAME" --out "$RUNNER_TEMP/entry/ubuntu-24.04-3.13__${{ matrix.shard }}.json"
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --out "$RUNNER_TEMP/entry/ubuntu-24.04-3.13__${{ matrix.shard }}.json"
       - name: Upload this shard's entry
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -253,7 +257,7 @@ jobs:
         run: >-
           "$(uv python find "$PY")" tools/ci/breadth_evidence.py decide --key "macos-26-3.12/${{ matrix.shard }}"
           --inputs "$RUNNER_TEMP/inputs.json"
-          --previous "$RUNNER_TEMP/previous/previous.json"
+          --previous "$RUNNER_TEMP/previous/previous.json" --ref "$GITHUB_REF_NAME"
           --out "$RUNNER_TEMP/entry/macos-26-3.12__${{ matrix.shard }}.json"
       - name: Install (locked)
         if: ${{ steps.decide.outputs.run != 'false' }}
@@ -286,9 +290,8 @@ jobs:
         if: ${{ always() && steps.decide.outputs.run != 'false' }}
         env:
           OUTCOME: ${{ steps.pytest.outcome }}
-          HISTORY: ${{ steps.decide.outputs.history }}
         run: |
-          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --history "$HISTORY" --ref "$GITHUB_REF_NAME" --out "$RUNNER_TEMP/entry/macos-26-3.12__${{ matrix.shard }}.json"
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --out "$RUNNER_TEMP/entry/macos-26-3.12__${{ matrix.shard }}.json"
       - name: Upload this shard's entry
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -358,7 +361,7 @@ jobs:
         run: >-
           "$(uv python find "$PY")" tools/ci/breadth_evidence.py decide --key "ubuntu-24.04-arm-3.13/${{ matrix.shard }}"
           --inputs "$RUNNER_TEMP/inputs.json"
-          --previous "$RUNNER_TEMP/previous/previous.json"
+          --previous "$RUNNER_TEMP/previous/previous.json" --ref "$GITHUB_REF_NAME"
           --out "$RUNNER_TEMP/entry/ubuntu-24.04-arm-3.13__${{ matrix.shard }}.json"
       - name: Install (locked)
         if: ${{ steps.decide.outputs.run != 'false' }}
@@ -391,9 +394,8 @@ jobs:
         if: ${{ always() && steps.decide.outputs.run != 'false' }}
         env:
           OUTCOME: ${{ steps.pytest.outcome }}
-          HISTORY: ${{ steps.decide.outputs.history }}
         run: |
-          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --history "$HISTORY" --ref "$GITHUB_REF_NAME" --out "$RUNNER_TEMP/entry/ubuntu-24.04-arm-3.13__${{ matrix.shard }}.json"
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --out "$RUNNER_TEMP/entry/ubuntu-24.04-arm-3.13__${{ matrix.shard }}.json"
       - name: Upload this shard's entry
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -464,7 +466,7 @@ jobs:
         run: >-
           "$(uv python find "$PY")" tools/ci/breadth_evidence.py decide --key "coverage/${{ matrix.shard }}"
           --inputs "$RUNNER_TEMP/inputs.json"
-          --previous "$RUNNER_TEMP/previous/previous.json"
+          --previous "$RUNNER_TEMP/previous/previous.json" --ref "$GITHUB_REF_NAME"
           --out "$RUNNER_TEMP/entry/coverage__${{ matrix.shard }}.json"
       - name: Install (locked)
         if: ${{ steps.decide.outputs.run != 'false' }}
@@ -496,9 +498,8 @@ jobs:
         if: ${{ always() && steps.decide.outputs.run != 'false' }}
         env:
           OUTCOME: ${{ steps.pytest.outcome }}
-          HISTORY: ${{ steps.decide.outputs.history }}
         run: |
-          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --history "$HISTORY" --ref "$GITHUB_REF_NAME" --out "$RUNNER_TEMP/entry/coverage__${{ matrix.shard }}.json"
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --out "$RUNNER_TEMP/entry/coverage__${{ matrix.shard }}.json"
       - name: Upload this shard's entry
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -1058,6 +1059,7 @@ jobs:
           --tree "$(git rev-parse 'HEAD^{tree}')"
           --record "$RUNNER_TEMP/evidence/record.json"
           --actions "$RUNNER_TEMP/actions.json"
+          --ref "$GITHUB_REF_NAME" --attempt "$GITHUB_RUN_ATTEMPT"
       # Whatever failed after the record was written, the record is kept: a night's red must
       # reach the chain the next night reads.
       - name: Upload the evidence record, named by its digest

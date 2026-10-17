@@ -1737,33 +1737,42 @@ def breadth_shards_violations(tree: Tree) -> list[str]:
     return bad
 
 
-_TREE_KEYED = frozenset({"ubuntu-24.04-3.13", "macos-26-3.12", "ubuntu-24.04-arm-3.13", "coverage"})
+_REF = '--ref "$GITHUB_REF_NAME"'
 
 
 def freshness_ref_violations(tree: Tree) -> list[str]:
-    """Off main, a tag's own earlier runs come first, and a green that ran without them is not
-    trusted: ``freshness`` passes its ref, and every tree-keyed shard's record passes the ref and
-    its decision's ``history``."""
+    """Off main nothing is reused, and that rests on the ref reaching each command:
+    ``freshness`` and every ``decide`` pass it, so off main neither reads nor carries an
+    earlier result; ``report`` passes it and the run attempt, so a rerun keeps an earlier
+    attempt's red; and no never-reused leg downloads ``freshness``'s map, which nothing of
+    theirs reads."""
     jobs = _breadth_jobs(tree)
+    bad: list[str] = []
     steps = (jobs.get("freshness") or {}).get("steps") or []
     calls = [str(s["run"]) for s in steps if "breadth_evidence.py previous" in str(s.get("run"))]
-    bad: list[str] = []
     if len(calls) != 1:
         bad.append(f"breadth.yml:freshness reads the earlier record {len(calls)} times, not once")
-    elif '--ref "$GITHUB_REF_NAME"' not in calls[0]:
+    elif _REF not in calls[0]:
         bad.append("breadth.yml:freshness reads main's runs whatever ref it runs on")
+    steps = (jobs.get("report") or {}).get("steps") or []
+    reports = [str(s["run"]) for s in steps if "breadth_evidence.py report" in str(s.get("run"))]
+    if (
+        len(reports) != 1
+        or _REF not in reports[0]
+        or ('--attempt "$GITHUB_RUN_ATTEMPT"' not in reports[0])
+    ):
+        bad.append("breadth.yml:report does not name the ref and the run attempt")
     for job_id, job in jobs.items():
         for step in job.get("steps") or []:
             run = str(step.get("run", ""))
-            if "breadth_evidence.py ran" not in run or not set(_ENTRY.findall(run)) & _TREE_KEYED:
-                continue
-            history = (step.get("env") or {}).get("HISTORY")
+            if "breadth_evidence.py decide" in run and _REF not in run:
+                bad.append(f"breadth.yml:{job_id}'s decision names no ref, so it carries off main")
             if (
-                '--ref "$GITHUB_REF_NAME"' not in run
-                or '--history "$HISTORY"' not in run
-                or history != "${{ steps.decide.outputs.history }}"
+                job_id in breadth_evidence.NON_REUSABLE
+                and _action(step) == "actions/download-artifact"
+                and (step.get("with") or {}).get("name") == "breadth-previous"
             ):
-                bad.append(f"breadth.yml:{job_id}'s record names no ref or no decision history")
+                bad.append(f"breadth.yml:{job_id} downloads freshness's map, which it never reads")
     return bad
 
 
@@ -2696,16 +2705,28 @@ ROWS: tuple[Row, ...] = (
         (
             _plant("freshness without --ref", _BREADTH, ' --ref "$GITHUB_REF_NAME"', ""),
             _plant(
-                "a tree-keyed shard's record without the ref",
+                "a decision without the ref",
                 _BREADTH,
-                '--history "$HISTORY" --ref "$GITHUB_REF_NAME" --out',
-                '--history "$HISTORY" --out',
+                '--previous "$RUNNER_TEMP/previous/previous.json" --ref "$GITHUB_REF_NAME"',
+                '--previous "$RUNNER_TEMP/previous/previous.json"',
             ),
             _plant(
-                "a tree-keyed shard's record without decide's history",
+                "report without the run attempt",
                 _BREADTH,
-                "          HISTORY: ${{ steps.decide.outputs.history }}\n",
+                ' --attempt "$GITHUB_RUN_ATTEMPT"',
                 "",
+            ),
+            _plant(
+                "a never-reused leg downloading the map",
+                _BREADTH,
+                "      - name: pytest (adversarial scanner corpus)\n",
+                "      - name: the earlier record's results\n"
+                "        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
+                " # v8.0.2\n"
+                "        with:\n"
+                "          name: breadth-previous\n"
+                "          path: ${{ runner.temp }}/previous\n"
+                "      - name: pytest (adversarial scanner corpus)\n",
             ),
             Control("the ref named, as the tree has it, passes", _nothing, fails=False),
         ),
