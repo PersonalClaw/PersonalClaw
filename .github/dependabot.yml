@@ -121,3 +121,16 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+
+  # The base images of the two Dockerfiles, each a tag with its index digest. A PR here moves
+  # the `FROM` (or `ARG`) line; the platform digests in the comment above it are refreshed by
+  # hand in the same PR, because Dependabot does not read comments. The containers that
+  # workflows run in are not Dockerfiles, so they are refreshed by a reviewed edit
+  # (docs/maintainers/ci.md, "Supply chain").
+  - package-ecosystem: docker
+    directory: /deploy/docker
+    schedule:
+      interval: weekly
+    groups:
+      images:
+        patterns: ["*"]

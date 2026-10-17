@@ -1,0 +1,87 @@
+# CI's supply-chain policy, read by tools/ci/supply_chain.py and held by the supply-chain rows
+# of tests/test_ci_contract.py. See docs/maintainers/ci.md, "Supply chain", for how to pin, how a
+# refresh arrives, and how to add or renew an exception.
+
+# Each Node release line CI or an image may run, and the date it reaches end of life, from the
+# Node.js release schedule (github.com/nodejs/Release, schedule.json). A Node on a line past its
+# date, or on a line not listed here, fails. Add a line when the repository moves to it; leave
+# past lines in place, so a pin on one fails on its date.
+[node_end_of_life]
+"20" = 2026-04-30
+"22" = 2027-04-30
+"24" = 2028-04-30
+"26" = 2029-04-30
+
+# Audited writes. Every write permission a job holds, its own or inherited from the top of its
+# workflow, must be listed here with the steps that use it and why. So must every actions/checkout
+# that keeps its credentials (permission = "persist-credentials"); there are none. A step is
+# named by its `name:`, or by its action without the ref when it has none. Anything unlisted
+# fails, and an entry that matches nothing fails.
+[[audited_write]]
+workflow = "dco.yml"
+job = "dco"
+permission = "pull-requests: write"
+steps = ["Explain how to fix DCO"]
+reason = "Posts or updates the one comment that says which commits lack a sign-off and how to add it."
+
+[[audited_write]]
+workflow = "pr-feedback.yml"
+job = "lint-help"
+permission = "pull-requests: write"
+steps = ["Post the remediation"]
+reason = "Posts or updates the one comment that carries a failed CI run's lint remediation, fork pull requests included."
+
+[[audited_write]]
+workflow = "release.yml"
+job = "pypi"
+permission = "id-token: write"
+steps = ["pypa/gh-action-pypi-publish"]
+reason = "Trusted Publishing: PyPI exchanges the job's OIDC token for an upload of personalclaw, behind the release environment."
+
+[[audited_write]]
+workflow = "release.yml"
+job = "pypi-client"
+permission = "id-token: write"
+steps = ["pypa/gh-action-pypi-publish"]
+reason = "Trusted Publishing of personalclaw-client, behind the release-client environment."
+
+[[audited_write]]
+workflow = "release.yml"
+job = "images"
+permission = "packages: write"
+steps = ["docker/login-action", "Build and push image with supply-chain attestations"]
+reason = "Pushes the two multi-platform images and their attestations to GHCR."
+
+[[audited_write]]
+workflow = "release.yml"
+job = "notes"
+permission = "contents: write"
+steps = ["Create GitHub Release"]
+reason = "Creates the tag's GitHub Release and attaches its distributions, SBOMs and desktop installers."
+
+[[audited_write]]
+workflow = "release.yml"
+job = "attest"
+permission = "id-token: write"
+steps = ["actions/attest-build-provenance"]
+reason = "Signs the wheel's and sdist's build-provenance attestations with the job's OIDC identity."
+
+[[audited_write]]
+workflow = "release.yml"
+job = "attest"
+permission = "attestations: write"
+steps = ["actions/attest-build-provenance"]
+reason = "Stores those attestations on the repository."
+
+# Exceptions. One waives one rule (scope) for one reference in one file, and expires at most 30
+# days after the day it is written or renewed. Renewing is a new expiry with a new reason. An
+# expired entry, one more than 30 days out, one that matches nothing, and one missing a field
+# all fail. `file`, `scope` and `reference` are the violation's own, as the row prints them.
+
+[[exception]]
+file = "deploy/docker/Dockerfile.backend"
+scope = "run-install"
+reference = "npm install of @agentclientprotocol/claude-agent-acp, @agentclientprotocol/codex-acp, @anthropic-ai/claude-code, @openai/codex names no exact version"
+owner = "maintainers"
+reason = "The gateway image installs the four agent CLIs at their newest. Pinning them by hand would leave them on one release with nothing to move them. This ends when a lock file under deploy/docker/ names them, and Dependabot's npm ecosystem refreshes it."
+expires = 2026-11-16

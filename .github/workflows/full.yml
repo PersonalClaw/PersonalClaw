@@ -151,6 +151,8 @@ jobs:
         # The image this job ran on, so a runner image that moves is visible in the log.
         run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
@@ -260,6 +262,8 @@ jobs:
         # The image this job ran on, so a runner image that moves is visible in the log.
         run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
@@ -271,9 +275,11 @@ jobs:
         # PEP-668 externally-managed and uv refuses `--system` there (the whole step
         # then errored out under `bash -e` before pip-audit ever ran, silently
         # disabling the scan). Report-only, so a finding never gates (|| true).
+        # pip-audit is not in uv.lock, so it is named as an exact release, and nothing refreshes
+        # it yet: moving it is a reviewed edit of this line.
         run: |
           uv venv .venv-audit
-          uv pip install --python .venv-audit/bin/python -e . pip-audit
+          uv pip install --python .venv-audit/bin/python -e . pip-audit==2.10.1
           .venv-audit/bin/python -m pip_audit || true
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -298,6 +304,8 @@ jobs:
         # The image this job ran on, so a runner image that moves is visible in the log.
         run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
@@ -368,6 +376,8 @@ jobs:
         # The image this job ran on, so a runner image that moves is visible in the log.
         run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
@@ -434,6 +444,8 @@ jobs:
           fi
           echo "all coverage shards passed"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
@@ -538,6 +550,8 @@ jobs:
           apt-get update -qq
           apt-get install -y --no-install-recommends ca-certificates curl
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           version: "0.13.1"

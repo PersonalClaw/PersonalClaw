@@ -1,0 +1,45 @@
+# Every action the workflows pin by commit SHA is still the release its comment names.
+#
+# A `uses: owner/repo@<sha> # vX.Y.Z` line runs the SHA; the comment is what a reviewer reads.
+# Dependabot keeps both moving together, but nothing else checks that they still agree: a tag
+# that moves upstream, or a comment edited without its SHA, leaves the two describing different
+# code. `tools/ci/action_pins.py` reads each distinct release once from the GitHub API, follows an
+# annotated tag to its commit, and fails on a mismatch, a tag that is gone, a pin with no release
+# comment, and any answer the API could not give (unresolved is never a pass).
+#
+# Read-only: the token reads public tags, and the job holds `contents: read` and nothing else.
+# Weekly, because a release tag moving is rare and the check costs one API call per release.
+# See docs/maintainers/ci.md, "Supply chain".
+name: Action pins
+
+on:
+  schedule:
+    # Wednesdays, off the hour and away from the slots the other scheduled workflows hold.
+    - cron: "29 6 * * 3"
+  workflow_dispatch:
+
+concurrency:
+  group: action-pins-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sha-matches-tag:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Every pinned SHA is its release tag's commit
+        # The token is here only for the API's rate limit; every call is a GET of a public tag.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/ci/action_pins.py .

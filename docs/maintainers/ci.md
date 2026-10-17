@@ -98,3 +98,94 @@ id is accepted, and a shallow clone refuses, because it cannot show ancestry.
 
 Until the catalogue lands, these rows run in the candidate's own suite, so a candidate could
 delete one. Its validator then runs the table from the default branch.
+
+## Supply chain
+
+Everything CI fetches is named exactly, so a run tests the same inputs on a day nothing in the
+repository changed, and every job holds only the token permissions it uses. The rules live in
+`tools/ci/supply_chain.py`, the policy they read in `tools/ci/supply-chain.toml`, and
+`tests/test_ci_contract.py` holds each rule as a row with planted violations.
+
+### How to pin
+
+- **An action:** a full commit SHA with its exact release as a comment,
+  `uses: owner/repo@<40-character sha> # vX.Y.Z`. A bare `# v7` fails. A `docker://` action is
+  an image and is pinned as one.
+- **A workflow's container or image:** a tag with the digest of its linux/amd64 manifest, and a
+  comment above it naming that platform and the index the manifest belongs to:
+  `# ubuntu:26.04, the linux/amd64 manifest of index sha256:<index>`. Pinning the index digest
+  itself fails, because an index is not any one platform's image.
+- **A Dockerfile base:** a tag with its index digest, and each platform's manifest digest in the
+  comment above. A base named through an `ARG` is judged by the `ARG`'s default, which must
+  exist. Dockerfiles are read wherever they are in the tree.
+- **An install a `run:` or `RUN` performs:** an exact version (`tool==X.Y.Z`, `pkg@X.Y.Z`), a
+  lock (`npm ci`, `uv sync --locked`, `pip install --require-hashes -r`), or this project
+  itself. `npm install` in a workflow, `npx` of a package that is not in the lock, `uvx` and
+  `uv run --with` without a version, and a download piped into a shell all fail. The public
+  installer's own `curl … | sh` in `full.yml`'s install-smoke is what that job tests, so it is
+  allowed.
+- **A setup action:** an exact version or the file that names one, never `check-latest`.
+  setup-qemu names its binfmt image by digest; setup-buildx names an exact buildx release, and
+  its BuildKit image by digest in `driver-opts`.
+- **Node:** every Node that CI or an image runs is on a line `[node_end_of_life]` dates, before
+  that date. The dates come from the Node.js release schedule. Add a line when the repository
+  moves to it, and leave past lines in place.
+
+OS packages (`apt-get`, `apk`, `brew`) are outside the install rule. They come with the image
+the job runs in, which is pinned by digest, or with the runner image, which every job logs in
+its Runner identity step.
+
+### How a refresh arrives
+
+- **Actions:** Dependabot's `github-actions` ecosystem, weekly. Its PR moves the SHA and the
+  comment together.
+- **Dockerfile bases:** Dependabot's `docker` ecosystem for `deploy/docker/`, weekly. It moves
+  the `FROM` or `ARG` line. Refresh the platform digests in the comment above it by hand in the
+  same PR, since Dependabot does not read comments.
+- **Workflow containers, QEMU, BuildKit and buildx:** a reviewed edit, by hand. The release's
+  QEMU and buildx steps are also run by `release-image-tooling.yml`'s `pin-smoke` job on every
+  pull request that changes `release.yml`: a two-platform build of a two-line image, with no
+  permissions and nothing pushed. The contract holds its pins equal to `release.yml`'s.
+- **Tools named by hand** (`pip-audit` in the audit job, `wheel` in the gateway image,
+  `pyinstaller` in the desktop builds): nothing refreshes them yet. Moving one is a reviewed
+  edit of its line.
+- **The weekly check:** `action-pins.yml` asks the GitHub API, once per release, which commit
+  each pinned tag names, following an annotated tag to its commit. It fails on a SHA that is
+  not its tag's commit, a tag that is gone, a pin with no release comment, and any answer the
+  API could not give. It holds `contents: read`, and uses its token for reads only.
+
+### Least privilege
+
+- No `write-all`, and every job declares its permissions or inherits declared ones.
+- A write is granted on the job that uses it, never at the top of a workflow, where it would
+  reach every job added later.
+- Every write a job holds, and every checkout that keeps its credentials, is an
+  `[[audited_write]]` in the policy: the workflow, the job, the permission, the steps that use
+  it and why. A write that is not listed fails, and so does an entry that matches nothing.
+  Every checkout sets `persist-credentials: false` today, so none is listed.
+- No workflow-level or job-level `env:` hands `github.token` or a secret to every step; set it
+  on the step that calls the API.
+
+The audited writes today:
+
+| Workflow | Job | Permission | Used by |
+|---|---|---|---|
+| `dco.yml` | `dco` | `pull-requests: write` | the sign-off remediation comment |
+| `pr-feedback.yml` | `lint-help` | `pull-requests: write` | the lint remediation comment |
+| `release.yml` | `pypi`, `pypi-client` | `id-token: write` | Trusted Publishing to PyPI |
+| `release.yml` | `images` | `packages: write` | pushing the two images to GHCR |
+| `release.yml` | `notes` | `contents: write` | creating the GitHub Release |
+| `release.yml` | `attest` | `id-token: write`, `attestations: write` | build-provenance attestations |
+
+### Exceptions
+
+An `[[exception]]` waives one rule for one reference in one file, while a pin cannot hold yet.
+It names `file`, `reference` and `scope` exactly as the row prints the violation, with an
+`owner`, a `reason` that says what ends it, and an `expires` date at most 30 days after the day
+it is written. Only the pinning rules may be waived (`action-sha`, `image-digest`,
+`run-install`, `setup-floating`, `node-eol`); a write is audited, never waived.
+
+An expired exception, one more than 30 days out, one that matches nothing, and one missing a
+field all fail. To renew one, set a new expiry and say in the reason what has changed. To end
+one, fix the reference and delete the entry: an exception left behind after its violation is
+gone fails as matching nothing.
