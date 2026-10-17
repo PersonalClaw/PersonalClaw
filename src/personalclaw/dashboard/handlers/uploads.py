@@ -31,6 +31,11 @@ from pathlib import Path
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
+
+# Imported with the handlers, not inside a complete: a module's first import runs on the event
+# loop, and this one's (its dataclasses built as it loads) held a complete up for 0.13-0.44 s on
+# a busy machine.
+from personalclaw.knowledge.file_items import store_file_item
 from personalclaw.uploads.content_scan import ContentRefused, scan_upload
 from personalclaw.uploads.policy import limits_table, single_post_threshold
 from personalclaw.uploads.store import UploadError, UploadSession, UploadStore
@@ -267,7 +272,9 @@ async def _finalize_target(request: web.Request, sess: UploadSession, final_path
     """Hand the assembled file to the same finalize the single-POST path uses.
 
     The file is moved (a copy when its destination is on another disk) and hashed in worker
-    threads; what it becomes (the item, the profile's record) is decided on the event loop."""
+    threads. A Knowledge item is decided in a worker thread too, under its store's lock
+    (``knowledge.file_items.store_file_item``); a voice profile's record is changed on the event
+    loop, as every edit of it is."""
     import uuid
 
     if sess.target == "attachment":
@@ -292,7 +299,6 @@ async def _finalize_target(request: web.Request, sess: UploadSession, final_path
 
     if sess.target == "knowledge":
         from personalclaw.dashboard.handlers.knowledge import _store as _kn_store
-        from personalclaw.knowledge.file_items import store_file_item
         from personalclaw.knowledge.media import classify
 
         if classify(sess.filename, sess.mime or None) is None:

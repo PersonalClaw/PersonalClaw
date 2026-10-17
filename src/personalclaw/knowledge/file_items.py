@@ -25,6 +25,7 @@ import logging
 import os
 import shutil
 import tempfile
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -84,6 +85,33 @@ def _discard_file(dest: Path, thumb_path: str) -> None:
         Path(thumb_path).unlink(missing_ok=True)
 
 
+#: Held while an upload's item is decided, whichever store decides it. The process can hold more
+#: than one store over one library (the vault's sweep opens its own), each with its own
+#: connection and lock, and two uploads of the same bytes decided on two of them made two items.
+_DECIDING = threading.Lock()
+
+
+def _decide(store, content_hash: str, item: dict) -> tuple[dict | None, bool]:
+    """What an upload becomes: the active item that already holds its bytes (``content_hash``),
+    or a new item made of *item* (``create_typed_item``'s arguments). Returns it with whether it
+    is new.
+
+    Run in a worker thread, one upload at a time in the process (:data:`_DECIDING`), and under
+    the store connection's lock from the duplicate check to the read of the new item, so no
+    other thread's statement lands between them and two uploads of the same bytes that finish
+    together still make one item. A transaction another thread has open on the connection holds
+    that lock until it ends (``KnowledgeStore``'s writers), so this waits for it rather than
+    starting inside it. On the event loop these statements waited on the disk: on a busy one a
+    single commit stopped the loop for 0.2 s."""
+    with _DECIDING, store.db.held():
+        if content_hash:
+            existing = store.find_active_by_file_hash(content_hash)
+            if existing:
+                return existing, False
+        new_id = store.create_typed_item(**item)
+        return store.get_item(new_id), True
+
+
 async def store_file_item(
     store, tmp_path: str, filename: str, mime: str | None = None, *, tags: list[str] | None = None
 ) -> tuple[dict | None, bool]:
@@ -98,8 +126,9 @@ async def store_file_item(
     What reads or writes the whole file (the move, which copies when the upload sits on another
     disk, the hash, the thumbnail, a gist's read) runs in a worker thread: on the event loop,
     hashing a 512 MB upload stopped every other request for 0.22 s. What decides the item (the
-    duplicate check and the insert) stays on the loop, so two uploads of the same bytes that
-    finish together still make one item."""
+    duplicate check, the insert and the read of the new item) runs in one worker call under the
+    store connection's lock (:func:`_decide`), so two uploads of the same bytes that finish
+    together still make one item."""
     from personalclaw.knowledge import knowledge_files_dir
     from personalclaw.knowledge.media import code_language
 
@@ -120,22 +149,18 @@ async def store_file_item(
         # Its text is the item's content, read here, so it is scanned here: the scan of the
         # file's bytes skips a window that holds a stray NUL byte. Refused, it raises.
         await scan_text(code, surface="knowledge")
-        if content_hash:
-            existing = store.find_active_by_file_hash(content_hash)
-            if existing:
-                return existing, False
-        new_id = store.create_typed_item(
-            item_type="gist",
-            title=filename,
-            content=code,
-            tags=tags,
-            extra={
+        gist = {
+            "item_type": "gist",
+            "title": filename,
+            "content": code,
+            "tags": tags,
+            "extra": {
                 "gist_language": lang,
                 "file_metadata": {"content_hash": content_hash} if content_hash else {},
                 "processing_status": "queued",
             },
-        )
-        return store.get_item(new_id), True
+        }
+        return await asyncio.to_thread(_decide, store, content_hash, gist)
     # Pick a mime_type consistent with the resolved item_type: a .webm recording is
     # classified audio via its upload mime, but guess_mime(name) → video/webm; honor
     # the upload mime when its top-level matches the item_type so the stored mime (and
@@ -152,20 +177,12 @@ async def store_file_item(
     # Content-hash dedup: re-uploading byte-identical content into the same space
     # returns the existing item instead of a duplicate (the file analog of bookmark
     # URL dedup). Hash is stored in file_metadata so the check is exact, not by name.
-    # Nothing is awaited between this check and the insert below.
-    if content_hash:
-        existing = store.find_active_by_file_hash(content_hash)
-        if existing:
-            # Drop the redundant copy we just saved.
-            await asyncio.to_thread(_discard_file, dest, thumb_path)
-            return existing, False  # (item, is_new) — dedup hit
-
-    new_id = store.create_typed_item(
-        item_type=item_type,
-        title=filename,
-        content="",
-        tags=tags,
-        extra={
+    stored = {
+        "item_type": item_type,
+        "title": filename,
+        "content": "",
+        "tags": tags,
+        "extra": {
             "file_path": str(dest),
             "mime_type": mime_type,
             "file_size": size,
@@ -180,8 +197,12 @@ async def store_file_item(
             # vision, transcription, … The caller enqueues after this returns.
             "processing_status": "queued",
         },
-    )
-    return store.get_item(new_id), True  # (item, is_new)
+    }
+    item, is_new = await asyncio.to_thread(_decide, store, content_hash, stored)
+    if not is_new:
+        # A dedup hit: drop the redundant copy just saved.
+        await asyncio.to_thread(_discard_file, dest, thumb_path)
+    return item, is_new
 
 
 # ── a file nobody uploaded ───────────────────────────────────────────────────
