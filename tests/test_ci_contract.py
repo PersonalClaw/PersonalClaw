@@ -29,6 +29,8 @@ import pytest
 import security_census
 import yaml
 
+from tools.ci import breadth_evidence
+
 REPO = Path(__file__).resolve().parents[1]
 
 #: An exact release, ``X.Y.Z``.
@@ -939,7 +941,7 @@ def _trust_scaffold(root: Path) -> None:
     _write(root, f"{_WORKFLOWS}/pr-feedback.yml", _FEEDBACK_WORKFLOW)
     _write(root, f"{_WORKFLOWS}/dco.yml", _DCO_WORKFLOW)
     _write(root, f"{_WORKFLOWS}/release.yml", _RELEASE)
-    _write(root, f"{_WORKFLOWS}/full.yml", _MAIN_ONLY)
+    _write(root, f"{_WORKFLOWS}/main-only.yml", _MAIN_ONLY)
 
 
 def _replace(workflow: str, old: str, new: str) -> Callable[[Path], None]:
@@ -1112,12 +1114,14 @@ ONLY_THE_RELEASE_CONTROLLER_PUBLISHES = Row(
         Control(
             "a top-level id-token: write fails",
             _replace(
-                "full.yml", "permissions:\n  contents: read\n", "permissions:\n  id-token: write\n"
+                "main-only.yml",
+                "permissions:\n  contents: read\n",
+                "permissions:\n  id-token: write\n",
             ),
         ),
         Control(
             "environment: release outside release.yml fails",
-            _add_to_job("full.yml", "    environment: release\n"),
+            _add_to_job("main-only.yml", "    environment: release\n"),
         ),
         Control(
             "an environment in its mapping form fails",
@@ -1125,7 +1129,7 @@ ONLY_THE_RELEASE_CONTROLLER_PUBLISHES = Row(
         ),
         Control(
             "any new environment outside release.yml fails",
-            _add_to_job("full.yml", "    environment: smoke\n"),
+            _add_to_job("main-only.yml", "    environment: smoke\n"),
         ),
         Control(
             "packages: write in a trusted job fails",
@@ -1133,7 +1137,9 @@ ONLY_THE_RELEASE_CONTROLLER_PUBLISHES = Row(
         ),
         Control(
             "permissions: write-all fails",
-            _replace("full.yml", "permissions:\n  contents: read\n", "permissions: write-all\n"),
+            _replace(
+                "main-only.yml", "permissions:\n  contents: read\n", "permissions: write-all\n"
+            ),
         ),
         Control("pull-requests: write in a trusted workflow passes", _nothing, fails=False),
         Control(
@@ -1221,6 +1227,390 @@ def wheel_and_scan_base_violations(tree: Tree) -> list[str]:
     return bad
 
 
+# ── The tested tree on main, and the nightly breadth ────────────────────────────────────────
+#
+# A push to main runs ``ci.yml``'s jobs again only when no green pull-request run tested its
+# tree, and platform breadth moves to ``breadth.yml``, a nightly whose legs reuse an earlier
+# result only on identical inputs. These rows hold the shape that makes both claims true.
+
+_GATE = "needs.tree-check.outputs.tested != 'true'"
+#: ``ci.yml`` jobs that run whatever ``tree-check`` answers: the check itself, the change
+#: classifier, the security corpus (never skipped on main) and the SDK contract.
+_ALWAYS_RUN = frozenset({"tree-check", "changes", "security-corpus", "apps-contract"})
+_ON_MAIN = "github.ref == 'refs/heads/main'"
+
+
+def _workflow(tree: Tree, name: str) -> dict[str, Any] | None:
+    return dict(_workflows(tree)).get(name)
+
+
+def _needs(job: dict[str, Any]) -> list[str]:
+    needs = job.get("needs") or []
+    return [needs] if isinstance(needs, str) else [str(n) for n in needs]
+
+
+def _runs(job: dict[str, Any]) -> str:
+    return "\n".join(str(step.get("run", "")) for step in job.get("steps") or [])
+
+
+def _pytest_run(job: dict[str, Any]) -> str:
+    return next(
+        (str(s["run"]) for s in job.get("steps") or [] if "pytest" in str(s.get("run", ""))), ""
+    )
+
+
+def _waits_on_tree_check(where: str, job: dict[str, Any]) -> list[str]:
+    """A gated job needs ``tree-check``, survives a failed dependency, and runs unless tested."""
+    bad: list[str] = []
+    condition = str(job.get("if", ""))
+    if "tree-check" not in _needs(job):
+        bad.append(f"{where} does not wait on tree-check")
+    if "!cancelled()" not in condition:
+        bad.append(f"{where} is not gated on `!cancelled()`, so a failed check skips it")
+    if _GATE not in condition:
+        bad.append(f"{where} does not run on every answer but `tested == 'true'`")
+    return bad
+
+
+def _main_never_cancels(where: str, workflow: dict[str, Any]) -> list[str]:
+    concurrency = workflow.get("concurrency") or {}
+    group = str(concurrency.get("group", ""))
+    cancel = concurrency.get("cancel-in-progress", False)
+    bad: list[str] = []
+    if f"{_ON_MAIN} && github.sha" not in group:
+        bad.append(f"{where}: a run on main is not grouped by its own commit")
+    off_main = "github.ref != 'refs/heads/main'"
+    if cancel is True or (isinstance(cancel, str) and off_main not in cancel):
+        bad.append(f"{where}: a run on main can be cancelled")
+    # Groups are shared across the repository, and a new pending entry replaces the old one,
+    # so a job's own group could cancel or replace a main run's job whatever the workflow's is.
+    for job_id, job in (workflow.get("jobs") or {}).items():
+        if isinstance(job, dict) and "concurrency" in job:
+            bad.append(f"{where}:{job_id} has its own concurrency group, which can cancel it")
+    return bad
+
+
+def main_push_runs_violations(tree: Tree) -> list[str]:
+    """``ci.yml`` runs on every push to main, and no main run is ever cancelled or replaced."""
+    workflow = _workflow(tree, "ci.yml")
+    if workflow is None:
+        return ["ci.yml is missing"]
+    push = _triggers(workflow).get("push", "absent")
+    bad: list[str] = []
+    if push == "absent":
+        bad.append("ci.yml does not run on a push")
+    elif not isinstance(push, dict):
+        bad.append("ci.yml runs on a bare `push:`, which a tag push also starts")
+    else:
+        branches = [str(b) for b in push.get("branches") or []]
+        # GitHub reads branch patterns in order, so a later `!` pattern drops what an earlier
+        # one matched; and a path filter starts no run for a push whose paths it excludes.
+        if (
+            "branches-ignore" in push
+            or not ({"**", "main"} & set(branches))
+            or any(b.startswith("!") for b in branches)
+            or {"paths", "paths-ignore"} & set(push)
+        ):
+            bad.append(f"ci.yml's push trigger leaves main, or some pushes to it, out: {push}")
+        if "tags" in push:
+            bad.append("ci.yml runs on a tag push, which is release.yml's")
+    return bad + _main_never_cancels("ci.yml", workflow)
+
+
+def _suite_words(command: str) -> list[str]:
+    """A pytest command's words, less the two a macOS shard may differ in: its worker count and
+    its report's path. Everything else (paths, selections, the split) must be the same."""
+    return re.sub(r"\s-n\s+\S+|\s--junitxml=\S+", "", " " + command).split()
+
+
+def macos_leg_violations(tree: Tree) -> list[str]:
+    """``test-macos`` runs ``test-shard``'s split suite on macOS, on pull requests into main and
+    on a main push no green pull-request run tested."""
+    jobs = (_workflow(tree, "ci.yml") or {}).get("jobs") or {}
+    macos, ubuntu = jobs.get("test-macos"), jobs.get("test-shard")
+    if macos is None or ubuntu is None:
+        return ["ci.yml has no test-macos or no test-shard"]
+    bad = _waits_on_tree_check("ci.yml:test-macos", macos)
+    condition = str(macos.get("if", ""))
+    on_pr = "github.event_name == 'pull_request' && github.base_ref == 'main'"
+    if on_pr not in condition:
+        bad.append("ci.yml:test-macos does not run on pull requests into main")
+    if f"github.event_name == 'push' && {_ON_MAIN}" not in condition:
+        bad.append("ci.yml:test-macos does not run on a push to main no pull-request run tested")
+    if not str(macos.get("runs-on", "")).startswith("macos-"):
+        bad.append(f"ci.yml:test-macos runs on {macos.get('runs-on')!r}, not macOS")
+    shards, theirs = _matrix_values(macos, "shard"), _matrix_values(ubuntu, "shard")
+    if shards != theirs:
+        bad.append(f"ci.yml:test-macos splits into {len(shards)}, test-shard into {len(theirs)}")
+    command = _pytest_run(macos)
+    if f"--splits {len(shards)} " not in command:
+        bad.append("ci.yml:test-macos's --splits is not its shard count")
+    if "--group ${{ matrix.shard }} " not in command:
+        bad.append("ci.yml:test-macos does not run its own shard's group")
+    if _suite_words(command) != _suite_words(_pytest_run(ubuntu)):
+        bad.append("ci.yml:test-macos's pytest selects other than test-shard's")
+    if (macos.get("env") or {}) != (ubuntu.get("env") or {}) or any(
+        "PYTEST_ADDOPTS" in (s.get("env") or {}) for s in macos.get("steps") or []
+    ):
+        bad.append("ci.yml:test-macos's environment differs from test-shard's")
+    return bad
+
+
+def tree_check_gating_violations(tree: Tree) -> list[str]:
+    """Every ``ci.yml`` job outside the always-run set waits on ``tree-check``'s answer."""
+    jobs = (_workflow(tree, "ci.yml") or {}).get("jobs") or {}
+    if "tree-check" not in jobs:
+        return ["ci.yml has no tree-check job"]
+    bad: list[str] = []
+    for job_id, job in jobs.items():
+        if job_id not in _ALWAYS_RUN:
+            bad += _waits_on_tree_check(f"ci.yml:{job_id}", job)
+    return bad
+
+
+_FETCH_BEFORE = "contents/tools/ci/tree_tested.py?ref=${BEFORE}"
+_CHECKED_OUT_COPY = re.compile(r"python3?\s+(?:\./)?tools/ci/tree_tested\.py")
+
+
+def _tree_check_violations(where: str, job: dict[str, Any] | None, asks: str) -> list[str]:
+    if job is None:
+        return [f"{where} is missing"]
+    bad: list[str] = []
+    permissions = job.get("permissions")
+    if not isinstance(permissions, dict) or "write" in permissions.values():
+        bad.append(f"{where} holds more than read permissions: {permissions!r}")
+    steps = job.get("steps") or []
+    if any(_action(step) == "actions/checkout" for step in steps):
+        bad.append(f"{where} checks out the pushed tree")
+    answer = next((s for s in steps if _FETCH_BEFORE in str(s.get("run", ""))), None)
+    if answer is None:
+        return bad + [f"{where} does not read the previous main commit's copy of the check"]
+    run = str(answer["run"])
+    if str((answer.get("env") or {}).get("BEFORE", "")) != "${{ github.event.before }}":
+        bad.append(f"{where} reads the check at a ref other than `github.event.before`")
+    if _CHECKED_OUT_COPY.search(run):
+        bad.append(f"{where} runs the checked-out copy of the check")
+    if _UV_COMMAND.search(run):
+        bad.append(f"{where} installs or runs through uv")
+    if f'python3 "$check" --workflow {asks}' not in " ".join(run.split()):
+        bad.append(f"{where} does not ask the fetched check about {asks}")
+    return bad
+
+
+def tree_check_reads_before_violations(tree: Tree) -> list[str]:
+    """``tree-check`` runs the PREVIOUS main commit's copy of the script: read-only, nothing
+    checked out, nothing installed."""
+    bad: list[str] = []
+    for name in ("ci.yml", "docker-single-container.yml"):
+        jobs = (_workflow(tree, name) or {}).get("jobs") or {}
+        bad += _tree_check_violations(f"{name}:tree-check", jobs.get("tree-check"), name)
+    return bad
+
+
+#: A pytest of the root project, which reads pyproject's addopts (``--cov personalclaw``).
+_ROOT_PYTEST = re.compile(r"\buv run (?:python -m )?pytest\b")
+
+
+def _measures_coverage(run: str) -> bool:
+    """pyproject's addopts carry ``--cov``, so a root pytest measures coverage unless it says
+    ``--no-cov``. A package's own venv (the client's) reads its own config, which has none."""
+    if re.search(r"--cov(?:=|\s|$)", run, flags=re.MULTILINE):
+        return True
+    return _ROOT_PYTEST.search(run) is not None and "--no-cov" not in run
+
+
+def _runner_labels(job: dict[str, Any]) -> list[str]:
+    """Every label a job can run on: its ``runs-on``, as a list or not, and the matrix values
+    any ``matrix.<key>`` in it names, and the matrix ``os``."""
+    runs_on = job.get("runs-on", [])
+    labels = [str(x) for x in (runs_on if isinstance(runs_on, list) else [runs_on])]
+    for key in re.findall(r"matrix\.([\w-]+)", " ".join(labels)):
+        labels += _matrix_values(job, key)
+    return labels + _matrix_values(job, "os")
+
+
+def push_breadth_violations(tree: Tree) -> list[str]:
+    """No ``macos-14`` leg anywhere (any size, any form), and coverage only in a workflow no push
+    or PR starts."""
+    bad: list[str] = []
+    for name, workflow in _workflows(tree):
+        on_change = {"push", "pull_request"} & set(_triggers(workflow))
+        for job_id, job in (workflow.get("jobs") or {}).items():
+            if any(re.fullmatch(r"macos-14(?:-.+)?", label) for label in _runner_labels(job)):
+                bad.append(f"{name}:{job_id} runs on macos-14")
+            steps = job.get("steps") or []
+            if on_change and any(_measures_coverage(str(s.get("run", ""))) for s in steps):
+                bad.append(f"{name}:{job_id} measures coverage on a push or pull request")
+    return bad
+
+
+def _breadth_jobs(tree: Tree) -> dict[str, Any]:
+    return dict((_workflow(tree, "breadth.yml") or {}).get("jobs") or {})
+
+
+def breadth_order_violations(tree: Tree) -> list[str]:
+    """``freshness`` runs first and every leg waits on it; ``report`` runs last, on every leg,
+    whatever the legs concluded."""
+    jobs = _breadth_jobs(tree)
+    if "freshness" not in jobs or "report" not in jobs:
+        return ["breadth.yml has no freshness or no report job"]
+    bad: list[str] = []
+    if _needs(jobs["freshness"]):
+        bad.append("breadth.yml:freshness waits on another job")
+
+    def reaches(job_id: str, seen: frozenset[str] = frozenset()) -> bool:
+        needs = _needs(jobs.get(job_id) or {})
+        return "freshness" in needs or any(
+            reaches(n, seen | {job_id}) for n in needs if n not in seen
+        )
+
+    for job_id in jobs:
+        if job_id != "freshness" and not reaches(job_id):
+            bad.append(f"breadth.yml:{job_id} does not wait on freshness")
+    missing = set(jobs) - {"report"} - set(_needs(jobs["report"]))
+    if missing:
+        bad.append(f"breadth.yml:report does not wait on {sorted(missing)}")
+    condition = str(jobs["report"].get("if", ""))
+    if "!cancelled()" not in condition or "success()" in condition:
+        bad.append("breadth.yml:report does not run whatever the legs concluded")
+    return bad
+
+
+def _security_leg(job: dict[str, Any]) -> bool:
+    runs = _runs(job)
+    return "tests/security" in runs or re.search(r"-m\s+['\"]?security", runs) is not None
+
+
+def non_reusable_violations(tree: Tree) -> list[str]:
+    """The legs the record never reuses are exactly ``NON_REUSABLE``, and none of them asks to
+    carry an earlier result."""
+    jobs = _breadth_jobs(tree)
+    bad = [
+        f"NON_REUSABLE names {job_id}, which breadth.yml does not have"
+        for job_id in sorted(breadth_evidence.NON_REUSABLE - set(jobs))
+    ]
+    for job_id, job in jobs.items():
+        decides = "breadth_evidence.py decide" in _runs(job)
+        if job_id in breadth_evidence.NON_REUSABLE and decides:
+            bad.append(f"breadth.yml:{job_id} is never reused, yet it carries an earlier result")
+        if _security_leg(job) and job_id not in breadth_evidence.NON_REUSABLE:
+            bad.append(f"breadth.yml:{job_id} runs security tests but is not in NON_REUSABLE")
+    return bad
+
+
+def evidence_artifact_violations(tree: Tree) -> list[str]:
+    """The run's record is uploaded once, under its digest, and kept 90 days."""
+    uploads = [
+        step
+        for step in (_breadth_jobs(tree).get("report") or {}).get("steps") or []
+        if _action(step) == "actions/upload-artifact"
+        and str((step.get("with") or {}).get("name", "")).startswith(breadth_evidence.PREFIX)
+    ]
+    if len(uploads) != 1:
+        return [f"breadth.yml:report uploads {len(uploads)} evidence records, not one"]
+    given = uploads[0].get("with") or {}
+    bad: list[str] = []
+    if given["name"] != breadth_evidence.PREFIX + "${{ steps.report.outputs.digest }}":
+        bad.append(f"breadth.yml's evidence artifact is not named by its digest: {given['name']}")
+    if given.get("retention-days") != 90:
+        bad.append(f"breadth.yml's evidence is kept {given.get('retention-days')} days, not 90")
+    return bad
+
+
+def report_permissions_violations(tree: Tree) -> list[str]:
+    """``report`` holds ``issues: write`` and no other write, and writes issues only on main."""
+    report = _breadth_jobs(tree).get("report") or {}
+    permissions = report.get("permissions")
+    bad: list[str] = []
+    if not isinstance(permissions, dict):
+        bad.append(f"breadth.yml:report's permissions are not listed: {permissions!r}")
+    else:
+        writes = sorted(k for k, v in permissions.items() if v == "write")
+        if writes != ["issues"]:
+            bad.append(f"breadth.yml:report writes {writes}, not only issues")
+    for step in report.get("steps") or []:
+        run = str(step.get("run", ""))
+        writes_issues = "breadth_evidence.py issues" in run or "gh issue" in run
+        if writes_issues and _ON_MAIN not in str(step.get("if", "")):
+            bad.append(f"breadth.yml:report's {step.get('name')!r} writes issues off main")
+    return bad
+
+
+#: A step that leaves the uv-managed interpreter installed, so a later `uv python find` finds it.
+_INSTALLS_PYTHON = re.compile(r"\buv (?:venv|sync|tool install|python install)\b")
+_ENTRY = re.compile(r"entry/([\w.-]+)__")
+
+
+def breadth_shards_violations(tree: Tree) -> list[str]:
+    """Every breadth shard records what it ran, so the record holds what the run did:
+
+    - the shards are exactly ``SHARDS``: each leg's job writes entries under its key, as many
+      as its matrix has shards;
+    - a managed Python is installed before the first ``uv python find`` (setup-uv only names
+      one, and ``uv python find`` never downloads);
+    - a decision that crashes leaves the shard to run (``continue-on-error``);
+    - no ``--tree`` falls back to a constant, and the served installer is never hashed from a
+      pipe, whose status is the hash's;
+    - the coverage combine reads a failed data download as a failure, never as "carried".
+    """
+    jobs = _breadth_jobs(tree)
+    bad: list[str] = []
+    found: dict[str, int] = {}
+    for job_id, job in jobs.items():
+        steps = job.get("steps") or []
+        runs = [str(s.get("run", "")) for s in steps]
+        keys = {m for run in runs for m in _ENTRY.findall(run)}
+        if len(keys) > 1:
+            bad.append(f"breadth.yml:{job_id} writes entries under {sorted(keys)}")
+        for key in keys:
+            found[key] = len(_matrix_values(job, "shard")) or 1
+        first_find = next((i for i, run in enumerate(runs) if "uv python find" in run), None)
+        if first_find is not None and not any(
+            _INSTALLS_PYTHON.search(r) for r in runs[:first_find]
+        ):
+            bad.append(f"breadth.yml:{job_id} runs `uv python find` before any managed Python")
+        for step in steps:
+            run = str(step.get("run", ""))
+            if "breadth_evidence.py decide" in run and step.get("continue-on-error") is not True:
+                bad.append(f"breadth.yml:{job_id}: a crashed decision skips the shard")
+            if re.search(r"--tree\s+\"\$\([^)]*\|\|", run):
+                bad.append(f"breadth.yml:{job_id}: --tree falls back to a constant")
+            if re.search(r"curl[^\n|]*\|\s*sha256sum", run):
+                bad.append(f"breadth.yml:{job_id} hashes a piped fetch")
+            if (
+                _action(step) == "actions/download-artifact"
+                and "coverage-data" in str((step.get("with") or {}).get("pattern", ""))
+                and step.get("continue-on-error")
+            ):
+                bad.append(f"breadth.yml:{job_id}: a failed coverage download is not a failure")
+    if found != dict(breadth_evidence.SHARDS):
+        bad.append(f"breadth.yml's shards {found} are not SHARDS {dict(breadth_evidence.SHARDS)}")
+    return bad
+
+
+def docker_tree_check_violations(tree: Tree) -> list[str]:
+    """``docker-single-container.yml`` builds on a main push only when the tree is untested, and
+    never cancels a main run."""
+    workflow = _workflow(tree, "docker-single-container.yml")
+    if workflow is None:
+        return ["docker-single-container.yml is missing"]
+    jobs = workflow.get("jobs") or {}
+    if "tree-check" not in jobs:
+        return ["docker-single-container.yml has no tree-check job"]
+    bad: list[str] = []
+    for job_id, job in jobs.items():
+        if job_id != "tree-check":
+            bad += _waits_on_tree_check(f"docker-single-container.yml:{job_id}", job)
+    return bad + _main_never_cancels("docker-single-container.yml", workflow)
+
+
+_CI = ".github/workflows/ci.yml"
+_BREADTH = ".github/workflows/breadth.yml"
+_DOCKER = ".github/workflows/docker-single-container.yml"
+_TESTED_IF = "if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}"
+_MACOS_RUN = "uv run pytest --no-cov -n 2 -q"
+
+
 ROWS: tuple[Row, ...] = (
     SECURITY_MARKER,
     _toolchain_row(
@@ -1247,9 +1637,9 @@ ROWS: tuple[Row, ...] = (
             ),
             _plant(
                 "a matrix leg off .python-version",
-                ".github/workflows/full.yml",
-                '{ python: "3.13.16", os: macos-14',
-                '{ python: "3.13.15", os: macos-14',
+                ".github/workflows/breadth.yml",
+                'python: ["3.13.16"]',
+                'python: ["3.13.15"]',
             ),
             _plant(".python-version a minor", ".python-version", "3.13.16", "3.13"),
         ),
@@ -1296,7 +1686,7 @@ ROWS: tuple[Row, ...] = (
             ),
             _plant(
                 "the workflow sets managed",
-                ".github/workflows/full.yml",
+                ".github/workflows/breadth.yml",
                 _PREFERENCE,
                 "  UV_PYTHON_PREFERENCE: managed\n",
             ),
@@ -1367,10 +1757,10 @@ ROWS: tuple[Row, ...] = (
                 "runs-on: ubuntu-latest",
             ),
             _plant(
-                "a matrix leg on macos-latest",
-                ".github/workflows/full.yml",
-                "os: [ubuntu-24.04, macos-26]",
-                "os: [ubuntu-24.04, macos-latest]",
+                "a leg on macos-latest",
+                ".github/workflows/breadth.yml",
+                "runs-on: macos-26",
+                "runs-on: macos-latest",
             ),
         ),
     ),
@@ -1399,13 +1789,13 @@ ROWS: tuple[Row, ...] = (
         (
             _plant(
                 "a workflow container by tag alone",
-                ".github/workflows/full.yml",
+                ".github/workflows/breadth.yml",
                 _UBUNTU,
                 "ubuntu:26.04",
             ),
             _plant(
                 "the moving tag latest",
-                ".github/workflows/full.yml",
+                ".github/workflows/breadth.yml",
                 "container: ubuntu:26.04@",
                 "container: ubuntu:latest@",
             ),
@@ -1444,7 +1834,7 @@ ROWS: tuple[Row, ...] = (
             ),
             _plant(
                 "a container job reading the runner's variables",
-                ".github/workflows/full.yml",
+                ".github/workflows/breadth.yml",
                 "          . /etc/os-release\n",
                 '          echo "$ImageOS $ImageVersion"\n',
             ),
@@ -1494,6 +1884,416 @@ ROWS: tuple[Row, ...] = (
                 ".github/workflows/ci.yml",
                 '--base "$BASE_SHA"',
                 '--base "${{ github.event.pull_request.base.sha }}"',
+            ),
+        ),
+    ),
+    _toolchain_row(
+        "main-push-runs-and-is-never-cancelled",
+        main_push_runs_violations,
+        (
+            _plant(
+                "branches-ignore: [main]",
+                _CI,
+                '    branches: ["**"]\n',
+                "    branches-ignore: [main]\n",
+            ),
+            _plant(
+                "cancel-in-progress: true on main",
+                _CI,
+                "  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}\n",
+                "  cancel-in-progress: true\n",
+            ),
+            _plant(
+                "a main run grouped by branch, not by commit",
+                _CI,
+                "github.ref == 'refs/heads/main' && github.sha || ",
+                "",
+            ),
+            _plant(
+                "a bare push: (a tag push would start it)",
+                _CI,
+                "  push:\n    # Every branch, main included. A tag is not a branch, so a tag push"
+                " starts no run here:\n    # tags are release.yml's.\n"
+                '    branches: ["**"]\n',
+                "  push:\n",
+            ),
+            _plant(
+                'a "!main" after "**"',
+                _CI,
+                '    branches: ["**"]\n',
+                '    branches: ["**", "!main"]\n',
+            ),
+            _plant(
+                "a paths-ignore on the main trigger",
+                _CI,
+                '    branches: ["**"]\n',
+                '    branches: ["**"]\n    paths-ignore: ["docs/**"]\n',
+            ),
+            _plant(
+                "a job-level concurrency group",
+                _CI,
+                "  test-macos:\n",
+                "  test-macos:\n    concurrency:\n      group: macos-${{ matrix.shard }}\n"
+                "      cancel-in-progress: true\n",
+            ),
+            Control("the per-commit group on main passes", _nothing, fails=False),
+        ),
+    ),
+    _toolchain_row(
+        "test-macos-before-the-merge",
+        macos_leg_violations,
+        (
+            _plant(
+                "test-macos without the tree-check condition",
+                _CI,
+                "if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true'"
+                " && ((github.event_name",
+                "if: ${{ !cancelled() && ((github.event_name",
+            ),
+            _plant(
+                "test-macos on a non-macOS runner",
+                _CI,
+                "    runs-on: macos-26\n",
+                "    runs-on: ubuntu-24.04\n",
+            ),
+            _plant(
+                "a shard count other than test-shard's",
+                _CI,
+                "    runs-on: macos-26\n    timeout-minutes: 50\n    strategy:\n"
+                "      fail-fast: false\n      matrix:\n        shard: [1, 2, 3, 4]\n",
+                "    runs-on: macos-26\n    timeout-minutes: 50\n    strategy:\n"
+                "      fail-fast: false\n      matrix:\n        shard: [1, 2, 3]\n",
+            ),
+            _plant(
+                "a -k only test-macos has",
+                _CI,
+                _MACOS_RUN,
+                '_MACOS -k "not vector"'.replace("_MACOS", _MACOS_RUN),
+            ),
+            _plant(
+                "an --ignore only test-macos has",
+                _CI,
+                _MACOS_RUN,
+                f"{_MACOS_RUN} --ignore=tests/test_vector_index.py",
+            ),
+            Control(
+                "a selection both shard sets share passes",
+                _both(
+                    _replace("ci.yml", _MACOS_RUN, f'{_MACOS_RUN} -m "not slow"'),
+                    _replace(
+                        "ci.yml",
+                        "uv run pytest --no-cov -q --splits 4",
+                        'uv run pytest --no-cov -q -m "not slow" --splits 4',
+                    ),
+                ),
+                fails=False,
+            ),
+            _plant(
+                "test-macos only on pull requests (an untested main merge skips it)",
+                _CI,
+                " || (github.event_name == 'push' && github.ref == 'refs/heads/main')",
+                "",
+            ),
+            _plant(
+                "every macOS shard runs group 1",
+                _CI,
+                "--group ${{ matrix.shard }} --splitting-algorithm least_duration"
+                " --junitxml=reports/junit-test-macos-",
+                "--group 1 --splitting-algorithm least_duration"
+                " --junitxml=reports/junit-test-macos-",
+            ),
+            _plant(
+                "a positional path only test-macos has",
+                _CI,
+                _MACOS_RUN,
+                f"{_MACOS_RUN} tests/security",
+            ),
+            _plant(
+                "PYTEST_ADDOPTS narrowing test-macos",
+                _CI,
+                "        run: " + _MACOS_RUN,
+                "        env:\n          PYTEST_ADDOPTS: -k vector\n        run: " + _MACOS_RUN,
+            ),
+        ),
+    ),
+    _toolchain_row(
+        "every-gated-job-waits-on-tree-check",
+        tree_check_gating_violations,
+        (
+            _plant(
+                "a new job without needs",
+                _CI,
+                "jobs:\n  tree-check:\n",
+                "jobs:\n  planted:\n    runs-on: ubuntu-24.04\n    steps:\n"
+                "      - run: true\n  tree-check:\n",
+            ),
+            _plant(
+                "a job that drops its needs", _CI, "  web:\n    needs: [tree-check]\n", "  web:\n"
+            ),
+            _plant(
+                "an if: without !cancelled()",
+                _CI,
+                _TESTED_IF,
+                "if: ${{ needs.tree-check.outputs.tested != 'true' }}",
+            ),
+            _plant(
+                "tested == 'false' (a failed check would skip the job)",
+                _CI,
+                _TESTED_IF,
+                "if: ${{ !cancelled() && needs.tree-check.outputs.tested == 'false' }}",
+            ),
+            Control(
+                "an always-run job with no needs passes (changes, security-corpus)",
+                _nothing,
+                fails=False,
+            ),
+        ),
+    ),
+    _toolchain_row(
+        "tree-check-runs-the-previous-commits-copy",
+        tree_check_reads_before_violations,
+        (
+            _plant(
+                "the checked-out copy",
+                _CI,
+                'python3 "$check" --workflow ci.yml',
+                "python3 tools/ci/tree_tested.py --workflow ci.yml",
+            ),
+            _plant(
+                "docker-single-container.yml runs the checked-out copy",
+                _DOCKER,
+                'python3 "$check" --workflow docker-single-container.yml',
+                "python3 tools/ci/tree_tested.py --workflow docker-single-container.yml",
+            ),
+            _plant(
+                "the copy read at the pushed commit",
+                _CI,
+                "BEFORE: ${{ github.event.before }}",
+                "BEFORE: ${{ github.sha }}",
+            ),
+            _plant(
+                "uv sync before the check",
+                _CI,
+                "          set -u\n",
+                "          set -u\n          uv sync --locked\n",
+            ),
+            _plant(
+                "the pushed tree checked out",
+                _CI,
+                "      - name: did a green pull-request run already test this tree\n",
+                "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n"
+                "      - name: did a green pull-request run already test this tree\n",
+            ),
+            _plant(
+                "a write grant",
+                _CI,
+                "      actions: read         # the pull request's runs and their first attempts\n",
+                "      actions: write\n",
+            ),
+        ),
+    ),
+    _toolchain_row(
+        "no-macos-14-and-no-coverage-on-a-push",
+        push_breadth_violations,
+        (
+            _plant(
+                "a macos-14 leg in ci.yml",
+                _CI,
+                "    runs-on: macos-26\n",
+                "    runs-on: macos-14\n",
+            ),
+            _plant(
+                "a macos-14 leg in breadth.yml", _BREADTH, "runs-on: macos-26", "runs-on: macos-14"
+            ),
+            _plant(
+                "--cov in ci.yml",
+                _CI,
+                _MACOS_RUN,
+                "uv run pytest --cov=personalclaw -n 2 -q",
+            ),
+            _plant(
+                "a gate leg without --no-cov (addopts measure coverage)",
+                _CI,
+                "uv run pytest --no-cov -q --splits 4",
+                "uv run pytest -q --splits 4",
+            ),
+            _plant(
+                "runs-on: [macos-14]",
+                _CI,
+                "    runs-on: macos-26\n",
+                "    runs-on: [macos-14]\n",
+            ),
+            _plant(
+                "runs-on: macos-14-xlarge",
+                _CI,
+                "    runs-on: macos-26\n",
+                "    runs-on: macos-14-xlarge\n",
+            ),
+            Control("coverage in breadth.yml passes", _nothing, fails=False),
+        ),
+    ),
+    _toolchain_row(
+        "breadth-freshness-first-and-report-last",
+        breadth_order_violations,
+        (
+            _plant(
+                "a leg without needs: freshness",
+                _BREADTH,
+                "  ubuntu:\n    needs: [freshness]\n",
+                "  ubuntu:\n",
+            ),
+            _plant(
+                "report missing a leg",
+                _BREADTH,
+                "needs: [freshness, ubuntu, macos, arm,",
+                "needs: [freshness, ubuntu, arm,",
+            ),
+            _plant(
+                "report gated on success()",
+                _BREADTH,
+                "install-smoke, audit]\n    if: ${{ !cancelled() }}\n",
+                "install-smoke, audit]\n    if: ${{ success() }}\n",
+            ),
+            Control(
+                "coverage, which reaches freshness through coverage-shard, passes",
+                _nothing,
+                fails=False,
+            ),
+        ),
+    ),
+    _toolchain_row(
+        "breadth-non-reusable-legs-match-the-jobs",
+        non_reusable_violations,
+        (
+            _plant(
+                "a security leg that carries an earlier result",
+                _BREADTH,
+                "      - name: pytest (adversarial scanner corpus)\n",
+                "      - name: carry\n"
+                "        run: python3 tools/ci/breadth_evidence.py decide --key security-corpus\n"
+                "      - name: pytest (adversarial scanner corpus)\n",
+            ),
+            _plant(
+                "a new job running tests/security outside the set",
+                _BREADTH,
+                "jobs:\n  freshness:\n",
+                "jobs:\n  security-extra:\n    needs: [freshness]\n    runs-on: ubuntu-24.04\n"
+                "    steps:\n      - run: uv run pytest tests/security\n  freshness:\n",
+            ),
+            _plant(
+                "a new job running -m security outside the set",
+                _BREADTH,
+                "jobs:\n  freshness:\n",
+                "jobs:\n  marked:\n    needs: [freshness]\n    runs-on: ubuntu-24.04\n"
+                "    steps:\n      - run: uv run pytest -m security\n  freshness:\n",
+            ),
+            _plant("a never-reused leg renamed away", _BREADTH, "  audit:\n", "  audit-deps:\n"),
+        ),
+    ),
+    _toolchain_row(
+        "breadth-evidence-named-by-digest-kept-90-days",
+        evidence_artifact_violations,
+        (
+            _plant(
+                "a fixed name",
+                _BREADTH,
+                "name: breadth-evidence-${{ steps.report.outputs.digest }}",
+                "name: breadth-evidence-latest",
+            ),
+            _plant(
+                "retention-days: 7",
+                _BREADTH,
+                "          retention-days: 90\n",
+                "          retention-days: 7\n",
+            ),
+            _plant(
+                "no record uploaded",
+                _BREADTH,
+                "name: breadth-evidence-${{ steps.report.outputs.digest }}",
+                "name: evidence",
+            ),
+        ),
+    ),
+    _toolchain_row(
+        "breadth-report-writes-only-issues-only-on-main",
+        report_permissions_violations,
+        (
+            _plant(
+                "contents: write",
+                _BREADTH,
+                "      contents: read\n      actions: read\n      issues: write",
+                "      contents: write\n      actions: read\n      issues: write",
+            ),
+            _plant(
+                "an issue step with no ref gate",
+                _BREADTH,
+                "        if: ${{ github.ref == 'refs/heads/main' }}\n        env:\n",
+                "        env:\n",
+            ),
+            Control("issues: write alone, on main, passes", _nothing, fails=False),
+        ),
+    ),
+    _toolchain_row(
+        "docker-single-container-checks-the-tree",
+        docker_tree_check_violations,
+        (
+            _plant(
+                "a build job without needs: tree-check",
+                _DOCKER,
+                "    needs: [tree-check]\n" f"    {_TESTED_IF}\n",
+                "",
+            ),
+            _plant(
+                "a main run that can be cancelled",
+                _DOCKER,
+                "  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}\n",
+                "  cancel-in-progress: true\n",
+            ),
+        ),
+    ),
+    _toolchain_row(
+        "breadth-shards-record-what-they-ran",
+        breadth_shards_violations,
+        (
+            _plant(
+                "no managed Python before `uv python find`",
+                _BREADTH,
+                "      - name: the uv-managed Python this shard runs on\n"
+                '        run: uv venv "$RUNNER_TEMP/shard-python"\n',
+                "",
+            ),
+            _plant(
+                "a decision that crashes skips the shard",
+                _BREADTH,
+                "        id: decide\n        continue-on-error: true\n",
+                "        id: decide\n",
+            ),
+            _plant(
+                "install-smoke's tree falls back to a constant",
+                _BREADTH,
+                '--tree "${TREE:?freshness named no tree}"',
+                "--tree \"$(git rev-parse 'HEAD^{tree}' 2>/dev/null || echo unknown)\"",
+            ),
+            _plant(
+                "the served installer hashed from a pipe",
+                _BREADTH,
+                'if curl -fsSL --retry 3 --max-time 60 -o "$RUNNER_TEMP/served-install.sh"'
+                " https://personalclaw.dev/install; then",
+                "installer=$(curl -fsSL https://personalclaw.dev/install | sha256sum)\n"
+                "          if true; then",
+            ),
+            _plant(
+                "a failed coverage download read as carried",
+                _BREADTH,
+                "      - name: Download the coverage data of every shard\n",
+                "      - name: Download the coverage data of every shard\n"
+                "        continue-on-error: true\n",
+            ),
+            _plant(
+                "a shard count other than SHARDS'",
+                _BREADTH,
+                'python: ["3.12.15"]\n        shard: [1, 2, 3, 4, 5, 6]\n',
+                'python: ["3.12.15"]\n        shard: [1, 2, 3, 4, 5]\n',
             ),
         ),
     ),

@@ -16,7 +16,7 @@ promise over the same bare command.
 So the rule, read from every install command this repository hands a user or runs in CI: an
 install of PersonalClaw names its Python. The installer names it once, as ``PC_PYTHON``; every
 other command names the same version (or the release's own range). That version must be inside
-``requires-python`` and must be one ``full.yml``'s matrix tests. And the words around the commands
+``requires-python`` and must be one ``breadth.yml``'s legs test. And the words around the commands
 must say what they do: no open-ended "Python 3.12+" while the range has an upper bound, and no
 "uv brings Python X" naming a version the installer does not install.
 
@@ -39,7 +39,7 @@ from packaging.version import Version
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _INSTALLER = _ROOT / "deploy" / "website" / "install.sh"
 _PYPROJECT = _ROOT / "pyproject.toml"
-_FULL = _ROOT / ".github" / "workflows" / "full.yml"
+_BREADTH = _ROOT / ".github" / "workflows" / "breadth.yml"
 
 #: Where a user, a contributor or CI is handed a command that installs PersonalClaw.
 _COMMAND_SOURCES = (
@@ -64,7 +64,7 @@ _MUST_CARRY_A_COMMAND = frozenset(
         "docs/guides/getting-started.md",
         "docs/guides/platforms.md",
         "deploy/website/install.sh",
-        ".github/workflows/full.yml",
+        ".github/workflows/breadth.yml",
     }
 )
 
@@ -91,14 +91,15 @@ def has_upper_bound(spec: SpecifierSet) -> bool:
 
 
 def matrix_pythons(text: str) -> list[str]:
-    """The Python minors (``X.Y``) of ``full.yml``'s test matrix ``python: [...]`` list.
+    """The Python minors (``X.Y``) of every ``python: [...]`` matrix list in a workflow.
 
     The matrix names exact patches (``3.13.16``), which the installer's ``PC_PYTHON`` never
     does: it names the minor uv picks the newest patch of, so the two meet at the minor.
     """
-    match = re.search(r"^\s*python:\s*\[([^\]]*)\]", text, flags=re.MULTILINE)
-    found = re.findall(r"\d+\.\d+(?:\.\d+)?", match.group(1)) if match else []
-    return [".".join(v.split(".")[:2]) for v in found]
+    found: list[str] = []
+    for listed in re.findall(r"^\s*python:\s*\[([^\]]*)\]", text, flags=re.MULTILINE):
+        found += re.findall(r"\d+\.\d+(?:\.\d+)?", listed)
+    return sorted({".".join(v.split(".")[:2]) for v in found})
 
 
 def _files(patterns: tuple[str, ...]) -> list[pathlib.Path]:
@@ -256,10 +257,10 @@ def test_the_installers_python_is_one_the_release_supports(pc_python) -> None:
 
 
 def test_the_installers_python_is_one_ci_tests(pc_python) -> None:
-    tested = matrix_pythons(_FULL.read_text(encoding="utf-8"))
-    assert tested, "found no `python: [...]` matrix in full.yml, so this check reads nothing"
+    tested = matrix_pythons(_BREADTH.read_text(encoding="utf-8"))
+    assert tested, "found no `python: [...]` matrix in breadth.yml, so this check reads nothing"
     assert pc_python in tested, (
-        f"PC_PYTHON={pc_python} is not in full.yml's matrix {tested}: the installer would put "
+        f"PC_PYTHON={pc_python} is not in breadth.yml's legs {tested}: the installer would put "
         "every new user on a Python no test ran on"
     )
 
@@ -348,7 +349,7 @@ def test_the_command_reader_reads_the_installer_and_the_workflow_shapes() -> Non
     commands = install_commands("install.sh", script)
     assert [names_a_supported_python(c, "3.13", spec) for c in commands] == [False, True], commands
     workflow = "          uv tool install .\n          uv tool install --python 3.12 .\n"
-    commands = install_commands("full.yml", workflow)
+    commands = install_commands("breadth.yml", workflow)
     assert [names_a_supported_python(c, "3.13", spec) for c in commands] == [False, False]
 
 

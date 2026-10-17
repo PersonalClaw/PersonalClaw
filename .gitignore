@@ -24,7 +24,7 @@ dist-client/
 .hypothesis/
 htmlcov/
 # JUnit XML written by CI's `--junitxml=reports/…` steps (.github/workflows/ci.yml,
-# full.yml). Ignored so copying a CI invocation locally cannot leave a report a
+# breadth.yml). Ignored so copying a CI invocation locally cannot leave a report a
 # `git add -A` would sweep into a commit.
 /reports/
 

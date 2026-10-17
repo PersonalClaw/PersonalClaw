@@ -34,13 +34,15 @@ import real_home_guard
 _REPO = Path(__file__).resolve().parents[1]
 _WORKFLOWS = _REPO / ".github" / "workflows"
 _CI = _WORKFLOWS / "ci.yml"
-_FULL = _WORKFLOWS / "full.yml"
+_BREADTH = _WORKFLOWS / "breadth.yml"
 
 #: Job ids old enough in each workflow that their absence means the parser broke rather
 #: than that CI changed. The vacuity floor for :func:`jobs`.
 _LONG_STANDING = {
     "ci.yml": frozenset({"lint", "test-shard", "test", "web", "rails", "harness", "client"}),
-    "full.yml": frozenset({"matrix-shard", "matrix", "audit", "security-corpus", "coverage"}),
+    "breadth.yml": frozenset(
+        {"coverage-shard", "coverage", "audit", "security-corpus", "install-smoke"}
+    ),
 }
 
 #: The directory every CI JUnit report is written under. Asserted rather than free-form so
@@ -193,7 +195,7 @@ def junit_uploads(block: str) -> list[str]:
 @pytest.fixture(scope="module")
 def workflows() -> dict[str, dict[str, str]]:
     parsed = {}
-    for path in (_CI, _FULL):
+    for path in (_CI, _BREADTH):
         assert path.is_file(), f"{path} moved — re-point this rail"
         parsed[path.name] = jobs(path.read_text(encoding="utf-8"))
     return parsed
@@ -224,9 +226,24 @@ def test_the_pytest_step_scan_finds_every_known_leg(workflows: dict[str, dict[st
     the rails with it), not silently shrink what they cover.
     """
     ci = set(_pytest_jobs(workflows["ci.yml"]))
-    full = set(_pytest_jobs(workflows["full.yml"]))
-    assert ci >= {"lint", "test-shard", "browse-live", "rails", "client"}, sorted(ci)
-    assert full >= {"matrix-shard", "security-corpus", "coverage-shard"}, sorted(full)
+    full = set(_pytest_jobs(workflows["breadth.yml"]))
+    assert ci >= {
+        "lint",
+        "test-shard",
+        "test-macos",
+        "browse-live",
+        "security-corpus",
+        "rails",
+        "client",
+    }, sorted(ci)
+    assert full >= {
+        "ubuntu",
+        "macos",
+        "arm",
+        "canary",
+        "security-corpus",
+        "coverage-shard",
+    }, sorted(full)
 
 
 def test_the_command_parser_normalizes_all_three_run_forms() -> None:
@@ -314,7 +331,7 @@ def test_the_artifact_name_is_read_from_with_not_from_the_display_name() -> None
 # ── the rails ─────────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("filename", ["ci.yml", "full.yml"])
+@pytest.mark.parametrize("filename", ["ci.yml", "breadth.yml"])
 def test_every_pytest_invocation_writes_a_junit_report(
     workflows: dict[str, dict[str, str]], filename: str
 ) -> None:
@@ -329,7 +346,7 @@ def test_every_pytest_invocation_writes_a_junit_report(
                 )
 
 
-@pytest.mark.parametrize("filename", ["ci.yml", "full.yml"])
+@pytest.mark.parametrize("filename", ["ci.yml", "breadth.yml"])
 def test_every_pytest_job_uploads_its_report_even_when_red(
     workflows: dict[str, dict[str, str]], filename: str
 ) -> None:
@@ -349,13 +366,13 @@ def test_every_pytest_job_uploads_its_report_even_when_red(
             )
 
 
-@pytest.mark.parametrize("filename", ["ci.yml", "full.yml"])
+@pytest.mark.parametrize("filename", ["ci.yml", "breadth.yml"])
 def test_a_matrix_job_names_its_artifact_per_leg(
     workflows: dict[str, dict[str, str]], filename: str
 ) -> None:
     """Artifact names are unique per run, so N legs sharing one name collapse to one upload.
 
-    ci.yml's ``test-shard`` runs 4 legs and full.yml's ``matrix-shard`` runs 24; a fixed name
+    ci.yml's ``test-shard`` runs 4 legs and breadth.yml's ``macos`` runs 6; a fixed name
     would keep whichever finished last, which is reliably not the one that failed.
     """
     matrixed = {
@@ -365,7 +382,7 @@ def test_a_matrix_job_names_its_artifact_per_leg(
     }
     # Vacuity floor, per file: the sharded job is named, not counted, so a `matrix:` indent
     # change reds HERE (parser broke) rather than quietly emptying the rail below.
-    expected = {"ci.yml": "test-shard", "full.yml": "matrix-shard"}[filename]
+    expected = {"ci.yml": "test-shard", "breadth.yml": "macos"}[filename]
     assert expected in matrixed, (
         f"the matrix scan did not find {filename}'s `{expected}` job (found: "
         f"{sorted(matrixed)}) — the parser broke, not the workflow."

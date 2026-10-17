@@ -18,15 +18,15 @@ one, and the token points at something you can go read or re-run:
 
 | Platform | Support | Proof |
 |---|---|---|
-| Linux x86-64 | first-class | `CI:full/matrix (ubuntu-24.04)` + `CI:release/images smoke (linux/amd64)` |
-| Linux arm64 | first-class | `CI:full/matrix (ubuntu-24.04-arm)` + `CI:release/images smoke (linux/arm64)` |
-| macOS Apple silicon | first-class | `CI:full/matrix (macos-14, macos-26)` |
+| Linux x86-64 | first-class | `CI:ci/test (ubuntu-24.04)` + `CI:breadth/ubuntu (ubuntu-24.04)` + `CI:release/images smoke (linux/amd64)` |
+| Linux arm64 | first-class | `CI:breadth/arm (ubuntu-24.04-arm)` + `CI:release/images smoke (linux/arm64)` |
+| macOS Apple silicon | first-class | `CI:ci/test-macos (macos-26)` + `CI:breadth/macos (macos-26)` |
 | macOS Intel | best-effort | `community` — no Intel runner in CI; the x86-64 Python/wheel path is the same as Linux x86-64 |
 | Windows via WSL2 | supported | `checklist:Windows via WSL2` (this page) |
 | Windows via Docker Desktop | supported | `checklist:Windows via Docker Desktop` (this page) — written, **not yet executed verbatim**; the release runbook's Windows checklist records the first run |
 | Windows native | not supported | — see [windows-native-audit](../research/windows-native-audit.md) |
 
-The arm64 rows became CI-backed with the arm jobs in `full.yml` and the
+The arm64 rows became CI-backed with the arm jobs in what is now `breadth.yml` and the
 per-arch release smoke; before that they were aspirational.
 
 The two `CI:release/images smoke` citations above were, for a while, a proof that had

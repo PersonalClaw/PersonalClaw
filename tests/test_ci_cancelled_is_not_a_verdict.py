@@ -3,7 +3,7 @@
 Two defects, one root: the workflows treated "no answer" as "a failing answer", and then
 arranged for there to be no answer most of the time.
 
-**The manufactured red.** ``ci.yml``'s ``test`` and ``full.yml``'s ``matrix`` are aggregation
+**The manufactured red.** ``ci.yml``'s ``test`` and ``breadth.yml``'s ``coverage`` are aggregation
 gates over a sharded matrix. Both were ``if: ${{ always() }}``, and ``always()`` runs a job
 *even when the run itself was cancelled* — at which point ``needs.<shard>.result`` is
 ``cancelled`` and the gate's ``!= success`` test turned that into ``exit 1``. Since ci.yml's
@@ -14,11 +14,11 @@ twelve of its other jobs ``cancelled`` and ``test`` → ``failure``, while the s
 ``pull_request`` run ``35338682195`` reported ``test`` → ``success``. Check-runs key on the
 SHA, so BOTH sat on that one commit and ``mergeStateStatus`` was permanently ``UNSTABLE``.
 
-**The invisible gap.** ``full.yml``'s group was ``cancel-in-progress: true`` on ``main``, so
-every merge killed the previous commit's verification. MEASURED the same day over the last 400
-main runs of that workflow: 324 cancelled · 46 failure · 29 success. Of the last 40: 38
-cancelled, 1 failure, 1 queued, ZERO success — the last successful main run was #1215 at
-2026-09-17T15:40Z. A cancelled run carries no conclusion a reader treats as red, so nothing
+**The invisible gap.** main's verification workflow's group was ``cancel-in-progress: true``
+on ``main``, so every merge killed the previous commit's verification. MEASURED the same day
+over the last 400 main runs of that workflow: 324 cancelled · 46 failure · 29 success. Of the
+last 40: 38 cancelled, 1 failure, 1 queued, ZERO success — the last successful main run was
+#1215 at 2026-09-17T15:40Z. A cancelled run carries no conclusion a reader treats as red, so nothing
 reading conclusions could see that main had stopped being verified.
 
 **What this file asserts, and why as PROPERTIES.** Pinning the new ``if:`` strings as text
@@ -27,15 +27,15 @@ a failing shard report *skipped* instead of red, hiding real failures) and a per
 (which stops the cancellation by fanning a 24-leg matrix out per merge). So each relation is
 stated on its own:
 
-1. no aggregate gate is gated on bare ``always()`` (``full.yml``'s ``coverage`` became a third
-   when coverage was split into quarters);
+1. no aggregate gate is gated on bare ``always()``;
 2. each is gated on ``!cancelled()`` — a failing shard still reaches the gate and reds, because
    ``fail-fast: false`` means a shard failure never cancels the run;
 3. each gate script handles ``cancelled`` as its OWN branch, so a shard cancelled on a live run
    is not silently folded into the generic failure message;
-4. ``full.yml`` does not cancel in progress — main's verification always completes;
-5. ``ci.yml`` still DOES cancel in progress — the #2595 dedupe must not be collateral damage of
-   fixing #2946, and it is the thing that stopped every PR running the matrix twice.
+4. ``breadth.yml`` does not cancel in progress — a verification of main always completes;
+5. ``ci.yml`` still DOES cancel in progress on every branch but ``main`` — the #2595 dedupe must
+   not be collateral damage of fixing #2946, and it is the thing that stopped every PR running
+   the matrix twice — and never on ``main``, where a push is its commit's check (#3913).
 
 Parsed with a line scan rather than PyYAML, matching the convention its siblings
 ``tests/test_ci_concurrency_dedupe.py`` and ``tests/test_ci_tier_enforcement.py`` state: PyYAML
@@ -52,13 +52,12 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 CI_YML = WORKFLOWS / "ci.yml"
-FULL_YML = WORKFLOWS / "full.yml"
+BREADTH_YML = WORKFLOWS / "breadth.yml"
 
 #: ``(workflow file, aggregation job name, the sharded matrix job it aggregates)``.
 AGGREGATE_GATES: tuple[tuple[Path, str, str], ...] = (
     (CI_YML, "test", "test-shard"),
-    (FULL_YML, "matrix", "matrix-shard"),
-    (FULL_YML, "coverage", "coverage-shard"),
+    (BREADTH_YML, "coverage", "coverage-shard"),
 )
 
 
@@ -98,7 +97,7 @@ def _cancel_in_progress(path: Path) -> str:
         if line.rstrip() != "concurrency:":
             continue
         for follower in lines[i + 1 : i + 6]:
-            m = re.match(r"\s+cancel-in-progress:\s*(\S+)\s*$", follower)
+            m = re.match(r"\s+cancel-in-progress:\s*(\S.*?)\s*$", follower)
             if m:
                 return m.group(1)
     raise AssertionError(
@@ -127,7 +126,7 @@ def test_the_aggregate_gate_was_actually_found(path: Path, job: str, shard_job: 
 def test_both_workflows_declare_a_concurrency_group() -> None:
     """Floor for relations 4 and 5: a missing block must fail loudly, not read as compliant."""
     assert _cancel_in_progress(CI_YML)
-    assert _cancel_in_progress(FULL_YML)
+    assert _cancel_in_progress(BREADTH_YML)
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +170,7 @@ def test_the_gate_script_treats_cancelled_as_its_own_case(
     The job-level ``!cancelled()`` covers a cancelled RUN. A single leg cancelled while the run
     lives on is a different state: the run is real, and one shard of the suite produced no
     answer. That must red (an unanswered question is never a passing answer — the doctrine
-    ``full.yml``'s install-smoke legs already state) but with a message that says *unproven*
+    ``breadth.yml``'s install-smoke legs already state) but with a message that says *unproven*
     rather than sending the reader hunting for a failing test that does not exist.
     """
     body = "\n".join(_job_block(path, job))
@@ -194,14 +193,14 @@ def test_the_gate_script_treats_cancelled_as_its_own_case(
 def test_mains_verification_run_is_never_cancelled_by_the_next_merge() -> None:
     """Relation 4 — the invisible gap, stated directly.
 
-    ``full.yml`` runs on push-to-main, the nightly cron and dispatch. With
+    ``breadth.yml`` runs on the nightly cron and dispatch. With
     ``cancel-in-progress: true`` every merge killed the run verifying the commit before it, and
     a cancelled run has no conclusion anything treats as red — so 81% of main's verification
     history evaporated without a single red check to show for it.
     """
-    value = _cancel_in_progress(FULL_YML)
+    value = _cancel_in_progress(BREADTH_YML)
     assert value == "false", (
-        f"full.yml's concurrency has `cancel-in-progress: {value}`. This workflow IS main's "
+        f"breadth.yml's concurrency has `cancel-in-progress: {value}`. This workflow IS main's "
         "verification, so cancelling in progress means the next merge erases the answer the "
         "current one is computing: measured 324 cancelled / 46 failure / 29 success over 400 "
         "main runs, and zero successes in the last 40. `false` queues instead — the in-flight "
@@ -219,8 +218,10 @@ def test_the_pr_gate_still_cancels_superseded_runs() -> None:
     cancellation off here would trade a cosmetic red for the binding constraint on merge rate.
     """
     value = _cancel_in_progress(CI_YML)
-    assert value == "true", (
-        f"ci.yml's concurrency has `cancel-in-progress: {value}`. That group collapses the "
+    assert value == "${{ github.ref != 'refs/heads/main' }}", (
+        f"ci.yml's concurrency has `cancel-in-progress: {value}`. On every branch but main it "
+        "must be true, and on main false (a push to main is its commit's check). That group "
+        "collapses the "
         "`pull_request` and `push` runs of a branch AND cancels superseded pushes (#2595); "
         "without cancellation both duplicates run to completion and half of all runner "
         "capacity recomputes an answer already in flight. The cancelled loser's red is fixed "

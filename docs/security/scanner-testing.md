@@ -31,10 +31,10 @@ integrity-race output readable. To run one class:
 python -m pytest -n 0 --no-cov tests/security/ -k invisible-char
 ```
 
-The corpus also runs unattended: `.github/workflows/full.yml` carries a
+The corpus also runs unattended: `.github/workflows/breadth.yml` carries a
 `security-corpus` job that executes `tests/security/` plus the scanner unit tests on
-every nightly `schedule:` run (07:00 UTC), on pushes to `main`, and on
-`workflow_dispatch`. It is a separate job so a corpus regression is legible on its
+every nightly `schedule:` run (09:37 UTC) and on `workflow_dispatch`, and
+`.github/workflows/ci.yml` runs the same job on every push to `main`. It is a separate job so a corpus regression is legible on its
 own rather than buried in the full-suite matrix.
 
 ## What the corpus is made of
