@@ -26,6 +26,8 @@ from personalclaw.workflows import handlers as H
 from personalclaw.workflows import store
 from personalclaw.workflows.models import RunStatus, WorkflowRun
 
+pytestmark = pytest.mark.security
+
 
 @pytest.fixture(autouse=True)
 def _isolated_home(tmp_path, monkeypatch):

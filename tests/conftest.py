@@ -79,6 +79,12 @@ container_runtime = importlib.import_module("container_runtime")
 # tests/tool_homes.py. Proof: tests/test_a_tests_programs_keep_their_files_in_its_folder.py.
 tool_homes = importlib.import_module("tool_homes")
 
+# ── The security marker's census ────────────────────────────────────────
+# Which modules must carry `pytest.mark.security`, read from their source. The CI contract row
+# (`tests/test_ci_contract.py`) fails on one that does not, and a run where that row ran prints how
+# many modules and items carry it (`pytest_terminal_summary`). Rule: tests/security_census.py.
+security_census = importlib.import_module("security_census")
+
 #: What `pytest_configure` set for collection, put back by `pytest_unconfigure`.
 _PUT_THE_PROGRAMS_BACK: list = []
 
@@ -136,6 +142,7 @@ _TEST_HOME_NUMBERS = itertools.count()
 def pytest_configure(config):
     config.pluginmanager.register(real_home_guard.Plugin(real_home_guard.GUARD), "real-home-guard")
     config.pluginmanager.register(container_runtime.Plugin(), "container-runtime-guard")
+    config.pluginmanager.register(security_census.Reporter(), "security-census")
     # The grammars the code map's tests parse with, fetched once and kept between runs, in the run's
     # downloads folder, which every worker shares: pytest's own cache folder in the checkout, or the
     # folder PERSONALCLAW_TEST_DOWNLOADS names (`tool_homes.downloads`).
@@ -153,7 +160,13 @@ def pytest_unconfigure(config):
 
 def pytest_terminal_summary(terminalreporter):
     """Say which tests did not drive this machine's container runtime, and how to let them: a skip
-    alone is one letter in a progress line, and these are the tests that prove the images."""
+    alone is one letter in a progress line, and these are the tests that prove the images. And,
+    only in a run where the CI contract row checked the security marker, how many modules and test
+    items carry it, so a set that shrinks shows in review (`tests/security_census.py`)."""
+    census = terminalreporter.config.stash.get(security_census.CENSUS_LINE, None)
+    if census:
+        terminalreporter.write_sep("-", "security marker census")
+        terminalreporter.write_line(census)
     skipped = container_runtime.skipped_without_the_opt_in(
         terminalreporter.stats.get("skipped", [])
     )

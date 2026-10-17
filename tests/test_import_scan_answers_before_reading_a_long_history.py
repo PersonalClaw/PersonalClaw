@@ -37,6 +37,9 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from fresh_interpreter import measure
 
+pytestmark = pytest.mark.security
+
+
 #: The CI-sized history: as many transcript files as a few weeks of daily use, most of them small.
 FILES = 1500
 #: The reading pass's thread (:class:`~personalclaw.onboarding_import.activity.ReadingPass`).

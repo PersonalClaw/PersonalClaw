@@ -21,6 +21,9 @@ import pytest
 
 from personalclaw.security import mask_child_output
 
+pytestmark = pytest.mark.security
+
+
 #: A credential shape the display mask knows (the documented example access key).
 _KEY = "AKIAIOSFODNN7EXAMPLE"
 

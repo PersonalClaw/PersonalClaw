@@ -58,6 +58,9 @@ from personalclaw.trigger_sources.parking import (
 from personalclaw.triggers.models import Trigger, TriggerHealth, TriggerState
 from personalclaw.triggers.store import TriggerStore
 
+pytestmark = pytest.mark.security
+
+
 #: The fixture app's name. GENERICALLY named on purpose — core contains no vendor names, and a
 #: test fixture is a tracked file like any other.
 APP = "sample-source"

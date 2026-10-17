@@ -42,6 +42,9 @@ from personalclaw.inbox import InboxItem, InboxState, InboxStore, ItemStatus, ow
 from personalclaw.inbox_service import fence_message_for_prompt
 from personalclaw.security import is_fenced
 
+pytestmark = pytest.mark.security
+
+
 OWNER = "keyur-golani"
 FOREIGN = "teammate-dana"
 

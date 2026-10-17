@@ -17,6 +17,8 @@ from personalclaw.security import (
     should_record_observe_history,
 )
 
+pytestmark = pytest.mark.security
+
 
 class TestIsSystemPath:
     """is_system_path — the single source of truth shared by Code workspace

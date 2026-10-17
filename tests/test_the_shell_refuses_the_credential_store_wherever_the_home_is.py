@@ -29,6 +29,9 @@ import pytest
 from personalclaw import security
 from personalclaw.security import is_sensitive_bash_command, is_sensitive_path
 
+pytestmark = pytest.mark.security
+
+
 FAKE_KEY = "BSAfakeexamplekey0000"
 OWN = "Blocked: command accesses PersonalClaw's own credential or audit key"
 

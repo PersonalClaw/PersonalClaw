@@ -46,6 +46,9 @@ from personalclaw.security import fence_untrusted, outside_fences
 from personalclaw.triggers import grants
 from personalclaw.triggers.models import Trigger
 
+pytestmark = pytest.mark.security
+
+
 #: The take-overs the screen refuses outright, from its own table.
 REFUSED_TEXTS = {name: text for name, (tier, text) in TAKE_OVER.items() if tier == REFUSED}
 _ORDERS = TAKE_OVER["tells the model to ignore what it was told"][1]

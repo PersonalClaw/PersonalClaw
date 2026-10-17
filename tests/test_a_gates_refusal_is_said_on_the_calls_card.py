@@ -30,6 +30,9 @@ from personalclaw.llm.base import (
     LLMEvent,
 )
 
+pytestmark = pytest.mark.security
+
+
 #: A credential shape the masker knows (the documented example access key).
 _KEY = "AKIAIOSFODNN7EXAMPLE"
 

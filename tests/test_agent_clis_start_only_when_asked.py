@@ -33,6 +33,9 @@ import personalclaw
 from personalclaw.llm.acp_agent import ACP_AGENT_CAPABILITY, AcpAgentProvider
 from personalclaw.llm.registry import ProviderEntry, get_default_registry
 
+pytestmark = pytest.mark.security
+
+
 #: The process-wide provider registry and the runtime class every other module imported, as this
 #: file found them: nothing here may swap the one or re-import the other.
 _PROCESS_REGISTRY = get_default_registry()

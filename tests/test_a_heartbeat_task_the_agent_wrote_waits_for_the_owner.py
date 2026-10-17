@@ -26,7 +26,7 @@ from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
 from personalclaw.action_providers.base import ActionContext
 from personalclaw.llm.events import EVENT_COMPLETE, EVENT_TEXT_CHUNK, EVENT_TOOL_CALL, AgentEvent
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.security]
 
 
 @pytest.fixture

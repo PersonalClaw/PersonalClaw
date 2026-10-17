@@ -29,6 +29,9 @@ from personalclaw.sel import sel
 from personalclaw.uploads import content_scan
 from personalclaw.uploads.content_scan import REFUSED_CODE, ContentRefused, scan_upload
 
+pytestmark = pytest.mark.security
+
+
 #: The scanner's own example of content it refuses: a list with a right-to-left override in it.
 OVERRIDE_LIST = "Shopping list for Saturday: ‮eggs‬, flour, apples.\n"
 #: The same list without the override: ordinary content.

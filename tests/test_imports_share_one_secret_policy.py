@@ -33,6 +33,9 @@ from aiohttp.test_utils import TestClient, TestServer
 from personalclaw.onboarding_import import ImportCategory, WriteOutcome, run_import, scan_source
 from personalclaw.security import redact_credentials
 
+pytestmark = pytest.mark.security
+
+
 FIXTURE = Path(__file__).parent / "fixtures" / "agent_tool_homes" / "noor"
 
 #: The owner's press, Look in Claude Code and Codex: the two tools' setups, which a scan

@@ -582,6 +582,9 @@ addopts = [
     "--color=yes",
 ]
 testpaths = ["tests"]
+markers = [
+    "security: proves a security or fail-closed boundary; never rerun, quarantined or selected out. tests/security_census.py names the modules that must carry it.",
+]
 
 [tool.coverage.run]
 branch = true

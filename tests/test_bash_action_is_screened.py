@@ -26,6 +26,8 @@ import pytest
 from personalclaw.action_providers import bash_provider
 from personalclaw.action_providers.base import ActionContext
 
+pytestmark = pytest.mark.security
+
 
 def _ctx() -> ActionContext:
     return ActionContext(event="test", context={}, payload={})

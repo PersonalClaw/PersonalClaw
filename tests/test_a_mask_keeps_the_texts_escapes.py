@@ -27,6 +27,9 @@ from personalclaw.security import (
     restore_masked_spans,
 )
 
+pytestmark = pytest.mark.security
+
+
 #: Each case: the command a JSON document carries, and the secret inside it. Every command ends
 #: with the same quoted tail, so one edit addresses the text right after each mask.
 CASES = {

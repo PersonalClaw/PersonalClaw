@@ -39,6 +39,9 @@ from personalclaw.apps import manager
 from personalclaw.dashboard import handlers_system
 from personalclaw.dashboard.handlers import local_model, model_check
 
+pytestmark = pytest.mark.security
+
+
 APP = "probe-onboarding"
 FAMILY = "/api/onboarding"
 BIND = "/api/onboarding/local-model/bind"

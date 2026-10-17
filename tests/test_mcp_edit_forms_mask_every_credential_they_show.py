@@ -33,6 +33,9 @@ from mcp_owner_allowed import confirmed
 from personalclaw.apps.secret_fields import SECRET_MASK
 from personalclaw.config import loader as config_loader
 
+pytestmark = pytest.mark.security
+
+
 #: A command that cannot resolve: nothing a fixture names is ever started.
 UNRESOLVABLE = "/nonexistent/pc-fixture-mcp"
 #: Invented tokens, hex and base64url: no named rule knows either shape.

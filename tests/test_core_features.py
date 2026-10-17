@@ -36,6 +36,9 @@ from personalclaw.sdk.features import (
     core_has,
 )
 
+pytestmark = pytest.mark.security
+
+
 #: Every name a core has offered. A name leaves this set only with a deliberate break of every app
 #: that declares it, so a removal from CORE_FEATURES fails here first.
 OFFERED_ONCE = {

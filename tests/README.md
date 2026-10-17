@@ -81,6 +81,35 @@ This is not a claim that any past "N mutations applied, N caught" result was
 wrong. It is that nothing enforced the invariant, so no past claim was
 self-certifying. From here the run enforces the bytecode half.
 
+## The `security` marker
+
+A test module that proves a security or fail-closed boundary declares
+`pytestmark = pytest.mark.security`, in a list beside any mark it already has.
+The rules that protect such tests key on this marker, never on a folder: a
+security-marked test is never rerun into green, quarantined or selected out.
+`pytest -m security` runs exactly that set.
+
+A census keeps the set complete. `tests/security_census.py` reads every test
+module's source with `ast`, without importing it, and requires the marker on:
+
+1. every module under `tests/security/`;
+2. every module that imports a security registry or a fail-closed reader
+   (`personalclaw.security`, `personalclaw.apps.permissions`,
+   `personalclaw.automation_posture`, `personalclaw.safety_flags`,
+   `personalclaw.browse.safety_script`), a function-level import included;
+3. the families named by file: `test_apps_cannot_*`, `test_apps_see_only_*`,
+   and the browser safety tests and real-home and credential guards listed one
+   by one in `NAMED_MODULES`, each with what it proves.
+
+The `security marker` row of the CI contract table (`tests/test_ci_contract.py`)
+fails on a required module without the marker, on a misspelt one, and on a
+registry or named module that no longer exists, so a rename cannot shrink the
+set. Planted violations prove the row can fail. A module may carry the marker
+without matching a clause: the set grows by hand and never shrinks by accident.
+A run in which the row ran ends with a `security marker census` line giving how
+many modules must carry the marker, how many do, and how many of the test items
+that run collected carry it.
+
 ## Conventions
 
 - Test files: `tests/test_<module>.py`

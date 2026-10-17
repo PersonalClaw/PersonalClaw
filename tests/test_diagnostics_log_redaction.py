@@ -6,6 +6,8 @@ import sys
 import types
 from unittest.mock import MagicMock
 
+import pytest
+
 if sys.platform == "win32":
     if "fcntl" not in sys.modules:
         _m = types.ModuleType("fcntl")
@@ -30,6 +32,8 @@ if sys.platform == "win32":
 from personalclaw.dashboard.handlers.updates import _QueueLogHandler, _RingLogHandler
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.security import MaskingFormatter
+
+pytestmark = pytest.mark.security
 
 
 def _masked(text: str) -> str:

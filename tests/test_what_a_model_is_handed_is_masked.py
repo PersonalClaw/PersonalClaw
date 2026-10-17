@@ -38,6 +38,9 @@ from personalclaw.security import (
 )
 from personalclaw.tool_providers.base import ToolDefinition, ToolProvider, ToolResult, tool_failure
 
+pytestmark = pytest.mark.security
+
+
 #: A provider key in its real shape (the redactor's Anthropic rule), and a GitHub token.
 KEY = "sk-ant-api03-" + "Q7x" * 14
 TOKEN = "ghp_" + "Zr8" * 12

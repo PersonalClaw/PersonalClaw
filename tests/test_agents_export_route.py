@@ -24,6 +24,9 @@ from personalclaw.config.loader import AgentProfile, AppConfig
 from personalclaw.dashboard.handlers.agent_export import api_agents_export
 from personalclaw.packs.external_formats import PROVENANCE_MARKER
 
+pytestmark = pytest.mark.security
+
+
 #: AWS-key-shaped, so the content scan the export shares with the pack exporter fires on it.
 CANARY = "AKIAIOSFODNN7EXAMPLE"
 

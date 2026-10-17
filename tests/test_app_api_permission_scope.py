@@ -43,6 +43,9 @@ from personalclaw.apps.permissions import (
     owner_only_api_reason,
 )
 
+pytestmark = pytest.mark.security
+
+
 # The path the issue measured, and the declaration that reached it.
 _PTY = "/api/ws/terminal/qa-pty"
 _EVENT_SOCKET = "/api/ws"

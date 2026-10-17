@@ -31,6 +31,9 @@ from personalclaw.dashboard.desktop_registry import (
 )
 from personalclaw.dashboard.handlers import desktop as desktop_handlers
 
+pytestmark = pytest.mark.security
+
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LOCAL_SECRET = "s3cret-local"
 

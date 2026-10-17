@@ -48,6 +48,9 @@ from personalclaw.inbound.capture_import import (
     load_ledger,
 )
 
+pytestmark = pytest.mark.security
+
+
 # Every field the capture record declares. Asserted as a set on every record so a future
 # adapter that forgets one cannot pass by omitting the key.
 RECORD_FIELDS = {

@@ -36,6 +36,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytestmark = pytest.mark.security
+
+
 _SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
 #: A login a text can carry: a URL with a password in it, which every mask removes.

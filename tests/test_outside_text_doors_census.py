@@ -40,6 +40,9 @@ import pytest
 
 from personalclaw.triggers.models import KINDS
 
+pytestmark = pytest.mark.security
+
+
 SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
 #: The one module whose function both screens and fences: the door itself.

@@ -33,6 +33,9 @@ from personalclaw.subagent_persistence import ASKING, QUEUED
 from personalclaw.subagent_waiting import ENDED, STARTED, TakenBack, cut_off, take_back
 from personalclaw.turn_source import arrived_on
 
+pytestmark = pytest.mark.security
+
+
 #: The chat the helpers work for, and another one.
 CHAT = "dashboard:chat-7-1791160000"
 OTHER_CHAT = "dashboard:chat-8-1791160100"

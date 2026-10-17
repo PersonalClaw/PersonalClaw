@@ -19,6 +19,9 @@ import pytest
 
 from personalclaw.security import is_sensitive_bash_command
 
+pytestmark = pytest.mark.security
+
+
 CREDENTIAL = "Blocked: command accesses sensitive credential path"
 
 

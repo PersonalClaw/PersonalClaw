@@ -32,6 +32,8 @@ from personalclaw.apps.permissions import (
     checker_for,
 )
 
+pytestmark = pytest.mark.security
+
 
 def _checker(**perms) -> PermissionChecker:
     return PermissionChecker(app_name="demo", permissions=Permissions(**perms))

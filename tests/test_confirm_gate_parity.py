@@ -34,6 +34,9 @@ from personalclaw.safety_flags import (
     confirm_granted_query,
 )
 
+pytestmark = pytest.mark.security
+
+
 SRC = pathlib.Path(personalclaw.__file__).resolve().parent
 
 #: The one module allowed to read a confirm field — it *is* the predicate.

@@ -55,6 +55,9 @@ import pytest
 from personalclaw import address_logins as A
 from personalclaw import security as S
 
+pytestmark = pytest.mark.security
+
+
 # ── the reference: the rule, said as plainly as it can be ──
 # Plain loops over the text, no memo and no possessive run, so the fast scan's shortcuts are what
 # is under test. It shares only leaf grammars with `address_logins.py` and `security.py` (what a

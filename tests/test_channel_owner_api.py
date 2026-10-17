@@ -29,6 +29,8 @@ from personalclaw.config.loader import CRED_OWNER_ID
 # What a channel app declares — the published name.
 from personalclaw.sdk.channel import ChannelCapabilities
 
+pytestmark = pytest.mark.security
+
 
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch):

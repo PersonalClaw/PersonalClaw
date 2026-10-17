@@ -56,6 +56,9 @@ from personalclaw.supply_chain import (
     default_scanner,
 )
 
+pytestmark = pytest.mark.security
+
+
 _SKILL_MD = "---\nname: recall-fixture\ndescription: inert fixture\n---\n\nFixture body.\n"
 
 

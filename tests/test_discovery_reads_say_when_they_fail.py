@@ -24,6 +24,8 @@ from types import SimpleNamespace
 import pytest
 from aiohttp.test_utils import make_mocked_request
 
+pytestmark = pytest.mark.security
+
 
 def _body(resp) -> dict:
     return json.loads(resp.body.decode())

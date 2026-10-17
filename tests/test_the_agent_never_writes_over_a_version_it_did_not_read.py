@@ -37,6 +37,9 @@ from personalclaw.apps.permissions import scoped_to_app
 from personalclaw.artifacts.native import NativeArtifactProvider
 from personalclaw.stale_write import revision_of
 
+pytestmark = pytest.mark.security
+
+
 CHAT = "dashboard:chat-1"
 OTHER_CHAT = "dashboard:chat-2"
 

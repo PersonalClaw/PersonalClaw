@@ -19,6 +19,9 @@ import pytest
 from personalclaw.hooks import validate_file_path
 from personalclaw.security import is_sensitive_bash_command, is_sensitive_path
 
+pytestmark = pytest.mark.security
+
+
 CREDENTIAL = "Blocked: command accesses sensitive credential path"
 
 #: Each tool's sign-in, where it keeps it when no variable moves its folder.

@@ -29,6 +29,9 @@ import pytest
 
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, LLMEvent
 
+pytestmark = pytest.mark.security
+
+
 ADDED = "pcfixture-cloudctl"
 DENIED = f"{ADDED} status"
 #: How every surface names an added pattern's rule.

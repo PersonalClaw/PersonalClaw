@@ -45,6 +45,9 @@ from personalclaw.workflows.models import (
 )
 from personalclaw.workflows.step_usage import NOTHING_SENT
 
+pytestmark = pytest.mark.security
+
+
 # The five-step task every resume test interrupts. Steps 1-3 finished, step 4 FAILED, step 5 was
 # never reached — so the only correct place for a resumed turn to continue is step 4.
 PLAN = ("fetch/inputs", "transform/rows", "write/report", "publish/upload", "notify/owner")

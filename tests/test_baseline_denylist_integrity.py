@@ -29,6 +29,9 @@ import pytest
 from personalclaw import security
 from personalclaw.sel import SecurityEventLog
 
+pytestmark = pytest.mark.security
+
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 #: The baseline content, pinned. A change to the shipped patterns must be a deliberate

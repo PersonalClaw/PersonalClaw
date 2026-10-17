@@ -54,6 +54,9 @@ from personalclaw.workflows import store
 from personalclaw.workflows.handlers import register_workflow_routes
 from personalclaw.workflows.models import OriginKind, RunOrigin, WorkflowRun
 
+pytestmark = pytest.mark.security
+
+
 CHAT = "chat-a"
 
 #: Two tasks: one that changes a file in the repository, one that only reads it.

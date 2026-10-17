@@ -43,6 +43,9 @@ from port_guard import GUARD
 
 from harness import named_home
 
+pytestmark = pytest.mark.security
+
+
 REPO = Path(__file__).resolve().parents[1]
 
 #: Runs a tool's file as ``__main__`` with every socket connection and SQLite open refused, so a

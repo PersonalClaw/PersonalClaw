@@ -38,6 +38,9 @@ from test_an_unattended_run_stays_inside_its_bounds import _run as _native_turn
 
 from personalclaw import run_bounds, trust_mode
 
+pytestmark = pytest.mark.security
+
+
 #: The protected folders, as ``protected_folders`` names them.
 HOME, ROOT, WORKING = "home", "root", "working"
 

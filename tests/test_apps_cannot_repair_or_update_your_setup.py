@@ -49,6 +49,9 @@ from personalclaw.apps import manager
 from personalclaw.dashboard.handlers import doctor as doctor_handlers
 from personalclaw.resilience import remediation
 
+pytestmark = pytest.mark.security
+
+
 APP = "probe-setup"
 DOCTOR = "/api/doctor"
 UPDATE = "/api/update"

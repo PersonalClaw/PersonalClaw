@@ -7,6 +7,8 @@ import pytest
 from personalclaw.hooks import FileTooLargeError, safe_read_file_bytes
 from personalclaw.security import redact
 
+pytestmark = pytest.mark.security
+
 
 class TestSafeReadFileBytes:
     def test_reads_normal_file(self, tmp_path):

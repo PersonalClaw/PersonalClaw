@@ -26,6 +26,9 @@ import pytest
 
 from personalclaw.net.git import git_argv, git_env
 
+pytestmark = pytest.mark.security
+
+
 ROOT = Path(__file__).resolve().parents[1]
 
 

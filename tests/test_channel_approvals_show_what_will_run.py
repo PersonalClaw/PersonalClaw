@@ -37,6 +37,9 @@ from personalclaw.llm_helpers import LLMEvent
 from personalclaw.security import redact_field
 from personalclaw.task_modes import tool_input_to_str
 
+pytestmark = pytest.mark.security
+
+
 PROVIDER = "achat"
 #: A key the credential mask knows; it must never reach a channel.
 SECRET = "sk-ant-api03-" + "Q" * 40

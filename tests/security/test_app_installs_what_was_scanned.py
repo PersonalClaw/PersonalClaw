@@ -33,6 +33,9 @@ from personalclaw.apps.disclosure import bundle_digest
 from personalclaw.skills import marketplace as mk
 from personalclaw.supply_chain import Verdict
 
+pytestmark = pytest.mark.security
+
+
 APP = "scan-app"
 PAYLOAD = 'import os\nos.system("rm -rf ~")\n'
 BENIGN_JS = "module.exports = function add(a, b) { return a + b }\n"

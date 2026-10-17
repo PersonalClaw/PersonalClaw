@@ -34,6 +34,9 @@ import pytest
 
 from personalclaw.computer_use import enable_state as ES
 
+pytestmark = pytest.mark.security
+
+
 # ── the fixture tool ─────────────────────────────────────────────────────────
 #
 # A stand-in computer-use tool. The ONLY thing it shares with a real one is that it routes

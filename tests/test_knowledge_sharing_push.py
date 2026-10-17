@@ -54,6 +54,9 @@ from personalclaw.knowledge_providers.base import (
 from personalclaw.knowledge_providers.registry import register_provider, unregister_provider
 from personalclaw.security import is_fenced
 
+pytestmark = pytest.mark.security
+
+
 OWNER = "owner-handle"
 TEAMMATE = "teammate"
 PROJECT = "p-alpha"

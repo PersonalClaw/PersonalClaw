@@ -36,6 +36,8 @@ from personalclaw.knowledge_providers.dir_source import (
     DirSourceProvider,
 )
 
+pytestmark = pytest.mark.security
+
 
 @pytest.fixture(autouse=True)
 def _isolated_home(tmp_path, monkeypatch):

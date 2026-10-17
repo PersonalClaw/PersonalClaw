@@ -26,6 +26,9 @@ import pytest
 
 from personalclaw.security import ROLE_TOKENS, fence_untrusted, strip_role_tokens
 
+pytestmark = pytest.mark.security
+
+
 #: One real injection per template family, with the token that must not survive.
 FORGERIES: list[tuple[str, str, tuple[str, ...]]] = [
     (

@@ -32,6 +32,9 @@ from personalclaw.documents import get_writer
 from personalclaw.documents.model import Sheet, SheetCell, SheetModel
 from personalclaw.stale_write import revision_of
 
+pytestmark = pytest.mark.security
+
+
 #: Each character a spreadsheet reads as the start of a formula when it begins a cell's text.
 LEADS = ["=", "+", "-", "@", "\t", "\r"]
 

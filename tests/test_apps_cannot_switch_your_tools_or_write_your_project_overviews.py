@@ -48,6 +48,9 @@ from personalclaw.dashboard.handlers import tools as tools_handlers
 from personalclaw.tool_providers import registry as tool_registry
 from personalclaw.tool_providers.base import RiskLevel, ToolDefinition, ToolProvider, ToolResult
 
+pytestmark = pytest.mark.security
+
+
 APP = "probe-tools"
 TOOLS = "/api/tools"
 LEGIBILITY = "/api/legibility"

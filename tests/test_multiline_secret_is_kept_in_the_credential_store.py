@@ -27,6 +27,9 @@ from mcp_owner_allowed import allow_configured, confirmed
 from personalclaw.config import loader as config_loader
 from personalclaw.config.credentials import get_credential, save_credential
 
+pytestmark = pytest.mark.security
+
+
 PEM = (
     "-----"
     "BEGIN PRIVATE KEY-----\n"

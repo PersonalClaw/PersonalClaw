@@ -24,9 +24,12 @@ import pytest
 from personalclaw.apps import app_manager, manager
 from personalclaw.apps import source as app_source
 
-pytestmark = pytest.mark.skipif(
-    not hasattr(os, "symlink") or os.name == "nt", reason="POSIX links and pipes"
-)
+pytestmark = [
+    pytest.mark.skipif(
+        not hasattr(os, "symlink") or os.name == "nt", reason="POSIX links and pipes"
+    ),
+    pytest.mark.security,
+]
 
 SECRET = b"pclaw-outside-secret-7f3a91c2"
 APP = "link-app"

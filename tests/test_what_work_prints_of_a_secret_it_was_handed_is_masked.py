@@ -36,6 +36,9 @@ from personalclaw.action_providers.base import ActionResult
 from personalclaw.config import credentials as cred
 from personalclaw.config import loader
 
+pytestmark = pytest.mark.security
+
+
 NAME = "ORCHARD_PASS"
 #: Long, unique and of no shape a pattern knows: only the dispatch that filled it in can mask it.
 VALUE = "ov-7c3e5a91-orchard-pass-staple"

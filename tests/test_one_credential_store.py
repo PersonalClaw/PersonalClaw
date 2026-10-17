@@ -38,7 +38,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from personalclaw.config import credentials as cred
 from personalclaw.config import loader
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.security]
 
 SECRETS_VALUE = "sv-5d1e-SETTINGS-SECRETS-VALUE"
 CLI_VALUE = "cv-77aa-SETUP-CREDENTIAL-VALUE"

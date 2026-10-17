@@ -64,6 +64,9 @@ from personalclaw.browse.handoff import (
 from personalclaw.browse.loop import run_browse_loop
 from personalclaw.workflows.needs_input import OUTCOME_ABSENT
 
+pytestmark = pytest.mark.security
+
+
 # ── the planted credentials ───────────────────────────────────────────────────
 #
 # Distinctive literals, so a sweep that finds one has found THAT value and not a substring of

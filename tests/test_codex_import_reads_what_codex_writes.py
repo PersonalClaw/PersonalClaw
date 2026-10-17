@@ -29,6 +29,9 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw.onboarding_import import ImportCategory, WriteOutcome, run_import, scan_source
 
+pytestmark = pytest.mark.security
+
+
 FIXTURE = Path(__file__).parent / "fixtures" / "agent_tool_homes" / "noor"
 
 #: Codex's setup as a place outside the home. The owner pressing Look in Codex names it, and

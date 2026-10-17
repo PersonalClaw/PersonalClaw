@@ -18,6 +18,8 @@ from personalclaw.apps import manager
 from personalclaw.apps.manifest import Permissions
 from personalclaw.apps.permissions import PermissionChecker
 
+pytestmark = pytest.mark.security
+
 
 def _install_app(
     tmp_path: Path,

@@ -40,6 +40,9 @@ from aiohttp.test_utils import make_mocked_request
 from personalclaw.hooks import safe_read_file, validate_file_path
 from personalclaw.security import is_sensitive_path
 
+pytestmark = pytest.mark.security
+
+
 #: Paths that are hostile but plausible as a query parameter. Every one must produce an ANSWER.
 NUL_PATHS = [
     "/tmp/a\x00b",

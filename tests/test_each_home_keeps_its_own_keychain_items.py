@@ -39,6 +39,9 @@ from personalclaw.config.credentials import (
 )
 from personalclaw.config.loader import AppConfig
 
+pytestmark = pytest.mark.security
+
+
 #: The name every release before per-home namespaces filed every home's items under.
 TODAYS_NAME = "personalclaw"
 #: The entry that lists a namespace's credential names.

@@ -16,6 +16,9 @@ import pytest
 from personalclaw.auth import credentials as creds
 from personalclaw.config import credentials as cred_store
 
+pytestmark = pytest.mark.security
+
+
 GOOD_PASSWORD = "correct-horse-battery-staple"
 
 

@@ -24,9 +24,12 @@ from personalclaw.apps import app_config, manager
 from personalclaw.config import secret_refs
 from personalclaw.providers.settings import ProviderSettings
 
-pytestmark = pytest.mark.skipif(
-    not hasattr(os, "symlink") or os.name == "nt", reason="POSIX links and pipes"
-)
+pytestmark = [
+    pytest.mark.skipif(
+        not hasattr(os, "symlink") or os.name == "nt", reason="POSIX links and pipes"
+    ),
+    pytest.mark.security,
+]
 
 APP = "data-link-app"
 OUTSIDE_SECRET = "fake-key-outside-file-3c2b1a0f"

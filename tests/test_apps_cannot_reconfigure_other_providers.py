@@ -51,6 +51,9 @@ from personalclaw.providers import instance_routes
 from personalclaw.providers import registry as registry_module
 from personalclaw.providers import routes as provider_routes
 
+pytestmark = pytest.mark.security
+
+
 ALPHA = "probe-alpha"
 BRAVO = "probe-bravo"
 #: The first-party MCP Tool Servers app's name (`providers/mcp_instances.MCP_TOOLS_EXTENSION`).

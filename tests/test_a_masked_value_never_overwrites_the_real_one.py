@@ -34,6 +34,9 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
 from mcp_owner_allowed import confirmed
 
+pytestmark = pytest.mark.security
+
+
 # A credential-shaped literal the redactor recognises. Not a real key.
 SECRET = "sk-ant-api03-" + ("A" * 20) + ("B" * 20) + ("C" * 15)
 MASK = "[REDACTED: credential]"

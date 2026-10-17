@@ -33,6 +33,9 @@ from personalclaw.tasks.models import Task, TaskDependency
 from personalclaw.triggers.models import Trigger
 from personalclaw.triggers.ownership import is_owner_authored, owner_authored
 
+pytestmark = pytest.mark.security
+
+
 OWNER = "owner"
 
 

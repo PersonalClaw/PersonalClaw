@@ -38,6 +38,9 @@ from personalclaw.inbox_service import InboxService
 from personalclaw.security import UNTRUSTED_CLOSE, outside_fences
 from personalclaw.triggers.models import Trigger
 
+pytestmark = pytest.mark.security
+
+
 APP = "fixture-bound-mail"
 SOURCE = "fixture-mail"
 TRAVEL = "travel@example.com"

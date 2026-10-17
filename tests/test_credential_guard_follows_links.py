@@ -19,6 +19,8 @@ import pytest
 
 from personalclaw.security import is_sensitive_path
 
+pytestmark = pytest.mark.security
+
 
 @pytest.fixture
 def home(tmp_path, monkeypatch) -> Path:

@@ -41,6 +41,9 @@ from personalclaw.inbound import caps as caps_mod
 from personalclaw.workflows import defs as defs_mod
 from personalclaw.workflows.models import DefMetadata, RunStatus
 
+pytestmark = pytest.mark.security
+
+
 _SURFACE_ENVS = ("OPENAI", "MCP", "A2A", "CAPTURE", "BRIDGE")
 
 

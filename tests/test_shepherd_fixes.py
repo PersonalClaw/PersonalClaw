@@ -6,6 +6,8 @@ import pytest
 
 from personalclaw.security import audit_bash_command
 
+pytestmark = pytest.mark.security
+
 
 class TestExpandedBashPatterns:
     """Tests for new SUSPICIOUS_BASH_PATTERNS."""

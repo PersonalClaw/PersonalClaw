@@ -37,6 +37,9 @@ from personalclaw.artifacts.native import NativeArtifactProvider
 from personalclaw.file_view import read_head, whole_text
 from personalclaw.stale_write import revision_of
 
+pytestmark = pytest.mark.security
+
+
 ORIGINAL = "the file's own bytes"
 POSTED = "what the request tried to write"
 

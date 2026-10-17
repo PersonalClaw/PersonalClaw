@@ -45,7 +45,7 @@ from personalclaw.workflows.validator import (
     validate_spec,
 )
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.security]
 
 
 @pytest.fixture

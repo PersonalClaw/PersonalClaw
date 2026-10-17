@@ -18,6 +18,9 @@ import pytest
 from personalclaw.inbound import capture_store
 from personalclaw.security import UNTRUSTED_CLOSE, UNTRUSTED_OPEN, redact_credentials
 
+pytestmark = pytest.mark.security
+
+
 # A credential-shaped string the redactor genuinely recognises. Every test that asserts
 # on its ABSENCE also proves the redactor would have found it — see the vacuity floor.
 SECRET = "sk-ant-api03-" + ("A" * 48)

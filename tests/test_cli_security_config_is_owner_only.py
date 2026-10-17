@@ -21,6 +21,9 @@ from personalclaw import security
 from personalclaw.config.edit_spec import SECURITY_SECTIONS, security_control
 from personalclaw.config.editable import _EDITABLE_CONFIG
 
+pytestmark = pytest.mark.security
+
+
 CLI = "personalclaw"
 
 SECURITY_FIELDS = sorted(k for k, spec in _EDITABLE_CONFIG.items() if security_control(spec))

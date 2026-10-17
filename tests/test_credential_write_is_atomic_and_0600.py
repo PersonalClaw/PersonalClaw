@@ -24,6 +24,8 @@ import stat
 
 import pytest
 
+pytestmark = pytest.mark.security
+
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):

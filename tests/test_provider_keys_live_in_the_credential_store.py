@@ -29,6 +29,9 @@ from personalclaw.llm.registry import get_default_registry
 from personalclaw.net.client import FetchResponse
 from personalclaw.sdk.provider_helpers import register_branded_app
 
+pytestmark = pytest.mark.security
+
+
 KEY = "fake-key-fixture-5f0c1d9e-never-plaintext"
 ROTATED = "fake-key-fixture-rotated-8a7b6c5d"
 

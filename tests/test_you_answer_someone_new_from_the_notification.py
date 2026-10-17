@@ -28,6 +28,9 @@ from personalclaw import channel_trust as ct
 from personalclaw.channel_transports.base import ChannelTransportProvider
 from personalclaw.dashboard.state import DashboardState
 
+pytestmark = pytest.mark.security
+
+
 STRANGER = "4242"
 
 

@@ -49,6 +49,9 @@ from personalclaw.config.secret_refs import write_mcp_document
 from personalclaw.tool_providers import registry as tool_registry
 from personalclaw.tool_providers.base import ToolDefinition, ToolProvider, ToolResult
 
+pytestmark = pytest.mark.security
+
+
 SERVER = "fixture"
 
 # A real MCP server. `delete_stack` writes a marker file when it runs, so a test can tell a call

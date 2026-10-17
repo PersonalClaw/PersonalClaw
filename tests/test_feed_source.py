@@ -39,6 +39,9 @@ from personalclaw.knowledge_providers.feed_source import (
     resolve_spec,
 )
 
+pytestmark = pytest.mark.security
+
+
 STORY_URL = "https://blog.example.com/posts/one-story"
 
 

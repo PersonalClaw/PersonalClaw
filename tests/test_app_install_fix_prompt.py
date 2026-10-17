@@ -23,6 +23,8 @@ import pytest
 from personalclaw import security
 from personalclaw.apps import app_manager, manager
 
+pytestmark = pytest.mark.security
+
 
 @pytest.fixture(autouse=True)
 def _isolate_apps(tmp_path, monkeypatch):

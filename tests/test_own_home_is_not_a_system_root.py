@@ -35,6 +35,9 @@ from personalclaw.dashboard.handlers.files import _is_system_root
 from personalclaw.loop.validation import workspace_dir_errors, workspace_write_target_errors
 from personalclaw.security import is_sensitive_path, is_system_path
 
+pytestmark = pytest.mark.security
+
+
 SUPERUSER_HOMES = ("/root", "/private/var/root")
 
 

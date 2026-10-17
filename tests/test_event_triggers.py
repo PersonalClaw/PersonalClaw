@@ -28,6 +28,8 @@ from personalclaw.event_triggers import (
 )
 from personalclaw.triggers.models import Trigger, TriggerState
 
+pytestmark = pytest.mark.security
+
 
 def _row(pattern: str, matcher: str = "", **fields) -> Trigger:
     return Trigger(

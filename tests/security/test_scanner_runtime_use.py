@@ -22,6 +22,9 @@ import pytest
 
 from personalclaw.supply_chain import RuntimeUse, TrustTier, Verdict, default_scanner
 
+pytestmark = pytest.mark.security
+
+
 _PROVIDER_APP = {
     "name": "demo",
     "version": "1.0.0",
