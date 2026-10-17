@@ -115,7 +115,9 @@ class TestAReadNamesOnlyTheAppsOwnConversation:
     ) -> None:
         state = _make_state(tmp_path)
         name = "mine" if whose == "yours" else "theirs"
-        _resident(state, name, "my bank PIN is 4471", creator="" if whose == "yours" else OTHER)
+        _resident(
+            state, name, "my bank PIN is heron-quince", creator="" if whose == "yours" else OTHER
+        )
         path = _fill(template, name)
         with _home(tmp_path):
             _install(tmp_path, APP, DECLARED)
@@ -181,7 +183,7 @@ class TestYourTranscriptNeverReachesTheApp:
                 own = await client.get("/api/chat/sessions/ours")
                 own_text = await own.text()
         assert yours.status == 403, yours_text
-        assert "4471" not in yours_text
+        assert "heron-quince" not in yours_text
         assert own.status == 200, own_text
         assert "the app's own line" in own_text
         assert _denials(sel_rows, "/api/chat/sessions/mine")
@@ -193,7 +195,7 @@ class TestYourTranscriptNeverReachesTheApp:
         from personalclaw.dashboard import chat
 
         state = _make_state(tmp_path)
-        _persisted(state, "old", "my bank PIN is 4471")
+        _persisted(state, "old", "my bank PIN is heron-quince")
         route = ("GET", "/api/chat/sessions/{session}", chat.api_chat_session_detail)
         with _home(tmp_path):
             _install(tmp_path, APP, DECLARED)
@@ -201,7 +203,7 @@ class TestYourTranscriptNeverReachesTheApp:
                 resp = await client.get("/api/chat/sessions/old")
                 text = await resp.text()
         assert resp.status == 403, text
-        assert "4471" not in text
+        assert "heron-quince" not in text
         assert "old" not in state._sessions, "a refused read loads nothing"
 
     @pytest.mark.asyncio
@@ -209,7 +211,7 @@ class TestYourTranscriptNeverReachesTheApp:
         from personalclaw.dashboard import handlers
 
         state = _make_state(tmp_path)
-        _persisted(state, "old", "my bank PIN is 4471")
+        _persisted(state, "old", "my bank PIN is heron-quince")
         _persisted(state, "ours", "the app's own line", creator=APP)
         route = ("GET", "/api/sessions/{key}", handlers.api_session_detail)
         with _home(tmp_path):
@@ -220,7 +222,7 @@ class TestYourTranscriptNeverReachesTheApp:
                 own = await client.get("/api/sessions/dashboard_ours")
                 own_text = await own.text()
         assert yours.status == 403, yours_text
-        assert "4471" not in yours_text
+        assert "heron-quince" not in yours_text
         assert own.status == 200, own_text
         assert "the app's own line" in own_text
         assert _denials(sel_rows, "/api/sessions/dashboard_old")
@@ -231,7 +233,7 @@ class TestYourTranscriptNeverReachesTheApp:
 
         state = _make_state(tmp_path)
         # The export reads the transcript off disk.
-        _persisted(state, "mine", "my bank PIN is 4471")
+        _persisted(state, "mine", "my bank PIN is heron-quince")
         _persisted(state, "ours", "the app's own line", creator=APP)
         route = (
             "GET",
@@ -246,7 +248,7 @@ class TestYourTranscriptNeverReachesTheApp:
                 own = await client.get("/api/chat/sessions/ours/export?format=md")
                 own_text = await own.text()
         assert yours.status == 403, yours_text
-        assert "4471" not in yours_text
+        assert "heron-quince" not in yours_text
         assert own.status == 200, own_text
         assert "the app's own line" in own_text
 
@@ -257,7 +259,7 @@ class TestYourTranscriptNeverReachesTheApp:
 def _mixed_history(state) -> None:
     """Yours and two apps', each resident and on disk — every branch a list reads."""
     _owner_chat(state, "mine")
-    _persisted(state, "old", "zebra: my bank PIN is 4471")
+    _persisted(state, "old", "zebra: my bank PIN is heron-quince")
     _resident(state, "ours", "the app's own line", creator=APP)
     _persisted(state, "ours-old", "zebra: the app's earlier line", creator=APP)
     _resident(state, "theirs", "the other app's line", creator=OTHER)
@@ -311,7 +313,11 @@ class TestAListHoldsOnlyTheAppsOwnConversations:
         _mixed_history(state)
         index_rows = (
             [
-                {"key": "dashboard:old", "title": "old", "snippet": "zebra: my bank PIN is 4471"},
+                {
+                    "key": "dashboard:old",
+                    "title": "old",
+                    "snippet": "zebra: my bank PIN is heron-quince",
+                },
                 {"key": "dashboard:ours-old", "title": "ours", "snippet": "zebra: the app's"},
             ]
             if answered_by == "index"
@@ -330,7 +336,7 @@ class TestAListHoldsOnlyTheAppsOwnConversations:
             async with TestClient(TestServer(_gateway(state, "", [route]))) as client:
                 as_owner = await (await client.get("/api/sessions/search?q=zebra")).json()
         assert resp.status == 200, text
-        assert "4471" not in text
+        assert "heron-quince" not in text
         assert [r["key"].replace(":", "_") for r in as_app["sessions"]] == ["dashboard_ours-old"]
         owner_keys = {r["key"].replace(":", "_") for r in as_owner["sessions"]}
         assert {"dashboard_old", "dashboard_ours-old"} <= owner_keys
@@ -510,7 +516,7 @@ def sockets(tmp_path):
     """Your socket, APP's, the other app's, and the approval relay's, over one state holding one
     conversation of each: yours (`mine`), APP's (`ours`) and the other app's (`theirs`)."""
     state = _make_state(tmp_path)
-    _resident(state, "mine", "my bank PIN is 4471")
+    _resident(state, "mine", "my bank PIN is heron-quince")
     _resident(state, "ours", "the app's own line", creator=APP)
     _resident(state, "theirs", "the other app's line", creator=OTHER)
     every = CHAT_FRAMES + [
@@ -569,7 +575,7 @@ class TestAnAppsSocketCarriesOnlyItsOwnConversations:
         (app_frame,) = [f for f in _frames(socks[APP]) if f["type"] == "sessions"]
         (your_frame,) = [f for f in _frames(socks["yours"]) if f["type"] == "sessions"]
         assert [r["key"] for r in app_frame["data"]] == ["ours"]
-        assert "4471" not in json.dumps(app_frame)
+        assert "heron-quince" not in json.dumps(app_frame)
         assert {r["key"] for r in your_frame["data"]} == {"mine", "ours", "theirs"}
 
     @pytest.mark.asyncio
@@ -633,7 +639,7 @@ class TestAnAppsSocketCarriesOnlyItsOwnConversations:
         ):
             _install(tmp_path, APP, {"api": ["/api/ws"], "events": ["sessions"]})
             state = _make_state(tmp_path)
-            _resident(state, "mine", "my bank PIN is 4471")
+            _resident(state, "mine", "my bank PIN is heron-quince")
             _resident(state, "ours", "the app's own line", creator=APP)
             token_auth.use_persistent_secret()
             token_auth.revoke_all_sessions()
@@ -655,7 +661,7 @@ class TestAnAppsSocketCarriesOnlyItsOwnConversations:
                 token_auth.revoke_all_sessions()
         (frame,) = [f for f in first if f["type"] == "sessions"]
         assert [r["key"] for r in frame["data"]] == ["ours"]
-        assert "4471" not in json.dumps(first)
+        assert "heron-quince" not in json.dumps(first)
 
 
 #: Fields a frame can name its conversation in, other than `session`.
@@ -1134,7 +1140,7 @@ async def _raise_notes(state) -> dict[str, str]:
     and yours. Returns title → ts."""
     from personalclaw import notification_kinds as nk
 
-    state.notify(nk.INFO, "your bank", "your PIN is 4471")
+    state.notify(nk.INFO, "your bank", "your PIN is heron-quince")
     await _propose(state, APP, "raised by the app", "a")
     await _propose(state, OTHER, "raised by the other app", "o")
     state.notify(nk.HEARTBEAT, "about the app's chat", "h", meta={"session": "ours"})
@@ -1155,7 +1161,7 @@ class TestAnAppReadsOnlyTheNotificationsItRaised:
         from personalclaw.dashboard.handlers.messaging import api_notifications
 
         state = _make_state(tmp_path)
-        _resident(state, "mine", "my bank PIN is 4471")
+        _resident(state, "mine", "my bank PIN is heron-quince")
         _resident(state, "ours", "the app's own line", creator=APP)
         route = ("GET", "/api/notifications", api_notifications)
         seen: dict[str, dict] = {}
@@ -1175,7 +1181,7 @@ class TestAnAppReadsOnlyTheNotificationsItRaised:
         assert titles(APP) == ["about the app's chat", "raised by the app"]
         assert titles(OTHER) == ["raised by the other app"]
         assert len(titles("")) == 5, "you still read every notification"
-        assert "4471" not in json.dumps(seen[APP])
+        assert "heron-quince" not in json.dumps(seen[APP])
         assert seen[APP]["unread"] == 2, "the count is over the app's own rows, not yours"
 
     @pytest.mark.asyncio
@@ -1323,7 +1329,7 @@ def noted(tmp_path):
     """Your socket, APP's and the other app's, each declaring every notification frame, over a
     state holding APP's conversation and yours."""
     state = _make_state(tmp_path)
-    _resident(state, "mine", "my bank PIN is 4471")
+    _resident(state, "mine", "my bank PIN is heron-quince")
     _resident(state, "ours", "the app's own line", creator=APP)
     with _home(tmp_path):
         for name in (APP, OTHER):
@@ -1362,7 +1368,7 @@ class TestAnAppsSocketCarriesOnlyItsOwnNotifications:
             "raised by the other app"
         ]
         assert len(_of(socks["yours"], "notification")) == 5, "yours carries every one"
-        assert "4471" not in json.dumps(_frames(socks[APP]))
+        assert "heron-quince" not in json.dumps(_frames(socks[APP]))
 
     @pytest.mark.asyncio
     async def test_marking_one_read_is_told_only_to_its_raiser(self, noted) -> None:
@@ -1392,7 +1398,7 @@ class TestAnAppsSocketCarriesOnlyItsOwnNotifications:
         rules = tmp_path / "entity_settings" / "notification_rules.json"
         rules.parent.mkdir(parents=True, exist_ok=True)
         rules.write_text(json.dumps({"rules": {"system/info": {"mode": "badge"}}}), "utf-8")
-        state.notify(nk.INFO, "your bank", "your PIN is 4471")
+        state.notify(nk.INFO, "your bank", "your PIN is heron-quince")
         state.notify(nk.INFO, "raised by the app", "a", raised_by_app=APP)
         ts = {n["title"]: n["ts"] for n in state._notification_log}
         assert all(n.get("badge_only") for n in state._notification_log), "not the badge path"
@@ -1434,7 +1440,7 @@ class TestAnAppsSocketCarriesOnlyItsOwnNotifications:
         state, socks = noted
         from personalclaw import notification_kinds as nk
 
-        state.notify(nk.INFO, "your bank", "your PIN is 4471")
+        state.notify(nk.INFO, "your bank", "your PIN is heron-quince")
         await _propose(state, APP, "raised by the app", "a")
         for sock in socks.values():
             sock.send_str.reset_mock()

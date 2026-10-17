@@ -44,13 +44,26 @@ def _git(args: list[str], root: Path) -> tuple[int, str, str]:
         return -1, "", str(exc)
 
 
-def merge_base(root: Path, base_ref: str = "origin/main") -> str:
-    """The merge-base sha between HEAD and ``base_ref`` (falls back to ``base_ref`` itself,
-    then to ``HEAD~1``) so ``--diff`` works whether or not the remote ref is present."""
-    for ref in (base_ref, "main", "HEAD~1"):
+class BaseNotFound(ValueError):
+    """The base a caller named shares no history with HEAD here, so nothing can be compared."""
+
+
+def merge_base(root: Path, base_ref: str = "origin/main", *, fallback: bool = True) -> str:
+    """The merge-base sha between HEAD and ``base_ref``.
+
+    With ``fallback`` (the default, for a local run against the default branch) it falls back
+    to ``main``, then ``HEAD~1``, then ``HEAD``, so ``--diff`` works whether or not the remote
+    ref is present. Without it only ``base_ref`` is tried, and :class:`BaseNotFound` is raised:
+    a base the caller named is the question, and answering a different one would scan the
+    wrong change. On a push to ``main``, the fallback to ``main`` is HEAD itself, which scans
+    nothing and passes.
+    """
+    for ref in (base_ref, "main", "HEAD~1") if fallback else (base_ref,):
         rc, out, _ = _git(["merge-base", "HEAD", ref], root)
         if rc == 0 and out.strip():
             return out.strip()
+    if not fallback:
+        raise BaseNotFound(f"{base_ref!r} does not name a commit HEAD shares history with")
     return "HEAD"
 
 
@@ -70,14 +83,17 @@ class Diff:
         return {root / f: lines for f, lines in self.changed_lines.items()}
 
 
-def compute_diff(root: Path | None = None, base_ref: str = "origin/main") -> Diff:
+def compute_diff(
+    root: Path | None = None, base_ref: str = "origin/main", *, fallback: bool = True
+) -> Diff:
     """Compute the diff of HEAD (plus uncommitted changes) against the merge-base.
 
     Uses ``git diff <base>`` (not ``<base>..HEAD``) so uncommitted working-tree edits are
-    included — the executor typically runs ``--diff`` before committing.
+    included — the executor typically runs ``--diff`` before committing. ``fallback`` is
+    :func:`merge_base`'s.
     """
     r = root if root is not None else _repo_root()
-    base = merge_base(r, base_ref)
+    base = merge_base(r, base_ref, fallback=fallback)
 
     rc, name_out, _ = _git(["diff", "--name-only", base], r)
     files = [ln.strip() for ln in name_out.splitlines() if ln.strip()] if rc == 0 else []
