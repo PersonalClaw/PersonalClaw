@@ -31,6 +31,8 @@ jobs:
       # JUnit artifact is untrusted input; the observer only searches bounded ZIP/XML bytes
       # and never extracts or executes them.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Classify browse-live quarantine frequency
         env:
           GH_TOKEN: ${{ github.token }}

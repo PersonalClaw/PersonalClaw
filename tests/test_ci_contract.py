@@ -16,6 +16,7 @@ control is one edit of one of them.
 from __future__ import annotations
 
 import ast
+import datetime
 import json
 import re
 import shutil
@@ -29,12 +30,12 @@ import pytest
 import security_census
 import yaml
 
+from tools.ci import supply_chain
+
 REPO = Path(__file__).resolve().parents[1]
 
 #: An exact release, ``X.Y.Z``.
 _EXACT = re.compile(r"\d+\.\d+\.\d+")
-_SHA = re.compile(r"[0-9a-f]{40}")
-_DIGEST = re.compile(r"[^\s@]+:[^\s@:]+@sha256:[0-9a-f]{64}")
 
 Tree = dict[str, str]
 """Repository-relative path to text: the files the toolchain rows read."""
@@ -94,16 +95,6 @@ def _matrix_values(job: dict[str, Any], key: str) -> list[str]:
 
 def _action(step: dict[str, Any]) -> str:
     return str(step.get("uses", "")).split("@", 1)[0]
-
-
-def _comment_above(lines: list[str], index: int) -> str:
-    """The run of ``#`` comment lines directly above ``lines[index]``."""
-    block: list[str] = []
-    i = index - 1
-    while i >= 0 and lines[i].lstrip().startswith("#"):
-        block.insert(0, lines[i])
-        i -= 1
-    return "\n".join(block)
 
 
 def _dockerfiles(tree: Tree) -> Iterator[tuple[str, str]]:
@@ -279,80 +270,6 @@ def runner_label_violations(tree: Tree) -> list[str]:
     return bad
 
 
-def action_sha_violations(tree: Tree) -> list[str]:
-    """Every ``uses:`` names a 40-character commit SHA, with its release as a comment."""
-    bad: list[str] = []
-    found = 0
-    for rel, text in tree.items():
-        if not rel.startswith(".github/workflows/"):
-            continue
-        for line in text.splitlines():
-            match = re.match(r"\s*(?:-\s+)?uses:\s*(\S+)(.*)$", line)
-            if not match or match.group(1).startswith("./"):
-                continue
-            found += 1
-            ref, rest = match.groups()
-            _, _, pin = ref.partition("@")
-            if not _SHA.fullmatch(pin):
-                bad.append(f"{rel}: {ref} is not pinned by commit SHA")
-            elif not re.fullmatch(r"\s+#\s*v\d+(?:\.\d+)*\s*", rest):
-                bad.append(f"{rel}: {ref} has no `# vX.Y.Z` release comment")
-    if not found:
-        bad.append("found no `uses:` line, so this row read nothing")
-    return bad
-
-
-def image_digest_violations(tree: Tree) -> list[str]:
-    """Every container image is a tag with its digest, never ``latest``, and says its
-    architecture: a workflow container names the platform manifest it pins, and an image
-    base built for both platforms lists each platform's manifest digest."""
-    bad: list[str] = []
-    found = 0
-
-    def judge(where: str, ref: str, comment: str, platforms: tuple[str, ...]) -> None:
-        if not _DIGEST.fullmatch(ref):
-            bad.append(f"{where}: {ref} is not a tag pinned by digest")
-        elif ref.split("@", 1)[0].rsplit(":", 1)[1] == "latest":
-            bad.append(f"{where}: {ref} names the moving tag `latest`")
-        for platform in platforms:
-            if not re.search(rf"{platform}\b.*sha256:[0-9a-f]{{64}}", comment, flags=re.S):
-                bad.append(f"{where}: {ref} does not say its {platform} manifest digest")
-
-    for rel, text in tree.items():
-        if not rel.startswith(".github/workflows/"):
-            continue
-        lines = text.splitlines()
-        for index, line in enumerate(lines):
-            match = re.match(r"\s+(?:container|image):\s*(\S+)\s*$", line)
-            if match:
-                found += 1
-                judge(rel, match.group(1), _comment_above(lines, index), ("linux/amd64",))
-    for rel, text in _dockerfiles(tree):
-        lines = text.splitlines()
-        args: dict[str, tuple[str, int]] = {}
-        stages: set[str] = set()
-        for index, line in enumerate(lines):
-            arg = re.match(r"ARG (\w+)=(\S+)$", line)
-            if arg:
-                args[arg.group(1)] = (arg.group(2), index)
-            words = [w for w in line.split() if not w.startswith("--")]
-            if not words or words[0] != "FROM":
-                continue
-            ref, at = words[1], index
-            variable = re.fullmatch(r"\$\{?(\w+)\}?", ref)
-            if variable and variable.group(1) in args:
-                ref, at = args[variable.group(1)]
-            if len(words) > 3 and words[2].upper() == "AS":
-                stages.add(words[3])
-            if ref in stages and ref != (words[3] if len(words) > 3 else ""):
-                continue
-            found += 1
-            judge(rel, ref, _comment_above(lines, at), ("linux/amd64", "linux/arm64"))
-    if not found:
-        bad.append("found no container image, so this row read nothing")
-    return bad
-
-
 def runner_identity_violations(tree: Tree) -> list[str]:
     """Every job logs the image it ran on: a ``Runner identity`` step that reads the runner
     image's name and version, or the container's own ``/etc/os-release``."""
@@ -383,6 +300,9 @@ class Control:
     name: str
     plant: Callable[[Path], None]
     fails: bool = True
+    #: Text one violation must carry, for a plant that would fail the check for a second reason
+    #: too: then only the named violation proves the clause under test bites.
+    expect: str = ""
 
 
 @dataclass(frozen=True)
@@ -501,7 +421,9 @@ def _copy_toolchain_files(root: Path) -> None:
         _write(root, rel, text)
 
 
-def _plant(name: str, rel: str, old: str, new: str) -> Control:
+def _plant(
+    name: str, rel: str, old: str, new: str, fails: bool = True, expect: str = ""
+) -> Control:
     """A violation planted by one edit of one file; a plant whose text is gone fails loudly."""
 
     def plant(root: Path) -> None:
@@ -509,7 +431,7 @@ def _plant(name: str, rel: str, old: str, new: str) -> Control:
         assert old in text, f"the plant {name!r} found no {old!r} in {rel}"
         _write(root, rel, text.replace(old, new, 1))
 
-    return Control(name, plant)
+    return Control(name, plant, fails, expect)
 
 
 def _toolchain_row(
@@ -1221,6 +1143,503 @@ def wheel_and_scan_base_violations(tree: Tree) -> list[str]:
     return bad
 
 
+# ── The supply chain (docs/maintainers/ci.md, "Supply chain") ─────────────────────────────────
+#
+# tools/ci/supply_chain.py holds the rules and tools/ci/supply-chain.toml the policy they read.
+# Each row checks the whole tree through the policy's exceptions and keeps its own rules'
+# violations, so a plant that also breaks another rule cannot pass for the one under test.
+
+_POLICY = supply_chain.POLICY_FILE
+_BACKEND = "deploy/docker/Dockerfile.backend"
+_CI = ".github/workflows/ci.yml"
+_FULL = ".github/workflows/full.yml"
+_RELEASE_YML = ".github/workflows/release.yml"
+_TOOLING = ".github/workflows/release-image-tooling.yml"
+_SETUP_NODE = "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0"
+_LOGIN = "docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0"
+_QEMU_AMD64 = "465d3fdd28d0f2b871ba4b4ec98bd183292e96167f00d9fd40bd249f8632d705"
+_QEMU_INDEX = "400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"
+_UBUNTU_INDEX = "f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7"
+_PINNED_NODE_BASE = (
+    "# node:24.21.0-alpine, as its multi-arch index. Platform manifests:\n"
+    "#   linux/amd64 sha256:83f1c388c31fb2e51f7cbd4dea949b96260798c98f206e8e4696bc93bd964e3a\n"
+    + _NODE_ARM64
+    + "FROM mirror.gcr.io/library/node:24.21.0-alpine@sha256:"
+    + "ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1\n"
+)
+
+
+def _days(n: int) -> str:
+    return (datetime.date.today() + datetime.timedelta(days=n)).isoformat()
+
+
+def _copy_supply_chain_files(root: Path) -> None:
+    for rel, text in supply_chain.read_tree(REPO).items():
+        _write(root, rel, text)
+
+
+def _supply_row(name: str, rules: tuple[str, ...], controls: tuple[Control, ...]) -> Row:
+    """A row over *rules*, or over every rule and the exceptions when *rules* is empty."""
+
+    def check(root: Path) -> list[str]:
+        found = supply_chain.check(supply_chain.read_tree(root))
+        return [str(v) for v in found if not rules or v.rule in rules]
+
+    return Row(name=name, check=check, scaffold=_copy_supply_chain_files, controls=controls)
+
+
+def _together(name: str, *controls: Control, fails: bool = True, expect: str = "") -> Control:
+    def plant(root: Path) -> None:
+        for control in controls:
+            control.plant(root)
+
+    return Control(name, plant, fails, expect)
+
+
+def _line(name: str, rel: str, start: str, new: str = "", **kw: Any) -> Control:
+    """Replace (or, with *new* empty, remove) the first line of *rel* that begins with *start*."""
+
+    def plant(root: Path) -> None:
+        lines = (root / rel).read_text(encoding="utf-8").splitlines(keepends=True)
+        index = next((i for i, line in enumerate(lines) if line.startswith(start)), None)
+        assert index is not None, f"the plant {name!r} found no line {start!r} in {rel}"
+        lines[index] = new + "\n" if new else ""
+        _write(root, rel, "".join(lines))
+
+    return Control(name, plant, **kw)
+
+
+def _append(name: str, rel: str, text: str, **kw: Any) -> Control:
+    def plant(root: Path) -> None:
+        path = root / rel
+        _write(root, rel, (path.read_text(encoding="utf-8") if path.exists() else "") + text)
+
+    return Control(name, plant, **kw)
+
+
+def _planted_workflow(
+    name: str, steps: str, top: str = "permissions: {}\n", job: str = "", **kw: Any
+) -> Control:
+    text = (
+        f"name: planted\non: workflow_dispatch\n{top}jobs:\n  it:\n    runs-on: ubuntu-24.04\n"
+        f"{job}    steps:\n{steps}"
+    )
+    return _append(name, ".github/workflows/planted.yml", text, **kw)
+
+
+def _runs(command: str, **kw: Any) -> Control:
+    return _planted_workflow(f"`{command}`", f"      - run: {command}\n", **kw)
+
+
+_LISTED_CHECKOUT = (
+    '\n[[audited_write]]\nworkflow = "ci.yml"\njob = "changes"\n'
+    'permission = "persist-credentials"\nsteps = ["actions/checkout"]\nreason = "planted"\n'
+)
+
+SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
+    _supply_row(
+        "action-sha",
+        ("action-sha", "image-digest"),
+        (
+            _plant(
+                "an action by tag",
+                ".github/workflows/dco.yml",
+                "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0",
+                "actions/github-script@v9",
+            ),
+            _plant(
+                "an action by branch",
+                _RELEASE_YML,
+                "pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2",
+                "pypa/gh-action-pypi-publish@release/v1",
+            ),
+            _plant("a SHA with no release comment", ".github/workflows/nix.yml", " # v31.11.2", ""),
+            _plant(
+                "a SHA whose comment is a bare major",
+                ".github/workflows/dco.yml",
+                "# v9.0.0",
+                "# v9",
+            ),
+            _planted_workflow("a docker:// action by tag", "      - uses: docker://alpine:3.20\n"),
+            _planted_workflow(
+                "a docker:// action by digest that names no platform",
+                f"      - uses: docker://alpine:3.20@sha256:{'a' * 64}\n",
+            ),
+            _planted_workflow(
+                "a docker:// action pinned to its linux/amd64 manifest passes",
+                f"      # alpine:3.20, the linux/amd64 manifest of index sha256:{'b' * 64}.\n"
+                f"      - uses: docker://alpine:3.20@sha256:{'a' * 64}\n",
+                fails=False,
+            ),
+        ),
+    ),
+    _supply_row(
+        "image-digest",
+        ("image-digest",),
+        (
+            _plant("a workflow container by tag alone", _FULL, _UBUNTU, "ubuntu:26.04"),
+            _plant(
+                "the moving tag latest",
+                _FULL,
+                "container: ubuntu:26.04@",
+                "container: ubuntu:latest@",
+            ),
+            _plant(
+                "an image base by tag alone",
+                "deploy/docker/Dockerfile.web",
+                _NGINX,
+                "nginx:1.27-alpine",
+            ),
+            _plant("a base ARG by tag alone", _BACKEND, _PYTHON, "python:3.13.16-slim"),
+            _plant(
+                "a two-platform base without its arm64 manifest",
+                "deploy/docker/Dockerfile.web",
+                _NODE_ARM64,
+                "",
+            ),
+            _plant(
+                "a workflow container without its platform",
+                ".github/workflows/clean-machine-walkthroughs.yml",
+                "the linux/amd64 manifest",
+                "the manifest",
+            ),
+            _plant(
+                "a workflow container pinned to the index its comment names",
+                _FULL,
+                _UBUNTU,
+                "ubuntu:26.04@sha256:" + _UBUNTU_INDEX,
+                expect="pins the index",
+            ),
+            _plant(
+                "a workflow container whose comment names no index",
+                ".github/workflows/clean-machine-walkthroughs.yml",
+                "of index",
+                "of",
+                expect="does not name the index",
+            ),
+            _plant(
+                "the QEMU image pinned to its index",
+                _RELEASE_YML,
+                _QEMU_AMD64,
+                _QEMU_INDEX,
+                expect="pins the index",
+            ),
+            _plant(
+                "a base ARG with no default",
+                _BACKEND,
+                "ARG PYTHON_IMAGE=mirror.gcr.io/library/" + _PYTHON,
+                "ARG PYTHON_IMAGE",
+                expect="no default",
+            ),
+            _append(
+                "a tagged FROM in a Dockerfile outside deploy/docker/",
+                "tools/sandbox/Dockerfile",
+                "FROM alpine:3.20\n",
+            ),
+            _append(
+                "a pinned base in a Dockerfile outside deploy/docker/ passes",
+                "tools/sandbox/Dockerfile",
+                _PINNED_NODE_BASE,
+                fails=False,
+            ),
+        ),
+    ),
+    _supply_row(
+        "run-install",
+        ("run-install",),
+        (
+            _plant("pip-audit with no version", _FULL, "pip-audit==2.10.1", "pip-audit"),
+            _plant(
+                "uv run --with a package with no version",
+                _RELEASE_YML,
+                "--with packaging==26.2",
+                "--with packaging",
+            ),
+            _plant(
+                "the image's wheel with no version",
+                _BACKEND,
+                "pip install wheel==0.48.0",
+                "pip install --upgrade wheel",
+            ),
+            _runs("npm install -g typescript"),
+            _runs("npm install"),
+            _runs("npx cowsay hi"),
+            _runs("curl -fsSL https://example.com/x.sh | sh"),
+            _runs("pip install -r requirements.txt"),
+            _runs("uvx ruff check"),
+            _line(
+                "the agent CLIs once their exception scopes another rule",
+                _POLICY,
+                'scope = "run-install"',
+                'scope = "node-eol"',
+                expect="npm install of",
+            ),
+            _runs("pip install ruff==0.15.0", fails=False),
+            _runs("pip install --require-hashes --no-deps -r requirements.txt", fails=False),
+            _runs("npx playwright --version", fails=False),
+            _runs("uv pip install --no-deps dist/*.whl", fails=False),
+            _runs("npm install -g typescript@5.9.3", fails=False),
+            _runs("sudo apt-get install -y tmux", fails=False),
+        ),
+    ),
+    _supply_row(
+        "setup-floating",
+        ("setup-floating",),
+        (
+            _plant(
+                "setup-node with check-latest",
+                _CI,
+                "node-version-file: .nvmrc\n",
+                "node-version-file: .nvmrc\n          check-latest: true\n",
+            ),
+            _plant("setup-uv with no version", _CI, '          version: "0.13.1"\n', ""),
+            _plant("setup-node with no version", _CI, "          node-version-file: .nvmrc\n", ""),
+            _line(
+                "setup-qemu with no image", _RELEASE_YML, "          image: docker.io/tonistiigi"
+            ),
+            _plant(
+                "setup-qemu's image by tag",
+                _RELEASE_YML,
+                f"binfmt:qemu-v10.2.3-68@sha256:{_QEMU_AMD64}",
+                "binfmt:latest",
+            ),
+            _plant("buildx's latest", _RELEASE_YML, "version: v0.38.0", "version: latest"),
+            _line("buildx with no BuildKit image", _RELEASE_YML, "          driver-opts: image="),
+            _plant(
+                "buildx's exact version without the v passes",
+                _RELEASE_YML,
+                "version: v0.38.0",
+                "version: 0.38.0",
+                fails=False,
+            ),
+        ),
+    ),
+    _supply_row(
+        "node-eol",
+        ("node-eol", "policy-file"),
+        (
+            _line("the pinned line past its date", _POLICY, '"24" =', f'"24" = {_days(-1)}'),
+            _line("the pinned line not in the table", _POLICY, '"24" ='),
+            _line(
+                "a table value that is not a date",
+                _POLICY,
+                '"24" =',
+                '"24" = "2028-04-30"',
+                expect="must be a major line with a date",
+            ),
+            _planted_workflow(
+                "setup-node on a line past its date",
+                f"      - uses: {_SETUP_NODE}\n        with:\n          node-version: 20.19.0\n",
+                expect="20.19.0 reached its end of life",
+            ),
+            _plant(
+                ".nvmrc on a newer dated line passes", ".nvmrc", "24.21.0", "26.1.0", fails=False
+            ),
+        ),
+    ),
+    _supply_row(
+        "least-privilege",
+        ("least-privilege",),
+        (
+            _plant(
+                "write-all at the top",
+                _FULL,
+                "permissions:\n  contents: read\n",
+                "permissions: write-all\n",
+            ),
+            _planted_workflow("write-all on a job", "", job="    permissions: write-all\n"),
+            _planted_workflow(
+                "an unlisted contents: write on a job",
+                "      - run: true\n",
+                job="    permissions:\n      contents: write\n",
+            ),
+            _planted_workflow(
+                "an unlisted write inherited from the top",
+                "      - run: true\n",
+                top="permissions:\n  issues: write\n",
+                expect="inherited from the top",
+            ),
+            _plant(
+                "a top-level write beside a job that grants its own",
+                ".github/workflows/pr-feedback.yml",
+                "  actions: read           # download the artifact from the CI run\n\njobs:",
+                "  actions: read\n  pull-requests: write\n\njobs:",
+                expect="top-level write",
+            ),
+            _plant(
+                "an extra write on a listed job",
+                _RELEASE_YML,
+                "      contents: write\n",
+                "      contents: write\n      issues: write\n",
+            ),
+            _planted_workflow("a job with no permissions anywhere", "      - run: true\n", top=""),
+            _line(
+                "a checkout that keeps its credentials", _CI, "          persist-credentials: false"
+            ),
+            _plant(
+                "a workflow env that hands a token to every step",
+                ".github/workflows/headless-run-smoke.yml",
+                _PREFERENCE,
+                _PREFERENCE + "  GH_TOKEN: ${{ github.token }}\n",
+            ),
+            _plant(
+                "a job env that hands a secret to every step",
+                _FULL,
+                '      PERSONALCLAW_SKIP_APP_BACKENDS: "1"\n',
+                '      PERSONALCLAW_SKIP_APP_BACKENDS: "1"\n      SMOKE: ${{ secrets.SMOKE }}\n',
+            ),
+            *(
+                _line(
+                    f"an audited write with no {field}", _POLICY, start, expect=f"missing {field}"
+                )
+                for field, start in (
+                    ("workflow", 'workflow = "dco.yml"'),
+                    ("job", 'job = "dco"'),
+                    ("permission", 'permission = "pull-requests: write"'),
+                    ("steps", 'steps = ["Explain how to fix DCO"]'),
+                    ("reason", 'reason = "Posts or updates the one comment that says which'),
+                )
+            ),
+            _line(
+                "an audited write for a job that is gone",
+                _POLICY,
+                'job = "dco"',
+                'job = "gone"',
+                expect="matches no job",
+            ),
+            _line(
+                "an audited write naming a step the job lacks",
+                _POLICY,
+                'steps = ["Explain how to fix DCO"]',
+                'steps = ["No such step"]',
+                expect="no step named",
+            ),
+            _line(
+                "an audited write for a permission the job does not hold",
+                _POLICY,
+                'permission = "pull-requests: write"',
+                'permission = "issues: write"',
+                expect="does not hold",
+            ),
+            _together(
+                "a checkout that keeps its credentials passes once it is an audited write",
+                _line("", _CI, "          persist-credentials: false"),
+                _append("", _POLICY, _LISTED_CHECKOUT),
+                fails=False,
+            ),
+        ),
+    ),
+    _supply_row(
+        "dependabot",
+        ("dependabot",),
+        (
+            _plant(
+                "the docker entry watching another folder",
+                ".github/dependabot.yml",
+                "    directory: /deploy/docker\n",
+                "    directory: /deploy/compose\n",
+            ),
+            _append("a Dockerfile in a folder nothing watches", "tools/sandbox/Dockerfile", "\n"),
+            _plant(
+                "the folder written with a trailing slash passes",
+                ".github/dependabot.yml",
+                "    directory: /deploy/docker\n",
+                "    directory: /deploy/docker/\n",
+                fails=False,
+            ),
+        ),
+    ),
+    _supply_row(
+        "release-tooling",
+        ("release-tooling",),
+        (
+            _plant("release.yml's buildx moved alone", _RELEASE_YML, "v0.38.0", "v0.37.0"),
+            _plant("the smoke's buildx moved alone", _TOOLING, "v0.38.0", "v0.37.0"),
+            _plant("the smoke's QEMU image moved alone", _TOOLING, _QEMU_AMD64, "c" * 64),
+            _plant(
+                "the smoke not run when release.yml changes",
+                _TOOLING,
+                "      - .github/workflows/release.yml\n",
+                "",
+            ),
+            _plant(
+                "the smoke holding a permission",
+                _TOOLING,
+                "permissions: {}\n\njobs:",
+                "permissions:\n  contents: read\n\njobs:",
+            ),
+            _plant(
+                "the smoke logging in",
+                _TOOLING,
+                "      - name: Build a two-platform image (no push)\n",
+                f"      - uses: {_LOGIN}\n      - name: Build a two-platform image (no push)\n",
+            ),
+            _plant("the smoke publishing", _TOOLING, "--output type=cacheonly", "--push"),
+            _plant(
+                "a comment changed on one side passes",
+                _TOOLING,
+                "# These three steps are",
+                "# These steps are",
+                fails=False,
+            ),
+        ),
+    ),
+    _supply_row(
+        "exceptions",
+        (),
+        (
+            _line("an expired exception", _POLICY, "expires =", f"expires = {_days(-1)}"),
+            _line(
+                "an exception more than 30 days out",
+                _POLICY,
+                "expires =",
+                f"expires = {_days(31)}",
+                expect="more than 30 days",
+            ),
+            _line(
+                "an exception that matches nothing",
+                _POLICY,
+                'reference = "npm install of',
+                'reference = "nothing"',
+                expect="matches nothing",
+            ),
+            *(
+                _line(f"an exception with no {field}", _POLICY, start, expect=f"missing {field}")
+                for field, start in (
+                    ("file", 'file = "deploy/docker/Dockerfile.backend"'),
+                    ("reference", 'reference = "npm install of'),
+                    ("scope", 'scope = "run-install"'),
+                    ("owner", 'owner = "maintainers"'),
+                    ("reason", 'reason = "The gateway image'),
+                    ("expires", "expires ="),
+                )
+            ),
+            _line(
+                "an exception for a rule no exception may waive",
+                _POLICY,
+                'scope = "run-install"',
+                'scope = "least-privilege"',
+                expect="not a rule an exception may waive",
+            ),
+            _line(
+                "an exception with an unknown field",
+                _POLICY,
+                'owner = "maintainers"',
+                'owner = "maintainers"\nticket = "x"',
+                expect="unknown field ticket",
+            ),
+            _line(
+                "an exception renewed exactly 30 days out passes",
+                _POLICY,
+                "expires =",
+                f"expires = {_days(30)}",
+                fails=False,
+            ),
+        ),
+    ),
+)
+
+
 ROWS: tuple[Row, ...] = (
     SECURITY_MARKER,
     _toolchain_row(
@@ -1374,67 +1793,7 @@ ROWS: tuple[Row, ...] = (
             ),
         ),
     ),
-    _toolchain_row(
-        "action-sha",
-        action_sha_violations,
-        (
-            _plant(
-                "an action by tag",
-                ".github/workflows/dco.yml",
-                "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0",
-                "actions/github-script@v9",
-            ),
-            _plant(
-                "an action by branch",
-                ".github/workflows/release.yml",
-                "pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2",
-                "pypa/gh-action-pypi-publish@release/v1",
-            ),
-            _plant("a SHA with no release comment", ".github/workflows/nix.yml", " # v31.11.2", ""),
-        ),
-    ),
-    _toolchain_row(
-        "image-digest",
-        image_digest_violations,
-        (
-            _plant(
-                "a workflow container by tag alone",
-                ".github/workflows/full.yml",
-                _UBUNTU,
-                "ubuntu:26.04",
-            ),
-            _plant(
-                "the moving tag latest",
-                ".github/workflows/full.yml",
-                "container: ubuntu:26.04@",
-                "container: ubuntu:latest@",
-            ),
-            _plant(
-                "an image base by tag alone",
-                "deploy/docker/Dockerfile.web",
-                _NGINX,
-                "nginx:1.27-alpine",
-            ),
-            _plant(
-                "a base ARG by tag alone",
-                "deploy/docker/Dockerfile.backend",
-                _PYTHON,
-                "python:3.13.16-slim",
-            ),
-            _plant(
-                "a two-platform base without its arm64 manifest",
-                "deploy/docker/Dockerfile.web",
-                _NODE_ARM64,
-                "",
-            ),
-            _plant(
-                "a workflow container without its platform",
-                ".github/workflows/clean-machine-walkthroughs.yml",
-                "the linux/amd64 manifest",
-                "the manifest",
-            ),
-        ),
-    ),
+    *SUPPLY_CHAIN_ROWS,
     _toolchain_row(
         "runner-identity",
         runner_identity_violations,
@@ -1519,6 +1878,7 @@ def test_the_ci_contract_holds_and_each_check_can_fail(
             found = row.check(root)
             if control.fails:
                 assert found, f"the planted violation went unseen: {control.name}"
+                assert any(control.expect in v for v in found), "\n".join(found)
             else:
                 assert found == [], "\n".join(found)
     with subtests.test("the tree"):

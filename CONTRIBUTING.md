@@ -220,7 +220,9 @@ and `nvm use` or `fnm use` reads `.nvmrc`. uv must be 0.13.1 or newer (`[tool.uv
 required-version` in `pyproject.toml`), and CI installs exactly 0.13.1. Every workflow that runs uv
 sets `UV_PYTHON_PREFERENCE: only-managed`, so CI runs on a Python uv downloads, never on one the
 runner image ships, even when the image's is the same patch. `tests/test_ci_contract.py` holds the
-workflows and the image to these files.
+workflows and the image to these files. Every action, image and tool CI fetches is pinned, and
+every job holds only the token permissions it uses: see "Supply chain" in
+[docs/maintainers/ci.md](docs/maintainers/ci.md) for how to pin and how a refresh arrives.
 
 **git 2.12 or newer.** PersonalClaw's own git refuses an older one
 (`net/git.py::MIN_GIT_VERSION`), which ignores the settings that stop a repository's own

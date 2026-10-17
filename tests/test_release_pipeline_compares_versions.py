@@ -311,6 +311,15 @@ def test_a_package_older_than_the_parse_cannot_answer_either(
 # ── the notes: the CHANGELOG section of this version, found by version ─────────────
 
 
+def _locked_version(name: str) -> str:
+    import tomllib
+
+    lock = tomllib.loads((REPO / "uv.lock").read_text(encoding="utf-8"))
+    versions = [p["version"] for p in lock["package"] if p["name"] == name]
+    assert len(versions) == 1, f"uv.lock holds {name} {versions}"
+    return versions[0]
+
+
 def _notes(tmp_path: Path, ref: str, changelog: str):
     """Run the build job's notes step for *ref* over *changelog*, with uv standing in.
 
@@ -340,6 +349,9 @@ def _notes(tmp_path: Path, ref: str, changelog: str):
         capture_output=True,
     )
     assert bare.returncode != 0, "the stand-in's interpreter can import the product's dependencies"
+    # The step names packaging exactly, at the release uv.lock holds, so a newer packaging on
+    # PyPI cannot change how a release's notes are found.
+    pinned = f"packaging=={_locked_version('packaging')}"
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     _stand_in(
@@ -349,7 +361,7 @@ def _notes(tmp_path: Path, ref: str, changelog: str):
         import os, subprocess, sys
 
         args = sys.argv[1:]
-        assert args[:4] == ["run", "--no-project", "--with", "packaging"], args
+        assert args[:4] == ["run", "--no-project", "--with", {pinned!r}], args
         assert args[4] == "python", args
         env = dict(os.environ, PYTHONPATH={str(only_packaging)!r})
         sys.exit(subprocess.run([sys.executable, "-S", *args[5:]], env=env).returncode)

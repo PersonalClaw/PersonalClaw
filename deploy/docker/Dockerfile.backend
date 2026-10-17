@@ -26,9 +26,11 @@ ARG UV_VERSION=0.13.1
 RUN pip install --no-cache-dir --root-user-action=ignore "uv==${UV_VERSION}"
 
 # pip is one of PersonalClaw's own dependencies (the app installer runs it), so the locked one
-# replaces this venv's in the layer below, with the rest of them.
+# replaces this venv's in the layer below, with the rest of them. wheel is not in uv.lock, so
+# it is named as an exact release, and nothing refreshes it yet: moving it is a reviewed edit
+# of this line.
 RUN python -m venv /opt/venv && \
-    /opt/venv/bin/pip install --upgrade wheel
+    /opt/venv/bin/pip install wheel==0.48.0
 
 # Third-party dependencies only (not the package itself), so the layer stays cached across
 # source changes, and EXACTLY the versions uv.lock pins, so the image runs what CI tested.

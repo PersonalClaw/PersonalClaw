@@ -24,10 +24,11 @@ on:
     workflows: ["CI"]
     types: [completed]
 
+# Read-only at the top, so a job added here later holds no write it was never audited for. The
+# one write is granted on the job that posts the comment (tools/ci/supply-chain.toml).
 permissions:
   contents: read
   actions: read           # download the artifact from the CI run
-  pull-requests: write    # post/update the remediation comment
 
 jobs:
   lint-help:
@@ -35,6 +36,11 @@ jobs:
     # download step below would find nothing anyway — this just avoids the pointless run.
     if: github.event.workflow_run.conclusion == 'failure'
     runs-on: ubuntu-24.04
+    # A job's `permissions:` replaces the workflow's, so the two reads are named again here.
+    permissions:
+      contents: read
+      actions: read           # download the artifact from the CI run
+      pull-requests: write    # post/update the remediation comment
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
