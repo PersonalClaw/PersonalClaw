@@ -28,7 +28,7 @@ harness/
   worktree_bench.py # worktree fan-out hydration baseline + measure-first gate
   named_home.py     # the one way a dev tool names its home and finds that home's gateway:
                     #   no home named, or the default one, is refused
-  cli.py         # python -m harness  validate | explain | run [--diff] | scan [--diff] | replay
+  cli.py         # python -m harness  validate | explain | run [--diff] | scan [--diff [--base REF]] | replay
   traces/        # recorded NDJSON event traces + baselines.json
   exemplars/     # per-slice runnable exemplars
 ```
@@ -164,6 +164,7 @@ Run on the repo venv, from the repo root:
 .venv/bin/python -m harness run T1.foo         # execute the task's required profiles
 .venv/bin/python -m harness run --diff         # diff-aware selection
 .venv/bin/python -m harness scan               # boundary scanner
+.venv/bin/python -m harness scan --diff --base <sha>  # only what changed since <sha>
 .venv/bin/python -m harness fanout-measure obs.json  # token-matched fan-out verdict
 ```
 

@@ -169,7 +169,7 @@ def test_the_case_records_a_baseline_output_hash_that_outlives_the_run_dir(home)
     run = store_mod.save(run)
     j = journal_mod.Journal(run.id)
     j.run_started("wf", inputs={"q": "x"}, spec_version=1)
-    ref, _ = j.store_output("root.fetch", {"answer": "42"})
+    ref, _ = j.store_output("root.fetch", {"answer": "sloe-lantern"})
     j.step_completed(
         "root.fetch",
         "fetch",
@@ -190,7 +190,7 @@ def test_the_case_records_a_baseline_output_hash_that_outlives_the_run_dir(home)
     # template + inputs would replay today's template, which is the variable an A/B holds still.
     assert outputs[0]["resolved_prompt_ref"] == "prompts/abc123"
     # The BODY is deliberately not inlined — the writer's spill boundary must not be undone here.
-    assert "42" not in json.dumps(outputs)
+    assert "sloe-lantern" not in json.dumps(outputs)
 
 
 def test_every_case_carries_at_least_one_turn_naming_its_workflow(home):

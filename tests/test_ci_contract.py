@@ -1176,6 +1176,51 @@ def _job_level_preference(root: Path, only_first: bool = False) -> None:
     _write(root, rel, yaml.safe_dump(workflow, sort_keys=False))
 
 
+# ── The pull request builds the wheel, and scans its diff against its own base ───────────────
+
+
+def wheel_and_scan_base_violations(tree: Tree) -> list[str]:
+    """``ci.yml``'s ``web`` job builds the wheel after the SPA build and runs the wheel contract
+    on it, and the ``harness`` job's scan names the pull request's base. The wheel must carry
+    the SPA, so a wheel built before ``npm run build`` would verify a dashboard-less build; a
+    scan with no base falls back to ``main`` and ``HEAD~1``, which can be a different change."""
+    bad: list[str] = []
+    workflow = dict(_workflows(tree)).get("ci.yml")
+    if workflow is None:
+        return ["ci.yml is missing"]
+    jobs = workflow.get("jobs") or {}
+    runs = [str(s.get("run", "")) for s in (jobs.get("web") or {}).get("steps") or []]
+
+    def first(word: str) -> int | None:
+        return next((i for i, run in enumerate(runs) if word in run), None)
+
+    spa, build, verify = first("npm run build"), first("uv build"), first("verify_wheel.py")
+    if spa is None:
+        bad.append("ci.yml:web builds no SPA")
+    if build is None or "--wheel" not in runs[build]:
+        bad.append("ci.yml:web builds no wheel (`uv build --wheel`)")
+    if verify is None or "--wheel" not in runs[verify]:
+        bad.append("ci.yml:web runs no wheel contract (`verify_wheel.py --wheel`)")
+    if None not in (spa, build, verify) and not (spa < build < verify):  # type: ignore[operator]
+        bad.append("ci.yml:web must build the SPA, then the wheel, then verify that wheel")
+    scans = [
+        s
+        for s in (jobs.get("harness") or {}).get("steps") or []
+        if "harness scan" in str(s.get("run", ""))
+    ]
+    if not scans:
+        bad.append("ci.yml:harness runs no `harness scan`")
+    for step in scans:
+        run = str(step.get("run", ""))
+        env = {str(k): str(v) for k, v in (step.get("env") or {}).items()}
+        named = [k for k, v in env.items() if "pull_request.base.sha" in v]
+        if not any(f'--base "${k}"' in run for k in named):
+            bad.append("ci.yml:harness scans without `--base` set to the pull request's base")
+        if "${{" in run:
+            bad.append("ci.yml:harness pastes an expression into its scan's `run:`")
+    return bad
+
+
 ROWS: tuple[Row, ...] = (
     SECURITY_MARKER,
     _toolchain_row(
@@ -1402,6 +1447,53 @@ ROWS: tuple[Row, ...] = (
                 ".github/workflows/full.yml",
                 "          . /etc/os-release\n",
                 '          echo "$ImageOS $ImageVersion"\n',
+            ),
+        ),
+    ),
+    _toolchain_row(
+        "wheel-and-scan-base",
+        wheel_and_scan_base_violations,
+        (
+            _plant(
+                "web without the wheel contract",
+                ".github/workflows/ci.yml",
+                "        run: uv run --no-project python scripts/verify_wheel.py"
+                ' --wheel "dist/*.whl"\n',
+                "        run: ls dist\n",
+            ),
+            _plant(
+                "a wheel built without --wheel (the sdist path)",
+                ".github/workflows/ci.yml",
+                "run: uv build --wheel --out-dir dist",
+                "run: uv build --out-dir dist",
+            ),
+            Control(
+                "the wheel built before the SPA",
+                _both(
+                    _replace(
+                        "ci.yml",
+                        "      - name: build (tsc + vite)\n        run: npm run build\n",
+                        "",
+                    ),
+                    _replace(
+                        "ci.yml",
+                        '--wheel "dist/*.whl"\n',
+                        '--wheel "dist/*.whl"\n      - name: the SPA, late\n'
+                        "        run: npm run build\n",
+                    ),
+                ),
+            ),
+            _plant(
+                "a scan with no base",
+                ".github/workflows/ci.yml",
+                'uv run python -m harness scan --diff --base "$BASE_SHA"',
+                "uv run python -m harness scan --diff",
+            ),
+            _plant(
+                "a base pasted into run: as an expression",
+                ".github/workflows/ci.yml",
+                '--base "$BASE_SHA"',
+                '--base "${{ github.event.pull_request.base.sha }}"',
             ),
         ),
     ),

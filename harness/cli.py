@@ -9,7 +9,8 @@ The agent-facing surface of the self-development harness:
 - ``run <task> | --diff`` — execute the union of required profiles. ``--diff`` forces
   profiles from the touched areas (the diff can add requirements, never remove them) and
   warns when a fix-shaped change touches no spec (the same-PR rule).
-- ``scan [--diff]`` — run the static boundary scanner over the whole tree or the diff.
+- ``scan [--diff [--base <ref>]]`` — run the static boundary scanner over the whole tree or
+  the diff (against ``<ref>`` when named, else the merge-base with ``origin/main``).
 - ``replay`` — gate recorded event-trace scenarios against checked-in baselines.
 - ``resume-audit <loop_id>`` — check a loop resumes from persisted state alone.
 - ``workflow-resume-audit <run_id>`` — check a workflow run resumes byte-equal from disk
@@ -37,6 +38,7 @@ from pathlib import Path
 
 from harness import scanner
 from harness.diff import (
+    BaseNotFound,
     commit_subjects_since,
     compute_diff,
     has_fix_shaped_commit,
@@ -331,10 +333,26 @@ def _tracked_files(root: Path) -> list[Path]:
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
-    """Run the static boundary scanner. Over the diff (``--diff``) or the whole tree."""
+    """Run the static boundary scanner. Over the diff (``--diff``) or the whole tree.
+
+    ``--base <ref>`` names what the diff is against. CI passes the commit the change lands on:
+    the default, the merge-base with ``origin/main``, is the pushed commit itself on a push to
+    ``main``, which scans nothing. A named base that does not resolve fails rather than
+    falling back to another one.
+    """
     root = _repo_root()
+    if args.base is not None and not args.diff:
+        print(f"{_FAIL} --base names the base of a diff, so it needs --diff", file=sys.stderr)
+        return 2
     if args.diff:
-        diff = compute_diff()
+        try:
+            if args.base is None:
+                diff = compute_diff(root)
+            else:
+                diff = compute_diff(root, base_ref=args.base, fallback=False)
+        except BaseNotFound as exc:
+            print(f"{_FAIL} {exc}", file=sys.stderr)
+            return 2
         if not diff.files:
             print(f"{_WARN}no changed files vs {diff.base[:12]}")
             return 0
@@ -566,6 +584,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_scan = sub.add_parser("scan", help="Static boundary scanner (whole tree or --diff).")
     p_scan.add_argument("--diff", action="store_true", help="Scan only files changed vs base.")
+    p_scan.add_argument(
+        "--base",
+        metavar="REF",
+        default=None,
+        help="With --diff: the base to diff against (default: the merge-base with origin/main). "
+        "A REF that does not resolve fails instead of falling back.",
+    )
     p_scan.set_defaults(func=cmd_scan)
 
     p_replay = sub.add_parser("replay", help="Gate replay scenarios vs checked-in baselines.")

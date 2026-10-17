@@ -13,8 +13,11 @@ import subprocess
 import textwrap
 from pathlib import Path
 
-from harness import scanner
+import pytest
+
+from harness import cli, scanner
 from harness.diff import (
+    BaseNotFound,
     _parse_added_lines,
     compute_diff,
     has_fix_shaped_commit,
@@ -292,3 +295,78 @@ def test_every_harness_subprocess_declares_a_decode_error_policy() -> None:
                 offenders.append(f"{path.relative_to(root)}:{line}")
     assert calls >= 3, f"rail found only {calls} text=True subprocess calls — it stopped matching"
     assert not offenders, "text=True with no errors= policy (see #2960):\n" + "\n".join(offenders)
+
+
+# ── A named base (`scan --diff --base <ref>`) ────────────────────────────────────
+
+
+def _commit(root: Path, files: dict[str, str], message: str) -> str:
+    for rel, text in files.items():
+        (root / rel).write_text(text, encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", message], cwd=root, check=True, capture_output=True)
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+        errors="replace",
+    ).stdout.strip()
+
+
+def _three_commits(root: Path) -> tuple[str, str]:
+    """``a.txt``, then ``b.txt``, then ``c.txt`` and an edit of ``a.txt``: (first, second)."""
+    _git_init(root)
+    first = _commit(root, {"a.txt": "a\n"}, "one")
+    second = _commit(root, {"b.txt": "b\n"}, "two")
+    _commit(root, {"c.txt": "c\n", "a.txt": "a\nmore\n"}, "three")
+    return first, second
+
+
+def test_a_named_base_diffs_exactly_what_changed_since_it(tmp_path: Path) -> None:
+    """On a push to ``main`` the base is the commit the push replaced, not the merge-base with
+    ``origin/main``, which there is the pushed commit itself."""
+    first, second = _three_commits(tmp_path)
+
+    since_second = compute_diff(tmp_path, base_ref=second, fallback=False)
+    since_first = compute_diff(tmp_path, base_ref=first, fallback=False)
+
+    assert since_second.base == second
+    assert sorted(since_second.files) == ["a.txt", "c.txt"]
+    assert sorted(since_first.files) == ["a.txt", "b.txt", "c.txt"]
+    assert since_second.changed_lines == {"a.txt": {2}, "c.txt": {1}}
+
+
+def test_a_named_base_that_does_not_resolve_is_refused_not_replaced(tmp_path: Path) -> None:
+    """The default falls back to ``main``, which on ``main`` is HEAD: an empty diff that passes.
+    A named base is never answered by another one."""
+    _three_commits(tmp_path)
+    missing = "0" * 40
+
+    with pytest.raises(BaseNotFound):
+        compute_diff(tmp_path, base_ref=missing, fallback=False)
+    # The local default keeps its fallback, and on `main` that is HEAD: nothing to scan.
+    assert compute_diff(tmp_path, base_ref=missing).files == []
+
+
+def test_scan_takes_its_base_and_fails_on_one_it_cannot_find(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    first, _second = _three_commits(tmp_path)
+    monkeypatch.setattr(cli, "_repo_root", lambda: tmp_path)
+    scanned: list[list[str]] = []
+
+    def fake_scan(files, root, changed_lines=None):
+        scanned.append(sorted(str(f.relative_to(root)) for f in files))
+        return []
+
+    monkeypatch.setattr(cli.scanner, "scan", fake_scan)
+
+    assert cli.main(["scan", "--diff", "--base", first]) == 0
+    assert scanned == [["a.txt", "b.txt", "c.txt"]]
+
+    assert cli.main(["scan", "--diff", "--base", "0" * 40]) == 2
+    assert "does not name a commit" in capsys.readouterr().err
+    assert cli.main(["scan", "--base", first]) == 2, "--base without --diff names nothing"
+    assert len(scanned) == 1, "a refused base must not fall through to a scan"

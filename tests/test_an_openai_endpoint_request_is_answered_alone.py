@@ -73,9 +73,12 @@ RULES = "Work as the research assistant: cite every source you read."
 TAG = "release-notes"
 
 #: What one request says, and what only that request says: the next request must not be handed it.
-FIRST = "[q1] My locker code is 4417. Summarise the incident report."
+#: Words, not a number: the checks search every wire record a CLI sent or received, and those carry
+#: its pid, ids and paths. A four-digit secret matched pid 14417 on a CI runner and failed a test
+#: whose CLI had been handed nothing of the first request.
+FIRST = "[q1] My locker code is mauve-otter. Summarise the incident report."
 SECOND = "[q2] What did I tell you before this?"
-SECRET = "4417"
+SECRET = "mauve-otter"
 
 
 def _marker(text: str) -> str:
