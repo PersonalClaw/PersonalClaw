@@ -1055,8 +1055,12 @@ class _FakeSession:
     async def start(self) -> None:
         return None
 
-    async def navigate(self, url: str) -> None:
+    async def navigate(self, url: str):
+        from personalclaw.browse.cdp import NavigationOutcome
+
         self.navigated.append(url)
+        # The outcome the real session returns for a navigation that loaded the page.
+        return NavigationOutcome(ok=True, allowed=True, url=url)
 
 
 class _Clock:

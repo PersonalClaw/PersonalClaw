@@ -84,7 +84,13 @@ def make_content_tick_runner(
             session, page, closer = await open_session(cdp_url)
             try:
                 await session.start()
-                await session.navigate(plan.start_url)
+                nav = await session.navigate(plan.start_url)
+                if not getattr(nav, "ok", False):
+                    # Refused, or loaded no document: the tab still holds whatever it held,
+                    # which this tick never judged, so nothing of it is read (as the browse
+                    # loop parks on a refused first navigation).
+                    why = getattr(nav, "reason", "") or getattr(nav, "error", "") or "refused"
+                    return TickOutcome(note=f"browse tick navigation refused: {why}"[:200])
                 if settle is not None:
                     await settle(page)
                 html = await page.html()
@@ -131,10 +137,12 @@ def make_gateway_opener(
         from personalclaw.browse.transport import WebSocketCdpTransport
 
         transport = await WebSocketCdpTransport.connect(cdp_url)
-        driver = CdpPageDriver(
-            transport, screenshot_dir=Path(screenshot_dir) if screenshot_dir else None
-        )
         session = GatedCdpSession(transport, caller_identity="browse:web-source", source=source)
+        # The page is read through the session, so a quarantined one reads nothing.
+        driver = CdpPageDriver(
+            session.page_transport,
+            screenshot_dir=Path(screenshot_dir) if screenshot_dir else None,
+        )
         return session, driver, transport.close
 
     return _open

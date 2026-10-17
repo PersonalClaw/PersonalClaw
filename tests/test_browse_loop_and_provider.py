@@ -495,6 +495,42 @@ class TestTheLoop:
         )
         assert any(f"already visited {CHANGELOG_URL}" in p for p in decide.page_prompts)
 
+    @pytest.mark.security
+    def test_a_navigate_step_that_loads_no_document_is_refused_not_visited(self):
+        """A NAVIGATE the gate allowed but the browser answered with errorText left the tab on
+        the page it held: the step is a refusal, the URL is not recorded as visited, and the
+        model is told."""
+
+        class _NoDocument(_FakeSession):
+            async def navigate(self, url: str):
+                if url != CHANGELOG_URL:
+                    return await super().navigate(url)
+                self.navigations.append(url)
+                return SimpleNamespace(
+                    ok=False, allowed=True, url=url, reason="", error="net::ERR_ABORTED"
+                )
+
+        page = _FakePage({INDEX_URL: INDEX_HTML, CHANGELOG_URL: CHANGELOG_HTML}, url=INDEX_URL)
+        session = _NoDocument(page)
+        decide = _Decide(f"NAVIGATE {CHANGELOG_URL}", "DONE")
+        result = _run(
+            run_browse_loop(
+                goal="read the changelog",
+                start_url=INDEX_URL,
+                session=session,
+                page=page,
+                decide=decide,
+            )
+        )
+
+        assert session.navigations == [INDEX_URL, CHANGELOG_URL]
+        assert result.blocked_urls == (CHANGELOG_URL,)
+        assert CHANGELOG_URL not in result.visited_urls
+        assert any(
+            f"navigation to {CHANGELOG_URL} was refused: net::ERR_ABORTED" in p
+            for p in decide.page_prompts
+        )
+
     def test_a_denied_first_navigation_is_a_failure_not_a_park(self):
         """A run that never loaded a page produced nothing to keep, so it fails rather than
         parking — parking a run with no notes asks a human to look at an empty result."""

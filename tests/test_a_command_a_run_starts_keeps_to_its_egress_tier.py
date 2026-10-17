@@ -681,7 +681,11 @@ class _PageSocket:
     async def send(self, payload: str) -> None:
         message = json.loads(payload)
         self.sent.append(message["method"])
-        await self._inbox.put(json.dumps({"id": message["id"], "result": {}}))
+        result: dict = {}
+        if message["method"] == "Page.getFrameTree":
+            # A tab the browser has just opened: one blank top frame.
+            result = {"frameTree": {"frame": {"id": "TOP", "url": "about:blank"}}}
+        await self._inbox.put(json.dumps({"id": message["id"], "result": result}))
 
     def event(self, method: str, params: dict) -> None:
         self._inbox.put_nowait(json.dumps({"method": method, "params": params}))
