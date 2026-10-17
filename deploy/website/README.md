@@ -58,9 +58,11 @@ and an unenforced instruction drifts the first time one side is edited.
    makes the user's `shasum -a 256 -c` resolve, so it must keep naming that file; and a mirror
    you forget to re-apply now reads to a verifying user as a possible tamper rather than as
    nothing at all.
-3. `full.yml`'s `install-smoke` job compares the pin against the bytes personalclaw.dev
-   really serves and reds on any difference — so a forgotten step 1 surfaces on the next push
-   to `main` or nightly run, rather than three weeks later in a bug report.
+3. The website checks the bytes personalclaw.dev really serves against the installer of the
+   core release it pins, in its scheduled release-follow check, and reports a difference in
+   its tracking issue — so a forgotten step 1 surfaces within a day, rather than three weeks
+   later in a bug report. Core does not compare them: core `main` runs ahead of every
+   release, so the comparison here was red between each installer edit and the next deploy.
 
 ### What CI actually covers (no longer an aspiration)
 
@@ -68,7 +70,7 @@ and an unenforced instruction drifts the first time one side is edited.
 | --- | --- | --- |
 | `ci.yml` `lint` | `shellcheck -s sh` · `sh -n` · `dash -n` · the offline module with `PERSONALCLAW_REQUIRE_INSTALL_PROOF=1` | every PR |
 | `ci.yml` `test` | same module, leverless (a laptop without dash skips rather than reds) | every PR |
-| `full.yml` `install-smoke` | current-checkout install + non-interactive `personalclaw setup` with system timezone paths removed; staged **and** served installer in a bare `ubuntu:latest` container; served-vs-pinned drift check | push to `main` + nightly |
+| `full.yml` `install-smoke` | current-checkout install + non-interactive `personalclaw setup` with system timezone paths removed; staged **and** served installer in a bare Ubuntu 26.04 container, pinned by digest | push to `main` + nightly |
 
 A fetch failure in `install-smoke` reports **`unproven` and reds**. It never goes green: an
 unanswered question is not a passing answer, and this repo has mistaken the two before.

@@ -54,6 +54,11 @@ concurrency:
 
 permissions: {}
 
+env:
+  # Every uv step uses a uv-managed CPython, never the runner image's own: an installed Python
+  # that is exactly the version asked for wins over a download by default (see full.yml's env).
+  UV_PYTHON_PREFERENCE: only-managed
+
 jobs:
   flake:
     runs-on: ubuntu-24.04

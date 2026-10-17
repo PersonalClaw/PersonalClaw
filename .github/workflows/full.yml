@@ -64,6 +64,13 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Every uv step uses a uv-managed CPython, never the runner image's own. When an installed
+  # Python is exactly the version asked for, uv's default preference picks it over a download:
+  # the macos-26 image's python.org 3.13.16 at /usr/local/bin was picked that way, sqlite-vec
+  # does not load in it, and every vector-index test failed on those legs alone.
+  UV_PYTHON_PREFERENCE: only-managed
+
 jobs:
   matrix-shard:
     # Python {3.12, 3.13} × OS {ubuntu, macos} on x86_64, plus two arm64 runners.
@@ -471,31 +478,39 @@ jobs:
     # `personalclaw.dev/install` returned nothing. The ninth absent-vs-declared-false in this
     # repo, and the cheapest kind to write: a claim of coverage costs one comment line.
     #
-    # WHY BOTH THE SERVED BYTES AND THE STAGED FILE, as separate legs:
-    #   · SERVED is what users actually get. It is the only leg that can catch a bad wheel on
-    #     PyPI, `uv tool install` regressing, or the site serving the wrong file — none of which
-    #     live in this repo, and all of which break the front door.
+    # THREE LEGS, each its own step so the red NAMES the owner:
+    #   · CURRENT CHECKOUT installs the wheel this tree builds and runs the setup a fresh user is
+    #     told to run, before the release reaches PyPI. Red = this tree's package or setup broke.
     #   · STAGED is the file we edit. Served-only coverage would let a broken edit sit green
-    #     until someone hand-applied it to the website repo, which is the same blind spot in a
-    #     new costume — test-what-we-lint is exactly how the one-line drift below survived
-    #     three weeks.
-    #   Split so the red NAMES the owner: staged red = we broke the installer; served red = the
-    #   site mirror or PyPI regressed; drift red = the mirror was never re-applied.
+    #     until the website published it, which is the same blind spot in a new costume —
+    #     test-what-we-lint is how a one-line installer error once survived three weeks.
+    #     Red = we broke the installer.
+    #   · SERVED is what users actually get. It is the only leg that can catch a bad wheel on
+    #     PyPI, `uv tool install` regressing, or the site serving a file that does not install —
+    #     none of which live in this repo, and all of which break the front door.
+    #     Red = the site or PyPI regressed.
     #
-    # WHY NOT THE PR GATE. Both legs reach personalclaw.dev, astral.sh and PyPI. A ≤10-min merge
+    # WHETHER THE SERVED BYTES ARE THE RIGHT BYTES is not asked here. The website publishes the
+    # installer from the core release it pins, so its own scheduled release-follow check is
+    # where the served file is compared with that release's installer. Core main runs ahead of
+    # every release: the same comparison here was red between each installer edit and the next
+    # website deploy, with nothing wrong on either side.
+    #
+    # WHY NOT THE PR GATE. The legs reach personalclaw.dev, astral.sh and PyPI. A ≤10-min merge
     # gate that fails when someone else's CDN hiccups trains people to re-run red checks, which
     # is worse than no check. The half that CAN gate every PR is offline and does:
     # tests/test_website_installer.py pins sha256(install.sh) to install.sh.sha256, so editing
     # the installer without updating the pin reds in `lint`/`test` at lint speed. Network here,
     # forcing function there.
     #
-    # EVERY LEG IS `!cancelled()`, not fail-fast: "the installer is broken" and "the mirror
-    # drifted" are different pages for different people, and one must not mask the other.
+    # THE PUBLIC LEGS ARE `!cancelled()`, not fail-fast: "the staged installer is broken" and
+    # "the served one-liner is broken" are different pages for different people, and one must
+    # not mask the other.
     #
-    # KNOWN RED ON LANDING: the served bytes are three weeks stale (site `public/install` still
-    # says setup configures "your name + first model provider"; core corrected that in 72e43db3b
-    # / #1642 because setup collects neither). The drift leg is SUPPOSED to be red until the
-    # website-repo mirror is re-applied. That red is the rail working, not the rail failing.
+    # A FETCH FAILURE IS `unproven`, NOT A PASS. Skipping, warning, or `continue-on-error` on the
+    # served leg would reproduce the defect the whole job answers: this repo has read absence as
+    # a negative eight times, most recently a tmux-gated test class that never ran once and
+    # whose skip was counted as a pass. An inconclusive run must cost a red.
     runs-on: ubuntu-24.04
     # A bare image, deliberately: the one-liner's whole promise is that it works on a machine
     # with nothing on it. A GitHub runner has python, uv-adjacent tooling and a warm PATH, so
@@ -517,11 +532,11 @@ jobs:
       # A bare ubuntu image ships neither curl nor CA roots — installing them IS part of asserting the
       # bare-machine claim. A failure here is an infrastructure red before any installer ran, and
       # is legible as such because it is its own step.
-      - name: bare-container prerequisites (curl · CA roots · diff)
+      - name: bare-container prerequisites (curl · CA roots)
         run: |
           set -eu
           apt-get update -qq
-          apt-get install -y --no-install-recommends ca-certificates curl diffutils
+          apt-get install -y --no-install-recommends ca-certificates curl
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
@@ -598,61 +613,3 @@ jobs:
             exit 1
           fi
           personalclaw --version
-      # ── Leg 3: the drift check this job was really written for ──────────────────────────────
-      # MEASURED 2026-09-06 — the defect in full: staged d7a852c1… said setup configures
-      # "your workspace directory + timezone"; the site mirror and the served bytes both said
-      # "your name + first model provider" (8e06a1fd…, identical to each other). Core is
-      # authoritative: site public/install has exactly ONE commit (e21bdee, 2026-07-21, the
-      # original hand-apply) while core corrected the line in 72e43db3b (#1642), whose message
-      # says setup "collects neither, and cannot". So personalclaw.dev spent three weeks telling
-      # newcomers to run a command that would do neither advertised thing.
-      #
-      # The sync path is a HUMAN COPY (deploy/website/README.md §1) — not broken code, no code at
-      # all. An unenforced instruction drifts the moment one side is edited, so this leg is the
-      # enforcement, and it is LAST so its red cannot mask a functional break above it.
-      #
-      # A FETCH FAILURE IS `unproven`, NOT A PASS. Skipping, warning, or `continue-on-error` here
-      # would reproduce the defect the whole job answers: this repo has read absence as a
-      # negative eight times, most recently a tmux-gated test class that never ran once and whose
-      # skip was counted as a pass. An inconclusive run must cost a red.
-      - name: drift — served bytes must equal the staged file
-        if: ${{ !cancelled() }}
-        run: |
-          set -eu
-          served="$RUNNER_TEMP/served-install.sh"
-          if ! curl -fsSL --retry 3 --retry-delay 5 --max-time 60 \
-                 -o "$served" https://personalclaw.dev/install; then
-            echo "::error title=install drift unproven::unproven — could not fetch" \
-                 "https://personalclaw.dev/install, so whether the mirror has drifted is" \
-                 "UNKNOWN. Reported red deliberately: an unanswered question must not arrive" \
-                 "as a green check."
-            exit 1
-          fi
-          if [ ! -s "$served" ]; then
-            echo "::error title=install drift unproven::unproven — /install returned 0 bytes." \
-                 "Nothing was compared."
-            exit 1
-          fi
-          served_sum=$(sha256sum "$served" | cut -d' ' -f1)
-          staged_sum=$(sha256sum deploy/website/install.sh | cut -d' ' -f1)
-          pinned_sum=$(cut -d' ' -f1 < deploy/website/install.sh.sha256)
-          echo "served=$served_sum"
-          echo "staged=$staged_sum"
-          echo "pinned=$pinned_sum"
-          # staged-vs-pinned is already gated offline in tests/test_website_installer.py. Repeated
-          # here so this leg's verdict does not depend on another job having run.
-          if [ "$staged_sum" != "$pinned_sum" ]; then
-            echo "::error title=install pin stale::deploy/website/install.sh.sha256 does not" \
-                 "match install.sh. Update the pin in the same change as the script."
-            exit 1
-          fi
-          if [ "$served_sum" != "$pinned_sum" ]; then
-            echo "::error title=install one-liner drift::the bytes served at" \
-                 "https://personalclaw.dev/install are NOT the bytes staged here. Users are" \
-                 "running something this repo does not lint or test. Re-apply" \
-                 "deploy/website/install.sh to the website repo's public/install (see" \
-                 "deploy/website/README.md §1) and re-run."
-            diff -u deploy/website/install.sh "$served" || true
-            exit 1
-          fi
-          echo "served bytes are identical to the staged installer ($served_sum)"

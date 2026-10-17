@@ -99,7 +99,7 @@ exactly that line.
 |---|---|---|
 | `uv.lock` | the `personalclaw` package's own `version` | every `uv sync --locked` and `uv export --locked`: all of CI, the gateway image, both desktop jobs and the wheel's SBOM (step 2) |
 | `deploy/website/install.sh` | `PC_MIN_VERSION`, the installer's floor, becomes the **previous** release | `tests/test_website_installer.py` |
-| `deploy/website/install.sh.sha256` | the installer's digest: `cd deploy/website && shasum -a 256 install.sh > install.sh.sha256` | `tests/test_website_installer.py`, then `full.yml`'s `install-smoke` drift leg until the website's mirror follows ([the cross-repo obligation](#the-cross-repo-obligation)) |
+| `deploy/website/install.sh.sha256` | the installer's digest: `cd deploy/website && shasum -a 256 install.sh > install.sh.sha256` | `tests/test_website_installer.py`, then the website's served-installer check once the website pins the release ([the cross-repo obligation](#the-cross-repo-obligation)) |
 
 `src/personalclaw/sdk/signatures.json` does not move: it records
 `personalclaw.sdk.channel.__version__` as a string, not as a release's value. If
@@ -401,9 +401,9 @@ A published core release is an **obligation on the other two repos**, and the or
 - **The installer mirror, right after the bump PR merges (no tag needed).** The website
   serves the installer from its own `public/install`, which must be byte for byte
   `deploy/website/install.sh` (`cmp`). A bump moves `PC_MIN_VERSION`, so it needs a
-  website PR that copies the file. Until that deploys, `full.yml`'s `install-smoke`
-  drift leg ("served bytes must equal the staged file") is red, and so is the
-  getting-started verify recipe for users.
+  website PR that copies the file. Until that deploys, the website's scheduled
+  release-follow check reports the served installer as drifted in its tracking issue,
+  and the getting-started verify recipe fails for users.
 - **`PersonalClawApps`** — tag it at the matching commit. The website's
   `released` channel requires *both* a core tag and an apps tag to resolve, and
   will fail closed without them. The apps tag **triggers nothing**: apps CI runs
