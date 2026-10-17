@@ -9,7 +9,7 @@
 #   * a runner is clean BY CONSTRUCTION, not by someone remembering to reset it;
 #   * a bare `ubuntu:24.04` container step is genuinely Node-absent, which V1 requires and
 #     a developer's own machine almost never is;
-#   * `macos-latest` exists, so V4's desktop arm runs on a real Mac;
+#   * a macOS runner exists (`macos-26`), so V4's desktop arm runs on a real Mac;
 #   * the run log IS the evidence — a pasted terminal transcript is weaker;
 #   * it costs nothing on a public repo, and there is no instance anyone can forget to
 #     terminate.
@@ -107,9 +107,16 @@ jobs:
     # runtime rather than near it (#3326 was the cost of the other mistake). Measured 30s
     # in run 35814995463.
     timeout-minutes: 30  # a pinned call may retry its install for ten minutes first
-    container: python:3.12-slim
+    # python:3.12.15-slim, the linux/amd64 manifest (this runner's platform) of index
+    # sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1.
+    container: python:3.12.15-slim@sha256:2b4f19dae3a777dfc3b76730bda1e82e1f66ab2a2686fa93ca78edbfb4f04ffe
     steps:
-      - uses: actions/checkout@v7
+      - name: Runner identity
+        # The container's own system, beside the runner image the job's set-up log names.
+        run: |
+          . /etc/os-release
+          echo "container ${PRETTY_NAME} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Prove the machine is Node-absent (V1's precondition, asserted not assumed)
         run: |
@@ -290,7 +297,10 @@ jobs:
     # shapes by an order of magnitude.
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: The two commands, verbatim from README
         run: |
@@ -438,13 +448,16 @@ jobs:
           - kind: container
             os: ubuntu-24.04
           - kind: desktop
-            os: macos-latest
+            os: macos-26
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.12.15"
 
       - name: Install
         env:
@@ -512,6 +525,9 @@ jobs:
     # Measured 3s; it writes a step summary and nothing else.
     timeout-minutes: 10
     steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
       - name: Summarise the walkthrough results
         run: |
           {

@@ -165,9 +165,9 @@ SBOM. A dependency change needs the same.
 uv lock
 ```
 
-Re-lock with the uv the gateway image pins (`uvx --from 'uv==0.12.19' uv lock`, the
-`uv` version in `deploy/docker/Dockerfile.backend`) to keep the diff to the lines that
-moved: a newer uv also rewrites the lockfile's `revision`.
+Re-lock with the uv CI and the gateway image pin (`uvx --from 'uv==0.13.1' uv lock`, the
+`uv` version in `deploy/docker/Dockerfile.backend` and every workflow's setup-uv step) to keep
+the diff to the lines that moved: a newer uv may also rewrite the lockfile's `revision`.
 
 ### 3. Run the full local gate
 

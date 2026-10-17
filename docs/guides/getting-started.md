@@ -309,8 +309,9 @@ in **Settings → Updates** as well as in `config.json`.
 **The installer is the one that made your environment.** A wheel or a git clone is installed
 into with the tool that set its environment up: uv for `uv tool install`, `uv sync` or
 `uv pip install` (a git clone's update runs `uv sync --locked --inexact`, so it follows the
-lockfile and never removes a package you added), and pip for pip, pipx or a `python -m venv`
-clone (`pip install -e .`). When that tool is not on the PATH PersonalClaw runs with, the
+lockfile and never removes a package you added; a clone's uv must be 0.13.1 or newer, and
+`uv self update` gets one), and pip for pip, pipx or a `python -m venv` clone
+(`pip install -e .`). When that tool is not on the PATH PersonalClaw runs with, the
 update changes nothing and says what to run instead, such as `personalclaw update` from a
 terminal where `uv` works. A service runs with the PATH it was installed with, so a uv
 installed later may be one only your terminal can see.

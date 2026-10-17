@@ -93,24 +93,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.12", "3.13"]
-        os: [ubuntu-24.04, macos-latest]
+        python: ["3.12.15", "3.13.16"]
+        os: [ubuntu-24.04, macos-26]
         shard: [1, 2, 3, 4, 5, 6]
         include:
           # linux arm64 + macOS Apple-silicon. macos-14 is the arm64 image
-          # (macos-latest is arm64 too, but pinning keeps the arch explicit here).
-          - { python: "3.13", os: ubuntu-24.04-arm, shard: 1 }
-          - { python: "3.13", os: ubuntu-24.04-arm, shard: 2 }
-          - { python: "3.13", os: ubuntu-24.04-arm, shard: 3 }
-          - { python: "3.13", os: ubuntu-24.04-arm, shard: 4 }
-          - { python: "3.13", os: ubuntu-24.04-arm, shard: 5 }
-          - { python: "3.13", os: ubuntu-24.04-arm, shard: 6 }
-          - { python: "3.13", os: macos-14, shard: 1 }
-          - { python: "3.13", os: macos-14, shard: 2 }
-          - { python: "3.13", os: macos-14, shard: 3 }
-          - { python: "3.13", os: macos-14, shard: 4 }
-          - { python: "3.13", os: macos-14, shard: 5 }
-          - { python: "3.13", os: macos-14, shard: 6 }
+          # (macos-26 is arm64 too, but naming macos-14 keeps the older image tested here).
+          - { python: "3.13.16", os: ubuntu-24.04-arm, shard: 1 }
+          - { python: "3.13.16", os: ubuntu-24.04-arm, shard: 2 }
+          - { python: "3.13.16", os: ubuntu-24.04-arm, shard: 3 }
+          - { python: "3.13.16", os: ubuntu-24.04-arm, shard: 4 }
+          - { python: "3.13.16", os: ubuntu-24.04-arm, shard: 5 }
+          - { python: "3.13.16", os: ubuntu-24.04-arm, shard: 6 }
+          - { python: "3.13.16", os: macos-14, shard: 1 }
+          - { python: "3.13.16", os: macos-14, shard: 2 }
+          - { python: "3.13.16", os: macos-14, shard: 3 }
+          - { python: "3.13.16", os: macos-14, shard: 4 }
+          - { python: "3.13.16", os: macos-14, shard: 5 }
+          - { python: "3.13.16", os: macos-14, shard: 6 }
     runs-on: ${{ matrix.os }}
     # ── Every job here carries a timeout (#3318) ─────────────────────────────────────────────
     # `cancel-in-progress: false` above is deliberate (#2946), so a hung job does not just waste
@@ -140,15 +140,18 @@ jobs:
       # developer's machine runs them only when it sets this too.
       PERSONALCLAW_TEST_CONTAINER_RUNTIME: "1"
     steps:
-      - uses: actions/checkout@v7
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
+          version: "0.13.1"
+          python-version: ${{ matrix.python }}
           enable-cache: true
-      - name: Set up Python ${{ matrix.python }}
-        run: uv python install ${{ matrix.python }}
       - name: Install (locked)
-        run: uv sync --locked --extra dev --python ${{ matrix.python }}
+        run: uv sync --locked --extra dev
       # Same reason as ci.yml's `test` job: the real-daemon tmux leg is skipif-gated on a
       # tmux binary and no stock runner image ships one, so it had been skipping on all six
       # cells here. Installed per-OS rather than apt-only because this matrix spans macOS too;
@@ -194,7 +197,7 @@ jobs:
       # every leg is its own runner.
       - name: Upload JUnit results (py${{ matrix.python }} · ${{ matrix.os }} · shard ${{ matrix.shard }})
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: junit-matrix-${{ matrix.python }}-${{ matrix.os }}-shard${{ matrix.shard }}
           path: reports/junit-matrix.xml
@@ -218,6 +221,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
       - name: every matrix shard passed
         run: |
           result='${{ needs.matrix-shard.result }}'
@@ -243,25 +249,28 @@ jobs:
     timeout-minutes: 20
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v7
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
+          version: "0.13.1"
+          python-version: "3.12.15"
           enable-cache: true
-      - name: Set up Python
-        run: uv python install 3.12
       - name: pip-audit
         # Install into a uv-managed venv, not `--system`: the runner's /usr is
         # PEP-668 externally-managed and uv refuses `--system` there (the whole step
         # then errored out under `bash -e` before pip-audit ever ran, silently
         # disabling the scan). Report-only, so a finding never gates (|| true).
         run: |
-          uv venv --python 3.12 .venv-audit
+          uv venv .venv-audit
           uv pip install --python .venv-audit/bin/python -e . pip-audit
           .venv-audit/bin/python -m pip_audit || true
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24"
+          node-version-file: .nvmrc
           cache: npm
       - name: npm audit (root workspace)
         run: npm ci && npm audit || true
@@ -278,13 +287,16 @@ jobs:
     env:
       PERSONALCLAW_SKIP_APP_BACKENDS: "1"
     steps:
-      - uses: actions/checkout@v7
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
+          version: "0.13.1"
+          python-version: "3.12.15"
           enable-cache: true
-      - name: Set up Python
-        run: uv python install 3.12
       - name: Install (locked)
         run: uv sync --locked --extra dev
       - name: pytest (adversarial scanner corpus)
@@ -297,7 +309,7 @@ jobs:
       # Same argument as ci.yml's `test-shard` upload step.
       - name: Upload JUnit results (security corpus)
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: junit-security-corpus
           path: reports/junit-security-corpus.xml
@@ -345,13 +357,16 @@ jobs:
       # all six land side by side in `coverage`, which combines them.
       COVERAGE_FILE: .coverage.shard${{ matrix.shard }}
     steps:
-      - uses: actions/checkout@v7
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
+          version: "0.13.1"
+          python-version: "3.12.15"
           enable-cache: true
-      - name: Set up Python
-        run: uv python install 3.12
       - name: Install (locked)
         run: uv sync --locked --extra dev
       # The suite's own 120 s a test, as on the plain legs. Not raised here: the Compose stack's
@@ -366,7 +381,7 @@ jobs:
       # `test-shard` upload step, and named per shard for matrix-shard's reason.
       - name: Upload JUnit results (coverage shard ${{ matrix.shard }})
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: junit-coverage-shard${{ matrix.shard }}
           path: reports/junit-coverage-shard${{ matrix.shard }}.xml
@@ -374,7 +389,7 @@ jobs:
           retention-days: 7
       # A dotfile, so it is uploaded only when asked for by name.
       - name: Upload coverage data (shard ${{ matrix.shard }})
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-data-shard${{ matrix.shard }}
           path: .coverage.shard${{ matrix.shard }}
@@ -392,6 +407,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
       - name: every coverage shard passed
         run: |
           result='${{ needs.coverage-shard.result }}'
@@ -408,17 +426,17 @@ jobs:
             exit 1
           fi
           echo "all coverage shards passed"
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
+          version: "0.13.1"
+          python-version: "3.12.15"
           enable-cache: true
-      - name: Set up Python
-        run: uv python install 3.12
       - name: Install (locked)
         run: uv sync --locked --extra dev
       - name: Download the coverage data of every shard
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: coverage-data-shard*
           path: coverage-data/
@@ -437,7 +455,7 @@ jobs:
           uv run coverage xml -o coverage.xml
           echo "coverage of the whole suite: $(uv run coverage report --format=total)%"
       - name: Upload coverage artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage
           path: coverage.xml
@@ -482,12 +500,21 @@ jobs:
     # A bare image, deliberately: the one-liner's whole promise is that it works on a machine
     # with nothing on it. A GitHub runner has python, uv-adjacent tooling and a warm PATH, so
     # running there would prove something easier than what we ship.
-    container: ubuntu:latest
+    # The bare-current-Ubuntu leg: ubuntu:26.04, which `ubuntu:latest` named when this was
+    # pinned, as its linux/amd64 manifest (this runner's platform) of index
+    # sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7. #4585's
+    # scheduled refresh keeps it on the current Ubuntu release, as a reviewed change.
+    container: ubuntu:26.04@sha256:88a381d5b5eeb2b35d3ad70925a362c37ce569daf43ede89ff818ec20e4d3794
     # Two `uv tool install`s plus a uv bootstrap. 20 covers a cold PyPI; it must not sit on a
     # runner for the default 360 when a host is black-holing packets.
     timeout-minutes: 20
     steps:
-      # ubuntu:latest ships neither curl nor CA roots — installing them IS part of asserting the
+      - name: Runner identity
+        # The container's own system, beside the runner image the job's set-up log names.
+        run: |
+          . /etc/os-release
+          echo "container ${PRETTY_NAME} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      # A bare ubuntu image ships neither curl nor CA roots — installing them IS part of asserting the
       # bare-machine claim. A failure here is an infrastructure red before any installer ran, and
       # is legible as such because it is its own step.
       - name: bare-container prerequisites (curl · CA roots · diff)
@@ -495,8 +522,11 @@ jobs:
           set -eu
           apt-get update -qq
           apt-get install -y --no-install-recommends ca-certificates curl diffutils
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.13.1"
+          python-version: "3.13.16"
       # The two public-installer legs below necessarily install the latest published release.
       # This source-tree leg closes the pre-publication gap: install the wheel this checkout
       # builds, remove every system timezone search path, and run the setup command a fresh user

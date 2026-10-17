@@ -213,6 +213,13 @@ If `python3 --version` is not 3.12.x or 3.13.x, create the venv with an explicit
 version the one-line installer installs on). An update installs with the tool that made the
 environment: `uv sync --locked --inexact` in one uv made, `pip install -e .` in one pip made.
 
+**The versions to develop on are the ones CI runs.** `.python-version` names the exact Python
+(the 3.13 patch; CI's 3.12 legs run the patch its workflows name), `.nvmrc` the exact Node, and
+`package.json`'s `packageManager` the npm that Node ships. `uv` reads `.python-version` itself,
+and `nvm use` or `fnm use` reads `.nvmrc`. uv must be 0.13.1 or newer (`[tool.uv]
+required-version` in `pyproject.toml`), and CI installs exactly 0.13.1. `tests/test_ci_contract.py`
+holds the workflows and the image to these files.
+
 **git 2.12 or newer.** PersonalClaw's own git refuses an older one
 (`net/git.py::MIN_GIT_VERSION`), which ignores the settings that stop a repository's own
 configuration from running a program, so the time-travel, worktree and updater tests need it

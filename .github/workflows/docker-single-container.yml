@@ -88,7 +88,10 @@ jobs:
     # than tightly — #3326 was the cost of setting a bound BELOW a job's own runtime.
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 

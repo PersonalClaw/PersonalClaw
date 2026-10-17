@@ -240,8 +240,8 @@ something away and the row above cannot say what:
 These are exercised on a genuinely clean machine rather than a dev box, and no single harness
 covers them all, so here is which one covers what: `scripts/fresh_install_validate.sh` drives
 **pip, Homebrew and Nix** in a throwaway container; the `install-smoke` job in
-`.github/workflows/full.yml` drives the **bootstrap one-liner** on a bare `ubuntu:latest` with
-neither curl nor CA roots preinstalled; `.github/workflows/docker-single-container.yml` builds
+`.github/workflows/full.yml` drives the **bootstrap one-liner** on a bare current Ubuntu
+(`ubuntu:26.04`) with neither curl nor CA roots preinstalled; `.github/workflows/docker-single-container.yml` builds
 the image and drives the **Docker** one-liner all the way to a *rendered dashboard*, not just a
 `200` from `/api/healthz`; `.github/workflows/nix.yml` builds the **Nix** flake, boots its
 gateway and reads its dashboard on every change to the flake, `pyproject.toml` or `uv.lock`, and

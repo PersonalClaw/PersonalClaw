@@ -21,6 +21,12 @@ RELEASE_WORKFLOW = WORKFLOWS / "release.yml"
 FULL_WORKFLOW = WORKFLOWS / "full.yml"
 
 
+def _action(step: object) -> str:
+    """The action a step uses, without its ref: the ref is a commit SHA that moves with every
+    release, and tests/test_ci_contract.py holds it to one."""
+    return str(step.get("uses", "") if isinstance(step, dict) else "").split("@", 1)[0]
+
+
 def _make_recipe(target: str) -> list[str]:
     recipe: list[str] = []
     in_target = False
@@ -79,7 +85,7 @@ def test_image_build_publishes_sbom_and_provenance_attestations() -> None:
     assert isinstance(images, dict)
 
     build = _step(images, name="Build and push image with supply-chain attestations")
-    assert build.get("uses") == "docker/build-push-action@v7"
+    assert _action(build) == "docker/build-push-action"
     inputs = build.get("with")
     assert isinstance(inputs, dict)
     assert inputs.get("sbom") is True
@@ -108,7 +114,7 @@ def test_both_image_architectures_export_spdx_json_to_the_release() -> None:
         assert anchor in script
 
     upload = _step(images, name="Upload image SBOM artifacts")
-    assert upload.get("uses") == "actions/upload-artifact@v7"
+    assert _action(upload) == "actions/upload-artifact"
     upload_inputs = upload.get("with")
     assert isinstance(upload_inputs, dict)
     assert upload_inputs.get("name") == "image-sbom-${{ matrix.name }}"
@@ -120,7 +126,7 @@ def test_both_image_architectures_export_spdx_json_to_the_release() -> None:
     downloads = [
         step.get("with")
         for step in steps
-        if isinstance(step, dict) and step.get("uses") == "actions/download-artifact@v8"
+        if isinstance(step, dict) and _action(step) == "actions/download-artifact"
     ]
     assert any(
         isinstance(inputs, dict)
@@ -316,7 +322,7 @@ def test_the_release_attaches_the_wheels_sbom_and_pypi_never_sees_it() -> None:
     uploads = {
         step["with"]["name"]: step["with"]
         for step in build["steps"]
-        if step.get("uses") == "actions/upload-artifact@v7"
+        if _action(step) == "actions/upload-artifact"
     }
     assert uploads["wheel-sbom"]["path"] == _WHEEL_SBOM
     assert uploads["wheel-sbom"].get("if-no-files-found") == "error"
@@ -325,15 +331,13 @@ def test_the_release_attaches_the_wheels_sbom_and_pypi_never_sees_it() -> None:
     pypi_downloads = [
         step["with"]["name"]
         for step in jobs["pypi"]["steps"]
-        if step.get("uses") == "actions/download-artifact@v8"
+        if _action(step) == "actions/download-artifact"
     ]
     assert pypi_downloads == ["dist"], "PyPI is handed the distributions and nothing else"
 
     notes = jobs["notes"]
     downloads = [
-        step["with"]
-        for step in notes["steps"]
-        if step.get("uses") == "actions/download-artifact@v8"
+        step["with"] for step in notes["steps"] if _action(step) == "actions/download-artifact"
     ]
     assert {"name": "wheel-sbom", "path": "wheel-sbom/"} in downloads
     create = _step(notes, name="Create GitHub Release")["run"]
@@ -349,9 +353,7 @@ def test_the_wheels_provenance_needs_only_the_build_it_attests() -> None:
     needs = attest.get("needs")
     assert (needs if isinstance(needs, list) else [needs]) == ["build"], needs
     downloads = [
-        step["with"]
-        for step in attest["steps"]
-        if step.get("uses") == "actions/download-artifact@v8"
+        step["with"] for step in attest["steps"] if _action(step) == "actions/download-artifact"
     ]
     assert downloads == [{"name": "dist", "path": "dist/"}], downloads
 

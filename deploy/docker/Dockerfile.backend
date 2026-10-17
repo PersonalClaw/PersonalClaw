@@ -2,7 +2,11 @@
 #   docker build -f deploy/docker/Dockerfile.backend .
 
 # ── Base image (single pull, reused across stages) ──────────────────────────
-ARG PYTHON_IMAGE=mirror.gcr.io/library/python:3.13-slim
+# python:3.13.16-slim, the interpreter `.python-version` names, as its multi-arch index.
+# Platform manifests:
+#   linux/amd64 sha256:8fb4cfa1a2616d7b8e0c2175cc6ad68f5729c34ea8488c0b360d2934b7be9024
+#   linux/arm64 sha256:cf97c3b79da1c706532c7042f851654d97d3b88c8ca6520acda9cf4479ea9b14
+ARG PYTHON_IMAGE=mirror.gcr.io/library/python:3.13.16-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
 FROM ${PYTHON_IMAGE} AS base
 
 # ── Stage 1: install dependencies only (cached until pyproject.toml or uv.lock changes) ─
@@ -18,7 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # uv reads the lock. It is a build tool here: the runtime stage copies /opt/venv alone, so uv
 # never ships. Pinned, like everything this stage installs, so a newer uv cannot meet the
 # lock on a day nothing in the repository changed.
-ARG UV_VERSION=0.12.19
+ARG UV_VERSION=0.13.1
 RUN pip install --no-cache-dir --root-user-action=ignore "uv==${UV_VERSION}"
 
 # pip is one of PersonalClaw's own dependencies (the app installer runs it), so the locked one
@@ -56,7 +60,10 @@ RUN uv export --locked --no-emit-project --emit-index-url \
 #
 # Byte-identical to Dockerfile.web's builder stage on purpose: one SPA build recipe,
 # two images. Keep them in step — see the workspace-install and heap notes there.
-FROM mirror.gcr.io/library/node:20-alpine AS web
+# node:24.21.0-alpine, the Node `.nvmrc` names, as its multi-arch index. Platform manifests:
+#   linux/amd64 sha256:83f1c388c31fb2e51f7cbd4dea949b96260798c98f206e8e4696bc93bd964e3a
+#   linux/arm64 sha256:38a36422dc7de80f3ced964270f23b3b17f73af816728d21a5fbbf84bf8be46f
+FROM mirror.gcr.io/library/node:24.21.0-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS web
 
 WORKDIR /app
 
