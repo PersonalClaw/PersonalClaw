@@ -79,8 +79,18 @@ event loop, where on a 512 MB upload it stopped every other request for up to 0.
   `uploads/content_scan.py`), because its parse holds the lock; the child imports the scanner and
   nothing else of the package, since every upload, Knowledge write and artifact save waits for its
   start;
-- what the file becomes is decided on the loop: the duplicate check and the insert, with nothing
-  awaited between them, so two uploads of the same bytes still make one item.
+- what the file becomes is decided in one worker call (`knowledge.file_items._decide`): the
+  duplicate check, the insert and the read of the new item, one upload at a time in the process
+  and under the store connection's lock (`SharedConnection.held`), so two uploads of the same
+  bytes still make one item, even decided on two stores over one library. A change the store
+  makes of several statements holds that lock from its `BEGIN` to its end, so the decision never
+  starts inside another thread's open change. A commit that waits on a busy disk (0.2 s,
+  measured) no longer stops the event loop itself, but loop code that uses the same store waits
+  for the lock meanwhile, among it the Knowledge list and its poll, the tags, and the ingest
+  runner's reads and writes. Most Knowledge routes and ingest stages still call the store on the
+  loop; moving them off is the follow-up;
+- the module that makes the item is imported with the upload handlers, so no complete pays for
+  its first import on the loop (0.13-0.44 s on a busy machine).
 
 While an upload's complete runs, `UploadStore.completing` holds it: a retried complete, a late part
 and a drop are refused with 409 (`upload_completing` for the drop), and the sweep passes it over.

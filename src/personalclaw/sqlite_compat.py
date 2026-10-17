@@ -219,6 +219,14 @@ class SharedConnection(sqlite3.Connection):
             super().rollback()
 
     @contextmanager
+    def held(self) -> Iterator[None]:
+        """Hold the connection's lock across several calls, so no other thread's statement runs
+        between them: a check and the write it decides, made together in one worker thread.
+        Unlike :meth:`transaction` it opens no transaction, so what runs inside may commit."""
+        with self._serial:
+            yield
+
+    @contextmanager
     def transaction(self) -> Iterator[None]:
         """Run the enclosed statements as one transaction: all of them are stored, or, when the
         enclosed work raises, none is.
