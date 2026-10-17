@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import io
+import itertools
 import json
 import shutil
 import socket
@@ -61,39 +62,41 @@ DENIED_HOST = "denied.local"
 #: Named once so the skip/fail message says which proof stopped running.
 PROOF = "LIVE PROOF"
 
-#: The CDP reply that means this session never attached to a page target. Chrome answers
-#: it to any ``Page.*`` message on a session with no attached page, so it is what the
-#: teardown's own ``Page.stopLoading`` / ``Page.navigate`` hit when the target the fixture
-#: picked out of ``/json/list`` went away between selection and use.
-_NOT_ATTACHED = "Not attached to an active page"
+#: The CDP reply Chrome sends to a ``Page.*`` command while the page's session is detached.
+#: The fixture proves the page attached before the scenario starts; right after a cross-site
+#: redirect the page's session is detached for a few milliseconds, which ``cdp._enforce``
+#: rides out by sending the teardown command again (``cdp.TEARDOWN_RETRY_BOUND``).
+_NOT_ATTACHED = cdp.PAGE_DETACHED
 
 
 def _refuse_unmeasured(obs: dict) -> None:
-    """Fail with the ENVIRONMENT cause when the browser never gave us a page to drive.
+    """Fail with the ENVIRONMENT cause when the page stayed detached past the teardown's bound.
 
-    Every observation this module records is downstream of attachment, so an unattached
-    session does not weaken the policy assertions — it makes all three of them WRONG:
+    The page attached (the fixture proved it, and the scenario's first two steps drove it);
+    a quarantine naming a detached page then means it stayed detached for the whole of
+    ``cdp.TEARDOWN_RETRY_BOUND`` while the denied redirect was torn down. That does not weaken
+    the policy assertions — it makes all three of them WRONG:
 
     * the quarantine check reads as a teardown regression,
     * the blanked-DOM check reads as ``stopLoading`` having been used on its own,
     * and the allowed-redirect check reads as the guard eating a legal navigation.
 
-    All three are the same one line in a CDP reply, and chasing any of them as a guard
-    defect is wasted work — measured four times across two branches before this existed
-    (see #2549). ``cdp._enforce`` is not implicated: it caught the failure, quarantined,
-    and refused all further navigation, which is the fail-closed behaviour it documents.
+    So it is named as what it is, once, instead of three wrong policy conclusions. The
+    session's behaviour is still the fail-closed one ``cdp._enforce`` documents: it
+    quarantined, refused all further navigation and every read of the page.
 
-    Deliberately a FAILURE and never a skip. A skip that reads as a pass is the shape
-    this repo keeps rediscovering, and this module's whole job is to prove a denied
-    document is torn down — an unproven teardown must not be able to look proven.
+    Deliberately a FAILURE and never a skip, and never a reason to re-run: a skip that reads
+    as a pass is the shape this repo keeps rediscovering, and this module's whole job is to
+    prove a denied document is torn down — an unproven teardown must not look proven.
     """
     reason = (obs.get("redirect_denied") or {}).get("quarantined") or ""
     if _NOT_ATTACHED in reason:
         raise AssertionError(
-            f"{PROOF}: ENVIRONMENT, NOT POLICY — the CDP session never attached to a page "
-            f"target, so nothing in this module was measured. Quarantine reason: {reason!r}. "
-            "The teardown logic is not implicated; re-run once the browser exposes an "
-            "attachable page target."
+            f"{PROOF}: ENVIRONMENT, NOT POLICY — the page attached, then stayed detached past "
+            f"the teardown's {cdp.TEARDOWN_RETRY_BOUND:g}s bound while a denied redirect was torn "
+            f"down, so the module's teardown clauses were not measured. Quarantine reason: "
+            f"{reason!r}. The session failed closed as documented; this is a red, not a "
+            "candidate for a re-run."
         )
 
 
@@ -389,7 +392,10 @@ async def _scenario(page_ws: str, site: _Site, sel_rows: list) -> dict:
         sel_rows.clear()
         await session.navigate(site.url(ALLOWED_HOST, "/jump-denied"))
         fired = await _settle(lambda: len(session.blocks) > before)
-        await asyncio.sleep(0.75)  # let the teardown's two messages complete
+        # A teardown resends a step while the page is detached, for up to
+        # cdp.TEARDOWN_RETRY_BOUND, so it is sampled only once it has ended, quarantined or not.
+        await _settle(lambda: not session.tearing_down)
+        await asyncio.sleep(0.75)  # let the teardown's about:blank navigation land
         obs["redirect_denied"] = {
             "guard_fired": fired,
             "blocked_url": session.blocks[-1].url if session.blocks else "",
@@ -398,7 +404,9 @@ async def _scenario(page_ws: str, site: _Site, sel_rows: list) -> dict:
                 (row.operation, row.metadata.get("phase"), row.metadata.get("host"))
                 for row in sel_rows
             ],
-            "wire_tail": recorder.methods[-2:],
+            # The whole teardown, a resent step counted once; [1:] drops the scenario's own
+            # Page.navigate, the first message recorded after the clear above.
+            "wire_tail": [method for method, _ in itertools.groupby(recorder.methods[1:])],
             "final_url": await _location(inner),
             "server_hits": site.snapshot(),
             "quarantined": session.quarantine_reason,
@@ -473,8 +481,9 @@ def live() -> dict:
 
 
 def test_the_guard_script_is_installed_before_anything_navigates(live: dict) -> None:
-    """Start's wire, from a real browser: enable then inject, and nothing else."""
-    assert live["start_wire"] == [cdp.PAGE_ENABLE, cdp.ADD_SCRIPT]
+    """Start's wire, from a real browser: enable, inject, then read the frames the tab already
+    holds (a blank tab here, so nothing is torn down), and nothing else."""
+    assert live["start_wire"] == [cdp.PAGE_ENABLE, cdp.ADD_SCRIPT, cdp.GET_FRAME_TREE]
 
 
 def test_the_session_really_injected_the_real_safety_script(live: dict) -> None:
@@ -553,8 +562,8 @@ def test_the_denied_document_is_torn_down_not_merely_stopped(live: dict) -> None
         "leaves the DOM the agent would extract"
     )
     assert red["wire_tail"] == [cdp.STOP_LOADING, cdp.NAVIGATE], (
-        "order matters: blanking before stopping races the in-flight load; "
-        f"wire was {red['wire_tail']}"
+        "order matters: blanking before stopping races the in-flight load, and nothing else "
+        f"belongs in a teardown (a resent step counts once); wire was {red['wire_tail']}"
     )
 
 

@@ -16,6 +16,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **An agent can no longer change a security setting by running `personalclaw config` in its shell; your own terminal still can.**
 - **A folder holding a `personalclaw` package no longer runs its own code in place of PersonalClaw's when an agent runs a command there, or when PersonalClaw starts an app, the computer-use driver, an evaluation, an upload scan or a restart: that code ran before the sandbox did.**
+- **A browse run whose page redirects itself to a site your egress settings deny can no longer read or act on that page when the browser refuses to tear it down, and a refusal that lasts only a moment after the redirect no longer ends the run.**
 
 ### Fixed
 

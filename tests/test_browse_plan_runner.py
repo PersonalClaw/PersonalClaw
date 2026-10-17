@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import types
 
 import pytest
 
 from personalclaw.browse import plans as bp
+from personalclaw.browse.cdp import NavigationOutcome
 from personalclaw.browse.plan_runner import make_content_tick_runner
 from personalclaw.guardrails.autonomy import RUNG_ONE_TAP
 
@@ -64,6 +66,8 @@ class FakeSession:
         if self._nav_exc is not None:
             raise self._nav_exc
         self.navigated.append(url)
+        # The outcome the real session returns for a navigation that loaded the page.
+        return NavigationOutcome(ok=True, allowed=True, url=url)
 
 
 class _Opener:
@@ -151,7 +155,7 @@ def test_settle_hook_runs_after_navigate():
     class _S(FakeSession):
         async def navigate(self, url):
             order.append("nav")
-            await super().navigate(url)
+            return await super().navigate(url)
 
     async def _settle(_pg):
         order.append("settle")
@@ -183,3 +187,58 @@ def test_composes_with_execute_tick_idempotently(plan_home):
     assert "changelog v2 shipped" in first.html  # rendered markup flows up through execute_tick
     second = asyncio.run(bp.execute_tick(bp.load_plan("w1"), run=runner, granted_rung=RUNG_ONE_TAP))
     assert second.changed is False
+
+
+class _RecordingPage(FakePage):
+    """A page that records every read, so a test can say nothing of it was read."""
+
+    def __init__(self, html: str, url: str = "") -> None:
+        super().__init__(html, url)
+        self.reads: list[str] = []
+
+    async def html(self) -> str:
+        self.reads.append("html")
+        return await super().html()
+
+    async def current_url(self) -> str:
+        self.reads.append("current_url")
+        return await super().current_url()
+
+
+@pytest.mark.security
+@pytest.mark.parametrize(
+    "refused",
+    [
+        NavigationOutcome(ok=False, allowed=False, url="https://x/c", reason="denied by policy"),
+        NavigationOutcome(
+            ok=False, allowed=True, url="https://x/c", error="net::ERR_ABORTED", reason="no doc"
+        ),
+        # An outcome that says nothing about ``ok`` is not taken for a loaded page.
+        None,
+        types.SimpleNamespace(allowed=True, url="https://x/c"),
+    ],
+    ids=["refused-at-preflight", "loaded-no-document", "no-outcome", "outcome-without-ok"],
+)
+def test_a_refused_navigation_reads_nothing_of_the_tab(refused):
+    """🔴 Red before: the tick threw the navigation's outcome away and read whatever the tab held,
+    a document no session judged (a denied page another session left loaded), as its content."""
+
+    class _Refusing(FakeSession):
+        async def navigate(self, url):
+            self.navigated.append(url)
+            return refused
+
+    page = _RecordingPage("<article>the denied page's secret body</article>", url="http://denied")
+    settled: list[str] = []
+
+    async def _settle(_pg):
+        settled.append("settle")
+
+    opener = _Opener(_Refusing(), page)
+    out = asyncio.run(_runner(opener, settle=_settle)(_watch()))
+
+    assert out.ok is False and out.verified is False
+    assert out.content == "" and out.html == "" and out.final_url == ""
+    assert "refused" in out.note
+    assert page.reads == [] and settled == [], "nothing of the tab may be read"
+    assert opener.closed == 1, "the session is still released"

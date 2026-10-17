@@ -569,11 +569,15 @@ class BrowseActionProvider(ActionProvider):
 
         transport = await WebSocketCdpTransport.connect(cdp_url)
         raw_dir = str(action_config.get("screenshot_dir") or "").strip()
-        driver = CdpPageDriver(transport, screenshot_dir=Path(raw_dir) if raw_dir else None)
         session = GatedCdpSession(
             transport,
             caller_identity=f"action:{PROVIDER_NAME}",
             source=str(getattr(ctx, "event", "") or "background"),
+        )
+        # The page is read and acted on through the session, so a quarantined session (one that
+        # could not tear a denied document down) reads and does nothing more on that page.
+        driver = CdpPageDriver(
+            session.page_transport, screenshot_dir=Path(raw_dir) if raw_dir else None
         )
         return session, driver, transport.close
 
