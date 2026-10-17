@@ -51,6 +51,9 @@ jobs:
       contents: read
       pull-requests: write   # post the remediation comment on failure
     steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
       # No checkout. `actions/checkout` REFUSES a fork ref under pull_request_target
       # ("Refusing to check out fork pull request code"), which skipped this step and
       # the comment below on every fork PR — the exact PRs this workflow exists for.
@@ -107,7 +110,7 @@ jobs:
       # is easy to miss; contributors need the remediation in the PR conversation.
       - name: Explain how to fix DCO
         if: failure() && steps.verify.outputs.unsigned != ''
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const marker = '<!-- dco-help -->';

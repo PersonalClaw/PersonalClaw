@@ -1,6 +1,7 @@
 {
   "name": "personalclaw",
   "private": true,
+  "packageManager": "npm@11.19.0",
   "workspaces": ["web", "desktop", "mobile"],
   "scripts": {
     "dev": "npm run dev --workspace=web",

@@ -34,6 +34,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **Updating a git clone that uv installed needs uv 0.13.1 or newer, which `uv self update` gets.**
 - **`personalclaw setup` ends by naming `personalclaw service install`, which keeps the gateway running in the background and through reboots, on a Mac or on Linux with systemd.**
 
 ## [0.2.1] — 2026-10-15

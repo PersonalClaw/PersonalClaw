@@ -511,6 +511,12 @@ personalclaw = [
 # (2.2 GB of wheels on x86_64) that a machine with no GPU never uses, and the image has always
 # installed the CPU build. `explicit` keeps every other package off that index. Only uv reads
 # this table; a `pip install 'personalclaw[embeddings]'` still resolves torch from PyPI.
+[tool.uv]
+# The oldest uv that reads and writes this lockfile's format (revision 5). A floor, not an exact
+# pin, so a newer uv keeps working in a checkout; CI and the gateway image install exactly this
+# release (tests/test_ci_contract.py holds the three to one version).
+required-version = ">=0.13.1"
+
 [tool.uv.sources]
 torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
 

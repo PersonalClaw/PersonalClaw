@@ -130,7 +130,8 @@ def _ci_verified_python_minors() -> set[tuple[int, int]]:
     ]
     minors: set[tuple[int, int]] = set()
     for value in declared:
-        major, _, minor = value.partition(".")
+        # An exact patch (`3.13.16`) is verified at its minor.
+        major, minor = value.split(".")[:2]
         minors.add((int(major), int(minor)))
     return minors
 

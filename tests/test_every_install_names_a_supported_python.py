@@ -91,9 +91,14 @@ def has_upper_bound(spec: SpecifierSet) -> bool:
 
 
 def matrix_pythons(text: str) -> list[str]:
-    """The ``python: [...]`` list of ``full.yml``'s test matrix."""
+    """The Python minors (``X.Y``) of ``full.yml``'s test matrix ``python: [...]`` list.
+
+    The matrix names exact patches (``3.13.16``), which the installer's ``PC_PYTHON`` never
+    does: it names the minor uv picks the newest patch of, so the two meet at the minor.
+    """
     match = re.search(r"^\s*python:\s*\[([^\]]*)\]", text, flags=re.MULTILINE)
-    return re.findall(r"[\d.]+", match.group(1)) if match else []
+    found = re.findall(r"\d+\.\d+(?:\.\d+)?", match.group(1)) if match else []
+    return [".".join(v.split(".")[:2]) for v in found]
 
 
 def _files(patterns: tuple[str, ...]) -> list[pathlib.Path]:
@@ -359,4 +364,8 @@ def test_the_prose_readers_catch_the_sentences_that_shipped() -> None:
 
 def test_the_matrix_reader_reads_the_python_list() -> None:
     assert matrix_pythons('      matrix:\n        python: ["3.12", "3.13"]\n') == ["3.12", "3.13"]
+    assert matrix_pythons('      matrix:\n        python: ["3.12.15", "3.13.16"]\n') == [
+        "3.12",
+        "3.13",
+    ]
     assert matrix_pythons("      matrix:\n        shard: [1, 2]\n") == []
