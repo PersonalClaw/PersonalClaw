@@ -283,6 +283,193 @@ async def test_scanning_a_large_text_upload_leaves_the_gateway_answering(gateway
     assert probe.answered_during >= 1, f"premise: the gateway was asked meanwhile; {probe.says()}"
 
 
+# ── what the upload becomes is decided off the loop ─────────────────────────────────────────
+
+#: How long :class:`_HeldInsert` holds the insert when nothing lets it go.
+_HOLD = 2.0
+
+
+#: The store's calls that decide what an upload becomes, in the order they run.
+_DECIDING_CALLS = ("find_active_by_file_hash", "create_typed_item", "get_item")
+
+
+class _HeldInsert:
+    """Records the thread each of :data:`_DECIDING_CALLS` runs on, and holds the insert of a new
+    item, wherever it runs, until :meth:`release` or for :data:`_HOLD` seconds. Held on the event
+    loop it stops every request for the whole hold; held in a worker thread, the loop answers
+    meanwhile."""
+
+    def __init__(self, store: KnowledgeStore) -> None:
+        self.entered = threading.Event()
+        self.released = threading.Event()
+        self.threads: dict[str, list[int]] = {name: [] for name in _DECIDING_CALLS}
+        self.timed_out = False
+        self._patches = [
+            patch.object(store, name, self._recorded(name, getattr(store, name)))
+            for name in _DECIDING_CALLS
+        ]
+
+    def _recorded(self, name, real):
+        def call(*args, **kwargs):
+            self.threads[name].append(threading.get_ident())
+            if name == "create_typed_item":
+                self.entered.set()
+                self.timed_out = not self.released.wait(_HOLD)
+            return real(*args, **kwargs)
+
+        return call
+
+    def __enter__(self) -> "_HeldInsert":
+        for p in self._patches:
+            p.start()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        for p in reversed(self._patches):
+            p.stop()
+
+    def release(self) -> None:
+        self.released.set()
+
+
+@pytest.mark.asyncio
+async def test_the_item_is_made_while_the_gateway_answers(gateway):
+    """🔴 Red before: the duplicate check, the insert and the read of the new item ran on the
+    event loop, so a commit or a read waiting on a busy disk held every request up (0.2 s and
+    0.32 s measured). All three run in one worker thread, the same one; held open there, the
+    insert lets a health check be answered before it is let go, and the complete still makes its
+    one item."""
+    loop_thread = threading.get_ident()
+    payload = _bytes(4 * _MB)
+    with _HeldInsert(gateway.store) as held:
+        async with TestClient(TestServer(gateway.app)) as client:
+            info = await _init(
+                client, len(payload), target="knowledge", filename="clip.mp4", mime="video/mp4"
+            )
+            await _send_parts(client, info, payload)
+            first = asyncio.ensure_future(_complete(client, info["uploadId"]))
+            assert await asyncio.to_thread(held.entered.wait, 30), "the insert never began"
+            health = await client.get("/api/healthz")
+            answered_while_held = health.status == 200 and not held.released.is_set()
+            held.release()
+            status, body = await first
+
+    ran_on = {name: threads for name, threads in held.threads.items()}
+    assert all(
+        len(threads) == 1 for threads in ran_on.values()
+    ), f"premise: each ran once; {ran_on}"
+    on_loop = [name for name, (thread,) in ran_on.items() if thread == loop_thread]
+    assert not on_loop, f"what decides the item ran on the event loop's thread: {on_loop}"
+    assert (
+        len({thread for (thread,) in ran_on.values()}) == 1
+    ), f"what decides the item did not run in one worker call: {ran_on}"
+    assert not held.timed_out, "nothing was answered until the held insert gave up waiting"
+    assert answered_while_held, "the gateway did not answer while the insert was held"
+    assert status == 200, body
+    assert _items(gateway.store) == 1 and gateway.queued == [body["item_id"]]
+
+
+@pytest.mark.asyncio
+async def test_two_uploads_of_the_same_bytes_finishing_together_make_one_item(gateway, tmp_path):
+    """Off the loop, the duplicate check and the insert are still one step under the store's
+    lock: two uploads of the same bytes stored at once make one item, and one is told so."""
+    from personalclaw.knowledge.file_items import store_file_item
+
+    payload = _bytes(_MB)
+    first, second = tmp_path / "a.mov", tmp_path / "b.mov"
+    first.write_bytes(payload)
+    second.write_bytes(payload)
+
+    made = await asyncio.gather(
+        store_file_item(gateway.store, str(first), "a.mov", mime="video/quicktime"),
+        store_file_item(gateway.store, str(second), "b.mov", mime="video/quicktime"),
+    )
+
+    assert sorted(is_new for _item, is_new in made) == [False, True]
+    assert made[0][0]["id"] == made[1][0]["id"]
+    assert _items(gateway.store) == 1
+
+
+def test_an_item_decided_while_another_change_is_open_waits_for_it(gateway):
+    """🔴 Red before: the store's changes held its connection's lock one statement at a time, so
+    an upload decided in a worker thread while this thread's edit was open ran inside it: its
+    insert failed with "cannot start a transaction within a transaction", the upload answered 500
+    and its stored file was left without an item. A change now holds the lock from its start to
+    its end, and the upload is decided after it."""
+    from personalclaw.knowledge import file_items
+
+    store = gateway.store
+    edited = store.create_typed_item(item_type="note", title="draft", content="first")
+    item = {"item_type": "note", "title": "clip", "content": "", "extra": {}}
+    decided: dict = {}
+
+    def decide() -> None:
+        try:
+            decided["made"] = file_items._decide(store, "", item)
+        except Exception as exc:  # what the upload's request would have answered 500 with
+            decided["error"] = exc
+
+    worker = threading.Thread(target=decide)
+    real_write_tags = store._write_item_tags
+    opened = threading.Event()
+
+    def write_tags_then_decide(*args, **kwargs):
+        # Inside the edit's transaction, on this thread: the upload is decided meanwhile.
+        if not opened.is_set():
+            opened.set()
+            worker.start()
+            worker.join(1.0)
+        return real_write_tags(*args, **kwargs)
+
+    with patch.object(store, "_write_item_tags", write_tags_then_decide):
+        store.update_item(edited, content="second", tags=["kept"])
+    worker.join(30)
+
+    assert opened.is_set(), "premise: the edit's transaction was open while the upload was decided"
+    assert not worker.is_alive(), "the upload was never decided"
+    assert "error" not in decided, f"the upload was decided inside the edit: {decided['error']!r}"
+    made, is_new = decided["made"]
+    assert is_new and made and made["title"] == "clip"
+    assert store.get_item(edited)["content"] == "second", "the edit was not stored"
+    assert _items(store) == 2
+
+
+@pytest.mark.asyncio
+async def test_two_stores_over_one_library_make_one_item_of_the_same_bytes(gateway, tmp_path):
+    """🔴 Red before: the duplicate check and the insert were one step under ONE store's lock, and
+    the process can hold two stores over one library (the vault's sweep opens its own). Two
+    uploads of the same bytes decided on the two at once made two items. Deciding is one upload
+    at a time in the process, so the second finds the first's item."""
+    from personalclaw.knowledge.file_items import store_file_item
+
+    other = KnowledgeStore(gateway.store.db_path)
+    payload = _bytes(_MB)
+    first, second = tmp_path / "a.mov", tmp_path / "b.mov"
+    first.write_bytes(payload)
+    second.write_bytes(payload)
+    try:
+        made = await asyncio.gather(
+            store_file_item(gateway.store, str(first), "a.mov", mime="video/quicktime"),
+            store_file_item(other, str(second), "b.mov", mime="video/quicktime"),
+        )
+    finally:
+        other.close()
+
+    assert sorted(is_new for _item, is_new in made) == [False, True]
+    assert made[0][0]["id"] == made[1][0]["id"]
+    assert _items(gateway.store) == 1
+
+
+def test_the_module_that_makes_the_item_loads_with_the_upload_handlers():
+    """🔴 Red before: a complete imported it on the first Knowledge upload, and a module's first
+    import runs on the event loop (0.13-0.44 s measured on a busy machine). It is imported with
+    the handlers, which the gateway loads when it registers the routes."""
+    from personalclaw.dashboard.handlers import uploads
+    from personalclaw.knowledge import file_items
+
+    assert getattr(uploads, "store_file_item", None) is file_items.store_file_item
+
+
 # ── while its complete runs, nothing else touches the upload ────────────────────────────────
 
 

@@ -64,14 +64,32 @@ _CI_RUNNER = {"CI": "true", "GITHUB_ACTIONS": "true"}
 #: A proxy nothing listens on, so a library in a probe has nowhere to send what it would upload.
 _NOWHERE = "http://127.0.0.1:9"
 
+#: The probe also records what the library itself sent and got back, so a control that sees no
+#: request says why: every URL its shared HTTP client asked for, each status it was answered with,
+#: and each error its AI-tool detection caught and logged instead of raising (it never raises).
 _HUB_PROBE = f"""
-import json
+import json, logging
 from huggingface_hub import constants
-from huggingface_hub.utils import build_hf_headers
+from huggingface_hub.utils import build_hf_headers, get_session
+
+asked, answered, swallowed = [], [], []
+session = get_session()
+session.event_hooks["request"].append(lambda request: asked.append(str(request.url)))
+session.event_hooks["response"].append(lambda response: answered.append(response.status_code))
+
+class _Swallowed(logging.Handler):
+    def emit(self, record):
+        if record.exc_info:
+            swallowed.append(repr(record.exc_info[1]))
+
+detection = logging.getLogger("huggingface_hub.utils._detect_agent")
+detection.addHandler(_Swallowed(logging.DEBUG))
+detection.setLevel(logging.DEBUG)
 print(json.dumps({{
     "none_passed": build_hf_headers().get("authorization"),
     "handed": build_hf_headers(token={_HANDED!r}).get("authorization"),
     "xet_off": constants.HF_HUB_DISABLE_XET,
+    "fetch": {{"asked": asked, "answered": answered, "swallowed": swallowed}},
 }}))
 """
 
@@ -277,14 +295,26 @@ def fake_hub():
 def test_the_hub_keeps_no_list_of_ai_tools_in_the_shared_folder(tmp_path, monkeypatch, fake_hub):
     """Before its first request the library asks the Hub for a list of AI tools, to name the one
     it runs under in its User-Agent, and keeps the list in the shared Hugging Face folder. Told
-    as every command tells it, it asks nothing and keeps nothing there."""
+    as every command tells it, it asks nothing and keeps nothing there.
+
+    The control reads the fetch from both ends: what the probe's library sent and got back (or
+    the error it swallowed: a failed fetch leaves only an empty list), and what the fake Hub saw.
+    A control that fails says which end went quiet, and why."""
     listed = tmp_path / "hf" / ".agent_harnesses.json"
     endpoint = {"HF_ENDPOINT": fake_hub.url}
+    list_url = f"{fake_hub.url}/api/agent-harnesses"
 
-    _hub(tmp_path, endpoint)
-    assert any(
-        p.startswith("/api/agent-harnesses") for p in fake_hub.paths
-    ), f"control: left alone, the library fetches the list ({fake_hub.paths})"
+    fetch = _hub(tmp_path, endpoint)["fetch"]
+    assert fetch["asked"] == [
+        list_url
+    ], f"control: left alone, the library asks for the list: {fetch}"
+    assert (
+        fetch["answered"] == [200] and fetch["swallowed"] == []
+    ), f"control: left alone, the library's request for the list is answered: {fetch}"
+    assert any(p.startswith("/api/agent-harnesses") for p in fake_hub.paths), (
+        f"control: the fake Hub saw the library's request ({fake_hub.paths}); "
+        f"the library recorded {fetch}"
+    )
     assert listed.is_file(), "control: left alone, the library keeps the list in the shared folder"
 
     listed.unlink()

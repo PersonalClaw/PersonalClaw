@@ -1027,33 +1027,34 @@ class KnowledgeStore:
         # every reopen. The schema is created AFTER this block for the same reason.
         if "chunk_index" in cols:
             self.db.execute("PRAGMA foreign_keys=OFF")
-            self.db.execute("BEGIN")
-            try:
-                self.db.execute("DROP TABLE IF EXISTS source_locations")
-                self.db.execute("DROP TABLE IF EXISTS ingestion_jobs")
-                self.db.execute("DROP TABLE IF EXISTS sources")
-                # Drop dependents of the chunk rows we're about to remove.
-                chunk_items = "SELECT id FROM items WHERE COALESCE(chunk_index, 0) <> 0"
-                self.db.execute(
-                    f"DELETE FROM mentions WHERE item_id IN ({chunk_items})"
-                )  # noqa: S608
-                self.db.execute(
-                    f"DELETE FROM entity_relations WHERE source_item_id IN ({chunk_items})"
-                )  # noqa: S608
-                self.db.execute(
-                    f"DELETE FROM extracted_contents WHERE item_id IN ({chunk_items})"
-                )  # noqa: S608
-                self.db.execute("DELETE FROM items WHERE COALESCE(chunk_index, 0) <> 0")
-                self.db.execute("DROP INDEX IF EXISTS idx_items_source_id")
-                for col in ("source_id", "chunk_index"):
-                    if col in cols:
-                        self.db.execute(f"ALTER TABLE items DROP COLUMN {col}")
-                self.db.execute("COMMIT")
-            except Exception:
-                self.db.execute("ROLLBACK")
-                raise
-            finally:
-                self.db.execute("PRAGMA foreign_keys=ON")
+            with self.db.held():
+                self.db.execute("BEGIN")
+                try:
+                    self.db.execute("DROP TABLE IF EXISTS source_locations")
+                    self.db.execute("DROP TABLE IF EXISTS ingestion_jobs")
+                    self.db.execute("DROP TABLE IF EXISTS sources")
+                    # Drop dependents of the chunk rows we're about to remove.
+                    chunk_items = "SELECT id FROM items WHERE COALESCE(chunk_index, 0) <> 0"
+                    self.db.execute(
+                        f"DELETE FROM mentions WHERE item_id IN ({chunk_items})"
+                    )  # noqa: S608
+                    self.db.execute(
+                        f"DELETE FROM entity_relations WHERE source_item_id IN ({chunk_items})"
+                    )  # noqa: S608
+                    self.db.execute(
+                        f"DELETE FROM extracted_contents WHERE item_id IN ({chunk_items})"
+                    )  # noqa: S608
+                    self.db.execute("DELETE FROM items WHERE COALESCE(chunk_index, 0) <> 0")
+                    self.db.execute("DROP INDEX IF EXISTS idx_items_source_id")
+                    for col in ("source_id", "chunk_index"):
+                        if col in cols:
+                            self.db.execute(f"ALTER TABLE items DROP COLUMN {col}")
+                    self.db.execute("COMMIT")
+                except Exception:
+                    self.db.execute("ROLLBACK")
+                    raise
+                finally:
+                    self.db.execute("PRAGMA foreign_keys=ON")
         if "tags" in cols:
             self._migrate_tags_to_rows()
         # Add the source store LAST, after the legacy chunk
@@ -1066,16 +1067,17 @@ class KnowledgeStore:
         self._migrate_chunk_fingerprint()
         self._migrate_phase_outcomes()
         # Prune orphan entities (no mentions/relations) + stale relations.
-        self.db.execute("BEGIN")
-        try:
-            self.db.execute(
-                "DELETE FROM entity_relations WHERE source_id NOT IN (SELECT id FROM entities) OR target_id NOT IN (SELECT id FROM entities)"  # noqa: E501
-            )
-            self._drop_orphan_entities()
-            self.db.execute("COMMIT")
-        except Exception:
-            self.db.execute("ROLLBACK")
-            raise
+        with self.db.held():
+            self.db.execute("BEGIN")
+            try:
+                self.db.execute(
+                    "DELETE FROM entity_relations WHERE source_id NOT IN (SELECT id FROM entities) OR target_id NOT IN (SELECT id FROM entities)"  # noqa: E501
+                )
+                self._drop_orphan_entities()
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
         # A stamp written before the store recorded offsets is this machine's local time with
         # none; rewritten as its UTC instant, so it sorts and compares with every newer one.
         backfill_zone_less(self.db)
@@ -1120,32 +1122,33 @@ class KnowledgeStore:
         ).fetchall()
         if not rows:
             return
-        self.db.execute("BEGIN")
-        try:
-            for row in rows:
-                try:
-                    meta = json.loads(row["file_metadata"] or "{}")
-                except (TypeError, ValueError):
-                    meta = None
-                phases = meta.get("node_phases") if isinstance(meta, dict) else None
-                if isinstance(phases, dict):
-                    meta["node_phases"] = {
-                        step: legacy(value) if isinstance(value, str) else value
-                        for step, value in phases.items()
-                    }
-                error = self._LEGACY_SKIP_LINE.sub("", row["processing_error"] or "").strip()
-                self.db.execute(
-                    "UPDATE items SET file_metadata = ?, processing_error = ? WHERE id = ?",
-                    (
-                        json.dumps(meta) if isinstance(meta, dict) else row["file_metadata"],
-                        error or None,
-                        row["id"],
-                    ),
-                )
-            self.db.execute("COMMIT")
-        except Exception:
-            self.db.execute("ROLLBACK")
-            raise
+        with self.db.held():
+            self.db.execute("BEGIN")
+            try:
+                for row in rows:
+                    try:
+                        meta = json.loads(row["file_metadata"] or "{}")
+                    except (TypeError, ValueError):
+                        meta = None
+                    phases = meta.get("node_phases") if isinstance(meta, dict) else None
+                    if isinstance(phases, dict):
+                        meta["node_phases"] = {
+                            step: legacy(value) if isinstance(value, str) else value
+                            for step, value in phases.items()
+                        }
+                    error = self._LEGACY_SKIP_LINE.sub("", row["processing_error"] or "").strip()
+                    self.db.execute(
+                        "UPDATE items SET file_metadata = ?, processing_error = ? WHERE id = ?",
+                        (
+                            json.dumps(meta) if isinstance(meta, dict) else row["file_metadata"],
+                            error or None,
+                            row["id"],
+                        ),
+                    )
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
 
     def _migrate_tags_to_rows(self):
         """Move tags from the legacy `items.tags` JSON column into `tags`/`item_tags`,
@@ -1209,56 +1212,58 @@ class KnowledgeStore:
 
         now = utc_now_iso()
         self.db.execute("PRAGMA foreign_keys=OFF")
-        self.db.execute("BEGIN")
-        try:
-            for name in sorted(found):
-                self.db.execute(
-                    "INSERT OR IGNORE INTO tags (name, created_at) VALUES (?, ?)",
-                    (name, now),
-                )
-            ids = {
-                r["name"]: r["id"] for r in self.db.execute("SELECT id, name FROM tags").fetchall()
-            }
-            for item_id, names in per_item.items():
-                for name in names:
+        with self.db.held():
+            self.db.execute("BEGIN")
+            try:
+                for name in sorted(found):
                     self.db.execute(
-                        "INSERT OR IGNORE INTO item_tags (item_id, tag_id, source, added_at) "
-                        "VALUES (?, ?, ?, ?)",
-                        (item_id, ids[name], self._migrated_tag_source(item_id, names), now),
+                        "INSERT OR IGNORE INTO tags (name, created_at) VALUES (?, ?)",
+                        (name, now),
+                    )
+                ids = {
+                    r["name"]: r["id"]
+                    for r in self.db.execute("SELECT id, name FROM tags").fetchall()
+                }
+                for item_id, names in per_item.items():
+                    for name in names:
+                        self.db.execute(
+                            "INSERT OR IGNORE INTO item_tags (item_id, tag_id, source, added_at) "
+                            "VALUES (?, ?, ?, ?)",
+                            (item_id, ids[name], self._migrated_tag_source(item_id, names), now),
+                        )
+
+                # Reconcile BEFORE the irreversible step.
+                landed = {
+                    r["name"]
+                    for r in self.db.execute(
+                        "SELECT DISTINCT t.name FROM tags t JOIN item_tags it ON it.tag_id = t.id"
+                    ).fetchall()
+                }
+                if landed != found:
+                    missing = sorted(found - landed)
+                    raise RuntimeError(
+                        f"tag migration would lose {len(missing)} tag(s): {missing[:10]} — "
+                        "rolling back, the JSON column is untouched"
                     )
 
-            # Reconcile BEFORE the irreversible step.
-            landed = {
-                r["name"]
-                for r in self.db.execute(
-                    "SELECT DISTINCT t.name FROM tags t JOIN item_tags it ON it.tag_id = t.id"
-                ).fetchall()
-            }
-            if landed != found:
-                missing = sorted(found - landed)
-                raise RuntimeError(
-                    f"tag migration would lose {len(missing)} tag(s): {missing[:10]} — "
-                    "rolling back, the JSON column is untouched"
+                self.db.execute("ALTER TABLE items DROP COLUMN tags")
+                # Recreate the FTS table against the new view (see the docstring — never
+                # 'rebuild' here), then repopulate from the view itself.
+                self.db.execute("DROP TABLE IF EXISTS items_fts")
+                self.db.execute(
+                    "CREATE VIRTUAL TABLE items_fts USING fts5("
+                    "title, content, tags, content=items_fts_src, content_rowid=rowid)"
                 )
-
-            self.db.execute("ALTER TABLE items DROP COLUMN tags")
-            # Recreate the FTS table against the new view (see the docstring — never
-            # 'rebuild' here), then repopulate from the view itself.
-            self.db.execute("DROP TABLE IF EXISTS items_fts")
-            self.db.execute(
-                "CREATE VIRTUAL TABLE items_fts USING fts5("
-                "title, content, tags, content=items_fts_src, content_rowid=rowid)"
-            )
-            self.db.execute(
-                "INSERT INTO items_fts (rowid, title, content, tags) "
-                "SELECT rowid, title, content, tags FROM items_fts_src"
-            )
-            self.db.execute("COMMIT")
-        except Exception:
-            self.db.execute("ROLLBACK")
-            raise
-        finally:
-            self.db.execute("PRAGMA foreign_keys=ON")
+                self.db.execute(
+                    "INSERT INTO items_fts (rowid, title, content, tags) "
+                    "SELECT rowid, title, content, tags FROM items_fts_src"
+                )
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
+            finally:
+                self.db.execute("PRAGMA foreign_keys=ON")
 
         if salvaged:
             logger.warning(
@@ -1561,33 +1566,34 @@ class KnowledgeStore:
         — an escalation that only surfaced on failure would make the expensive-but-working
         case the invisible one."""
         now = utc_now_iso()
-        self.db.execute("BEGIN")
-        try:
-            self.db.execute(
-                "INSERT INTO source_cursors (source_id, cursor, updated_at) VALUES (?, ?, ?) "
-                "ON CONFLICT(source_id) DO UPDATE SET cursor = excluded.cursor, "
-                "updated_at = excluded.updated_at",
-                (source_id, cursor, now),
-            )
-            self.db.execute(
-                "UPDATE sources SET last_poll_at = ?, next_poll_at = ?, last_new_count = ?, "
-                "health_status = ?, last_error_summary = ?, last_escalations = ?, "
-                "updated_at = ? WHERE id = ?",
-                (
-                    now,
-                    next_poll_at or None,
-                    int(new_count),
-                    health_status,
-                    error_summary,
-                    json.dumps([str(e) for e in (escalations or [])]),
-                    now,
-                    source_id,
-                ),
-            )
-            self.db.execute("COMMIT")
-        except Exception:
-            self.db.execute("ROLLBACK")
-            raise
+        with self.db.held():
+            self.db.execute("BEGIN")
+            try:
+                self.db.execute(
+                    "INSERT INTO source_cursors (source_id, cursor, updated_at) VALUES (?, ?, ?) "
+                    "ON CONFLICT(source_id) DO UPDATE SET cursor = excluded.cursor, "
+                    "updated_at = excluded.updated_at",
+                    (source_id, cursor, now),
+                )
+                self.db.execute(
+                    "UPDATE sources SET last_poll_at = ?, next_poll_at = ?, last_new_count = ?, "
+                    "health_status = ?, last_error_summary = ?, last_escalations = ?, "
+                    "updated_at = ? WHERE id = ?",
+                    (
+                        now,
+                        next_poll_at or None,
+                        int(new_count),
+                        health_status,
+                        error_summary,
+                        json.dumps([str(e) for e in (escalations or [])]),
+                        now,
+                        source_id,
+                    ),
+                )
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
         self._prune_seen(source_id)
 
     def _prune_seen(self, source_id: str) -> None:
@@ -1684,64 +1690,65 @@ class KnowledgeStore:
 
         kind = item_type if item_type in semantics.SYNTHESIZED_KINDS else ""
         logical_key = semantics.logical_key(kind, title) if kind else ""
-        self.db.execute("BEGIN")
-        try:
-            if is_source_item:
-                # The novelty gate IS the storm guard: the INSERT-or-ignore into the
-                # UNIQUE seen-set is what makes a page that changes every render fire at most
-                # once. Do it FIRST, inside the item's txn — if the guid was already seen,
-                # bail before writing a duplicate item (no dup) and before touching the FTS.
-                cur = self.db.execute(
-                    "INSERT OR IGNORE INTO source_seen (source_id, guid, first_seen_at) "
-                    "VALUES (?, ?, ?)",
-                    (source_id, guid, now),
-                )
-                if cur.rowcount == 0:
+        with self.db.held():
+            self.db.execute("BEGIN")
+            try:
+                if is_source_item:
+                    # The novelty gate IS the storm guard: the INSERT-or-ignore into the
+                    # UNIQUE seen-set is what makes a page that changes every render fire at most
+                    # once. Do it FIRST, inside the item's txn — if the guid was already seen,
+                    # bail before writing a duplicate item (no dup) and before touching the FTS.
+                    cur = self.db.execute(
+                        "INSERT OR IGNORE INTO source_seen (source_id, guid, first_seen_at) "
+                        "VALUES (?, ?, ?)",
+                        (source_id, guid, now),
+                    )
+                    if cur.rowcount == 0:
+                        self.db.execute("ROLLBACK")
+                        return None
+                try:
+                    self.db.execute(
+                        "INSERT INTO items (id, title, content, item_type, summary, status, url, "
+                        "word_count, provider, source_id, guid, kind, logical_key, "
+                        "created_at, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            item_id,
+                            title,
+                            content,
+                            item_type,
+                            summary,
+                            url,
+                            word_count,
+                            provider,
+                            source_id or None,
+                            guid or None,
+                            kind or None,
+                            logical_key or None,
+                            now,
+                            now,
+                        ),
+                    )
+                except sqlite3.IntegrityError:
+                    # The never-pruned item-level UNIQUE(source_id, guid) backstop fired: this
+                    # source+guid already has an item even though the FIFO-capped seen-set had
+                    # forgotten it (a very-old guid re-appearing after the ~5000-entry prune).
+                    # Roll back and dedup rather than crash the poll — the item index is the
+                    # authoritative persist gate, the seen-set is the storm guard on top.
                     self.db.execute("ROLLBACK")
                     return None
-            try:
+                self._write_item_tags(item_id, tag_names, source="user", now=now)
+                rowid = self.db.execute(
+                    "SELECT rowid FROM items WHERE id = ?", (item_id,)
+                ).fetchone()[0]
                 self.db.execute(
-                    "INSERT INTO items (id, title, content, item_type, summary, status, url, "
-                    "word_count, provider, source_id, guid, kind, logical_key, "
-                    "created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        item_id,
-                        title,
-                        content,
-                        item_type,
-                        summary,
-                        url,
-                        word_count,
-                        provider,
-                        source_id or None,
-                        guid or None,
-                        kind or None,
-                        logical_key or None,
-                        now,
-                        now,
-                    ),
+                    "INSERT INTO items_fts (rowid, title, content, tags) VALUES (?, ?, ?, ?)",
+                    (rowid, title, content, _fts_tags(tag_names)),
                 )
-            except sqlite3.IntegrityError:
-                # The never-pruned item-level UNIQUE(source_id, guid) backstop fired: this
-                # source+guid already has an item even though the FIFO-capped seen-set had
-                # forgotten it (a very-old guid re-appearing after the ~5000-entry prune).
-                # Roll back and dedup rather than crash the poll — the item index is the
-                # authoritative persist gate, the seen-set is the storm guard on top.
+                self.db.execute("COMMIT")
+            except Exception:
                 self.db.execute("ROLLBACK")
-                return None
-            self._write_item_tags(item_id, tag_names, source="user", now=now)
-            rowid = self.db.execute("SELECT rowid FROM items WHERE id = ?", (item_id,)).fetchone()[
-                0
-            ]
-            self.db.execute(
-                "INSERT INTO items_fts (rowid, title, content, tags) VALUES (?, ?, ?, ?)",
-                (rowid, title, content, _fts_tags(tag_names)),
-            )
-            self.db.execute("COMMIT")
-        except Exception:
-            self.db.execute("ROLLBACK")
-            raise
+                raise
         if extra:
             self.update_item(item_id, **extra)
             self.db.commit()
@@ -2250,141 +2257,142 @@ class KnowledgeStore:
         }
         # Read before the rows move — see `delete_item`.
         neighbours = self._vault_neighbours(merge_id) + self._vault_neighbours(keep_id)
-        self.db.execute("BEGIN")
-        try:
-            # Collections: drop the pairs the survivor already has, then redirect the rest.
-            self.db.execute(
-                "DELETE FROM collection_items WHERE item_id = ? AND collection_id IN "
-                "(SELECT collection_id FROM collection_items WHERE item_id = ?)",
-                (merge_id, keep_id),
-            )
-            cur = self.db.execute(
-                "UPDATE collection_items SET item_id = ? WHERE item_id = ?", (keep_id, merge_id)
-            )
-            moved["collections"] = cur.rowcount or 0
-
-            self.db.execute(
-                "DELETE FROM item_tags WHERE item_id = ? AND tag_id IN "
-                "(SELECT tag_id FROM item_tags WHERE item_id = ?)",
-                (merge_id, keep_id),
-            )
-            cur = self.db.execute(
-                "UPDATE item_tags SET item_id = ? WHERE item_id = ?", (keep_id, merge_id)
-            )
-            moved["tags"] = cur.rowcount or 0
-
-            self.db.execute(
-                "DELETE FROM mentions WHERE item_id = ? AND entity_id IN "
-                "(SELECT entity_id FROM mentions WHERE item_id = ?)",
-                (merge_id, keep_id),
-            )
-            cur = self.db.execute(
-                "UPDATE mentions SET item_id = ? WHERE item_id = ?", (keep_id, merge_id)
-            )
-            moved["mentions"] = cur.rowcount or 0
-
-            # Reading highlights follow the same rule as the rest of the curation: a merge
-            # must not silently lose passages the user marked on the copy that loses. No
-            # de-dup pass is needed — `annotations` is surrogate-keyed, so there is no
-            # composite PK for a redirect to violate. The anchor may no longer resolve
-            # against the survivor's body; the row still lists, which is why anchoring
-            # failure is designed to degrade to "listed but not marked".
-            cur = self.db.execute(
-                "UPDATE annotations SET item_id = ? WHERE item_id = ?", (keep_id, merge_id)
-            )
-            moved["annotations"] = cur.rowcount or 0
-
-            # Relations discovered FROM the merged item now belong to the survivor, so the
-            # graph edge keeps a live provenance link instead of dangling.
-            self.db.execute(
-                "UPDATE entity_relations SET source_item_id = ? WHERE source_item_id = ?",
-                (keep_id, merge_id),
-            )
-
-            # The survivor keeps the STRONGER curation signal from either copy: a merge should
-            # never demote something the user had favorited or already read.
-            keep_row = self.db.execute(
-                "SELECT read_state, favorited FROM items WHERE id = ?", (keep_id,)
-            ).fetchone()
-            merge_row = self.db.execute(
-                "SELECT read_state, favorited FROM items WHERE id = ?", (merge_id,)
-            ).fetchone()
-            rank = {"unread": 0, "reading": 1, "read": 2}
-            best_state = max(
-                (keep_row["read_state"] or "unread", merge_row["read_state"] or "unread"),
-                key=lambda s: rank.get(s, 0),
-            )
-            self.db.execute(
-                "UPDATE items SET read_state = ?, favorited = ? WHERE id = ?",
-                (
-                    best_state,
-                    1 if (keep_row["favorited"] or merge_row["favorited"]) else 0,
-                    keep_id,
-                ),
-            )
-
-            # Typed ITEM-level edges follow the survivor on BOTH legs. Until this
-            # existed the merge could not even complete for a related item: the cascade has
-            # to delete these rows to satisfy the bare FK, so an unredirected merge either
-            # raised or (once the cascade deleted them) silently destroyed the graph edge
-            # that made the two items worth merging. Redirect, then let the cascade sweep
-            # whatever is left.
-            #
-            # The collision rule is the composite PK (source, target, relation_type) plus
-            # one case a PK cannot express: a redirect that would point an edge at itself.
-            # Both legs therefore delete the losers first — the sibling idiom used for
-            # collections/tags/mentions above — and the TARGET leg's `source_item_id = keep`
-            # test is what catches the self-edge the SOURCE leg's update can create when the
-            # two items already related to each other.
-            self.db.execute(
-                "DELETE FROM item_relations WHERE source_item_id = ? AND ("
-                "  target_item_id = ? OR EXISTS ("
-                "    SELECT 1 FROM item_relations r2 WHERE r2.source_item_id = ?"
-                "      AND r2.target_item_id = item_relations.target_item_id"
-                "      AND r2.relation_type = item_relations.relation_type))",
-                (merge_id, keep_id, keep_id),
-            )
-            cur = self.db.execute(
-                "UPDATE item_relations SET source_item_id = ? WHERE source_item_id = ?",
-                (keep_id, merge_id),
-            )
-            moved["relations"] = cur.rowcount or 0
-            self.db.execute(
-                "DELETE FROM item_relations WHERE target_item_id = ? AND ("
-                "  source_item_id = ? OR EXISTS ("
-                "    SELECT 1 FROM item_relations r2 WHERE r2.target_item_id = ?"
-                "      AND r2.source_item_id = item_relations.source_item_id"
-                "      AND r2.relation_type = item_relations.relation_type))",
-                (merge_id, keep_id, keep_id),
-            )
-            cur = self.db.execute(
-                "UPDATE item_relations SET target_item_id = ? WHERE target_item_id = ?",
-                (keep_id, merge_id),
-            )
-            moved["relations"] += cur.rowcount or 0
-
-            if relink_citations:
-                # `chunk_index` is reset to -1 (the whole item) rather than carried across.
-                # The number indexed a chunk of the copy being deleted; the survivor's
-                # chunks are its own and are about to be recomputed, so keeping the integer
-                # would point the attribution at an unrelated passage — a citation that
-                # resolves to the WRONG text, which is worse than one that resolves to the
-                # item and says no more than that.
+        with self.db.held():
+            self.db.execute("BEGIN")
+            try:
+                # Collections: drop the pairs the survivor already has, then redirect the rest.
+                self.db.execute(
+                    "DELETE FROM collection_items WHERE item_id = ? AND collection_id IN "
+                    "(SELECT collection_id FROM collection_items WHERE item_id = ?)",
+                    (merge_id, keep_id),
+                )
                 cur = self.db.execute(
-                    "UPDATE item_citations SET source_item_id = ?, chunk_index = -1 "
-                    "WHERE source_item_id = ?",
+                    "UPDATE collection_items SET item_id = ? WHERE item_id = ?", (keep_id, merge_id)
+                )
+                moved["collections"] = cur.rowcount or 0
+
+                self.db.execute(
+                    "DELETE FROM item_tags WHERE item_id = ? AND tag_id IN "
+                    "(SELECT tag_id FROM item_tags WHERE item_id = ?)",
+                    (merge_id, keep_id),
+                )
+                cur = self.db.execute(
+                    "UPDATE item_tags SET item_id = ? WHERE item_id = ?", (keep_id, merge_id)
+                )
+                moved["tags"] = cur.rowcount or 0
+
+                self.db.execute(
+                    "DELETE FROM mentions WHERE item_id = ? AND entity_id IN "
+                    "(SELECT entity_id FROM mentions WHERE item_id = ?)",
+                    (merge_id, keep_id),
+                )
+                cur = self.db.execute(
+                    "UPDATE mentions SET item_id = ? WHERE item_id = ?", (keep_id, merge_id)
+                )
+                moved["mentions"] = cur.rowcount or 0
+
+                # Reading highlights follow the same rule as the rest of the curation: a merge
+                # must not silently lose passages the user marked on the copy that loses. No
+                # de-dup pass is needed — `annotations` is surrogate-keyed, so there is no
+                # composite PK for a redirect to violate. The anchor may no longer resolve
+                # against the survivor's body; the row still lists, which is why anchoring
+                # failure is designed to degrade to "listed but not marked".
+                cur = self.db.execute(
+                    "UPDATE annotations SET item_id = ? WHERE item_id = ?", (keep_id, merge_id)
+                )
+                moved["annotations"] = cur.rowcount or 0
+
+                # Relations discovered FROM the merged item now belong to the survivor, so the
+                # graph edge keeps a live provenance link instead of dangling.
+                self.db.execute(
+                    "UPDATE entity_relations SET source_item_id = ? WHERE source_item_id = ?",
                     (keep_id, merge_id),
                 )
-                moved["citations"] = cur.rowcount or 0
 
-            # The cascade owns the FTS 'delete' (it must carry exactly the indexed values,
-            # read BEFORE item_tags rows go away) — reusing it is why this merge can't rot
-            # the search index.
-            self._delete_item_cascade(merge_id)
-            self.db.execute("COMMIT")
-        except Exception:
-            self.db.execute("ROLLBACK")
-            raise
+                # The survivor keeps the STRONGER curation signal from either copy: a merge should
+                # never demote something the user had favorited or already read.
+                keep_row = self.db.execute(
+                    "SELECT read_state, favorited FROM items WHERE id = ?", (keep_id,)
+                ).fetchone()
+                merge_row = self.db.execute(
+                    "SELECT read_state, favorited FROM items WHERE id = ?", (merge_id,)
+                ).fetchone()
+                rank = {"unread": 0, "reading": 1, "read": 2}
+                best_state = max(
+                    (keep_row["read_state"] or "unread", merge_row["read_state"] or "unread"),
+                    key=lambda s: rank.get(s, 0),
+                )
+                self.db.execute(
+                    "UPDATE items SET read_state = ?, favorited = ? WHERE id = ?",
+                    (
+                        best_state,
+                        1 if (keep_row["favorited"] or merge_row["favorited"]) else 0,
+                        keep_id,
+                    ),
+                )
+
+                # Typed ITEM-level edges follow the survivor on BOTH legs. Until this
+                # existed the merge could not even complete for a related item: the cascade has
+                # to delete these rows to satisfy the bare FK, so an unredirected merge either
+                # raised or (once the cascade deleted them) silently destroyed the graph edge
+                # that made the two items worth merging. Redirect, then let the cascade sweep
+                # whatever is left.
+                #
+                # The collision rule is the composite PK (source, target, relation_type) plus
+                # one case a PK cannot express: a redirect that would point an edge at itself.
+                # Both legs therefore delete the losers first — the sibling idiom used for
+                # collections/tags/mentions above — and the TARGET leg's `source_item_id = keep`
+                # test is what catches the self-edge the SOURCE leg's update can create when the
+                # two items already related to each other.
+                self.db.execute(
+                    "DELETE FROM item_relations WHERE source_item_id = ? AND ("
+                    "  target_item_id = ? OR EXISTS ("
+                    "    SELECT 1 FROM item_relations r2 WHERE r2.source_item_id = ?"
+                    "      AND r2.target_item_id = item_relations.target_item_id"
+                    "      AND r2.relation_type = item_relations.relation_type))",
+                    (merge_id, keep_id, keep_id),
+                )
+                cur = self.db.execute(
+                    "UPDATE item_relations SET source_item_id = ? WHERE source_item_id = ?",
+                    (keep_id, merge_id),
+                )
+                moved["relations"] = cur.rowcount or 0
+                self.db.execute(
+                    "DELETE FROM item_relations WHERE target_item_id = ? AND ("
+                    "  source_item_id = ? OR EXISTS ("
+                    "    SELECT 1 FROM item_relations r2 WHERE r2.target_item_id = ?"
+                    "      AND r2.source_item_id = item_relations.source_item_id"
+                    "      AND r2.relation_type = item_relations.relation_type))",
+                    (merge_id, keep_id, keep_id),
+                )
+                cur = self.db.execute(
+                    "UPDATE item_relations SET target_item_id = ? WHERE target_item_id = ?",
+                    (keep_id, merge_id),
+                )
+                moved["relations"] += cur.rowcount or 0
+
+                if relink_citations:
+                    # `chunk_index` is reset to -1 (the whole item) rather than carried across.
+                    # The number indexed a chunk of the copy being deleted; the survivor's
+                    # chunks are its own and are about to be recomputed, so keeping the integer
+                    # would point the attribution at an unrelated passage — a citation that
+                    # resolves to the WRONG text, which is worse than one that resolves to the
+                    # item and says no more than that.
+                    cur = self.db.execute(
+                        "UPDATE item_citations SET source_item_id = ?, chunk_index = -1 "
+                        "WHERE source_item_id = ?",
+                        (keep_id, merge_id),
+                    )
+                    moved["citations"] = cur.rowcount or 0
+
+                # The cascade owns the FTS 'delete' (it must carry exactly the indexed values,
+                # read BEFORE item_tags rows go away) — reusing it is why this merge can't rot
+                # the search index.
+                self._delete_item_cascade(merge_id)
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
         self._load_graph()
         # A merge is a delete plus a re-point: one item left the library and another
         # one's mentions/tags/chunks changed underneath it.
@@ -2644,46 +2652,47 @@ class KnowledgeStore:
         tags = dict(snapshot.get("tags") or {})
         children = dict(snapshot.get("children") or {})
         result: dict = {"items": 0, "created_removed": 0, "children": {}}
-        self.db.execute("BEGIN")
-        try:
-            # Anything the verb minted goes first, so its child rows are gone before the
-            # snapshot's own rows are re-inserted and cannot collide on a composite PK.
-            for iid in ids:
-                if iid in existing:
-                    continue
-                if self.db.execute("SELECT 1 FROM items WHERE id = ?", (iid,)).fetchone():
-                    self._delete_item_cascade(iid)
-                    result["created_removed"] += 1
-            for row in rows:
-                self._restore_item_row(row, tags.get(str(row.get("id")), []))
-                result["items"] += 1
-            for table, columns in self._SNAPSHOT_TABLES:
-                where = " OR ".join(f"{col} IN ({_placeholders(ids)})" for col in columns)
-                self.db.execute(
-                    f"DELETE FROM {table} WHERE {where}", tuple(ids) * len(columns)
-                )  # noqa: S608
-                restored = 0
-                for child in children.get(table, []):
-                    cols = list(child)
-                    placeholders = _placeholders(cols)
-                    try:
-                        self.db.execute(
-                            f"INSERT OR REPLACE INTO {table} ({', '.join(cols)}) "  # noqa: S608
-                            f"VALUES ({placeholders})",
-                            tuple(_restore_value(child[c]) for c in cols),
-                        )
-                    except sqlite3.IntegrityError:
-                        # A row whose OTHER endpoint has since been deleted by something
-                        # outside this snapshot. Skipped rather than aborting the whole undo:
-                        # restoring four of five relations beats refusing to restore the item.
-                        logger.debug("undo skipped a %s row: %r", table, child, exc_info=True)
+        with self.db.held():
+            self.db.execute("BEGIN")
+            try:
+                # Anything the verb minted goes first, so its child rows are gone before the
+                # snapshot's own rows are re-inserted and cannot collide on a composite PK.
+                for iid in ids:
+                    if iid in existing:
                         continue
-                    restored += 1
-                result["children"][table] = restored
-            self.db.execute("COMMIT")
-        except Exception:
-            self.db.execute("ROLLBACK")
-            raise
+                    if self.db.execute("SELECT 1 FROM items WHERE id = ?", (iid,)).fetchone():
+                        self._delete_item_cascade(iid)
+                        result["created_removed"] += 1
+                for row in rows:
+                    self._restore_item_row(row, tags.get(str(row.get("id")), []))
+                    result["items"] += 1
+                for table, columns in self._SNAPSHOT_TABLES:
+                    where = " OR ".join(f"{col} IN ({_placeholders(ids)})" for col in columns)
+                    self.db.execute(
+                        f"DELETE FROM {table} WHERE {where}", tuple(ids) * len(columns)
+                    )  # noqa: S608
+                    restored = 0
+                    for child in children.get(table, []):
+                        cols = list(child)
+                        placeholders = _placeholders(cols)
+                        try:
+                            self.db.execute(
+                                f"INSERT OR REPLACE INTO {table} ({', '.join(cols)}) "  # noqa: S608
+                                f"VALUES ({placeholders})",
+                                tuple(_restore_value(child[c]) for c in cols),
+                            )
+                        except sqlite3.IntegrityError:
+                            # A row whose OTHER endpoint has since been deleted by something
+                            # outside this snapshot. Skipped rather than aborting the whole undo:
+                            # restoring four of five relations beats refusing to restore the item.
+                            logger.debug("undo skipped a %s row: %r", table, child, exc_info=True)
+                            continue
+                        restored += 1
+                    result["children"][table] = restored
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
         self._load_graph()
         return result
 
@@ -3077,20 +3086,21 @@ class KnowledgeStore:
             chunk_index = -1 if raw_chunk is None else int(raw_chunk)
             rows[marker] = (item_id, marker, str(source_id), chunk_index, str(excerpt))
 
-        self.db.execute("BEGIN")
-        try:
-            self.db.execute("DELETE FROM item_citations WHERE item_id = ?", (item_id,))
-            if rows:
-                self.db.executemany(
-                    "INSERT INTO item_citations "
-                    "(item_id, marker, source_item_id, chunk_index, excerpt) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    list(rows.values()),
-                )
-            self.db.execute("COMMIT")
-        except Exception:
-            self.db.execute("ROLLBACK")
-            raise
+        with self.db.held():
+            self.db.execute("BEGIN")
+            try:
+                self.db.execute("DELETE FROM item_citations WHERE item_id = ?", (item_id,))
+                if rows:
+                    self.db.executemany(
+                        "INSERT INTO item_citations "
+                        "(item_id, marker, source_item_id, chunk_index, excerpt) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        list(rows.values()),
+                    )
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
         return len(rows)
 
     def item_citations(self, item_id: str) -> list[dict]:
@@ -3419,37 +3429,38 @@ class KnowledgeStore:
             old_fts_tags = _fts_tags(self._tags_for_item(item_id))
         cols = ", ".join(f"{k} = ?" for k in safe)
         vals = [json.dumps(v) if isinstance(v, (list, dict)) else v for v in safe.values()]
-        self.db.execute("BEGIN")
-        try:
-            if safe:
-                self.db.execute(
-                    f"UPDATE items SET {cols} WHERE id = ?",  # noqa: S608
-                    (*vals, item_id),
-                )
-            if tags_update is not None:
-                self._write_item_tags(item_id, tags_update, source=tag_source)
-            # Sync FTS: delete with OLD values, insert with NEW values
-            if old_row:
-                self.db.execute(
-                    "INSERT INTO items_fts (items_fts, rowid, title, content, tags) VALUES ('delete', ?, ?, ?, ?)",  # noqa: E501
-                    (old_row["rowid"], old_row["title"], old_row["content"], old_fts_tags),
-                )
-                new_row = self.db.execute(
-                    "SELECT title, content FROM items WHERE id = ?", (item_id,)
-                ).fetchone()
-                self.db.execute(
-                    "INSERT INTO items_fts (rowid, title, content, tags) VALUES (?, ?, ?, ?)",
-                    (
-                        old_row["rowid"],
-                        new_row["title"],
-                        new_row["content"],
-                        _fts_tags(self._tags_for_item(item_id)),
-                    ),
-                )
-            self.db.execute("COMMIT")
-        except Exception:
-            self.db.execute("ROLLBACK")
-            raise
+        with self.db.held():
+            self.db.execute("BEGIN")
+            try:
+                if safe:
+                    self.db.execute(
+                        f"UPDATE items SET {cols} WHERE id = ?",  # noqa: S608
+                        (*vals, item_id),
+                    )
+                if tags_update is not None:
+                    self._write_item_tags(item_id, tags_update, source=tag_source)
+                # Sync FTS: delete with OLD values, insert with NEW values
+                if old_row:
+                    self.db.execute(
+                        "INSERT INTO items_fts (items_fts, rowid, title, content, tags) VALUES ('delete', ?, ?, ?, ?)",  # noqa: E501
+                        (old_row["rowid"], old_row["title"], old_row["content"], old_fts_tags),
+                    )
+                    new_row = self.db.execute(
+                        "SELECT title, content FROM items WHERE id = ?", (item_id,)
+                    ).fetchone()
+                    self.db.execute(
+                        "INSERT INTO items_fts (rowid, title, content, tags) VALUES (?, ?, ?, ?)",
+                        (
+                            old_row["rowid"],
+                            new_row["title"],
+                            new_row["content"],
+                            _fts_tags(self._tags_for_item(item_id)),
+                        ),
+                    )
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
         if index_changes:
             from personalclaw.knowledge import maintenance
 
@@ -3535,14 +3546,15 @@ class KnowledgeStore:
         # left `[[Eviction-1d51c992]]` in a sibling's body after its item was deleted, and the
         # broken-link check is what reported it.
         neighbours = self._vault_neighbours(item_id)
-        self.db.execute("BEGIN")
-        try:
-            self._delete_item_cascade(item_id)
-            self._drop_orphan_entities()
-            self.db.execute("COMMIT")
-        except Exception:
-            self.db.execute("ROLLBACK")
-            raise
+        with self.db.held():
+            self.db.execute("BEGIN")
+            try:
+                self._delete_item_cascade(item_id)
+                self._drop_orphan_entities()
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
         self._load_graph()
         # A delete is index-affecting in both directions: the item leaves the
         # consolidation candidate set, and the orphan-entity sweep above just changed the
@@ -5178,65 +5190,69 @@ class KnowledgeStore:
         )
         moved = already = 0
         now = utc_now_iso()
-        self.db.execute("BEGIN")
-        try:
-            for row in rows:
-                existing = self.db.execute(
-                    "SELECT source FROM item_tags WHERE item_id = ? AND tag_id = ?",
-                    (row["item_id"], target_id),
-                ).fetchone()
-                if existing:
-                    already += 1
-                    if "user" in (existing["source"], row["source"]):
+        with self.db.held():
+            self.db.execute("BEGIN")
+            try:
+                for row in rows:
+                    existing = self.db.execute(
+                        "SELECT source FROM item_tags WHERE item_id = ? AND tag_id = ?",
+                        (row["item_id"], target_id),
+                    ).fetchone()
+                    if existing:
+                        already += 1
+                        if "user" in (existing["source"], row["source"]):
+                            self.db.execute(
+                                "UPDATE item_tags SET source = 'user' "
+                                "WHERE item_id = ? AND tag_id = ?",
+                                (row["item_id"], target_id),
+                            )
+                    else:
                         self.db.execute(
-                            "UPDATE item_tags SET source = 'user' "
-                            "WHERE item_id = ? AND tag_id = ?",
-                            (row["item_id"], target_id),
+                            "INSERT INTO item_tags (item_id, tag_id, source, added_at) "
+                            "VALUES (?, ?, ?, ?)",
+                            (row["item_id"], target_id, row["source"] or "user", now),
                         )
-                else:
+                        moved += 1
+                # 🔴 THE SURVIVOR TAKES THE SOURCE'S PLACE FIRST, or the merge mints a cycle.
+                # Folding a tag into one nested underneath it is a legitimate merge ("these are
+                # the same thing; keep the child's name"), and the blanket re-parent below
+                # pointed the target's own ancestor chain back at the target. Measured, both
+                # shapes:
+                #
+                #   parent into its child        `zfs` > `homelab`  → homelab.parent = homelab
+                #   grandparent into grandchild  `a` > `b` > `c`    → b.parent = c, c.parent = b
+                #
+                # so the depth-1 case is a self-cycle and deeper ones are longer loops (#761).
+                # Neither is cosmetic: `TagManager.tsx` builds roots as `parent_id === null` and
+                # children one level below them, so a tag inside a cycle is neither and falls
+                # through to the straggler append at the bottom of the list — rendered flat and
+                # detached from where the user filed it, along with everything beneath it. Any
+                # `WITH RECURSIVE` consumer of `parent_id` added later would not terminate at all.
+                #
+                # `set_tag_parent` refuses exactly this via `_tag_ancestors`; this path had no
+                # guard at all. Reassigning rather than refusing, because the merge itself is
+                # valid: the source is being deleted, so the target inherits its position in the
+                # tree. That generalizes the depth-1 answer (a root's child becomes a root)
+                # instead of special-casing it, and it keeps the branch where the user had it
+                # when the source was not a root.
+                if source_id in self._tag_ancestors(target_id):
                     self.db.execute(
-                        "INSERT INTO item_tags (item_id, tag_id, source, added_at) "
-                        "VALUES (?, ?, ?, ?)",
-                        (row["item_id"], target_id, row["source"] or "user", now),
+                        "UPDATE tags SET parent_id = ? WHERE id = ?",
+                        (src["parent_id"], target_id),
                     )
-                    moved += 1
-            # 🔴 THE SURVIVOR TAKES THE SOURCE'S PLACE FIRST, or the merge mints a cycle.
-            # Folding a tag into one nested underneath it is a legitimate merge ("these are the
-            # same thing; keep the child's name"), and the blanket re-parent below pointed the
-            # target's own ancestor chain back at the target. Measured, both shapes:
-            #
-            #   parent into its child        `zfs` > `homelab`      → homelab.parent = homelab
-            #   grandparent into grandchild  `a` > `b` > `c`        → b.parent = c, c.parent = b
-            #
-            # so the depth-1 case is a self-cycle and deeper ones are longer loops (#761). Neither
-            # is cosmetic: `TagManager.tsx` builds roots as `parent_id === null` and children one
-            # level below them, so a tag inside a cycle is neither and falls through to the
-            # straggler append at the bottom of the list — rendered flat and detached from where
-            # the user filed it, along with everything beneath it. Any `WITH RECURSIVE` consumer
-            # of `parent_id` added later would not terminate at all.
-            #
-            # `set_tag_parent` refuses exactly this via `_tag_ancestors`; this path had no guard at
-            # all. Reassigning rather than refusing, because the merge itself is valid: the source
-            # is being deleted, so the target inherits its position in the tree. That generalizes
-            # the depth-1 answer (a root's child becomes a root) instead of special-casing it, and
-            # it keeps the branch where the user had it when the source was not a root.
-            if source_id in self._tag_ancestors(target_id):
+                # Children of the source follow it to the target rather than being orphaned.
+                # `id != ?` keeps this correct independently of the statement above rather than
+                # by ordering alone.
                 self.db.execute(
-                    "UPDATE tags SET parent_id = ? WHERE id = ?",
-                    (src["parent_id"], target_id),
+                    "UPDATE tags SET parent_id = ? WHERE parent_id = ? AND id != ?",
+                    (target_id, source_id, target_id),
                 )
-            # Children of the source follow it to the target rather than being orphaned. `id != ?`
-            # keeps this correct independently of the statement above rather than by ordering alone.
-            self.db.execute(
-                "UPDATE tags SET parent_id = ? WHERE parent_id = ? AND id != ?",
-                (target_id, source_id, target_id),
-            )
-            self.db.execute("DELETE FROM item_tags WHERE tag_id = ?", (source_id,))
-            self.db.execute("DELETE FROM tags WHERE id = ?", (source_id,))
-            self.db.execute("COMMIT")
-        except Exception:
-            self.db.execute("ROLLBACK")
-            raise
+                self.db.execute("DELETE FROM item_tags WHERE tag_id = ?", (source_id,))
+                self.db.execute("DELETE FROM tags WHERE id = ?", (source_id,))
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
         self._resync_fts(snapshot)
         return {"moved": moved, "already": already}
 
