@@ -10,16 +10,14 @@ from personalclaw.concurrency import boot_sweep, lock_path, single_flight
 
 
 @pytest.fixture(autouse=True)
-def _tmp_home(monkeypatch, tmp_path, _isolate_single_flight_locks):
+def _tmp_home(monkeypatch, tmp_path):
     """Point config_dir() at a tmp dir so lock files land in isolation.
 
     This suite tests the REAL single-flight primitive, including a cross-PROCESS
     case where a spawned child (which re-sets PERSONALCLAW_HOME and re-imports
     concurrency) must contend on the SAME lock file as the parent. So here the lock
-    dir must derive from PERSONALCLAW_HOME — not from the fixed per-test dir the root
-    conftest's ``_isolate_single_flight_locks`` patches in for every other test (that
-    patch lives only in the parent process, so it would desync parent and child).
-    Depending on that fixture forces this override to run last, so it wins."""
+    dir must derive from PERSONALCLAW_HOME — not from a redirect that lives only in the
+    parent process, which would desync parent and child."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
 
     def _derive() -> Path:

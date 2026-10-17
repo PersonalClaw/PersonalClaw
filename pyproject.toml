@@ -568,8 +568,8 @@ addopts = [
     # cross-worker flakiness that once forced loadscope here (#8/#10) is FENCED — not
     # closed — by autouse fixtures in tests/conftest.py that snapshot-and-restore
     # process-global state around every test: _reset_sel_singleton (the
-    # SecurityEventLog singleton), _isolate_single_flight_locks (the cross-process
-    # single-flight lock dir), _restore_pipeline_node_registry (the ingestion
+    # SecurityEventLog singleton), _isolate_real_home_writers (each test's own home,
+    # which holds the cross-process single-flight lock dir), _restore_pipeline_node_registry (the ingestion
     # NODE_REGISTRY) and _restore_local_model_registry (the local-model provider
     # registry) — four of the 25 autouse fixtures now carrying that load.
     #

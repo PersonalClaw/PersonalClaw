@@ -123,9 +123,9 @@ def _store(tmp_path, monkeypatch):
     🔴 BOTH, not just `config_dir`: patching `config_dir` alone still lets an import-bound store
     reach the real `~/.personalclaw`, which this repo has been bitten by. The env var is what
     isolates the stores the parking path resolves lazily. The gateway's and the handler's own
-    `config_dir` are pointed at the same home, because conftest's `_isolate_trigger_store` has
-    already pointed them at a DIFFERENT tmp dir and a fire that recorded its run elsewhere would
-    read here as a fire that recorded nothing.
+    `config_dir` are pointed at the same home too, so that a fire records its run here whatever
+    else the test patches: a run recorded elsewhere would read here as a fire that recorded
+    nothing.
     """
     home = tmp_path / "home"
     home.mkdir()
