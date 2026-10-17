@@ -21,6 +21,9 @@ import pytest
 from personalclaw import shell_syntax
 from personalclaw.security import is_denied
 
+pytestmark = pytest.mark.security
+
+
 OPERATOR_CHARS = ";&|<>\n"
 OTHER_CHARS = "`$(){}#"
 PUSH = "git push origin main --force"

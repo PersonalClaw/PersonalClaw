@@ -50,6 +50,9 @@ from personalclaw.inbound import auth as inbound_auth
 from personalclaw.inbound import clients as clients_mod
 from personalclaw.sdk.channel import ChannelCapabilities
 
+pytestmark = pytest.mark.security
+
+
 PASSWORD = "correct-horse-battery-staple"
 CHANNEL = "examplechat"
 

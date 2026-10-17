@@ -40,6 +40,9 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.security
+
+
 _SRC = Path(__file__).resolve().parents[1] / "src"
 
 #: Runs in the child. ``argv``: the scratch root, then ``import`` or ``reference``.

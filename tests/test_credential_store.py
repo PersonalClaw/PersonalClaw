@@ -20,6 +20,9 @@ from personalclaw.config import loader
 from personalclaw.llm.credentials import CredentialStore, OwnedCredentialRefused
 from tests.test_credential_backend import _install_stub_keyring
 
+pytestmark = pytest.mark.security
+
+
 NAME = "CS_UNIT_TOKEN"
 
 

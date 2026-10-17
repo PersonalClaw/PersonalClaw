@@ -35,6 +35,9 @@ import personalclaw
 from personalclaw import validation
 from personalclaw.safety_flags import CONFIRM_FIELDS
 
+pytestmark = pytest.mark.security
+
+
 SRC = Path(personalclaw.__file__).resolve().parent
 
 #: Read where the module reads the call's arguments, through ``yes_or_no`` or a reader built on it

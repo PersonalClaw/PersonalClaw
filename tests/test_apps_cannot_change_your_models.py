@@ -54,6 +54,9 @@ from personalclaw.dashboard.handlers import local_model, model_registry
 from personalclaw.dashboard.handlers import providers as model_providers
 from personalclaw.dashboard.handlers.apps import register_app_routes
 
+pytestmark = pytest.mark.security
+
+
 APP = "probe-models"
 #: Both families, and the onboarding routes, so no refusal here is "path not declared".
 DECLARES = ["/api/models", "/api/model-providers", "/api/onboarding"]

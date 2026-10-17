@@ -22,6 +22,9 @@ import pytest
 
 from personalclaw.safety_flags import strict_bool
 
+pytestmark = pytest.mark.security
+
+
 TEXT_OFF = ["false", "False", " no ", "off", "0"]
 UNREADABLE = ["maybe", "", [], {}, "enabled"]
 

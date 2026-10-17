@@ -6,9 +6,14 @@ recovery hint. format_tool_result surfaces the result contract (recovery_hints
 on failure, truncation notice on success) instead of dropping it.
 """
 
+import pytest
+
 from personalclaw import security
 from personalclaw.agents.native.tools import format_tool_result
 from personalclaw.tool_providers.base import ToolResult
+
+pytestmark = pytest.mark.security
+
 
 # ── classify_denial taxonomy ──
 

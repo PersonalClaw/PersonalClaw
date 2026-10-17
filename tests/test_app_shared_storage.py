@@ -20,6 +20,9 @@ from personalclaw.apps import app_manager, backend_runtime, manager
 from personalclaw.apps.manifest import AppManifest, Permissions
 from personalclaw.apps.permissions import PermissionChecker, checker_for
 
+pytestmark = pytest.mark.security
+
+
 _SHARER_ENV = "PERSONALCLAW_APP_SHARED_DIR_NOTE_KEEPER"
 
 

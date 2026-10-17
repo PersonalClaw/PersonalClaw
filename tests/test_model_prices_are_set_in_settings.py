@@ -24,6 +24,9 @@ from personalclaw.llm.registry import ProviderEntry, get_default_registry
 from personalclaw.routing import rates as rates_mod
 from personalclaw.routing.rates import rate_for
 
+pytestmark = pytest.mark.security
+
+
 _REF = "acme-cloud:acme-large"
 
 

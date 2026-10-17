@@ -39,6 +39,9 @@ from personalclaw.config.secret_refs import (
 )
 from personalclaw.mcp_client import McpClientRegistry, _personalclaw_mcp_specs
 
+pytestmark = pytest.mark.security
+
+
 #: Invented fixture values: no real service issued any of them.
 TOKEN = "fixture-todo-token-0000aaaa1111bbbb2222"
 ROTATED = "fixture-todo-token-3333cccc4444dddd5555"

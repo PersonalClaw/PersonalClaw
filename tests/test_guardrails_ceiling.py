@@ -28,6 +28,8 @@ from personalclaw.guardrails.policy import (
     unattended_dispatch_key,
 )
 
+pytestmark = pytest.mark.security
+
 
 def _write_ceiling(tmp_path, scopes: dict) -> None:
     """Point the process at an operator ceiling holding ``scopes``."""

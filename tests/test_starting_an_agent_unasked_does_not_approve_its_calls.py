@@ -47,6 +47,9 @@ from personalclaw.subagent import SubagentInfo, SubagentManager
 from personalclaw.triggers import grants
 from personalclaw.triggers.models import Trigger
 
+pytestmark = pytest.mark.security
+
+
 TASK = "Write this week's report into weekly-report.md."
 #: A workflow's step: no trigger's Allow starts its agent, so the start is the setting's to decide.
 STEP = ActionContext(event="workflow_node", payload={"run_id": "run-1", "node_id": "report"})

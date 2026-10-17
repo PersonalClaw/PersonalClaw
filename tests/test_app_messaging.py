@@ -26,6 +26,9 @@ from personalclaw.apps.permissions import PermissionChecker
 from personalclaw.dashboard.handlers.apps import register_app_routes
 from personalclaw.security import is_fenced
 
+pytestmark = pytest.mark.security
+
+
 # ── unit: the permission gate (deny-by-default, wildcard) ──
 
 

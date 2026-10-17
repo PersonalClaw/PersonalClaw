@@ -1,7 +1,11 @@
 """F1 — fence_untrusted: wrap external content so a model treats it as data, not
 instructions. Includes the fence-break defense (content can't close the fence early)."""
 
+import pytest
+
 from personalclaw.security import UNTRUSTED_CLOSE, UNTRUSTED_OPEN, fence_untrusted
+
+pytestmark = pytest.mark.security
 
 
 def test_wraps_content():

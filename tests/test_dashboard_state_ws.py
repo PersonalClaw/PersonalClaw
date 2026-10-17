@@ -8,6 +8,8 @@ import pytest
 
 from personalclaw.dashboard.state import DashboardState
 
+pytestmark = pytest.mark.security
+
 
 @pytest.fixture(autouse=True)
 def sync_event_loop():

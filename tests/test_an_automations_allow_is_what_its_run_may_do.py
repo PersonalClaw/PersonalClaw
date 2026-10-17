@@ -47,6 +47,9 @@ from personalclaw.subagent import SubagentManager
 from personalclaw.triggers import grants
 from personalclaw.triggers.models import Trigger
 
+pytestmark = pytest.mark.security
+
+
 TRIGGER = "file:kitchen-pdf-summary"
 
 

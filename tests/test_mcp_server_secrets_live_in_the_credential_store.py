@@ -30,6 +30,9 @@ from personalclaw.config.credentials import credential_names, get_credential
 from personalclaw.config.secret_refs import make_ref, migrate_plaintext_secrets, ref_key
 from personalclaw.mcp_client import McpClientRegistry, _personalclaw_mcp_specs
 
+pytestmark = pytest.mark.security
+
+
 TOKEN = "fake-github-token-1"
 OLD_TOKEN = "fake-github-token-2"
 HEADER_TOKEN = "Bearer fixture-remote-header-token-5a4b3c2d"

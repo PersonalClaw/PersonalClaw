@@ -60,6 +60,9 @@ from personalclaw.tasks.models import Project
 from personalclaw.workflows import project_archive
 from personalclaw.workflows.project_export import plan_export
 
+pytestmark = pytest.mark.security
+
+
 APP = "probe-projects"
 PROJECTS = "/api/projects"
 #: The task lists too, as `minutes` declares them: it files a meeting's action items in a list

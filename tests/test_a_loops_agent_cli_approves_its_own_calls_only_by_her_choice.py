@@ -22,6 +22,9 @@ from personalclaw.loop import store
 from personalclaw.loop.loop import Loop, LoopStatus
 from personalclaw.sel import sel
 
+pytestmark = pytest.mark.security
+
+
 #: An agent CLI whose residual PersonalClaw declares, and one nobody measured.
 MEASURED = "acp:claude-code"
 UNMEASURED = "acp:example-cli"

@@ -55,6 +55,9 @@ from personalclaw.sdk.provider_helpers import (
     register_subscription_source,
 )
 
+pytestmark = pytest.mark.security
+
+
 SECRET = "fake-key-1"
 
 

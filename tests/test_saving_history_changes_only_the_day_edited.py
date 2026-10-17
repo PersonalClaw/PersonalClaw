@@ -30,7 +30,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw.stale_write import revision_of
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.security]
 
 #: What each day's entry says, by how many days before today it was written. Twenty days back is
 #: a day the recent-days view cut to its first entry.

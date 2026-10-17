@@ -36,6 +36,9 @@ from personalclaw.llm.registry import get_default_registry
 from personalclaw.providers.settings import ProviderSettings
 from personalclaw.sdk.provider_helpers import register_branded_app
 
+pytestmark = pytest.mark.security
+
+
 PLANTED = {
     "provider key": "fake-key-fixture-property-provider-81a2b3c4",
     "app secret setting": "fake-bot-token-fixture-property-app-5d6e7f80",

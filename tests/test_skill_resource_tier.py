@@ -36,6 +36,9 @@ from personalclaw.skills.loader import (
 )
 from personalclaw.validation import MCP_CORE_SCHEMAS
 
+pytestmark = pytest.mark.security
+
+
 _SECRET = "SENTINEL-RESOURCE-BODY-DO-NOT-INLINE"
 
 

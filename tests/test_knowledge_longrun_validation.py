@@ -23,6 +23,8 @@ from personalclaw.action_providers.base import ActionContext
 from personalclaw.knowledge import consolidation
 from personalclaw.workflows.longrun import SeenSet, sibling_view
 
+pytestmark = pytest.mark.security
+
 
 def run(coro):
     return asyncio.get_event_loop().run_until_complete(coro)

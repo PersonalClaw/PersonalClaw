@@ -42,6 +42,9 @@ from personalclaw.browse.loop import (
 )
 from personalclaw.security import is_fenced
 
+pytestmark = pytest.mark.security
+
+
 INDEX_URL = "https://example.test/docs"
 CHANGELOG_URL = "https://example.test/changelog"
 

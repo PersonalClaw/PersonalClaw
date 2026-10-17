@@ -47,6 +47,9 @@ import pathlib
 
 import pytest
 
+pytestmark = pytest.mark.security
+
+
 SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
 #: The one module allowed to work the home out.

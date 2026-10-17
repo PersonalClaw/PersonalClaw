@@ -37,6 +37,9 @@ from personalclaw.guardrails import project_trust
 from personalclaw.triggers import grants
 from personalclaw.triggers.models import Trigger
 
+pytestmark = pytest.mark.security
+
+
 TRIGGER = "file:site-rebuild"
 FOLDER = "~/Projects/site"
 

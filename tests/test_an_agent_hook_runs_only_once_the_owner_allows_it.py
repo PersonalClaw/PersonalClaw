@@ -36,6 +36,8 @@ from aiohttp.test_utils import make_mocked_request
 
 import personalclaw.config.loader as loader
 
+pytestmark = pytest.mark.security
+
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):

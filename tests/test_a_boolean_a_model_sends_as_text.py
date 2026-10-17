@@ -31,6 +31,9 @@ from personalclaw.tasks.models import (
     normalize_exit_criterion,
 )
 
+pytestmark = pytest.mark.security
+
+
 #: Each way a caller spells yes, and no. A real boolean included: it must still pass through.
 YES = [True, "true", "TRUE", " yes ", "1", "on"]
 NO = [False, "false", "False", " no ", "0", "off"]

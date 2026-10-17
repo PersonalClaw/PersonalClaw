@@ -10,7 +10,11 @@ runs a command does.
 import json
 from pathlib import Path
 
+import pytest
+
 from personalclaw import security
+
+pytestmark = pytest.mark.security
 
 
 class TestBuiltinDenylist:

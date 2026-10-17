@@ -54,6 +54,9 @@ from personalclaw.owner_questions import (
 from personalclaw.tool_providers.ask_user import QuestionToolProvider
 from personalclaw.tool_providers.base import is_interactive_tool
 
+pytestmark = pytest.mark.security
+
+
 CHAT = "chat-trip"
 KEY = f"dashboard:{CHAT}"
 

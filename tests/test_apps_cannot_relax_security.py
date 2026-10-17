@@ -31,6 +31,9 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from signed_in_sessions import without_sign_in
 
+pytestmark = pytest.mark.security
+
+
 APP = "evil-app"
 
 

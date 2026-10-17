@@ -30,6 +30,9 @@ from personalclaw.learning import staging as staging_mod
 from personalclaw.learning.gate import Cadence
 from personalclaw.security import UNTRUSTED_CLOSE, UNTRUSTED_OPEN, redact_credentials
 
+pytestmark = pytest.mark.security
+
+
 # A credential-shaped string the redactor genuinely recognises. Asserted absent below,
 # with a floor proving the redactor would have found it — `redact_credentials` reports
 # `found` only on FIRST contact, so a vacuity floor built by re-screening what was

@@ -50,6 +50,8 @@ from personalclaw.apps.manifest import Permissions
 from personalclaw.apps.permissions import PermissionChecker
 from personalclaw.dashboard.handlers.apps import register_app_routes
 
+pytestmark = pytest.mark.security
+
 
 def _checker(**perms) -> PermissionChecker:
     return PermissionChecker(app_name="listener", permissions=Permissions(**perms))

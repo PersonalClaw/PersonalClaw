@@ -24,6 +24,8 @@ from aiohttp.test_utils import make_mocked_request
 from personalclaw.dashboard.handlers import rooms as h
 from personalclaw.rooms import store
 
+pytestmark = pytest.mark.security
+
 
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch):

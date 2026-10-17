@@ -16,6 +16,7 @@ import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 
@@ -23,6 +24,8 @@ import personalclaw.action_providers as AP
 from personalclaw.action_providers.base import ActionContext, ActionResult
 from personalclaw.action_providers.template import without_fence
 from personalclaw.security import fence_untrusted, is_fenced
+
+pytestmark = pytest.mark.security
 
 
 def _fenced(text: str) -> str:

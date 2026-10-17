@@ -27,6 +27,8 @@ from personalclaw.own_words import (
 )
 from personalclaw.security import fence_untrusted
 
+pytestmark = pytest.mark.security
+
 
 def _row(content: str, *, role: str = "user", **meta) -> dict:
     return (

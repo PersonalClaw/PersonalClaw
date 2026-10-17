@@ -28,6 +28,9 @@ from personalclaw.inbound import caps as caps_mod
 from personalclaw.inbound import clients as clients_mod
 from personalclaw.inbound import framing, gate, mcp_http
 
+pytestmark = pytest.mark.security
+
+
 _SURFACES = ("openai", "mcp", "a2a", "capture", "bridge")
 
 

@@ -31,6 +31,9 @@ import pytest
 from personalclaw import shell_syntax
 from personalclaw.hooks import TOOL_AUTO_APPROVE, TOOL_DENY, HookManager, HooksConfig
 
+pytestmark = pytest.mark.security
+
+
 #: The characters every operator and redirect the reader emits is spelled with. None is longer than
 #: three of them (`<<<`, `&>>`), so every spelling of up to three of these reaches each one.
 OPERATOR_CHARS = ";&|<>\n"

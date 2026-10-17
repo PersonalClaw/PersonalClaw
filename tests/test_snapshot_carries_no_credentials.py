@@ -31,6 +31,9 @@ from personalclaw.llm.registry import get_default_registry
 from personalclaw.providers.settings import ProviderSettings
 from personalclaw.sdk.provider_helpers import register_branded_app
 
+pytestmark = pytest.mark.security
+
+
 PROVIDER_KEY = "fake-key-fixture-snapshot-provider-7c6b5a49"
 APP_TOKEN = "fake-bot-token-fixture-snapshot-app-3e2d1c0b"
 VAULT_VALUE = "fake-github-token-1"

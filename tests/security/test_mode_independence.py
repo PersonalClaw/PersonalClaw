@@ -64,6 +64,9 @@ from personalclaw.llm.events import (
 )
 from personalclaw.tool_providers.base import ToolDefinition, ToolProvider, ToolResult
 
+pytestmark = pytest.mark.security
+
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_SRC = REPO_ROOT / "src" / "personalclaw" / "agents" / "native" / "runtime.py"
 BUILTIN_SRC = REPO_ROOT / "src" / "personalclaw" / "agents" / "native" / "builtin_tools.py"

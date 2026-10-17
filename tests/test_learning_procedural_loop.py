@@ -40,6 +40,9 @@ from personalclaw.memory_service import (
 )
 from personalclaw.vector_memory import VectorMemoryStore
 
+pytestmark = pytest.mark.security
+
+
 #: Reinforcements needed for `promote_by_heat`'s 1.0 threshold. Not a magic number:
 #: heat is `0.7·log1p(visits)/ln10 + 0.5·strength`, so a fresh record needs
 #: `log1p(visits) ≥ 1.645` → 5 visits. Written as a constant so a kernel change that

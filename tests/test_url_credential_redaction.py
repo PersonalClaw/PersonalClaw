@@ -44,6 +44,9 @@ import pytest
 from personalclaw.address_logins import redact_url_userinfo
 from personalclaw.security import redact_credentials
 
+pytestmark = pytest.mark.security
+
+
 _TAG = "[REDACTED: url credential]"
 
 #: Credential-bearing URLs whose secret is NOT a recognisable provider-key shape,

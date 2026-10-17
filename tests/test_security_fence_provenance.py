@@ -17,7 +17,11 @@ inside, which would reintroduce the fence-break the body is already protected ag
 
 from __future__ import annotations
 
+import pytest
+
 from personalclaw.security import fence_untrusted
+
+pytestmark = pytest.mark.security
 
 
 def _tag(text: str) -> str:

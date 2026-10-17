@@ -47,6 +47,9 @@ from personalclaw.skills import marketplace as mk
 from personalclaw.skills.marketplace import SkillDetail, SkillInstallRefused, SkillsMarketplace
 from personalclaw.supply_chain import TrustTier, Verdict, default_scanner
 
+pytestmark = pytest.mark.security
+
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CORPUS_ROOT = Path(__file__).resolve().parent / "corpus"
 ATTACK_CLASSES = (

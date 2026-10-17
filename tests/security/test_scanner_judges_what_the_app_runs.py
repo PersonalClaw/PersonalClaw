@@ -30,6 +30,9 @@ from personalclaw.supply_chain import (
     default_scanner,
 )
 
+pytestmark = pytest.mark.security
+
+
 _APP = {
     "name": "notebook-demo",
     "version": "1.0.0",

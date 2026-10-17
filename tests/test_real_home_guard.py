@@ -22,6 +22,9 @@ import pytest
 import real_home_guard
 from real_home_guard import Guard, RealHomeAccessError
 
+pytestmark = pytest.mark.security
+
+
 _TESTS_DIR = Path(__file__).resolve().parent
 
 

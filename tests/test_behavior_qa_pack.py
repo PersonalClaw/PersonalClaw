@@ -17,6 +17,9 @@ import pytest
 
 from personalclaw.loop import files as loop_files
 
+pytestmark = pytest.mark.security
+
+
 # Fake secret markers — shaped to match the real credential detectors but
 # obviously synthetic, so a leak surfacing in a failure message is harmless.
 FAKE_AWS_KEY = "AKIA" + "QA0000FAKE000TEST"  # AKIA + 16 chars → AWS access key shape

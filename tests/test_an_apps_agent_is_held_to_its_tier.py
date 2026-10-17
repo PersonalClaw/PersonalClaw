@@ -35,6 +35,9 @@ from personalclaw.apps.manifest import AppManifest
 from personalclaw.llm.events import EVENT_COMPLETE, EVENT_TEXT_CHUNK, EVENT_TOOL_CALL, AgentEvent
 from personalclaw.tool_providers.base import RiskLevel, ToolDefinition, ToolProvider, ToolResult
 
+pytestmark = pytest.mark.security
+
+
 APP = "probe-notes"
 TASK = "Summarise these notes in two lines: the gutters are cleared on Fridays."
 

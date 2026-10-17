@@ -35,6 +35,9 @@ from mcp_owner_allowed import confirmed
 
 from personalclaw.config.secret_refs import resolve_mcp_spec
 
+pytestmark = pytest.mark.security
+
+
 # A credential-shaped literal the redactor recognises. Not a real key.
 SECRET = "sk-ant-api03-" + ("A" * 20) + ("B" * 20) + ("C" * 15)
 MASK = "[REDACTED: credential]"

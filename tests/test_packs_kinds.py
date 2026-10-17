@@ -30,6 +30,9 @@ from personalclaw.packs import bundled as pack_bundled
 from personalclaw.packs import onelink, prompt_cards, roster
 from personalclaw.packs.import_ import PackImportRefused, import_pack, inspect_pack
 
+pytestmark = pytest.mark.security
+
+
 # ── fixtures ──────────────────────────────────────────────────────────────────
 
 

@@ -23,6 +23,8 @@ from aiohttp.test_utils import TestClient, TestServer
 from chat_test_helpers import _make_state
 from test_apps_cannot_run_code_or_bypass_approvals import APP, _denials, _home, _install
 
+pytestmark = pytest.mark.security
+
 
 @pytest.fixture
 def sel_rows():

@@ -25,6 +25,9 @@ from personalclaw.config.credentials import credential_names, get_credential
 from personalclaw.config.secret_refs import migrate_plaintext_secrets, ref_key
 from personalclaw.dashboard.handlers import hooks as hooks_mod
 
+pytestmark = pytest.mark.security
+
+
 TOKEN = "whk_fixtureWebhookToken_4f3e2d1c0b9a8877"
 OLD_TOKEN = "whk_fixtureBackupToken_1234567890abcdef"
 

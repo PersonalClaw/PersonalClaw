@@ -43,6 +43,9 @@ from personalclaw.tool_providers.base import (
     ToolResult,
 )
 
+pytestmark = pytest.mark.security
+
+
 #: An invented credential, in the shape a name-keyed assignment takes.
 SECRET = "pcfixture-not-a-real-key"
 #: A command carrying it, for a program that cannot resolve.

@@ -35,6 +35,9 @@ from personalclaw.apps import manager
 from personalclaw.apps.permissions import APP_SCOPED_PREFIXES, app_request_denial
 from personalclaw.dashboard.handlers.feedback import api_feedback_record
 
+pytestmark = pytest.mark.security
+
+
 FIXTURE_APP = "feedback-fixture"
 
 

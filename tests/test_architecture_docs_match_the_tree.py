@@ -10,8 +10,13 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 from personalclaw.sandbox import _STANDARD_DIRS
 from personalclaw.security import BUILTIN_DENIED_COMMAND_PATTERNS
+
+pytestmark = pytest.mark.security
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOCS_DIR = REPO_ROOT / "docs" / "architecture"

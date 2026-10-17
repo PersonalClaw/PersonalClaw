@@ -43,6 +43,9 @@ from personalclaw.signing import (
 )
 from personalclaw.supply_chain import TrustTier, Verdict
 
+pytestmark = pytest.mark.security
+
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 pytest.importorskip(

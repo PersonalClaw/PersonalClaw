@@ -26,6 +26,9 @@ from chat_test_helpers import _make_state
 from test_apps_cannot_post_into_your_chats import _gateway, _owner_chat, _runner, _send, _stub
 from test_apps_cannot_run_code_or_bypass_approvals import APP, _denials, _home, _install
 
+pytestmark = pytest.mark.security
+
+
 #: A second app. Its conversations are as closed to APP as yours are.
 OTHER = "probe-other"
 

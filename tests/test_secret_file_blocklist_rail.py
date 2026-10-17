@@ -54,6 +54,9 @@ from personalclaw.security import (
     is_sensitive_path,
 )
 
+pytestmark = pytest.mark.security
+
+
 #: Modules that own PersonalClaw's authentication state. Each exports zero-arg ``*_path()``
 #: helpers naming the files it writes; the rail reads those rather than a copied list, so a new
 #: auth file is covered on the day its path helper appears.

@@ -47,6 +47,8 @@ from test_apps_cannot_run_code_or_bypass_approvals import APP, _call, _denials, 
 
 from personalclaw.apps import manager
 
+pytestmark = pytest.mark.security
+
 
 @pytest.fixture
 def sel_rows():

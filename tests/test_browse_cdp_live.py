@@ -52,6 +52,9 @@ from personalclaw.browse.transport import CdpTransportError
 from personalclaw.config.loader import AppConfig
 from personalclaw.net import policy as net_policy
 
+pytestmark = pytest.mark.security
+
+
 ALLOWED_HOST = "allowed.local"
 DENIED_HOST = "denied.local"
 

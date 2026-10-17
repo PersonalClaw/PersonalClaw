@@ -43,6 +43,9 @@ from personalclaw.config import loader as config_loader
 from personalclaw.config.secret_refs import write_mcp_document
 from personalclaw.dashboard.handlers import mcp as mcp_handlers
 
+pytestmark = pytest.mark.security
+
+
 UNRESOLVABLE = "/nonexistent/pc-fixture-mcp"
 TOKEN = "fixture-owner-only-token-0123456789"
 

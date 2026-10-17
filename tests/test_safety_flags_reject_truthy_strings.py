@@ -28,6 +28,9 @@ import pytest
 from personalclaw import hooks
 from personalclaw.safety_flags import strict_bool
 
+pytestmark = pytest.mark.security
+
+
 SRC = pathlib.Path(hooks.__file__).resolve().parent
 
 #: ``(module, flag, reader)`` for every safety flag that reads user-controlled data.

@@ -16,6 +16,9 @@ import pytest
 from personalclaw import security
 from personalclaw.dashboard import chat_refusals
 
+pytestmark = pytest.mark.security
+
+
 _OFFERED = [
     {"id": "allow_once", "label": "Yes, proceed", "kind": "allow_once"},
     {"id": "cancel", "label": "No, and tell me what to do differently", "kind": "reject_once"},

@@ -61,6 +61,9 @@ from personalclaw.llm.events import (
 )
 from personalclaw.memory import MemoryStore
 
+pytestmark = pytest.mark.security
+
+
 KEY = "dashboard:chat-garden-1700000000"
 #: A working folder's memory partition, as ``config.loader.memory_dir_for_cwd`` names one.
 SLUG = "home_user_projects_garden"

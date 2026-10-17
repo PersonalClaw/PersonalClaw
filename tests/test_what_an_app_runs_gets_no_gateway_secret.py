@@ -39,6 +39,9 @@ from tests.test_install_a_sidecar_engine import APP, _installed
 from tests.test_install_a_sidecar_engine import _manifest as _engine_manifest
 from tests.test_install_a_sidecar_engine import _stub_python
 
+pytestmark = pytest.mark.security
+
+
 #: Credentials the way the gateway holds them: a cloud key, a provider key, and a token no
 #: name-pattern would recognise.
 _SECRETS = {

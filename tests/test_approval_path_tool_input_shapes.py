@@ -46,6 +46,8 @@ import pytest
 
 from personalclaw.approval_answer import YOU
 
+pytestmark = pytest.mark.security
+
 
 def _state():
     from unittest.mock import MagicMock

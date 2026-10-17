@@ -49,6 +49,9 @@ from personalclaw.security import (
     strip_shell_quotes,
 )
 
+pytestmark = pytest.mark.security
+
+
 _HOME = str(pathlib.Path.home())
 
 

@@ -36,6 +36,9 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw.apps import manager
 
+pytestmark = pytest.mark.security
+
+
 APP = "probe-app"
 
 

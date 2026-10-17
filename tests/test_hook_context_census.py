@@ -28,6 +28,9 @@ from personalclaw.hooks import HOOK_EVENTS, ScriptHook, ScriptHookStore
 from personalclaw.security import is_fenced
 from personalclaw.triggers import grants
 
+pytestmark = pytest.mark.security
+
+
 #: What each event's context carries, as its fire site builds it.
 CONTEXT_CARRIES: dict[str, str] = {
     "AgentSpawn": "names: the session's key (chat_runner)",

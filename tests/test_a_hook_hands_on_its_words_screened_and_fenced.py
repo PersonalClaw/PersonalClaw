@@ -35,6 +35,9 @@ from personalclaw.triggers import grants
 from personalclaw.triggers import screen as screen_mod
 from personalclaw.workflows import pool
 
+pytestmark = pytest.mark.security
+
+
 #: The sentence the screen is told to refuse in these tests (the ``refusing`` fixture).
 REFUSED = "The quarterly figures are attached."
 

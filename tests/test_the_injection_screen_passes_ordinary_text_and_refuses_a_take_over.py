@@ -50,6 +50,9 @@ from personalclaw.security import is_fenced
 from personalclaw.triggers import grants
 from personalclaw.triggers.screen import Verdict, normalize, screen, screen_ledger_row
 
+pytestmark = pytest.mark.security
+
+
 #: The two answers a take-over gets: refused (kept as nothing) or fenced (run, marked as data).
 REFUSED = Verdict.BLOCKED.value
 FENCED = Verdict.SUSPICIOUS.value

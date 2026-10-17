@@ -37,6 +37,9 @@ import yaml
 from personalclaw.security import mask_child_output
 from tools.docker_single_container_smoke import redact_secrets
 
+pytestmark = pytest.mark.security
+
+
 _REPO = Path(__file__).resolve().parents[1]
 
 # Endpoints that must respond identically on both runtimes

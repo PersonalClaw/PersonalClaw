@@ -29,6 +29,9 @@ from personalclaw.dashboard.handlers import (
 )
 from personalclaw.security import _mask_pairs, redact_for_display, restore_masked_spans
 
+pytestmark = pytest.mark.security
+
+
 # A credential-shaped literal the redactor recognises. Not a real key.
 SECRET = "sk-ant-api03-" + ("A" * 20) + ("B" * 20) + ("C" * 15)
 MASK = "[REDACTED: credential]"

@@ -32,6 +32,9 @@ from personalclaw.security import outside_fences
 from personalclaw.uploads import content_scan
 from personalclaw.uploads.content_scan import scan_upload
 
+pytestmark = pytest.mark.security
+
+
 #: One small file of each kind an owner attaches to ask about, and a line only its text holds. A
 #: ``.toml`` is no kind the library keeps as code: the document reader read it already, and does.
 FILES = {

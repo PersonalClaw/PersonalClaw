@@ -33,7 +33,10 @@ from personalclaw.loop import files as loop_files
 from personalclaw.loop import kinds, store, worktree
 from personalclaw.loop.loop import Loop, LoopStatus
 
-pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+pytestmark = [
+    pytest.mark.skipif(shutil.which("git") is None, reason="git not installed"),
+    pytest.mark.security,
+]
 
 OWNER = ("Ada Example", "ada@example.com")
 TASK = "t-0a1b2c3d"

@@ -24,6 +24,9 @@ from aiohttp.test_utils import TestClient, TestServer
 from personalclaw import branch_publish, security
 from personalclaw.config.loader import CONFIG_ON_DISCARDED_READ, AppConfig, config_dir
 
+pytestmark = pytest.mark.security
+
+
 FIELD = "security.allow_git_push"
 PUSH = "git push"
 

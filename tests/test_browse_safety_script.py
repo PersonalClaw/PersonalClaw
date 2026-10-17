@@ -67,6 +67,9 @@ from personalclaw.browse.safety_script import (
     safety_script,
 )
 
+pytestmark = pytest.mark.security
+
+
 # --------------------------------------------------------------------------------------------
 # Layer 1: content / structure. No browser.
 # --------------------------------------------------------------------------------------------

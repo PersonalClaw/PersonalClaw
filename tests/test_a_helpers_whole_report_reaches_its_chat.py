@@ -38,6 +38,9 @@ from personalclaw.config.loader import AppConfig
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 from personalclaw.security import outside_fences
 
+pytestmark = pytest.mark.security
+
+
 CHAT = "chat-a"
 CHAT_KEY = f"dashboard:{CHAT}"
 

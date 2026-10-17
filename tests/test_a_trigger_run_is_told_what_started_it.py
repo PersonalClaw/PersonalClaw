@@ -27,6 +27,9 @@ from personalclaw.triggers import fire_facts
 from personalclaw.triggers.file_watch import Delta, fire_payload
 from personalclaw.triggers.models import Trigger
 
+pytestmark = pytest.mark.security
+
+
 FACTS = "[WHAT STARTED THIS RUN]\nA file it watches changed.\n[END WHAT STARTED THIS RUN]"
 INSTRUCTION = (
     "When a new PDF lands in ~/Documents/Home/Kitchen, summarise it into "

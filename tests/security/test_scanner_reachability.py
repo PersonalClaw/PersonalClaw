@@ -47,6 +47,9 @@ from personalclaw.supply_chain import (
     default_scanner,
 )
 
+pytestmark = pytest.mark.security
+
+
 # ── the two shapes that could not be installed at all ────────────────────────
 # Reduced from `spec-builder/test_provider.py` and `ops/test_provider.py` as they stand
 # on the apps `main`: an attack string written as a literal inside a test, asserted

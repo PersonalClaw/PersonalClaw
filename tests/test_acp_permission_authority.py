@@ -40,6 +40,9 @@ from personalclaw.llm.base import (
     LLMEvent,
 )
 
+pytestmark = pytest.mark.security
+
+
 # ── mode clamp: the module contract ──────────────────────────────────────────
 
 

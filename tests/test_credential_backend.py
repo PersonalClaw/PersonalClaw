@@ -47,6 +47,9 @@ from personalclaw.config.credentials import (
 )
 from personalclaw.config.loader import AppConfig
 
+pytestmark = pytest.mark.security
+
+
 _KEY = "SH1_TEST_TOKEN"
 _OTHER = "SH1_TEST_OTHER"
 

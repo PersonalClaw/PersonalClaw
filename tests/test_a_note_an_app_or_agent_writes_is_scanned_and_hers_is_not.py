@@ -30,6 +30,9 @@ from personalclaw.apps.permissions import scoped_to_app
 from personalclaw.knowledge.store import KnowledgeStore
 from personalclaw.sel import sel
 
+pytestmark = pytest.mark.security
+
+
 #: The scanner's own example of content it refuses: a list with a right-to-left override in it.
 OVERRIDE_LIST = "Shopping list for Saturday: \u202eeggs\u202c, flour, apples."
 #: The same list without the override: ordinary content.

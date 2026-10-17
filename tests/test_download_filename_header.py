@@ -39,6 +39,9 @@ from personalclaw.tasks import registry
 from personalclaw.tasks.handlers import register_task_routes
 from personalclaw.workflows import project_archive as pa
 
+pytestmark = pytest.mark.security
+
+
 #: The repo's own synthetic non-credential fixture (``test_session_starters``,
 #: ``test_session_share``), so this file mints no new secret-shaped string.
 FAKE_SK_TOKEN = "sk-notarealfixture0123456789abcdefghij"

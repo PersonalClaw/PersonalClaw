@@ -12,6 +12,9 @@ from personalclaw.learning import hygiene
 from personalclaw.learning.hygiene import MIN_EVIDENCE_DEFAULT
 from personalclaw.security import fence_untrusted
 
+pytestmark = pytest.mark.security
+
+
 # ── untrusted content is invisible ──
 
 

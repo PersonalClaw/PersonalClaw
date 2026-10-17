@@ -21,6 +21,8 @@ from personalclaw.web.fetch import (
     web_fetch,
 )
 
+pytestmark = pytest.mark.security
+
 
 def _web_tool_provider_cls():
     """Load WebToolProvider from the web-tools APP (it moved out of core). Mirrors how

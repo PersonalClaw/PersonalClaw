@@ -15,6 +15,8 @@ import pytest
 
 from personalclaw import channel_trust as ct
 
+pytestmark = pytest.mark.security
+
 
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch):
