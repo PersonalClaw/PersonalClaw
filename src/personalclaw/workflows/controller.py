@@ -82,6 +82,7 @@ from personalclaw.workflows import (
     store,
     task_projection,
 )
+from personalclaw.workflows.bindings import item_prefixes
 from personalclaw.workflows.effects import EffectRecord, EffectStatus, effect_history
 from personalclaw.workflows.engine import NodeResult, node_commits_effects
 from personalclaw.workflows.failure_taxonomy import with_breaker_window
@@ -389,6 +390,12 @@ class RunController:
         #: consumer's gap detection fire on every unpublished journal write.
         self._event_seq = 0
         self._outputs: dict[str, Any] = {}
+        #: instance path → (node id, output), for each step inside a fan-out item that ended in
+        #: success. `_outputs` is keyed by node id, so every item of a fan-out writes the same entry
+        #: and it holds whichever item finished last; a step inside an item reads its own item's
+        #: outputs from here (`BindingContext.scoped_to`). Rehydrated with `_outputs`, from the
+        #: same stored outputs, so a resumed run scopes exactly as the run before the restart did.
+        self._instance_outputs: dict[str, tuple[str, Any]] = {}
         #: branch instance path → the output this controller recorded for it when the case it took
         #: last ended (`node_bindings.record_branch_outputs`). In memory only: a resumed run records
         #: each ended case once more, writing the value its step already holds.
@@ -418,7 +425,24 @@ class RunController:
             node = by_path.get(spec_path(path))
             if node is None or not node.id:
                 continue
-            self._outputs[node.id] = store.read_output(self.run.id, path)
+            self.record_output(path, node.id, store.read_output(self.run.id, path))
+
+    def record_output(self, path: str, node_id: str, value: Any) -> None:
+        """Enter one step's settled output where bindings read it: under its node id, and, for a
+        step inside a fan-out item, under its instance path too, so a sibling in the SAME item
+        reads it rather than whichever item last wrote that id (`BindingContext.scoped_to`)."""
+        if not node_id:
+            return
+        self._outputs[node_id] = value
+        if item_prefixes(path):
+            self._instance_outputs[path] = (node_id, value)
+
+    def forget_output(self, path: str, node_id: str) -> None:
+        """Take a reset step's output out of where bindings read it, by id and by instance path,
+        so nothing resolves a stale value between the reset and the re-run."""
+        if node_id:
+            self._outputs.pop(node_id, None)
+        self._instance_outputs.pop(path, None)
 
     # ── public lifecycle ──
 
@@ -981,8 +1005,7 @@ class RunController:
                 cont.instance_path, {"answer": filled, "approved": True}
             )
             inst.output_ref = ref
-            if cont.node_id:
-                self._outputs[cont.node_id] = preview
+            self.record_output(cont.instance_path, cont.node_id, preview)
             inst.completed_at = now_stamp()
         else:
             # Declined, not failed: the next `_step` ends the run at this gate
@@ -1290,6 +1313,7 @@ class RunController:
             outputs=self._outputs,
             inputs=self.run.inputs,
             iterations=self._iterations,
+            instance_outputs=self._instance_outputs,
             running_lanes=self._running_lanes(),
             # WIP=1. Read from the spec's `runtime_hints.execution`
             # every tick rather than cached at construction, because a mid-flight spec edit
@@ -1372,6 +1396,7 @@ class RunController:
                 outputs=self._outputs,
                 inputs=self.run.inputs,
                 iterations=self._iterations,
+                instance_outputs=self._instance_outputs,
             )
             if outcome not in TERMINAL_STATES:
                 continue
@@ -1454,7 +1479,9 @@ class RunController:
             # that decide a node's outcome-origin (the fresh dispatch below is the other).
             inst.cached = True
             if item.node.id:
-                self._outputs[item.node.id] = store.read_output(self.run.id, item.path)
+                self.record_output(
+                    item.path, item.node.id, store.read_output(self.run.id, item.path)
+                )
             self.journal.step_cached(
                 item.path,
                 item.node.id,
@@ -1686,8 +1713,7 @@ class RunController:
                     item.path, {"approved": True, "auto": verdict.decision.value}
                 )
                 inst.output_ref = ref
-                if item.node.id:
-                    self._outputs[item.node.id] = preview
+                self.record_output(item.path, item.node.id, preview)
                 self.journal.write(
                     journal_mod.GATE_RESOLVED,
                     instance_path=item.path,
@@ -1871,8 +1897,7 @@ class RunController:
         if result.state in SUCCESS_STATES:
             ref, preview = self.journal.store_output(item.path, result.output)
             inst.output_ref = ref
-            if item.node.id:
-                self._outputs[item.node.id] = preview
+            self.record_output(item.path, item.node.id, preview)
             # The run row keeps the dispatcher's estimate as a FLOOR when the provider reported no
             # usage — a budget must still see the spend — while the ledger says "not recorded".
             charge(self.run, usage, estimate=result.tokens)
@@ -2077,8 +2102,7 @@ class RunController:
                 # an in-memory-only value would come back None and break a binding on it.
                 ref, preview = self.journal.store_output(path, {"waited": True})
                 inst.output_ref = ref
-                if node_id:
-                    self._outputs[node_id] = preview
+                self.record_output(path, node_id, preview)
                 self.journal.step_completed(
                     path,
                     node_id,

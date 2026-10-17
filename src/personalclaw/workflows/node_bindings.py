@@ -94,7 +94,10 @@ def context_for(ctl: RunController, item: ReadyNode) -> BindingContext:
         secret_resolver=_secrets_for(ctl, item),
         input_secrets=input_secrets.of_run(ctl.run),
         run_document=deliverable.document_path(ctl.run, ctl.spec),
-    )
+        instance_outputs=dict(ctl._instance_outputs),
+        # Scoped to the step's own fan-out item: a sibling it binds is that item's instance, not
+        # whichever item last wrote the node id (`BindingContext.scoped_to`).
+    ).scoped_to(item.path)
 
 
 #: Node kinds whose bound config is the text of a model call: a stage's agent task, an infer
@@ -409,11 +412,18 @@ def record_branch_outputs(ctl: RunController) -> None:
     if not branches:
         return
     states = {path: inst.state for path, inst in ctl.instances.items()}
-    ctx = BindingContext(inputs=ctl.run.inputs, node_outputs=ctl._outputs)
+    base = BindingContext(
+        inputs=ctl.run.inputs,
+        node_outputs=ctl._outputs,
+        instance_outputs=dict(ctl._instance_outputs),
+    )
     latest: dict[str, str] = {}
     recorded = False
     for path in sorted(branches, key=instance_order, reverse=True):
         node = branches[path]
+        # The case a branch inside a fan-out item took is read from ITS item's selector value, as
+        # the frontier routed it (`tick._visit_branch`), not from whichever item wrote it last.
+        ctx = base.scoped_to(path)
         taken = taken_case(node, path, ctx) if states[path] in SUCCESS_STATES else None
         if taken is None or (
             derive_state(
@@ -441,6 +451,9 @@ def record_branch_outputs(ctl: RunController) -> None:
                 path, {"case": label, "produced": produced}
             )
             recorded = True
+            # Each instance's own record, by instance path, for a step in the SAME fan-out item
+            # that reads the branch; the latest-instance-per-id entry is set below.
+            ctl.record_output(path, node.id, ctl._branch_recorded[path])
         if node.id and node.id not in latest:
             latest[node.id] = path
     for node_id, path in latest.items():
@@ -492,7 +505,10 @@ def resolved_inputs(ctl: RunController, item: ReadyNode, ctx: BindingContext) ->
     from personalclaw.workflows.bindings import node_deps
 
     deps = node_deps(item.node.config or {})
-    view: dict[str, Any] = {dep: ctl._outputs.get(dep) for dep in sorted(deps)}
+    # From the step's own (item-scoped) context, so a fan-out item's cache key hashes the values
+    # its bindings actually resolved, not another item's.
+    outputs = ctx.node_outputs or {}
+    view: dict[str, Any] = {dep: outputs.get(dep) for dep in sorted(deps)}
     if item.has_item:
         view["__item"] = item.item
     if item.iter_index is not None:

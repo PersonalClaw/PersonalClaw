@@ -28,16 +28,27 @@ import inspect
 import json
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
-from personalclaw.workflows.models import NO_OUTPUT_KINDS, NodeKind
+from personalclaw.workflows.models import NO_OUTPUT_KINDS, NodeKind, instance_order, spec_path
 from personalclaw.workflows.secrets import SECRET_BINDING_RE
 
 logger = logging.getLogger(__name__)
 
 #: One `{{ … }}` occurrence. Non-greedy so adjacent refs don't merge.
 _REF_RE = re.compile(r"\{\{(.+?)\}\}")
+
+#: One fan-out item in an instance path: `….body#2`.
+_ITEM_RE = re.compile(r"\.body#\d+")
+
+
+def item_prefixes(path: str) -> list[str]:
+    """The instance path of each fan-out item enclosing *path*, outermost first:
+    `root.children[1].body#2.children[0].body#0.children[1]` →
+    `["root.children[1].body#2", "root.children[1].body#2.children[0].body#0"]`."""
+    return [path[: match.end()] for match in _ITEM_RE.finditer(path)]
+
 
 #: A pipe call: `name` or `name('a','b')` / `name(3)`.
 _PIPE_RE = re.compile(r"^([a-z_]+)\s*(?:\((.*)\))?$")
@@ -128,6 +139,68 @@ class BindingContext:
     #: `{{run.document}}` (`deliverable.document_path`). "" for a run that keeps none, where the
     #: root is absent and a read of it says so rather than handing a step an empty path.
     run_document: str = ""
+    #: instance path → (node id, output), for each step inside a fan-out item that ended in
+    #: success. `node_outputs` is keyed by node id, and every item of a fan-out writes the same id,
+    #: so on its own it holds whichever item finished last; `scoped_to` lays one item's own
+    #: outputs over it. None outside a run that keeps them, where nothing is scoped.
+    instance_outputs: dict[str, tuple[str, Any]] | None = None
+    #: `_item_index`'s grouping of `instance_outputs`, built on first use. Carried by `replace`,
+    #: which is right: a scoped copy holds the same `instance_outputs`.
+    _index: tuple[dict[str, list[str]], dict[str, set[str]]] | None = field(
+        default=None, repr=False, compare=False
+    )
+
+    def scoped_to(self, path: str) -> BindingContext:
+        """This context as a step at instance *path* reads it: inside a fan-out item, a node of
+        that item's body is that item's own instance, never another item's.
+
+        Every item of a `foreach` runs the same body, so its steps share node ids, and
+        `node_outputs` (node id → output) holds only the item that wrote last. Read through it,
+        a step in item 1 that binds its sibling got item 2's answer whenever item 2's sibling
+        finished in between, and nothing failed: the run went on with the wrong item's data.
+
+        Each enclosing item is applied outermost first, so the NEAREST one wins for a fan-out
+        nested in another's item. Within an item, a node with several instances (a loop's cycles
+        inside it) reads the latest. A node of the item's body that has not produced an output
+        in THIS item is taken out rather than left on another item's, so the read fails as
+        unresolved, as it does before any item has run, instead of answering for the wrong item.
+        A read of a node outside every enclosing item's body is left as it was.
+        """
+        if not self.instance_outputs:
+            return self
+        prefixes = item_prefixes(path)
+        if not prefixes:
+            return self
+        by_item, ids_by_body = self._item_index()
+        outputs = dict(self.node_outputs or {})
+        for prefix in prefixes:
+            # Every item's instance of this body's nodes comes out first, then this item's own
+            # go back in, oldest first, so the latest of several (a loop's cycles) is the one read.
+            for node_id in ids_by_body.get(spec_path(prefix), ()):
+                outputs.pop(node_id, None)
+            for ipath in by_item.get(prefix, ()):
+                node_id, value = self.instance_outputs[ipath]
+                outputs[node_id] = value
+        return replace(self, node_outputs=outputs)
+
+    def _item_index(self) -> tuple[dict[str, list[str]], dict[str, set[str]]]:
+        """`instance_outputs` grouped once per context, so scoping an item does not walk every
+        recorded output: item instance path → its own recorded paths (oldest first), and
+        fan-out body spec path → the node ids recorded inside any of its items."""
+        if self._index is not None:
+            return self._index
+        by_item: dict[str, list[str]] = {}
+        ids_by_body: dict[str, set[str]] = {}
+        for ipath, (node_id, _value) in (self.instance_outputs or {}).items():
+            if not node_id:
+                continue
+            for prefix in item_prefixes(ipath):
+                by_item.setdefault(prefix, []).append(ipath)
+                ids_by_body.setdefault(spec_path(prefix), set()).add(node_id)
+        for paths in by_item.values():
+            paths.sort(key=instance_order)
+        self._index = (by_item, ids_by_body)
+        return self._index
 
     def as_root(self) -> dict[str, Any]:
         root: dict[str, Any] = {

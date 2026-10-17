@@ -159,7 +159,9 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
         iter_index=iteration,
         last_output=layered,
         has_last=True,
-    )
+        instance_outputs=dict(ctl._instance_outputs),
+        # A loop inside a fan-out item tests its condition on that item's own outputs.
+    ).scoped_to(parent_path)
     keep_going, reason = loop_should_continue(
         node,
         iteration=iteration + 1,
@@ -368,6 +370,7 @@ def _iteration_complete(ctl: RunController, node: Node, parent_path: str, iterat
         outputs=ctl._outputs,
         inputs=ctl.run.inputs,
         iterations=ctl._iterations,
+        instance_outputs=ctl._instance_outputs,
     )
     return state in TERMINAL_STATES
 

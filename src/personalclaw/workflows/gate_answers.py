@@ -617,8 +617,7 @@ def resume_revise(
     inst.completed_at = None
     inst.wake_at = 0.0
     inst.attempt = 0
-    if cont.node_id:
-        ctl._outputs.pop(cont.node_id, None)
+    ctl.forget_output(cont.instance_path, cont.node_id)
     ctl.journal.write(
         journal_mod.GATE_REVISED,
         instance_path=cont.instance_path,

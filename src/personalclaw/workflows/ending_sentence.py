@@ -547,6 +547,7 @@ def _failed_steps(ctl: RunController) -> list[str]:
             outputs=ctl._outputs,
             inputs=ctl.run.inputs,
             iterations=ctl._iterations,
+            instance_outputs=ctl._instance_outputs,
         )
 
     found: list[str] = []

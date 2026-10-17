@@ -297,10 +297,9 @@ def _apply_reentry(ctl: RunController, op: mutations.Op, preview: mutations.Casc
         # So were the calls she declined in it (`declines`): the re-run records its own.
         inst.declined = []
         node = dict(walk(ctl.root)).get(spec_path(path))
-        if node is not None and node.id:
-            # Drop the cached output so a binding cannot resolve a stale value between
-            # the reset and the re-run.
-            ctl._outputs.pop(node.id, None)
+        # Drop the cached output so a binding cannot resolve a stale value between the reset and
+        # the re-run: by id, and by instance path for a step inside a fan-out item.
+        ctl.forget_output(path, node.id if node is not None else "")
         ctl.journal.invalidate_prefix(path)
         # An answer given to this step's last park belongs to the dispatch it started, not to
         # the re-run a rewind asks for.

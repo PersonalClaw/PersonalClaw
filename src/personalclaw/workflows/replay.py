@@ -42,7 +42,7 @@ from personalclaw.ledger import CLOCK_READ, hash_value
 from personalclaw.workflows import execution_hints
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import store
-from personalclaw.workflows.bindings import BindingContext
+from personalclaw.workflows.bindings import BindingContext, item_prefixes
 from personalclaw.workflows.engine_support import resolve_config
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
@@ -321,6 +321,9 @@ def _redrive(
     node_by_path = {path: node for path, node in walk(root)}
     states: dict[str, InstanceState] = {}
     outputs: dict[str, Any] = {}
+    # Each fan-out item's own outputs, as the controller keeps them (`record_output`), so a
+    # replayed item routes and resolves on its own steps, as the run did.
+    instance_outputs: dict[str, tuple[str, Any]] = {}
     steps: list[TrajectoryStep] = []
     budget = _MAX_TICKS_PER_NODE * (len(node_by_path) + 1)
 
@@ -331,6 +334,7 @@ def _redrive(
             outputs=dict(outputs),
             inputs=inputs,
             single_active_feature=single_active_feature,
+            instance_outputs=dict(instance_outputs),
         )
         if fr.complete:
             break
@@ -355,10 +359,17 @@ def _redrive(
             progressed = True
         # `fr.ready` is already path-sorted by `frontier` (deterministic admission).
         for item in fr.ready:
-            steps.append(_replay_one(item.node, item.path, outputs, inputs, responses, clock))
+            steps.append(
+                _replay_one(
+                    item.node, item.path, outputs, inputs, responses, clock, instance_outputs
+                )
+            )
             states[item.path] = responses.state(item.path)
             if item.node.id and responses.state(item.path) in SUCCESS_STATES:
-                outputs[item.node.id] = responses.output(item.path)
+                value = responses.output(item.path)
+                outputs[item.node.id] = value
+                if item_prefixes(item.path):
+                    instance_outputs[item.path] = (item.node.id, value)
             progressed = True
         if not progressed:
             # Nothing skipped, nothing ready, not complete — a shape the driver does not model
@@ -375,14 +386,20 @@ def _replay_one(
     inputs: dict[str, Any],
     responses: RecordedResponses,
     clock: RecordedClock,
+    instance_outputs: dict[str, tuple[str, Any]] | None = None,
 ) -> TrajectoryStep:
     """Execute one leaf against its recorded response, re-resolving its prompt FRESH.
 
     The recorded response supplies the state and (elsewhere) the output; the prompt is
     RE-RESOLVED from this node's current config so an edit to it is what the trajectory shows.
-    A node the run resolved against the clock reads its recorded value THROUGH the seam.
+    A node the run resolved against the clock reads its recorded value THROUGH the seam. A leaf
+    inside a fan-out item resolves against that item's own steps, as it did in the run.
     """
-    ctx = BindingContext(inputs=dict(inputs), node_outputs=dict(outputs))
+    ctx = BindingContext(
+        inputs=dict(inputs),
+        node_outputs=dict(outputs),
+        instance_outputs=dict(instance_outputs or {}),
+    ).scoped_to(path)
     prompt = _resolve_prompt(node, ctx)
     state = responses.state(path)
     # The clock read — through the recorded seam, never `time.time()`. Only a node the run
