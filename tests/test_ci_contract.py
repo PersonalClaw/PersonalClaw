@@ -185,6 +185,45 @@ def uv_violations(tree: Tree) -> list[str]:
     return bad
 
 
+#: A shell line that invokes ``uv`` or ``uvx`` as a command, not one that only names it in prose.
+_UV_COMMAND = re.compile(r"(?:^|[\s;&|(])uvx?\s+\S", flags=re.MULTILINE)
+
+
+def _runs_uv(step: dict[str, Any]) -> bool:
+    if _action(step) == "astral-sh/setup-uv":
+        return True
+    code = "\n".join(
+        line for line in str(step.get("run", "")).splitlines() if not line.lstrip().startswith("#")
+    )
+    return bool(_UV_COMMAND.search(code))
+
+
+def uv_python_preference_violations(tree: Tree) -> list[str]:
+    """Every step that runs uv sees ``UV_PYTHON_PREFERENCE=only-managed``, from the workflow's
+    ``env:`` or its job's, and no job or step sets it to anything else. uv's default prefers an
+    installed Python that matches the requested version exactly over a download, so a runner
+    image that ships that exact patch would run the job on the image's interpreter."""
+    bad: list[str] = []
+    found = 0
+    key = "UV_PYTHON_PREFERENCE"
+    for name, workflow in _workflows(tree):
+        top = workflow.get("env") or {}
+        for job_id, job in (workflow.get("jobs") or {}).items():
+            job_env = job.get("env") or {}
+            for step in job.get("steps") or []:
+                if not _runs_uv(step):
+                    continue
+                found += 1
+                step_env = step.get("env") or {}
+                value = next((env[key] for env in (step_env, job_env, top) if key in env), None)
+                if value != "only-managed":
+                    where = f"{name}:{job_id}:{step.get('name') or _action(step) or 'a uv step'}"
+                    bad.append(f"{where}: {key} is {value!r}, not 'only-managed'")
+    if not found:
+        bad.append("found no step that runs uv, so this row read nothing")
+    return bad
+
+
 def node_violations(tree: Tree) -> list[str]:
     """``.nvmrc`` is an exact Node, every setup-node step reads it, and the image's Node
     stages run the same release."""
@@ -1110,6 +1149,33 @@ ONLY_THE_RELEASE_CONTROLLER_PUBLISHES = Row(
 )
 
 
+#: The workflow-level line the preference plants remove or change.
+_PREFERENCE = "  UV_PYTHON_PREFERENCE: only-managed\n"
+
+_NO_UV_WORKFLOW = (
+    "name: no-uv\non: workflow_dispatch\npermissions: {}\njobs:\n  only:\n"
+    "    runs-on: ubuntu-24.04\n    steps:\n      - name: Runner identity\n"
+    '        run: echo "${ImageOS} ${ImageVersion}"\n'
+    "      - run: python3 tools/something.py  # names no uv\n"
+)
+
+
+def _job_level_preference(root: Path, only_first: bool = False) -> None:
+    """Move release.yml's setting off the workflow and onto its uv jobs: every one of them, or
+    only the first, so the other uv jobs run without it. release.yml has uv jobs and jobs
+    without uv, so both halves of the rule are read."""
+    rel = ".github/workflows/release.yml"
+    workflow = yaml.safe_load((root / rel).read_text(encoding="utf-8"))
+    del workflow["env"]["UV_PYTHON_PREFERENCE"]
+    uv_jobs = [
+        job for job in workflow["jobs"].values() if any(_runs_uv(s) for s in job.get("steps", []))
+    ]
+    assert len(uv_jobs) > 1, "release.yml no longer has several uv jobs to plant on"
+    for job in uv_jobs[:1] if only_first else uv_jobs:
+        job.setdefault("env", {})["UV_PYTHON_PREFERENCE"] = "only-managed"
+    _write(root, rel, yaml.safe_dump(workflow, sort_keys=False))
+
+
 ROWS: tuple[Row, ...] = (
     SECURITY_MARKER,
     _toolchain_row(
@@ -1170,6 +1236,51 @@ ROWS: tuple[Row, ...] = (
                 "pyproject.toml",
                 'required-version = ">=0.13.1"',
                 'required-version = "==0.13.1"',
+            ),
+        ),
+    ),
+    _toolchain_row(
+        "uv-python-preference",
+        uv_python_preference_violations,
+        (
+            _plant(
+                "a workflow that runs uv without it",
+                ".github/workflows/ci.yml",
+                _PREFERENCE,
+                "",
+            ),
+            _plant(
+                "the workflow sets managed",
+                ".github/workflows/full.yml",
+                _PREFERENCE,
+                "  UV_PYTHON_PREFERENCE: managed\n",
+            ),
+            _plant(
+                "the workflow sets another value",
+                ".github/workflows/release.yml",
+                _PREFERENCE,
+                "  UV_PYTHON_PREFERENCE: system\n",
+            ),
+            _plant(
+                "a uv step overrides it",
+                ".github/workflows/headless-run-smoke.yml",
+                "        run: uv sync --locked --extra dev\n",
+                "        env:\n          UV_PYTHON_PREFERENCE: managed\n"
+                "        run: uv sync --locked --extra dev\n",
+            ),
+            Control(
+                "set on one uv job of several, not the workflow, fails",
+                lambda root: _job_level_preference(root, only_first=True),
+            ),
+            Control(
+                "set on every uv job instead of the workflow passes",
+                _job_level_preference,
+                fails=False,
+            ),
+            Control(
+                "a workflow with no uv step passes without it",
+                lambda root: _write(root, ".github/workflows/no-uv.yml", _NO_UV_WORKFLOW),
+                fails=False,
             ),
         ),
     ),

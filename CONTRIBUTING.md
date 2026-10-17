@@ -217,8 +217,10 @@ environment: `uv sync --locked --inexact` in one uv made, `pip install -e .` in 
 (the 3.13 patch; CI's 3.12 legs run the patch its workflows name), `.nvmrc` the exact Node, and
 `package.json`'s `packageManager` the npm that Node ships. `uv` reads `.python-version` itself,
 and `nvm use` or `fnm use` reads `.nvmrc`. uv must be 0.13.1 or newer (`[tool.uv]
-required-version` in `pyproject.toml`), and CI installs exactly 0.13.1. `tests/test_ci_contract.py`
-holds the workflows and the image to these files.
+required-version` in `pyproject.toml`), and CI installs exactly 0.13.1. Every workflow that runs uv
+sets `UV_PYTHON_PREFERENCE: only-managed`, so CI runs on a Python uv downloads, never on one the
+runner image ships, even when the image's is the same patch. `tests/test_ci_contract.py` holds the
+workflows and the image to these files.
 
 **git 2.12 or newer.** PersonalClaw's own git refuses an older one
 (`net/git.py::MIN_GIT_VERSION`), which ignores the settings that stop a repository's own

@@ -24,6 +24,11 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Every uv step uses a uv-managed CPython, never the runner image's own: an installed Python
+  # that is exactly the version asked for wins over a download by default (see full.yml's env).
+  UV_PYTHON_PREFERENCE: only-managed
+
 jobs:
   smoke:
     runs-on: ubuntu-24.04

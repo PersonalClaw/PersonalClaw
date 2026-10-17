@@ -46,8 +46,10 @@ What this module asserts, and why each half exists:
   and ``sha256(install.sh) == install.sh.sha256``.
 * **The digest pin is the forcing function.** Editing the installer without updating the
   pin reds at lint speed, and the pin line in the diff is where a reviewer sees "the site
-  mirror needs re-applying". Offline and network-free, so it can gate every PR — the live
-  comparison cannot.
+  mirror needs re-applying". Offline and network-free, so it can gate every PR. Whether the
+  served bytes equal a release's installer is the website's check, where it is published:
+  core main runs ahead of every release, so the same comparison here would be red between
+  any installer edit and the next website deploy.
 * **Header truth.** Every workflow file and job id the header names must exist, and the
   jobs must really name the installer. This is the direct rail over the defect above: the
   next person who writes "CI-smoke-tested" without writing the job gets a red.
@@ -620,17 +622,17 @@ class TestTruncatedDownloadFailsClosed:
         )
 
 
-# ── the digest pin: the offline half of the drift rail ───────────────────────────────
+# ── the digest pin: the offline check of the staged installer ────────────────────────
 
 
 class TestServedDigestPin:
     """``install.sh.sha256`` is the contract between this repo and personalclaw.dev.
 
-    The website repo's ``public/install`` is a hand-applied mirror with no automation
-    behind it, so "staged and served agree" cannot be checked without the network — and a
-    PR gate that reaches a third-party host on every push is a gate that goes red when
-    someone else's CDN hiccups. The pin splits the check in two: this half is offline and
-    gates every PR, and ``full.yml``'s live leg compares the pin to the real bytes.
+    "Staged and served agree" cannot be checked without the network, and a PR gate that
+    reaches a third-party host on every push is a gate that goes red when someone else's CDN
+    hiccups. So this half is offline and gates every PR, and the website, which publishes
+    the installer from the core release it pins, compares the served bytes with that
+    release's installer in its own scheduled check.
     """
 
     def test_pin_matches_the_staged_installer(self, installer_text: str) -> None:
@@ -1099,11 +1101,10 @@ class TestLiveInstallerLegIsWired:
         Running both separates "our next installer is broken" (staged red) from "the site
         or PyPI regressed" (served red) — two different pages for two different people.
 
-        Asserted as EXECUTION, not as a mention. The drift leg legitimately names the staged
-        path twice — ``sha256sum deploy/website/install.sh`` and a ``diff`` against it — so a
-        substring check passed with the staged smoke leg deleted outright: measured, the leg
-        was reduced to served-only and the case stayed green. Hashing a file is not running
-        it.
+        Asserted as EXECUTION, not as a mention. A step that hashes or diffs the staged path
+        names it too — a byte comparison step once did both — so a substring check passed
+        with the staged smoke leg deleted outright: measured, the leg was reduced to
+        served-only and the case stayed green. Hashing a file is not running it.
         """
         _jid, body = leg
         assert re.search(
@@ -1131,13 +1132,6 @@ class TestLiveInstallerLegIsWired:
             "the one-liner users are actually given."
         )
 
-    def test_it_compares_served_against_the_pin(self, leg: tuple[str, str]) -> None:
-        _jid, body = leg
-        assert "install.sh.sha256" in code_only(body), (
-            "the live leg does not compare the served bytes to install.sh.sha256, so the "
-            "drift this rail exists for would still go unnoticed."
-        )
-
     def test_every_fetch_failure_exits_nonzero_and_says_unproven(
         self, leg: tuple[str, str]
     ) -> None:
@@ -1154,9 +1148,11 @@ class TestLiveInstallerLegIsWired:
         """
         _jid, body = leg
         guards = fetch_guards(code_only(body))
-        assert len(guards) >= 2, (
-            "expected a guarded fetch for both the served smoke and the drift comparison; "
-            f"found {len(guards)}. An unguarded curl cannot report `unproven` at all."
+        served = [g for g in guards if SERVED_URL in g]
+        assert len(served) == 1, (
+            f"expected exactly one guarded fetch of {SERVED_URL} (the served smoke); found "
+            f"{len(served)} among {len(guards)} guard(s). An unguarded curl cannot report "
+            "`unproven` at all."
         )
         for guard in guards:
             assert re.search(r"^\s*exit\s+[1-9]", guard, flags=re.MULTILINE), (
@@ -1336,7 +1332,11 @@ class TestParsersAreNotVacuous:
         """The live leg must really contain the guards the assertions iterate over."""
         _jid, body = _live_leg(_FULL.read_text(encoding="utf-8"))
         guards = fetch_guards(body)
-        assert len(guards) >= 2, f"parser found {len(guards)} fetch guards in the live leg"
+        served = [g for g in guards if SERVED_URL in g]
+        assert len(served) == 1, (
+            f"parser found {len(served)} guarded fetch(es) of {SERVED_URL} in the live leg "
+            f"({len(guards)} guard(s) in all)"
+        )
         assert all("curl" in g for g in guards)
 
     def test_fetch_guards_isolates_each_block(self) -> None:
