@@ -39,6 +39,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import source_index
+
 import personalclaw
 
 SRC = Path(personalclaw.__file__).parent
@@ -77,15 +79,8 @@ def _module_name(path: Path) -> str:
 
 
 def _sources() -> list[tuple[Path, ast.Module]]:
-    out = []
-    for f in sorted(SRC.rglob("*.py")):
-        if f == OWNER:
-            continue
-        try:
-            out.append((f, ast.parse(f.read_text(encoding="utf-8"))))
-        except SyntaxError:  # pragma: no cover - the lint gate owns syntax
-            continue
-    return out
+    """Every package module but the resolver's own, parsed, from the suite's one source index."""
+    return [(f, tree) for f, tree in source_index.package_trees() if f != OWNER]
 
 
 def _binders(trees: list[tuple[Path, ast.Module]]) -> list[str]:

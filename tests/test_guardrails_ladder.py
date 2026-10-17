@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import source_index
 from aiohttp.test_utils import make_mocked_request
 
 from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult
@@ -385,11 +386,7 @@ def test_nothing_but_the_api_handler_grants_a_rung():
 
     root = Path(au.__file__).resolve().parent.parent
     callers: set[str] = set()
-    for path in root.rglob("*.py"):
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (OSError, SyntaxError):  # pragma: no cover
-            continue
+    for path, tree in source_index.package_trees():
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue

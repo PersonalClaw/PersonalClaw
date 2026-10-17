@@ -35,6 +35,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import source_index
 
 pytestmark = pytest.mark.security
 
@@ -577,9 +578,9 @@ def _fail_open_maskers(tree: ast.AST) -> tuple[list[int], list[str]]:
 def test_no_masker_in_the_tree_falls_back_to_the_text_it_could_not_mask() -> None:
     found: dict[str, list[int]] = {}
     seen: set[str] = set()
-    for path in sorted(_SRC.rglob("*.py")):
+    for path, tree in source_index.package_trees():
         rel = path.relative_to(_SRC).as_posix()
-        hits, where = _fail_open_maskers(ast.parse(path.read_text(encoding="utf-8")))
+        hits, where = _fail_open_maskers(tree)
         seen |= {f"{rel}::{fn}" for fn in where}
         if hits:
             found[rel] = hits

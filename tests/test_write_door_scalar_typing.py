@@ -32,6 +32,7 @@ import pathlib
 from typing import Any
 
 import pytest
+import source_index
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -155,7 +156,7 @@ _DOORS: tuple[tuple[str, str, str, str, str], ...] = (
 
 
 def _handler(module: str, name: str) -> ast.AST:
-    tree = ast.parse((_SRC / module).read_text(encoding="utf-8"))
+    tree = source_index.tree(_SRC / module)
     for node in ast.walk(tree):
         if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)) and node.name == name:
             return node
@@ -319,9 +320,9 @@ class _CoercionScan(ast.NodeVisitor):
 
 def _scan_tree() -> set[tuple[str, str, str]]:
     found: set[tuple[str, str, str]] = set()
-    for path in sorted(_SRC.rglob("*.py")):
+    for path, tree in source_index.package_trees():
         scan = _CoercionScan()
-        scan.visit(ast.parse(path.read_text(encoding="utf-8")))
+        scan.visit(tree)
         rel = path.relative_to(_SRC).as_posix()
         found |= {(rel, fn, field) for fn, field in scan.hits}
     return found

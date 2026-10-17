@@ -26,6 +26,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import source_index
+
 SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 SHARED_WRITER = SRC / "atomic_write.py"
 
@@ -218,12 +220,12 @@ def declared(tree: ast.AST, names: set[str]) -> dict[str, list[str]]:
 
 
 def _modules() -> list[tuple[str, ast.AST]]:
-    out = []
-    for path in sorted(SRC.rglob("*.py")):
-        if "__pycache__" in path.parts or path == SHARED_WRITER:
-            continue
-        out.append((path.relative_to(SRC).as_posix(), ast.parse(path.read_text(encoding="utf-8"))))
-    return out
+    """Every package module but the private writer's own, from the suite's one source index."""
+    return [
+        (path.relative_to(SRC).as_posix(), tree)
+        for path, tree in source_index.package_trees()
+        if path != SHARED_WRITER
+    ]
 
 
 def _archive_writer_functions(modules: list[tuple[str, ast.AST]]) -> set[tuple[str, str]]:

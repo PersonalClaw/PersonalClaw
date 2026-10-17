@@ -29,6 +29,7 @@ import ast
 import pathlib
 
 import pytest
+import source_index
 
 from personalclaw.learning import ambient
 from personalclaw.memory_record import MemoryKind, MemoryScope
@@ -399,10 +400,9 @@ def test_corrected_has_no_writer_anywhere_in_src():
     previous turn's tool set forward — so any writer here would blame whichever tools
     happened to run this turn. A wrong prior is worse than a missing one.
     """
-    src = pathlib.Path(__file__).resolve().parents[1] / "src" / "personalclaw"
     offenders = []
-    for path in src.rglob("*.py"):
-        for line in path.read_text(encoding="utf-8").splitlines():
+    for path in source_index.package_files():
+        for line in source_index.text(path).splitlines():
             if 'outcome="corrected"' in line or "outcome='corrected'" in line:
                 offenders.append(f"{path.name}: {line.strip()}")
     assert offenders == []

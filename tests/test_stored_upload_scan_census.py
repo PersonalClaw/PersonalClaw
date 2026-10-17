@@ -38,6 +38,8 @@ import functools
 import textwrap
 from pathlib import Path
 
+import source_index
+
 _PACKAGE = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
 #: The calls on ``request`` that read its body as bytes.
@@ -96,10 +98,10 @@ def _is_request(node: ast.AST) -> bool:
 
 
 class _Census:
-    """The census over modules given as ``{path under the package: source}``."""
+    """The census over modules given as ``{path under the package: parsed module}``."""
 
-    def __init__(self, sources: dict[str, str]) -> None:
-        self.trees = {rel: ast.parse(text) for rel, text in sources.items()}
+    def __init__(self, trees: dict[str, ast.Module]) -> None:
+        self.trees = trees
         self.defs: dict[tuple[str, str], ast.AST] = {}
         #: (file, function) → how it reads a request's body.
         self.sites: dict[tuple[str, str], set[str]] = collections.defaultdict(set)
@@ -166,11 +168,9 @@ class _Census:
 
 @functools.lru_cache(maxsize=1)
 def _package_census() -> _Census:
+    """The census of every package module, its trees from the suite's one source index."""
     return _Census(
-        {
-            path.relative_to(_PACKAGE).as_posix(): path.read_text(encoding="utf-8")
-            for path in sorted(_PACKAGE.rglob("*.py"))
-        }
+        {path.relative_to(_PACKAGE).as_posix(): tree for path, tree in source_index.package_trees()}
     )
 
 
@@ -259,7 +259,7 @@ _SHAPES = textwrap.dedent("""
 
 def test_the_census_finds_each_shape_of_body_and_which_one_scans():
     """The falsification: source written to hold each shape."""
-    census = _Census({"shapes.py": _SHAPES})
+    census = _Census({"shapes.py": ast.parse(_SHAPES)})
 
     assert dict(census.sites) == {
         ("shapes.py", "keeps_a_multipart_file"): {"request.multipart()"},

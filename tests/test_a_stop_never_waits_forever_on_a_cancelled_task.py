@@ -31,6 +31,7 @@ import logging
 from pathlib import Path
 
 import pytest
+import source_index
 from test_gateway import _make_orchestrator
 
 from personalclaw import cancellation
@@ -345,8 +346,15 @@ def _unbounded_waits(root: Path) -> set[str]:
             else:
                 visit(child, rel, prefix)
 
-    for path in sorted(root.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+    # The repository's own package is the suite's one source index; a fixture root is walked here.
+    if root == _SRC:
+        trees = source_index.package_trees()
+    else:
+        trees = [
+            (path, ast.parse(path.read_text(encoding="utf-8")))
+            for path in sorted(root.rglob("*.py"))
+        ]
+    for path, tree in trees:
         visit(tree, path.relative_to(root).as_posix(), "")
     return found
 
@@ -425,8 +433,8 @@ def test_the_family_waits_through_the_helper():
     census above is a zero because they do, not because the scan went blind."""
     calls = [
         node
-        for path in _SRC.rglob("*.py")
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        for _path, tree in source_index.package_trees()
+        for node in ast.walk(tree)
         if isinstance(node, ast.Call) and _call_name(node) == "cancel_and_wait"
     ]
     assert len(calls) >= 12, len(calls)

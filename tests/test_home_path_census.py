@@ -36,6 +36,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+import source_index
+
 SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
 
@@ -574,7 +576,7 @@ def unaccounted(tree: ast.AST, rel: str) -> list[str]:
 
 def _trees() -> dict[str, ast.AST]:
     rels = {*MODULES, *(rel for rel, _ in DOORS), *(rel for rel, _ in HAND_READ)}
-    return {rel: ast.parse((SRC / rel).read_text(encoding="utf-8")) for rel in sorted(rels)}
+    return {rel: source_index.tree(SRC / rel) for rel in sorted(rels)}
 
 
 # ── the rail ─────────────────────────────────────────────────────────────────────────────────────
@@ -613,7 +615,7 @@ def test_every_table_names_a_function_that_is_there():
 def test_each_form_of_the_check_is_the_check():
     """Each form answers through the one it names, and ``home_path`` and ``export_path`` through
     the check itself (``_checked``): a form of the check that did not would be a way around it."""
-    trees = {rel: ast.parse((SRC / rel).read_text(encoding="utf-8")) for rel, _ in FORMS}
+    trees = {rel: source_index.tree(SRC / rel) for rel, _ in FORMS}
     for (rel, name), through in FORMS.items():
         fn = dict(functions(trees[rel]))[name]
         calls = {_dotted(n.func).rsplit(".", 1)[-1] for n in _own(fn) if isinstance(n, ast.Call)}
@@ -1018,7 +1020,7 @@ def read_unaccounted(tree: ast.AST, rel: str) -> list[str]:
 
 def _read_trees() -> dict[str, ast.AST]:
     rels = {*READ_MODULES, *(r for r, _ in READ_DOORS), *(r for r, _ in READ_HAND_READ)}
-    return {rel: ast.parse((SRC / rel).read_text(encoding="utf-8")) for rel in sorted(rels)}
+    return {rel: source_index.tree(SRC / rel) for rel in sorted(rels)}
 
 
 def test_every_read_an_export_makes_takes_its_path_from_the_check():
@@ -1266,10 +1268,9 @@ def lock_strays(tree: ast.AST, rel: str) -> list[str]:
 def _lock_trees() -> dict[str, ast.AST]:
     """Every module of the package that names ``fcntl``: where a lock can be taken."""
     out: dict[str, ast.AST] = {}
-    for path in sorted(SRC.rglob("*.py")):
-        text = path.read_text(encoding="utf-8")
-        if "fcntl" in text:
-            out[path.relative_to(SRC).as_posix()] = ast.parse(text)
+    for path in source_index.package_files():
+        if "fcntl" in source_index.text(path):
+            out[path.relative_to(SRC).as_posix()] = source_index.tree(path)
     return out
 
 

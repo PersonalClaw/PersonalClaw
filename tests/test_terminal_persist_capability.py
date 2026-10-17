@@ -15,6 +15,7 @@ import time
 from unittest.mock import MagicMock, patch
 
 import pytest
+import source_index
 
 from personalclaw import tmux_substrate
 from personalclaw.dashboard.handlers import terminal
@@ -137,8 +138,8 @@ def test_the_tmux_probe_has_exactly_one_owner():
     assert pattern in owner.read_text(encoding="utf-8")
     strays = sorted(
         str(p.relative_to(root))
-        for p in root.rglob("*.py")
-        if p != owner and pattern in p.read_text(encoding="utf-8", errors="replace")
+        for p in source_index.package_files()
+        if p != owner.resolve() and pattern in source_index.text(p)
     )
     assert strays == [], (
         "tmux availability must come from tmux_substrate.tmux_available(); a second "

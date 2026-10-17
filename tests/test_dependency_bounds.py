@@ -34,6 +34,7 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
+import source_index
 import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -97,8 +98,8 @@ def test_the_client_the_openai_bound_protects_is_still_handed_to_the_sdk() -> No
     client to ``AsyncOpenAI``. If none does any more, re-derive the bound instead of keeping it."""
     passing = [
         path.relative_to(_REPO_ROOT).as_posix()
-        for path in sorted((_REPO_ROOT / "src" / "personalclaw").rglob("*.py"))
-        if "openai.AsyncOpenAI(" in (text := path.read_text(encoding="utf-8"))
+        for path in source_index.package_files()
+        if "openai.AsyncOpenAI(" in (text := source_index.text(path))
         and "http_client=http_client(" in text
     ]
     assert passing, (

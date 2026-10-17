@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+import source_index
 
 from personalclaw.sandbox import PROFILE_TOOL, ResourceCeilings
 from personalclaw.sandbox_providers import (
@@ -234,8 +235,8 @@ def test_no_module_binds_the_spawn_when_it_is_imported():
 
     root = Path(personalclaw.__file__).parent
     bound = []
-    for path in sorted(root.rglob("*.py")):
-        for node in ast.parse(path.read_text(encoding="utf-8")).body:
+    for path, tree in source_index.package_trees():
+        for node in tree.body:
             if (
                 isinstance(node, ast.ImportFrom)
                 and node.module == "personalclaw.sandbox"

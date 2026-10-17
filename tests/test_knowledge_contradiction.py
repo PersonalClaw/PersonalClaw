@@ -10,6 +10,7 @@ import asyncio
 import json
 
 import pytest
+import source_index
 
 from personalclaw.action_providers.base import ActionContext
 from personalclaw.knowledge import session_brief
@@ -724,9 +725,8 @@ def test_no_module_composes_the_knowledge_path_itself():
     root = _pathlib.Path(__file__).resolve().parents[1] / "src/personalclaw"
     offenders = [
         str(path.relative_to(root))
-        for path in root.rglob("*.py")
-        if '"knowledge" / "knowledge.db"' in path.read_text(encoding="utf-8")
-        and path.name != "store.py"
+        for path in source_index.package_files()
+        if '"knowledge" / "knowledge.db"' in source_index.text(path) and path.name != "store.py"
     ]
     assert offenders == [], f"these compose the knowledge path directly: {offenders}"
 

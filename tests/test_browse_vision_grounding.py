@@ -53,6 +53,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import source_index
 
 from personalclaw.browse import vision
 from personalclaw.browse.extraction import extract_page
@@ -769,8 +770,7 @@ def test_adds_no_model_artifact_to_the_shipped_tree() -> None:
     """
     from personalclaw.bundled_model import weight_shaped_members
 
-    pkg = _REPO_ROOT / "src" / "personalclaw"
-    names = [str(p.relative_to(_REPO_ROOT)) for p in pkg.rglob("*") if p.is_file()]
+    names = [str(p.relative_to(_REPO_ROOT)) for p in source_index.package_any_files()]
     assert names, "no packaged files were found — the scan is vacuous"
     assert weight_shaped_members(names) == [], (
         "a model weight is present in the packaged source tree; the vision fallback's model is "

@@ -20,11 +20,13 @@ import ast
 import re
 from pathlib import Path
 
+import source_index
+
 SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
 #: What the rail reads: the web gateway, the chat REPL, and the error-sentence registries.
 SCANNED = [
-    *sorted((SRC / "dashboard").rglob("*.py")),
+    *source_index.under(source_index.package_files(), SRC / "dashboard"),
     SRC / "cli_chat.py",
     SRC / "http_errors.py",
     SRC / "errors.py",
@@ -86,9 +88,10 @@ def _is_skipped(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> bool:
     return False
 
 
-def emoji_in(source: str) -> list[tuple[int, str]]:
-    """Every ``(line, literal)`` in *source* that carries an emoji and is product text."""
-    tree = ast.parse(source)
+def emoji_in(source: str | ast.Module) -> list[tuple[int, str]]:
+    """Every ``(line, literal)`` in *source* (text, or its tree) that carries an emoji and is
+    product text."""
+    tree = source if isinstance(source, ast.Module) else ast.parse(source)
     parents = _parents(tree)
     found: list[tuple[int, str]] = []
     for node in ast.walk(tree):
@@ -102,7 +105,7 @@ def test_the_gateways_product_text_carries_no_emoji():
     offenders = []
     for path in SCANNED:
         rel = path.relative_to(SRC).as_posix()
-        for line, literal in emoji_in(path.read_text(encoding="utf-8")):
+        for line, literal in emoji_in(source_index.tree(path)):
             if (rel, literal) in DATA_GLYPHS:
                 continue
             offenders.append(f"{rel}:{line}: {literal[:80]!r}")
@@ -116,7 +119,7 @@ def test_the_scan_reads_what_it_claims_to():
     assert all(p.is_file() for p in SCANNED), [p for p in SCANNED if not p.is_file()]
     assert len(SCANNED) > 50
     for rel, literal in DATA_GLYPHS:
-        literals = {lit for _, lit in emoji_in((SRC / rel).read_text(encoding="utf-8"))}
+        literals = {lit for _, lit in emoji_in(source_index.tree(SRC / rel))}
         assert literal in literals, f"stale allowance, the literal is gone: {rel}"
 
 

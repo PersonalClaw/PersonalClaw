@@ -64,6 +64,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+import source_index
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 WEB_SRC = REPO / "web/src"
@@ -96,10 +97,10 @@ def _strip_comments(text: str) -> str:
 def _frontend_sources() -> dict[str, str]:
     """Every non-test ``.ts``/``.tsx`` under ``web/src``, comments stripped."""
     out: dict[str, str] = {}
-    for p in sorted([*WEB_SRC.rglob("*.ts"), *WEB_SRC.rglob("*.tsx")]):
+    for p in [p for p in source_index.web_files() if p.suffix in {".ts", ".tsx"}]:
         if ".test." in p.name:
             continue
-        out[str(p.relative_to(REPO))] = _strip_comments(p.read_text(encoding="utf-8"))
+        out[str(p.relative_to(REPO))] = _strip_comments(source_index.text(p))
     return out
 
 

@@ -27,6 +27,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
+import source_index
 
 import personalclaw.action_providers as action_providers_mod
 from personalclaw.action_providers.base import ActionResult
@@ -130,11 +131,11 @@ def test_only_gating_callers_exist():
     import ast
 
     root = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
-    callers = {p for p in root.rglob("*.py") if ".fire_for_ids(" in p.read_text(encoding="utf-8")}
+    callers = {p for p in source_index.package_files() if ".fire_for_ids(" in source_index.text(p)}
     assert {p.name for p in callers} == {"chat_runner.py", "pre_tool_hooks.py"}
-    step = (root / "pre_tool_hooks.py").read_text(encoding="utf-8")
+    step = source_index.text(root / "pre_tool_hooks.py")
     assert "HOOK_EVENT_PRE_TOOL_USE" in step and "== _BLOCKS" in step, "the step must gate exit 2"
-    chat_runner = ast.parse((root / "dashboard" / "chat_runner.py").read_text(encoding="utf-8"))
+    chat_runner = source_index.tree(root / "dashboard" / "chat_runner.py")
     names = {n.id for n in ast.walk(chat_runner) if isinstance(n, ast.Name)}
     assert "HOOK_EVENT_PRE_TOOL_USE" not in names, "the chat runner fires the pre-tool hooks itself"
 

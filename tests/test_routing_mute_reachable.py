@@ -44,6 +44,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw.agents import routing
 
@@ -91,8 +92,8 @@ def _product_sources() -> tuple[tuple[Path, str], ...]:
     is auditing is worse than no scanner.
     """
     return tuple(
-        (p, p.read_text())
-        for p in sorted(WEB_SRC.rglob("*"))
+        (p, source_index.text(p))
+        for p in source_index.web_files()
         if p.suffix in {".ts", ".tsx"}
         and not re.search(r"\.(test|spec|doc)\.tsx?$", p.name)
         and p.name != "api.ts"

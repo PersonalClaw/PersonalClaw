@@ -26,6 +26,7 @@ import ast
 import pathlib
 
 import pytest
+import source_index
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -56,13 +57,9 @@ class TestTheConstantMatchesTheCode:
         That false positive is what would make this rail unmaintainable.
         """
         consumers: set[str] = set()
-        for path in sorted(SRC.rglob("*.py")):
+        for path, tree in source_index.package_trees():
             rel = str(path.relative_to(SRC))
             if rel == "feedback.py":
-                continue
-            try:
-                tree = ast.parse(path.read_text(), filename=str(path))
-            except SyntaxError:  # pragma: no cover - the lint job owns syntax
                 continue
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call):

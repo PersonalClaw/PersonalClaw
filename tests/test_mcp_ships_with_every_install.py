@@ -21,6 +21,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+import source_index
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
@@ -131,14 +132,22 @@ def test_the_image_names_no_extra_that_does_not_exist():
 
 #: Every surface a user reads advice on: the package, the SPA, the docs and the repo's front page.
 _COPY = [
-    *(_ROOT / "src").rglob("*.py"),
-    *(_ROOT / "src").rglob("*.md"),
-    *(_ROOT / "web" / "src").rglob("*.ts"),
-    *(_ROOT / "web" / "src").rglob("*.tsx"),
-    *(_ROOT / "docs").rglob("*.md"),
+    *source_index.package_files(),
+    *(p for p in source_index.package_any_files() if p.suffix == ".md"),
+    *(p for p in source_index.web_files() if p.suffix == ".ts"),
+    *(p for p in source_index.web_files() if p.suffix == ".tsx"),
+    *(p for p in source_index.docs_files() if p.suffix == ".md"),
     _ROOT / "README.md",
     _ROOT / "CONTRIBUTING.md",
 ]
+
+
+def _text(path: Path) -> str:
+    """A file under the four roots through the suite's one source index; the two front pages
+    at the repository's root read here."""
+    if path.parent == _ROOT:
+        return path.read_text(encoding="utf-8")
+    return source_index.text(path)
 
 
 def test_the_copy_census_reads_real_files():
@@ -153,7 +162,7 @@ def test_no_copy_tells_a_user_to_install_the_mcp_extra():
         f"{p.relative_to(_ROOT)}:{n}"
         for p in _COPY
         if p.is_file()
-        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        for n, line in enumerate(_text(p).splitlines(), 1)
         if "personalclaw[mcp]" in line
     ]
     assert not offenders, "still tells a user to install `personalclaw[mcp]`: " + ", ".join(

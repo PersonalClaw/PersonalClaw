@@ -28,13 +28,15 @@ import html
 import io
 import re
 import shlex
-from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw.cli import build_parser
 
-_ROOT = Path(__file__).resolve().parents[1]
+#: How many commands the copy holds today. The table test asserts it exactly, so a row the scan
+#: stops finding fails rather than quietly leaving the table. A new command in copy raises it.
+_ROWS = 115
 
 #: Files whose backticked commands describe a command someone RAN, not one a user is told to run.
 _DESCRIBES_COMMANDS_THAT_RAN = {
@@ -55,15 +57,15 @@ _HOLE = re.compile(r"\$?\{[^{}]*\}")
 
 def _spa_commands() -> list[tuple[str, str]]:
     found: list[tuple[str, str]] = []
-    for path in sorted((_ROOT / "web" / "src").rglob("*.ts*")):
+    for path in source_index.web_files():
         if (
             ".test." in path.name
             or "/test/" in path.as_posix()
             or path.suffix not in (".ts", ".tsx")
         ):
             continue
-        text = path.read_text(encoding="utf-8")
-        rel = path.relative_to(_ROOT).as_posix()
+        text = source_index.text(path)
+        rel = source_index.rel(path)
         for match in _CODE_ELEMENT.finditer(text):
             body = " ".join(match.group(1).split())
             if body.startswith("personalclaw "):
@@ -96,11 +98,11 @@ def _docstring_nodes(tree: ast.AST) -> set[int]:
 
 def _message_commands() -> list[tuple[str, str]]:
     found: list[tuple[str, str]] = []
-    for path in sorted((_ROOT / "src" / "personalclaw").rglob("*.py")):
-        rel = path.relative_to(_ROOT).as_posix()
+    for path in source_index.package_files():
+        rel = source_index.rel(path)
         if rel in _DESCRIBES_COMMANDS_THAT_RAN:
             continue
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = source_index.tree(path)
         skip = _docstring_nodes(tree)
         for node in ast.walk(tree):
             if isinstance(node, ast.JoinedStr):
@@ -169,14 +171,17 @@ def _parse_error(argv: list[str]) -> str:
     return "a placeholder never fitted any value the parser takes"
 
 
-_COMMANDS = _spa_commands() + _message_commands()
+def _commands() -> list[tuple[str, str]]:
+    """Every command in copy, read when a test asks, never as the module is collected."""
+    return _spa_commands() + _message_commands()
 
 
 def test_the_scan_finds_the_copy_it_is_meant_to_read():
     """Vacuity guard: each source shape is read, so a green is a measurement."""
-    where = {site.split(":")[0] for site, _ in _COMMANDS}
-    commands = {command for _, command in _COMMANDS}
-    assert len(_COMMANDS) >= 60, len(_COMMANDS)
+    found = _commands()
+    where = {site.split(":")[0] for site, _ in found}
+    commands = {command for _, command in found}
+    assert len(found) >= 60, len(found)
     assert "web/src/pages/settings/DurabilityPanel.tsx" in where  # <code> elements
     assert "web/src/pages/settings/CompanionPanel.tsx" in where  # backticks in a hint string
     assert "web/src/pages/settings/UpdatesPanel.tsx" in where  # \` in a template literal
@@ -209,7 +214,15 @@ def test_a_sample_in_a_choices_slot_is_retried_with_the_first_choice(said):
     assert match is not None and match.groups() == ("sample1", "both"), said
 
 
-@pytest.mark.parametrize(("site", "command"), _COMMANDS, ids=[site for site, _ in _COMMANDS])
-def test_a_command_in_copy_parses(site, command):
-    error = _parse_error(_argv(command))
-    assert not error, f"{site} tells users to run `{command}`, and the CLI says: {error}"
+def test_every_command_in_copy_parses(subtests):
+    """One row per command in copy, each a subtest named by its site. The rows are read here, not
+    at collection, so collecting this module parses nothing; the count is today's exactly."""
+    found = _commands()
+    assert len(found) == _ROWS, (
+        f"the copy holds {len(found)} commands, not {_ROWS}: a row went missing, or a new command "
+        "was added (then raise _ROWS)"
+    )
+    for site, command in found:
+        with subtests.test(site=site, command=command):
+            error = _parse_error(_argv(command))
+            assert not error, f"{site} tells users to run `{command}`, and the CLI says: {error}"

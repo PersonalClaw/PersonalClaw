@@ -26,6 +26,7 @@ import ast
 import pathlib
 
 import pytest
+import source_index
 
 SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
@@ -45,7 +46,7 @@ CATCHERS = (
 
 
 def _imports_driver_from_compat(path: pathlib.Path) -> bool:
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = source_index.tree(path)
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and (node.module or "").endswith("sqlite_compat"):
             if any(a.name == "sqlite3" for a in node.names):
@@ -55,7 +56,7 @@ def _imports_driver_from_compat(path: pathlib.Path) -> bool:
 
 def _declares_its_own_driver(path: pathlib.Path) -> bool:
     """Whether the module names `pysqlite3` in an import of its own."""
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = source_index.tree(path)
     for node in ast.walk(tree):
         if isinstance(node, ast.Import) and any(a.name == "pysqlite3" for a in node.names):
             return True
@@ -86,7 +87,7 @@ def test_no_module_re_derives_the_driver_for_itself(rel: str) -> None:
 def test_sqlite_compat_is_the_only_place_that_names_pysqlite3() -> None:
     """The residue sweep, stated over the whole package rather than a fixed list."""
     offenders = []
-    for path in sorted(SRC.rglob("*.py")):
+    for path in source_index.package_files():
         if path.name == "sqlite_compat.py":
             continue
         if _declares_its_own_driver(path):

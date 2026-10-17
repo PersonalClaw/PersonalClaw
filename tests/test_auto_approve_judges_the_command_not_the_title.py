@@ -30,6 +30,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import source_index
 
 from personalclaw.acp.permission_authority import screen_tool_call
 from personalclaw.hooks import TOOL_AUTO_APPROVE, TOOL_DENY, HookManager, HooksConfig
@@ -299,8 +300,7 @@ REFUSES_ONLY = {
 
 def _screen_calls() -> dict[str, list[ast.Call]]:
     sites: dict[str, list[ast.Call]] = {}
-    for path in sorted(SRC.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+    for path, tree in source_index.package_trees():
         rel = path.relative_to(SRC).as_posix()
 
         def visit(node, scope):

@@ -37,6 +37,7 @@ import types
 from dataclasses import dataclass
 
 import pytest
+import source_index
 
 from personalclaw.triggers.models import KINDS
 
@@ -212,13 +213,23 @@ def _screen_names(tree: ast.Module) -> tuple[set[str], set[str]]:
     return functions, modules
 
 
+def _parsed(rel: str, text: str) -> ast.Module:
+    """The tree of *text*, the file *rel* under ``src/personalclaw``. A package module whose text
+    is the very string the suite's one source index holds (as :func:`_tree` hands out) is that
+    index's tree; a text a test changed or planted is parsed here."""
+    path = SRC / rel
+    if path.is_file() and text is source_index.text(path):
+        return source_index.tree(path)
+    return ast.parse(text)
+
+
 def scan(sources: dict[str, str]) -> dict[str, set[tuple[str, str]]]:
     """``{"fence": {(file, function)}, "screen": {(file, function)}}`` for *sources*, a map of a
     file's path under ``src/personalclaw`` to its text. A function is named with its class, as
     ``Class.method``; a call at a module's top level as ``<module>``."""
     found: dict[str, set[tuple[str, str]]] = {"fence": set(), "screen": set()}
     for rel, text in sources.items():
-        tree = ast.parse(text)
+        tree = _parsed(rel, text)
         screen_functions, screen_modules = _screen_names(tree)
 
         def _walk(node: ast.AST, scope: tuple[str, ...], in_function: bool) -> None:
@@ -253,16 +264,18 @@ def scan(sources: dict[str, str]) -> dict[str, set[tuple[str, str]]]:
 
 
 def _tree() -> dict[str, str]:
+    """Every package module's text, from the suite's one source index. A fresh dict each call,
+    so a test that changes one file's text changes only its own copy."""
     return {
-        path.relative_to(SRC).as_posix(): path.read_text(encoding="utf-8")
-        for path in sorted(SRC.rglob("*.py"))
+        path.relative_to(SRC).as_posix(): source_index.text(path)
+        for path in source_index.package_files()
     }
 
 
-def _function(text: str, qualname: str) -> ast.AST | None:
+def _function(rel: str, text: str, qualname: str) -> ast.AST | None:
     """The function *qualname* (``name`` or ``Class.method``) in *text*, or None."""
     parts = qualname.split(".")
-    nodes: list[ast.AST] = list(ast.parse(text).body)
+    nodes: list[ast.AST] = list(_parsed(rel, text).body)
     for depth, part in enumerate(parts):
         last = depth == len(parts) - 1
         kinds = (ast.FunctionDef, ast.AsyncFunctionDef) if last else (ast.ClassDef,)
@@ -316,7 +329,7 @@ def door_problems(sources: dict[str, str]) -> list[str]:
         for rel, fn in sorted(listed_screens - found["screen"])
     ]
     for (rel, fn), door in sorted(DOORS.items()):
-        node = _function(sources.get(rel, ""), fn) if rel in sources else None
+        node = _function(rel, sources[rel], fn) if rel in sources else None
         if node is None:
             problems.append(f"{rel}:{fn} is a door that no longer exists")
             continue
@@ -456,7 +469,7 @@ def instruction_sites(sources: dict[str, str]) -> dict[str, set[tuple[str, str]]
                     found["key"].add(where)
                 _walk(child, inner, inner_in_function)
 
-        _walk(ast.parse(text), (), False)
+        _walk(_parsed(rel, text), (), False)
     return found
 
 
@@ -485,7 +498,7 @@ def instruction_problems(sources: dict[str, str]) -> list[str]:
         ("inbox_service.py", "admitted_instruction"): "holds",
     }
     for (rel, fn), call in sorted(held_by.items()):
-        node = _function(sources.get(rel, ""), fn) if rel in sources else None
+        node = _function(rel, sources[rel], fn) if rel in sources else None
         if node is None or call not in _calls(node):
             problems.append(f"{rel}:{fn} takes in an instruction without {call}()")
     return problems

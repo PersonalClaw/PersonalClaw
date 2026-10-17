@@ -37,6 +37,8 @@ from __future__ import annotations
 
 import json
 
+import source_index
+
 from personalclaw.guardrails.loop_breaker import (
     ANNOTATION_ARG_KEYS,
     BLOCK_THRESHOLD,
@@ -378,8 +380,7 @@ class TestTheCircuitCeilingIsConfigurable:
         src_root = pathlib.Path(personalclaw.__file__).parent
         owner = src_root / "guardrails" / "loop_breaker.py"
         hits: dict[str, int] = {}
-        for p in src_root.rglob("*.py"):
-            tree = ast.parse(p.read_text(encoding="utf-8"))
+        for p, tree in source_index.package_trees():
             n = sum(
                 1
                 for node in ast.walk(tree)

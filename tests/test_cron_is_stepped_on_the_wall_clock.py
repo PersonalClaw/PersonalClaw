@@ -19,6 +19,7 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
+import source_index
 
 from personalclaw import schedule as schedule_mod
 from personalclaw.triggers import arm
@@ -169,7 +170,7 @@ SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
 
 def _constructions(path: pathlib.Path) -> list[int]:
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = source_index.tree(path)
     return [
         node.lineno
         for node in ast.walk(tree)
@@ -184,7 +185,7 @@ def test_a_cron_is_stepped_in_one_place():
     (attribute calls) are not steps, and stay where they are."""
     elsewhere = {
         path.relative_to(SRC).as_posix(): lines
-        for path in sorted(SRC.rglob("*.py"))
+        for path in source_index.package_files()
         if path.name != "cron_clock.py" and (lines := _constructions(path))
     }
     assert elsewhere == {}

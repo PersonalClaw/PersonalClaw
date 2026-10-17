@@ -40,7 +40,10 @@ from __future__ import annotations
 import ast
 import ipaddress
 import re
+from fnmatch import fnmatch
 from pathlib import Path
+
+import source_index
 
 _ROOT = Path(__file__).resolve().parents[1]
 _CORE = _ROOT / "src" / "personalclaw"
@@ -83,12 +86,9 @@ def skip_reason(host: str) -> str | None:
 
 
 def _shipped_files() -> list[Path]:
-    out: list[Path] = []
-    for p in sorted(_CORE.rglob("*.py")):
-        if "__pycache__" not in p.parts:
-            out.append(p)
+    out: list[Path] = list(source_index.package_files())
     for pattern in ("*.ts", "*.tsx"):
-        for p in sorted(_WEB.rglob(pattern)):
+        for p in (w for w in source_index.web_files() if fnmatch(w.name, pattern)):
             # A test fixture's URL is not something the product contacts.
             if p.name.endswith((".test.ts", ".test.tsx")) or "__tests__" in p.parts:
                 continue
@@ -238,9 +238,10 @@ def _live_strings(tree: ast.AST) -> list[str]:
     ]
 
 
-def live_hosts_in_network_module(source: str) -> set[str]:
-    """Hosts a module that can open a connection holds as live data (empty if it cannot)."""
-    tree = ast.parse(source)
+def live_hosts_in_network_module(source: str | ast.Module) -> set[str]:
+    """Hosts a module (its text, or its tree) that can open a connection holds as live data
+    (empty if it cannot)."""
+    tree = source if isinstance(source, ast.Module) else ast.parse(source)
     if not _is_network_capable(tree):
         return set()
     return {h for text in _live_strings(tree) for h in hosts_in(text)}
@@ -252,7 +253,7 @@ def _network_module_hosts() -> dict[str, list[str]]:
     for f in _shipped_files():
         if f.suffix != ".py":
             continue
-        for host in live_hosts_in_network_module(f.read_text(encoding="utf-8")):
+        for host in live_hosts_in_network_module(source_index.tree(f)):
             out.setdefault(host, []).append(str(f.relative_to(_CORE)))
     return out
 
@@ -261,7 +262,7 @@ def _found() -> dict[str, str]:
     """host -> first file it appears in (a shipped fetch record counts as a file)."""
     out: dict[str, str] = {}
     for f in _shipped_files():
-        for host in hosts_in(f.read_text(encoding="utf-8")):
+        for host in hosts_in(source_index.text(f)):
             out.setdefault(host, str(f.relative_to(_ROOT)))
     for host, where in _record_fetches().items():
         out.setdefault(host, where)

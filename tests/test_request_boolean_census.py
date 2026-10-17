@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import source_index
 
 import personalclaw
 
@@ -252,7 +253,9 @@ def _is_body_call(node: ast.AST | None) -> bool:
     )
 
 
-def _scan(source: str) -> tuple[dict[tuple[str, str], object], list[tuple[str, str, str, int]]]:
+def _scan(
+    source: str | ast.Module,
+) -> tuple[dict[tuple[str, str], object], list[tuple[str, str, str, int]]]:
     """``(declared, misreads)`` for one module.
 
     *declared* maps ``(function, field)`` to what an omitted field means there, for every boolean
@@ -262,7 +265,7 @@ def _scan(source: str) -> tuple[dict[tuple[str, str], object], list[tuple[str, s
     with ``True``/``False``, or a ``.get(field, True|False)`` default. A name bound straight from a
     raw read counts as the read, unless a hand-written refusal checks it in between.
     """
-    tree = ast.parse(source)
+    tree = source if isinstance(source, ast.Module) else ast.parse(source)
     module_tuples = {
         t.id: _constant_strings(n.value, {})
         for n in getattr(tree, "body", [])
@@ -419,13 +422,13 @@ def _tree() -> tuple[dict[tuple[str, str, str], object], list[tuple[str, str, st
     declared: dict[tuple[str, str, str], object] = {}
     misreads: list[tuple[str, str, str, str, int]] = []
     modules = 0
-    for path in sorted(SRC.rglob("*.py")):
-        source = path.read_text(encoding="utf-8")
+    for path in source_index.package_files():
+        source = source_index.text(path)
         rel = path.relative_to(SRC).as_posix()
         if not _body_module(rel, source):
             continue
         modules += 1
-        found, wrong = _scan(source)
+        found, wrong = _scan(source_index.tree(path))
         declared |= {(rel, fn, field): how for (fn, field), how in found.items()}
         misreads += [(rel, *row) for row in wrong]
     return declared, misreads, modules
@@ -574,12 +577,13 @@ LOADER_BUDGET = frozenset(
 )
 
 
-def _loader_misreads(source: str) -> set[tuple[str, str]]:
+def _loader_misreads(source: str | ast.Module) -> set[tuple[str, str]]:
     """``{(class, field)}`` for each boolean a record loader reads by truthiness: ``bool()`` of a
     read, a comparison of one with ``True``/``False``, or a ``.get(field, True|False)`` handed on
     raw. A read inside a strict reader is not one."""
     found: set[tuple[str, str]] = set()
-    for cls in ast.walk(ast.parse(source)):
+    tree = source if isinstance(source, ast.Module) else ast.parse(source)
+    for cls in ast.walk(tree):
         if not isinstance(cls, ast.ClassDef):
             continue
         for fn in cls.body:
@@ -665,8 +669,8 @@ def test_a_record_loader_reads_no_switch_by_truthiness():
     records in :data:`LOADER_BUDGET` may still read a boolean another way."""
     found = {
         (path.relative_to(SRC).as_posix(), cls, field)
-        for path in sorted(SRC.rglob("*.py"))
-        for cls, field in _loader_misreads(path.read_text(encoding="utf-8"))
+        for path, tree in source_index.package_trees()
+        for cls, field in _loader_misreads(tree)
     }
     assert found, "the loader scan found nothing at all: it no longer sees a loader"
     assert found == LOADER_BUDGET, (

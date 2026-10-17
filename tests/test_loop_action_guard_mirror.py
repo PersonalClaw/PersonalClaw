@@ -44,6 +44,7 @@ import re
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw.loop.loop import ACTION_SOURCE_STATES
 
@@ -108,13 +109,13 @@ def _strip_comments(text: str) -> str:
 
 def _registry_text() -> str:
     assert _REGISTRY.is_file(), f"{_REGISTRY} is missing — this rail can parse nothing"
-    return _strip_comments(_REGISTRY.read_text(encoding="utf-8"))
+    return _strip_comments(source_index.text(_REGISTRY))
 
 
 def _web_sources() -> list[Path]:
     return [
         p
-        for p in sorted(_WEB.rglob("*.ts*"))
+        for p in source_index.web_files()
         if p.suffix in {".ts", ".tsx"} and not p.name.endswith(".test.ts")
     ]
 
@@ -301,7 +302,7 @@ def test_there_is_exactly_one_loop_action_guard_map():
     others = [
         p.relative_to(_REPO)
         for p in _web_sources()
-        if p != _REGISTRY and _ACTION_MAP_ROW.search(_strip_comments(p.read_text(encoding="utf-8")))
+        if p != _REGISTRY and _ACTION_MAP_ROW.search(_strip_comments(source_index.text(p)))
     ]
     assert not others, (
         f"a second loop action-guard map reappeared: {[str(p) for p in others]}. The source states "
@@ -373,7 +374,7 @@ def test_no_surface_hand_writes_a_lifecycle_action_guard():
     offenders = {
         str(p.relative_to(_REPO)): shapes
         for p in sources
-        if (shapes := _hand_written_action_guards(_strip_comments(p.read_text(encoding="utf-8"))))
+        if (shapes := _hand_written_action_guards(_strip_comments(source_index.text(p))))
     }
     assert not offenders, (
         f"a hand-written lifecycle-action guard reappeared: {offenders}. Import "

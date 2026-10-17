@@ -29,6 +29,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import source_index
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 
@@ -174,11 +175,11 @@ def _sites(tree: ast.AST) -> set[str]:
 
 def home_sites() -> set[tuple[str, str]]:
     out: set[tuple[str, str]] = set()
-    for py in sorted(SRC.rglob("*.py")):
+    for py, tree in source_index.package_trees():
         rel = py.relative_to(SRC).as_posix()
         if rel.startswith("skills/bundled/"):
             continue
-        for scope in _sites(ast.parse(py.read_text(encoding="utf-8"))):
+        for scope in _sites(tree):
             out.add((rel, scope))
     return out
 

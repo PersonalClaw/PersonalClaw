@@ -38,6 +38,7 @@ from contextlib import asynccontextmanager
 from unittest.mock import patch
 
 import pytest
+import source_index
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -355,9 +356,9 @@ def _update_task_call_line_counts() -> dict[str, int]:
     call_re = re.compile(r"\.update_task\(")
     def_re = re.compile(r"^\s*(async\s+)?def\s+update_task\b")
     counts: dict[str, int] = {}
-    for path in src_root.rglob("*.py"):
+    for path in source_index.package_files():
         n = 0
-        for line in path.read_text(encoding="utf-8").splitlines():
+        for line in source_index.text(path).splitlines():
             if def_re.match(line):
                 continue
             if call_re.search(line):

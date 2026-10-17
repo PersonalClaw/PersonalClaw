@@ -51,6 +51,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+import source_index
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
@@ -107,12 +108,18 @@ def zone_resolution_sites(root: Path) -> list[Site]:
     anything about the real scan.
     """
     sites: list[Site] = []
-    for path in sorted(root.rglob("*.py")):
+    # The repository's own package is the suite's one source index; a planted root is walked here.
+    if root == SRC:
+        trees = source_index.package_trees()
+    else:
+        trees = []
+        for path in sorted(root.rglob("*.py")):
+            try:
+                trees.append((path, ast.parse(path.read_text(encoding="utf-8"))))
+            except SyntaxError:  # pragma: no cover - a parse failure is a separate problem
+                continue
+    for path, tree in trees:
         rel = str(path.relative_to(root))
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except SyntaxError:  # pragma: no cover - a parse failure is a separate problem
-            continue
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and _dotted(node.func).split(".")[-1] == "ZoneInfo":
                 sites.append(Site(rel, node.lineno, "ZoneInfo", _dotted(node.func)))
@@ -152,7 +159,7 @@ def _imports_the_owner(path: Path) -> bool:
     docstring still said `timezones.machine_zone_name`, so the prose satisfied the rail while
     the delegation was gone. Prose cannot satisfy an `ast.ImportFrom`.
     """
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = source_index.tree(path)
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and (node.module or "") == "personalclaw.timezones":
             return True
@@ -235,7 +242,7 @@ def test_the_scan_is_not_vacuous_it_finds_the_owners_own_resolutions():
     assert len(machine) >= 2, f"the owner reads /etc/localtime AND /etc/timezone: {machine}"
 
     # Independent mechanism — plain text, no `ast` involved.
-    raw = (SRC / OWNER).read_text(encoding="utf-8")
+    raw = source_index.text(SRC / OWNER)
     assert raw.count("ZoneInfo(") >= 3
     assert raw.count('"/etc/localtime"') >= 1
     assert raw.count('"/etc/timezone"') >= 1
@@ -245,6 +252,6 @@ def test_the_scan_really_visits_the_whole_package():
     """The other way a scan goes vacuous: a wrong root, so it parses ~nothing. Counted by
     glob rather than by the parse, and floored well under the real number (1099 files at the
     time of writing) so ordinary growth or pruning does not make this a maintenance tax."""
-    parsed = sum(1 for _ in SRC.rglob("*.py"))
+    parsed = sum(1 for p in source_index.package_files() if p.is_relative_to(SRC))
     assert parsed >= 400, f"only {parsed} modules under {SRC} — is the root right?"
     assert (SRC / OWNER).is_file(), f"the owner module is missing from {SRC}"

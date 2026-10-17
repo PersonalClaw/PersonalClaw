@@ -46,6 +46,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import pytest
+import source_index
 
 MODULE_REL = "src/personalclaw/workflows/gate_policy.py"
 #: Any file that can reach a name in the module contains this literal. See §2 above.
@@ -151,6 +152,20 @@ def _python_files(root: Path, *areas: str) -> list[Path]:
     return sorted(p for area in areas for p in (root / area).rglob("*.py"))
 
 
+def _in_the_index(path: Path) -> bool:
+    """Whether *path* is a package module of this repository, which the suite's one source index
+    holds: such a file is read and parsed through it, never a second time here."""
+    return path.is_relative_to(source_index.REPO / source_index.ROOTS["package"])
+
+
+def _text(path: Path) -> str:
+    return source_index.text(path) if _in_the_index(path) else path.read_text(encoding="utf-8")
+
+
+def _parsed(path: Path) -> ast.Module:
+    return source_index.tree(path) if _in_the_index(path) else ast.parse(_text(path))
+
+
 def _files_mentioning(paths: list[Path], needles: set[str]) -> list[Path]:
     """The subset whose TEXT contains at least one needle — a complete cheap prefilter.
 
@@ -164,7 +179,7 @@ def _files_mentioning(paths: list[Path], needles: set[str]) -> list[Path]:
     hits: list[Path] = []
     for path in paths:
         try:
-            text = path.read_text(encoding="utf-8")
+            text = _text(path)
         except (OSError, UnicodeDecodeError):  # pragma: no cover - unreadable fixture
             continue
         if any(needle in text for needle in needles):
@@ -173,7 +188,11 @@ def _files_mentioning(paths: list[Path], needles: set[str]) -> list[Path]:
 
 
 def _production_files(root: Path, module_path: Path) -> list[Path]:
-    candidates = _python_files(root, "src/personalclaw")
+    # The repository's own package is the index's walk; a fixture root is walked here.
+    if root.resolve() == source_index.REPO:
+        candidates = list(source_index.package_files())
+    else:
+        candidates = _python_files(root, "src/personalclaw")
     return [
         path
         for path in _files_mentioning(candidates, {IMPORT_TOKEN})
@@ -200,13 +219,13 @@ def unreachable_public_names(root: Path, module_rel: str = MODULE_REL) -> tuple[
 
 def _compute_unreachable(root: Path, module_rel: str) -> tuple[set[str], dict]:
     module_path = (root / module_rel).resolve()
-    tree = ast.parse(module_path.read_text(encoding="utf-8"))
+    tree = _parsed(module_path)
     public = _public_top_level(tree)
 
     external: set[str] = set()
     candidates = _production_files(root, module_path)
     for path in candidates:
-        external |= _names_referenced(ast.parse(path.read_text(encoding="utf-8")))
+        external |= _names_referenced(_parsed(path))
 
     # Transitive closure from the externally-named roots, inside the module.
     reachable = {name for name in public if name in external}
@@ -271,7 +290,7 @@ class TestGatePolicyHasNoUnreachableDecisionLayer:
             if path.resolve() == Path(__file__).resolve():
                 continue  # this file names them as literals in `dead`
             try:
-                tree = ast.parse(path.read_text(encoding="utf-8"))
+                tree = _parsed(path)
             except SyntaxError:  # pragma: no cover - a deliberately broken fixture
                 continue
             live = (_names_referenced(tree) | _defined_names(tree)) & dead

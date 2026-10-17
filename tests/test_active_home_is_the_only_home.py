@@ -46,6 +46,7 @@ import ast
 import pathlib
 
 import pytest
+import source_index
 
 pytestmark = pytest.mark.security
 
@@ -111,7 +112,7 @@ def _home_name(node: ast.AST) -> bool:
     )
 
 
-def resolutions(source: str) -> list[tuple[int, str]]:
+def resolutions(source: str | ast.Module) -> list[tuple[int, str]]:
     """Every place ``source`` works the home out itself, as ``(line, what)``.
 
     Two shapes, which between them are every independent resolver the census found:
@@ -125,7 +126,7 @@ def resolutions(source: str) -> list[tuple[int, str]]:
     Comments are not in the AST and a docstring is a bare string statement, so an explanation
     that spells the old code out is never mistaken for it.
     """
-    tree = ast.parse(source)
+    tree = source if isinstance(source, ast.Module) else ast.parse(source)
     aliases: set[str] = set()
     for node in tree.body:
         if isinstance(node, ast.Assign) and _text(node.value) == _ENV:
@@ -153,9 +154,9 @@ def resolutions(source: str) -> list[tuple[int, str]]:
 
 def _tree_resolutions() -> dict[str, list[tuple[int, str]]]:
     out: dict[str, list[tuple[int, str]]] = {}
-    for path in sorted(SRC.rglob("*.py")):
+    for path, tree in source_index.package_trees():
         rel = path.relative_to(SRC).as_posix()
-        hits = resolutions(path.read_text(encoding="utf-8"))
+        hits = resolutions(tree)
         if hits:
             out[rel] = hits
     return out

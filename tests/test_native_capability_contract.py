@@ -19,12 +19,14 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import io
 import json
 import sys
 import tokenize
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw.apps.manifest import AppManifest
 from personalclaw.apps.native_contract import (
@@ -48,14 +50,14 @@ def _core_sources() -> dict[str, str]:
     document that a capability moved into a bundle; code that REACHES for it is the defect.
     """
     out: dict[str, str] = {}
-    for path in sorted(_SRC_DIR.rglob("*.py")):
+    for path in source_index.package_files():
         if NATIVE_DIR in path.parents or "egg-info" in str(path):
             continue
+        text = source_index.text(path)
         try:
-            with path.open("rb") as fh:
-                tokens = list(tokenize.tokenize(fh.readline))
-        except (SyntaxError, tokenize.TokenError, OSError):
-            out[str(path.relative_to(_SRC_DIR))] = path.read_text(encoding="utf-8")
+            tokens = list(tokenize.tokenize(io.BytesIO(text.encode("utf-8")).readline))
+        except (SyntaxError, tokenize.TokenError):
+            out[str(path.relative_to(_SRC_DIR))] = text
             continue
         out[str(path.relative_to(_SRC_DIR))] = "\n".join(
             t.string for t in tokens if t.type != tokenize.COMMENT

@@ -36,6 +36,7 @@ import ast
 import pathlib
 
 import pytest
+import source_index
 
 from personalclaw.workflows import introspection
 from personalclaw.workflows.introspection import (
@@ -464,11 +465,8 @@ def _kinds_written_under(package: str) -> set[str]:
     """
     written: set[str] = set()
     root = _SRC / package
-    for path in sorted(root.rglob("*.py")):
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (SyntaxError, UnicodeDecodeError):  # pragma: no cover - source is ours
-            continue
+    for path in source_index.under(source_index.package_files(), root):
+        tree = source_index.tree(path)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue

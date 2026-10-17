@@ -25,6 +25,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+import source_index
 from packaging.utils import canonicalize_name
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -205,7 +206,11 @@ def _install_files() -> list[Path]:
     """Every file here that runs an install: images, workflows, shell scripts and the Makefile."""
     files = [
         *(_ROOT / "deploy").rglob("Dockerfile*"),
-        *(_ROOT / ".github" / "workflows").glob("*.yml"),
+        *(
+            p
+            for p in source_index.workflow_files()
+            if p.parent == _ROOT / ".github" / "workflows" and p.suffix == ".yml"
+        ),
         *(_ROOT / "scripts").glob("*.sh"),
         *(_ROOT / "deploy").rglob("*.sh"),
         _ROOT / "Makefile",
@@ -213,13 +218,19 @@ def _install_files() -> list[Path]:
     return sorted(p for p in files if p.is_file())
 
 
+def _text(path: Path) -> str:
+    """A workflow through the suite's one source index; any other install file (an image, a
+    script, the Makefile, none of them under its roots) read here."""
+    if path.is_relative_to(_ROOT / ".github" / "workflows"):
+        return source_index.text(path)
+    return path.read_text(encoding="utf-8")
+
+
 def _census() -> list[Install]:
     return [
         install
         for path in _install_files()
-        for install in _commands(
-            path.relative_to(_ROOT).as_posix(), path.read_text(encoding="utf-8")
-        )
+        for install in _commands(path.relative_to(_ROOT).as_posix(), _text(path))
     ]
 
 

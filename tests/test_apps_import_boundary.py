@@ -23,6 +23,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import source_index
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -136,8 +137,15 @@ def _app_source_files() -> list[tuple[Path, Path]]:
     reason having nothing to do with apps.
     """
     out: list[tuple[Path, Path]] = []
+    package = source_index.REPO / source_index.ROOTS["package"]
     for root in _app_roots():
-        for p in sorted(root.rglob("*.py")):
+        # The bundled apps are package files the suite's one source index holds; an apps clone
+        # outside the repository is walked here.
+        if root.resolve().is_relative_to(package):
+            files = source_index.under(source_index.package_files(), root.resolve())
+        else:
+            files = sorted(root.rglob("*.py"))
+        for p in files:
             if _NOT_APP_SOURCE & set(p.relative_to(root).parts):
                 continue
             if p.name.startswith("test_"):  # test files may import core helpers
@@ -148,7 +156,12 @@ def _app_source_files() -> list[tuple[Path, Path]]:
 
 def _offending_imports(path: Path) -> list[str]:
     """Return ``personalclaw.<non-sdk>`` module paths imported by ``path``."""
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    # A bundled app is a package file the suite's one source index holds; an app from a
+    # sibling apps checkout (outside the four roots) is read and parsed here.
+    if path.is_relative_to(source_index.REPO / source_index.ROOTS["package"]):
+        tree = source_index.tree(path)
+    else:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     bad: list[str] = []
 
     def _check(mod: str | None) -> None:

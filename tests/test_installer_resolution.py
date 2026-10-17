@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw import _installer
 
@@ -459,11 +460,10 @@ def installer_spawns() -> dict[tuple[str, str], bool]:
 
     src = Path(personalclaw.__file__).resolve().parent
     found: dict[tuple[str, str], bool] = {}
-    for py in sorted(src.rglob("*.py")):
+    for py, tree in source_index.package_trees():
         rel = py.relative_to(src).as_posix()
         if rel.startswith("skills/bundled/"):
             continue
-        tree = ast.parse(py.read_text(encoding="utf-8"))
         parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
 
         def enclosing(node):

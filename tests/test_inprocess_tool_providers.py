@@ -9,6 +9,7 @@ it from resurfacing.
 from __future__ import annotations
 
 import pytest
+import source_index
 
 from personalclaw.agents.native.tools import InProcessMcpToolProvider
 from personalclaw.tool_providers.registry import (
@@ -42,8 +43,8 @@ def test_get_mcp_registry_has_no_importers():
 
     root = pathlib.Path(__file__).resolve().parent.parent / "src" / "personalclaw"
     offenders = []
-    for p in root.rglob("*.py"):
-        text = p.read_text(encoding="utf-8", errors="replace")
+    for p in source_index.package_files():
+        text = source_index.text(p)
         if "import get_mcp_registry" in text or "mcp_discovery import get_mcp_registry" in text:
             offenders.append(str(p.relative_to(root)))
     assert offenders == [], f"dead get_mcp_registry import resurfaced in: {offenders}"

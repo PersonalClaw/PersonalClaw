@@ -40,6 +40,7 @@ from collections import Counter
 from pathlib import Path
 
 import pytest
+import source_index
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw" / "apps" / "app_manager.py"
 SRC_ROOT = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
@@ -143,7 +144,7 @@ def _idents(expr: ast.AST) -> set[str]:
     return set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", ast.unparse(expr)))
 
 
-def census(source: str) -> list[tuple[tuple[str, str, tuple[str, ...]], str, int]]:
+def census(source: str | ast.Module) -> list[tuple[tuple[str, str, tuple[str, ...]], str, int]]:
     """Every destroy/overwrite of a data-copy path in *source*, derived by AST.
 
     Returns ``(key, how_the_path_was_named, lineno)``. ``how`` is ``"literal"`` when the
@@ -151,7 +152,7 @@ def census(source: str) -> list[tuple[tuple[str, str, tuple[str, ...]], str, int
     from one — the distinction the vacuity floor leans on, since every real site is an
     alias and a tracker that only matched literals would find nothing.
     """
-    tree = ast.parse(source)
+    tree = source if isinstance(source, ast.Module) else ast.parse(source)
     found: list[tuple[tuple[str, str, tuple[str, ...]], str, int]] = []
     for fn in ast.walk(tree):
         if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -203,7 +204,7 @@ def census(source: str) -> list[tuple[tuple[str, str, tuple[str, ...]], str, int
 
 def test_every_destroy_of_a_data_copy_is_a_reviewed_site():
     """The derived census equals the reviewed one — no additions, no disappearances."""
-    sites = census(SRC.read_text(encoding="utf-8"))
+    sites = census(source_index.tree(SRC))
     got = Counter(key for key, _how, _line in sites)
     assert got == EXPECTED, (
         "the set of places that destroy or overwrite a copy of an app's data/ changed.\n"
@@ -217,7 +218,7 @@ def test_every_destroy_of_a_data_copy_is_a_reviewed_site():
 
 
 def test_every_such_site_lives_in_a_function_declared_to_own_the_decision():
-    sites = census(SRC.read_text(encoding="utf-8"))
+    sites = census(source_index.tree(SRC))
     strays = sorted({key[0] for key, _how, _line in sites} - OWNERS)
     assert not strays, (
         f"{strays} destroy or overwrite a copy of an app's data/ but are not declared "
@@ -241,7 +242,7 @@ def test_the_census_is_not_vacuous():
     primitives are now all enumerated. Lowering it to match a census that stopped matching
     something is how this rail dies green.
     """
-    sites = census(SRC.read_text(encoding="utf-8"))
+    sites = census(source_index.tree(SRC))
     assert len(sites) >= 8, f"the census found only {len(sites)} sites; it has gone blind"
     aliased = [s for s in sites if s[1] == "alias"]
     assert len(aliased) >= 3, (
@@ -339,17 +340,17 @@ def test_no_other_module_reaches_the_data_copy_paths():
     scan cannot be green because the names were renamed out from under it.
     """
     tokens = sorted(TAINT_SOURCES - {"_restore_preserved_data"}) + ["_restore_preserved_data"]
-    own = SRC.read_text(encoding="utf-8")
+    own = source_index.text(SRC)
     missing = [t for t in tokens if t not in own]
     assert not missing, f"{missing} no longer exist in app_manager; this scan is checking air"
 
     offenders: dict[str, list[str]] = {}
     scanned = 0
-    for path in sorted(SRC_ROOT.rglob("*.py")):
+    for path in source_index.package_files():
         if path == SRC:
             continue
         scanned += 1
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = source_index.text(path)
         hits = [t for t in tokens if t in text]
         if hits:
             offenders[str(path.relative_to(SRC_ROOT))] = hits

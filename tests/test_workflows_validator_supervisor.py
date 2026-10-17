@@ -15,6 +15,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import source_index
+
 from personalclaw.workflows import supervisor_policy as sp
 from personalclaw.workflows.autonomy import Attention
 from personalclaw.workflows.judge_contract import RubricCriterion
@@ -76,11 +78,11 @@ def _census() -> tuple[dict[str, int], int]:
     root = module_path.parents[1]  # .../src/personalclaw
     hits: dict[str, int] = {}
     scanned = 0
-    for py in root.rglob("*.py"):
+    for py, tree in source_index.package_trees():
         if py.resolve() == module_path:
             continue
         scanned += 1
-        n = _count_policy_callers(ast.parse(py.read_text()))
+        n = _count_policy_callers(tree)
         if n:
             hits[str(py.relative_to(root))] = n
     return hits, scanned

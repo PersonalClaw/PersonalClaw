@@ -32,6 +32,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw.apps.manifest import AppManifest
 from personalclaw.apps.native_contract import (
@@ -291,10 +292,10 @@ def test_core_declares_no_ollama_provider_type():
     make core a provider.
     """
     offenders: dict[str, list[str]] = {}
-    for path in sorted(_SRC_DIR.rglob("*.py")):
+    for path in source_index.package_files():
         if NATIVE_DIR in path.parents or "egg-info" in str(path):
             continue
-        text = path.read_text(encoding="utf-8")
+        text = source_index.text(path)
         hits = []
         if "register_type(OLLAMA" in text or 'register_type("ollama' in text:
             hits.append("registers the ollama provider type")

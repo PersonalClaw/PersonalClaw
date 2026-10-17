@@ -30,6 +30,7 @@ import re
 from pathlib import Path
 
 import pytest
+import source_index
 import test_stale_write as _config_harness
 import test_stale_write_settings_records as _settings_harness
 import test_the_agent_never_writes_over_a_version_it_did_not_read as _agent_harness
@@ -109,13 +110,13 @@ def test_no_sentence_puts_a_possessive_after_a_quoted_name() -> None:
     doubled = re.compile(r"!r\}['’]s\b")
     found = [
         f"{path.relative_to(_SRC)}:{n}"
-        for path in sorted(_SRC.rglob("*.py"))
-        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        for path in source_index.package_files()
+        for n, line in enumerate(source_index.text(path).splitlines(), 1)
         if doubled.search(line)
     ]
     assert not found, f"a possessive after a quoted name reads as a doubled quote: {found}"
     # The scan reads the tree: it sees the f-strings it is looking through.
-    assert any("!r}" in p.read_text(encoding="utf-8") for p in _SRC.rglob("*.py"))
+    assert any("!r}" in source_index.text(p) for p in source_index.package_files())
 
 
 # ── 234. The audit row ───────────────────────────────────────────────────────────────────────────
@@ -336,8 +337,7 @@ def test_every_audited_refusal_records_which_refusal_it_was() -> None:
 
     blocks = 0
     wrong = []
-    for path in sorted(_SRC.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+    for path, tree in source_index.package_trees():
         for fn in ast.walk(tree):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue

@@ -53,6 +53,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+import source_index
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -455,7 +456,7 @@ def _config_bearing_producers() -> dict[str, dict[str, Any]]:
         out[dotted] = info
         if not path.is_file():  # surfaced by test_the_store_derivation_still_discriminates
             continue
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = source_index.tree(path)
         for node in tree.body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 if _returns_a_config(node):
@@ -744,14 +745,14 @@ def _emitted(node: ast.AST, masked: bool = False):
         yield from _emitted(child, inner)
 
 
-def scan_source(source: str, rel: str, census: Census) -> None:
-    """Classify one module's route handlers.
+def scan_source(source: str | ast.Module, rel: str, census: Census) -> None:
+    """Classify one module's route handlers, given as source text or as its parsed tree.
 
     Split out of :func:`scan` so the mechanism can be exercised against source written in
     this file — a census whose only test is "the tree currently reports zero" cannot tell a
     clean tree from a broken detector.
     """
-    tree = ast.parse(source)
+    tree = source if isinstance(source, ast.Module) else ast.parse(source)
     census.files_scanned += 1
     seeds = _seed_spellings(tree)
 
@@ -797,17 +798,8 @@ def scan_source(source: str, rel: str, census: Census) -> None:
 def scan() -> Census:
     """Walk every module under ``src/personalclaw`` and classify its config-bearing routes."""
     census = Census()
-    for path in sorted(SRC.rglob("*.py")):
-        if "__pycache__" in path.parts:
-            continue
-        try:
-            source = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):  # pragma: no cover - defensive
-            continue
-        try:
-            scan_source(source, str(path.relative_to(SRC.parent.parent)), census)
-        except SyntaxError:  # pragma: no cover - defensive
-            continue
+    for path, tree in source_index.package_trees():
+        scan_source(tree, str(path.relative_to(SRC.parent.parent)), census)
     return census
 
 
@@ -1059,13 +1051,7 @@ def test_every_config_bearing_surface_also_preserves_secrets_if_it_writes():
     registrations, so no method is hard-coded per handler here.
     """
     writers: dict[str, set[str]] = {}
-    for path in sorted(SRC.rglob("*.py")):
-        if "__pycache__" in path.parts:
-            continue
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (SyntaxError, UnicodeDecodeError):  # pragma: no cover - defensive
-            continue
+    for path, tree in source_index.package_trees():
         rel = str(path.relative_to(SRC.parent.parent))
         for node in ast.walk(tree):
             if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
@@ -1083,10 +1069,9 @@ def test_every_config_bearing_surface_also_preserves_secrets_if_it_writes():
     for surface in census.surfaces:
         if surface.handler not in writers.get(surface.module, set()):
             continue
-        source = (SRC.parent.parent / surface.module).read_text(encoding="utf-8")
         fn = next(
             n
-            for n in ast.walk(ast.parse(source))
+            for n in ast.walk(source_index.tree(SRC.parent.parent / surface.module))
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == surface.handler
         )
         if "preserve_unchanged_secrets" not in ast.unparse(fn):

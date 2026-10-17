@@ -22,6 +22,7 @@ What the tests pin:
 from __future__ import annotations
 
 import pytest
+import source_index
 
 from personalclaw.workflows import attention
 
@@ -119,7 +120,6 @@ class TestTitleAndBody:
     def test_the_SHIPPED_TEMPLATES_still_contain_promptless_gates(self) -> None:
         """The vacuity floor. If every bundled gate ever authored a prompt, the change above would
         be unreachable and the two tests before it would prove nothing about the product."""
-        import glob
         import json
 
         def walk(node: object, out: list) -> None:
@@ -132,14 +132,26 @@ class TestTitleAndBody:
                 for value in node:
                     walk(value, out)
 
-        files = sorted(glob.glob("src/personalclaw/packs/bundled/*/templates/*.json")) + sorted(
-            glob.glob("src/personalclaw/workflows/bundled/**/*.json", recursive=True)
+        package = source_index.REPO / "src" / "personalclaw"
+        every = source_index.package_any_files()
+        packs = sorted(
+            p
+            for p in source_index.under(every, package / "packs" / "bundled")
+            if p.suffix == ".json"
+            and p.parent.name == "templates"
+            and p.parent.parent.parent == package / "packs" / "bundled"
         )
+        workflows = [
+            p
+            for p in source_index.under(every, package / "workflows" / "bundled")
+            if p.suffix == ".json"
+        ]
+        files = packs + workflows
         assert len(files) > 10, f"the template corpus must be discoverable, found {len(files)}"
         gates, promptless = 0, 0
         for path in files:
             try:
-                doc = json.load(open(path, encoding="utf-8"))
+                doc = json.loads(source_index.text(path))
             except Exception:  # noqa: BLE001 — a malformed fixture is not this test's subject
                 continue
             nodes: list = []

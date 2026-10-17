@@ -29,6 +29,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw import channel_trust as ct
 
@@ -422,14 +423,10 @@ def test_redemption_has_a_non_test_production_caller():
     """
     root = _src_root()
     callers: list[str] = []
-    for path in sorted(root.rglob("*.py")):
+    for path, tree in source_index.package_trees():
         rel = path.relative_to(root).as_posix()
         if rel == "channel_trust.py" or rel.startswith("testing/") or rel.startswith("sdk/"):
             continue  # the definition site, test-support, and pure re-export surfaces
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (OSError, SyntaxError):  # pragma: no cover - defensive
-            continue
         for node in ast.walk(tree):
             if (
                 isinstance(node, ast.Call)

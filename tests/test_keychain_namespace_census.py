@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+import source_index
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
@@ -193,13 +194,9 @@ def _keychain_calls_in(tree: ast.Module, known_doors: set[str]) -> list[Keychain
     return found
 
 
-@functools.cache
 def _modules() -> dict[str, ast.Module]:
-    return {
-        str(path.relative_to(SRC)): ast.parse(path.read_text(encoding="utf-8"))
-        for path in sorted(SRC.rglob("*.py"))
-        if "__pycache__" not in path.parts
-    }
+    """Every module of the package, parsed, from the suite's one source index."""
+    return {str(path.relative_to(SRC)): tree for path, tree in source_index.package_trees()}
 
 
 @functools.cache

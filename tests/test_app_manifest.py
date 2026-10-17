@@ -4,6 +4,7 @@ import json
 from dataclasses import fields
 
 import pytest
+import source_index
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -1200,9 +1201,12 @@ class TestIconValidation:
 
         repo = Path(__file__).resolve().parents[1]
         seen: dict[str, str] = {}
-        for app_json in sorted((repo / "src" / "personalclaw" / "apps").rglob("app.json")):
+        apps = repo / "src" / "personalclaw" / "apps"
+        for app_json in source_index.under(source_index.package_any_files(), apps):
+            if app_json.name != "app.json":
+                continue
             try:
-                data = json.loads(app_json.read_text(encoding="utf-8"))
+                data = json.loads(source_index.text(app_json))
             except (json.JSONDecodeError, OSError):
                 continue
             for value in [data.get("icon", "")] + [

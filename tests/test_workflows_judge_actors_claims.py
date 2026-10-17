@@ -18,6 +18,8 @@ from __future__ import annotations
 import ast
 import pathlib
 
+import source_index
+
 SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 MODULE = SRC / "workflows" / "judge_actors.py"
 
@@ -45,13 +47,10 @@ def _production_callers(name: str) -> set[str]:
     walk would have to follow it anyway.
     """
     hits: set[str] = set()
-    for path in SRC.rglob("*.py"):
+    for path in source_index.package_files():
         if path == MODULE:
             continue
-        try:
-            text = path.read_text(encoding="utf-8")
-        except OSError:  # pragma: no cover - unreadable file is not a claim
-            continue
+        text = source_index.text(path)
         if name in text:
             hits.add(str(path.relative_to(SRC)))
     return hits
@@ -64,7 +63,7 @@ def test_the_module_is_parseable_and_the_symbols_exist() -> None:
     would pass by measuring nothing, which is the failure mode it exists to prevent
     elsewhere.
     """
-    tree = ast.parse(MODULE.read_text(encoding="utf-8"))
+    tree = source_index.tree(MODULE)
     defined = {
         n.name for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
@@ -89,7 +88,7 @@ def test_the_once_authored_invariant_is_wired_and_the_docstring_agrees() -> None
     as enforced; without the docstring check someone could wire it and leave prose that tells the
     next auditor not to bother looking.
     """
-    doc = MODULE.read_text(encoding="utf-8")
+    doc = source_index.text(MODULE)
     stranded = [name for name in _AUTHORED if not _production_callers(name)]
     assert not stranded, (
         f"{stranded} has no production caller — the worker-transition rule or the evidence "

@@ -23,6 +23,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
+import source_index
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from chat_test_helpers import _make_app, _make_state
@@ -125,11 +126,11 @@ class TestManualOnlyActivation:
         this shows no caller exists at all outside the endpoint's own module."""
         callers = sorted(
             p.relative_to(_SRC).as_posix()
-            for p in _SRC.rglob("*.py")
-            if "chat_plan.activate(" in p.read_text()
+            for p in source_index.package_files()
+            if "chat_plan.activate(" in source_index.text(p)
         )
         assert callers == [], callers
-        own = (_SRC / "dashboard" / "chat_plan.py").read_text()
+        own = source_index.text(_SRC / "dashboard" / "chat_plan.py")
         # Exactly one call site, inside the activate endpoint.
         assert own.count("= activate(chat, running=") == 1
 

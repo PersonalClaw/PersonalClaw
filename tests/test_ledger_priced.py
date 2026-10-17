@@ -35,6 +35,7 @@ import ast
 import pathlib
 
 import pytest
+import source_index
 
 _SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "personalclaw"
 
@@ -414,7 +415,8 @@ MIN_MONEY_READ_SITES = 4
 
 
 def _python_sources() -> list[pathlib.Path]:
-    return sorted(_SRC.rglob("*.py"))
+    """Every package module, from the suite's one source index."""
+    return list(source_index.package_files())
 
 
 def _money_consumers() -> tuple[list[tuple[str, int, str]], list[tuple[str, int, str]]]:
@@ -429,10 +431,7 @@ def _money_consumers() -> tuple[list[tuple[str, int, str]], list[tuple[str, int,
     violations: list[tuple[str, int, str]] = []
     for path in _python_sources():
         rel = str(path.relative_to(_SRC.parent.parent))
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        except SyntaxError:  # pragma: no cover - the tree is expected to parse
-            continue
+        tree = source_index.tree(path)
         for fn, cls in _functions(tree):
             reason = _consumer_reason(fn, cls)
             if reason is None:

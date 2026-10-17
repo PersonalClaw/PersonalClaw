@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw.sandbox import _STANDARD_DIRS
 from personalclaw.shell_denylist import BUILTIN_DENIED_COMMAND_PATTERNS
@@ -67,8 +68,9 @@ def test_every_file_an_architecture_doc_names_is_in_the_tree():
     not exist: the module is ``src/personalclaw/surface_layers.py``.
     """
     named: list[tuple[str, str]] = []
-    for doc in sorted(DOCS_DIR.glob("*.md")):
-        named += [(doc.name, m) for m in _FILE_PATH.findall(doc.read_text(encoding="utf-8"))]
+    docs = [p for p in source_index.docs_files() if p.parent == DOCS_DIR and p.suffix == ".md"]
+    for doc in docs:
+        named += [(doc.name, m) for m in _FILE_PATH.findall(source_index.text(doc))]
     # A pattern that stopped matching would pass this leg while checking nothing.
     assert len(named) >= 40, f"the scan found only {len(named)} file paths in the docs"
     missing = [

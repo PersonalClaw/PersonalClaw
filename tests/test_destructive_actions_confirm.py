@@ -27,6 +27,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import source_index
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 
@@ -169,8 +170,8 @@ class TestNoNewUngatedDestructiveRoute:
     def _post_routes(self) -> list[tuple[str, str, Path]]:
         found = []
         pat = re.compile(r"""add_post\(\s*["']([^"']+)["']\s*,\s*([A-Za-z_][\w.]*)""")
-        for py in sorted(SRC.rglob("*.py")):
-            for path, handler in pat.findall(py.read_text(encoding="utf-8")):
+        for py in source_index.package_files():
+            for path, handler in pat.findall(source_index.text(py)):
                 found.append((path, handler, py))
         return found
 
@@ -193,7 +194,7 @@ class TestNoNewUngatedDestructiveRoute:
                 continue
             if path in self._REVIEWED_UNGATED:
                 continue
-            src = py.read_text(encoding="utf-8")
+            src = source_index.text(py)
             name = handler.rsplit(".", 1)[-1]
             m = re.search(rf"^async def {re.escape(name)}\(.*?(?=^async def |\Z)", src, re.S | re.M)
             body = m.group(0) if m else ""

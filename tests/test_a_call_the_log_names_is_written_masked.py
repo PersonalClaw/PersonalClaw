@@ -22,6 +22,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import source_index
 from test_acp_permission_authority import _context_builder, _drive, _make_state, _session
 from test_acp_permission_authority import _set_stream as _stream
 
@@ -222,9 +223,10 @@ def _raw_call_text(node: ast.AST, masked: bool = False) -> list[str]:
     return [hit for child in ast.iter_child_nodes(node) for hit in _raw_call_text(child, masked)]
 
 
-def _offenders(source: str, where: str) -> list[str]:
+def _offenders(source: str | ast.Module, where: str) -> list[str]:
     hits = []
-    for node in ast.walk(ast.parse(source)):
+    tree = source if isinstance(source, ast.Module) else ast.parse(source)
+    for node in ast.walk(tree):
         if isinstance(node, ast.Call) and _is_log_call(node):
             for arg in [*node.args[1:], *(k.value for k in node.keywords)]:
                 hits += [f"{where}:{node.lineno}: {raw}" for raw in _raw_call_text(arg)]
@@ -240,12 +242,12 @@ def test_the_rail_finds_a_raw_title_and_passes_a_masked_one():
 
 
 def test_no_log_line_writes_a_calls_title_or_input_raw():
-    files = sorted(_SRC.rglob("*.py"))
+    files = list(source_index.package_files())
     assert len(files) > 300, "the census must read the whole package"
     found = [
         hit
         for path in files
-        for hit in _offenders(path.read_text(encoding="utf-8"), str(path.relative_to(_SRC)))
+        for hit in _offenders(source_index.tree(path), str(path.relative_to(_SRC)))
     ]
     assert not found, (
         "a log line writes a tool call's title or arguments as it came; write it through "

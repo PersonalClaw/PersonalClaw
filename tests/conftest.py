@@ -263,6 +263,7 @@ def pytest_configure(config):
     config.pluginmanager.register(real_home_guard.Plugin(real_home_guard.GUARD), "real-home-guard")
     config.pluginmanager.register(container_runtime.Plugin(), "container-runtime-guard")
     config.pluginmanager.register(security_census.Reporter(), "security-census")
+    config.pluginmanager.register(source_index.WarmUp(), "source-index-warm-up")
     # The grammars the code map's tests parse with, fetched once and kept between runs, in the run's
     # downloads folder, which every worker shares: pytest's own cache folder in the checkout, or the
     # folder PERSONALCLAW_TEST_DOWNLOADS names (`tool_homes.downloads`).
@@ -296,6 +297,7 @@ def pytest_terminal_summary(terminalreporter):
     if census:
         terminalreporter.write_sep("-", "security marker census")
         terminalreporter.write_line(census)
+    source_index.report(terminalreporter)
     skipped = container_runtime.skipped_without_the_opt_in(
         terminalreporter.stats.get("skipped", [])
     )
@@ -341,6 +343,15 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             and item.get_closest_marker("timeout") is None
         ):
             item.add_marker(pytest.mark.timeout(_WORKFLOWS_TEST_TIMEOUT_SECONDS))
+
+
+# ── The source index warms outside every test's timeout ─────────────────
+# A tree rail reads the source tree through tests/source_index.py, which walks the four roots and
+# parses the package once per worker. That costs seconds, so it must not land inside the first
+# rail's own time limit: pytest-timeout arms its timer in its `pytest_runtest_protocol` wrapper,
+# and `tryfirst` puts this wrapper outside that one, so the walk runs before the timer starts. A
+# worker that runs no tree rail never builds the index. Proof: tests/test_source_index.py.
+source_index = importlib.import_module("source_index")
 
 
 @pytest.fixture(autouse=True, scope="module")

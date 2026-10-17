@@ -34,6 +34,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import source_index
 
 from personalclaw.record_ids import (
     MAX_RECORD_ID_LEN,
@@ -418,9 +419,9 @@ INTERPOLATION_SITE_FLOOR = 15
 def census() -> dict[str, list[int]]:
     """file (relative to src/personalclaw) → line numbers holding a raw interpolation."""
     found: dict[str, list[int]] = {}
-    for py in sorted(SRC.rglob("*.py")):
+    for py in source_index.package_files():
         rel = py.relative_to(SRC).as_posix()
-        for n, line in enumerate(py.read_text(encoding="utf-8").splitlines(), start=1):
+        for n, line in enumerate(source_index.text(py).splitlines(), start=1):
             if line.lstrip().startswith("#") or "``" in line:
                 continue  # a comment or a docstring quoting the pattern is not a call site
             if _INTERPOLATION_RE.search(line):

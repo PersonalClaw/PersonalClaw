@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 
 import pytest
+import source_index
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -187,10 +188,11 @@ _OWN_LOCK = {
 }
 
 
-def _raw_shared_opens(source: str) -> int:
+def _raw_shared_opens(source: str | ast.Module) -> int:
     """How many ``connect(..., check_same_thread=False)`` calls ``source`` makes."""
     count = 0
-    for node in ast.walk(ast.parse(source)):
+    tree = source if isinstance(source, ast.Module) else ast.parse(source)
+    for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         func = node.func
@@ -215,11 +217,11 @@ def test_a_connection_shared_between_threads_is_opened_shared():
     assert _raw_shared_opens("connect_shared(p, isolation_level=None)") == 0
 
     found: dict[str, int] = {}
-    for path in (_SRC / "personalclaw").rglob("*.py"):
+    for path, tree in source_index.package_trees():
         rel = path.relative_to(_SRC).as_posix()
         if rel == "personalclaw/sqlite_compat.py":
             continue  # where the shared connection is made
-        n = _raw_shared_opens(path.read_text(encoding="utf-8"))
+        n = _raw_shared_opens(tree)
         if n:
             found[rel] = n
     # And on the population: the two lock-holding modules are found, so the scan is not vacuous.

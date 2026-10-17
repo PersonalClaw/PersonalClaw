@@ -28,6 +28,7 @@ import re
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw import seed as seed_mod
 from personalclaw.loop import files as loop_files
@@ -415,12 +416,11 @@ def test_the_committed_fixture_dbs_are_self_contained() -> None:
     ships a fixture that boots EMPTY, and committing the sidecar ships a file that
     is not state. Also pins that no generation-machine path leaked into the bytes.
     """
-    dbs = sorted(_DEMO_DIR.rglob("*.db"))
+    demo = source_index.under(source_index.package_any_files(), _DEMO_DIR)
+    dbs = [p for p in demo if p.suffix == ".db"]
     assert len(dbs) == 2, f"expected knowledge.db + loops.db in the fixture, found {dbs}"
 
-    strays = sorted(
-        p.name for p in _DEMO_DIR.rglob("*") if p.name.endswith(("-wal", "-shm", ".db-journal"))
-    )
+    strays = sorted(p.name for p in demo if p.name.endswith(("-wal", "-shm", ".db-journal")))
     assert not strays, f"SQLite sidecars must not ship: {strays}"
 
     for db in dbs:
@@ -497,7 +497,7 @@ def test_every_fixture_file_is_covered_by_a_package_data_glob() -> None:
     for pattern in globs:
         matched.update(p for p in pkg_root.glob(pattern) if p.is_file())
 
-    present = {p for p in _FIXTURES_DIR.rglob("*") if p.is_file()}
+    present = set(source_index.under(source_index.package_any_files(), _FIXTURES_DIR))
     assert present, "no fixture files on disk — this test would pass vacuously"
 
     missing = sorted(str(p.relative_to(pkg_root)) for p in present - matched)
@@ -515,7 +515,10 @@ def test_the_demo_fixture_is_nested_deeper_than_one_level() -> None:
     pins that the fixture really does keep files below ``<fixture>/<file>`` —
     i.e. that there is something for the recursive glob to be load-bearing for.
     """
-    depths = [len(p.relative_to(_DEMO_DIR).parts) for p in _DEMO_DIR.rglob("*") if p.is_file()]
+    depths = [
+        len(p.relative_to(_DEMO_DIR).parts)
+        for p in source_index.under(source_index.package_any_files(), _DEMO_DIR)
+    ]
     assert depths, f"{FIXTURE_NAME} has no files"
     assert max(depths) >= 3, (
         "the demo fixture is flat — the recursive package-data glob is no longer "

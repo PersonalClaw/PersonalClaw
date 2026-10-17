@@ -33,6 +33,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+import source_index
 
 _CORE = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 #: The apps that ship inside core.
@@ -301,9 +302,10 @@ def _unhooked(call: ast.Call, scopes: _Scopes) -> str:
     return ""
 
 
-def unguarded_clients(source: str, filename: str = "<source>") -> list[str]:
-    """Each client *source* opens with no guard in it, as ``"<line>: <what>"``."""
-    tree = ast.parse(source, filename=filename)
+def unguarded_clients(source: str | ast.Module, filename: str = "<source>") -> list[str]:
+    """Each client *source* (text, or its tree) opens with no guard in it, as
+    ``"<line>: <what>"``."""
+    tree = source if isinstance(source, ast.Module) else ast.parse(source, filename=filename)
     aliases = _aliases(tree)
     scopes = _Scopes(tree)
     found: list[str] = []
@@ -328,8 +330,8 @@ def unguarded_clients(source: str, filename: str = "<source>") -> list[str]:
 
 def _scanned() -> Iterator[tuple[str, Path]]:
     for root in (*(_CORE / package for package in _CORE_PROVIDER_PACKAGES), _BUNDLED_APPS):
-        for path in sorted(root.rglob("*.py")):
-            if "__pycache__" not in path.parts and not path.name.startswith("test_"):
+        for path in source_index.under(source_index.package_files(), root):
+            if not path.name.startswith("test_"):
                 yield f"src/personalclaw/{path.relative_to(_CORE)}", path
 
 
@@ -350,7 +352,7 @@ def test_the_rail_reads_the_provider_clients_it_holds():
         "src/personalclaw/image_gen/openai_provider.py",
     ):
         assert module in scanned, f"{module} is not read"
-        tree = ast.parse(scanned[module].read_text(encoding="utf-8"))
+        tree = source_index.tree(scanned[module])
         guarded = [
             node
             for node in ast.walk(tree)
@@ -361,7 +363,7 @@ def test_the_rail_reads_the_provider_clients_it_holds():
         assert guarded, f"{module} builds no SDK client with a guarded http_client"
     ollama = scanned.get("src/personalclaw/apps/native/ollama-models/provider.py")
     assert ollama is not None, "the bundled apps are not read"
-    tree = ast.parse(ollama.read_text(encoding="utf-8"))
+    tree = source_index.tree(ollama)
     made = {_named(n) for n in ast.walk(tree) if isinstance(n, ast.Call)} & _GUARDED
     assert made == {"http_client", "http_session"}, f"the Ollama app's guarded clients: {made}"
 
@@ -370,7 +372,7 @@ def test_no_provider_or_app_opens_a_client_the_guard_is_not_in():
     found = {
         label: unguarded
         for label, path in _scanned()
-        if (unguarded := unguarded_clients(path.read_text(encoding="utf-8"), str(path)))
+        if (unguarded := unguarded_clients(source_index.tree(path), str(path)))
     }
     assert not found, (
         "These open a network client the egress guard is not inside, so a host on Denied hosts "

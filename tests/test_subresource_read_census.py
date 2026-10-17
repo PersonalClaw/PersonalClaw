@@ -19,6 +19,8 @@ import ast
 import re
 from pathlib import Path
 
+import source_index
+
 import personalclaw
 from personalclaw.manifest_meta import canonical_route
 
@@ -224,8 +226,7 @@ def _literal(node: ast.AST) -> str | None:
 def _get_routes() -> dict[str, str]:
     """Return every literal GET route in all of ``src/personalclaw`` by AST."""
     routes: dict[str, str] = {}
-    for py in sorted(_SRC_ROOT.rglob("*.py")):
-        tree = ast.parse(py.read_text(encoding="utf-8"))
+    for py, tree in source_index.package_trees():
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
                 continue

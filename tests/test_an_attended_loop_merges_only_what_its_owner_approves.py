@@ -26,6 +26,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import source_index
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 
@@ -536,10 +537,10 @@ def test_no_loop_commit_names_an_identity_of_the_products_own():
     src = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
     scanned = 0
     for area in ("loop", "workflows", "planning", "agents", "dashboard"):
-        for path in sorted((src / area).rglob("*")):
+        for path in source_index.under(source_index.package_any_files(), src / area):
             if path.suffix not in (".py", ".md", ".json", ".txt", ".yaml", ".toml"):
                 continue
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = source_index.text(path)
             scanned += 1
             assert "user.name=" not in text and "user.email=" not in text, path
     assert scanned > 100, scanned  # the scan read the tree

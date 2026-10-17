@@ -25,6 +25,7 @@ import json
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw.packs import bundled as pack_bundled
 from personalclaw.packs import onelink, prompt_cards, roster
@@ -873,8 +874,8 @@ def test_every_bundled_pack_file_is_declared_package_data():
     tree = repo / "src" / "personalclaw" / "packs" / "bundled"
     members = [
         p.relative_to(repo / "src" / "personalclaw").as_posix()
-        for p in tree.rglob("*")
-        if p.is_file() and p.suffix != ".pyc" and p.name != "__init__.py"
+        for p in source_index.under(source_index.package_any_files(), tree)
+        if p.suffix != ".pyc" and p.name != "__init__.py"
     ]
     assert members, "the bundled pack trees are empty"
     undeclared = [

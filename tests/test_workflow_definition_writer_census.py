@@ -30,6 +30,7 @@ import functools
 from pathlib import Path
 
 import pytest
+import source_index
 
 import personalclaw
 from personalclaw.workflows import defs as defs_mod
@@ -73,12 +74,9 @@ DEFS_PATHS: dict[tuple[str, str], str] = {
 }
 
 
-@functools.lru_cache(maxsize=1)
 def _trees() -> dict[str, ast.Module]:
-    return {
-        path.relative_to(SRC).as_posix(): ast.parse(path.read_text(encoding="utf-8"))
-        for path in sorted(SRC.rglob("*.py"))
-    }
+    """Every module of the package, parsed, from the suite's one source index."""
+    return {path.relative_to(SRC).as_posix(): tree for path, tree in source_index.package_trees()}
 
 
 def _in_functions(tree: ast.Module):

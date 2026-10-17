@@ -31,6 +31,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import source_index
 from test_spawn_ceiling_audit import _SPAWN_CALLEES, _callee, _census, _normalize, _src_root
 
 # ── BUILT: the child allowlist (`sandbox.build_child_env`) ─────────────────────────────────────
@@ -386,14 +387,9 @@ def env_source(call: ast.Call, func: ast.AST | None, builders: set[str]) -> str:
 
 
 def _trees() -> dict[str, ast.Module]:
+    """Every module of the package, parsed, from the suite's one source index."""
     root = _src_root()
-    out: dict[str, ast.Module] = {}
-    for path in sorted(root.rglob("*.py")):
-        try:
-            out[path.relative_to(root).as_posix()] = ast.parse(path.read_text(encoding="utf-8"))
-        except (OSError, SyntaxError):
-            continue
-    return out
+    return {path.relative_to(root).as_posix(): tree for path, tree in source_index.package_trees()}
 
 
 def _sources(trees: dict[str, ast.Module]) -> dict[str, list[tuple[int, str]]]:

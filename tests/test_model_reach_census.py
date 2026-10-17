@@ -32,6 +32,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
+import source_index
 
 import personalclaw
 from personalclaw import memory_writes
@@ -91,10 +92,8 @@ READS_THEIR_INPUT: dict[str, tuple[str, ...]] = {
 
 
 def _sources() -> dict[str, ast.Module]:
-    return {
-        str(path.relative_to(SRC)): ast.parse(path.read_text(encoding="utf-8"))
-        for path in sorted(SRC.rglob("*.py"))
-    }
+    """Every module of the package, parsed, from the suite's one source index."""
+    return {str(path.relative_to(SRC)): tree for path, tree in source_index.package_trees()}
 
 
 # ── the detectors, each a function of one module's tree ─────────────────────────────────────

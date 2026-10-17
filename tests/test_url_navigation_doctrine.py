@@ -16,7 +16,25 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import source_index
+
 _PAGES = Path("web/src/pages")
+
+
+def _pages() -> list[Path]:
+    """Every page ``.tsx``, repository-relative, from the suite's one source index."""
+    pages = source_index.REPO / _PAGES
+    return [
+        Path(source_index.rel(p))
+        for p in source_index.under(source_index.web_files(), pages)
+        if p.suffix == ".tsx"
+    ]
+
+
+def _page_text(f: Path) -> str:
+    return source_index.text(source_index.REPO / f)
+
+
 _ROUTER = Path("web/src/app/useHashRoute.ts")
 
 # Raw URL/history mutations that bypass the router. The router file itself is the
@@ -55,8 +73,8 @@ def _uncommented(line: str) -> str:
 def test_no_raw_history_or_location_bypass_in_pages():
     """No page writes the URL directly — all nav routes through navigate/setQuery."""
     offenders: list[str] = []
-    for f in _PAGES.rglob("*.tsx"):
-        for lineno, raw in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+    for f in _pages():
+        for lineno, raw in enumerate(_page_text(f).splitlines(), 1):
             m = _BYPASS_RE.search(_uncommented(raw))
             if m:
                 offenders.append(f"{f}:{lineno}  {m.group(0).strip()}")
@@ -71,11 +89,7 @@ def test_no_partial_routeprops_in_pages():
     Partial<RouteProps> — a Partial silently degrades URL state to local state
     (with `query ?? {}` / `setQuery ?? (()=>{})` guards) if App.tsx's contract
     ever breaks. App.tsx always spreads the full bundle, so Partial is a lie."""
-    offenders = [
-        str(f)
-        for f in _PAGES.rglob("*.tsx")
-        if "Partial<RouteProps>" in f.read_text(encoding="utf-8")
-    ]
+    offenders = [str(f) for f in _pages() if "Partial<RouteProps>" in _page_text(f)]
     assert not offenders, (
         "Partial<RouteProps> found — use full RouteProps or a precise "
         "Pick<RouteProps, ...> so URL state can't silently degrade to local:\n  "
@@ -90,8 +104,8 @@ def test_no_startediting_seed_prop_in_pages():
     Edit didn't push, Back couldn't leave edit, and refresh dropped it. Banning the
     prop keeps every view↔edit toggle on the single ?edit=1 contract."""
     offenders: list[str] = []
-    for f in _PAGES.rglob("*.tsx"):
-        for lineno, raw in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+    for f in _pages():
+        for lineno, raw in enumerate(_page_text(f).splitlines(), 1):
             if "startEditing" in _uncommented(raw):
                 offenders.append(f"{f}:{lineno}")
     assert not offenders, (
@@ -112,8 +126,8 @@ def test_replace_keys_use_replace_semantics():
     # useQueryParam(<q>, <sq>, 'KEY'  … ) — capture through end of line to see opts.
     call_re = re.compile(r"useQueryParam\([^,]+,[^,]+,\s*'(" + "|".join(replace_keys) + r")'")
     offenders: list[str] = []
-    for f in _PAGES.rglob("*.tsx"):
-        for lineno, raw in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+    for f in _pages():
+        for lineno, raw in enumerate(_page_text(f).splitlines(), 1):
             code = _uncommented(raw)
             if call_re.search(code) and "replace" not in code:
                 offenders.append(f"{f}:{lineno}  {code.strip()[:90]}")
@@ -135,8 +149,8 @@ def test_tasks_deep_links_use_a_key_the_tasks_route_reads():
     read_keys = set(re.findall(r"query\.([a-zA-Z_]+)", reader))
     assert "open" in read_keys, "TasksSection should still read the ?open=<id> deep link"
     offenders: list[str] = []
-    for f in _PAGES.rglob("*.tsx"):
-        for lineno, raw in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+    for f in _pages():
+        for lineno, raw in enumerate(_page_text(f).splitlines(), 1):
             for key in re.findall(r"navigate\(`tasks\?([a-zA-Z_]+)=", _uncommented(raw)):
                 if key not in read_keys:
                     offenders.append(f"{f}:{lineno}  tasks?{key}=")

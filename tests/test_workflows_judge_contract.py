@@ -8,6 +8,7 @@ and advice loses to a worker being scored on completion.
 import inspect
 
 import pytest
+import source_index
 
 from personalclaw.workflows.judge_contract import (
     DEFAULT_FORBIDDEN_MODES,
@@ -463,11 +464,11 @@ def _production_callers() -> dict[str, list[str]]:
     The owning module is excluded — a function calling its own helpers is not wiring.
     """
     found: dict[str, list[str]] = {name: [] for name in _ENFORCEMENT_ENTRY_POINTS}
-    for path in sorted(_repo_src().rglob("*.py")):
+    for path in source_index.package_files():
         rel = path.as_posix()
         if rel.endswith(_OWNER):
             continue
-        text = path.read_text(encoding="utf-8")
+        text = source_index.text(path)
         for name in _ENFORCEMENT_ENTRY_POINTS:
             if f"{name}(" in text or f"import {name}" in text:
                 found[name].append(rel)
@@ -484,7 +485,7 @@ def test_every_enforcement_entry_point_has_a_production_caller():
     inverted rather than deleted, because "the contract is authored but nothing runs it" is a state
     this module has already been in once, and it is invisible from inside the module.
     """
-    source = (_repo_src() / "personalclaw/workflows/judge_contract.py").read_text(encoding="utf-8")
+    source = source_index.text(_repo_src() / "personalclaw/workflows/judge_contract.py")
     # Vacuity floor: a rail scanning for names that no longer exist passes forever on an
     # empty match set. Every entry point must still be a function in the owning module.
     missing = [name for name in _ENFORCEMENT_ENTRY_POINTS if f"def {name}(" not in source]

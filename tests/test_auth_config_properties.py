@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 
 import pytest
+import source_index
 
 pytest.importorskip("hypothesis")
 
@@ -91,17 +92,11 @@ def test_no_residue_in_python_src(term):
     pattern = re.compile(term)
     violations: list[str] = []
 
-    for py_file in REPO_SRC.rglob("*.py"):
-        # Skip __pycache__
-        if "__pycache__" in py_file.parts:
-            continue
+    for py_file in source_index.package_files():
         # Skip test files for the residue pattern check
         if "test" in py_file.parts:
             continue
-        try:
-            text = py_file.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
+        text = source_index.text(py_file)
         for lineno, line in enumerate(text.splitlines(), 1):
             stripped = line.strip()
             # Skip pure comment lines — residue in comments is documentation

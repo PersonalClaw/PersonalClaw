@@ -31,6 +31,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import source_index
 from test_spawn_ceiling_audit import _callee, _census, _normalize, _src_root
 
 THE_CHECK = "denied_command"
@@ -356,7 +357,8 @@ def _runs_a_handed_shell_command(node: ast.AST, fixed: set[str]) -> bool:
 
 
 def _parsed(rel: str) -> ast.Module:
-    return ast.parse((_src_root() / rel).read_text(encoding="utf-8"))
+    """The tree of ``src/personalclaw/<rel>``, from the suite's one source index."""
+    return source_index.tree(_src_root() / rel)
 
 
 # ── the rail ───────────────────────────────────────────────────────────────────────────────────
@@ -423,8 +425,7 @@ def test_the_bash_action_is_reached_only_as_a_provider():
     constructs it but the provider registry, so it runs only through an action dispatch, which
     asks the action denylist for a run nobody answers (``test_action_provider_chokepoints``)."""
     built = set()
-    for path in _src_root().rglob("*.py"):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+    for path, tree in source_index.package_trees():
         for call in ast.walk(tree):
             if isinstance(call, ast.Call) and _name_of(call) == "BashActionProvider":
                 built.add(path.relative_to(_src_root()).as_posix())
@@ -599,9 +600,4 @@ def test_the_census_is_not_empty_and_holds_every_asking_site():
     census = _census()
     assert len(census) > 100, len(census)
     assert set(_ASKS) <= set(census)
-    assert (
-        Path(_src_root(), "shell_denylist.py")
-        .read_text(encoding="utf-8")
-        .count(f"def {THE_CHECK}(")
-        == 1
-    )
+    assert source_index.text(Path(_src_root(), "shell_denylist.py")).count(f"def {THE_CHECK}(") == 1

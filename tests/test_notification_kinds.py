@@ -18,6 +18,7 @@ import pathlib
 import re
 
 import pytest
+import source_index
 
 from personalclaw import notification_kinds as nk
 
@@ -276,15 +277,9 @@ def test_EVERY_EMITTER_IN_THE_TREE_IS_REGISTERED():
     emitter is added — a runtime sweep would only see the paths a test happens to exercise.
     """
     import ast
-    import pathlib
 
-    root = pathlib.Path(nk.__file__).parent
     pairs: dict[tuple[str, str], str] = {}
-    for path in root.rglob("*.py"):
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except SyntaxError:  # pragma: no cover - a generated file is not this test's subject
-            continue
+    for path, tree in source_index.package_trees():
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
@@ -424,11 +419,7 @@ def _emitted_kind_strings() -> set[str]:
     the dedicated tests below.
     """
     found: set[str] = set()
-    for path in SRC.rglob("*.py"):
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (SyntaxError, UnicodeDecodeError):
-            continue
+    for _path, tree in source_index.package_trees():
         for node in ast.walk(tree):
             if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
                 continue
@@ -470,11 +461,7 @@ def test_no_call_site_passes_a_bare_string_literal():
 def _emitted_constant_names() -> set[str]:
     """``notification_kinds.X`` attribute names passed as the kind at a call site."""
     found: set[str] = set()
-    for path in SRC.rglob("*.py"):
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (SyntaxError, UnicodeDecodeError):
-            continue
+    for _path, tree in source_index.package_trees():
         for node in ast.walk(tree):
             if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
                 continue

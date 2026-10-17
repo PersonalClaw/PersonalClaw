@@ -32,6 +32,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw.net.git import (
     TRANSPORT_REFUSALS,
@@ -652,9 +653,8 @@ def _git_spawn_census() -> dict[str, set[str]]:
 
     root = _src_root()
     out: dict[str, set[str]] = {}
-    for path in sorted(root.rglob("*.py")):
+    for path, tree in source_index.package_trees():
         rel = path.relative_to(root).as_posix()
-        tree = ast.parse(path.read_text(encoding="utf-8"))
 
         class V(ast.NodeVisitor):
             def __init__(self) -> None:

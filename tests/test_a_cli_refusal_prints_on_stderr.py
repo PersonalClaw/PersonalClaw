@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+import source_index
 
 import personalclaw
 
@@ -85,10 +86,12 @@ def _own_nodes(fn: ast.FunctionDef | ast.AsyncFunctionDef):
                 stack.append(child)
 
 
-def _refusals_on_stdout(source: str, module: str) -> set[_Site]:
-    """Each stdout print in a block that runs straight into a non-zero exit."""
+def _refusals_on_stdout(source: str | ast.Module, module: str) -> set[_Site]:
+    """Each stdout print in a block that runs straight into a non-zero exit, in *source* (text,
+    or its tree)."""
     sites: set[_Site] = set()
-    for fn in ast.walk(ast.parse(source)):
+    tree = source if isinstance(source, ast.Module) else ast.parse(source)
+    for fn in ast.walk(tree):
         if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         for node in _own_nodes(fn):
@@ -109,9 +112,9 @@ def _refusals_on_stdout(source: str, module: str) -> set[_Site]:
 
 def _package_sites() -> set[_Site]:
     sites: set[_Site] = set()
-    for path in sorted(PACKAGE.rglob("*.py")):
+    for path, tree in source_index.package_trees():
         module = path.relative_to(PACKAGE).as_posix()
-        sites |= _refusals_on_stdout(path.read_text(encoding="utf-8"), module)
+        sites |= _refusals_on_stdout(tree, module)
     return sites
 
 

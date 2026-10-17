@@ -22,6 +22,7 @@ import logging
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw import after_turn_review as atr
 from personalclaw.guardrails.audit import (
@@ -179,8 +180,8 @@ class TestTheVocabularyIsClosed:
         surface, and this repo's whole inert-surface census exists because that keeps
         happening. Readers in ``tests/`` deliberately do not count."""
         found: set[str] = set()
-        for path in _SRC.rglob("*.py"):
-            text = path.read_text(encoding="utf-8")
+        for path in source_index.package_files():
+            text = source_index.text(path)
             for name in CALLERS:
                 if f'caller_scope("{name}")' in text:
                     found.add(name)

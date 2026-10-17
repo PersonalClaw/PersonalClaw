@@ -30,6 +30,8 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
+import source_index
+
 from personalclaw.dashboard import handlers, routes, server
 from personalclaw.dashboard.handlers import memory as mem_mod
 
@@ -144,8 +146,9 @@ def test_no_frontend_reference_to_the_retired_plane_remains():
     web = REPO / "web/src"
     hits = [
         f"{path.relative_to(REPO)}:{token}"
-        for path in web.rglob("*.ts*")
+        for path in source_index.web_files()
+        if path.suffix.startswith(".ts") and path.is_relative_to(web)
         for token in RETIRED_PATHS
-        if token in path.read_text(encoding="utf-8", errors="ignore")
+        if token in source_index.text(path)
     ]
     assert hits == [], f"a frontend caller appeared: {hits}"

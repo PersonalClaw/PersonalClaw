@@ -60,6 +60,8 @@ import ast
 import pathlib
 from dataclasses import dataclass, field
 
+import source_index
+
 SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "personalclaw"
 
 # ── The measured baseline (re-measured 2026-08-21 on this tree) ────────────────
@@ -482,15 +484,15 @@ def _static_code(call: ast.Call, constants: dict[str, str]) -> str | None:
     return None
 
 
-def scan_source(source: str, rel: str, census: Census) -> None:
-    """Classify one module's error sites into ``census``.
+def scan_source(source: str | ast.Module, rel: str, census: Census) -> None:
+    """Classify one module's error sites into ``census``, given as source text or its tree.
 
     Split out of :func:`scan` so the wrapper-following logic can be exercised against a
     SYNTHETIC module (see :func:`test_the_scanner_follows_a_wrapper`). A mechanism whose
     only test is "the tree's current count is N" cannot distinguish "no sites" from
     "detector broken", and that distinction is the whole reason this function exists.
     """
-    tree = ast.parse(source)
+    tree = source if isinstance(source, ast.Module) else ast.parse(source)
     census.files_scanned += 1
     constants = _module_string_constants(tree)
     wrappers, accounted = _response_wrappers(tree)
@@ -550,17 +552,8 @@ def scan() -> Census:
     quotes both shapes verbatim and would otherwise inflate every number here).
     """
     census = Census()
-    for path in sorted(SRC.rglob("*.py")):
-        if "__pycache__" in path.parts:
-            continue
-        try:
-            source = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):  # pragma: no cover - defensive
-            continue
-        try:
-            scan_source(source, str(path.relative_to(SRC.parent.parent)), census)
-        except SyntaxError:  # pragma: no cover - defensive
-            continue
+    for path, tree in source_index.package_trees():
+        scan_source(tree, str(path.relative_to(SRC.parent.parent)), census)
     return census
 
 
@@ -863,13 +856,7 @@ def test_no_module_local_error_helper_came_back():
     therefore catches a helper whose name nobody thought to list.
     """
     offenders: list[str] = []
-    for path in sorted(SRC.rglob("*.py")):
-        if "__pycache__" in path.parts:
-            continue
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (SyntaxError, UnicodeDecodeError):  # pragma: no cover - defensive
-            continue
+    for path, tree in source_index.package_trees():
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -999,7 +986,7 @@ _COMPOSER_BODIES_ADMITTED_AT_218: dict[tuple[str, str, str], int] = {
 
 def _handler_of(rel: str, line: int) -> str:
     """The innermost function around *line* of *rel*, from a census row's own coordinates."""
-    tree = ast.parse((SRC.parent.parent / rel).read_text(encoding="utf-8"))
+    tree = source_index.tree(SRC.parent.parent / rel)
     best: ast.FunctionDef | ast.AsyncFunctionDef | None = None
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):

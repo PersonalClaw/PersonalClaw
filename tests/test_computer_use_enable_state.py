@@ -31,6 +31,7 @@ import json
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw.computer_use import enable_state as ES
 
@@ -294,8 +295,8 @@ def test_only_the_keystone_module_names_the_enable_file():
     the shipped package but this module even MENTIONS the filename or the env var, then no
     handler, CLI command, config loader or action provider can write it."""
     naming = []
-    for path in sorted(_shipped_root().rglob("*.py")):
-        text = path.read_text(encoding="utf-8")
+    for path in source_index.package_files():
+        text = source_index.text(path)
         if ES.ENABLE_FILENAME in text or ES.ENABLE_PATH_ENV in text:
             naming.append(str(path.relative_to(_shipped_root())))
     assert naming == ["computer_use/enable_state.py"], (

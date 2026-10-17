@@ -23,6 +23,7 @@ import json
 from pathlib import Path
 
 import pytest
+import source_index
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from chat_test_helpers import _make_state
@@ -399,13 +400,14 @@ THE_RULE = "personalclaw/approval_answer.py"
 SRC = Path(__file__).resolve().parents[1] / "src"
 
 
-def _header_reads(source: str) -> list[int]:
+def _header_reads(source: str | ast.Module) -> list[int]:
     """The lines of *source* that read ``X-Session-Key`` off a request's headers: a
     ``….headers.get("X-Session-Key"…)`` call, a ``….headers["X-Session-Key"]`` load, or a
     ``"X-Session-Key" in ….headers`` test. Sending the header (a client building its headers)
     is not a read."""
     lines: list[int] = []
-    for node in ast.walk(ast.parse(source)):
+    tree = source if isinstance(source, ast.Module) else ast.parse(source)
+    for node in ast.walk(tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             owner = node.func.value
             if (
@@ -436,8 +438,8 @@ def _header_reads(source: str) -> list[int]:
 def test_only_the_one_rule_reads_the_session_a_request_names():
     readers = {
         path.relative_to(SRC).as_posix(): found
-        for path in sorted(SRC.rglob("*.py"))
-        if (found := _header_reads(path.read_text(encoding="utf-8")))
+        for path, tree in source_index.package_trees()
+        if (found := _header_reads(tree))
     }
 
     # The control: the rule itself reads it, so a scan that read nothing would fail here.

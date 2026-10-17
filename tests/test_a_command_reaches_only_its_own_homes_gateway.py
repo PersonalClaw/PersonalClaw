@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import source_index
 from fakes import GatewayStandIn, gateway_stand_in, home_fingerprint, released_port
 
 import personalclaw
@@ -747,6 +748,12 @@ def _docstrings(tree: ast.AST) -> set[int]:
 
 
 def _trees(root: Path) -> Iterator[tuple[str, ast.Module]]:
+    """Every ``.py`` file under *root* with its tree. The package is the suite's one source
+    index; any other root (the dev tools under ``harness/``) is walked and parsed here."""
+    if root == SRC:
+        for path, tree in source_index.package_trees():
+            yield path.relative_to(root).as_posix(), tree
+        return
     for path in sorted(root.rglob("*.py")):
         yield path.relative_to(root).as_posix(), ast.parse(path.read_text(encoding="utf-8"))
 
@@ -788,7 +795,7 @@ def test_only_reach_makes_a_home_gateway():
     ``reach``, it would be a port taken on trust with the secret's door open."""
     makers = [rel for rel, tree in _trees(SRC) if _makes_a_home_gateway(tree)]
     assert makers == ["home_gateway.py"], makers
-    tree = ast.parse((SRC / "home_gateway.py").read_text(encoding="utf-8"))
+    tree = source_index.tree(SRC / "home_gateway.py")
     functions = [
         node.name
         for node in ast.walk(tree)

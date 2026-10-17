@@ -113,6 +113,20 @@ A run in which the row ran ends with a `security marker census` line giving how
 many modules must carry the marker, how many do, and how many of the test items
 that run collected carry it.
 
+## Tests that read the source tree
+
+A test that reads the package, `web/src`, `docs` or the workflows reads them through
+`tests/source_index.py` rather than walking them itself. Take the walk that matches what it
+reads: `package_files()` for the package's `.py` modules, `package_any_files()` for every file
+under the package (an app's `app.json`, a bundled workflow), `web_files()`, `docs_files()` or
+`workflow_files()`, and `under(files, folder)` to keep one folder of a walk. Each walk fails if
+it finds fewer files than its floor. `text(path)` and `tree(path)` read and parse a file once per
+process, and every test shares the result, so never change a tree. A worker builds the index
+before the first test whose module reads it, outside that test's timeout. The "no test walks a
+source root itself" row of `tests/test_ci_contract.py` fails on a test that walks one of these
+roots on its own. A test that must walk one itself goes in `NOT_THROUGH_THE_INDEX` in
+`tests/private_walkers.py`, by `file::function`, with the reason it cannot use the index.
+
 ## Conventions
 
 - Test files: `tests/test_<module>.py`

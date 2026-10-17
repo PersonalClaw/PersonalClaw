@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import source_index
 
 from personalclaw import mcp_shared
 from personalclaw.agents.native.tools import InProcessMcpToolProvider
@@ -211,12 +212,12 @@ def test_every_reader_of_the_leaf_keys_goes_through_the_one_accessor():
     """🔴 Red on main (four readers of the process environment). A reader of its own is how the
     native runtime lost the lineage: it read a place a native session never writes."""
     assert _reads_a_leaf_key_from_the_environment('os.environ.get("__wf_run_id", "")'), "control"
-    files = sorted(_SRC.rglob("*.py"))
+    files = list(source_index.package_files())
     assert len(files) > 500, "vacuity floor: the package was not read"
     offenders = [
         f"{path.relative_to(_SRC)}:{number}"
         for path in files
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        for number, line in enumerate(source_index.text(path).splitlines(), 1)
         if _reads_a_leaf_key_from_the_environment(line)
     ]
     assert offenders == [], offenders

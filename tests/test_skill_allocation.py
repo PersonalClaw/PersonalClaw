@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw.context import ContextBuilder
 from personalclaw.learning.surfacing import Candidate, Tier, allocate, count_tokens
@@ -389,15 +390,20 @@ class TestTheCapsArePerSkillAndInAggregate:
 
         bundled = Path(__file__).resolve().parents[1] / "src/personalclaw/skills/bundled"
         over: list[str] = []
-        for path in sorted(bundled.rglob("SKILL.md")):
-            raw = path.read_text(encoding="utf-8")
+        skills = [
+            p
+            for p in source_index.under(source_index.package_any_files(), bundled)
+            if p.name == "SKILL.md"
+        ]
+        for path in skills:
+            raw = source_index.text(path)
             tier = resolve_tier(parse_frontmatter(raw).get("context_tier", ""))
             body = SkillsLoader.strip_frontmatter(raw).strip()
             tokens = count_tokens(full_block(path.parent.name, body))
             if tokens > CONTEXT_TIERS[tier]:
                 over.append(f"{path.parent.name}: {tokens} tokens > {tier} cap")
         assert not over, over
-        assert len(list(bundled.rglob("SKILL.md"))) >= 15, "vacuity floor: skills were found"
+        assert len(skills) >= 15, "vacuity floor: skills were found"
 
 
 # ── Continued cost ──

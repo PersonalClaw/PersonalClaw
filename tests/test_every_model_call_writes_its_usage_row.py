@@ -33,6 +33,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import source_index
 
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 from personalclaw.llm.capabilities import Capability, ProviderCapability
@@ -119,11 +120,11 @@ def _read_stream(node: ast.AST) -> ast.Call | None:
     return None
 
 
-def _sites(source: str):
+def _sites(source: str | ast.Module):
     """Each place in *source* that consumes a model's stream: ``(qualified name, the functions
     around it, the collector call or None for an ``async for`` over the stream itself, whether
     the stream is wrapped in :data:`_SPENT_WRAPPERS`)``."""
-    tree = ast.parse(source)
+    tree = source if isinstance(source, ast.Module) else ast.parse(source)
     parents: dict[ast.AST, ast.AST] = {}
     for node in ast.walk(tree):
         for child in ast.iter_child_nodes(node):
@@ -155,8 +156,9 @@ def _sites(source: str):
         yield qualname, [s for s in scopes if not isinstance(s, ast.ClassDef)], collect, wrapped
 
 
-def unrecorded_calls(source: str) -> tuple[list[str], list[str]]:
-    """``(every site, the sites that write no row)`` in *source*, each as its qualified name.
+def unrecorded_calls(source: str | ast.Module) -> tuple[list[str], list[str]]:
+    """``(every site, the sites that write no row)`` in *source* (text or its tree), each as its
+    qualified name.
 
     A site writes its row when a function around it calls a writer (:data:`_WRITERS`), or, for
     a collector, when it passes ``on_complete``.
@@ -182,11 +184,9 @@ def _census() -> tuple[dict[str, list[str]], list[tuple[str, str]]]:
     """Core's sites by file, and the ``(file, qualname)`` of each that writes no row."""
     everything: dict[str, list[str]] = {}
     unwritten: list[tuple[str, str]] = []
-    for path in sorted(SRC.rglob("*.py")):
-        if "__pycache__" in path.parts:
-            continue
+    for path, tree in source_index.package_trees():
         rel = path.relative_to(SRC).as_posix()
-        sites, missing = unrecorded_calls(path.read_text(encoding="utf-8"))
+        sites, missing = unrecorded_calls(tree)
         if sites:
             everything[rel] = sites
         unwritten.extend((rel, qualname) for qualname in missing)
@@ -274,7 +274,7 @@ SPENT_EXEMPT = {
 }
 
 
-def spent_unread(source: str) -> list[str]:
+def spent_unread(source: str | ast.Module) -> list[str]:
     """The sites in *source* that consume a model's stream themselves and never read
     ``EVENT_SPENT``, neither themselves nor through :data:`_SPENT_WRAPPERS`: a turn there that
     ends in an error writes no row for the calls it made."""
@@ -294,11 +294,9 @@ def spent_unread(source: str) -> list[str]:
 
 def _spent_census() -> list[tuple[str, str]]:
     unread: list[tuple[str, str]] = []
-    for path in sorted(SRC.rglob("*.py")):
-        if "__pycache__" in path.parts:
-            continue
+    for path, tree in source_index.package_trees():
         rel = path.relative_to(SRC).as_posix()
-        unread.extend((rel, qualname) for qualname in spent_unread(path.read_text("utf-8")))
+        unread.extend((rel, qualname) for qualname in spent_unread(tree))
     return unread
 
 

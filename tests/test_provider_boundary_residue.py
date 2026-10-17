@@ -47,6 +47,8 @@ import inspect
 import re
 from pathlib import Path
 
+import source_index
+
 _CORE = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 _KEEPS_FILE = (
     Path(__file__).resolve().parents[1] / "docs" / "architecture" / "provider-boundary-keeps.txt"
@@ -110,23 +112,22 @@ _SDK_IMPORT_RE = re.compile(
 
 
 def _core_files() -> list[Path]:
-    out: list[Path] = []
-    for p in sorted(_CORE.rglob("*.py")):
-        if "__pycache__" in p.parts:
-            continue
-        out.append(p)
-    return out
+    """Every package module, from the suite's one source index."""
+    return list(source_index.package_files())
 
 
-def _sdk_import_lines(text: str) -> list[tuple[int, str]]:
+def _sdk_import_lines(text: str | ast.Module) -> list[tuple[int, str]]:
     """``(lineno, vendor)`` for every real vendor-SDK import — AST nodes, not text.
 
     Comments and docstrings hold no Import node, so the prose documenting a keep can
     never be counted as the keep (§ the module docstring's trap note)."""
-    try:
-        tree = ast.parse(text)
-    except SyntaxError:
-        return [(0, "?")] if _SDK_IMPORT_RE.search(text) else []
+    if isinstance(text, ast.Module):
+        tree = text
+    else:
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            return [(0, "?")] if _SDK_IMPORT_RE.search(text) else []
     wanted = {m.lower() for m in _SDK_MODULES}
     found: list[tuple[int, str]] = []
     for node in ast.walk(tree):
@@ -142,8 +143,18 @@ def _sdk_import_lines(text: str) -> list[tuple[int, str]]:
     return found
 
 
-def _has_residue(text: str) -> bool:
-    return bool(_sdk_import_lines(text)) or any(pat.search(text) for pat in _LITERAL_PATTERNS)
+def _has_residue(text: str, tree: ast.Module | None = None) -> bool:
+    """Whether *text* carries residue; its imports read from *tree* when one is given."""
+    imports = _sdk_import_lines(text if tree is None else tree)
+    return bool(imports) or any(pat.search(text) for pat in _LITERAL_PATTERNS)
+
+
+def _residue_of(path: Path) -> bool:
+    """Whether the file at *path* carries residue: a package module through the suite's one
+    source index, any other file (a fixture's, a docs keep's) read here."""
+    if path.suffix == ".py" and path.is_relative_to(_CORE):
+        return _has_residue(source_index.text(path), source_index.tree(path))
+    return _has_residue(path.read_text(encoding="utf-8"))
 
 
 #: The marker of the keeps file's second kind of entry: an interoperability FORMAT keep.
@@ -186,7 +197,7 @@ def test_no_new_vendor_residue_outside_keeps():
     keeps = _keeps()
     offenders: list[str] = []
     for f in _core_files():
-        if _has_residue(f.read_text(encoding="utf-8")):
+        if _residue_of(f):
             rel = _rel(f)
             if rel not in keeps:
                 offenders.append(rel)
@@ -206,7 +217,7 @@ def test_keeps_table_has_no_stale_entries():
     stale: list[str] = []
     for rel in _keeps():
         p = _CORE.parents[1] / rel
-        if not p.is_file() or not _has_residue(p.read_text(encoding="utf-8")):
+        if not p.is_file() or not _residue_of(p):
             stale.append(rel)
     assert not stale, "Stale keeps entries (no residue found — remove them):\n" + "\n".join(
         f"  {s}" for s in sorted(stale)
@@ -269,7 +280,7 @@ def test_the_openai_wire_clients_are_enforced_keeps_not_merely_declared_ones():
     """
     sites: dict[str, list[tuple[int, str]]] = {}
     for f in _core_files():
-        found = _sdk_import_lines(f.read_text(encoding="utf-8"))
+        found = _sdk_import_lines(source_index.tree(f))
         if found:
             sites[_rel(f)] = found
     assert len(sites) >= _SDK_IMPORT_FILE_FLOOR, (
@@ -349,12 +360,15 @@ def _unresolvable_symbol_citations(rows: list[str]) -> list[str]:
         for module, symbol in _DOC_SYMBOL_RE.findall(ln):
             if symbol.endswith("_"):  # a `CRED_SLACK_*`-style family, not one name
                 continue
-            candidates = [_CORE / f"{module}.py", *_CORE.rglob(f"{module}.py")]
+            candidates = [
+                _CORE / f"{module}.py",
+                *(p for p in source_index.package_files() if p.name == f"{module}.py"),
+            ]
             defining = [
                 p
                 for p in candidates
                 if p.is_file()
-                and re.search(rf"^{re.escape(symbol)}\s*[:=]", p.read_text(encoding="utf-8"), re.M)
+                and re.search(rf"^{re.escape(symbol)}\s*[:=]", source_index.text(p), re.M)
             ]
             if not defining:
                 bad.append(f"{module}.{symbol}")
@@ -435,7 +449,7 @@ def test_the_interoperability_formats_are_a_recorded_keep():
     for rel in sorted(formats):
         path = root / rel
         assert path.is_file(), f"format keep {rel} does not exist"
-        assert not _has_residue(path.read_text(encoding="utf-8")), (
+        assert not _residue_of(path), (
             f"{rel} carries vendor SDK or credential residue, so it is a residue keep, "
             "not a format keep"
         )

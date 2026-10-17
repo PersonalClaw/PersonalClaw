@@ -25,6 +25,8 @@ import re
 import textwrap
 from pathlib import Path
 
+import source_index
+
 SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 HELPER = "bounded_log"
 
@@ -135,10 +137,15 @@ def _uses_helper(fn: ast.AST) -> bool:
     )
 
 
-def position_trims(source: str) -> dict[str, list[int]]:
-    """Every function in *source* that trims by position and writes, by name: its cut lines."""
+def _parsed(source: str | ast.Module) -> ast.Module:
+    return source if isinstance(source, ast.Module) else ast.parse(source)
+
+
+def position_trims(source: str | ast.Module) -> dict[str, list[int]]:
+    """Every function in *source* (text, or its tree) that trims by position and writes, by
+    name: its cut lines."""
     found: dict[str, list[int]] = {}
-    for fn in ast.walk(ast.parse(source)):
+    for fn in ast.walk(_parsed(source)):
         if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         cuts = _position_cuts(fn)
@@ -150,17 +157,23 @@ def position_trims(source: str) -> dict[str, list[int]]:
 
 
 def _tree() -> dict[str, str]:
+    """Every package module's text but the helper's, from the suite's one source index."""
     return {
-        str(path.relative_to(SRC)): path.read_text(encoding="utf-8")
-        for path in sorted(SRC.rglob("*.py"))
+        str(path.relative_to(SRC)): source_index.text(path)
+        for path in source_index.package_files()
         if path.stem != HELPER
     }
 
 
+def _module(rel: str) -> ast.Module:
+    """The tree of the package module *rel*, from the suite's one source index."""
+    return source_index.tree(SRC / rel)
+
+
 def _tree_trims() -> dict[str, list[int]]:
     out: dict[str, list[int]] = {}
-    for rel, source in _tree().items():
-        for name, cuts in position_trims(source).items():
+    for rel in _tree():
+        for name, cuts in position_trims(_module(rel)).items():
             out[f"{rel}::{name}"] = cuts
     return out
 
@@ -188,8 +201,8 @@ def test_every_exemption_still_names_a_function_the_shape_matches() -> None:
 def test_no_table_in_core_is_pruned_to_its_highest_row_ids() -> None:
     hits = [
         f"{rel}: {m.group(0)[:80]}"
-        for rel, source in _tree().items()
-        for m in _PRUNE_BY_ID.finditer(_string_constants(source))
+        for rel in _tree()
+        for m in _PRUNE_BY_ID.finditer(_string_constants(_module(rel)))
     ]
     assert not hits, (
         "A merge brings another database's rows in with their own ids, which say nothing about "
@@ -197,11 +210,12 @@ def test_no_table_in_core_is_pruned_to_its_highest_row_ids() -> None:
     )
 
 
-def _string_constants(source: str) -> str:
-    """Every string in *source*, adjacent literals joined as Python joins them."""
+def _string_constants(source: str | ast.Module) -> str:
+    """Every string in *source* (text, or its tree), adjacent literals joined as Python joins
+    them."""
     return "\n".join(
         node.value
-        for node in ast.walk(ast.parse(source))
+        for node in ast.walk(_parsed(source))
         if isinstance(node, ast.Constant) and isinstance(node.value, str)
     )
 
@@ -215,8 +229,8 @@ def test_the_rail_sees_the_tree_and_the_helper_at_work() -> None:
     tree = _tree()
     functions = sum(
         isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-        for source in tree.values()
-        for n in ast.walk(ast.parse(source))
+        for rel in tree
+        for n in ast.walk(_module(rel))
     )
     assert functions > 5000, functions
     users = sorted(rel for rel, source in tree.items() if re.search(rf"\b{HELPER}\.\w+\(", source))

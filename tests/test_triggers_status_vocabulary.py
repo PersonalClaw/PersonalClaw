@@ -43,6 +43,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
+import source_index
 
 from personalclaw.triggers import executor as E
 from personalclaw.triggers import history as H
@@ -483,9 +484,8 @@ def test_the_writer_file_census_is_pinned() -> None:
     attr_files: set[str] = set()
     call_files: set[str] = set()
     settle_files: set[str] = set()
-    for path in sorted(SRC.rglob("*.py")):
+    for path, tree in source_index.package_trees():
         rel = path.relative_to(SRC).as_posix()
-        tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign):
                 for target in node.targets:

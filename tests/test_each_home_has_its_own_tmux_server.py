@@ -22,6 +22,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+import source_index
 
 import personalclaw
 from personalclaw import tmux_substrate
@@ -99,11 +100,11 @@ def test_a_home_too_long_for_a_socket_still_gets_a_server_of_its_own(tmp_path, m
 def test_no_tmux_command_is_built_outside_the_substrate():
     """Three private copies in the terminal handler kept naming the machine-wide socket."""
     stray = []
-    for py in sorted(SRC.rglob("*.py")):
+    for py, tree in source_index.package_trees():
         rel = py.relative_to(SRC).as_posix()
         if rel == "tmux_substrate.py" or rel.startswith("skills/bundled/"):
             continue
-        for node in ast.walk(ast.parse(py.read_text(encoding="utf-8"))):
+        for node in ast.walk(tree):
             args = []
             if isinstance(node, (ast.List, ast.Tuple)):
                 args = node.elts

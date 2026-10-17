@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 import pytest
+import source_index
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -386,8 +387,7 @@ def test_every_sink_the_gateway_attaches_goes_through_the_one_rule() -> None:
 
     src = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
     calls: dict[str, list[int]] = {}
-    for path in sorted(src.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+    for path, tree in source_index.package_trees():
         for node in ast.walk(tree):
             if (
                 isinstance(node, ast.Call)

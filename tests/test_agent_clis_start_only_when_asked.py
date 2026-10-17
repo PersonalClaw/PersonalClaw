@@ -27,6 +27,7 @@ import os
 from pathlib import Path
 
 import pytest
+import source_index
 from aiohttp.test_utils import make_mocked_request
 
 import personalclaw
@@ -423,9 +424,9 @@ def _references() -> dict[str, set[str]]:
                 found[name].add(f"{rel}::{'.'.join(scope) or '<module>'}")
             walk(child, rel, scope)
 
-    for path in sorted(src.rglob("*.py")):
+    for path, tree in source_index.package_trees():
         rel = path.relative_to(src).as_posix()
-        walk(ast.parse(path.read_text(encoding="utf-8")), rel, [])
+        walk(tree, rel, [])
     return found
 
 

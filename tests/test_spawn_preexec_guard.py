@@ -20,6 +20,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import source_index
+
 # Documented, deliberate exceptions (``file::qualname`` keys). Empty by design: the shim
 # mechanism means an async spawn never needs preexec_fn. An entry here must carry a written
 # reason in this dict AND survive review — it is a hole in the safety property.
@@ -46,11 +48,7 @@ def _offending_sites() -> list[str]:
     """Every async spawn passing ``preexec_fn=`` → ``file:line qualname`` strings."""
     out: list[str] = []
     root = _src_root()
-    for path in sorted(root.rglob("*.py")):
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (OSError, SyntaxError):
-            continue
+    for path, tree in source_index.package_trees():
         rel = path.relative_to(root).as_posix()
 
         class V(ast.NodeVisitor):

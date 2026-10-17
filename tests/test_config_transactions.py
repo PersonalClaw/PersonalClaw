@@ -39,6 +39,7 @@ from argparse import Namespace
 from pathlib import Path
 
 import pytest
+import source_index
 
 # ── helpers: real processes, started together ───────────────────────────────────────────────
 
@@ -781,7 +782,7 @@ class _Scope:
         )
 
 
-def _raw_config_writes(source: str) -> list[int]:
+def _raw_config_writes(source: str | ast.Module) -> list[int]:
     """Lines that write the config file's path without going through the transaction.
 
     Scoped per function, so ``path = config_path()`` in one function does not make an
@@ -789,7 +790,7 @@ def _raw_config_writes(source: str) -> list[int]:
     names of the function it is written in. A path that arrives as a parameter is out of a
     static scan's reach — the boot-time secret move is one, and it has its own behavioural test.
     """
-    tree = ast.parse(source)
+    tree = source if isinstance(source, ast.Module) else ast.parse(source)
     functions = [
         n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
     ]
@@ -823,9 +824,8 @@ def test_nothing_writes_the_config_file_around_the_transaction():
     root = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
     offenders = {
         str(path.relative_to(root)): lines
-        for path in sorted(root.rglob("*.py"))
-        if str(path.relative_to(root)) != _THE_WRITER
-        and (lines := _raw_config_writes(path.read_text(encoding="utf-8")))
+        for path, tree in source_index.package_trees()
+        if str(path.relative_to(root)) != _THE_WRITER and (lines := _raw_config_writes(tree))
     }
     assert offenders == {}, f"raw config.json writers: {offenders}"
 
