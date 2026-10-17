@@ -30,6 +30,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
+import source_index
 
 import personalclaw.dashboard.server as server_mod
 from personalclaw.apps.manifest import AppManifest
@@ -151,8 +152,8 @@ def _literal_route_paths() -> set[str]:
     """
     dash_dir = Path(server_mod.__file__).parent
     paths: set[str] = set()
-    for py in dash_dir.rglob("*.py"):
-        tree = ast.parse(py.read_text(encoding="utf-8"))
+    for py in source_index.under(source_index.package_files(), dash_dir.resolve()):
+        tree = source_index.tree(py)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue

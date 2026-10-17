@@ -19,6 +19,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import source_index
+
 from personalclaw.stats import Stats
 
 _SRC = Path(__file__).resolve().parent.parent / "src" / "personalclaw"
@@ -46,12 +48,8 @@ def _called_methods() -> set[str]:
     any mention in a comment, which is how a writerless counter can look wired.
     """
     names: set[str] = set()
-    for path in _SRC.rglob("*.py"):
+    for path, tree in source_index.package_trees():
         if path.name == "stats.py":
-            continue
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (SyntaxError, UnicodeDecodeError):
             continue
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):

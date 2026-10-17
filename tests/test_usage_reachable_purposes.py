@@ -20,6 +20,8 @@ import ast
 import re
 from pathlib import Path
 
+import source_index
+
 from personalclaw.routing.usage import (
     APP_PURPOSE,
     PURPOSE_BY_SOURCE,
@@ -93,20 +95,16 @@ def _app_names() -> set[str]:
     ``PURPOSE_BY_SOURCE`` (``purpose_for_source`` checks that map FIRST).
     """
     found: set[str] = set()
-    for path in _SRC.rglob("*.py"):
-        if "__pycache__" in str(path):
-            continue
-        found.update(_APP_ARG.findall(_code_lines(path.read_text(encoding="utf-8"))))
+    for path in source_index.package_files():
+        found.update(_APP_ARG.findall(_code_lines(source_index.text(path))))
     return found
 
 
 def _attribution_sources() -> set[str]:
     """Every literal ``source`` an ``Attribution(...)`` is built with in the tree."""
     found: set[str] = set()
-    for path in _SRC.rglob("*.py"):
-        if "__pycache__" in str(path):
-            continue
-        text = _code_lines(path.read_text(encoding="utf-8"))
+    for path in source_index.package_files():
+        text = _code_lines(source_index.text(path))
         for match in _ATTRIBUTION.finditer(text):
             args = _call_arguments(text, match.end() - 1)
             for literal_dq, literal_sq, _expression in _SOURCE_ARG.findall(args):
@@ -118,10 +116,8 @@ def _attribution_sources() -> set[str]:
 def _writer_sources() -> set[str]:
     """Every ``source`` value the live turn-ledger call sites can pass."""
     found: set[str] = _attribution_sources()
-    for path in _SRC.rglob("*.py"):
-        if "__pycache__" in str(path):
-            continue
-        text = path.read_text(encoding="utf-8")
+    for path in source_index.package_files():
+        text = source_index.text(path)
         for match in _SEAM.finditer(text):
             args = _call_arguments(text, match.end() - 1)
             for literal_dq, literal_sq, expression in _SOURCE_ARG.findall(args):

@@ -25,6 +25,7 @@ from unittest.mock import MagicMock
 
 import aiohttp
 import pytest
+import source_index
 
 import personalclaw
 from personalclaw import self_update
@@ -551,13 +552,13 @@ def test_one_function_decides_whether_an_update_check_may_reach_out() -> None:
     asked; the only other read is the value the Updates screen shows its switch with."""
     root = Path(personalclaw.__file__).parent
     readers: set[tuple[str, str]] = set()
-    for path in sorted(root.rglob("*.py")):
-        rel = path.relative_to(root).as_posix()
-        text = path.read_text(encoding="utf-8")
+    for path in source_index.package_files():
+        rel = path.relative_to(root.resolve()).as_posix()
+        text = source_index.text(path)
         if rel.startswith("config/") or "check_enabled" not in text:
             continue
         visitor = _Readers()
-        visitor.visit(ast.parse(text))
+        visitor.visit(source_index.tree(path))
         readers |= {(rel, where) for where, _line in visitor.found}
     assert readers, "the scan found no reader at all: it is not reading the tree"
     assert readers == {

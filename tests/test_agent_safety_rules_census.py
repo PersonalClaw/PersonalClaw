@@ -34,9 +34,9 @@ What it cannot see: an agent started by a name other than these three.
 from __future__ import annotations
 
 import ast
-import functools
 from pathlib import Path
 
+import source_index
 from test_session_acquisition_census import REACQUIRES, _census, _functions
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
@@ -167,14 +167,9 @@ def _calls(tree: ast.Module, attr: str) -> list[str]:
     return out
 
 
-@functools.cache
 def _package() -> dict[str, ast.Module]:
-    """Every module of the package, parsed once for the whole census."""
-    return {
-        path.relative_to(SRC).as_posix(): ast.parse(path.read_text(encoding="utf-8"))
-        for path in sorted(SRC.rglob("*.py"))
-        if "__pycache__" not in path.parts
-    }
+    """Every module of the package, parsed, from the suite's one source index."""
+    return {path.relative_to(SRC).as_posix(): tree for path, tree in source_index.package_trees()}
 
 
 def _sites(attr: str, *, skip: frozenset[str] = frozenset()) -> set[tuple[str, str]]:
@@ -402,10 +397,8 @@ def test_the_rules_are_worded_in_one_place():
     assert _copied(f"Rules:\n- {_rules()[-1]}\n") == [_rules()[-1]], "a copy is found"
     copies = [
         (path.relative_to(SRC).as_posix(), rule[:60])
-        for path in sorted(SRC.rglob("*"))
-        if path.is_file()
-        and path != SNIPPET
-        and path.suffix in {".py", ".md", ".json", ".yaml", ".yml", ".txt"}
-        for rule in _copied(path.read_text(encoding="utf-8", errors="replace"))
+        for path in source_index.package_any_files()
+        if path != SNIPPET and path.suffix in {".py", ".md", ".json", ".yaml", ".yml", ".txt"}
+        for rule in _copied(source_index.text(path))
     ]
     assert not copies, f"a rule is copied out of the snippet: {copies}"

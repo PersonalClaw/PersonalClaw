@@ -31,6 +31,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw.durability import footprint, shards
 from personalclaw.sqlite_compat import sqlite3
@@ -186,12 +187,12 @@ def test_the_rail_passes(shape: str) -> None:
 
 
 def test_no_module_under_src_imports_the_stdlib_driver() -> None:
-    modules = sorted(_SRC.rglob("*.py"))
+    modules = list(source_index.package_files())
     offenders: list[str] = []
     shared = 0
     exempt_lines: list[int] = []
     for path in modules:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = source_index.tree(path)
         lines = _stdlib_driver_imports(tree)
         if path == _EXEMPT:
             exempt_lines = lines

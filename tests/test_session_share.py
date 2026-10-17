@@ -22,6 +22,7 @@ import re
 from pathlib import Path
 
 import pytest
+import source_index
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from chat_test_helpers import _make_state
@@ -318,7 +319,7 @@ async def test_share_reports_unavailable_artifacts_instead_of_500ing(routed, mon
 # ── never auto-published: an AST census of every call site ─────────────────────
 
 
-def _share_call_sites(sources: dict[str, str]) -> set[tuple[str, str]]:
+def _share_call_sites(sources: dict[str, str | ast.Module]) -> set[tuple[str, str]]:
     """``{(file, enclosing function)}`` for every call to ``share_session``.
 
     Counts both ``session_share.share_session(...)`` and a bare ``share_session(...)``, so
@@ -326,7 +327,7 @@ def _share_call_sites(sources: dict[str, str]) -> set[tuple[str, str]]:
     """
     found: set[tuple[str, str]] = set()
     for label, src in sources.items():
-        tree = ast.parse(src)
+        tree = src if isinstance(src, ast.Module) else ast.parse(src)
         parents: dict[ast.AST, str] = {}
         for fn in ast.walk(tree):
             if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -344,11 +345,10 @@ def _share_call_sites(sources: dict[str, str]) -> set[tuple[str, str]]:
     return found
 
 
-def _core_sources() -> dict[str, str]:
+def _core_sources() -> dict[str, str | ast.Module]:
+    """Every package module's tree, from the suite's one source index."""
     root = Path(personalclaw.__file__).resolve().parent
-    return {
-        str(p.relative_to(root)): p.read_text(encoding="utf-8") for p in sorted(root.rglob("*.py"))
-    }
+    return {str(p.relative_to(root)): tree for p, tree in source_index.package_trees()}
 
 
 def test_share_has_exactly_one_call_site():

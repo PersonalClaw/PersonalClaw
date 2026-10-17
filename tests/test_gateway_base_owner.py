@@ -31,6 +31,7 @@ import time
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw import gateway_base
 from personalclaw.gateway_base import GatewayBaseUnresolved
@@ -291,6 +292,20 @@ _CHILD_BASE_MODULES = (
 )
 
 
+def _trees_under(root: Path) -> list[tuple[Path, ast.Module]]:
+    """Every ``.py`` file under *root* with its tree: the package from the suite's one source
+    index, a fixture root (a test's planted tree) walked and parsed here."""
+    if root == SRC:
+        return source_index.package_trees()
+    out = []
+    for py in sorted(root.rglob("*.py")):
+        try:
+            out.append((py, ast.parse(py.read_text(encoding="utf-8"))))
+        except (SyntaxError, UnicodeDecodeError):  # pragma: no cover - defensive
+            continue
+    return out
+
+
 def _resolution_sites(root: Path) -> set[tuple[str, str]]:
     """Every ``(module, resolver)`` pair read anywhere under *root*, from the AST.
 
@@ -298,11 +313,7 @@ def _resolution_sites(root: Path) -> set[tuple[str, str]]:
     does not hide a site.
     """
     found: set[tuple[str, str]] = set()
-    for py in sorted(root.rglob("*.py")):
-        try:
-            tree = ast.parse(py.read_text(encoding="utf-8"))
-        except (SyntaxError, UnicodeDecodeError):  # pragma: no cover - defensive
-            continue
+    for py, tree in _trees_under(root):
         rel = py.relative_to(root).as_posix()
         for node in ast.walk(tree):
             name = ""
@@ -369,8 +380,8 @@ class TestNobodyElseResolvesTheBase:
         """
         text_hits = 0
         pattern = re.compile("|".join(rf"\b{re.escape(r)}\b" for r in _RESOLVERS))
-        for py in SRC.rglob("*.py"):
-            text_hits += len(pattern.findall(py.read_text(encoding="utf-8")))
+        for py in source_index.package_files():
+            text_hits += len(pattern.findall(source_index.text(py)))
         assert text_hits >= 30, f"only {text_hits} textual occurrences — the scan lost its corpus"
         assert len(_resolution_sites(SRC)) >= 10
         assert len(_ALLOWED) >= 10

@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import source_index
 
 from personalclaw.workflows import journal as J
 from personalclaw.workflows import loop_aliases, loop_convergence, service, store, supervisor_policy
@@ -824,14 +825,14 @@ def test_the_run_path_has_no_convergence_consumer_yet() -> None:
     """
     src = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
     readers: dict[str, list[int]] = {}
-    for path in sorted(src.rglob("*.py")):
+    for path in source_index.package_files():
         if path.name == "supervisor_policy.py":
             continue  # the declaration's own module
         # Parsed, not grepped. A substring scan for ".convergence" also matches the VALIDATOR's
         # error strings ("unknown supervisor.convergence field") — measured, it reported
         # `workflows/validator.py` as a reader — so the rail would fire on documentation and then
         # be relaxed to shut it up. An attribute ACCESS is the only thing that is actually a read.
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = source_index.tree(path)
         lines = sorted(
             node.lineno
             for node in ast.walk(tree)

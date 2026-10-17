@@ -15,6 +15,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import source_index
+
 SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
 
@@ -30,8 +32,8 @@ def _external_callers(symbol: str) -> dict[str, str]:
     ref = re.compile(rf"\b{symbol}\b")
     define = re.compile(rf"\bdef\s+{symbol}\b")
     out: dict[str, str] = {}
-    for p in SRC.rglob("*.py"):
-        text = p.read_text(encoding="utf-8")
+    for p in source_index.package_files():
+        text = source_index.text(p)
         if ref.search(text) and not define.search(text):
             out[p.relative_to(SRC).as_posix()] = text
     return out

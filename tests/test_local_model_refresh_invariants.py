@@ -29,6 +29,7 @@ import ast
 from pathlib import Path
 
 import pytest
+import source_index
 
 import personalclaw
 from personalclaw.local_models import registry as lm_registry
@@ -171,14 +172,10 @@ def _modules_defining_refresh_providers() -> set[str]:
     """
     pkg_root = Path(personalclaw.__file__).resolve().parent
     found: set[str] = set()
-    for path in pkg_root.rglob("*.py"):
-        text = path.read_text(encoding="utf-8", errors="ignore")
-        if "def refresh_providers" not in text:
+    for path in source_index.package_files():
+        if "def refresh_providers" not in source_index.text(path):
             continue
-        try:
-            tree = ast.parse(text)
-        except SyntaxError:  # pragma: no cover — the lint gate owns syntax
-            continue
+        tree = source_index.tree(path)
         if not any(
             isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "refresh_providers"
             for n in tree.body

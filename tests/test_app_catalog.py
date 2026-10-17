@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw.apps import app_manager, catalog, manager
 from personalclaw.apps import source as app_source
@@ -1377,17 +1378,17 @@ def _scanner_gate_call_sites(token: str) -> set[tuple[str, str]]:
     import personalclaw
 
     pkg_root = Path(personalclaw.__file__).resolve().parent
-    files = sorted(p for p in pkg_root.rglob("*.py"))
+    files = list(source_index.package_files())
     # Vacuity floor: a broken glob (wrong root, wrong suffix) reads as "no call sites"
     # and would make every assertion below trivially true.
     assert len(files) > 100, f"census walked only {len(files)} files under {pkg_root}"
 
     sites: set[tuple[str, str]] = set()
     for path in files:
-        text = path.read_text(encoding="utf-8")
+        text = source_index.text(path)
         if token not in text:
             continue
-        tree = ast.parse(text)
+        tree = source_index.tree(path)
         owners: list[tuple[int, int, str]] = [
             (n.lineno, n.end_lineno or n.lineno, n.name)
             for n in ast.walk(tree)

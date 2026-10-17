@@ -21,6 +21,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+import source_index
 
 
 class _FakeWS:
@@ -177,8 +178,8 @@ def test_every_note_type_in_the_tree_is_mapped():
 
     src = Path(__file__).resolve().parent.parent / "src"
     found: dict[str, str] = {}
-    for path in src.rglob("*.py"):
-        for m in re.finditer(r'"_type":\s*"([a-z_]+)"', path.read_text(encoding="utf-8")):
+    for path in source_index.package_files():
+        for m in re.finditer(r'"_type":\s*"([a-z_]+)"', source_index.text(path)):
             found.setdefault(m.group(1), str(path.relative_to(src)))
     assert found, "the scan found no `_type` literals at all — it would pass vacuously"
     unmapped = {k: v for k, v in found.items() if k not in BROADCAST_NOTE_TYPES}

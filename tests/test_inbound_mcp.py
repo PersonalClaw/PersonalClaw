@@ -9,6 +9,7 @@ that happens for the wrong reason is a bug even when the status code is right.
 import json
 
 import pytest
+import source_index
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -1123,8 +1124,8 @@ class TestProtocolRevision:
 
         root = pathlib.Path(mcp_http.__file__).parent
         hits = []
-        for path in root.rglob("*.py"):
-            for line in path.read_text(encoding="utf-8").splitlines():
+        for path in source_index.under(source_index.package_files(), root.resolve()):
+            for line in source_index.text(path).splitlines():
                 stripped = line.strip()
                 if not stripped or stripped.startswith("#"):
                     continue

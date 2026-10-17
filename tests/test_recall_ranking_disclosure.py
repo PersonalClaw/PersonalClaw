@@ -28,6 +28,7 @@ import pathlib
 from unittest.mock import MagicMock, patch
 
 import pytest
+import source_index
 
 from personalclaw.memory_ranking import (
     AXES,
@@ -194,8 +195,8 @@ def test_every_handler_that_ranks_returns_the_ranking():
 def test_the_degradation_clause_lives_in_exactly_one_file():
     owners = sorted(
         p.relative_to(_SRC).as_posix()
-        for p in _SRC.rglob("*.py")
-        if FALLS_BACK_CLAUSE in p.read_text(errors="ignore")
+        for p in source_index.package_files()
+        if FALLS_BACK_CLAUSE in source_index.text(p)
     )
     assert owners == ["memory_ranking.py"], (
         f"the recall-degradation clause is authored in {owners}. It must exist only in "
@@ -209,16 +210,17 @@ def test_no_frontend_file_authors_the_degradation_clause():
     """The sentence is server-composed; the frontend renders it verbatim."""
     scanned = [
         p
-        for p in _WEB.rglob("*.ts*")
-        if ".test." not in p.name and ".behaviour." not in p.name and ".doc." not in p.name
+        for p in source_index.web_files()
+        if p.suffix.startswith(".ts")
+        and ".test." not in p.name
+        and ".behaviour." not in p.name
+        and ".doc." not in p.name
     ]
     # Vacuity floor: prove the scan actually read the panel this issue is about.
     panel = _WEB / "pages" / "settings" / "MemoryPanel.tsx"
-    assert panel in scanned and "RankingNote" in panel.read_text()
+    assert panel in scanned and "RankingNote" in source_index.text(panel)
     offenders = [
-        p.relative_to(_WEB).as_posix()
-        for p in scanned
-        if FALLS_BACK_CLAUSE in p.read_text(errors="ignore")
+        p.relative_to(_WEB).as_posix() for p in scanned if FALLS_BACK_CLAUSE in source_index.text(p)
     ]
     assert not offenders, (
         f"{offenders} author the recall-degradation clause client-side. Render "
@@ -236,8 +238,10 @@ def test_recall_ranking_reaches_the_frontend_through_one_component():
     """
     consumers = sorted(
         p.relative_to(_WEB).as_posix()
-        for p in _WEB.rglob("*.ts*")
-        if ".test." not in p.name and "RecallRanking" in p.read_text(errors="ignore")
+        for p in source_index.web_files()
+        if p.suffix.startswith(".ts")
+        and ".test." not in p.name
+        and "RecallRanking" in source_index.text(p)
     )
     assert consumers == ["lib/api.ts", "pages/settings/MemoryPanel.tsx"], (
         f"RecallRanking is now referenced by {consumers}. A new consumer must render it "

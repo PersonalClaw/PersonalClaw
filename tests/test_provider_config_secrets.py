@@ -23,6 +23,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import source_index
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -205,8 +206,8 @@ def test_the_masking_policy_has_exactly_one_implementation():
     src = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
     carriers = sorted(
         str(p.relative_to(src))
-        for p in src.rglob("*.py")
-        if SECRET_MASK in p.read_text(encoding="utf-8")
+        for p in source_index.package_files()
+        if SECRET_MASK in source_index.text(p)
     )
     assert carriers == ["apps/secret_fields.py"], (
         f"the sensitive-field mask sentinel appears in more than one module: {carriers}. "

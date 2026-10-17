@@ -34,6 +34,7 @@ import json
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw.loop import files as loop_files
 from personalclaw.loop import journal as loop_journal
@@ -177,7 +178,8 @@ def test_the_orphan_reap_still_sees_a_backed_dir() -> None:
 
 
 def _python_sources() -> list[Path]:
-    return sorted(p for p in _SRC.rglob("*.py") if p.is_file())
+    """Every package module, from the suite's one source index."""
+    return list(source_index.package_files())
 
 
 #: Callees that own a SAME-NAMED counter of their own: `tick.TickState` is a pure, never-persisted
@@ -266,7 +268,7 @@ def test_no_module_writes_the_retired_column() -> None:
         rel = path.relative_to(_SRC).as_posix()
         if rel == _TICK_STATE_OWNS_THE_NAME:
             continue
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = source_index.tree(path)
         scanned += 1
         if hits := _writes_of(tree):
             offenders[rel] = hits
@@ -313,17 +315,17 @@ def test_the_write_census_can_actually_fail() -> None:
     ), "the exemption leaked: a keyword into a non-TickState callee must still be flagged"
 
     # And neither exemption is a dead entry. `tick.py` really does declare the shadow field…
-    tick = ast.parse((_SRC / _TICK_STATE_OWNS_THE_NAME).read_text(encoding="utf-8"))
+    tick = source_index.tree(_SRC / _TICK_STATE_OWNS_THE_NAME)
     assert _writes_of(tick), (
         f"{_TICK_STATE_OWNS_THE_NAME} is exempted from the census but contains no write of "
         f"{_RETIRED!r} — the exemption is stale and should be deleted"
     )
     # …and a censused module really does feed that snapshot by keyword, so the callee exemption is
     # load-bearing rather than hypothetical.
-    sdlc = (_SRC / "loop" / "kinds" / "sdlc.py").read_text(encoding="utf-8")
+    sdlc = source_index.tree(_SRC / "loop" / "kinds" / "sdlc.py")
     feeders = [
         node
-        for node in ast.walk(ast.parse(sdlc))
+        for node in ast.walk(sdlc)
         if isinstance(node, ast.Call)
         and _callee_name(node) in _TICK_STATE_CALLEES
         and any(kw.arg == _RETIRED for kw in node.keywords)

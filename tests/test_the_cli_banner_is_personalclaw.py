@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw import cli, cli_chat, home_gateway
 from personalclaw.constants import BANNER
@@ -85,8 +86,7 @@ def test_the_banner_is_the_only_drawing_in_the_package():
     """A second drawing is how the two copies came to say different things. Every string
     constant in every module is read, so a drawing under another name is found too."""
     drawings = []
-    for path in sorted(PACKAGE.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+    for path, tree in source_index.package_trees():
         for node in ast.walk(tree):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
                 if _drawn_rows(node.value) >= 3:
@@ -96,7 +96,7 @@ def test_the_banner_is_the_only_drawing_in_the_package():
 
 def _banner_line() -> int:
     """Where `BANNER`'s string starts in `constants.py`, or 0 when it defines none."""
-    tree = ast.parse((PACKAGE / "constants.py").read_text(encoding="utf-8"))
+    tree = source_index.tree(PACKAGE / "constants.py")
     for node in tree.body:
         if isinstance(node, ast.Assign) and any(
             isinstance(t, ast.Name) and t.id == "BANNER" for t in node.targets

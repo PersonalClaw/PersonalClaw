@@ -56,6 +56,8 @@ import functools
 import pathlib
 from dataclasses import dataclass, field
 
+import source_index
+
 from personalclaw.durability import inventory as inv
 
 _SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "personalclaw"
@@ -124,11 +126,7 @@ def _is_config_dir(node: ast.AST) -> bool:
     )
 
 
-def _parse(name: str, shown: str, text: str) -> _Module | None:
-    try:
-        tree = ast.parse(text)
-    except SyntaxError:
-        return None
+def _module(name: str, shown: str, tree: ast.Module) -> _Module:
     mod = _Module(name, shown, tree)
     for node in tree.body:
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
@@ -494,25 +492,24 @@ class _HomeCensus:
                             self._grow(table, kw.arg, rels, [key])
 
 
-def _census_of(files: dict[str, str]) -> _HomeCensus:
-    """Census a tree given as `{"personalclaw/x.py": source}` — the real one or a planted one."""
+def _census_of(files: dict[str, ast.Module]) -> _HomeCensus:
+    """Census a tree given as `{"personalclaw/x.py": parsed module}` — the real one or a planted
+    one."""
     modules: dict[str, _Module] = {}
-    for shown, text in files.items():
+    for shown, tree in files.items():
         parts = list(pathlib.PurePosixPath(shown).with_suffix("").parts)
         if parts[-1] == "__init__":
             parts = parts[:-1]
-        if (mod := _parse(".".join(parts), shown, text)) is not None:
-            modules[mod.name] = mod
+        mod = _module(".".join(parts), shown, tree)
+        modules[mod.name] = mod
     return _HomeCensus(modules)
 
 
 @functools.cache
 def _real() -> _HomeCensus:
+    """The census of every package module, its trees from the suite's one source index."""
     return _census_of(
-        {
-            p.relative_to(_SRC.parent).as_posix(): p.read_text(encoding="utf-8", errors="replace")
-            for p in sorted(_SRC.rglob("*.py"))
-        }
+        {p.relative_to(_SRC.parent).as_posix(): tree for p, tree in source_index.package_trees()}
     )
 
 
@@ -544,7 +541,9 @@ def test_the_census_is_not_vacuous():
 
 
 def _planted(**modules: str) -> _HomeCensus:
-    return _census_of({f"personalclaw/{name}.py": text for name, text in modules.items()})
+    return _census_of(
+        {f"personalclaw/{name}.py": ast.parse(text) for name, text in modules.items()}
+    )
 
 
 def test_each_spelling_that_hid_a_real_store_is_read():

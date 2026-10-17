@@ -22,10 +22,10 @@ nobody consented to?" is answered where it is added.
 from __future__ import annotations
 
 import ast
-import functools
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw import approval_grants
 from personalclaw.config.editable import _EDITABLE_CONFIG
@@ -46,15 +46,11 @@ NOT_A_GRANT = {
 }
 
 
-@functools.cache
 def _modules() -> tuple[tuple[str, ast.AST], ...]:
-    """Every module of the package, parsed: read when a test first asks, not when pytest imports
-    this file, so a worker that never runs these tests never holds the tree."""
-    out = []
-    for path in sorted(SRC.rglob("*.py")):
-        rel = path.relative_to(SRC).as_posix()
-        out.append((rel, ast.parse(path.read_text(encoding="utf-8"), filename=rel)))
-    return tuple(out)
+    """Every module of the package, parsed, from the suite's one source index."""
+    return tuple(
+        (path.relative_to(SRC).as_posix(), tree) for path, tree in source_index.package_trees()
+    )
 
 
 def _reads_the_agent_field(node: ast.AST) -> bool:

@@ -32,6 +32,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+import source_index
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from chat_test_helpers import _api_app, _make_state
@@ -163,12 +164,12 @@ def _reruns_in_the_tree() -> set[tuple[str, str]]:
     turn is run again cannot hold one, so only the files that do are parsed."""
     names = (_STARTS_A_TURN, _QUEUES_IT_AGAIN, _HANDED_THE_RE_SEND)
     found: set[tuple[str, str]] = set()
-    for path in sorted(SRC.rglob("*.py")):
-        text = path.read_text(encoding="utf-8")
+    for path in source_index.package_files():
+        text = source_index.text(path)
         if not any(name in text for name in names):
             continue
         rel = path.relative_to(SRC).as_posix()
-        for qualified, func in _functions(ast.parse(text)).items():
+        for qualified, func in _functions(source_index.tree(path)).items():
             if _runs_a_turn_again(func):
                 found.add((rel, qualified))
     return found

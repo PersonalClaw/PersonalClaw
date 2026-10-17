@@ -18,6 +18,7 @@ import logging
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw.security import mask_child_output
 
@@ -234,9 +235,9 @@ def _unmasked_log_calls(tree: ast.AST) -> list[str]:
 def test_no_log_line_in_the_tree_carries_a_childs_raw_output():
     found = {}
     scanned = 0
-    for path in sorted(_SRC.rglob("*.py")):
+    for path, tree in source_index.package_trees():
         scanned += 1
-        hits = _unmasked_log_calls(ast.parse(path.read_text(encoding="utf-8")))
+        hits = _unmasked_log_calls(tree)
         if hits:
             found[path.relative_to(_SRC).as_posix()] = hits
     assert scanned > 500, f"the scan read {scanned} files: it is not reading the tree"
@@ -287,12 +288,10 @@ def test_no_printed_line_error_or_record_in_the_tree_carries_a_childs_raw_output
     both as printed."""
     found = {}
     scanned = 0
-    for path in sorted(_SRC.rglob("*.py")):
+    for path, tree in source_index.package_trees():
         scanned += 1
         rel = path.relative_to(_SRC).as_posix()
-        hits = _unmasked_terminal_errors_and_records(
-            ast.parse(path.read_text(encoding="utf-8")), rel
-        )
+        hits = _unmasked_terminal_errors_and_records(tree, rel)
         if hits:
             found[rel] = hits
     assert scanned > 500, f"the scan read {scanned} files: it is not reading the tree"
@@ -414,10 +413,7 @@ def test_every_log_sink_the_tree_makes_masks_what_it_writes():
     """``gateway.log``, the console stream a service manager keeps, and the Logs page's buffer
     and live stream: a record reaches each through a handler, and the handler's formatter is
     what masks it."""
-    trees = {
-        path.relative_to(_SRC).as_posix(): ast.parse(path.read_text(encoding="utf-8"))
-        for path in sorted(_SRC.rglob("*.py"))
-    }
+    trees = {path.relative_to(_SRC).as_posix(): tree for path, tree in source_index.package_trees()}
     handler_classes = set(_HANDLER_CLASSES)
     classes = [
         node for tree in trees.values() for node in ast.walk(tree) if isinstance(node, ast.ClassDef)

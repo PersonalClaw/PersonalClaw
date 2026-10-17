@@ -29,6 +29,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+import source_index
+
 import personalclaw
 from personalclaw import schedule_script
 from personalclaw.dashboard import server
@@ -69,10 +71,8 @@ class Call:
 
 @functools.lru_cache(maxsize=1)
 def _trees() -> dict[str, ast.Module]:
-    trees = {
-        path.relative_to(SRC).as_posix(): ast.parse(path.read_text(encoding="utf-8"))
-        for path in sorted(SRC.rglob("*.py"))
-    }
+    """Every package module's tree from the suite's one source index, and the launcher's."""
+    trees = {path.relative_to(SRC).as_posix(): tree for path, tree in source_index.package_trees()}
     trees[LAUNCHER] = ast.parse(schedule_script._LAUNCHER_SRC)
     return trees
 

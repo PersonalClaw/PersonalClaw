@@ -37,6 +37,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+import source_index
 
 _REPO = Path(__file__).resolve().parents[1]
 _SRC = _REPO / "src" / "personalclaw"
@@ -237,12 +238,31 @@ def _follow(
     return None
 
 
+def _parsed(path: Path) -> ast.Module:
+    """*path*'s tree: a package module of this repository from the suite's one source index,
+    any other file (a fixture tree's) parsed here."""
+    if path.is_relative_to(_SRC):
+        return source_index.tree(path)
+    return ast.parse(path.read_text(encoding="utf-8"))
+
+
+def _trees_under(where: Path) -> list[tuple[Path, ast.Module]]:
+    """Every ``.py`` file under *where* (or *where* itself, a file) with its tree, in path order.
+    The repository's own package is the index's walk; a fixture root is walked here."""
+    if not where.is_dir():
+        return [(where, _parsed(where))]
+    if where.is_relative_to(_SRC):
+        paths = source_index.under(source_index.package_files(), where)
+    else:
+        paths = sorted(where.rglob("*.py"))
+    return [(path, _parsed(path)) for path in paths]
+
+
 def _census(src: Path, manifest) -> dict[str, list[Site]]:
     """Every call under *src* that loads a module by its name, by ``file::qualname``."""
     modules = manifest.package_modules(src.parents[1])
     sites: dict[str, list[Site]] = {}
-    for path in sorted(src.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+    for path, tree in _trees_under(src):
         aliases = _aliases(tree)
         constants = _module_constants(tree)
         rel = path.relative_to(src).as_posix()
@@ -290,8 +310,8 @@ def _census(src: Path, manifest) -> dict[str, list[Site]]:
 def _calls(name: str, where: Path = _SRC) -> list[ast.Call]:
     """Every call of a function or class called *name* under *where*."""
     found: list[ast.Call] = []
-    for path in sorted(where.rglob("*.py")) if where.is_dir() else [where]:
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+    for _path, tree in _trees_under(where):
+        for node in ast.walk(tree):
             if isinstance(node, ast.Call) and _dotted(node.func, {}).split(".")[-1] == name:
                 found.append(node)
     return found
@@ -309,7 +329,7 @@ def _first_strings(name: str, where: Path = _SRC) -> set[str]:
 def _constant(rel: str, name: str) -> set[str]:
     """The strings of a module-level constant in ``src/personalclaw/<rel>``, a ``module:attr``
     reference read as its module."""
-    tree = ast.parse((_SRC / rel).read_text(encoding="utf-8"))
+    tree = _parsed(_SRC / rel)
     return {t.partition(":")[0] for t in _texts(_module_constants(tree).get(name))}
 
 
@@ -321,7 +341,7 @@ def _in_process_tool_modules() -> set[str]:
         for k in c.keywords
         if k.arg == "module" and isinstance(k.value, ast.Constant)
     }
-    tree = ast.parse((_SRC / "agents" / "native" / "tools.py").read_text(encoding="utf-8"))
+    tree = _parsed(_SRC / "agents" / "native" / "tools.py")
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef) and node.name == "InProcessMcpToolProvider":
             init = next(n for n in node.body if getattr(n, "name", "") == "__init__")
@@ -361,7 +381,7 @@ def _sdk_modules() -> set[str]:
 
 def _required_deps() -> set[str]:
     """The modules the gateway's own dependency check asks for (``Gateway._REQUIRED_DEPS``)."""
-    tree = ast.parse((_SRC / "gateway.py").read_text(encoding="utf-8"))
+    tree = _parsed(_SRC / "gateway.py")
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign) and any(
             isinstance(t, ast.Name) and t.id == "_REQUIRED_DEPS" for t in node.targets
@@ -505,10 +525,10 @@ def _imported_in_the_package(skip: Path | None = None) -> set[str]:
     """The top-level name of every module an import statement in the package names (outside
     *skip*)."""
     tops: set[str] = set()
-    for path in _SRC.rglob("*.py"):
+    for path, tree in _trees_under(_SRC):
         if skip is not None and path.is_relative_to(skip):
             continue
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 tops |= {a.name.split(".", 1)[0] for a in node.names}
             elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
@@ -573,7 +593,7 @@ class TestTheNativeAppsReachTheBundle:
         native = _SRC / "apps" / "native"
         imported = _imported_in_the_package(skip=native)
         for path in files:
-            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            for node in ast.walk(_parsed(path)):
                 if isinstance(node, ast.Import):
                     names = [alias.name for alias in node.names]
                 elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:

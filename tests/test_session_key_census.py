@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw import session_keys
 from personalclaw.guardrails.policy import is_unattended_session
@@ -148,8 +149,12 @@ def _callee(call: ast.Call) -> str:
 class Census:
     """The session keys a set of modules mints, keyed by module name."""
 
-    def __init__(self, sources: dict[str, str]) -> None:
-        self.modules = {name: _Module(name, ast.parse(text)) for name, text in sources.items()}
+    def __init__(self, sources: dict[str, str | ast.Module]) -> None:
+        """*sources* maps a module's name to its text, or to its parsed tree."""
+        self.modules = {
+            name: _Module(name, text if isinstance(text, ast.Module) else ast.parse(text))
+            for name, text in sources.items()
+        }
 
     # ── what a key's prefix is spelled by ────────────────────────────────────────────────
     def _module_named(self, module: _Module, local: str) -> str | None:
@@ -303,13 +308,14 @@ def violations(census: Census) -> list[str]:
     return sorted(said)
 
 
-def _tree_sources() -> dict[str, str]:
-    sources: dict[str, str] = {}
-    for path in sorted(PACKAGE.rglob("*.py")):
+def _tree_sources() -> dict[str, str | ast.Module]:
+    """Every package module's tree by its dotted name, from the suite's one source index."""
+    sources: dict[str, str | ast.Module] = {}
+    for path, tree in source_index.package_trees():
         parts = list(path.relative_to(SRC).with_suffix("").parts)
         if parts[-1] == "__init__":
             parts = parts[:-1]
-        sources[".".join(parts)] = path.read_text(encoding="utf-8")
+        sources[".".join(parts)] = tree
     return sources
 
 

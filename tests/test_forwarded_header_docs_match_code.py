@@ -35,6 +35,8 @@ from __future__ import annotations
 import pathlib
 import re
 
+import source_index
+
 import personalclaw
 
 SRC = pathlib.Path(personalclaw.__file__).resolve().parent
@@ -65,8 +67,8 @@ _HEADER_READ_RES = (
 
 def _forwarded_headers_read_by_code() -> set[str]:
     found: set[str] = set()
-    for path in sorted(SRC.rglob("*.py")):
-        text = path.read_text(encoding="utf-8")
+    for path in source_index.package_files():
+        text = source_index.text(path)
         for pattern in _HEADER_READ_RES:
             for name in pattern.findall(text):
                 if _FORWARDED_RE.fullmatch(name):

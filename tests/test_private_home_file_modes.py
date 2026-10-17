@@ -18,13 +18,13 @@ The static legs below catch a wide literal mode handed to the writer anywhere in
 from __future__ import annotations
 
 import ast
-import functools
 import json
 import os
 import stat
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw.atomic_write import atomic_write, atomic_write_bytes
 from personalclaw.config import loader as config_loader
@@ -140,13 +140,9 @@ def test_mcp_json_is_private_whether_new_or_rewritten():
     assert json.loads(mcp.read_text())["mcpServers"]["x"]["command"] == "true"
 
 
-@functools.lru_cache(maxsize=1)
 def _sources() -> tuple[tuple[Path, ast.Module], ...]:
-    """Every module under ``src/``, parsed once for both static legs."""
-    return tuple(
-        (path, ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
-        for path in sorted(SRC.rglob("*.py"))
-    )
+    """Every module under ``src/``, parsed, from the suite's one source index."""
+    return tuple(source_index.package_trees())
 
 
 def _called_name(call: ast.Call) -> str:

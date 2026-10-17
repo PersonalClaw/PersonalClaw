@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import source_index
 
 import personalclaw
 
@@ -352,11 +353,11 @@ def _registrations(verb: str) -> tuple[list[_Route], list[str]]:
     adds = {"GET": "add_get", "POST": "add_post"}
     routes: list[_Route] = []
     unresolved: list[str] = []
-    for py in sorted(SRC.rglob("*.py")):
-        text = py.read_text(encoding="utf-8")
+    for py in source_index.package_files():
+        text = source_index.text(py)
         if not any(verb_name in text for verb_name in (adds[verb], "add_route", "web.")):
             continue
-        tree = ast.parse(text)
+        tree = source_index.tree(py)
         parent = {c: p for p in ast.walk(tree) for c in ast.iter_child_nodes(p)}
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):

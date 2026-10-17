@@ -35,6 +35,7 @@ import re
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw.loop.loop import ACTIVE_STATUSES, LoopStatus
 
@@ -83,7 +84,7 @@ def _registry_keys() -> set[str]:
 def _web_sources() -> list[Path]:
     return [
         p
-        for p in sorted(_WEB.rglob("*.ts*"))
+        for p in source_index.web_files()
         if p.suffix in {".ts", ".tsx"} and not p.name.endswith(".test.ts")
     ]
 
@@ -131,7 +132,7 @@ def test_there_is_exactly_one_loop_status_registry():
         for p in _web_sources()
         if p != _REGISTRY
         and p.name != "useAgentActivity.ts"  # a projection, not a vocabulary — see above
-        and _REGISTRY_ROW.search(p.read_text(encoding="utf-8"))
+        and _REGISTRY_ROW.search(source_index.text(p))
     ]
     assert not others, (
         f"a second loop-status registry reappeared: {[str(p) for p in others]}. The words and "
@@ -147,7 +148,7 @@ def test_no_surface_rewrites_the_active_status_set_by_hand():
     others = [
         p.relative_to(_REPO)
         for p in _web_sources()
-        if p != _REGISTRY and _ACTIVE_LITERAL.search(p.read_text(encoding="utf-8"))
+        if p != _REGISTRY and _ACTIVE_LITERAL.search(source_index.text(p))
     ]
     assert not others, (
         f"a hand-written active-loop-status set reappeared: {[str(p) for p in others]}. Import "

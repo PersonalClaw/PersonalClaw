@@ -41,6 +41,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw import mcp_core
 from personalclaw.agents.native.runtime import NativeAgentRuntime
@@ -93,8 +94,7 @@ def _tool_definition_calls() -> list[tuple[str, ast.Call]]:
     """Every call that builds a ``ToolDefinition`` in the package, under any alias it is
     imported as (the runtime builds its meta-tools as ``_TD``)."""
     found: list[tuple[str, ast.Call]] = []
-    for path in sorted(_SRC.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+    for path, tree in source_index.package_trees():
         names = {"ToolDefinition"} | {
             alias.asname
             for node in ast.walk(tree)

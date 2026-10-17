@@ -37,6 +37,7 @@ import re
 from pathlib import Path
 
 import pytest
+import source_index
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -170,11 +171,17 @@ def _literal_port_sites(root: Path) -> set[tuple[str, int]]:
     """
     found: set[tuple[str, int]] = set()
     needle = f":{_GUESSED_PORT}"
-    for py in sorted(root.rglob("*.py")):
-        try:
-            tree = ast.parse(py.read_text(encoding="utf-8"))
-        except (SyntaxError, UnicodeDecodeError):  # pragma: no cover - defensive
-            continue
+    # The repository's own package is the suite's one source index; a fixture root is walked here.
+    if root == SRC:
+        trees = source_index.package_trees()
+    else:
+        trees = []
+        for py in sorted(root.rglob("*.py")):
+            try:
+                trees.append((py, ast.parse(py.read_text(encoding="utf-8"))))
+            except (SyntaxError, UnicodeDecodeError):  # pragma: no cover - defensive
+                continue
+    for py, tree in trees:
         docstrings: set[int] = set()
         for node in ast.walk(tree):
             if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -234,7 +241,7 @@ class TestNoSiteGuessesThePortFromALiteral:
         """
         pattern = re.compile(rf":{_GUESSED_PORT}\b")
         text_hits = sum(
-            len(pattern.findall(py.read_text(encoding="utf-8"))) for py in SRC.rglob("*.py")
+            len(pattern.findall(source_index.text(py))) for py in source_index.package_files()
         )
         assert text_hits >= 5, f"only {text_hits} textual occurrences — the scan lost its corpus"
         assert len(_literal_port_sites(SRC)) == 0

@@ -14,10 +14,13 @@ key — the owning file is.
 
 from __future__ import annotations
 
+import io
 import pathlib
 import re
 import tokenize
 from pathlib import Path
+
+import source_index
 
 from personalclaw.resilience import degraded
 
@@ -186,11 +189,11 @@ def _code_only(path: Path) -> str:
     dropped with the rest — a name inside a string is not a call. An unparseable file falls
     back to its raw text: a syntax error must not make a real call site invisible.
     """
+    text = source_index.text(path)
     try:
-        with path.open("rb") as fh:
-            tokens = list(tokenize.tokenize(fh.readline))
-    except (SyntaxError, tokenize.TokenError, OSError):
-        return path.read_text(encoding="utf-8", errors="ignore")
+        tokens = list(tokenize.tokenize(io.BytesIO(text.encode("utf-8")).readline))
+    except (SyntaxError, tokenize.TokenError):
+        return text
     return "\n".join(t.string for t in tokens if t.type not in (tokenize.COMMENT, tokenize.STRING))
 
 
@@ -198,7 +201,7 @@ def _files_calling_one_shot() -> set[str]:
     """Repo-relative (posix) paths of every source file that CALLS
     one_shot_completion — excluding llm_helpers.py, which DEFINES it."""
     hits: set[str] = set()
-    for path in _SRC.rglob("*.py"):
+    for path in source_index.package_files():
         if path.name == "llm_helpers.py":
             continue
         if _CALL_RE.search(_code_only(path)):

@@ -24,6 +24,7 @@ import types
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw.dashboard import handlers_system
 from personalclaw.local_models import fit, residency
@@ -43,8 +44,8 @@ _GB = 1024**3
 def _census(markers: tuple[str, ...]) -> dict[str, list[int]]:
     """``{relative path: [line numbers]}`` for every file under ``src/personalclaw``."""
     hits: dict[str, list[int]] = {}
-    for path in sorted(_SRC.rglob("*.py")):
-        lines = path.read_text(encoding="utf-8").splitlines()
+    for path in source_index.package_files():
+        lines = source_index.text(path).splitlines()
         found = [n for n, line in enumerate(lines, 1) if any(m in line for m in markers)]
         if found:
             hits[path.relative_to(_SRC).as_posix()] = found

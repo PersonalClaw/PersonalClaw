@@ -25,6 +25,7 @@ import ast
 import pathlib
 
 import pytest
+import source_index
 
 import personalclaw
 from personalclaw.safety_flags import (
@@ -155,7 +156,7 @@ def _confirm_reads(path: pathlib.Path) -> list[tuple[int, str]]:
     READ is what is banned, so there is nothing left for a wrapper to be wrong about.
     """
     found: list[tuple[int, str]] = []
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = source_index.tree(path)
     for node in ast.walk(tree):
         key: str | None = None
         if (
@@ -183,7 +184,7 @@ def test_no_module_outside_safety_flags_reads_a_confirm_field():
     nobody centralised is a coercion that will disagree with the other twenty-three."""
     offenders = [
         f"{path.relative_to(SRC)}:{lineno}  {src}"
-        for path in sorted(SRC.rglob("*.py"))
+        for path in source_index.package_files()
         if path.name != OWNER
         for lineno, src in _confirm_reads(path)
     ]
@@ -210,10 +211,9 @@ def test_every_destructive_door_calls_the_predicate():
     The number is a floor, not an enumeration — a new door raises it and never lowers it.
     """
     callers: dict[str, int] = {}
-    for path in sorted(SRC.rglob("*.py")):
+    for path, tree in source_index.package_trees():
         if path.name == OWNER:
             continue
-        tree = ast.parse(path.read_text(encoding="utf-8"))
         n = sum(
             1
             for node in ast.walk(tree)
@@ -259,7 +259,7 @@ def test_the_app_install_doors_gate_on_a_reviewed_digest_not_on_confirm():
     in `test_app_install_needs_consent.py`; this pins the structure the list above used to.
     """
     path = SRC / "dashboard" / "handlers" / "apps.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = source_index.tree(path)
     doors = {
         node.name: node
         for node in ast.walk(tree)

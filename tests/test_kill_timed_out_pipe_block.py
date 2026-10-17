@@ -48,6 +48,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import source_index
 
 from personalclaw.config import AppConfig
 from personalclaw.loop import gates
@@ -225,10 +226,19 @@ _UPDATES_LEAF = {
 }
 
 
-def _spawns_by_target(source: str, callee: str) -> dict[str, set[str]]:
+def _parsed(source: str | ast.Module) -> ast.Module:
+    return source if isinstance(source, ast.Module) else ast.parse(source)
+
+
+def _package_tree(*parts: str) -> ast.Module:
+    """The tree of ``src/personalclaw/<parts>``, from the suite's one source index."""
+    return source_index.tree(_SRC.joinpath(*parts))
+
+
+def _spawns_by_target(source: str | ast.Module, callee: str) -> dict[str, set[str]]:
     """Map assignment-target name -> set of keyword names, for each *callee* spawn."""
     found: dict[str, set[str]] = {}
-    for node in ast.walk(ast.parse(source)):
+    for node in ast.walk(_parsed(source)):
         if not isinstance(node, ast.Assign) or len(node.targets) != 1:
             continue
         target = node.targets[0]
@@ -247,7 +257,7 @@ def _spawns_by_target(source: str, callee: str) -> dict[str, set[str]]:
 
 def test_only_the_censused_spawns_lead_their_own_group():
     """Both directions: the two forking spawns opt in, the five leaves stay out."""
-    src = (_SRC / "dashboard" / "handlers" / "updates.py").read_text()
+    src = _package_tree("dashboard", "handlers", "updates.py")
     spawns = _spawns_by_target(src, "create_subprocess_exec")
 
     missing = {n for n in _UPDATES_GROUP_LED if "start_new_session" not in spawns.get(n, set())}
@@ -264,13 +274,13 @@ def test_only_the_censused_spawns_lead_their_own_group():
     )
 
 
-def _timeout_kill_style(source: str) -> dict[str, str]:
+def _timeout_kill_style(source: str | ast.Module) -> dict[str, str]:
     """Map killed-variable name -> ``"pid"`` or ``"group"``, per timeout handler.
 
     Keyed by NAME, not line, so ordinary edits above a handler don't churn the rail.
     """
     style: dict[str, str] = {}
-    for node in ast.walk(ast.parse(source)):
+    for node in ast.walk(_parsed(source)):
         if not isinstance(node, ast.ExceptHandler):
             continue
         if "TimeoutError" not in (ast.dump(node.type) if node.type else ""):
@@ -295,7 +305,7 @@ def test_updates_timeout_handlers_match_the_census_exactly():
     and gave a non-forking child a session it doesn't need; a forking spawn drifting to
     ``pid`` means the grandchild is holding the pipe again.
     """
-    src = (_SRC / "dashboard" / "handlers" / "updates.py").read_text()
+    src = _package_tree("dashboard", "handlers", "updates.py")
     style = _timeout_kill_style(src)
 
     assert {n for n, s in style.items() if s == "group"} == _UPDATES_GROUP_LED, (
@@ -311,7 +321,7 @@ def test_updates_timeout_handlers_match_the_census_exactly():
 def test_the_checkouts_install_leads_its_group_and_its_timeout_kills_the_group():
     """checkout_update.py has ONE spawn: the checkout's install (pip install -e / uv sync), which
     forks build backends and compilers that inherit its pipes."""
-    src = (_SRC / "checkout_update.py").read_text()
+    src = _package_tree("checkout_update.py")
     assert _timeout_kill_style(src) == {"install": "group"}
     spawns = _spawns_by_target(src, "create_subprocess_exec")
     assert set(spawns) == {"install"}, spawns
@@ -323,7 +333,7 @@ def test_the_checkouts_install_leads_its_group_and_its_timeout_kills_the_group()
 
 def test_the_loop_gate_kills_its_shells_group():
     """gates.py has ONE spawn — an arbitrary ``/bin/sh -c``, so it always forks."""
-    src = (_SRC / "loop" / "gates.py").read_text()
+    src = _package_tree("loop", "gates.py")
     assert _timeout_kill_style(src) == {"proc": "group"}
     spawns = _spawns_by_target(src, "create_subprocess_limited")
     assert "start_new_session" in spawns["proc"], (
@@ -353,10 +363,10 @@ _FILES_PID_KILL = {
 _FILES_GROUP_LED = {"_git"}
 
 
-def _spawn_functions(source: str) -> dict[str, dict[str, object]]:
+def _spawn_functions(source: str | ast.Module) -> dict[str, dict[str, object]]:
     """Map function name -> {kill: "group"|"pid"|None, own_session: bool} per spawn site."""
     out: dict[str, dict[str, object]] = {}
-    for fn in ast.walk(ast.parse(source)):
+    for fn in ast.walk(_parsed(source)):
         if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         dumped = ast.dump(fn)
@@ -388,7 +398,7 @@ def test_every_file_browser_spawn_reaps_its_timeout():
     reaper that stops reaping reds; and a leaf that acquires a session it doesn't need
     reds too.
     """
-    src = (_SRC / "dashboard" / "handlers" / "files.py").read_text()
+    src = _package_tree("dashboard", "handlers", "files.py")
     sites = _spawn_functions(src)
 
     unclassified = set(sites) - _FILES_REAPED - _FILES_PID_KILL
@@ -618,7 +628,8 @@ def _reaped_by_owner(fn: ast.AST) -> set[str]:
 
 
 def _src_files() -> list[Path]:
-    return sorted(_SRC.rglob("*.py"))
+    """Every package module, from the suite's one source index."""
+    return list(source_index.package_files())
 
 
 def _async_spawn_census() -> tuple[dict[str, bool], dict[str, str]]:
@@ -627,10 +638,7 @@ def _async_spawn_census() -> tuple[dict[str, bool], dict[str, str]]:
     routed: dict[str, bool] = {}
     no_path: dict[str, str] = {}
     for path in _src_files():
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (OSError, SyntaxError):  # pragma: no cover
-            continue
+        tree = source_index.tree(path)
         rel = path.relative_to(_SRC).as_posix()
         for qual, fn in _iter_functions(tree):
             spawn_vars = _async_spawn_vars(fn)
@@ -715,10 +723,7 @@ def test_the_owner_is_the_only_hand_rolled_group_kill_on_a_timeout_path():
         rel = path.relative_to(_SRC).as_posix()
         if rel == "cancellation.py":  # the owner itself
             continue
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (OSError, SyntaxError):  # pragma: no cover
-            continue
+        tree = source_index.tree(path)
         for qual, fn in _iter_functions(tree):
             for handler in _timeout_handlers(fn):
                 # Direct `os.killpg`, or a call to a local helper that wraps one.

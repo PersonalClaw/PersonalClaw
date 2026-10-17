@@ -21,7 +21,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import source_index
+
 _WEB = Path("web/src")
+
+
+def _tsx_files() -> list[Path]:
+    """Every ``.tsx`` under ``web/src``, from the suite's one source index."""
+    return [p for p in source_index.web_files() if p.suffix == ".tsx"]
 
 
 def test_no_overflowmenu_primitive():
@@ -33,7 +40,9 @@ def test_no_overflowmenu_primitive():
         "plan removed)."
     )
     offenders = [
-        str(f) for f in _WEB.rglob("*.tsx") if "OverflowMenu" in f.read_text(encoding="utf-8")
+        str(f.relative_to(source_index.REPO))
+        for f in _tsx_files()
+        if "OverflowMenu" in source_index.text(f)
     ]
     assert not offenders, (
         "`OverflowMenu` referenced again — use HeaderControl with priority='low' in a "
@@ -45,7 +54,9 @@ def test_no_overflowmenu_primitive():
 def test_no_headerbutton_alias():
     """`HeaderButton` (the old 2-tier control) is gone — use `HeaderControl`."""
     offenders = [
-        str(f) for f in _WEB.rglob("*.tsx") if "HeaderButton" in f.read_text(encoding="utf-8")
+        str(f.relative_to(source_index.REPO))
+        for f in _tsx_files()
+        if "HeaderButton" in source_index.text(f)
     ]
     assert not offenders, (
         "`HeaderButton` found — it was replaced by `HeaderControl` (adds priority / "

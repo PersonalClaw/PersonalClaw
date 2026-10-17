@@ -132,6 +132,7 @@ import ast
 import pathlib
 
 import pytest
+import source_index
 
 SRC = pathlib.Path(__file__).resolve().parents[1] / "src"
 PKG = SRC / "personalclaw"
@@ -292,8 +293,7 @@ def _module_name(path: pathlib.Path) -> str:
 def _body_readers() -> list[tuple[str, str, int, str]]:
     """(module, qualname, line, annotation) for every body reader in the package."""
     found: list[tuple[str, str, int, str]] = []
-    for path in sorted(PKG.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for path, tree in source_index.package_trees():
         module = _module_name(path)
         for qualname, fn in _walk_functions(tree):
             line = _reads_the_body(fn)
@@ -318,8 +318,7 @@ def _swallowing_body_reads() -> list[tuple[str, int, str]]:
     the count exists to find the arm that silently continues, not to audit exception ladders.
     """
     found: list[tuple[str, int, str]] = []
-    for path in sorted(PKG.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for path, tree in source_index.package_trees():
         module = _module_name(path)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Try) or not node.handlers:
@@ -364,8 +363,7 @@ def test_the_swallow_classifier_still_recognises_guarded_reads() -> None:
     If that collapses, this rail is green for the wrong reason.
     """
     guarded = 0
-    for path in sorted(PKG.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for path, tree in source_index.package_trees():
         for node in ast.walk(tree):
             if not isinstance(node, ast.Try) or not node.handlers:
                 continue
@@ -388,12 +386,12 @@ def test_the_package_has_python_sources_to_scan() -> None:
     1128 source files and 186 body-reading functions (1127 and 265 on ``dd5c279db`` before
     it), so a collapse to a handful means the scan root moved, not that the defect was fixed.
     """
-    sources = list(PKG.rglob("*.py"))
+    sources = list(source_index.package_files())
     assert len(sources) > 400, f"expected the whole package, scanned only {len(sources)} files"
     readers_and_handlers = sum(
         1
         for path in sources
-        for _, fn in _walk_functions(ast.parse(path.read_text(encoding="utf-8")))
+        for _, fn in _walk_functions(source_index.tree(path))
         if _reads_the_body(fn) is not None
     )
     assert readers_and_handlers > 100, (
@@ -443,7 +441,7 @@ def test_every_exemption_is_still_a_real_reader() -> None:
         module, qualname = key
         path = SRC / (module.replace(".", "/") + ".py")
         assert path.is_file(), f"exemption {module}.{qualname}: {module} no longer exists"
-        names = {q for q, _ in _walk_functions(ast.parse(path.read_text(encoding="utf-8")))}
+        names = {q for q, _ in _walk_functions(source_index.tree(path))}
         assert qualname in names, f"exemption {module}.{qualname}: no such function any more"
         assert key in readers, (
             f"exemption {module}.{qualname} no longer reads a request body — delete the "
@@ -460,7 +458,7 @@ def test_the_one_reader_is_where_it_is_declared_to_be() -> None:
     module, qualname = THE_READER
     path = SRC / (module.replace(".", "/") + ".py")
     assert path.is_file(), f"{module} does not exist — the exemption names no real function"
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = source_index.tree(path)
     names = {q for q, _ in _walk_functions(tree)}
     assert qualname in names, f"{module} defines no {qualname}"
     assert (module, qualname) in {(m, q) for m, q, _, _ in _body_readers()}, (
@@ -478,7 +476,7 @@ def test_the_one_reader_can_refuse_a_malformed_body() -> None:
     `tests/test_request_validation.py`.
     """
     path = SRC / (THE_READER[0].replace(".", "/") + ".py")
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = source_index.tree(path)
     fn = next(f for q, f in _walk_functions(tree) if q == THE_READER[1])
     raises = [n for n in ast.walk(fn) if isinstance(n, ast.Raise)]
     assert raises, (
@@ -502,9 +500,8 @@ def test_the_one_reader_can_refuse_a_malformed_body() -> None:
 def test_request_json_is_called_only_by_the_one_reader() -> None:
     """Eventually: nothing outside the one reader touches `request.json()` at all."""
     callers: list[str] = []
-    for path in sorted(PKG.rglob("*.py")):
+    for path, tree in source_index.package_trees():
         module = _module_name(path)
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for qualname, fn in _walk_functions(tree):
             line = _reads_the_body(fn)
             if line is not None and (module, qualname) != THE_READER:

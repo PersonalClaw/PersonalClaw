@@ -25,10 +25,16 @@ import json
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw.approval_answer import YOU
 
 WEB = Path(__file__).resolve().parents[1] / "web" / "src"
+
+
+def _ts_files() -> list[Path]:
+    """Every ``.ts``/``.tsx`` file under ``web/src``, from the suite's one source index."""
+    return [p for p in source_index.web_files() if p.suffix.startswith(".ts")]
 
 
 # ── the one owner ─────────────────────────────────────────────────────────────
@@ -239,30 +245,30 @@ class TestBothPermissionSurfacesAgree:
         decoder reds here instead of shipping a surface that casts the wire."""
         readers = sorted(
             p.relative_to(WEB).as_posix()
-            for p in WEB.rglob("*.ts*")
+            for p in _ts_files()
             if not p.name.endswith((".test.ts", ".test.tsx"))
-            and "blast_radius" in p.read_text(encoding="utf-8")
+            and "blast_radius" in source_index.text(p)
         )
         # api.ts declares the field and approvalMeta.ts documents it; the rest READ it.
         assert [r for r in readers if r not in ("lib/api.ts", "pages/chat/approvalMeta.ts")] == (
             self.READERS
         ), readers
         for rel in self.READERS:
-            text = (WEB / rel).read_text(encoding="utf-8")
+            text = source_index.text(WEB / rel)
             assert "blastRadiusOf(" in text, f"{rel} reads blast_radius without the one decoder"
 
     def test_no_surface_derives_a_radius_of_its_own(self) -> None:
-        for p in WEB.rglob("*.ts*"):
+        for p in _ts_files():
             if p.name.endswith((".test.ts", ".test.tsx")):
                 continue
-            text = p.read_text(encoding="utf-8")
+            text = source_index.text(p)
             assert "deriveBlastRadius" not in text, p
             assert "readOnlyOf" not in text, p
 
     def test_the_source_census_is_not_vacuous(self) -> None:
         """Both scans above are greps over a tree; prove the tree was actually read."""
         assert (WEB / "pages" / "chat" / "approvalMeta.ts").exists()
-        assert len(list(WEB.rglob("*.ts*"))) > 100
-        assert "export function blastRadiusOf" in (
+        assert len(_ts_files()) > 100
+        assert "export function blastRadiusOf" in source_index.text(
             WEB / "pages" / "chat" / "approvalMeta.ts"
-        ).read_text(encoding="utf-8")
+        )

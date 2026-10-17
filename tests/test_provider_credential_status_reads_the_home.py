@@ -26,6 +26,7 @@ import re
 from dataclasses import dataclass, field
 
 import pytest
+import source_index
 
 _SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "personalclaw"
 
@@ -117,8 +118,8 @@ def test_no_call_site_passes_the_credentials_file_as_the_home():
     """
     offenders = []
     pattern = re.compile(r"CredentialStore\([^#]*?credentials\.json")
-    for path in _SRC.rglob("*.py"):
-        for num, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for path in source_index.package_files():
+        for num, line in enumerate(source_index.text(path).splitlines(), 1):
             if pattern.search(line):
                 offenders.append(f"{path.relative_to(_SRC)}:{num}: {line.strip()}")
     assert not offenders, (

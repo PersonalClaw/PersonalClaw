@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import private_walkers
 import pytest
 import security_census
 import yaml
@@ -2139,6 +2140,113 @@ _TESTED_IF = "if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' 
 _MACOS_RUN = "uv run pytest -n 2 --dist worksteal -q"
 
 
+# ── No test walks a source root itself ───────────────────────────────────────────────────────
+#
+# A tree rail reads the package, web/src, docs and the workflows through tests/source_index.py,
+# which walks each root once per worker. A test that walks one itself pays the walk (and usually a
+# parse of everything it finds) again, inside its own time limit. The rule and its one recorded
+# exemption live in tests/private_walkers.py.
+
+_WALKER = "tests/test_walks.py"
+
+
+def _walker_scaffold(root: Path) -> None:
+    """A tree where the rule holds: a test reads the package through the index, one walks a
+    folder of its own, and one lists a single folder of the package."""
+    _write(
+        root,
+        "tests/test_reads_the_index.py",
+        "import source_index\n\n\ndef test_it():\n    assert source_index.package_files()\n",
+    )
+    _write(
+        root,
+        "tests/test_walks_its_own.py",
+        "def test_it(tmp_path):\n    assert not list(tmp_path.rglob('*'))\n",
+    )
+    _write(
+        root,
+        "tests/test_lists_one_folder.py",
+        "from pathlib import Path\n\nSRC = Path(__file__).resolve().parents[1] / 'src' / "
+        "'personalclaw'\n\n\ndef test_it():\n    assert list((SRC / 'sdk').glob('*.py'))\n",
+    )
+
+
+def _walker(text: str) -> Callable[[Path], None]:
+    return lambda root: _write(root, _WALKER, "from pathlib import Path\n\n" + text)
+
+
+NO_TEST_WALKS_A_SOURCE_ROOT_ITSELF = Row(
+    name="no test walks a source root itself",
+    check=private_walkers.private_walks,
+    scaffold=_walker_scaffold,
+    controls=(
+        Control(
+            "an rglob of the package, spelled from the test file, fails",
+            _walker(
+                "SRC = Path(__file__).resolve().parents[1] / 'src' / 'personalclaw'\n\n\n"
+                "def test_it():\n    assert list(SRC.rglob('*.py'))\n"
+            ),
+        ),
+        Control(
+            "an rglob from a package module's __file__ fails",
+            _walker(
+                "import personalclaw\n\n\ndef test_it():\n"
+                "    root = Path(personalclaw.__file__).parent\n"
+                "    assert list(root.rglob('*.py'))\n"
+            ),
+        ),
+        Control(
+            "an os.walk of web/src fails",
+            _walker("import os\n\n\ndef test_it():\n    assert list(os.walk('web/src'))\n"),
+        ),
+        Control(
+            "a recursive glob.glob of docs fails",
+            _walker(
+                "import glob\n\n\ndef test_it():\n"
+                "    assert glob.glob('docs/**/*.md', recursive=True)\n"
+            ),
+        ),
+        Control(
+            "a '**' glob of the workflows, through a name bound in the function, fails",
+            _walker(
+                "def test_it():\n    wf = Path('.github') / 'workflows'\n"
+                "    assert list(wf.glob('**/*.yml'))\n"
+            ),
+        ),
+        Control(
+            "a recursive glob under the package, joined to a part read at run time, fails",
+            _walker(
+                "import glob\n\nROOT = Path(__file__).resolve().parents[1]\n\n\n"
+                "def test_it():\n    for pattern in ('**/*.json',):\n"
+                "        assert glob.glob(str(ROOT / 'src' / 'personalclaw' / pattern), "
+                "recursive=True)\n"
+            ),
+        ),
+        Control(
+            "an exemption that names no walk any more fails",
+            lambda root: _write(
+                root,
+                next(iter(private_walkers.NOT_THROUGH_THE_INDEX)).split("::")[0],
+                "def test_it():\n    pass\n",
+            ),
+        ),
+        Control(
+            "a walk of tests/ is not a source root, and passes",
+            _walker(
+                "TESTS = Path(__file__).resolve().parent\n\n\n"
+                "def test_it():\n    assert list(TESTS.rglob('*.py'))\n"
+            ),
+            fails=False,
+        ),
+        Control(
+            "a walk of a path the function was handed passes",
+            _walker("def walk(root):\n    return list(root.rglob('*'))\n"),
+            fails=False,
+        ),
+    ),
+)
+
+
 ROWS: tuple[Row, ...] = (
     SECURITY_MARKER,
     _toolchain_row(
@@ -3231,6 +3339,7 @@ ROWS: tuple[Row, ...] = (
         ),
     ),
     FIXED_WAITS,
+    NO_TEST_WALKS_A_SOURCE_ROOT_ITSELF,
 )
 
 

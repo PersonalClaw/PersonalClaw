@@ -23,6 +23,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw.sqlite_compat import sqlite3
 
@@ -241,7 +242,7 @@ def _driver_names(tree: ast.AST) -> set[str]:
 def _file_opens(path: Path) -> list[int]:
     """The lines that open a database FILE with the driver's own ``connect``: not ``:memory:``,
     and not a URI (``uri=True``, which every read-only open passes)."""
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = source_index.tree(path)
     driver = _driver_names(tree)
     lines: list[int] = []
     for node in ast.walk(tree):
@@ -266,7 +267,7 @@ def test_a_store_opens_its_database_through_the_private_opener():
     """🔴 Red on integration: the staging log, the memory index, session search, the loop store and
     the workflow store opened theirs with the driver's own ``connect``."""
     found = {}
-    for path in sorted(_SRC.rglob("*.py")):
+    for path in source_index.package_files():
         rel = path.relative_to(_SRC).as_posix()
         if rel == _OPENER or rel in _TOOLING:
             continue

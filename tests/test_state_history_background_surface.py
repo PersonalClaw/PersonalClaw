@@ -24,6 +24,7 @@ import types
 from pathlib import Path
 
 import pytest
+import source_index
 
 import personalclaw
 from personalclaw.durability import state_history as sh
@@ -49,11 +50,7 @@ def _writing_surface_calls() -> dict[str, set[str]]:
     counted those would report this change as already done before a single line was written.
     """
     found: dict[str, set[str]] = {}
-    for path in sorted(SRC.rglob("*.py")):
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except SyntaxError:  # pragma: no cover - a template/fixture, never a producer
-            continue
+    for path, tree in source_index.package_trees():
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or not node.args:
                 continue
@@ -112,7 +109,7 @@ def test_the_producer_is_APPLIED_to_the_unattended_dispatch():
     decorated function too — the same "assert the call SITE, not the mechanism" reason the census
     exists at all.
     """
-    tree = ast.parse((SRC / "gateway.py").read_text(encoding="utf-8"))
+    tree = source_index.tree(SRC / "gateway.py")
     dispatches = [
         node
         for node in ast.walk(tree)
@@ -140,7 +137,7 @@ def test_a_MENTION_of_the_constant_does_not_count_as_a_producer():
     writer; a text scan would have scored both.
     """
     debounce = SRC / "durability" / "history_debounce.py"
-    text = debounce.read_text(encoding="utf-8")
+    text = source_index.text(debounce)
     assert (
         "SURFACE_BACKGROUND" in text
     ), "this discriminator is vacuous unless the file really does mention the constant"
@@ -149,7 +146,7 @@ def test_a_MENTION_of_the_constant_does_not_count_as_a_producer():
         "durability/history_debounce.py", set()
     ), "a READ of the constant was scored as a producer"
 
-    gateway_text = (SRC / "gateway.py").read_text(encoding="utf-8")
+    gateway_text = source_index.text(SRC / "gateway.py")
     prose = [
         line
         for line in gateway_text.splitlines()

@@ -41,6 +41,8 @@ import functools
 import textwrap
 from pathlib import Path
 
+import source_index
+
 _PACKAGE = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
 #: Whole-file calls of the standard library, by module and function.
@@ -162,11 +164,11 @@ def _name(func: ast.expr) -> str:
 
 
 class _Census:
-    """The census over modules given as ``{path under the package: source}``."""
+    """The census over modules given as ``{path under the package: parsed module}``."""
 
-    def __init__(self, sources: dict[str, str]) -> None:
-        self.trees = {rel: ast.parse(text) for rel, text in sources.items()}
-        self.module = {rel: self._module_name(rel) for rel in sources}
+    def __init__(self, trees: dict[str, ast.Module]) -> None:
+        self.trees = trees
+        self.module = {rel: self._module_name(rel) for rel in trees}
         self.defs: dict[str, ast.AST] = {}
         self.by_name: dict[str, list[str]] = collections.defaultdict(list)
         self.owner: dict[int, tuple[str, str, str | None]] = {}  # id(def) → (rel, qual, class)
@@ -356,11 +358,9 @@ class _Census:
 
 @functools.lru_cache(maxsize=1)
 def _package_census() -> _Census:
+    """The census of every package module, its trees from the suite's one source index."""
     return _Census(
-        {
-            path.relative_to(_PACKAGE).as_posix(): path.read_text(encoding="utf-8")
-            for path in sorted(_PACKAGE.rglob("*.py"))
-        }
+        {path.relative_to(_PACKAGE).as_posix(): tree for path, tree in source_index.package_trees()}
     )
 
 
@@ -449,7 +449,7 @@ _SHAPES = textwrap.dedent("""
 
 def test_the_census_finds_each_shape_on_the_loop_and_none_handed_off():
     """The falsification: source written to hold each shape, on the loop and handed off."""
-    on_loop, handing = _Census({"shapes.py": _SHAPES}).sites()
+    on_loop, handing = _Census({"shapes.py": ast.parse(_SHAPES)}).sites()
 
     assert sorted(on_loop) == [
         ("shapes.py", "copies", "shutil.copy"),

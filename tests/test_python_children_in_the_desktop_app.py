@@ -40,6 +40,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import source_index
 
 from personalclaw import self_update
 from personalclaw.cli import build_parser
@@ -153,8 +154,7 @@ def _census() -> dict[str, list[list[str]]]:
     A call of ``python_child_argv(<module>, …)`` is the argv it makes from an interpreter,
     ``-P -m <module>``."""
     sites: dict[str, list[list[str]]] = {}
-    for path in sorted(_SRC.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+    for path, tree in source_index.package_trees():
         constants = _module_constants(tree)
         rel = path.relative_to(_SRC).as_posix()
         scope: list[str] = []

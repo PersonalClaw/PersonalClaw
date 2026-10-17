@@ -30,6 +30,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import source_index
 
 from personalclaw.packs import bundled as pack_bundled
 from personalclaw.packs import fingerprint as fp
@@ -181,11 +182,7 @@ def test_reading_a_project_does_not_scan():
     """
     root = Path(fp.__file__).parents[1]
     callers: set[str] = set()
-    for path in sorted(root.rglob("*.py")):
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (OSError, SyntaxError):  # pragma: no cover
-            continue
+    for path, tree in source_index.package_trees():
         rel = path.relative_to(root).as_posix()
         # Attribute the call to its ENCLOSING FUNCTION, not just its file. Scoping this to
         # files would let a scan added to ``api_projects_get`` pass — same module as the

@@ -30,6 +30,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import source_index
 
 import personalclaw
 from personalclaw.apps import quality as quality_mod
@@ -649,12 +650,8 @@ def test_the_verifier_has_no_gateway_call_site():
 
     src = Path(pkg.__file__).resolve().parent
     importers: list[str] = []
-    for path in sorted(src.rglob("*.py")):
+    for path, tree in source_index.package_trees():
         if path.name == "quality.py" and path.parent.name == "apps":
-            continue
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (OSError, SyntaxError):
             continue
         for node in ast.walk(tree):
             mods: list[str] = []
@@ -671,7 +668,7 @@ def test_the_verifier_has_no_gateway_call_site():
         f"it or justify the exemption anew) — importers: {importers}"
     )
     # Vacuity floor: the scan really walks the package and really detects an import.
-    assert len(list(src.rglob("*.py"))) > 100
+    assert len(source_index.package_files()) > 100
     probe = ast.parse("from personalclaw.apps.quality import verify_app\n")
     assert any(isinstance(n, ast.ImportFrom) for n in ast.walk(probe))
 

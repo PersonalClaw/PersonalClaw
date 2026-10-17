@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+import source_index
 
 from personalclaw.triggers import claims as C
 from personalclaw.triggers import loop as L
@@ -1095,8 +1096,8 @@ def test_nothing_in_the_tree_creates_a_trigger_session(tmp_path):
 
     src = pathlib.Path(__file__).resolve().parent.parent / "src" / "personalclaw"
     creators = []
-    for py in sorted(src.rglob("*.py")):
-        for n, line in enumerate(py.read_text(encoding="utf-8").splitlines(), 1):
+    for py in source_index.package_files():
+        for n, line in enumerate(source_index.text(py).splitlines(), 1):
             if "get_or_create(" not in line or "def get_or_create" in line:
                 continue
             if re.search(r"session_key_for|cron:|trigger", line):

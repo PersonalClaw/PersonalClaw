@@ -49,6 +49,8 @@ import ast
 import re
 from pathlib import Path
 
+import source_index
+
 from personalclaw.errors import ERROR_CODES
 from personalclaw.http_errors import HTTP_ERROR_CODES
 from personalclaw.workflows.error_codes import WF_ERROR_CODES
@@ -86,11 +88,8 @@ _MAPPED_CODE_FLOOR = 40
 
 
 def _core_modules() -> list[Path]:
-    return [
-        p
-        for p in sorted(_CORE.rglob("*.py"))
-        if "__pycache__" not in p.parts and p != _REGISTRY_MODULE
-    ]
+    """Every package module but the registry's own, from the suite's one source index."""
+    return [p for p in source_index.package_files() if p != _REGISTRY_MODULE]
 
 
 def _literal_codes(node: ast.AST) -> list[str]:
@@ -102,8 +101,10 @@ def _literal_codes(node: ast.AST) -> list[str]:
     return out
 
 
-def scan(text: str, where: str = "?") -> tuple[dict[str, list[str]], dict[str, list[str]]]:
-    """``(raised, mapped)``, each ``code -> ["<where>:<line>", ...]``.
+def scan(
+    text: str | ast.Module, where: str = "?"
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """``(raised, mapped)`` of *text* (source, or its tree), each ``code -> ["<where>:<line>"]``.
 
     RAISED — a code literal in a position that *emits* it:
 
@@ -118,7 +119,7 @@ def scan(text: str, where: str = "?") -> tuple[dict[str, list[str]], dict[str, l
     """
     raised: dict[str, list[str]] = {}
     mapped: dict[str, list[str]] = {}
-    tree = ast.parse(text)
+    tree = text if isinstance(text, ast.Module) else ast.parse(text)
 
     def note(bucket: dict[str, list[str]], code: str, lineno: int) -> None:
         bucket.setdefault(code, []).append(f"{where}:{lineno}")
@@ -155,7 +156,7 @@ def _scan_core() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
     mapped: dict[str, list[str]] = {}
     for p in _core_modules():
         rel = str(p.relative_to(_CORE.parents[1]))
-        r, m = scan(p.read_text(encoding="utf-8"), rel)
+        r, m = scan(source_index.tree(p), rel)
         for bucket, found in ((raised, r), (mapped, m)):
             for code, sites in found.items():
                 bucket.setdefault(code, []).extend(sites)

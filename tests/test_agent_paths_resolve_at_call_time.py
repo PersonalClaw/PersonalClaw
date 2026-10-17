@@ -30,6 +30,7 @@ import json
 from pathlib import Path
 
 import pytest
+import source_index
 
 
 def test_the_agents_dir_is_a_resolver_not_a_frozen_constant() -> None:
@@ -100,8 +101,8 @@ def test_the_dead_mcp_json_constant_is_gone() -> None:
     src = Path(agent.__file__).resolve().parents[1]
     offenders = [
         f"{p.relative_to(src)}"
-        for p in src.rglob("*.py")
-        if "_USER_MCP_JSON" in p.read_text(encoding="utf-8")
+        for p in source_index.package_files()
+        if "_USER_MCP_JSON" in source_index.text(p)
     ]
     assert not offenders, f"_USER_MCP_JSON came back: {offenders}"
 

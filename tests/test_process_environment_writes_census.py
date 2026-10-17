@@ -27,6 +27,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import source_index
+
 _AS_A_COMMAND_STARTS: dict[str, str] = {
     "_frozen_child.py::restore_environment": (
         "what the frozen bundle's own start-up added, taken back out before it runs anything"
@@ -156,9 +158,8 @@ def writes(tree: ast.Module) -> list[tuple[str, int, list[str | None]]]:
 def _census() -> dict[str, list[tuple[int, list[str | None]]]]:
     root = _src_root()
     out: dict[str, list[tuple[int, list[str | None]]]] = {}
-    for path in sorted(root.rglob("*.py")):
+    for path, tree in source_index.package_trees():
         rel = path.relative_to(root).as_posix()
-        tree = ast.parse(path.read_text(encoding="utf-8"))
         for qual, line, names in writes(tree):
             out.setdefault(f"{rel}::{qual}", []).append((line, names))
     return out

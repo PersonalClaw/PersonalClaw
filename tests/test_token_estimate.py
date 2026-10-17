@@ -26,6 +26,7 @@ import re
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw.agents.native.runtime import NativeAgentRuntime
 from personalclaw.token_estimate import (
@@ -63,10 +64,10 @@ class TestOneDefinition:
 
     def test_no_module_defines_its_own_ratio(self) -> None:
         offenders: list[str] = []
-        for path in sorted(_SRC.rglob("*.py")):
+        for path in source_index.package_files():
             if path == _CANONICAL:
                 continue
-            text = path.read_text(encoding="utf-8")
+            text = source_index.text(path)
             for lineno, line in enumerate(text.splitlines(), start=1):
                 if _LOCAL_DEFINITION.search(line):
                     offenders.append(f"{path.relative_to(_SRC)}:{lineno}: {line.strip()}")

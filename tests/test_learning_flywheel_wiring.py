@@ -34,6 +34,7 @@ import ast
 import pathlib
 
 import pytest
+import source_index
 
 from personalclaw import learning
 
@@ -64,13 +65,9 @@ def _importers(module_rel: str) -> set[str]:
     want = {stem, f"personalclaw.{stem}"}
     suffix = "." + stem
     found: set[str] = set()
-    for path in sorted(PKG.rglob("*.py")):
+    for path, tree in source_index.package_trees():
         rel = str(path.relative_to(PKG))
         if rel == module_rel:
-            continue
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"), filename=str(path))
-        except SyntaxError:  # pragma: no cover - the lint job owns syntax
             continue
         pkg = ["personalclaw", *path.relative_to(PKG).parent.parts]
         for node in ast.walk(tree):

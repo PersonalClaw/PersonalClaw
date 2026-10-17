@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
+import source_index
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
@@ -88,10 +89,10 @@ FuncNode = ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda
 
 
 class Module:
-    def __init__(self, name: str, text: str, *, package: bool) -> None:
+    def __init__(self, name: str, text: str | ast.Module, *, package: bool) -> None:
         self.name = name
         self.package = package
-        self.tree = ast.parse(text)
+        self.tree = text if isinstance(text, ast.Module) else ast.parse(text)
         self._scopes: dict[int, tuple[set[str], set[str], dict[str, FuncNode]]] = {}
         self.parent: dict[ast.AST, ast.AST] = {}
         for node in ast.walk(self.tree):
@@ -182,15 +183,15 @@ class Sources:
         here = SRC.joinpath(*parts[1:])
         for path, package in ((here.with_suffix(".py"), False), (here / "__init__.py", True)):
             if path.is_file():
-                return Module(name, path.read_text("utf-8"), package=package)
+                return Module(name, source_index.tree(path), package=package)
         return None
 
     def scanned(self) -> list[str]:
         if self.fixtures:
             return sorted(self.fixtures)
         names = []
-        for path in sorted(SRC.rglob("*.py")):
-            if any(marker in path.read_text("utf-8") for marker in _MARKERS):
+        for path in source_index.package_files():
+            if any(marker in source_index.text(path) for marker in _MARKERS):
                 rel = path.relative_to(SRC.parent).with_suffix("")
                 parts = list(rel.parts[:-1]) if rel.name == "__init__" else list(rel.parts)
                 names.append(".".join(parts))

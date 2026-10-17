@@ -33,6 +33,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import source_index
+
 import personalclaw
 from personalclaw.dashboard import chat_runner
 from personalclaw.stats import Stats
@@ -111,7 +113,8 @@ def render(cache_read_tokens, cache_creation_tokens):
 
 
 def _py_files() -> list[Path]:
-    return sorted(p for p in SRC.rglob("*.py") if "tests_fixtures" not in p.parts)
+    """Every package module outside test fixtures, from the suite's one source index."""
+    return [p for p in source_index.package_files() if "tests_fixtures" not in p.parts]
 
 
 def _target_names(node: ast.AST) -> list[str]:
@@ -127,7 +130,7 @@ def _target_names(node: ast.AST) -> list[str]:
     return names
 
 
-def _accumulators(source: str, label: str) -> list[str]:
+def _accumulators(source: str | ast.Module, label: str) -> list[str]:
     """``x += ...`` (or ``-=``, ``|=`` &c.) onto a prompt-cache-named quantity.
 
     The TARGET is what makes a store: ``total += cache_read_tokens`` accumulates a
@@ -135,7 +138,8 @@ def _accumulators(source: str, label: str) -> list[str]:
     accumulates the cache tally itself. Only the latter is a second store.
     """
     hits: list[str] = []
-    for node in ast.walk(ast.parse(source)):
+    tree = source if isinstance(source, ast.Module) else ast.parse(source)
+    for node in ast.walk(tree):
         if not isinstance(node, ast.AugAssign):
             continue
         if any(frag in name for name in _target_names(node.target) for frag in _CACHE_NAMES):
@@ -148,7 +152,7 @@ def _tally_writer_calls() -> dict[str, list[str]]:
     found: dict[str, list[str]] = {}
     for path in _py_files():
         rel = path.relative_to(SRC).as_posix()
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        for node in ast.walk(source_index.tree(path)):
             if (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
@@ -160,7 +164,7 @@ def _tally_writer_calls() -> dict[str, list[str]]:
 
 def _turn_local_bindings() -> dict[str, list[ast.AST]]:
     """Every statement in ``chat_runner`` that binds one of the two turn locals."""
-    tree = ast.parse(Path(chat_runner.__file__).read_text(encoding="utf-8"))
+    tree = source_index.tree(Path(chat_runner.__file__).resolve())
     bindings: dict[str, list[ast.AST]] = {name: [] for name in _TURN_LOCALS}
     for node in ast.walk(tree):
         targets: list[ast.expr] = []
@@ -211,7 +215,7 @@ def test_no_module_on_the_live_path_accumulates_a_prompt_cache_quantity() -> Non
         rel = path.relative_to(SRC).as_posix()
         if rel in _READ_SIDE_FOLDS or rel in _TURN_ASSEMBLERS:
             continue
-        hits.extend(_accumulators(path.read_text(encoding="utf-8"), rel))
+        hits.extend(_accumulators(source_index.tree(path), rel))
     assert hits == [], (
         "a second prompt-cache accumulator appeared: "
         + ", ".join(hits)
@@ -231,7 +235,7 @@ def test_the_read_side_exemption_is_still_read_side() -> None:
     from personalclaw import usage_ledger
 
     for rel in _READ_SIDE_FOLDS:
-        source = (SRC / rel).read_text(encoding="utf-8")
+        source = source_index.tree(SRC / rel)
         assert _accumulators(source, rel), (
             f"{rel} no longer accumulates a cache quantity — drop it from "
             "_READ_SIDE_FOLDS instead of exempting a module that needs no exemption"
@@ -261,8 +265,7 @@ def test_the_turn_assembly_exemption_is_still_locals_only() -> None:
       inference's, which is the reason accumulating was necessary in the first place.
     """
     for rel in _TURN_ASSEMBLERS:
-        source = (SRC / rel).read_text(encoding="utf-8")
-        tree = ast.parse(source)
+        tree = source_index.tree(SRC / rel)
 
         augs = [
             node

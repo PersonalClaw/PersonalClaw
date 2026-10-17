@@ -21,6 +21,7 @@ import re
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw import api_version as av
 from personalclaw import manifest
@@ -45,13 +46,16 @@ ALLOWED_TS_BINDINGS = {"CLIENT_API_VERSION"}
 
 
 def _py_files() -> list[Path]:
-    return sorted(p for p in SRC.rglob("*.py") if "__pycache__" not in p.parts)
+    """Every package module, from the suite's one source index."""
+    return list(source_index.package_files())
 
 
 def _ts_files() -> list[Path]:
-    return sorted(
-        p for p in WEB.rglob("*") if p.suffix in {".ts", ".tsx"} and "node_modules" not in p.parts
-    )
+    return [
+        p
+        for p in source_index.web_files()
+        if p.suffix in {".ts", ".tsx"} and "node_modules" not in p.parts
+    ]
 
 
 def _int_literal_bindings(tree: ast.AST) -> list[tuple[str, int]]:
@@ -78,10 +82,7 @@ class TestSingleOriginPython:
     def test_only_api_version_py_binds_an_api_version_literal(self):
         offenders: list[str] = []
         for path in _py_files():
-            try:
-                tree = ast.parse(path.read_text(encoding="utf-8"))
-            except SyntaxError:  # pragma: no cover - a syntax error is another test's red
-                continue
+            tree = source_index.tree(path)
             for name, value in _int_literal_bindings(tree):
                 if not _NAME_RE.search(name):
                     continue
@@ -96,7 +97,7 @@ class TestSingleOriginPython:
     def test_the_origin_binds_both_window_ends_and_nothing_else(self):
         bound = {
             name
-            for name, _ in _int_literal_bindings(ast.parse(ORIGIN_PY.read_text(encoding="utf-8")))
+            for name, _ in _int_literal_bindings(source_index.tree(ORIGIN_PY))
             if _NAME_RE.search(name)
         }
         assert bound == ALLOWED_PY_BINDINGS
@@ -116,7 +117,7 @@ class TestSingleOriginTypeScript:
         pat = re.compile(r"([A-Za-z_$][\w$]*)\s*(?::\s*number)?\s*[:=]\s*(\d+)")
         offenders: list[str] = []
         for path in _ts_files():
-            for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for lineno, line in enumerate(source_index.text(path).splitlines(), 1):
                 for name, value in pat.findall(line):
                     if not _NAME_RE.search(name):
                         continue
@@ -165,10 +166,7 @@ class TestSingleChokepoint:
     def test_negotiate_has_exactly_one_non_test_caller(self):
         callers: list[str] = []
         for path in _py_files():
-            try:
-                tree = ast.parse(path.read_text(encoding="utf-8"))
-            except SyntaxError:  # pragma: no cover
-                continue
+            tree = source_index.tree(path)
             for node in ast.walk(tree):
                 if isinstance(node, ast.Call):
                     fn = node.func
@@ -200,7 +198,7 @@ class TestSingleChokepoint:
     def test_the_gate_holds_no_version_literal_of_its_own(self):
         bound = [
             name
-            for name, _ in _int_literal_bindings(ast.parse(GATE_PY.read_text(encoding="utf-8")))
+            for name, _ in _int_literal_bindings(source_index.tree(GATE_PY))
             if _NAME_RE.search(name)
         ]
         assert bound == []

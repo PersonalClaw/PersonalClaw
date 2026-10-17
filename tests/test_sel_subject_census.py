@@ -22,6 +22,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import source_index
+
 from personalclaw.audit_subject import COMMAND, FILE_PATH, kind_of_subject
 from personalclaw.file_scope import PATH_TOOLS
 from personalclaw.run_bounds import FILE_WRITES
@@ -71,8 +73,7 @@ def _problem(call: ast.Call) -> str:
 
 def _audit_calls() -> list[tuple[str, int, ast.Call]]:
     found: list[tuple[str, int, ast.Call]] = []
-    for path in sorted(SRC.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for path, tree in source_index.package_trees():
         for node in ast.walk(tree):
             if (
                 isinstance(node, ast.Call)

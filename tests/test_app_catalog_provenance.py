@@ -32,6 +32,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw.apps import catalog, manager
 from personalclaw.providers import loader
@@ -436,19 +437,19 @@ def _py_census(token: str) -> set[tuple[str, str]]:
     import personalclaw
 
     pkg_root = Path(personalclaw.__file__).resolve().parent
-    files = sorted(p for p in pkg_root.rglob("*.py"))
+    files = list(source_index.package_files())
     # Vacuity floor #1: a broken glob reads as "no sites" and would make every assertion
     # below trivially true.
     assert len(files) > 100, f"census walked only {len(files)} files under {pkg_root}"
 
     sites: set[tuple[str, str]] = set()
     for path in files:
-        text = path.read_text(encoding="utf-8")
+        text = source_index.text(path)
         if token not in text:
             continue
         owners = [
             (n.lineno, n.end_lineno or n.lineno, n.name)
-            for n in ast.walk(ast.parse(text))
+            for n in ast.walk(source_index.tree(path))
             if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
         ]
         for lineno, line in enumerate(text.splitlines(), start=1):
@@ -470,7 +471,11 @@ def _py_raw_count(token: str) -> int:
     import personalclaw
 
     pkg_root = Path(personalclaw.__file__).resolve().parent
-    return sum(p.read_text(encoding="utf-8").count(token) for p in pkg_root.rglob("*.py"))
+    return sum(
+        source_index.text(p).count(token)
+        for p in source_index.package_files()
+        if p.is_relative_to(pkg_root)
+    )
 
 
 def test_one_owner_resolves_a_catalog_name_collision():
@@ -509,13 +514,15 @@ def _web_census(token: str) -> set[str]:
     quotes the old code is not a second implementation of it."""
     web_src = Path(__file__).resolve().parent.parent / "web" / "src"
     files = sorted(
-        p for p in web_src.rglob("*.ts*") if not p.name.endswith((".test.ts", ".test.tsx", ".d.ts"))
+        p
+        for p in source_index.web_files()
+        if p.suffix.startswith(".ts") and not p.name.endswith((".test.ts", ".test.tsx", ".d.ts"))
     )
     # Vacuity floor #1: a wrong root or suffix reads as "no sites".
     assert len(files) > 100, f"census walked only {len(files)} files under {web_src}"
     hits: set[str] = set()
     for path in files:
-        for line in path.read_text(encoding="utf-8").splitlines():
+        for line in source_index.text(path).splitlines():
             stripped = line.strip()
             if stripped.startswith(("//", "*", "/*")):
                 continue
@@ -527,8 +534,11 @@ def _web_census(token: str) -> set[str]:
 def _web_raw_count(token: str) -> int:
     """Raw occurrence count over the SPA's bytes — vacuity floor #2 for the web census, on a
     different mechanism (no line splitting, no comment filter)."""
-    web_src = Path(__file__).resolve().parent.parent / "web" / "src"
-    return sum(p.read_text(encoding="utf-8").count(token) for p in web_src.rglob("*.ts*"))
+    return sum(
+        source_index.text(p).count(token)
+        for p in source_index.web_files()
+        if p.suffix.startswith(".ts")
+    )
 
 
 def test_one_owner_labels_app_provenance():

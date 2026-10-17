@@ -40,6 +40,7 @@ from __future__ import annotations
 import inspect
 
 import pytest
+import source_index
 
 #: Every module that resolves an action provider and RUNS it. Discovered by grepping
 #: `get_action_provider(` across `src/`, then reading each hit to see whether it executes.
@@ -395,7 +396,7 @@ def test_the_would_execute_preview_site_only_reads_the_declaration():
     assert "runner=None" in src, "the dry fire must be dispatched with no runner"
 
 
-def _reaches_the_registry(source: str) -> bool:
+def _reaches_the_registry(source: str | object) -> bool:
     """Whether *source* reaches the provider registry's lookup at all: calls it, imports it under
     any name, or hands the name on (`getter = get_action_provider`). Read from the syntax tree, so
     an alias is a site and a mention in a comment or a docstring is not.
@@ -406,7 +407,8 @@ def _reaches_the_registry(source: str) -> bool:
     """
     import ast
 
-    for node in ast.walk(ast.parse(source)):
+    tree = source if isinstance(source, ast.Module) else ast.parse(str(source))
+    for node in ast.walk(tree):
         if isinstance(node, ast.Name) and node.id == "get_action_provider":
             return True
         if isinstance(node, ast.Attribute) and node.attr == "get_action_provider":
@@ -445,9 +447,8 @@ def test_the_site_list_is_not_STALE():
 
     root = pathlib.Path(inspect.getfile(__import__("personalclaw"))).parent
     callers: set[str] = set()
-    for path in root.rglob("*.py"):
-        text = path.read_text(encoding="utf-8", errors="replace")
-        if _reaches_the_registry(text):
+    for path, tree in source_index.package_trees():
+        if _reaches_the_registry(tree):
             rel = path.relative_to(root).with_suffix("")
             # A package's `__init__` is the package (`personalclaw.action_providers`).
             parts = rel.parts[:-1] if rel.name == "__init__" else rel.parts

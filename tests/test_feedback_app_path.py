@@ -27,6 +27,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import source_index
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -347,11 +348,11 @@ class TestAnAppCannotSupersedeACoreVerdict:
 
         root = Path(fb.__file__).resolve().parents[1]
         writers: set[str] = set()
-        for path in sorted(root.rglob("*.py")):
-            text = path.read_text(encoding="utf-8")
+        for path in source_index.package_files():
+            text = source_index.text(path)
             if "record_feedback" not in text and "feedback" not in path.name:
                 continue
-            for node in ast.walk(ast.parse(text)):
+            for node in ast.walk(source_index.tree(path)):
                 if not isinstance(node, ast.Call):
                     continue
                 target = node.func

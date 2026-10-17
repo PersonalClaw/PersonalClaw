@@ -25,6 +25,7 @@ import re
 import tempfile
 
 import pytest
+import source_index
 
 from personalclaw.workflows.introspection import (
     CHECKLIST,
@@ -410,17 +411,19 @@ def test_GATE_REJECTED_is_still_emitted_NOWHERE():
     this test
     fails and the projection should be revisited to count it — a silent second source of truth for
     rejections would double-count them."""
-    import pathlib as _p
     import re as _re
 
-    src = _p.Path("src/personalclaw")
     # A WRITE, not a mention: `journal.py` declares the constant and `introspection.py`
     # documents why
     # it is unused, and matching either would make this test fail on its own explanation.
     # The pattern
     # is the shape a real emitter has — the constant passed to a journal write.
     emit = _re.compile(r"write\s*\(\s*[\w_.]*GATE_REJECTED")
-    emitters = [str(f) for f in src.rglob("*.py") if emit.search(f.read_text(encoding="utf-8"))]
+    emitters = [
+        str(f.relative_to(source_index.REPO))
+        for f in source_index.package_files()
+        if emit.search(source_index.text(f))
+    ]
     assert emitters == [], f"GATE_REJECTED is now emitted by {emitters} — revisit gate_stats"
 
 

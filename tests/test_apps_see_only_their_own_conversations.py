@@ -21,6 +21,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import source_index
 from aiohttp.test_utils import TestClient, TestServer
 from chat_test_helpers import _make_state
 from test_apps_cannot_post_into_your_chats import _gateway, _owner_chat, _runner, _send, _stub
@@ -673,12 +674,10 @@ def _literal_frames() -> list[tuple[str, int, str, set[str]]]:
     literals — `broadcast_ws`, `send_ws_event`, the subagent fan-out, and `_broadcast` notes."""
     import ast
 
-    import personalclaw
-
     producers = {"broadcast_ws", "send_ws_event", "broadcast_ws_subagent_subscribers"}
     found = []
-    for path in sorted(Path(personalclaw.__file__).parent.rglob("*.py")):
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+    for path, tree in source_index.package_trees():
+        for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
             func = node.func
@@ -707,12 +706,10 @@ def _producer_types() -> set[str]:
     `inbox._announce`, which forwards its type to `broadcast_ws`."""
     import ast
 
-    import personalclaw
-
     senders = {"broadcast_ws", "send_ws_event", "broadcast_ws_subagent_subscribers", "_announce"}
     types: set[str] = set()
-    for path in sorted(Path(personalclaw.__file__).parent.rglob("*.py")):
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+    for path, tree in source_index.package_trees():
+        for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
             func = node.func

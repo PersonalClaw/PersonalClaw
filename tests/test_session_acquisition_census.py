@@ -27,6 +27,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import source_index
+
 SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
 #: Sessions that keep their turns because the turns are one conversation, by (file under
@@ -114,10 +116,14 @@ def _functions(tree: ast.AST) -> dict[str, ast.AST]:
     return found
 
 
-def acquisitions(source: str) -> list[str]:
-    """The qualified name of the function around each ``….get_or_create(…)`` in *source*,
-    once per call."""
-    tree = ast.parse(source)
+def _parsed(source: str | ast.Module) -> ast.Module:
+    return source if isinstance(source, ast.Module) else ast.parse(source)
+
+
+def acquisitions(source: str | ast.Module) -> list[str]:
+    """The qualified name of the function around each ``….get_or_create(…)`` in *source* (text,
+    or its tree), once per call."""
+    tree = _parsed(source)
     out: list[str] = []
     for qualname, func in _functions(tree).items():
         inner = {
@@ -153,11 +159,11 @@ def asks_the_chore_helper(source: str, qualname: str) -> bool:
     )
 
 
-def outside_history_clears(source: str) -> list[int]:
+def outside_history_clears(source: str | ast.Module) -> list[int]:
     """Lines that reach into another object's turns (:data:`_TURNS`): ``hasattr(x, "_history")``
     or ``x._messages…`` where ``x`` is not ``self``."""
     lines: set[int] = set()
-    for node in ast.walk(ast.parse(source)):
+    for node in ast.walk(_parsed(source)):
         if (
             isinstance(node, ast.Call)
             and _called(node) == "hasattr"
@@ -181,11 +187,9 @@ def _read(rel: str) -> str:
 
 def _census() -> list[tuple[str, str]]:
     sites: list[tuple[str, str]] = []
-    for path in sorted(SRC.rglob("*.py")):
-        if "__pycache__" in path.parts:
-            continue
+    for path, tree in source_index.package_trees():
         rel = path.relative_to(SRC).as_posix()
-        sites.extend((rel, q) for q in acquisitions(path.read_text(encoding="utf-8")))
+        sites.extend((rel, q) for q in acquisitions(tree))
     return sites
 
 
@@ -268,9 +272,8 @@ def test_a_one_turn_session_nothing_ends_is_caught():
 def test_no_code_reaches_into_a_model_clients_history():
     reaching = {
         path.relative_to(SRC).as_posix(): lines
-        for path in sorted(SRC.rglob("*.py"))
-        if "__pycache__" not in path.parts
-        and (lines := outside_history_clears(path.read_text(encoding="utf-8")))
+        for path, tree in source_index.package_trees()
+        if (lines := outside_history_clears(tree))
     }
     assert not reaching, (
         "these reach into a model client's turns from outside it. A chore that needs a fresh "

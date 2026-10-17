@@ -26,6 +26,7 @@ import json
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw.apps.manifest import AppManifest
 from personalclaw.apps.native_contract import NATIVE_DIR, load_bundle_module
@@ -316,8 +317,7 @@ def test_the_bundle_is_the_only_copy():
     src = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
     offenders = [
         str(p.relative_to(src))
-        for p in src.rglob("*.py")
-        if "apps/native/" not in p.as_posix()
-        and "def create_mcp_provider" in p.read_text(encoding="utf-8")
+        for p in source_index.package_files()
+        if "apps/native/" not in p.as_posix() and "def create_mcp_provider" in source_index.text(p)
     ]
     assert offenders == [], offenders

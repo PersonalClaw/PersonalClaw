@@ -23,6 +23,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import source_index
+
 _SPAWN_CALLEES = {
     "subprocess.Popen",
     "subprocess.run",
@@ -607,11 +609,7 @@ def _census() -> dict[str, list[int]]:
     """Map ``file::qualname::callee`` → sorted line numbers for every spawn site."""
     out: dict[str, list[int]] = {}
     root = _src_root()
-    for path in sorted(root.rglob("*.py")):
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (OSError, SyntaxError):
-            continue
+    for path, tree in source_index.package_trees():
         rel = path.relative_to(root).as_posix()
 
         class V(ast.NodeVisitor):

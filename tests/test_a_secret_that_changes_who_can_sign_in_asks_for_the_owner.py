@@ -22,6 +22,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+import source_index
 from aiohttp import web
 from signed_in_sessions import OLD, client_for, guarded_app, owner_presence_rows, sign_in
 
@@ -196,8 +197,8 @@ def test_the_names_are_the_ones_the_gateway_reads():
     assert not is_sign_in_key("PERSONALCLAW_OWNER")
     root = Path(inspect.getfile(personalclaw)).parent
     sources = {
-        path: path.read_text(encoding="utf-8")
-        for path in root.rglob("*.py")
+        path: source_index.text(path)
+        for path in source_index.under(source_index.package_files(), root.resolve())
         if path.name != "secrets_vault.py"
     }
     for name in SIGN_IN_ENVIRONMENT:

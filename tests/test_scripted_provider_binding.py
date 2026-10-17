@@ -29,6 +29,7 @@ import sys
 import types
 
 import pytest
+import source_index
 
 import personalclaw.llm as _llm_pkg
 from personalclaw.llm.capabilities import Capability, ProviderCapability
@@ -486,9 +487,10 @@ def test_no_retired_env_name_is_still_read_by_anything() -> None:
     src = root / "src"
     live = sorted(
         p.name
-        for p in src.rglob("*.py")
+        for p in source_index.package_files()
+        if p.is_relative_to(src)
         for n in RETIRED_ENV_NAMES
-        if n in p.read_text(encoding="utf-8")
+        if n in source_index.text(p)
     )
     assert not live, (
         f"these shipped modules still name a RETIRED env var {sorted(RETIRED_ENV_NAMES)}: "

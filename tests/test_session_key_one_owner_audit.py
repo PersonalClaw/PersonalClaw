@@ -36,6 +36,7 @@ import ast
 from pathlib import Path
 
 import pytest
+import source_index
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 DASHBOARD = SRC / "dashboard"
@@ -269,11 +270,11 @@ class _KeyFlow(ast.NodeVisitor):
 
 
 def audit_source(
-    source: str, *, path: Path, keyed: frozenset[str]
+    source: str | ast.Module, *, path: Path, keyed: frozenset[str]
 ) -> list[tuple[int, str, str, str]]:
-    """Classify every keyed ``conversation_log`` call site in *source*."""
+    """Classify every keyed ``conversation_log`` call site in *source* (text, or its tree)."""
     flow = _KeyFlow(keyed, path)
-    flow.visit(ast.parse(source))
+    flow.visit(source if isinstance(source, ast.Module) else ast.parse(source))
     return flow.sites
 
 
@@ -281,9 +282,9 @@ def audit_tree() -> list[tuple[Path, int, str, str, str]]:
     """Classify every keyed ``conversation_log`` call site under ``dashboard/``."""
     keyed = keyed_conversation_log_methods()
     out: list[tuple[Path, int, str, str, str]] = []
-    for path in sorted(DASHBOARD.rglob("*.py")):
+    for path in source_index.under(source_index.package_files(), DASHBOARD):
         for lineno, method, src, kind in audit_source(
-            path.read_text(encoding="utf-8"), path=path, keyed=keyed
+            source_index.tree(path), path=path, keyed=keyed
         ):
             out.append((path, lineno, method, src, kind))
     return out
@@ -329,7 +330,8 @@ def test_scan_population_is_non_trivial_and_owner_is_recognised():
     # The prefix helper must still be a live name in the tree, or clause one is matching
     # something that no longer exists.
     assert any(
-        PREFIX_ONLY in p.read_text(encoding="utf-8") for p in DASHBOARD.rglob("*.py")
+        PREFIX_ONLY in source_index.text(p)
+        for p in source_index.under(source_index.package_files(), DASHBOARD)
     ), f"{PREFIX_ONLY} is gone — clause one now matches nothing"
 
 

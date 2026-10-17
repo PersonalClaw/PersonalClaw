@@ -54,6 +54,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import source_index
 
 from personalclaw import seed as seed_mod
 
@@ -445,17 +446,16 @@ def test_the_committed_fixture_ships_no_sqlite_sidecar_and_no_machine_path() -> 
     committing the sidecar ships a file that is not state. A leaked absolute path would
     resolve on exactly one machine.
     """
-    dbs = sorted(p.name for p in _FIXTURE_DIR.rglob("*.db"))
+    fixture = source_index.under(source_index.package_any_files(), _FIXTURE_DIR)
+    dbs = sorted(p.name for p in fixture if p.suffix == ".db")
     assert dbs == ["knowledge.db", "loops.db", "memory.db"], f"unexpected db set: {dbs}"
 
     strays = sorted(
-        p.name
-        for p in _FIXTURE_DIR.rglob("*")
-        if p.name.endswith(("-wal", "-shm", ".db-journal", ".lock"))
+        p.name for p in fixture if p.name.endswith(("-wal", "-shm", ".db-journal", ".lock"))
     )
     assert not strays, f"these must not ship: {strays}"
 
-    for path in sorted(p for p in _FIXTURE_DIR.rglob("*") if p.is_file()):
+    for path in fixture:
         blob = path.read_bytes()
         for needle in (b"/Users/", b"/home/", b"/private/tmp", b"/var/folders"):
             assert needle not in blob, (

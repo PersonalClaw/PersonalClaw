@@ -11,7 +11,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-WORKFLOWS = Path(__file__).resolve().parents[1] / "src" / "personalclaw" / "workflows"
+import source_index
+
+WORKFLOWS = source_index.REPO / "src" / "personalclaw" / "workflows"
 
 #: The derivation's vacuity floor. The split that introduced this set left thirteen responsibility
 #: modules plus ``liveness``; a derivation that finds far fewer has broken, and every rail built on
@@ -22,10 +24,10 @@ MIN_CONTROLLER_MODULES = 12
 def controller_modules() -> list[Path]:
     """``controller.py`` first, then each responsibility module, sorted."""
     modules = [WORKFLOWS / "controller.py"]
-    for path in sorted(WORKFLOWS.glob("*.py")):
-        if path.name == "controller.py":
+    for path in source_index.package_files():
+        if path.parent != WORKFLOWS or path.name == "controller.py":
             continue
-        if "ctl: RunController" in path.read_text(encoding="utf-8"):
+        if "ctl: RunController" in source_index.text(path):
             modules.append(path)
     assert len(modules) >= MIN_CONTROLLER_MODULES, (
         f"found only {len(modules)} controller modules under {WORKFLOWS} — the derivation is "
@@ -36,4 +38,4 @@ def controller_modules() -> list[Path]:
 
 def controller_source() -> str:
     """Every controller module's text, concatenated in ``controller_modules()`` order."""
-    return "\n".join(path.read_text(encoding="utf-8") for path in controller_modules())
+    return "\n".join(source_index.text(path) for path in controller_modules())

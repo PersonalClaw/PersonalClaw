@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+import source_index
 
 import personalclaw.dashboard.handlers.tools as tools_mod
 from personalclaw.mcp_client import McpClientRegistry
@@ -572,8 +573,8 @@ def test_only_two_execution_paths_exist_and_both_are_gated():
     # for a reason that has nothing to do with gating. A SECOND `.invoke(` appearing in an
     # already-listed file is still caught, because the count changes.
     hits: dict[str, int] = {}
-    for py in sorted(src.rglob("*.py")):
-        for line in py.read_text(encoding="utf-8").splitlines():
+    for py in source_index.package_files():
+        for line in source_index.text(py).splitlines():
             if re.search(r"\b(prov|provider)\.invoke\(", line):
                 rel = py.relative_to(src).as_posix()
                 hits[rel] = hits.get(rel, 0) + 1

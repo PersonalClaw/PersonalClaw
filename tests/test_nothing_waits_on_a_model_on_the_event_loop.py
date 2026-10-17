@@ -28,6 +28,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import source_index
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -87,8 +88,7 @@ def _sites() -> tuple[list[str], int]:
     """``(calls on the event loop, calls handed off)`` across every ``async def`` in the package."""
     on_loop: list[str] = []
     handed_off = 0
-    for path in sorted(_PACKAGE.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+    for path, tree in source_index.package_trees():
         # Each call is read once, from the outermost ``async def`` around it: ``ast.walk`` reaches
         # an ``async def`` before the ones nested in it, and a nested one's calls are its too.
         read: set[int] = set()

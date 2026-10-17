@@ -37,6 +37,7 @@ import ast
 import pathlib
 
 import pytest
+import source_index
 
 SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 BRIDGE = SRC / "providers" / "provider_bridge.py"
@@ -144,11 +145,7 @@ class TestTheChokepointStaysSingle:
         could interpret.
         """
         sites: list[str] = []
-        for path in sorted(SRC.rglob("*.py")):
-            try:
-                tree = ast.parse(path.read_text(), filename=str(path))
-            except SyntaxError:  # pragma: no cover - a syntax error is the lint job's failure
-                continue
+        for path, tree in source_index.package_trees():
             for node in ast.walk(tree):
                 if _call_name(node) == CHOKEPOINT:
                     sites.append(f"{path.relative_to(SRC)}:{node.lineno}")

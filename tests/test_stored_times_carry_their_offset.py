@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
+import source_index
 
 from personalclaw.knowledge.source_engine import SourceEngine
 from personalclaw.knowledge.store import KnowledgeStore
@@ -518,8 +519,8 @@ def test_the_census_sees_a_writer_that_drops_the_zone():
 def test_no_writer_turns_a_zone_less_clock_reading_into_a_stored_or_served_time():
     found = {
         path.relative_to(SRC).as_posix(): lines
-        for path in sorted(SRC.rglob("*.py"))
-        if (lines := zone_less_writers(ast.parse(path.read_text(encoding="utf-8"))))
+        for path, tree in source_index.package_trees()
+        if (lines := zone_less_writers(tree))
     }
-    assert len(list(SRC.rglob("*.py"))) > 500, "the census read the tree"
+    assert len(source_index.package_files()) > 500, "the census read the tree"
     assert found == {}

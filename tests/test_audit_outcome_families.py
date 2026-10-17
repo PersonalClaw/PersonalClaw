@@ -38,6 +38,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw.sel import (
     AUDIT_OUTCOME_FAMILIES,
@@ -147,11 +148,7 @@ class _Vocabulary:
         self._functions: dict[str, list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef]]] = {}
         self._reading: set[str] = set()
         trees: dict[Path, ast.Module] = {}
-        for path in sorted(_SRC.rglob("*.py")):
-            try:
-                tree = ast.parse(path.read_text(encoding="utf-8"))
-            except SyntaxError:  # pragma: no cover - the tree is lint-clean
-                continue
+        for path, tree in source_index.package_trees():
             trees[path] = tree
             module = _string_constants(tree.body)
             self._consts_by_module[path.stem] = module
@@ -479,8 +476,8 @@ def test_the_scanner_sees_a_constant_valued_outcome() -> None:
     """
     inline = {
         word
-        for path in _SRC.rglob("*.py")
-        for word in _INLINE_ONLY.findall(path.read_text(encoding="utf-8"))
+        for path in source_index.package_files()
+        for word in _INLINE_ONLY.findall(source_index.text(path))
     }
     emitted = _emitted_outcomes()
     for word in ("grounded", "no_model", "refused_challenge", "declined", "needs_human"):

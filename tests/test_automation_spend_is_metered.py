@@ -48,6 +48,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import source_index
 
 import personalclaw.agents.native.runtime as runtime_mod
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
@@ -227,11 +228,11 @@ def resolution_verdict(site: Site, guarded: frozenset[str]) -> str:
 
 def src_sites(counted: Callable[[ast.Call], bool] = _acquires) -> list[Site]:
     sites: list[Site] = []
-    for path in sorted(SRC.rglob("*.py")):
+    for path, tree in source_index.package_trees():
         rel = path.relative_to(SRC).as_posix()
         if counted is _resolves and rel in RESOLVER_HOMES:
             continue
-        sites.extend(census(ast.parse(path.read_text(encoding="utf-8")), rel, counted))
+        sites.extend(census(tree, rel, counted))
     return sites
 
 

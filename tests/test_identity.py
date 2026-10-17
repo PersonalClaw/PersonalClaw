@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw.identity import (
     DEFAULT_USER_NAME,
@@ -97,8 +98,8 @@ class TestOneSlugSuggester:
         Python function and a TypeScript function claiming the same job."""
         folders = sorted(
             p.relative_to(REPO).as_posix()
-            for p in (REPO / "web" / "src").rglob("*.ts*")
-            if "NFKD" in p.read_text(encoding="utf-8")
+            for p in source_index.web_files()
+            if p.suffix.startswith(".ts") and "NFKD" in source_index.text(p)
         )
         assert folders == [self.TS_MODULE.relative_to(REPO).as_posix()], (
             "the display-name→handle rule must have ONE home "

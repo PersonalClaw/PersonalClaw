@@ -25,6 +25,7 @@ import re
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw import shell_denylist
 from personalclaw.sel import SecurityEventLog
@@ -432,13 +433,13 @@ class TestStrictlyAdditiveUserConfig:
         assert shell_denylist.denied_command("mkfs.ext4 /dev/sda1") is not None
 
 
-def _code_strings(source: str) -> list[str]:
+def _code_strings(source: str | ast.Module) -> list[str]:
     """Every string constant a module's CODE holds: docstrings excluded, f-string parts included.
 
     What a second loader of the packaged file would have to contain. A docstring that mentions
     the file opens nothing, so counting it would red on documentation instead of on a copy.
     """
-    tree = ast.parse(source)
+    tree = source if isinstance(source, ast.Module) else ast.parse(source)
     docstrings: set[int] = set()
     for node in ast.walk(tree):
         if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -480,8 +481,8 @@ class TestSharedSource:
         src = REPO_ROOT / "src" / "personalclaw"
         namers = sorted(
             p.relative_to(src).as_posix()
-            for p in src.rglob("*.py")
-            if any("baseline_denylist.json" in s for s in _code_strings(p.read_text("utf-8")))
+            for p, tree in source_index.package_trees()
+            if any("baseline_denylist.json" in s for s in _code_strings(tree))
         )
         assert namers == ["shell_denylist.py"]
 

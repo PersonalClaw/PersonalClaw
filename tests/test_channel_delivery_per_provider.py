@@ -41,6 +41,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+import source_index
 
 from personalclaw import channel_delivery as cd
 
@@ -304,9 +305,7 @@ def _code(path: Path) -> str:
     """Source with comment-only lines stripped — the fix's own comments quote the shape they
     replaced, and a raw-text rail would read that explanation as the defect."""
     return "\n".join(
-        line
-        for line in path.read_text(encoding="utf-8").split("\n")
-        if not line.strip().startswith("#")
+        line for line in source_index.text(path).split("\n") if not line.strip().startswith("#")
     )
 
 
@@ -329,7 +328,7 @@ class TestNoSecondSlotComesBack:
         do. Zero core writers was already true before this change; the rail keeps it true."""
         offenders = [
             p.relative_to(_CORE).as_posix()
-            for p in _CORE.rglob("*.py")
+            for p in source_index.package_files()
             if "channel_delivery =" in _code(p) and p.name != "state.py"
         ]
         assert offenders == [], f"core assigned the channel-delivery attribute: {offenders}"
@@ -339,14 +338,14 @@ class TestNoSecondSlotComesBack:
         dict; nobody else may keep one."""
         offenders = [
             p.relative_to(_CORE).as_posix()
-            for p in _CORE.rglob("*.py")
+            for p in source_index.package_files()
             if "_channel_delivery: " in _code(p) and p.name != "channel_delivery.py"
         ]
         assert offenders == [], f"a second delivery slot reappeared in {offenders}"
 
     def test_the_census_is_not_vacuous(self) -> None:
         """🪤 Floor for the two rails above: if the scan read nothing, both pass on empty lists."""
-        files = list(_CORE.rglob("*.py"))
+        files = list(source_index.package_files())
         assert len(files) > 100
         assert "_REGISTRY" in _code(_CORE / "channel_delivery.py")
         assert "def delivery_for" in _code(_CORE / "channel_delivery.py")

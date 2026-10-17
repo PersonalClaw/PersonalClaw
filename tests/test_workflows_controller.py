@@ -23,6 +23,7 @@ import asyncio
 import time
 
 import pytest
+import source_index
 
 from personalclaw.workflows import journal as J
 from personalclaw.workflows import node_bindings, store
@@ -498,13 +499,13 @@ class TestPerNodeStallWindow:
         """The four real declarations, read from the bundled library rather than restated — a
         hand-copied list would stop tracking the templates it is meant to protect."""
         import json
-        import pathlib
 
         declared: list[tuple[str, int]] = []
-        for path in sorted(
-            pathlib.Path("src/personalclaw/workflows/bundled").glob("*/workflow.json")
-        ):
-            spec = json.loads(path.read_text())
+        bundled = source_index.REPO / "src/personalclaw/workflows/bundled"
+        for path in source_index.package_any_files():
+            if path.name != "workflow.json" or path.parent.parent != bundled:
+                continue
+            spec = json.loads(source_index.text(path))
 
             def walk(node: object) -> None:
                 if isinstance(node, dict):

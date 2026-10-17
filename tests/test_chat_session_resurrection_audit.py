@@ -44,6 +44,7 @@ import pathlib
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import source_index
 from aiohttp.test_utils import TestClient, TestServer
 from chat_test_helpers import _make_app, _make_state
 
@@ -133,7 +134,7 @@ _CREATES_BY_DESIGN: dict[str, str] = {
 # ── the scanner ───────────────────────────────────────────────────────────────
 
 
-def scan_source(source: str, rel: str, creators: dict, guards: dict) -> None:
+def scan_source(source: str | ast.Module, rel: str, creators: dict, guards: dict) -> None:
     """Record every ``get_or_create_session`` / owner call site in one module.
 
     Split out so the mechanism can be exercised against SYNTHETIC source (see
@@ -141,7 +142,7 @@ def scan_source(source: str, rel: str, creators: dict, guards: dict) -> None:
     is "the tree currently measures N" cannot distinguish "no unguarded writers" from
     "the matcher is broken", and that distinction is the whole point.
     """
-    tree = ast.parse(source)
+    tree = source if isinstance(source, ast.Module) else ast.parse(source)
 
     class V(ast.NodeVisitor):
         def __init__(self) -> None:
@@ -181,17 +182,8 @@ def scan() -> tuple[dict[str, list[int]], dict[str, list[int]], int]:
     creators: dict[str, list[int]] = {}
     guards: dict[str, list[int]] = {}
     scanned = 0
-    for path in sorted(SRC.rglob("*.py")):
-        if "__pycache__" in path.parts:
-            continue
-        try:
-            source = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):  # pragma: no cover - defensive
-            continue
-        try:
-            scan_source(source, path.relative_to(SRC).as_posix(), creators, guards)
-        except SyntaxError:  # pragma: no cover - defensive
-            continue
+    for path, tree in source_index.package_trees():
+        scan_source(tree, path.relative_to(SRC).as_posix(), creators, guards)
         scanned += 1
     return creators, guards, scanned
 
@@ -256,7 +248,7 @@ def _session_routes() -> set[tuple[str, str]]:
         "dashboard/session_bulk.py",
         "dashboard/session_starters.py",
     ):
-        tree = ast.parse((SRC / rel).read_text(encoding="utf-8"))
+        tree = source_index.tree(SRC / rel)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
                 continue

@@ -33,6 +33,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+import source_index
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 
@@ -106,7 +107,7 @@ def _code_lines(path: Path):
     Comment-only lines are skipped because the fix's own prose names the statuses it replaced, and a
     census that counted explanations would make documenting the defect impossible.
     """
-    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for n, line in enumerate(source_index.text(path).splitlines(), start=1):
         stripped = line.strip()
         if stripped.startswith("#") or stripped.startswith("*") or stripped.startswith("//"):
             continue
@@ -160,7 +161,7 @@ def test_only_one_module_spells_the_open_status_pair():
     33 and 37 ended up on the same screen.
     """
     found: list[str] = []
-    for path in sorted(PKG.rglob("*.py")):
+    for path in source_index.package_files():
         for lineno, line in _code_lines(path):
             if _PAIR.search(line):
                 found.append(f"{path.relative_to(REPO)}:{lineno}: {line.strip()}")
@@ -201,7 +202,7 @@ def test_the_frontend_does_not_respell_the_open_pair():
     Mission Control's lanes could disagree.
     """
     found: list[str] = []
-    for path in sorted([*WEB.rglob("*.ts"), *WEB.rglob("*.tsx")]):
+    for path in [p for p in source_index.web_files() if p.suffix in {".ts", ".tsx"}]:
         if ".test." in path.name:
             continue
         for lineno, line in _code_lines(path):

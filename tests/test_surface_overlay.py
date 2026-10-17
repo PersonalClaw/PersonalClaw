@@ -24,6 +24,7 @@ import json
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw import surface_overlay as so
 from personalclaw.errors import ERROR_CODES
@@ -389,9 +390,9 @@ def test_every_overlayable_surface_has_a_frontend_call_site():
     """
     web = Path(__file__).resolve().parents[1] / "web" / "src"
     sources = "\n".join(
-        p.read_text(encoding="utf-8")
-        for p in web.rglob("*.tsx")
-        if not p.name.endswith(".test.tsx")
+        source_index.text(p)
+        for p in source_index.web_files()
+        if p.suffix == ".tsx" and p.is_relative_to(web) and not p.name.endswith(".test.tsx")
     )
     assert "<SurfaceOverlay" in sources, "the band has no call site at all"
     for surface in sorted(so.OVERLAYABLE_SURFACES):

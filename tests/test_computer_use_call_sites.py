@@ -39,6 +39,8 @@ from __future__ import annotations
 import ast
 import pathlib
 
+import source_index
+
 SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
 #: The three functions that are the chain's steps 2, 4 and 5, plus the step 4b.
@@ -65,11 +67,11 @@ def _called_name(call: ast.Call) -> str:
     return ""
 
 
-def _call_sites(source: str) -> list[str]:
+def _call_sites(source: str | ast.Module) -> list[str]:
     """Every screen invoked by *source*, as ``name`` strings — CALLS only, never prose."""
     return [
         name
-        for node in ast.walk(ast.parse(source))
+        for node in ast.walk(source if isinstance(source, ast.Module) else ast.parse(source))
         if isinstance(node, ast.Call) and (name := _called_name(node)) in _SCREENS
     ]
 
@@ -77,8 +79,8 @@ def _call_sites(source: str) -> list[str]:
 def _production_call_sites() -> dict[str, list[str]]:
     """Census of screen call sites across production ``src/``, keyed by relative path."""
     found: dict[str, list[str]] = {}
-    for path in sorted(SRC.rglob("*.py")):
-        names = _call_sites(path.read_text(encoding="utf-8"))
+    for path, tree in source_index.package_trees():
+        names = _call_sites(tree)
         if names:
             found[str(path.relative_to(SRC))] = sorted(names)
     return found
@@ -192,5 +194,5 @@ def test_the_census_actually_reads_the_shipped_modules():
     """Second vacuity floor, for the *corpus* rather than the matcher: an empty or
     mis-rooted ``SRC`` glob would also report zero call sites. Asserts the census really
     walked the two files the screens live in."""
-    scanned = {str(p.relative_to(SRC)) for p in SRC.rglob("*.py")}
+    scanned = {str(p.relative_to(SRC)) for p in source_index.package_files()}
     assert {"computer_use/policy.py", "computer_use/gate.py"} <= scanned

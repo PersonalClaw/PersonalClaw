@@ -21,6 +21,7 @@ import ast
 from pathlib import Path
 
 import pytest
+import source_index
 
 import personalclaw
 from personalclaw.guardrails.budgets import Budget, BudgetVerdict, CallCost, get_meter
@@ -95,7 +96,12 @@ def _imported_modules(path: Path, *, root: Path = SRC.parent) -> set[str]:
     if package and package[-1] == "__init__":
         package = package[:-1]
     found: set[str] = set()
-    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+    # A package module's tree is the suite's one source index; a fixture root's is parsed here.
+    if path.is_relative_to(SRC) and path.suffix == ".py":
+        tree = source_index.tree(path)
+    else:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             found.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
@@ -112,7 +118,7 @@ def _imported_modules(path: Path, *, root: Path = SRC.parent) -> set[str]:
 def _readers_of_the_shipped_table() -> set[str]:
     return {
         str(path.relative_to(SRC))
-        for path in SRC.rglob("*.py")
+        for path in source_index.package_files()
         if "personalclaw.pricing" in _imported_modules(path) and path.name != "pricing.py"
     }
 

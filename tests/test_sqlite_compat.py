@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import sqlite3 as _stdlib_sqlite
 
+import source_index
+
 from personalclaw import sqlite_compat
 
 
@@ -172,14 +174,14 @@ def test_no_production_site_uses_a_bare_with_on_a_connection():
     from pathlib import Path
 
     src = Path(__file__).resolve().parent.parent / "src" / "personalclaw"
-    files = sorted(src.rglob("*.py"))
+    files = list(source_index.package_files())
     assert len(files) > 100, f"only {len(files)} source files scanned — did the tree move?"
 
     pattern = re.compile(r"with\s+(?:\w+\.)*sqlite3\.connect\(")
     offenders = [
         f"{p.relative_to(src)}:{i}"
         for p in files
-        for i, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        for i, line in enumerate(source_index.text(p).splitlines(), 1)
         if pattern.search(line)
     ]
     assert not offenders, (

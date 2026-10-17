@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+import source_index
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from fakes import FakeTaskProvider, only_task_provider
@@ -355,8 +356,8 @@ def test_no_caller_still_asks_for_everything_with_a_magic_limit():
     root = pathlib.Path(__file__).resolve().parents[1] / "src"
     offenders = [
         f"{path.relative_to(root)}:{i}"
-        for path in root.rglob("*.py")
-        for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        for path in source_index.package_files()
+        for i, line in enumerate(source_index.text(path).splitlines(), 1)
         if re.search(r"list_all_tasks\([^)]*limit=(?:500|10_000|10000)", line)
     ]
     assert offenders == [], f"these mean collect_tasks(): {offenders}"

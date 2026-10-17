@@ -29,6 +29,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import source_index
+
 SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
 #: The calls that are the screen, by callee.
@@ -168,10 +170,8 @@ def _problems(modules: dict[str, ast.AST]) -> dict[str, list[str]]:
 
 
 def _tree() -> dict[str, ast.AST]:
-    return {
-        path.relative_to(SRC).as_posix(): ast.parse(path.read_text(encoding="utf-8"))
-        for path in sorted(SRC.rglob("*.py"))
-    }
+    """Every module of the package, parsed, from the suite's one source index."""
+    return {path.relative_to(SRC).as_posix(): tree for path, tree in source_index.package_trees()}
 
 
 def test_every_approval_site_is_classified_and_none_is_stale():

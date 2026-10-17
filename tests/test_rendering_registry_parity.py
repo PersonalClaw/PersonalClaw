@@ -29,6 +29,7 @@ import re
 from pathlib import Path
 
 import pytest
+import source_index
 
 from personalclaw.artifacts.models import ALLOWED_KINDS
 
@@ -103,7 +104,7 @@ _FORBIDDEN_DECL = re.compile(r"\b(IFRAME_KINDS|EDITABLE_KINDS)\b\s*=")
 
 
 def _web_sources() -> list[Path]:
-    return [p for p in _WEB.rglob("*.ts*") if p.suffix in {".ts", ".tsx"}]
+    return [p for p in source_index.web_files() if p.suffix in {".ts", ".tsx"}]
 
 
 def _code_only(text: str) -> str:
@@ -194,7 +195,7 @@ def test_no_resurrected_capability_sets():
     """The IFRAME_KINDS / EDITABLE_KINDS dispatch Sets stay deleted (registry owns this)."""
     offenders = []
     for p in _web_sources():
-        if _FORBIDDEN_DECL.search(_code_only(p.read_text(encoding="utf-8"))):
+        if _FORBIDDEN_DECL.search(_code_only(source_index.text(p))):
             offenders.append(str(p.relative_to(_WEB)))
     assert not offenders, (
         "content-type capability Sets were re-introduced (the registry's edit/sandbox "
@@ -295,7 +296,7 @@ def _markup_census() -> dict[str, dict[str, int]]:
     """Every app source's markup sites, by kind."""
     census = {}
     for p in _app_sources():
-        found = _sink_counts(_code_only(p.read_text(encoding="utf-8")))
+        found = _sink_counts(_code_only(source_index.text(p)))
         if found:
             census[str(p.relative_to(_WEB))] = found
     return census
@@ -325,7 +326,7 @@ def test_only_a_chat_reply_runs_widgets():
     agent's chat reply is where the model is given that contract; nothing else opts in."""
     opted_in = {}
     for p in _app_sources():
-        n = len(re.findall(r"<Markdown\b[^\n>]*\swidgets\b", _code_only(p.read_text("utf-8"))))
+        n = len(re.findall(r"<Markdown\b[^\n>]*\swidgets\b", _code_only(source_index.text(p))))
         if n:
             opted_in[str(p.relative_to(_WEB))] = n
     assert opted_in == {"pages/ChatPage.tsx": 3}

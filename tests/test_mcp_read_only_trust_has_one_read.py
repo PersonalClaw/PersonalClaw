@@ -23,8 +23,9 @@ from __future__ import annotations
 
 import ast
 import inspect
-from functools import lru_cache
 from pathlib import Path
+
+import source_index
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 OWNER = SRC / "mcp_read_only_trust.py"
@@ -40,13 +41,11 @@ _RECORD_CONSTANTS = {"TRUST_RECORD", "SEEN_RECORD"}
 _STANDING_READERS = {SRC / "guardrails" / "policy.py"}
 
 
-@lru_cache(maxsize=None)
 def _tree() -> tuple[tuple[Path, str, ast.Module], ...]:
-    out = []
-    for path in sorted(SRC.rglob("*.py")):
-        text = path.read_text(encoding="utf-8")
-        out.append((path, text, ast.parse(text)))
-    return tuple(out)
+    """Every module of the package with its text and tree, from the suite's one source index."""
+    return tuple(
+        (path, source_index.text(path), tree) for path, tree in source_index.package_trees()
+    )
 
 
 def _record_reads(path: Path, tree: ast.Module) -> list[str]:
