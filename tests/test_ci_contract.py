@@ -35,8 +35,6 @@ REPO = Path(__file__).resolve().parents[1]
 
 #: An exact release, ``X.Y.Z``.
 _EXACT = re.compile(r"\d+\.\d+\.\d+")
-_SHA = re.compile(r"[0-9a-f]{40}")
-_DIGEST = re.compile(r"[^\s@]+:[^\s@:]+@sha256:[0-9a-f]{64}")
 
 Tree = dict[str, str]
 """Repository-relative path to text: the files the toolchain rows read."""
@@ -96,16 +94,6 @@ def _matrix_values(job: dict[str, Any], key: str) -> list[str]:
 
 def _action(step: dict[str, Any]) -> str:
     return str(step.get("uses", "")).split("@", 1)[0]
-
-
-def _comment_above(lines: list[str], index: int) -> str:
-    """The run of ``#`` comment lines directly above ``lines[index]``."""
-    block: list[str] = []
-    i = index - 1
-    while i >= 0 and lines[i].lstrip().startswith("#"):
-        block.insert(0, lines[i])
-        i -= 1
-    return "\n".join(block)
 
 
 def _dockerfiles(tree: Tree) -> Iterator[tuple[str, str]]:
@@ -281,80 +269,6 @@ def runner_label_violations(tree: Tree) -> list[str]:
     return bad
 
 
-def action_sha_violations(tree: Tree) -> list[str]:
-    """Every ``uses:`` names a 40-character commit SHA, with its release as a comment."""
-    bad: list[str] = []
-    found = 0
-    for rel, text in tree.items():
-        if not rel.startswith(".github/workflows/"):
-            continue
-        for line in text.splitlines():
-            match = re.match(r"\s*(?:-\s+)?uses:\s*(\S+)(.*)$", line)
-            if not match or match.group(1).startswith("./"):
-                continue
-            found += 1
-            ref, rest = match.groups()
-            _, _, pin = ref.partition("@")
-            if not _SHA.fullmatch(pin):
-                bad.append(f"{rel}: {ref} is not pinned by commit SHA")
-            elif not re.fullmatch(r"\s+#\s*v\d+(?:\.\d+)*\s*", rest):
-                bad.append(f"{rel}: {ref} has no `# vX.Y.Z` release comment")
-    if not found:
-        bad.append("found no `uses:` line, so this row read nothing")
-    return bad
-
-
-def image_digest_violations(tree: Tree) -> list[str]:
-    """Every container image is a tag with its digest, never ``latest``, and says its
-    architecture: a workflow container names the platform manifest it pins, and an image
-    base built for both platforms lists each platform's manifest digest."""
-    bad: list[str] = []
-    found = 0
-
-    def judge(where: str, ref: str, comment: str, platforms: tuple[str, ...]) -> None:
-        if not _DIGEST.fullmatch(ref):
-            bad.append(f"{where}: {ref} is not a tag pinned by digest")
-        elif ref.split("@", 1)[0].rsplit(":", 1)[1] == "latest":
-            bad.append(f"{where}: {ref} names the moving tag `latest`")
-        for platform in platforms:
-            if not re.search(rf"{platform}\b.*sha256:[0-9a-f]{{64}}", comment, flags=re.S):
-                bad.append(f"{where}: {ref} does not say its {platform} manifest digest")
-
-    for rel, text in tree.items():
-        if not rel.startswith(".github/workflows/"):
-            continue
-        lines = text.splitlines()
-        for index, line in enumerate(lines):
-            match = re.match(r"\s+(?:container|image):\s*(\S+)\s*$", line)
-            if match:
-                found += 1
-                judge(rel, match.group(1), _comment_above(lines, index), ("linux/amd64",))
-    for rel, text in _dockerfiles(tree):
-        lines = text.splitlines()
-        args: dict[str, tuple[str, int]] = {}
-        stages: set[str] = set()
-        for index, line in enumerate(lines):
-            arg = re.match(r"ARG (\w+)=(\S+)$", line)
-            if arg:
-                args[arg.group(1)] = (arg.group(2), index)
-            words = [w for w in line.split() if not w.startswith("--")]
-            if not words or words[0] != "FROM":
-                continue
-            ref, at = words[1], index
-            variable = re.fullmatch(r"\$\{?(\w+)\}?", ref)
-            if variable and variable.group(1) in args:
-                ref, at = args[variable.group(1)]
-            if len(words) > 3 and words[2].upper() == "AS":
-                stages.add(words[3])
-            if ref in stages and ref != (words[3] if len(words) > 3 else ""):
-                continue
-            found += 1
-            judge(rel, ref, _comment_above(lines, at), ("linux/amd64", "linux/arm64"))
-    if not found:
-        bad.append("found no container image, so this row read nothing")
-    return bad
-
-
 def runner_identity_violations(tree: Tree) -> list[str]:
     """Every job logs the image it ran on: a ``Runner identity`` step that reads the runner
     image's name and version, or the container's own ``/etc/os-release``."""
@@ -385,6 +299,9 @@ class Control:
     name: str
     plant: Callable[[Path], None]
     fails: bool = True
+    #: Text one violation must carry, for a plant that would fail the check for a second reason
+    #: too: then only the named violation proves the clause under test bites.
+    expect: str = ""
 
 
 @dataclass(frozen=True)
@@ -503,7 +420,9 @@ def _copy_toolchain_files(root: Path) -> None:
         _write(root, rel, text)
 
 
-def _plant(name: str, rel: str, old: str, new: str) -> Control:
+def _plant(
+    name: str, rel: str, old: str, new: str, fails: bool = True, expect: str = ""
+) -> Control:
     """A violation planted by one edit of one file; a plant whose text is gone fails loudly."""
 
     def plant(root: Path) -> None:
@@ -511,7 +430,7 @@ def _plant(name: str, rel: str, old: str, new: str) -> Control:
         assert old in text, f"the plant {name!r} found no {old!r} in {rel}"
         _write(root, rel, text.replace(old, new, 1))
 
-    return Control(name, plant)
+    return Control(name, plant, fails, expect)
 
 
 def _toolchain_row(
@@ -532,20 +451,36 @@ _IDENTITY_STEP = (
     ' ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"\n'
 )
 
+
+def _pinned(rel: str, pattern: str) -> str:
+    """The first match of *pattern* in *rel* as the tree has it today, so a plant follows a
+    refresh (a Dependabot base move, a hand-moved container) instead of going stale. A pattern
+    that matches nothing fails here, loudly, rather than leaving a plant with nothing to edit."""
+    match = re.search(pattern, (REPO / rel).read_text(encoding="utf-8"), flags=re.M)
+    assert match, f"no {pattern!r} in {rel}: the plants that edit it need a new anchor"
+    return match.group(1)
+
+
+_DIGEST_REF = r"(?:[\w.-]+/)*({name}:[\w.-]+@sha256:[0-9a-f]{{64}})"
+
 #: The image references the digest plants edit, as the tree pins them today.
-_UBUNTU = (
-    "ubuntu:26.04@sha256:" + "88a381d5b5eeb2b35d3ad70925a362c37ce569daf43ede89ff818ec20e4d3794"
+_UBUNTU = _pinned(
+    ".github/workflows/breadth.yml", "container: " + _DIGEST_REF.format(name="ubuntu")
 )
-_NGINX = (
-    "nginx:1.27-alpine@sha256:" + "65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10"
+_NGINX = _pinned("deploy/docker/Dockerfile.web", "^FROM " + _DIGEST_REF.format(name="nginx"))
+_PYTHON = _pinned("deploy/docker/Dockerfile.backend", "^FROM " + _DIGEST_REF.format(name="python"))
+_NODE_BASE = _pinned("deploy/docker/Dockerfile.web", "^FROM " + _DIGEST_REF.format(name="node"))
+#: The comment line naming the node base's arm64 manifest, newline included.
+_NODE_ARM64 = _pinned(
+    "deploy/docker/Dockerfile.web",
+    r"(#\s+linux/arm64 sha256:[0-9a-f]{64}\n)(?=FROM \S*node:)",
 )
-_PYTHON = (
-    "python:3.13.16-slim@sha256:"
-    + "70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f"
+_NODE_AMD64 = _pinned(
+    "deploy/docker/Dockerfile.web",
+    r"#\s+linux/amd64 sha256:([0-9a-f]{64})\n#\s+linux/arm64 sha256:[0-9a-f]{64}\nFROM \S*node:",
 )
-_NODE_ARM64 = (
-    "#   linux/arm64 sha256:" + "38a36422dc7de80f3ced964270f23b3b17f73af816728d21a5fbbf84bf8be46f\n"
-)
+#: The Node `.nvmrc` names, which the images' node tag must equal.
+_NVMRC = (REPO / ".nvmrc").read_text(encoding="utf-8").strip()
 
 # ── Per-test temporary folders are constant-time ─────────────────────────────────────────────
 #
@@ -1953,12 +1888,12 @@ ROWS: tuple[Row, ...] = (
                 "node-version-file: .nvmrc",
                 'node-version: "24"',
             ),
-            _plant(".nvmrc a major", ".nvmrc", "24.21.0", "24"),
+            _plant(".nvmrc a major", ".nvmrc", _NVMRC, _NVMRC.split(".")[0]),
             _plant(
                 "an image Node stage off .nvmrc",
                 "deploy/docker/Dockerfile.web",
-                "node:24.21.0-alpine@",
-                "node:20.19.0-alpine@",
+                _NODE_BASE,
+                _NODE_BASE.replace(f"node:{_NVMRC}", "node:20.19.0"),
             ),
         ),
     ),
@@ -1985,67 +1920,6 @@ ROWS: tuple[Row, ...] = (
                 ".github/workflows/breadth.yml",
                 "runs-on: macos-26",
                 "runs-on: macos-latest",
-            ),
-        ),
-    ),
-    _toolchain_row(
-        "action-sha",
-        action_sha_violations,
-        (
-            _plant(
-                "an action by tag",
-                ".github/workflows/dco.yml",
-                "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0",
-                "actions/github-script@v9",
-            ),
-            _plant(
-                "an action by branch",
-                ".github/workflows/release.yml",
-                "pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2",
-                "pypa/gh-action-pypi-publish@release/v1",
-            ),
-            _plant("a SHA with no release comment", ".github/workflows/nix.yml", " # v31.11.2", ""),
-        ),
-    ),
-    _toolchain_row(
-        "image-digest",
-        image_digest_violations,
-        (
-            _plant(
-                "a workflow container by tag alone",
-                ".github/workflows/breadth.yml",
-                _UBUNTU,
-                "ubuntu:26.04",
-            ),
-            _plant(
-                "the moving tag latest",
-                ".github/workflows/breadth.yml",
-                "container: ubuntu:26.04@",
-                "container: ubuntu:latest@",
-            ),
-            _plant(
-                "an image base by tag alone",
-                "deploy/docker/Dockerfile.web",
-                _NGINX,
-                "nginx:1.27-alpine",
-            ),
-            _plant(
-                "a base ARG by tag alone",
-                "deploy/docker/Dockerfile.backend",
-                _PYTHON,
-                "python:3.13.16-slim",
-            ),
-            _plant(
-                "a two-platform base without its arm64 manifest",
-                "deploy/docker/Dockerfile.web",
-                _NODE_ARM64,
-                "",
-            ),
-            _plant(
-                "a workflow container without its platform",
-                ".github/workflows/clean-machine-walkthroughs.yml",
-                "the linux/amd64 manifest",
-                "the manifest",
             ),
         ),
     ),
@@ -2843,10 +2717,9 @@ ROWS: tuple[Row, ...] = (
 )
 
 
-@pytest.mark.parametrize("row", ROWS, ids=lambda row: row.name)
-def test_the_ci_contract_holds_and_each_check_can_fail(
-    row: Row, subtests, tmp_path: Path, request: pytest.FixtureRequest
-) -> None:
+def run_row(row: Row, subtests, tmp_path: Path, request: pytest.FixtureRequest) -> None:
+    """One row: its scaffold holds, each control fails or passes as it says, and the tree
+    holds. Every contract table's test is this body."""
     with subtests.test("the scaffold satisfies the check"):
         row.scaffold(tmp_path / "scaffold")
         assert row.check(tmp_path / "scaffold") == []
@@ -2858,6 +2731,7 @@ def test_the_ci_contract_holds_and_each_check_can_fail(
             found = row.check(root)
             if control.fails:
                 assert found, f"the planted violation went unseen: {control.name}"
+                assert any(control.expect in v for v in found), "\n".join(found)
             else:
                 assert found == [], "\n".join(found)
     with subtests.test("the tree"):
@@ -2865,3 +2739,10 @@ def test_the_ci_contract_holds_and_each_check_can_fail(
         assert violations == [], "\n".join(violations)
     if row.on_tree is not None:
         row.on_tree(request)
+
+
+@pytest.mark.parametrize("row", ROWS, ids=lambda row: row.name)
+def test_the_ci_contract_holds_and_each_check_can_fail(
+    row: Row, subtests, tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    run_row(row, subtests, tmp_path, request)
