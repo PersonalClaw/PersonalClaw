@@ -2,8 +2,8 @@
 #
 # WHY THIS IS ITS OWN WORKFLOW, not a job in ci.yml.
 # ci.yml runs on `pull_request`. This repo's fork-PR policy is
-# `approval_policy: first_time_contributors`, so a NEW contributor's PR runs no
-# workflow until a maintainer clicks "Approve and run". PR #680 (a fork
+# `approval_policy: first_time_contributors_new_to_github`, so a PR from an account new
+# to GitHub runs no workflow until a maintainer clicks "Approve and run". PR #680 (a fork
 # PR with 8 unsigned commits) had ZERO check-runs on its head SHA, and neither it
 # nor #350 ever received the remediation comment below. The check was gated on
 # exactly the contributors most likely to need it, so four contributors in a row

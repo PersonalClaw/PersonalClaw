@@ -16,7 +16,8 @@
 # Fork PRs from accounts that are not brand new to GitHub run without approval
 # (repo setting `fork-pr-contributor-approval: first_time_contributors_new_to_github`).
 # An account created days ago is still gated, so dco.yml + pr-feedback.yml are what a
-# brand-new contributor hears from first.
+# brand-new contributor hears from first. pr-feedback.yml takes the PR it comments on from
+# the API, never from this workflow's artifact (docs/maintainers/ci.md, "Trust boundary").
 name: CI
 
 on:
@@ -239,8 +240,10 @@ jobs:
       # break went green here and red for a local contributor. `scripts/` was the same hole
       # one step worse — NO gate saw it while the pre-commit hook silently reformatted it,
       # so an isort violation rode an open PR. Same scope as the Makefile now:
-      # black/isort/flake8 over src+tests+harness+scripts, mypy over src+harness (scripts/
-      # does not pass mypy yet — see the Makefile's `lint:` comment for the measured count).
+      # black/isort/flake8 over src+tests+harness+scripts+tools/ci, mypy over
+      # src+harness+tools/ci (scripts/ does not pass mypy yet — see the Makefile's `lint:`
+      # comment for the measured count). `tools/ci` is the CI controller code
+      # (docs/maintainers/ci.md, "Trust boundary"), held to every tool from its first file.
       #
       # Every tool runs even when an earlier one fails, and its output is captured, so
       # the failure comment below names every violation at once. Otherwise a contributor
@@ -261,10 +264,10 @@ jobs:
               { echo "**$label**"; echo '```'; printf '%s\n' "$out"; echo '```'; } >> /tmp/lint-out.txt
             fi
           }
-          run_tool "black --check" uv run black --check src/personalclaw tests harness scripts
-          run_tool "isort --check-only" uv run isort --check-only src/personalclaw tests harness scripts
-          run_tool "flake8" uv run flake8 src/personalclaw tests harness scripts
-          run_tool "mypy" uv run mypy src/personalclaw harness
+          run_tool "black --check" uv run black --check src/personalclaw tests harness scripts tools/ci
+          run_tool "isort --check-only" uv run isort --check-only src/personalclaw tests harness scripts tools/ci
+          run_tool "flake8" uv run flake8 src/personalclaw tests harness scripts tools/ci
+          run_tool "mypy" uv run mypy src/personalclaw harness tools/ci
           # The bundled-app tree is excluded from the pass above and checked one bundle per
           # mypy run here — see scripts/lint_bundled_apps.py for why (two bundles ship a
           # module named `provider.py`, which aborts a single combined run).
