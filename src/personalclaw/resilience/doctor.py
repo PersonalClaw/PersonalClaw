@@ -1685,7 +1685,7 @@ async def _probe_baseline_denylist(_ctx: DoctorContext) -> ProbeResult:
     and their digest together. A diverged file is never adopted — the verified
     baseline stays in force, so this reports the divergence rather than a shrunk denylist.
     """
-    from personalclaw.security import verify_baseline_denylist
+    from personalclaw.shell_denylist import verify_baseline_denylist
 
     report = await asyncio.to_thread(verify_baseline_denylist)
     ok = bool(report["file_verified"])

@@ -3,7 +3,8 @@
 The dashboard keeps every security setting to the owner (`config.edit_spec.app_write_refusal`, the
 consent on a loosening write), but an agent's shell could type the same change as a command:
 `personalclaw config set agent.yolo true`, a whole file applied with `config set --file`, or
-`config edit`. The packaged baseline now refuses those (`security.CLI_SECURITY_CONFIG_PATTERNS`),
+`config edit`. The packaged baseline now refuses those
+(`shell_denylist.CLI_SECURITY_CONFIG_PATTERNS`),
 on every path that asks the shell denylist. The owner's own terminal runs no screen, so the same
 command typed there still works.
 """
@@ -17,7 +18,7 @@ from unittest.mock import patch
 
 import pytest
 
-from personalclaw import security
+from personalclaw import shell_denylist
 from personalclaw.config.edit_spec import SECURITY_SECTIONS, security_control
 from personalclaw.config.editable import _EDITABLE_CONFIG
 
@@ -36,13 +37,15 @@ ORDINARY_FIELDS = sorted(
 
 
 def _rule_matches(command: str) -> bool:
-    return any(re.search(p, command, re.IGNORECASE) for p in security.CLI_SECURITY_CONFIG_PATTERNS)
+    return any(
+        re.search(p, command, re.IGNORECASE) for p in shell_denylist.CLI_SECURITY_CONFIG_PATTERNS
+    )
 
 
-def _refused_by_the_rule(command: str) -> security.DeniedCommand:
+def _refused_by_the_rule(command: str) -> shell_denylist.DeniedCommand:
     """Refused by the baseline, and the rule matches it: an earlier baseline pattern may match
     first (`guardrails.budgets.max_tokens_per_run` also says `token`), which refuses it too."""
-    denied = security.denied_command(command)
+    denied = shell_denylist.denied_command(command)
     assert denied is not None, f"not refused: {command}"
     assert not denied.added
     assert _rule_matches(command), command
@@ -50,9 +53,9 @@ def _refused_by_the_rule(command: str) -> security.DeniedCommand:
 
 
 def test_the_three_patterns_are_part_of_the_verified_baseline():
-    assert len(security.CLI_SECURITY_CONFIG_PATTERNS) == 3
-    baseline = security.baseline_denied_command_patterns()
-    assert all(p in baseline for p in security.CLI_SECURITY_CONFIG_PATTERNS)
+    assert len(shell_denylist.CLI_SECURITY_CONFIG_PATTERNS) == 3
+    baseline = shell_denylist.baseline_denied_command_patterns()
+    assert all(p in baseline for p in shell_denylist.CLI_SECURITY_CONFIG_PATTERNS)
 
 
 @pytest.mark.parametrize("field", SECURITY_FIELDS)
@@ -120,7 +123,7 @@ def test_an_ordinary_setting_is_left_alone(field):
 )
 def test_a_neighbour_of_a_security_setting_is_left_alone(field):
     """`agent.self_qa.fix_branch_enabled` and `durability.sync_enabled` are named exactly."""
-    assert security.denied_command(f"{CLI} config set {field} x") is None
+    assert shell_denylist.denied_command(f"{CLI} config set {field} x") is None
 
 
 def test_the_hooks_section_is_refused_whole():
@@ -143,13 +146,13 @@ def test_the_hooks_section_is_refused_whole():
     ],
 )
 def test_reads_and_other_writes_still_run(command):
-    assert security.denied_command(command) is None
+    assert shell_denylist.denied_command(command) is None
 
 
 def test_the_refusal_says_who_may_change_it_and_where():
     said = _refused_by_the_rule(f"{CLI} config set agent.yolo true").refusal()
     assert "one of the shell denylist's built-in patterns" in said
-    assert security.CLI_SECURITY_CONFIG_REASON in said
+    assert shell_denylist.CLI_SECURITY_CONFIG_REASON in said
     assert "Settings → Security" in said and "their own terminal" in said
 
 
@@ -160,7 +163,7 @@ def test_the_action_seam_refuses_it_too():
     decision = check_action("bash", {"command": f"{CLI} config set agent.yolo true"})
     assert decision.blocked
     assert decision.matched.startswith("cmd:")
-    assert decision.matched[len("cmd:") :] in security.CLI_SECURITY_CONFIG_PATTERNS
+    assert decision.matched[len("cmd:") :] in shell_denylist.CLI_SECURITY_CONFIG_PATTERNS
 
 
 def test_the_owners_own_terminal_still_changes_a_security_setting(tmp_path, capsys):
@@ -177,5 +180,5 @@ def test_the_owners_own_terminal_still_changes_a_security_setting(tmp_path, caps
 
 
 def test_each_pattern_compiles():
-    for pat in security.CLI_SECURITY_CONFIG_PATTERNS:
+    for pat in shell_denylist.CLI_SECURITY_CONFIG_PATTERNS:
         re.compile(pat)

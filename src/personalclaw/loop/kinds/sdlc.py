@@ -490,7 +490,8 @@ class CodeKind(LoopKindStrategy):
         workspace, and screening the unattended verify/test commands. Returns
         (errors, warnings) folded into the shared validator's result."""
         from personalclaw.loop.sdlc_meta import ENTRY_STAGES, PROJECT_KINDS
-        from personalclaw.security import audit_bash_command, denied_command
+        from personalclaw.security import audit_bash_command
+        from personalclaw.shell_denylist import denied_command
 
         errors: list[str] = []
         warnings: list[str] = []

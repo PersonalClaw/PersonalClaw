@@ -264,7 +264,7 @@ async def run_teardown(
     from personalclaw.command_audit import audit_command_refusal
     from personalclaw.guardrails.denylist import check_command
     from personalclaw.guardrails.policy import unattended_dispatch_key
-    from personalclaw.security import denied_command
+    from personalclaw.shell_denylist import denied_command
 
     # The action denylist, then the shell denylist every command path asks. A teardown runs with
     # nobody answering it, so among the first one's rules a teardown that would stop or replace

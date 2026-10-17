@@ -402,7 +402,7 @@ async def run_step(
     from personalclaw.command_audit import audit_command_refusal
     from personalclaw.guardrails.denylist import check_command
     from personalclaw.guardrails.policy import unattended_dispatch_key
-    from personalclaw.security import denied_command
+    from personalclaw.shell_denylist import denied_command
 
     # The action denylist, then the shell denylist every command path asks, before either way of
     # running the step (bare or in the run's durable session): a step is workflow-authored text,

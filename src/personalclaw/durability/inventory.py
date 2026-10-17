@@ -2277,6 +2277,13 @@ IGNORED: tuple[str, ...] = (
     # missing copy costs is one maintenance pass running sooner than it needed to; a RESTORED
     # stale copy is worse, because it claims passes ran that this home never ran.
     "graph_maintenance.json",
+    # When knowledge consolidation's unattended dry run last ran
+    # (`action_providers/knowledge_maintain_provider.py`), so the maintenance tick does not
+    # re-plan the whole library on every write. Ignored on the same argument as
+    # `graph_maintenance.json` directly above: run bookkeeping with no unique truth. A missing
+    # copy costs one extra plan on the next tick (its reader treats a missing stamp as never
+    # run); a restored copy claims a dry run this home never ran and holds the tick back.
+    "knowledge_consolidation.json",
     # 🔴 #2217 — `session_pid_<pid>.txt`, written per ACP agent PID so an MCP tool can hand
     # the spawn API its session key (`dashboard/chat_runner.py`, globbed by `mcp_core.py`).
     # Process-lifetime and pid-keyed, exactly like `session_pids.txt` and `agent_pids.txt`

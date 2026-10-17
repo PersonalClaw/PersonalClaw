@@ -21,7 +21,7 @@ from unittest.mock import patch
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-from personalclaw import branch_publish, security
+from personalclaw import branch_publish, security, shell_denylist
 from personalclaw.config.loader import CONFIG_ON_DISCARDED_READ, AppConfig, config_dir
 
 pytestmark = pytest.mark.security
@@ -120,14 +120,14 @@ def test_the_switch_is_off_by_default():
 
 @pytest.mark.parametrize("command", ALLOWED)
 def test_while_off_every_push_is_refused_by_both_rules(command):
-    denied = security.denied_command(command)
+    denied = shell_denylist.denied_command(command)
     if command != PUSH:  # a bare push matches the tool-name rule; the baseline wants more
-        assert denied is not None and denied.pattern == security.GIT_PUSH_BASELINE_PATTERN
+        assert denied is not None and denied.pattern == shell_denylist.GIT_PUSH_BASELINE_PATTERN
     assert security.is_denied(command) is not None
 
 
 def test_the_refusal_while_off_names_the_switch_and_the_one_command_form():
-    denied = security.denied_command(f"{PUSH} origin feature-x")
+    denied = shell_denylist.denied_command(f"{PUSH} origin feature-x")
     assert denied is not None
     for why in (denied.why(), security.is_denied(f"{PUSH} origin feature-x") or ""):
         assert branch_publish.SWITCH_PLACE in why
@@ -141,7 +141,7 @@ def test_the_refusal_while_off_names_the_switch_and_the_one_command_form():
 @pytest.mark.parametrize("command", ALLOWED)
 def test_while_on_a_plain_push_passes_both_rules(command):
     _set_switch(True)
-    assert security.denied_command(command) is None
+    assert shell_denylist.denied_command(command) is None
     assert security.is_denied(command) is None
     assert security.is_denied(f"Running: {command}") is None
 
@@ -150,7 +150,10 @@ def test_while_on_a_plain_push_passes_both_rules(command):
 def test_while_on_every_other_push_stays_refused(command):
     _set_switch(True)
     assert branch_publish.plain_push(command) is False
-    assert security.is_denied(command) is not None or security.denied_command(command) is not None
+    assert (
+        security.is_denied(command) is not None
+        or shell_denylist.denied_command(command) is not None
+    )
 
 
 def test_while_on_the_refusal_says_what_stays_refused():
@@ -163,8 +166,10 @@ def test_while_on_the_refusal_says_what_stays_refused():
 def test_while_on_another_baseline_pattern_still_refuses_the_same_line():
     """The exemption skips the push pattern only; a line another pattern refuses stays refused."""
     _set_switch(True)
-    assert security.denied_command("mkfs.ext4 /dev/sda1") is not None
-    assert security.denied_command(f"{PUSH} origin feature-x; mkfs.ext4 /dev/sda1") is not None
+    assert shell_denylist.denied_command("mkfs.ext4 /dev/sda1") is not None
+    assert (
+        shell_denylist.denied_command(f"{PUSH} origin feature-x; mkfs.ext4 /dev/sda1") is not None
+    )
 
 
 def test_while_on_an_owner_added_pattern_still_refuses_a_push():
@@ -173,7 +178,7 @@ def test_while_on_an_owner_added_pattern_still_refuses_a_push():
     data = json.loads(path.read_text(encoding="utf-8"))
     data["security"]["denied_commands"] = [r"push\s+origin"]
     path.write_text(json.dumps(data), encoding="utf-8")
-    denied = security.denied_command(f"{PUSH} origin feature-x")
+    denied = shell_denylist.denied_command(f"{PUSH} origin feature-x")
     assert denied is not None and denied.added
 
 
@@ -204,22 +209,25 @@ def test_the_stash_exception_is_unchanged():
 
 
 def test_the_push_pattern_is_in_the_verified_baseline_whatever_the_switch():
-    before = list(security.baseline_denied_command_patterns())
+    before = list(shell_denylist.baseline_denied_command_patterns())
     _set_switch(True)
-    security.denied_command(f"{PUSH} origin feature-x")
-    after = list(security.baseline_denied_command_patterns())
-    assert security.GIT_PUSH_BASELINE_PATTERN in before
+    shell_denylist.denied_command(f"{PUSH} origin feature-x")
+    after = list(shell_denylist.baseline_denied_command_patterns())
+    assert shell_denylist.GIT_PUSH_BASELINE_PATTERN in before
     assert before == after
     doc = json.loads(
-        (Path(security.__file__).parent / "baseline_denylist.json").read_text(encoding="utf-8")
+        (Path(shell_denylist.__file__).parent / "baseline_denylist.json").read_text(
+            encoding="utf-8"
+        )
     )
-    assert security._baseline_digest(doc["patterns"]) == doc["sha256"]
+    assert shell_denylist._baseline_digest(doc["patterns"]) == doc["sha256"]
 
 
 def test_removing_the_push_pattern_is_healed():
-    security.BUILTIN_DENIED_COMMAND_PATTERNS.remove(security.GIT_PUSH_BASELINE_PATTERN)
-    assert security.denied_command(f"{PUSH} --force origin main") is not None
-    assert security.GIT_PUSH_BASELINE_PATTERN in security.BUILTIN_DENIED_COMMAND_PATTERNS
+    pattern = shell_denylist.GIT_PUSH_BASELINE_PATTERN
+    shell_denylist.BUILTIN_DENIED_COMMAND_PATTERNS.remove(pattern)
+    assert shell_denylist.denied_command(f"{PUSH} --force origin main") is not None
+    assert pattern in shell_denylist.BUILTIN_DENIED_COMMAND_PATTERNS
 
 
 # ── the config ───────────────────────────────────────────────────────────────────────────────
@@ -241,7 +249,16 @@ def test_only_a_json_true_turns_it_on(value):
 
 
 def test_an_unreadable_config_holds_it_off():
-    assert CONFIG_ON_DISCARDED_READ[FIELD] is False
+    """A config.json that stored the switch on and can no longer be parsed leaves it off: a
+    discarded read starts from the defaults, where the switch is off, so the fail-closed table
+    needs no entry for it."""
+    _set_switch(True)
+    path = config_dir() / "config.json"
+    stored = path.read_text(encoding="utf-8")
+    path.write_text(stored[: len(stored) // 2], encoding="utf-8")
+    assert AppConfig.load().security.allow_git_push is False
+    assert branch_publish.switch_on() is False
+    assert FIELD not in CONFIG_ON_DISCARDED_READ
 
 
 def test_an_unreadable_switch_means_off():
@@ -258,8 +275,8 @@ def test_an_agents_shell_cannot_change_it_through_the_cli():
         f"personalclaw config set {FIELD} true",
         f"personalclaw config unset {FIELD}",
     ):
-        denied = security.denied_command(command)
-        assert denied is not None and denied.pattern in security.CLI_SECURITY_CONFIG_PATTERNS
+        denied = shell_denylist.denied_command(command)
+        assert denied is not None and denied.pattern in shell_denylist.CLI_SECURITY_CONFIG_PATTERNS
 
 
 def _config_app(app_name: str = ""):

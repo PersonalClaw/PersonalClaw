@@ -1,8 +1,8 @@
 """A scheduled action can no longer kill the gateway running it.
 
 🔴 THE DEFECT, measured before a line was written. The packaged baseline denylist
-(`security.baseline_denied_command_patterns`) is the only thing that had ever looked at this, and
-it looks at LITERAL TEXT. Counted against it:
+(`shell_denylist.baseline_denied_command_patterns`) is the only thing that had ever looked at this,
+and it looks at LITERAL TEXT. Counted against it:
 
 * `personalclaw stop` — no pattern. `personalclaw update` — no pattern. `personalclaw service
   uninstall` — no pattern. Each one ends the host process; each one passed.

@@ -327,7 +327,7 @@ see the prompt; and no tool that asks a person something is offered. A turn on
 an agent CLI, which runs its tools where the host cannot hold them to those
 grants, is refused before its message is sent, and the owner is told why.
 
-## Command screening (`security.py`)
+## Command screening (`shell_denylist.py`, `security.py`)
 
 - **Deny list** — `BUILTIN_DENIED_COMMAND_PATTERNS` (119 shell patterns, from
   the packaged `baseline_denylist.json`) is merged with user-configured

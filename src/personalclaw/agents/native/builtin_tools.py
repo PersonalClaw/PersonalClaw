@@ -1531,14 +1531,14 @@ class NativeBuiltinToolProvider(ToolProvider):
     def _bash_refusal(self, command: str, handed: list[str], written: str) -> ToolResult | None:
         """What the shell refuses to run, judged on the command that would RUN (*written* is the
         command as the agent wrote it, its references unfilled); None to run it."""
-        from personalclaw import security
+        from personalclaw import security, shell_denylist
 
         # App-level guards before any execution, judged on the command that will RUN, so a value a
         # reference fills in cannot carry a sensitive path or a denied pattern past them:
         # 1. sensitive credential-path access (is_sensitive_bash_command), with a relative path
         #    read from the folder the command runs in — the workspace, inside the home;
         # 2. the action denylist, under this session (one nobody is in is held to it), then the
-        #    shell denylist (`security.denied_command`, the check every command path asks).
+        #    shell denylist (`shell_denylist.denied_command`, the check every command path asks).
         # Each refusal names its control and rule for the call's audit row (`_refused_by`).
         sens = security.is_sensitive_bash_command(command, cwd=self._cwd)
         if sens:
@@ -1566,7 +1566,7 @@ class NativeBuiltinToolProvider(ToolProvider):
         if (kept := memory_named_in(command, cwd=self._cwd)) is not None:
             said = security.redact_known_values(str(kept), handed)
             return _refused_by("bash", kept.control, said, said, [kept.hint])
-        if (denied := security.denied_command(command)) is not None:
+        if (denied := shell_denylist.denied_command(command)) is not None:
             return _refused_by(
                 "bash",
                 "shell_denylist",

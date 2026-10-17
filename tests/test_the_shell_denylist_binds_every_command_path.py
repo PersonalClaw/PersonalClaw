@@ -8,7 +8,7 @@ setup hook, and a command an agent CLI asked the host to run all ran a command t
 pattern for. The approval card and Tools → Try it asked the owner to confirm a command the tool
 then refused.
 
-Every one of those paths now asks ``security.denied_command``, the one check, before it runs
+Every one of those paths now asks ``shell_denylist.denied_command``, the one check, before it runs
 anything, and ``test_every_command_path_asks_the_denylist.py`` keeps it so. The added pattern names
 a program that cannot resolve (``pcfixture-cloudctl``), so a path that still ran it ran nothing.
 Each family has its control: an ordinary command still runs, or is still asked about.
@@ -71,7 +71,7 @@ def _ran(seen: list[list[str]]) -> bool:
 
 
 def test_the_one_check_names_the_rule_and_whose_rule_it_is():
-    from personalclaw.security import denied_command
+    from personalclaw.shell_denylist import denied_command
 
     _add_pattern()
     added = denied_command(DENIED)

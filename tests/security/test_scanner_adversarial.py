@@ -41,7 +41,7 @@ from typing import Any, Callable
 
 import pytest
 
-from personalclaw import security, supply_chain
+from personalclaw import shell_denylist, supply_chain
 from personalclaw.sel import SecurityEventLog
 from personalclaw.skills import marketplace as mk
 from personalclaw.skills.marketplace import SkillDetail, SkillInstallRefused, SkillsMarketplace
@@ -434,7 +434,7 @@ def assert_manifest_rejected(case: dict[str, Any], tmp_path: Path) -> None:
 # ── baseline-tamper drivers ─────────────────────────────────────────────────────
 #
 # The tamper is applied to a TEMP COPY of the packaged data file, never to the installed
-# one: ``security.resources`` is swapped for a shim that resolves
+# one: ``shell_denylist.resources`` is swapped for a shim that resolves
 # ``baseline_denylist.json`` inside ``tmp_path``, so the REAL ``_read_packaged_baseline``
 # does the reading, hashing and raising. (the unit tests substitute the whole reader,
 # which re-implements the parse; going through the real function is what makes this
@@ -455,7 +455,7 @@ def _baseline_doc(case_tamper: dict[str, Any], patterns_key: str = "patterns") -
     """Serialize a tampered ``{version, sha256, patterns}`` doc from a case's spec."""
     patterns = [str(p) for p in case_tamper.get(patterns_key, [])]
     if case_tamper.get("recompute_sha256"):
-        digest = security._baseline_digest(patterns)
+        digest = shell_denylist._baseline_digest(patterns)
     else:
         digest = str(case_tamper["sha256"])
     return json.dumps(
@@ -466,8 +466,8 @@ def _baseline_doc(case_tamper: dict[str, Any], patterns_key: str = "patterns") -
 def _install_tampered_file(raw: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path / "tampered-package"
     root.mkdir(parents=True, exist_ok=True)
-    (root / security.BASELINE_DENYLIST_FILE).write_text(raw, encoding="utf-8")
-    monkeypatch.setattr(security, "resources", _TamperedResources(root))
+    (root / shell_denylist.BASELINE_DENYLIST_FILE).write_text(raw, encoding="utf-8")
+    monkeypatch.setattr(shell_denylist, "resources", _TamperedResources(root))
 
 
 def _use_home(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -496,11 +496,11 @@ def _still_enforcing(case: dict[str, Any]) -> None:
     stopped refusing the commands is the outcome that matters, so every case names the
     probe commands that must STILL be denied — and one that must still not be."""
     for command in case["variants"]:
-        assert security.denied_command(command) is not None, (
+        assert shell_denylist.denied_command(command) is not None, (
             f"{case['id']}: {command!r} is no longer refused after the tamper — the "
             f"baseline shrank"
         )
-    assert security.denied_command("echo sh7-corpus-negative-control") is None, (
+    assert shell_denylist.denied_command("echo sh7-corpus-negative-control") is None, (
         f"{case['id']}: the post-tamper denylist refuses a benign command, so 'still "
         f"enforcing' above proves nothing"
     )
@@ -511,14 +511,14 @@ def assert_baseline_file_tamper_detected(
 ) -> None:
     """A self-consistent on-disk rewrite: detected, not adopted, audited, still enforcing."""
     _use_home(tmp_path, monkeypatch)
-    before = len(security.baseline_denied_command_patterns())
+    before = len(shell_denylist.baseline_denied_command_patterns())
     _install_tampered_file(_baseline_doc(case["tamper"]), tmp_path, monkeypatch)
 
-    report = security.verify_baseline_denylist()
+    report = shell_denylist.verify_baseline_denylist()
 
     assert report["file_verified"] is False, f"{case['id']}: the rewrite was not detected"
     assert case["detail_contains"] in report["detail"], report["detail"]
-    assert report["sha256"] == security._BASELINE_SHA256, "the tampered digest was ADOPTED"
+    assert report["sha256"] == shell_denylist._BASELINE_SHA256, "the tampered digest was ADOPTED"
     assert report["count"] == before, "the enforced set changed size after the tamper"
     rows = _sel_rows(tmp_path, "baseline_denylist_tamper_attempt")
     assert len(rows) == 1, f"{case['id']}: tamper not audited ({len(rows)} events)"
@@ -537,13 +537,13 @@ def assert_baseline_file_unreadable_detected(
     swallowing it.
     """
     _use_home(tmp_path, monkeypatch)
-    before = len(security.baseline_denied_command_patterns())
+    before = len(shell_denylist.baseline_denied_command_patterns())
     _install_tampered_file(_baseline_doc(case["tamper"]), tmp_path, monkeypatch)
 
     with pytest.raises(ValueError, match=case["raises"]):
-        security._read_packaged_baseline()
+        shell_denylist._read_packaged_baseline()
 
-    report = security.verify_baseline_denylist()
+    report = shell_denylist.verify_baseline_denylist()
 
     assert report["file_verified"] is False
     assert case["detail_contains"] in report["detail"], report["detail"]
@@ -559,14 +559,16 @@ def assert_baseline_healed_and_audited(
 ) -> None:
     """An in-process ``.clear()`` is healed on the next read and logged as a re-assert."""
     _use_home(tmp_path, monkeypatch)
-    before = len(security.baseline_denied_command_patterns())
-    security.BUILTIN_DENIED_COMMAND_PATTERNS.clear()
-    assert security.BUILTIN_DENIED_COMMAND_PATTERNS == [], "the tamper did not apply"
+    before = len(shell_denylist.baseline_denied_command_patterns())
+    shell_denylist.BUILTIN_DENIED_COMMAND_PATTERNS.clear()
+    assert shell_denylist.BUILTIN_DENIED_COMMAND_PATTERNS == [], "the tamper did not apply"
 
-    healed = security.baseline_denied_command_patterns()
+    healed = shell_denylist.baseline_denied_command_patterns()
 
     assert len(healed) == before, "the heal did not restore the full baseline"
-    assert list(security.BUILTIN_DENIED_COMMAND_PATTERNS) == list(healed), "live list not repaired"
+    assert list(shell_denylist.BUILTIN_DENIED_COMMAND_PATTERNS) == list(
+        healed
+    ), "live list not repaired"
     rows = _sel_rows(tmp_path, case["sel_event"])
     assert len(rows) == 1, f"{case['id']}: heal not audited ({len(rows)} events)"
     assert rows[0]["outcome"] == "healed"
@@ -590,11 +592,11 @@ def assert_baseline_shrink_refused_and_audited(
     tamper = case["tamper"]
     _install_tampered_file(_baseline_doc(tamper, "file_patterns"), tmp_path, monkeypatch)
     monkeypatch.setattr(
-        security, "_BASELINE_PATTERNS", tuple(str(p) for p in tamper["snapshot_patterns"])
+        shell_denylist, "_BASELINE_PATTERNS", tuple(str(p) for p in tamper["snapshot_patterns"])
     )
-    security.BUILTIN_DENIED_COMMAND_PATTERNS[:] = [str(p) for p in tamper["live_patterns"]]
+    shell_denylist.BUILTIN_DENIED_COMMAND_PATTERNS[:] = [str(p) for p in tamper["live_patterns"]]
 
-    effective = security.baseline_denied_command_patterns()
+    effective = shell_denylist.baseline_denied_command_patterns()
 
     for source in ("snapshot_patterns", "live_patterns", "file_patterns"):
         for pattern in tamper[source]:
@@ -725,18 +727,18 @@ def baseline_state_restored(tmp_path, monkeypatch):
     test the xdist worker picks up next. The SEL singleton is reset so each case's events
     land in its own ``tmp_path`` home and are counted exactly.
     """
-    live_before = list(security.BUILTIN_DENIED_COMMAND_PATTERNS)
-    snapshot_before = security._BASELINE_PATTERNS
-    reported_before = set(security._BASELINE_TAMPER_REPORTED)
+    live_before = list(shell_denylist.BUILTIN_DENIED_COMMAND_PATTERNS)
+    snapshot_before = shell_denylist._BASELINE_PATTERNS
+    reported_before = set(shell_denylist._BASELINE_TAMPER_REPORTED)
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    security._BASELINE_TAMPER_REPORTED.clear()
+    shell_denylist._BASELINE_TAMPER_REPORTED.clear()
     SecurityEventLog._instance = None
     SecurityEventLog._initialized = False
     yield
-    security._BASELINE_PATTERNS = snapshot_before
-    security.BUILTIN_DENIED_COMMAND_PATTERNS[:] = live_before
-    security._BASELINE_TAMPER_REPORTED.clear()
-    security._BASELINE_TAMPER_REPORTED.update(reported_before)
+    shell_denylist._BASELINE_PATTERNS = snapshot_before
+    shell_denylist.BUILTIN_DENIED_COMMAND_PATTERNS[:] = live_before
+    shell_denylist._BASELINE_TAMPER_REPORTED.clear()
+    shell_denylist._BASELINE_TAMPER_REPORTED.update(reported_before)
     SecurityEventLog._instance = None
     SecurityEventLog._initialized = False
 
@@ -760,10 +762,10 @@ class TestBaselineTamperClass:
         """Isolation floor for this class. Every case rewrites a copy under ``tmp_path``;
         the real packaged file must still verify against the fingerprint captured at
         import. If a case ever wrote to the checkout, this reds."""
-        version, digest, patterns = security._read_packaged_baseline()
-        assert digest == security._BASELINE_SHA256
-        assert version == security.BASELINE_DENYLIST_VERSION
-        assert len(patterns) == len(security._BASELINE_PATTERNS)
+        version, digest, patterns = shell_denylist._read_packaged_baseline()
+        assert digest == shell_denylist._BASELINE_SHA256
+        assert version == shell_denylist.BASELINE_DENYLIST_VERSION
+        assert len(patterns) == len(shell_denylist._BASELINE_PATTERNS)
 
 
 # ── the corpus's own floor ──────────────────────────────────────────────────────
@@ -916,8 +918,10 @@ class TestCorpusRedsOnAWeakenedScanner:
         with monkeypatch.context() as intact:
             assert_baseline_file_tamper_detected(case, tmp_path / "intact", intact)
 
-        tampered_digest = security._baseline_digest([str(p) for p in case["tamper"]["patterns"]])
-        monkeypatch.setattr(security, "_BASELINE_SHA256", tampered_digest)
+        tampered_digest = shell_denylist._baseline_digest(
+            [str(p) for p in case["tamper"]["patterns"]]
+        )
+        monkeypatch.setattr(shell_denylist, "_BASELINE_SHA256", tampered_digest)
         expect_rail_red(
             assert_baseline_file_tamper_detected, case, tmp_path / "weakened", monkeypatch
         )
@@ -934,9 +938,9 @@ class TestCorpusRedsOnAWeakenedScanner:
         case = self._case("baseline-tamper/snapshot-and-file-both-rebound")
         with monkeypatch.context() as intact:
             assert_baseline_shrink_refused_and_audited(case, tmp_path / "intact", intact)
-        security._BASELINE_TAMPER_REPORTED.clear()
+        shell_denylist._BASELINE_TAMPER_REPORTED.clear()
 
-        monkeypatch.setattr(security, "_note_baseline_tamper", lambda digest: False)
+        monkeypatch.setattr(shell_denylist, "_note_baseline_tamper", lambda digest: False)
         expect_rail_red(
             assert_baseline_shrink_refused_and_audited, case, tmp_path / "weakened", monkeypatch
         )

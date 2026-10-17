@@ -315,7 +315,7 @@ async def run_verify_block(block: dict[str, Any], *, default_cwd: str = "") -> b
     the one the work happened in.
     """
     from personalclaw.loop.gates import CheckRefused, held, run_verify_command
-    from personalclaw.security import denied_command
+    from personalclaw.shell_denylist import denied_command
 
     command = str(block.get("command") or block.get("script") or "").strip()
     if not command:

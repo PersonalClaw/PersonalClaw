@@ -216,11 +216,11 @@ def test_any_other_command_follows_the_normal_rules(folders, target, shape):
 def test_the_shell_denylist_no_longer_refuses_an_ordinary_recursive_delete():
     """The text patterns are gone: a recursive delete of a build folder is no more a refusal than
     any other change, and the delete of a protected folder is decided on the command instead."""
-    from personalclaw import security
+    from personalclaw import shell_denylist
 
-    assert security.denied_command(_deleting("/tmp/build")) is None
-    assert security.denied_command(_deleting("~/.cache/build")) is None
-    baseline = security.baseline_denied_command_patterns()
+    assert shell_denylist.denied_command(_deleting("/tmp/build")) is None
+    assert shell_denylist.denied_command(_deleting("~/.cache/build")) is None
+    baseline = shell_denylist.baseline_denied_command_patterns()
     assert not [p for p in baseline if p.startswith("rm ")], "a text pattern for rm is left"
 
 

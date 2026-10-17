@@ -150,7 +150,8 @@ class GoalKind(LoopKindStrategy):
         """Goal-kind pre-flight: goal_type/granularity validity, a verifiable goal's
         done-ness signal, and screening the unattended verify_command. Returns
         (errors, warnings) folded into the shared validator's result."""
-        from personalclaw.security import audit_bash_command, denied_command
+        from personalclaw.security import audit_bash_command
+        from personalclaw.shell_denylist import denied_command
 
         errors: list[str] = []
         warnings: list[str] = []

@@ -19,12 +19,8 @@ from personalclaw import lasting_work, record_files
 from personalclaw.atomic_write import atomic_write
 from personalclaw.audit_subject import log_title
 from personalclaw.safety_flags import strict_bool
-from personalclaw.security import (
-    denied_command,
-    is_denied,
-    is_sensitive_bash_command,
-    is_sensitive_path,
-)
+from personalclaw.security import is_denied, is_sensitive_bash_command, is_sensitive_path
+from personalclaw.shell_denylist import denied_command
 from personalclaw.shell_syntax import duplicates_a_descriptor, joins_commands, one_command
 from personalclaw.task_modes import SHELL_TOOL_NAMES
 
@@ -543,7 +539,7 @@ class HookManager:
             if reason:
                 return ToolHookResult.refuse(reason, control="sensitive_path", rule=reason)
             # The shell denylist, the check the native bash tool and every other command path
-            # ask (`security.denied_command`): a command an agent CLI asks the host to run is
+            # ask (`shell_denylist.denied_command`): a command an agent CLI asks the host to run is
             # refused here, before any auto-approve pattern or card can offer it.
             if (denied := denied_command(normalized)) is not None:
                 return ToolHookResult.refuse(

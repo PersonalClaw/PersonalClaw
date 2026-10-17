@@ -176,7 +176,7 @@ class TestSandboxDeniedCommands:
 
     @pytest.fixture()
     def denied_commands(self) -> list[str]:
-        from personalclaw.security import BUILTIN_DENIED_COMMAND_PATTERNS
+        from personalclaw.shell_denylist import BUILTIN_DENIED_COMMAND_PATTERNS
 
         return list(BUILTIN_DENIED_COMMAND_PATTERNS)
 
@@ -253,12 +253,12 @@ class TestSelfTamperDenylist:
     The agent must not kill/restart/update its own gateway, while ordinary
     commands that merely mention ``personalclaw`` (e.g. listing the skills dir,
     reading the config) must NOT be falsely blocked. Uses the live native
-    screener :func:`personalclaw.security.denied_command`.
+    screener :func:`personalclaw.shell_denylist.denied_command`.
     """
 
     @staticmethod
     def _is_denied(cmd: str) -> bool:
-        from personalclaw.security import denied_command
+        from personalclaw.shell_denylist import denied_command
 
         return denied_command(cmd) is not None
 

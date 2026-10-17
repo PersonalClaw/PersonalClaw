@@ -3,7 +3,7 @@
 `workflows/compaction.is_context_overflow` — the shared "did the provider reject this for
 length?" reader — had ZERO callers under `agents/`, so the one place a long chat actually
 overflows could not tell that failure apart from any other. It did not merely go
-unrecovered, it went recovered WRONG: `_inference_failure_mode` collapses a vendor
+unrecovered, it went recovered WRONG: `inference_failure_mode` collapses a vendor
 length-400 to `PROVIDER_ERROR`, which `is_retryable` answers True to, so the loop's single
 per-turn retry was spent re-sending the byte-identical oversized history one backoff later.
 The user paid for two guaranteed failures and got one error.

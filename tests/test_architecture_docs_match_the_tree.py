@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from personalclaw.sandbox import _STANDARD_DIRS
-from personalclaw.security import BUILTIN_DENIED_COMMAND_PATTERNS
+from personalclaw.shell_denylist import BUILTIN_DENIED_COMMAND_PATTERNS
 
 pytestmark = pytest.mark.security
 

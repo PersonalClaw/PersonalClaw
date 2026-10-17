@@ -13,6 +13,7 @@ mapping of those stays in ``llm_helpers.humanize_provider_error``.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import contextvars
 from collections.abc import Iterator
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
     from personalclaw.errors import AgentError
 
 from personalclaw.llm.events import is_length_stop
+from personalclaw.net.client import refusal_in
 
 
 class FailureMode(str, Enum):
@@ -154,6 +156,27 @@ class GuardError(Exception):
     """Base for errors the model-call guard raises to its caller."""
 
     mode: FailureMode = FailureMode.PROVIDER_ERROR
+
+
+def inference_failure_mode(exc: BaseException) -> FailureMode:
+    """Classify a raised inference exception into the guard's taxonomy, by the rule
+    this module documents for the guard, so the native loop's rows and the guard's fold into
+    one: a guard error carries its mode, a request the owner's network settings
+    refused is ``EGRESS_REFUSED`` (refused again, and not for another model to answer), a bare
+    timeout is ``TIMEOUT``, and every vendor SDK exception collapses to ``PROVIDER_ERROR``."""
+    if isinstance(exc, GuardError):
+        return exc.mode
+    if refusal_in(exc) is not None:
+        return FailureMode.EGRESS_REFUSED
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        return FailureMode.TIMEOUT
+    if isinstance(exc, MemoryError):
+        # An allocation that just failed is not a transient: the identical prompt asks for the
+        # identical memory. Measured on the bundled model, the blind retry re-ran a
+        # (9, 27862, 27862) float32 allocation — and on a memory-capped host the second attempt
+        # is the one the kernel kills the whole gateway for.
+        return FailureMode.PROMPT_TOO_LARGE
+    return FailureMode.PROVIDER_ERROR
 
 
 def use_case_binding(use_case: str) -> str:

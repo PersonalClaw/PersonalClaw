@@ -3603,9 +3603,6 @@ CONFIG_ON_DISCARDED_READ: dict[str, Any] = {
     # turned it on asked for nothing unproven to run while nobody is watching, and a file we
     # cannot parse must not answer that request with "never mind".
     "agent.unattended_requires_verified_adapter": True,
-    # Off by default too, so a discard changes nothing for most homes; listed because an owner who
-    # turned it on chose a config we can read, and an unreadable one must not keep it on.
-    "security.allow_git_push": False,
 }
 
 

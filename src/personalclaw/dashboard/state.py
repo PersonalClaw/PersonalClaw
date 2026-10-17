@@ -43,6 +43,7 @@ from personalclaw.task_modes import (  # noqa: F401,E501 — re-exported for das
     shell_command,
     tool_input_to_str,
 )
+from personalclaw.textfmt import board_options, without_board_options
 from personalclaw.turn_source import DASHBOARD_SOURCE, source_of
 
 
@@ -178,27 +179,12 @@ CRON_NOTIFY_END = "[End of cron notification]"
 CRON_NOTIFY_RE = re.compile(rf'^{re.escape(CRON_NOTIFY_PREFIX)}"(.*)"\]')
 SUBAGENT_COMPLETION_PREFIX = "[Subagent completion event]"
 
-# The ``[OPTIONS: …]`` mechanism is retired as a SUGGESTION surface (chat renders
-# `chat_followups` chips instead), but sessions persisted before the retirement still
-# carry the marker. This pattern stays so the Board keeps stripping it out of
-# `prompt_preview` rather than showing a raw tag.
-_OPTIONS_RE = re.compile(r"\[OPTIONS:\s*([^\]]+)\]")
-
 
 def _redact(text: str) -> str:
     """Sanitise LLM output before surfacing to dashboard."""
     text, _ = redact_exfiltration_urls(text)
     text, _ = redact_credentials(text)
     return text
-
-
-def _parse_options(text: str) -> list[str]:
-    """Extract pipe-separated choices from the LAST [OPTIONS: A | B | C] in text."""
-    matches = _OPTIONS_RE.findall(text)
-    if not matches:
-        return []
-    parts = [p.strip() for p in matches[-1].split("|")]
-    return [p for p in parts if p]
 
 
 VALID_MEMORY_MODES = ("persistent", "incognito", "temporary")
@@ -836,10 +822,10 @@ class _ChatSession(ChatQueue):
                     redacted = _redact(txt)
                     last_msg = (redacted[:80] + "…") if len(redacted) > 80 else redacted
                     if role == "assistant":
-                        options = _parse_options(txt)
+                        options = board_options(txt)
                         has_options = bool(options)
                         if has_options:
-                            stripped = _redact(_OPTIONS_RE.sub("", txt).strip())
+                            stripped = _redact(without_board_options(txt).strip())
                             prompt_preview = (
                                 stripped[:240] + "…" if len(stripped) > 240 else stripped
                             )

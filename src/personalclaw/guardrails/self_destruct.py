@@ -12,8 +12,8 @@ which is the very process hosting the run. The runner dies mid-flight, so the
 run rather than as a self-inflicted stop. The user is left debugging a phantom.
 
 **Measured before a line was written.** The packaged baseline
-(`security.baseline_denied_command_patterns`) carries exactly three lifecycle-adjacent regexes —
-`.*personal.?claw restart.*`,
+(`shell_denylist.baseline_denied_command_patterns`) carries exactly three lifecycle-adjacent
+regexes — `.*personal.?claw restart.*`,
 `.*personal.?claw gateway restart.*` and `.*\\b(kill|pkill|killall)\\b.*\\bpersonal[-.]?claw\\b.*`
 — and they are matched against literal text. So:
 
