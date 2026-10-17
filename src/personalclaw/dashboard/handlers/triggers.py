@@ -98,8 +98,8 @@ def _trigger_store():
     """The unified store, rooted at the active home.
 
     Resolved through this module's `config_dir` so there is exactly ONE place to redirect the
-    handler's store — which is what `tests/conftest.py::_isolate_trigger_store` patches. Importing
-    it inside the function instead would defeat that fixture, and that mistake was made once
+    handler's store — which is where a test points it at a home of its own. Importing
+    it inside the function instead would defeat that redirect, and that mistake was made once
     already: the boot migration took `config_dir()` from its caller and wrote to the real home.
     """
     from personalclaw.triggers.store import TriggerStore

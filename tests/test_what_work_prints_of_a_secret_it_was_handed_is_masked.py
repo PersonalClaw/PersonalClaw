@@ -74,7 +74,7 @@ def _store(name: str = NAME, value: str = VALUE) -> None:
 
 def _homes(home: Path) -> list[Path]:
     """The home, and where the Triggers page's handlers keep the trigger store and its history
-    (the suite keeps those apart: `conftest._isolate_trigger_store`)."""
+    (a test may point those at a home of its own)."""
     from personalclaw.dashboard.handlers.triggers import _runs_store
 
     return sorted({home, Path(_runs_store()._dir).parent})

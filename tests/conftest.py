@@ -86,6 +86,11 @@ tool_homes = importlib.import_module("tool_homes")
 # many modules and items carry it (`pytest_terminal_summary`). Rule: tests/security_census.py.
 security_census = importlib.import_module("security_census")
 
+# ── The fixture-cost report ─────────────────────────────────────────────
+# `--fixture-costs` times each fixture's own setup and writes reports/fixture-costs.json, merged
+# across xdist workers. Mechanism: tests/fixture_costs.py.
+fixture_costs = importlib.import_module("fixture_costs")
+
 #: What `pytest_configure` set for collection, put back by `pytest_unconfigure`.
 _PUT_THE_PROGRAMS_BACK: list = []
 
@@ -135,20 +140,96 @@ _TEST_HOME_NUMBERS = itertools.count()
 #: Numbers each test's ``tmp_path`` within this process's own temporary folder.
 _TMP_PATH_NUMBERS = itertools.count()
 
-#: Numbers the per-test folders the isolating fixtures below point a seam at.
-_ISOLATED_FOLDER_NUMBERS = itertools.count()
+
+class _LoadedModules:
+    """The loaded modules that hold a given name, worked out again only when ``sys.modules``
+    changed.
+
+    Two autouse fixtures re-point a function some modules bound at import: the home resolvers
+    (``_isolate_real_home_writers``) and the provider registry's accessor
+    (``_restore_provider_registry``). Walking every loaded module for them cost about 2 ms each per
+    test once a worker had imported its share of the suite (some 6,500 modules), and copying
+    ``sys.modules`` to walk it set off a garbage collection in nearly every test.
+
+    So the modules that hold a name are found once and kept until ``sys.modules`` changes.
+    "Changes" is the dictionary's own equality: the same names, each bound to the SAME module
+    object. A count is not enough, because popping one module and importing another keeps the
+    length. Nor are the names, because a module popped and imported again
+    (``_forget_apps_registered_elsewhere`` pops app modules, and many tests pop one to import it
+    afresh) comes back as a new object under its old name, with a binding of its own that nothing
+    has re-pointed. Comparing the two dictionaries copies nothing and allocates nothing.
+
+    What the fixtures check in every test is each holder's CURRENT value, never a remembered one:
+    a test's patches are undone at its teardown, and ``importlib.reload`` runs a module's imports
+    again into the same object, so each holder is looked at again every time. What this cannot
+    see is a module that gains one of the names after it was loaded while ``sys.modules`` stays
+    the same; no module of ours assigns these names at run time.
+
+    The comparison is made once per test setup, by whichever fixture asks first, and the other
+    reuses it (``pytest_runtest_setup`` numbers each setup). Even with nothing copied, comparing
+    6,500 entries cost 0.16-0.29 ms, and each fixture used to make its own. A module first imported
+    by a fixture set up between the two is seen at the next test's setup instead; nothing a test
+    replaces is in place yet while fixtures are set up, so what such a module bound is the real
+    function. The app modules loaded at setup (``apps``) are kept on the same version."""
+
+    def __init__(self) -> None:
+        self._seen: dict | None = None
+        self._version = 0
+        self._looked = 0
+        self._holders: dict[str, tuple[int, list]] = {}
+        self._apps: tuple[int, frozenset[str]] = (0, frozenset())
+
+    def _look(self) -> None:
+        """Compare ``sys.modules`` with the last snapshot, once per test setup."""
+        if self._seen is not None and self._looked == _THIS_SETUP:
+            return
+        self._looked = _THIS_SETUP
+        if self._seen is None or sys.modules != self._seen:
+            self._seen = dict(sys.modules)
+            self._version += 1
+
+    def apps(self) -> frozenset[str]:
+        """The app bundles' modules (``_APP_MODULE_PREFIX``) loaded as this test is set up."""
+        self._look()
+        if self._apps[0] != self._version:
+            loaded = frozenset(n for n in self._seen or {} if n.startswith(_APP_MODULE_PREFIX))
+            self._apps = (self._version, loaded)
+        return self._apps[1]
+
+    def holding(self, label: str, names: tuple[str, ...], prefixes: tuple[str, ...]) -> list:
+        """``(name, module)`` for each loaded module under *prefixes* whose own namespace holds
+        one of *names*. *label* names the caller, whose list is kept between calls."""
+        self._look()
+        kept = self._holders.get(label)
+        if kept is None or kept[0] != self._version:
+            found = []
+            for name, module in self._seen.items():
+                if module is None or not (
+                    name.startswith(prefixes)
+                    or str(getattr(module, "__name__", "")).startswith(prefixes)
+                ):
+                    continue
+                namespace = getattr(module, "__dict__", None) or {}
+                if any(held in namespace for held in names):
+                    found.append((name, module))
+            kept = (self._version, found)
+            self._holders[label] = kept
+        return kept[1]
 
 
-def _isolated_folder(tmp_path_factory, prefix: str) -> Path:
-    """A new folder for one test, named by a counter rather than by ``mktemp()``.
+#: The one record of loaded modules that both re-pointing fixtures share.
+_LOADED_MODULES = _LoadedModules()
 
-    ``mktemp()`` numbers its folder by scanning and sorting the whole temporary folder, so each
-    call costs more than the last as a worker's run goes on. A counter is unique within the
-    process, and each xdist worker has a temporary folder of its own, so the name is unique per
-    worker without reading the folder at all."""
-    folder = tmp_path_factory.getbasetemp() / f"{prefix}-{next(_ISOLATED_FOLDER_NUMBERS)}"
-    folder.mkdir(mode=0o700)
-    return folder
+#: Numbers each test's setup, so the two re-pointing fixtures share one look at ``sys.modules``.
+_SETUPS = itertools.count(1)
+_THIS_SETUP = 0
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item):  # noqa: ARG001 — hook signature
+    """A new test's setup is starting: the next look at ``sys.modules`` compares again."""
+    global _THIS_SETUP
+    _THIS_SETUP = next(_SETUPS)
 
 
 # No module resolves the home at IMPORT (`tests/test_importing_personalclaw_touches_no_home.py`
@@ -158,7 +239,19 @@ def _isolated_folder(tmp_path_factory, prefix: str) -> Path:
 # it and names who did it. That is deliberate: a quarantine for those would hide them.
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--fixture-costs",
+        action="store_true",
+        default=False,
+        help="time each fixture's own setup and write reports/fixture-costs.json "
+        "(tests/fixture_costs.py)",
+    )
+
+
 def pytest_configure(config):
+    if config.getoption("--fixture-costs"):
+        config.pluginmanager.register(fixture_costs.Plugin(config.rootpath), "fixture-costs")
     config.pluginmanager.register(real_home_guard.Plugin(real_home_guard.GUARD), "real-home-guard")
     config.pluginmanager.register(container_runtime.Plugin(), "container-runtime-guard")
     config.pluginmanager.register(security_census.Reporter(), "security-census")
@@ -449,9 +542,10 @@ def _isolate_real_home_writers(tmp_path_factory, monkeypatch):
     a global ``$PERSONALCLAW_HOME`` for pytest jobs (removed once already: it takes
     precedence over ``Path.home()`` inside ``config_dir``, so it defeats the tests that
     assert env precedence and the ones that assert the default resolution), and a blanket
-    ``Path.home`` patch (see ``_isolate_session_map`` — it breaks the real-home safety
-    rails, and it would also silently redefine the unrelated ``Path.home()/".aws"`` and
-    ``Path.home()/".ssh"`` paths that the artifact/task sensitivity tests assert on).
+    ``Path.home`` patch (it breaks the tests that assert the real-home safety rails —
+    seed, loop validation — and it would also silently redefine the unrelated
+    ``Path.home()/".aws"`` and ``Path.home()/".ssh"`` paths that the artifact/task
+    sensitivity tests assert on).
 
     What a fixture CANNOT reach: a home resolved into a module-level constant at import time.
     The real-home rail this suite used to run caught 147 real-home entries still landing in
@@ -467,15 +561,23 @@ def _isolate_real_home_writers(tmp_path_factory, monkeypatch):
     ``sel()`` call constructs a fresh ``SecurityEventLog`` — and that construction must
     still find the redirected ``config_dir``, or the leak comes straight back.
 
-    Both resolvers are redirected, to the one path: ``resolve_config_dir()`` (where the home is,
-    never created) as well as ``config_dir()`` (that, created). Redirecting only the second left
-    every path built from the first pointing at the real home, and a child process handed one
-    made it where no in-process guard can see: the namespace sandbox's launcher, whose owner-only
+    ONE resolver is redirected: ``resolve_config_dir()``, where the home is, which creates
+    nothing. The loader's own ``config_dir()`` is that resolver's answer, made (0700) the first
+    time it is asked for, so it follows the redirect without a patch of its own, and so does every
+    module that bound it at import. Redirecting only ``config_dir()``, as this fixture once did,
+    left every path built from the resolver pointing at the real home, and a child process
+    handed one made it where no in-process guard can see: the namespace sandbox's launcher, whose
+    owner-only
     fence names the home it holds, created an empty real ``~/.personalclaw`` from four tests of
     ``test_sandbox_argv.py``. A call that names its own environment asks about another process's
     home (a gateway run elsewhere), and is answered by the rule as it asked. A test that patches
-    ``config.loader.config_dir`` to name its own home moves the first resolver as well: the path
+    ``config.loader.config_dir`` to name its own home moves the resolver as well: the path
     helpers ask where the home is without making it, and they answer inside that test's home.
+
+    The folder around the home (``pclaw-home-<n>``) is made by the loader as the home's parent,
+    with the default mode; only the home itself is 0700. That is safe only because the folder
+    holding it, the run's base temporary folder, is 0700 and the current user's own, which
+    ``tests/test_an_unchosen_home_holds_every_seams_files.py`` asserts.
     """
     import personalclaw.config.loader as config_loader
 
@@ -493,21 +595,10 @@ def _isolate_real_home_writers(tmp_path_factory, monkeypatch):
     original_config_dir = config_loader.config_dir
     original_resolve_config_dir = config_loader.resolve_config_dir
 
-    def guarded_config_dir() -> Path:
-        if _caller_chose_a_home():
-            return original_config_dir()
-        # NB: return the tmp dir WITHOUT delegating first — config_dir() mkdirs whatever
-        # it resolves, so delegating would create ~/.personalclaw on a machine that has
-        # none before we could redirect it.
-        home = tmp_home()
-        home.parent.mkdir(mode=0o700, exist_ok=True)
-        home.mkdir(mode=0o700, exist_ok=True)
-        return home
-
     def guarded_resolve_config_dir(env=None) -> Path:
         if env is not None:
             return original_resolve_config_dir(env)
-        if config_loader.config_dir is not guarded_config_dir:
+        if config_loader.config_dir is not original_config_dir:
             # The test named its home by patching `config_dir`, and that is where the home is
             # too: every path in the home (`config_path`, `env_path`, `apps_dir`) is worked out
             # from this resolver, which creates nothing, and each one follows that choice. Ahead
@@ -517,23 +608,23 @@ def _isolate_real_home_writers(tmp_path_factory, monkeypatch):
             return original_resolve_config_dir(env)
         return tmp_home()
 
-    guarded = {
-        original_config_dir: ("config_dir", guarded_config_dir),
-        original_resolve_config_dir: ("resolve_config_dir", guarded_resolve_config_dir),
-    }
-    for original, (name, replacement) in guarded.items():
-        monkeypatch.setattr(config_loader, name, replacement)
-    # `from ... import config_dir` at module scope binds the function object into the
-    # importing module, where patching the loader can never reach it (58 such modules).
-    # Re-point every binding of THESE function objects — identity-matched, so nothing else
-    # is touched. Function-local imports (95 sites, incl. every `as _cd` alias) resolve
-    # from the loader at call time and are already covered by the patch above.
-    for module in list(sys.modules.values()):
-        if module is None or not getattr(module, "__name__", "").startswith("personalclaw"):
+    monkeypatch.setattr(config_loader, "resolve_config_dir", guarded_resolve_config_dir)
+    # `from ... import resolve_config_dir` at module scope binds the function object into the
+    # importing module, where patching the loader can never reach it (`cli` today). Re-point
+    # every binding of THAT function object — identity-matched, so nothing else is touched.
+    # A module-scope `config_dir` binding needs nothing: it is the loader's own, which asks the
+    # resolver above. The modules that hold the name are found again only when `sys.modules`
+    # changed (`_LoadedModules`).
+    #
+    # The loader itself is skipped: it holds the resolver in its own namespace, so the walk would
+    # re-point it too, and the patch above would then be a second way of doing the same thing that
+    # no test could tell was missing. The patch alone redirects the loader, and the walk alone
+    # redirects the modules that bound a copy; each is proved by dropping it.
+    for _, module in _LOADED_MODULES.holding("home", ("resolve_config_dir",), ("personalclaw",)):
+        if module is config_loader:
             continue
-        for original, (name, replacement) in guarded.items():
-            if getattr(module, name, None) is original:
-                monkeypatch.setattr(module, name, replacement)
+        if module.__dict__.get("resolve_config_dir") is original_resolve_config_dir:
+            monkeypatch.setattr(module, "resolve_config_dir", guarded_resolve_config_dir)
     return root
 
 
@@ -564,56 +655,6 @@ def _the_library_guard_stays_with_its_test():
     before = list(sys.meta_path)
     yield
     sys.meta_path[:] = before
-
-
-@pytest.fixture(autouse=True)
-def _isolate_session_map(tmp_path_factory, monkeypatch):
-    """Point the SESSION MAP at a per-test tmp dir so nothing touches the real
-    ~/.personalclaw/session_map.json. SessionManager.__init__ builds a SessionMap()
-    that reads/prunes/REWRITES config_dir()/session_map.json at construction time — so
-    any test that does SessionManager(cfg) without its own home patch mutates the USER's
-    real session map (observed: a SessionMap key migration ran against the live file
-    during a rename). Scoped to session_map.config_dir only (NOT a global Path.home
-    patch, which breaks tests that assert real-home safety rails — seed/loop-validation).
-    A test that patches session_map.config_dir itself still overrides this (last wins)."""
-    map_home = _isolated_folder(tmp_path_factory, "pclaw-sessmap")
-    monkeypatch.setattr("personalclaw.session_map.config_dir", lambda: map_home)
-
-
-@pytest.fixture(autouse=True)
-def _isolate_trigger_store(tmp_path_factory, monkeypatch):
-    """Point the BOOT TRIGGER MIGRATION at a per-test tmp home.
-
-    Same hazard and same remedy as `_isolate_session_map` above. `GatewayOrchestrator._init_cron`
-    now runs `boot_migrate.migrate_and_arm(config_dir())`, which imports `crons.json` into
-    `triggers.json` and ARMS the imported clocks. Three pre-existing tests call `_init_cron` with no
-    home isolation at all (`test_gateway`, `test_cron_acp_retry`, `test_cron_thread_routing`) — they
-    were harmless only because that path never wrote before. A full-suite run migrated the
-    USER's real crons into `~/.personalclaw/triggers.json`.
-
-    Scoped to the two seams that build a store from the ACTIVE HOME rather than a global `Path.home`
-    patch, for the reason the fixture above gives: a blanket patch breaks the tests that assert
-    real-home safety rails. A test that patches either itself still overrides it (last wins), and
-    every test that passes an explicit `base_dir` is unaffected.
-
-    🔴 The second seam was added: re-pointing the `/api/triggers` WRITES means the
-    handler's `_trigger_store()` now persists a created/updated row, and four pre-existing
-    dashboard tests call that handler with no home isolation. Observed on a full-suite run:
-    `clock:t`, `clock:t-2`, `clock:t-3` and `clock:test` landed in the USER's real
-    `~/.personalclaw/triggers.json`. Any new path that WRITES a store built from `config_dir()`
-    has to be redirected here too.
-
-    🔴 The THIRD seam was added: `_init_cron` now runs the app-cron and digest reconcilers
-    against a store built from `gateway.config_dir()`, so `test_gateway`'s unisolated `_init_cron`
-    calls wrote `system:notification-digest` into the USER's real store (reproduced by deleting the
-    file and running that one file). Four occurrences of this hazard now; the rule is the docstring
-    above, and the real-home guard (tests/real_home_guard.py) fails the test that writes one."""
-    store_home = _isolated_folder(tmp_path_factory, "pclaw-triggers")
-    monkeypatch.setattr("personalclaw.triggers.boot_migrate.config_dir", lambda: store_home)
-    monkeypatch.setattr(
-        "personalclaw.dashboard.handlers.triggers.config_dir", lambda: store_home, raising=False
-    )
-    monkeypatch.setattr("personalclaw.gateway.config_dir", lambda: store_home, raising=False)
 
 
 #: Where the package under test "runs from" unless a test places it: a wheel's copy in this
@@ -969,25 +1010,6 @@ def _reset_sel_singleton():
 
 
 @pytest.fixture(autouse=True)
-def _isolate_single_flight_locks(tmp_path_factory, monkeypatch):
-    """Point the cross-process single-flight lock dir at a per-test tmp dir.
-
-    ``concurrency.single_flight(job_key)`` takes an OS ``flock`` on
-    ``config_dir()/locks/<job_key>.lock`` so only one PROCESS consolidates a given
-    key at a time — correct in production, but a cross-test hazard under xdist:
-    all workers share one ``PERSONALCLAW_HOME`` (one ``config_dir()``), and several
-    tests reuse the same consolidation key (e.g. ``consolidate:dashboard:chat-empty``).
-    Two such tests landing on different workers then contend for the SAME lock file —
-    the loser's ``single_flight`` returns False, its consolidation is skipped, and its
-    SEL-audit assertions see an empty record (a rotating ~1-in-3 red). Isolating the
-    lock DIR per test makes each test's keys resolve to their own files, so no two
-    tests can collide regardless of worker placement. A test that patches the locks
-    dir itself still overrides this (last wins)."""
-    locks_home = _isolated_folder(tmp_path_factory, "pclaw-locks")
-    monkeypatch.setattr("personalclaw.concurrency._locks_dir", lambda: locks_home)
-
-
-@pytest.fixture(autouse=True)
 def _forbid_real_model_roots(monkeypatch):
     """Make the bound-model-deletion incident unreproducible BY CONSTRUCTION.
 
@@ -1218,10 +1240,9 @@ def _put_back_the_registry_accessor() -> None:
     a replacement a test left behind.
     """
     real = _real_registry_accessor()
-    for name, module in list(sys.modules.items()):
-        if module is None or not name.startswith(_OUR_MODULES):
-            continue
-        bound = (getattr(module, "__dict__", None) or {}).get("get_default_registry")
+    holders = _LOADED_MODULES.holding("registry accessor", ("get_default_registry",), _OUR_MODULES)
+    for name, module in holders:
+        bound = module.__dict__.get("get_default_registry")
         if bound is None or bound is real or getattr(bound, "__module__", None) == name:
             continue
         module.get_default_registry = real
@@ -1327,7 +1348,7 @@ def _restore_provider_registry() -> object:
     original = _registry_mod.get_default_registry()
     entries = getattr(original, "_entries", None)
     before = set(entries) if isinstance(entries, dict) else set()
-    apps_before = _app_modules()
+    apps_before = _LOADED_MODULES.apps()
     yield
     if _registry_mod.get_default_registry() is not original:
         _registry_mod.set_default_registry(original)
