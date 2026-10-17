@@ -373,6 +373,102 @@ def run_bundle_tests(app_dir: Path, timeout: float = 900.0) -> tuple[bool, str]:
     return proc.returncode == 0, tail
 
 
+#: The file ``--results DIR`` reads: the outcomes a CI run already recorded.
+RESULTS_FILENAME = "results.json"
+
+#: The outcomes a results entry may carry. Anything else is a malformed file, not a
+#: third state: a result the verifier cannot read as pass or fail vouches for nothing.
+RESULT_OUTCOMES = frozenset({"pass", "fail"})
+
+
+class ResultsError(ValueError):
+    """``DIR/results.json`` cannot be trusted as evidence. The message names the problem
+    (the path, the app or the value); the CLI prints it and exits 1."""
+
+
+class RecordedResult(NamedTuple):
+    """One app's recorded test outcome, as ``DIR/results.json`` states it."""
+
+    app: str
+    outcome: str
+    junit: str | None = None
+
+    @property
+    def passed(self) -> bool:
+        return self.outcome == "pass"
+
+
+def _plain_file_name(value: object) -> bool:
+    """True for a bare file name: no path separator, no ``..``, not empty."""
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and "/" not in value
+        and "\\" not in value
+        and ".." not in value
+    )
+
+
+def load_results(
+    results_dir: Path, known_apps: set[str] | frozenset[str] | None = None
+) -> dict[str, RecordedResult]:
+    """Read ``results_dir/results.json`` into an app-folder-name → result map.
+
+    The file is ``{"apps": [{"app": <folder>, "outcome": "pass"|"fail",
+    "junit": <optional file name in results_dir>}]}``. Every way the file can fail to be
+    evidence raises :class:`ResultsError` naming the problem: a missing directory or
+    file, unreadable or non-JSON content, the wrong shape, an unknown outcome, a
+    duplicate app, a ``junit`` value that is not a plain file name present in
+    ``results_dir``, and — when ``known_apps`` is given — an app folder that is not in
+    the tree, since results recorded for another tree must not be read as this one's.
+    """
+    if not results_dir.is_dir():
+        raise ResultsError(f"results directory {results_dir} is not a directory")
+    path = results_dir / RESULTS_FILENAME
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ResultsError(f"cannot read {path}: {exc}") from exc
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ResultsError(f"{path} is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("apps"), list):
+        raise ResultsError(f'{path} must be an object with an "apps" list')
+
+    out: dict[str, RecordedResult] = {}
+    for i, entry in enumerate(data["apps"]):
+        where = f"{path} apps[{i}]"
+        if not isinstance(entry, dict):
+            raise ResultsError(f"{where} is not an object")
+        app = entry.get("app")
+        if not isinstance(app, str) or not app:
+            raise ResultsError(f'{where} has no "app" name')
+        outcome = entry.get("outcome")
+        if outcome not in RESULT_OUTCOMES:
+            raise ResultsError(
+                f'{where} ({app}) has unknown outcome {outcome!r} — expected "pass" or "fail"'
+            )
+        if app in out:
+            raise ResultsError(f"{path} lists app {app!r} more than once")
+        if known_apps is not None and app not in known_apps:
+            raise ResultsError(
+                f"{path} has a result for app {app!r}, which is not an app folder in this tree"
+            )
+        junit = entry.get("junit")
+        if junit is not None:
+            if not _plain_file_name(junit):
+                raise ResultsError(
+                    f"{where} ({app}) junit {junit!r} must be a plain file name in {results_dir}"
+                )
+            if not (results_dir / junit).is_file():
+                raise ResultsError(
+                    f"{where} ({app}) junit file {junit!r} does not exist in {results_dir}"
+                )
+        out[app] = RecordedResult(app, str(outcome), junit)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # a11y evidence (the a11y axis)
 # ---------------------------------------------------------------------------
@@ -395,6 +491,38 @@ def read_axe_report(app_dir: Path) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 TestRunner = Callable[[Path], tuple[bool, str]]
+
+
+class NoRecordedResult(Exception):
+    """Raised by a recorded-results runner when the results hold nothing for an app.
+
+    The message is the whole ``tested`` violation reason. A missing result is not a
+    test failure, so it does not get the "the bundle's own tests fail" wording, and it
+    never falls back to running the bundle's tests.
+    """
+
+
+def recorded_results_runner(results_dir: Path, results: dict[str, RecordedResult]) -> TestRunner:
+    """A :data:`TestRunner` that reads each app's outcome from loaded results.
+
+    It starts no process: the outcome comes from ``results``, keyed by app folder name.
+    A ``fail`` outcome reports like a failing rerun, and an app with no entry raises
+    :class:`NoRecordedResult`.
+    """
+    source = results_dir / RESULTS_FILENAME
+
+    def run(app_dir: Path) -> tuple[bool, str]:
+        result = results.get(app_dir.name)
+        if result is None:
+            raise NoRecordedResult(
+                f"claims tested, but the results in {results_dir} hold no result for it"
+            )
+        if result.passed:
+            return True, ""
+        detail = f"; junit report: {results_dir / result.junit}" if result.junit else ""
+        return False, f'{source} records outcome "fail"{detail}'
+
+    return run
 
 
 def verify_app(
@@ -431,13 +559,17 @@ def verify_app(
                 )
             )
         else:
-            passed, tail = runner(app_dir)
-            if not passed:
-                out.append(
-                    QualityViolation(
-                        name, "tested", "true", f"the bundle's own tests fail:\n      {tail}"
+            try:
+                passed, tail = runner(app_dir)
+            except NoRecordedResult as missing:
+                out.append(QualityViolation(name, "tested", "true", str(missing)))
+            else:
+                if not passed:
+                    out.append(
+                        QualityViolation(
+                            name, "tested", "true", f"the bundle's own tests fail:\n      {tail}"
+                        )
                     )
-                )
 
     if "designSystem" in claims:
         sources = frontend_sources(app_dir)
@@ -547,10 +679,29 @@ def main(argv: list[str] | None = None) -> int:
         description="Verify each app's declared quality block against its evidence.",
     )
     ap.add_argument("tree", nargs="?", default=".", help="dir holding <app>/app.json (default: .)")
+    ap.add_argument(
+        "--results",
+        metavar="DIR",
+        default=None,
+        help=(
+            f"judge `tested` claims from DIR/{RESULTS_FILENAME} (recorded test results) "
+            "instead of running each app's tests"
+        ),
+    )
     args = ap.parse_args(argv)
 
     root = Path(args.tree).resolve()
-    violations, seen = verify_tree(root)
+    run_tests: TestRunner | None = None
+    if args.results is not None:
+        results_dir = Path(args.results).resolve()
+        known_apps = {mf.parent.name for mf in root.glob("*/app.json")}
+        try:
+            results = load_results(results_dir, known_apps)
+        except ResultsError as exc:
+            print(f"quality: {exc}", file=sys.stderr)
+            return 1
+        run_tests = recorded_results_runner(results_dir, results)
+    violations, seen = verify_tree(root, run_tests=run_tests)
 
     if seen == 0:
         print(f"quality: no */app.json under {root} — nothing was verified", file=sys.stderr)
