@@ -11,6 +11,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Added
 
 - **Settings → Security can let agents push a branch, each push still asking you.**
+- **The app quality check can judge each app's `tested` claim from test results a CI run already recorded (`--results DIR`), instead of running every app's tests again.**
 
 ### Security
 

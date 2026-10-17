@@ -32,6 +32,7 @@ from pathlib import Path
 import pytest
 
 import personalclaw
+from personalclaw.apps import quality as quality_mod
 from personalclaw.apps.manifest import AppManifest
 from personalclaw.apps.quality import (
     AXE_REPORT_RELPATH,
@@ -727,3 +728,157 @@ def test_an_unknown_design_system_level_is_an_install_error():
         }
     )
     assert any("quality.designSystem" in e for e in m.validate())
+
+
+# --------------------------------------------------------------------------- #
+# --results DIR — judging `tested` from results a CI run already recorded
+# --------------------------------------------------------------------------- #
+
+
+def write_results(results_dir: Path, apps: object) -> Path:
+    """Write ``results_dir/results.json`` holding ``{"apps": apps}``."""
+    results_dir.mkdir(parents=True, exist_ok=True)
+    (results_dir / "results.json").write_text(json.dumps({"apps": apps}), encoding="utf-8")
+    return results_dir
+
+
+class TestRecordedResults:
+    """``--results DIR`` must start no pytest, judge each ``tested`` claim from the
+    recorded outcome, and refuse a results file it cannot trust, naming the problem."""
+
+    @pytest.fixture(autouse=True)
+    def no_test_process(self, monkeypatch):
+        """Any rerun of an app's tests in this class is a failure of the mode itself."""
+
+        def refuse(*_a, **_k):
+            raise AssertionError("--results mode must not start a test process")
+
+        monkeypatch.setattr(quality_mod, "run_bundle_tests", refuse)
+        monkeypatch.setattr(quality_mod.subprocess, "run", refuse)
+
+    def tree(self, root: Path) -> Path:
+        """One app claiming ``tested`` whose own tests would FAIL if they ran, and one
+        app claiming nothing."""
+        tree = root / "tree"
+        make_bundle(tree, "tested-app", quality={"tested": True}, tests=_FAILING_TEST)
+        make_bundle(tree, "quiet-app", quality=None, tests=_FAILING_TEST)
+        return tree
+
+    def run(self, tree: Path, results_dir: Path) -> int:
+        return main([str(tree), "--results", str(results_dir)])
+
+    def test_a_recorded_pass_backs_the_claim_without_running_its_tests(self, tmp_path, capsys):
+        """The recorded pass is what is judged, not a rerun. The fail entry for the
+        app that claims nothing is ignored."""
+        tree = self.tree(tmp_path)
+        results = write_results(
+            tmp_path / "res",
+            [
+                {"app": "tested-app", "outcome": "pass"},
+                {"app": "quiet-app", "outcome": "fail"},
+            ],
+        )
+        assert self.run(tree, results) == 0
+        assert "every declared claim is backed" in capsys.readouterr().out
+
+    def test_a_recorded_fail_is_the_same_violation_as_a_failing_rerun(self, tmp_path, capsys):
+        tree = self.tree(tmp_path)
+        (tmp_path / "res").mkdir()
+        (tmp_path / "res" / "tested-app.xml").write_text("<testsuite/>", encoding="utf-8")
+        results = write_results(
+            tmp_path / "res",
+            [{"app": "tested-app", "outcome": "fail", "junit": "tested-app.xml"}],
+        )
+        assert self.run(tree, results) == 1
+        out = capsys.readouterr().out
+        assert "tested-app: quality.tested=true — the bundle's own tests fail" in out
+        assert "tested-app.xml" in out
+
+    def test_a_tested_claim_with_no_entry_is_a_tested_violation(self, tmp_path, capsys):
+        """No entry never falls back to running the tests, and never passes."""
+        tree = self.tree(tmp_path)
+        results = write_results(tmp_path / "res", [])
+        assert self.run(tree, results) == 1
+        out = capsys.readouterr().out
+        assert "tested-app: quality.tested=true — claims tested, but the results in" in out
+        assert "hold no result for it" in out
+
+    def test_an_unreadable_results_file_exits_1_naming_it(self, tmp_path, capsys):
+        tree = self.tree(tmp_path)
+        (tmp_path / "res").mkdir()
+        (tmp_path / "res" / "results.json").write_text("{not json", encoding="utf-8")
+        assert self.run(tree, tmp_path / "res") == 1
+        err = capsys.readouterr().err
+        assert "results.json" in err and "not valid JSON" in err
+
+    def test_an_unknown_outcome_exits_1_naming_it(self, tmp_path, capsys):
+        tree = self.tree(tmp_path)
+        results = write_results(tmp_path / "res", [{"app": "tested-app", "outcome": "skip"}])
+        assert self.run(tree, results) == 1
+        assert "unknown outcome 'skip'" in capsys.readouterr().err
+
+    def test_a_duplicate_app_exits_1_naming_it(self, tmp_path, capsys):
+        tree = self.tree(tmp_path)
+        entry = {"app": "tested-app", "outcome": "pass"}
+        results = write_results(tmp_path / "res", [entry, entry])
+        assert self.run(tree, results) == 1
+        assert "lists app 'tested-app' more than once" in capsys.readouterr().err
+
+    def test_an_app_not_in_the_tree_exits_1_naming_it(self, tmp_path, capsys):
+        """Results recorded for another tree must not be read as this one's."""
+        tree = self.tree(tmp_path)
+        results = write_results(
+            tmp_path / "res",
+            [{"app": "tested-app", "outcome": "pass"}, {"app": "other-app", "outcome": "pass"}],
+        )
+        assert self.run(tree, results) == 1
+        err = capsys.readouterr().err
+        assert "'other-app'" in err and "not an app folder in this tree" in err
+
+    @pytest.mark.parametrize("junit", ["../report.xml", "sub/report.xml", "sub\\report.xml"])
+    def test_a_path_like_junit_value_exits_1_naming_it(self, tmp_path, capsys, junit):
+        tree = self.tree(tmp_path)
+        results = write_results(
+            tmp_path / "res", [{"app": "tested-app", "outcome": "pass", "junit": junit}]
+        )
+        assert self.run(tree, results) == 1
+        err = capsys.readouterr().err
+        assert repr(junit) in err and "must be a plain file name" in err
+
+    def test_a_missing_junit_file_exits_1_naming_it(self, tmp_path, capsys):
+        tree = self.tree(tmp_path)
+        results = write_results(
+            tmp_path / "res", [{"app": "tested-app", "outcome": "pass", "junit": "gone.xml"}]
+        )
+        assert self.run(tree, results) == 1
+        err = capsys.readouterr().err
+        assert "'gone.xml'" in err and "does not exist" in err
+
+    def test_a_missing_results_file_exits_1_naming_it(self, tmp_path, capsys):
+        tree = self.tree(tmp_path)
+        (tmp_path / "res").mkdir()
+        assert self.run(tree, tmp_path / "res") == 1
+        err = capsys.readouterr().err
+        assert "cannot read" in err and str((tmp_path / "res").resolve() / "results.json") in err
+
+    def test_a_results_dir_that_is_not_a_directory_exits_1_naming_it(self, tmp_path, capsys):
+        tree = self.tree(tmp_path)
+        assert self.run(tree, tmp_path / "nowhere") == 1
+        err = capsys.readouterr().err
+        assert str((tmp_path / "nowhere").resolve()) in err and "is not a directory" in err
+
+
+def test_without_results_the_bundle_tests_still_run(tmp_path, monkeypatch, capsys):
+    """The floor for the flag: without ``--results`` the verifier still reruns each
+    app's tests, so a failing run is caught exactly as before."""
+    calls: list[str] = []
+
+    def failing_rerun(app_dir: Path) -> tuple[bool, str]:
+        calls.append(app_dir.name)
+        return False, "1 failed"
+
+    monkeypatch.setattr(quality_mod, "run_bundle_tests", failing_rerun)
+    make_bundle(tmp_path, "rerun-app", quality={"tested": True}, tests=_PASSING_TEST)
+    assert main([str(tmp_path)]) == 1
+    assert calls == ["rerun-app"]
+    assert "the bundle's own tests fail" in capsys.readouterr().out

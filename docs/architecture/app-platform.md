@@ -829,6 +829,34 @@ ran. The CLI also exits non-zero on a tree containing no `*/app.json` at all —
 checker that silently checked nothing is the failure mode this whole surface exists
 to prevent.
 
+**Recorded results (`--results DIR`).** A CI that has already run each app's tests
+can hand the verifier its outcomes instead of having it rerun them:
+`python -m personalclaw.apps.quality TREE --results DIR`. With the flag, no app's
+tests are started; every `tested` claim is judged from `DIR/results.json`:
+
+```json
+{"apps": [{"app": "<app folder name>", "outcome": "pass", "junit": "<optional file name in DIR>"}]}
+```
+
+- `outcome` is `"pass"` or `"fail"`. A `fail` is the same violation a failing rerun
+  gives (*the bundle's own tests fail*), naming the `junit` report when there is one.
+- An app that claims `tested` with no entry is a violation on the `tested` axis
+  (*claims tested, but the results in DIR hold no result for it*). It never falls
+  back to running the tests and never passes: a run that selected only some apps
+  cannot vouch for the others.
+- An entry for an app that claims nothing is ignored.
+- The file must be evidence for this tree, so each of these exits 1 before anything
+  is verified, naming the problem: a missing `DIR` or `results.json`, a file that is
+  not JSON or not `{"apps": [...]}`, an unknown `outcome`, an app listed twice, an app
+  that is not a folder in `TREE` (results from another tree are not read as this
+  one's), and a `junit` value that is not a plain file name present in `DIR` (no path
+  separator, no `..`).
+
+The recorded results take the place of the rerun through the verifier's one
+test-runner seam (`verify_app(..., run_tests=...)`), so every other axis is checked
+exactly as without the flag. Without `--results`, the verifier reruns each app's tests
+as before.
+
 Third-party declarations are unverified by construction, which is why the badge
 tooltip says *declares*, never *verified*.
 
