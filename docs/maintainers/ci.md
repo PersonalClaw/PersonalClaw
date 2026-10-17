@@ -272,3 +272,183 @@ The rows check the edits a maintainer plausibly makes: a respelled flag, a new l
 condition, a fallback added for convenience. They do not evaluate expressions or shell, so a
 deliberately adversarial rewrite (a coverage flag assembled from variables, a hash computed in
 a helper script) can pass them; review is what holds those.
+
+## Supply chain
+
+The actions, images and tools the workflows and Dockerfiles fetch are named exactly, so a run
+tests the same inputs on a day nothing in the repository changed, and every job holds only the
+token permissions it uses. The rules live in `tools/ci/supply_chain.py` (with the shell reader
+in `tools/ci/shell_installs.py`), the policy they read in `tools/ci/supply-chain.toml`, and
+`tests/test_ci_supply_chain_contract.py` holds each rule as a row with planted violations.
+
+### What the check reads, and what it does not
+
+It reads every workflow (`.yml` and `.yaml`), every local action's `action.yml` (its steps
+are judged as if they ran in the job that calls it), every Dockerfile or Containerfile in the
+tree whatever its spelling, `.github/dependabot.yml`, `.nvmrc`, the root `package.json` and
+`package-lock.json`, and the policy. A workflow or action file that does not parse fails
+(`workflow-yaml`), and that rule cannot be waived.
+
+It does not read, and review holds instead:
+
+- **compose files.** The only images they name are the project's own GHCR images, which
+  `clean-machine-walkthroughs.yml`'s `v3-container` pulls at `latest` on purpose: the
+  published image is what that job tests.
+- **`[build-system] requires`** in a `pyproject.toml`. The root pins its build backend exactly,
+  and `tests/test_verify_wheel_contract.py` holds it equal to `uv.lock`;
+  `packages/personalclaw-client-py` does not yet.
+- **The pre-commit hook and Nix.** No workflow runs the hook. `flake.lock` locks nixpkgs by rev
+  and hash, and `nix/pins.toml` pins each wheel by sha256.
+- **What an exact pin brings with it.** An exact version names the tool, not its dependencies:
+  without a lock or hashes the dependency tree resolves on the day. That is true of
+  `pip-audit`'s tree, PyInstaller's hooks, and installs of this project itself (editable, as a
+  uv tool, or the client package). Exact top-level pins are the boundary this check
+  holds; transitive pins come from a lock (`uv sync --locked`, `npm ci`,
+  `pip install --require-hashes -r`).
+- **Whether a comment's digests are the image's.** The contract runs offline: it requires the
+  comment above an image to name the tag the line pins and each platform's own digest, but
+  does not ask a registry whether those digests are that tag's.
+- **A download run in a later step.** A download piped into a shell or an interpreter, given
+  as `<(curl …)` or as `sh -c "$(curl …)"`, fails; a file downloaded in one command and run in
+  another (`curl -o x.sh … && sh x.sh`) is not traced.
+
+### How to pin
+
+- **An action:** a full commit SHA with its exact release as a comment,
+  `uses: owner/repo@<40-character sha> # vX.Y.Z`. A bare `# v7` fails. A `docker://` action is
+  an image and is pinned as one.
+- **A workflow's container or image:** a tag with the digest of its linux/amd64 manifest, and a
+  comment above it naming that platform and the index the manifest belongs to:
+  `# ubuntu:26.04, the linux/amd64 manifest of index sha256:<index>`. Pinning the index digest
+  itself fails, because an index is not any one platform's image.
+  The line must hold the whole value: an image behind a trailing comment, a `${{ }}`
+  expression or a flow mapping fails, and so does a `services:` image. setup-buildx's BuildKit
+  image (`driver-opts: image=`) is judged the same way.
+- **A Dockerfile base:** a tag with its index digest on the `FROM` line, and a comment above it
+  that names the tag and gives each platform's own manifest digest
+  (`#   linux/amd64 sha256:<digest>`), none of them the index. Write the base on the `FROM`
+  line: a base named through an `ARG` fails, because Dependabot cannot move it, and a build
+  that overrides a base `ARG` with `--build-arg` or `build-args` fails too. `COPY --from=` and
+  `RUN --mount=from=` an image are judged as bases. Dockerfiles are read wherever they are in
+  the tree, under any spelling (`Dockerfile-dev`, `app.dockerfile`).
+- **An image a `run:` step fetches:** `docker run`, `pull` and `create`, and the `FROM` of a
+  build fed on stdin, are judged as workflow images. The project's own GHCR images, and an
+  image an earlier step of the job builds with `--tag`, are what those jobs test, so they pass.
+- **An install a `run:` or `RUN` performs:** an exact version (`tool==X.Y.Z`, `pkg@X.Y.Z`), a
+  lock (`npm ci`, `uv sync --locked`, `pip install --require-hashes -r`), or this project
+  itself (a path in the checkout, a built wheel, or `personalclaw`). A URL, a VCS reference or
+  a `$VAR` is never this project. A version through a variable counts only when the step's,
+  job's or workflow's `env:`, or the Dockerfile's `ARG` default, gives it a literal exact value.
+  `npm install` in a workflow, `npx` of a package neither pinned nor installed by an `npm ci`
+  earlier in the job (or stage), `uvx`, `pipx run` and `uv run --with` without a version,
+  `uv pip sync` without hashes, and installers of other ecosystems (`go install`, `cargo`,
+  `gem`, `pnpm`, `yarn`, `bun`) all fail. The command is found wherever the shell would run it:
+  after `if`/`then`/`do`, inside `( )`, `{ }` and `$( )`, behind `sudo`, `env`, `timeout`,
+  `xargs` and the like, in `sh -c "…"`, behind a Dockerfile `RUN`'s flags, in its exec form and
+  in its heredocs. A `#` comment after a pin is not part of it.
+- **A download a shell or an interpreter runs** fails: piped into `sh`, `bash`, `python` and the
+  like (through `tee` or `sudo -E` too), or given as `<(curl …)` or `"$(curl …)"`. The one
+  allowed is the public installer, `https://personalclaw.dev/install`, piped into `sh` in
+  `breadth.yml`'s install-smoke step that tests it, and nowhere else.
+- **A setup action:** a literal exact version or the file that names one, never `check-latest`
+  (anything but a literal `false` fails) and never an expression. setup-qemu names its binfmt
+  image by digest; setup-buildx names an exact buildx release, and its BuildKit image by digest
+  in `driver-opts`. A setup or install action the check does not know fails until its version
+  inputs are added to `SETUP_INPUTS` (or `INSTALLS_BUNDLED`, for one whose pinned release
+  bundles its tool) in `tools/ci/supply_chain.py`.
+- **Node:** every Node that CI or an image runs is on a line `[node_end_of_life]` dates, before
+  that date: `.nvmrc`, each setup-node version, and every `node:<tag>` image a workflow, an
+  action or a Dockerfile names. A setup-node `node-version-file` other than `.nvmrc` fails, and
+  so does an OS package's `nodejs`, whose line is the distribution's. The dates come from the
+  Node.js release schedule. Add a line when the repository moves to it, and leave past lines
+  in place.
+
+Other OS packages (`apt-get`, `apk`, `brew`) are outside the install rule. They come with the
+image the job runs in, which is pinned by digest, or with the runner image, which every job
+logs in its Runner identity step.
+
+### How a refresh arrives
+
+- **Actions:** Dependabot's `github-actions` ecosystem, weekly. Its PR moves the SHA and the
+  comment together.
+- **Dockerfile bases:** Dependabot's `docker` ecosystem for `deploy/docker/`, weekly. It moves
+  the `FROM` line. In the same PR, refresh the tag and the platform digests in the comment
+  above it by hand, since Dependabot does not read comments, and the contract fails a comment
+  that no longer names the tag. Node has a group of its own and no major moves: a Node line
+  change also moves `.nvmrc`, `release-image-tooling.yml`'s base (held equal to
+  `Dockerfile.web`'s) and `[node_end_of_life]`, so it is a reviewed edit. The contract's plants
+  read today's pins from the tree, so a refresh needs no test edit.
+- **Workflow containers, QEMU, BuildKit and buildx:** a reviewed edit, by hand. The release's
+  QEMU and buildx steps are also run by `release-image-tooling.yml`'s `pin-smoke` job on every
+  pull request that changes `release.yml`: a two-platform build of a two-line image on the
+  images' own node base, with no permissions, no other action and nothing pushed. The contract
+  holds its pins and base equal to `release.yml`'s and `Dockerfile.web`'s, and requires it to
+  build every platform the release builds.
+- **Tools named by hand** (`pip-audit` in the audit job, `wheel` in the gateway image,
+  `pyinstaller` in the desktop builds): nothing refreshes them yet. Moving one is a reviewed
+  edit of its line. `packaging` in `release.yml`'s notes step is named at the version
+  `uv.lock` holds, and a test holds the two equal: a Dependabot python-deps PR that moves
+  packaging in `uv.lock` is red until that line follows.
+- **The pin check:** `action-pins.yml` asks the GitHub API, once per release, which commit
+  each pinned tag names, following an annotated tag to its commit. It reads the workflows and
+  the local actions. It fails on a SHA that is not its tag's commit, a tag that is gone, and a
+  pin with no release comment. It runs weekly, for a tag that moves upstream, where an answer
+  the API could not give fails too; and on every pull request that changes a workflow, a local
+  action or the check, where such an answer is a warning, so an API blip cannot turn the pull
+  request red. It holds `contents: read`, and uses its token for reads only.
+
+### Least privilege
+
+- No `write-all`, and every job declares its permissions or inherits declared ones. A job that
+  calls another repository's workflow declares them too; a call to a local workflow is exempt,
+  because that workflow's own jobs are read here.
+- A write is granted on the job that uses it, never at the top of a workflow, where it would
+  reach every job added later.
+- Every write a job holds, and every checkout that keeps its credentials, is an
+  `[[audited_write]]` in the policy: the workflow, the job, the permission, the steps that use
+  it and why. A write that is not listed fails, and so does an entry that matches nothing. A
+  credential entry names each checkout that keeps its credentials by a `name:` no other checkout
+  in the job shares. A local action's checkout may never keep them, since it runs in every job
+  that calls it. Every checkout sets `persist-credentials: false` today, so none is listed.
+- No workflow-level, job-level or job-container `env:` hands the job token or a secret to every
+  step, in any spelling (`secrets.X`, `secrets['X']`, `toJSON(secrets)`, any case); set it on
+  the step that calls the API. An `env:` that is an expression fails, since its variables cannot
+  be read.
+
+The audited writes today:
+
+| Workflow | Job | Permission | Used by |
+|---|---|---|---|
+| `dco.yml` | `dco` | `pull-requests: write` | the sign-off remediation comment |
+| `pr-feedback.yml` | `lint-help` | `pull-requests: write` | the lint remediation comment |
+| `release.yml` | `pypi`, `pypi-client` | `id-token: write` | Trusted Publishing to PyPI |
+| `release.yml` | `images` | `packages: write` | pushing the two images to GHCR |
+| `release.yml` | `notes` | `contents: write` | creating the GitHub Release |
+| `release.yml` | `attest` | `id-token: write`, `attestations: write` | build-provenance attestations |
+| `breadth.yml` | `report` | `issues: write` | one issue per red nightly leg |
+
+### Exceptions
+
+An `[[exception]]` waives exactly one violation of one rule in one file, while a pin cannot hold
+yet. It names `file`, `reference` and `scope` exactly as the row prints the violation (for a
+workflow step, `<job> <step>: <problem>`; a repeat of the same problem in a file gets ` (2)`),
+with an `owner`, a `reason` that says what ends it, and an `expires` date at most 30 days after
+the day it is written. Every field but `expires` is a non-empty string. Only the pinning rules
+may be waived (`action-sha`, `image-digest`, `run-install`, `setup-floating`, `node-eol`); a
+write is audited, never waived, and a file that does not parse is never waived.
+
+An expired exception, one more than 30 days out, one that matches nothing, one that matches
+more than one violation, and one missing a field all fail. To renew one, set a new expiry and
+say in the reason what has changed. To end one, fix the reference and delete the entry: an
+exception left behind after its violation is gone fails as matching nothing.
+
+The day an exception expires, or a Node line reaches its end of life, CI goes red with no
+change to the repository. That is the policy: a dated exception is a deadline, and a Node past
+its end of life gets no security fixes. Renew or fix before the date.
+
+The exceptions today:
+
+| File | Rule | What it waives | Ends when |
+|---|---|---|---|
+| `deploy/docker/Dockerfile.backend` | `run-install` | the four agent CLIs installed at their newest | a lock under `deploy/docker/` names them |
+| `deploy/docker/Dockerfile.backend` | `node-eol` | the runtime stage's Debian `nodejs` | the runtime stage copies Node from a pinned node image |

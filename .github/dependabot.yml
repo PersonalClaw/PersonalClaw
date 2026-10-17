@@ -114,10 +114,35 @@ updates:
           - "@testing-library/*"
 
   # The GitHub Actions the workflows pin (setup-uv, setup-node, publish, buildx, …).
+  # The local composite actions' own `uses:` pins are refreshed with the workflows'.
   - package-ecosystem: github-actions
-    directory: /
+    directories:
+      - /
+      - /.github/actions/*
     schedule:
       interval: weekly
     groups:
       actions:
         patterns: ["*"]
+
+  # The base images of the two Dockerfiles, each a tag with its index digest on its `FROM` line.
+  # A PR here moves the `FROM`; refresh the platform digests and the tag in the comment above it
+  # by hand in the same PR, because Dependabot does not read comments, and the contract fails a
+  # comment that no longer names the tag. Node gets a group of its own and no major moves: a
+  # Node line change also moves `.nvmrc`, the pin-smoke base and `[node_end_of_life]`, so it is
+  # a reviewed edit, and a Node refresh must not ride with nginx or python. The containers
+  # that workflows run in are not Dockerfiles, so they are refreshed by a reviewed edit
+  # (docs/maintainers/ci.md, "Supply chain").
+  - package-ecosystem: docker
+    directory: /deploy/docker
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: "*node"
+        update-types: ["version-update:semver-major"]
+    groups:
+      node:
+        patterns: ["*node"]
+      images:
+        patterns: ["*"]
+        exclude-patterns: ["*node"]

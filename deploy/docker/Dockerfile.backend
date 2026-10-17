@@ -6,8 +6,7 @@
 # Platform manifests:
 #   linux/amd64 sha256:8fb4cfa1a2616d7b8e0c2175cc6ad68f5729c34ea8488c0b360d2934b7be9024
 #   linux/arm64 sha256:cf97c3b79da1c706532c7042f851654d97d3b88c8ca6520acda9cf4479ea9b14
-ARG PYTHON_IMAGE=mirror.gcr.io/library/python:3.13.16-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
-FROM ${PYTHON_IMAGE} AS base
+FROM mirror.gcr.io/library/python:3.13.16-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f AS base
 
 # ── Stage 1: install dependencies only (cached until pyproject.toml or uv.lock changes) ─
 FROM base AS deps
@@ -26,9 +25,11 @@ ARG UV_VERSION=0.13.1
 RUN pip install --no-cache-dir --root-user-action=ignore "uv==${UV_VERSION}"
 
 # pip is one of PersonalClaw's own dependencies (the app installer runs it), so the locked one
-# replaces this venv's in the layer below, with the rest of them.
+# replaces this venv's in the layer below, with the rest of them. wheel is not in uv.lock, so
+# it is named as an exact release, and nothing refreshes it yet: moving it is a reviewed edit
+# of this line.
 RUN python -m venv /opt/venv && \
-    /opt/venv/bin/pip install --upgrade wheel
+    /opt/venv/bin/pip install wheel==0.48.0
 
 # Third-party dependencies only (not the package itself), so the layer stays cached across
 # source changes, and EXACTLY the versions uv.lock pins, so the image runs what CI tested.
