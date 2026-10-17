@@ -80,9 +80,8 @@ def history_app(tmp_path, monkeypatch):
 
     Seeded so no branch of the response is empty: an empty `runs` list derives no row field names
     at all, which would let this census pass while checking nothing. Both home seams are redirected
-    for the reason `test_triggers_history.py` records — conftest's autouse `_isolate_trigger_store`
-    has already pointed `T.config_dir` at a different tmp dir, and last-wins is the documented way
-    to override it.
+    for the reason `test_triggers_history.py` records: the trigger and run stores resolve
+    through `T.config_dir`, and last wins.
     """
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     monkeypatch.setattr(T, "config_dir", lambda: pathlib.Path(tmp_path))

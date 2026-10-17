@@ -119,6 +119,13 @@ that run collected carry it.
   folder `t<N>-<test name>` from a counter, because pytest's own scans the whole temporary folder
   on every call and grows slower with every test a worker runs; for the same reason no
   function-scoped autouse fixture calls `mktemp()` (a row of `tests/test_ci_contract.py`)
+- `--fixture-costs` writes `reports/fixture-costs.json`: each fixture's own setup time per call
+  (median, p95, calls), merged across xdist workers and under `-n 0` alike. Teardown is not
+  counted. An autouse fixture in `tests/conftest.py` stays under a 1 ms median setup there, or
+  does its work only when a test needs it, with one exception: `_isolate_real_home_writers`
+  makes the one comparison of `sys.modules` per test that it and `_restore_provider_registry`
+  share, and its median was 0.82-1.33 ms per CI shard on Ubuntu (over 1 ms on three of four;
+  0.43 ms on a macOS arm64 machine). Every other one was under 0.7 ms on every shard
 - Use `monkeypatch` for config / environment overrides
 - Mock subprocess providers (e.g. `AcpAgentProvider`) — never spawn real
   external processes in tests

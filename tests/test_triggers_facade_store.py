@@ -30,8 +30,8 @@ def home(tmp_path, monkeypatch):
     """A tmp home the handler reads for BOTH stores.
 
     The handler resolves its trigger store AND its run store through its own
-    module-level `config_dir`, which is the single redirect point `conftest._isolate_trigger_store`
-    also patches. Patching only the loader left `_runs_store()` pointing at the fixture's own tmp
+    module-level `config_dir`, the single redirect point for both, so it is patched here
+    too. Patching only the loader left `_runs_store()` pointing at the fixture's own tmp
     home — measured: every run-record read returned 0 rows.
     """
     import personalclaw.config.loader as loader

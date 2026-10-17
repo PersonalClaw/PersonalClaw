@@ -404,10 +404,9 @@ def app_with_all_kinds(tmp_path, monkeypatch):
     on-disk shape, which a hand-built dict does not.
 
     Both home seams are redirected. `PERSONALCLAW_HOME` covers the process home; the explicit
-    `T.config_dir` patch covers the trigger and run stores, because conftest's autouse
-    `_isolate_trigger_store` has already pointed that at a DIFFERENT tmp dir (last-wins is the
-    documented way to override it). With only the env var, `schedule_total` was 0 while
-    every other assertion passed.
+    `T.config_dir` patch covers the trigger and run stores, which resolve through that one
+    seam (last wins). Measured when the suite pointed that seam at a different tmp dir: with
+    only the env var, `schedule_total` was 0 while every other assertion passed.
     """
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     monkeypatch.setattr(T, "config_dir", lambda: pathlib.Path(tmp_path))
