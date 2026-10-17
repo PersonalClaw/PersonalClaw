@@ -15,6 +15,7 @@ control is one edit of one of them.
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import shutil
@@ -505,6 +506,133 @@ _NODE_ARM64 = (
     "#   linux/arm64 sha256:" + "38a36422dc7de80f3ced964270f23b3b17f73af816728d21a5fbbf84bf8be46f\n"
 )
 
+# ── Per-test temporary folders are constant-time ─────────────────────────────────────────────
+#
+# `TempPathFactory.mktemp()` numbers its folder by scanning and sorting the whole temporary folder,
+# so a call made for every test grows slower with every test its worker has run. A fixture that
+# runs once per module or per session pays that once and may keep it; one that runs for every test
+# (a function-scoped autouse fixture, and `tmp_path` itself) names its folder from a counter.
+
+_CONFTEST = "tests/conftest.py"
+
+
+def _fixture_call(decorator: ast.expr) -> ast.Call | None:
+    """The `pytest.fixture(...)` call a decorator is, a bare `@pytest.fixture` as a call of none."""
+    target = decorator.func if isinstance(decorator, ast.Call) else decorator
+    named = (isinstance(target, ast.Attribute) and target.attr == "fixture") or (
+        isinstance(target, ast.Name) and target.id == "fixture"
+    )
+    if not named:
+        return None
+    return decorator if isinstance(decorator, ast.Call) else ast.Call(target, [], [])
+
+
+def _runs_for_every_test(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    for decorator in node.decorator_list:
+        call = _fixture_call(decorator)
+        if call is None:
+            continue
+        options = {kw.arg: kw.value for kw in call.keywords}
+        scope = options.get("scope")
+        if isinstance(scope, ast.Constant) and scope.value != "function":
+            return False
+        if node.name == "tmp_path":
+            return True
+        autouse = options.get("autouse")
+        return isinstance(autouse, ast.Constant) and autouse.value is True
+    return False
+
+
+def _per_test_mktemp_check(root: Path) -> list[str]:
+    tree = ast.parse((root / _CONFTEST).read_text(encoding="utf-8"), filename=_CONFTEST)
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not _runs_for_every_test(node):
+            continue
+        for inner in ast.walk(node):
+            if not isinstance(inner, ast.Call):
+                continue
+            func = inner.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+            if name == "mktemp":
+                found.append(
+                    f"{_CONFTEST}:{inner.lineno}: `{node.name}` runs for every test and calls "
+                    "mktemp(), which scans the whole temporary folder: name the folder from a "
+                    "counter under getbasetemp() instead"
+                )
+    return found
+
+
+def _per_test_mktemp_scaffold(root: Path) -> None:
+    _write(
+        root,
+        _CONFTEST,
+        "import itertools\n\nimport pytest\n\n_N = itertools.count()\n\n\n"
+        "@pytest.fixture(autouse=True)\n"
+        "def _isolated(tmp_path_factory):\n"
+        '    folder = tmp_path_factory.getbasetemp() / f"isolated-{next(_N)}"\n'
+        "    folder.mkdir(mode=0o700)\n\n\n"
+        "@pytest.fixture\n"
+        "def tmp_path(tmp_path_factory):\n"
+        '    path = tmp_path_factory.getbasetemp() / f"t{next(_N)}"\n'
+        "    path.mkdir(mode=0o700)\n"
+        "    return path\n",
+    )
+
+
+def _append_to_conftest(text: str) -> Callable[[Path], None]:
+    def plant(root: Path) -> None:
+        path = root / _CONFTEST
+        path.write_text(path.read_text(encoding="utf-8") + "\n\n" + text, encoding="utf-8")
+
+    return plant
+
+
+PER_TEST_TEMPORARY_FOLDERS = Row(
+    name="no fixture that runs for every test calls mktemp()",
+    check=_per_test_mktemp_check,
+    scaffold=_per_test_mktemp_scaffold,
+    controls=(
+        Control(
+            "an autouse fixture that calls mktemp() fails",
+            _append_to_conftest(
+                "@pytest.fixture(autouse=True)\n"
+                "def _planted(tmp_path_factory):\n"
+                '    return tmp_path_factory.mktemp("planted")\n'
+            ),
+        ),
+        Control(
+            "a tmp_path fixture that calls mktemp() fails",
+            _append_to_conftest(
+                "@pytest.fixture\n"
+                "def tmp_path(tmp_path_factory):\n"
+                '    return tmp_path_factory.mktemp("t")\n'
+            ),
+        ),
+        Control(
+            "a module-scoped autouse fixture that calls mktemp() passes: it runs once",
+            _append_to_conftest(
+                '@pytest.fixture(autouse=True, scope="module")\n'
+                "def _once(tmp_path_factory):\n"
+                '    return tmp_path_factory.mktemp("once")\n'
+            ),
+            fails=False,
+        ),
+        Control(
+            "a fixture a test asks for by name that calls mktemp() passes",
+            _append_to_conftest(
+                "@pytest.fixture\n"
+                "def asked_for(tmp_path_factory):\n"
+                '    return tmp_path_factory.mktemp("asked")\n'
+            ),
+            fails=False,
+        ),
+    ),
+)
+
+
 ROWS: tuple[Row, ...] = (
     SECURITY_MARKER,
     _toolchain_row(
@@ -689,6 +817,7 @@ ROWS: tuple[Row, ...] = (
             ),
         ),
     ),
+    PER_TEST_TEMPORARY_FOLDERS,
 )
 
 

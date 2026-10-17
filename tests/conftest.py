@@ -6,6 +6,7 @@ import importlib
 import inspect
 import itertools
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -130,6 +131,24 @@ def _caller_chose_a_home() -> bool:
 #: Numbers each test's home within this process's own temporary folder (an xdist worker has one
 #: of its own), so a home is named without making anything.
 _TEST_HOME_NUMBERS = itertools.count()
+
+#: Numbers each test's ``tmp_path`` within this process's own temporary folder.
+_TMP_PATH_NUMBERS = itertools.count()
+
+#: Numbers the per-test folders the isolating fixtures below point a seam at.
+_ISOLATED_FOLDER_NUMBERS = itertools.count()
+
+
+def _isolated_folder(tmp_path_factory, prefix: str) -> Path:
+    """A new folder for one test, named by a counter rather than by ``mktemp()``.
+
+    ``mktemp()`` numbers its folder by scanning and sorting the whole temporary folder, so each
+    call costs more than the last as a worker's run goes on. A counter is unique within the
+    process, and each xdist worker has a temporary folder of its own, so the name is unique per
+    worker without reading the folder at all."""
+    folder = tmp_path_factory.getbasetemp() / f"{prefix}-{next(_ISOLATED_FOLDER_NUMBERS)}"
+    folder.mkdir(mode=0o700)
+    return folder
 
 
 # No module resolves the home at IMPORT (`tests/test_importing_personalclaw_touches_no_home.py`
@@ -383,6 +402,22 @@ def _a_host_with_memory_to_spare(_meminfo_with_memory_to_spare, monkeypatch):
     monkeypatch.setattr(subagent, "check_memory_available", check)
 
 
+@pytest.fixture
+def tmp_path(request, tmp_path_factory) -> Path:
+    """pytest's ``tmp_path`` in constant time: ``t<N>-<test name>`` in the run's temporary folder.
+
+    pytest's own fixture names its folder with ``mktemp()``, which scans and sorts the whole
+    temporary folder on every call, so a test's setup grew slower with every test its worker had
+    already run. This one numbers the folder from a counter instead. It is still a direct child of
+    ``getbasetemp()`` (tests read ``tmp_path.parent`` as that folder), still honours
+    ``--basetemp``, is unique per worker process, and still carries the test's name, so a failing
+    test's folder can be found. Every folder is kept, as pytest's default retention keeps them."""
+    name = re.sub(r"\W", "_", request.node.name)[:30]
+    path = tmp_path_factory.getbasetemp() / f"t{next(_TMP_PATH_NUMBERS)}-{name}"
+    path.mkdir(mode=0o700)
+    return path
+
+
 @pytest.fixture(autouse=True)
 def _isolate_real_home_writers(tmp_path_factory, monkeypatch):
     """Make an UNSPECIFIED home mean a per-test tmp dir instead of the developer's
@@ -541,7 +576,7 @@ def _isolate_session_map(tmp_path_factory, monkeypatch):
     during a rename). Scoped to session_map.config_dir only (NOT a global Path.home
     patch, which breaks tests that assert real-home safety rails — seed/loop-validation).
     A test that patches session_map.config_dir itself still overrides this (last wins)."""
-    map_home = tmp_path_factory.mktemp("pclaw-sessmap")
+    map_home = _isolated_folder(tmp_path_factory, "pclaw-sessmap")
     monkeypatch.setattr("personalclaw.session_map.config_dir", lambda: map_home)
 
 
@@ -573,7 +608,7 @@ def _isolate_trigger_store(tmp_path_factory, monkeypatch):
     calls wrote `system:notification-digest` into the USER's real store (reproduced by deleting the
     file and running that one file). Four occurrences of this hazard now; the rule is the docstring
     above, and the real-home guard (tests/real_home_guard.py) fails the test that writes one."""
-    store_home = tmp_path_factory.mktemp("pclaw-triggers")
+    store_home = _isolated_folder(tmp_path_factory, "pclaw-triggers")
     monkeypatch.setattr("personalclaw.triggers.boot_migrate.config_dir", lambda: store_home)
     monkeypatch.setattr(
         "personalclaw.dashboard.handlers.triggers.config_dir", lambda: store_home, raising=False
@@ -948,7 +983,7 @@ def _isolate_single_flight_locks(tmp_path_factory, monkeypatch):
     lock DIR per test makes each test's keys resolve to their own files, so no two
     tests can collide regardless of worker placement. A test that patches the locks
     dir itself still overrides this (last wins)."""
-    locks_home = tmp_path_factory.mktemp("pclaw-locks")
+    locks_home = _isolated_folder(tmp_path_factory, "pclaw-locks")
     monkeypatch.setattr("personalclaw.concurrency._locks_dir", lambda: locks_home)
 
 
