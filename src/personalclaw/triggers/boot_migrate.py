@@ -69,7 +69,7 @@ def migrate_and_arm(base_dir: Path | str | None = None, *, now: float = 0.0) -> 
     from personalclaw.triggers.store import TriggerStore, unreadable
 
     # Resolved through THIS module's `config_dir` so there is exactly one place to redirect the
-    # boot migration's home — which is what `tests/conftest.py::_isolate_trigger_store` patches.
+    # boot migration's home — which is where a test points it at a home of its own.
     root = base_dir if base_dir is not None else config_dir()
     try:
         store = TriggerStore(base_dir=root)

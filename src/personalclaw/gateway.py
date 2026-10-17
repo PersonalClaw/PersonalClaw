@@ -2640,8 +2640,8 @@ class GatewayOrchestrator:
                 from personalclaw.triggers.boot_migrate import migrate_and_arm
 
                 # No explicit home: `migrate_and_arm` resolves it through its OWN `config_dir`, so
-                # there is exactly one place to redirect the boot migration (which is what
-                # `tests/conftest.py::_isolate_trigger_store` patches). Passing `config_dir()` from
+                # there is exactly one place to redirect the boot migration (which is where a
+                # test points it at a home of its own). Passing `config_dir()` from
                 # here instead bypassed that single point and made three pre-existing gateway tests
                 # migrate the USER's real crons into `~/.personalclaw/triggers.json`.
                 migrate_and_arm()
