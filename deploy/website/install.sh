@@ -10,13 +10,13 @@
 # What CI actually does with this file. Every claim in this block is asserted by
 # tests/test_website_installer.py, which reds if the job it names stops existing or
 # stops naming this file — an earlier version of this header advertised a weekly
-# full.yml smoke that had never been written, and nothing noticed:
+# container smoke that had never been written, and nothing noticed:
 #   · ci.yml   `lint`          shellcheck -s sh + sh -n + dash -n on this file (every PR)
 #   · ci.yml   `test`          offline contract: --help / --container / unknown-arg, the
 #                              truncation-safe structure, staged-vs-pinned digest
-#   · full.yml `install-smoke` runs BOTH this file AND the bytes actually served at
-#                              /install, in a bare ubuntu container (push to main +
-#                              nightly), and reds when the two disagree. A fetch that
+#   · breadth.yml `install-smoke` runs BOTH this file AND the bytes actually served at
+#                              /install, in a bare ubuntu container (nightly),
+#                              and reds when the two disagree. A fetch that
 #                              fails reports `unproven` and reds; it never goes green.
 #
 # What it does (idempotent — re-running upgrades):
@@ -45,7 +45,7 @@ PC_PACKAGE="personalclaw"
 # WHY NOT THE CURRENT VERSION. A floor equal to pyproject's version is unsatisfiable for as
 # long as it takes that release to reach PyPI and its mirrors — measured, `>=0.1.4` exits 1
 # today with "only personalclaw<=0.1.3 is available". That window would break every install
-# AND full.yml's `install-smoke`, which runs this file for real on every push to main. One
+# AND breadth.yml's `install-smoke`, which runs this file for real every night. One
 # release behind has always shipped already, so the floor can never demand a version that
 # does not exist yet. The cost is one unguarded step: a rollback to the immediately-previous
 # release still installs, which is the attacker's weakest move anyway.
@@ -59,7 +59,7 @@ PC_MIN_VERSION="0.2.0"
 # none lands on the newest interpreter uv finds or downloads (measured, uv 0.12.19: a wheel
 # declaring <3.14,>=3.12 installed on CPython 3.14.7, exit 0, no warning). Re-running this file
 # moves an environment built on another Python onto this one. The rails that keep it inside
-# pyproject's requires-python and full.yml's test matrix, and every documented install command
+# pyproject's requires-python and the Pythons CI tests, and every documented install command
 # on the same version, are in tests/test_every_install_names_a_supported_python.py.
 PC_PYTHON="3.13"
 UV_INSTALLER_URL="https://astral.sh/uv/install.sh"

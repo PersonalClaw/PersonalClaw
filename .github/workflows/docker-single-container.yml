@@ -73,15 +73,66 @@ on:
 
 # Same branch-keyed dedupe as ci.yml — see the two traps documented in its `concurrency`
 # block for why this is keyed on the branch rather than on `github.ref` or the head SHA.
+# On main, as in ci.yml, one group per commit and nothing cancelled: a push to main is that
+# commit's check, and a pending run replaced by the next would leave a tree unchecked.
 concurrency:
-  group: docker-single-container-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
+  group: docker-single-container-${{ github.ref == 'refs/heads/main' && github.sha || github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
 
 jobs:
+  tree-check:
+    # Did a green pull-request run of THIS workflow already build and smoke this tree? The
+    # same check as ci.yml's `tree-check` (tools/ci/tree_tested.py, the previous main
+    # commit's copy, read at `github.event.before`), asked about this workflow's runs. A
+    # pull request or a dispatch answers no at once, and so does anything the check cannot
+    # answer: the image is then built and smoked again.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read   # `commits/{sha}/pulls`
+      actions: read         # the pull request's runs of this workflow
+      issues: read          # the pull request's events: whether its base was changed
+    outputs:
+      tested: ${{ steps.answer.outputs.tested }}
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - name: did a green pull-request run already build and smoke this tree
+        id: answer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -u
+          answer=""
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            check="$RUNNER_TEMP/tree_tested.py"
+            if gh api -H "Accept: application/vnd.github.raw" \
+                 "repos/${GITHUB_REPOSITORY}/contents/tools/ci/tree_tested.py?ref=${BEFORE}" \
+                 > "$check"; then
+              GITHUB_OUTPUT="$RUNNER_TEMP/answer.txt" \
+                python3 "$check" --workflow docker-single-container.yml || true
+              answer=$(cat "$RUNNER_TEMP/answer.txt" 2>/dev/null || true)
+            else
+              echo "the previous main commit ${BEFORE} has no tree check, so the image is built" \
+                | tee -a "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          case "$answer" in
+            tested=true|tested=false) ;;
+            *) answer="tested=false" ;;
+          esac
+          echo "$answer"
+          printf '%s\n' "$answer" >> "$GITHUB_OUTPUT"
+
   single-container:
+    needs: [tree-check]
+    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     # The image build is the long pole: a CPU-only torch install, the bundled ACP adapter
     # CLIs, and now a Node stage for the SPA. Bounded well above its measured cost rather

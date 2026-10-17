@@ -37,10 +37,10 @@ on:
   # That is #3353 §3 and it was the last hole in the argument above.
   #
   # Weekly rather than nightly, on purpose. The subject here is the fresh-machine install
-  # paths, which move on release boundaries rather than per commit, and `full.yml` already
-  # runs the per-commit surface nightly. Sunday 06:23 UTC is off the hour and clear of the
-  # three slots this repo has already taken — `ghcr-anonymous-pull` 05:41 daily, `full`
-  # 07:00 daily, `headless-run-smoke` 07:00 Mondays.
+  # paths, which move on release boundaries rather than per commit, and `breadth.yml` already
+  # runs the platform breadth nightly. Sunday 06:23 UTC is off the hour and clear of the
+  # three slots this repo has already taken — `ghcr-anonymous-pull` 05:41 daily, `breadth`
+  # 09:37 daily, `headless-run-smoke` 07:00 Mondays.
   schedule:
     - cron: "23 6 * * 0"
   workflow_dispatch:

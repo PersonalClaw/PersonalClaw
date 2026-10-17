@@ -222,10 +222,41 @@ def test_each_gated_job_takes_both_the_needs_and_the_condition(job: str) -> None
         f"{job} depends on `changes` but does not READ its verdict, so the gate only reorders "
         f"the run. Condition was {condition!r}."
     )
-    assert "'true'" in condition, (
+    # The whole comparison, not a `'true'` literal anywhere in the condition: the tree-check
+    # clause beside it (`tested != 'true'`) carries one too, so an inverted frontend verdict
+    # would pass a looser check.
+    assert "needs.changes.outputs.frontend == 'true'" in condition, (
         f"{job}'s condition does not compare the verdict to the string 'true'. A job output is "
         f"always a STRING, so a bare truthiness check is true for 'false' too. Got {condition!r}."
     )
+
+
+@pytest.mark.parametrize(
+    "mutant",
+    [
+        "needs.changes.outputs.frontend == 'false'",
+        "needs.changes.outputs.frontend != 'true'",
+        "needs.changes.outputs.frontend",
+    ],
+    ids=["inverted", "negated", "bare truthiness"],
+)
+def test_the_condition_check_refuses_a_wrong_frontend_comparison(
+    mutant: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The planted control: each wrong comparison, beside the tree-check clause, fails the check."""
+    jobs = _ci()["jobs"]
+    planted = {
+        **jobs,
+        "e2e-a11y": {
+            **jobs["e2e-a11y"],
+            "if": "${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && "
+            + mutant
+            + " }}",
+        },
+    }
+    monkeypatch.setattr(sys.modules[__name__], "_ci", lambda: {"jobs": planted})
+    with pytest.raises(AssertionError):
+        test_each_gated_job_takes_both_the_needs_and_the_condition("e2e-a11y")
 
 
 def test_the_script_runs_as_a_cli_and_prints_a_github_output_line() -> None:

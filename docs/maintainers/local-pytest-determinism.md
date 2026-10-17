@@ -20,12 +20,14 @@ The local gate runs `.venv/bin/python -m pytest`, inheriting the repository
 addopts: coverage, `-n auto`, `--dist worksteal`, and a 120-second timeout.
 The worker cap resolves `auto` to three workers for these measurements.
 
-The Full workflow does not run the same shape. Its matrix partitions the suite
-into six disjoint pytest-split groups, disables coverage for each group, and
-caps macOS groups at two xdist workers. It also sets
-`PERSONALCLAW_SKIP_APP_BACKENDS=1`. Coverage is measured separately, in six
-groups of its own (`coverage-shard`), and the `coverage` job combines their data
-into one report.
+CI does not run the same shape. The pull-request gate's `test-shard` (Ubuntu,
+Python 3.12) and `test-macos` (macOS 26, Python 3.13) jobs in `ci.yml` partition
+the suite into four disjoint pytest-split groups, disable coverage for each
+group, and cap macOS groups at two xdist workers. The nightly `breadth.yml` runs
+the suite the same way: four groups on Ubuntu and arm64, and six on macOS. Every
+one of these legs sets `PERSONALCLAW_SKIP_APP_BACKENDS=1`. Coverage is measured
+separately, nightly in `breadth.yml`, in six groups of its own
+(`coverage-shard`), and the `coverage` job combines their data into one report.
 
 ## Measurement protocol
 

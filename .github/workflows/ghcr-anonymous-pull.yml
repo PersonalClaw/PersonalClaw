@@ -12,8 +12,8 @@ name: GHCR anonymous pull
 
 on:
   schedule:
-    # Daily, deliberately off the hour and off 07:00 UTC where full.yml and
-    # headless-run-smoke.yml already sit. A day is the detection window for a package
+    # Daily, deliberately off the hour and off 07:00 UTC where headless-run-smoke.yml
+    # already sits, and off breadth.yml's 09:37. A day is the detection window for a package
     # visibility change; the job itself is four HTTP requests.
     - cron: "41 5 * * *"
   workflow_dispatch:

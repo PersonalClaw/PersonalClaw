@@ -62,7 +62,7 @@ What this module asserts, and why each half exists:
   must fetch its digest from an origin OTHER than the one serving the script, which is the only
   reason that recipe is worth anything. The last one is asserted on the URL's host, because a
   same-origin digest reads identically and proves nothing.
-* **Rail wiring.** ``full.yml``'s live leg must run BOTH the staged file and the served
+* **Rail wiring.** ``breadth.yml``'s live leg must run BOTH the staged file and the served
   bytes, redirect uv's tool dirs, and report ``unproven`` (never green) when the fetch
   fails. Asserted here because the wiring is now the load-bearing part.
 
@@ -88,7 +88,7 @@ _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _INSTALLER = _ROOT / "deploy" / "website" / "install.sh"
 _PIN = _ROOT / "deploy" / "website" / "install.sh.sha256"
 _CI = _ROOT / ".github" / "workflows" / "ci.yml"
-_FULL = _ROOT / ".github" / "workflows" / "full.yml"
+_BREADTH = _ROOT / ".github" / "workflows" / "breadth.yml"
 _PYPROJECT = _ROOT / "pyproject.toml"
 _CHANGELOG = _ROOT / "CHANGELOG.md"
 #: The user-facing install guide — where the verify recipe is documented, because a verify path
@@ -97,7 +97,7 @@ _GUIDE = _ROOT / "docs" / "guides" / "getting-started.md"
 _DEPLOY_README = _ROOT / "deploy" / "website" / "README.md"
 _REPO_README = _ROOT / "README.md"
 
-#: The URL the one-liner is served from. The live legs in ``full.yml`` must name it.
+#: The URL the one-liner is served from. The live legs in ``breadth.yml`` must name it.
 SERVED_URL = "https://personalclaw.dev/install"
 
 #: The host that serves the script. A digest fetched from HERE would be worthless against a
@@ -166,7 +166,7 @@ FORBIDDEN_TOOLS = ("curl", "wget", "uv")
 #: Job ids long enough in these workflows that their absence means the parser broke rather
 #: than that CI changed. The vacuity floor for :func:`jobs`.
 LONG_STANDING_CI_JOBS = frozenset({"lint", "test", "web", "rails", "harness", "client"})
-LONG_STANDING_FULL_JOBS = frozenset({"matrix", "audit", "security-corpus", "coverage"})
+LONG_STANDING_BREADTH_JOBS = frozenset({"install-smoke", "audit", "security-corpus", "coverage"})
 
 
 # ── parsers (text in, answer out — so the vacuity tests can drive them) ───────────────
@@ -675,8 +675,8 @@ class TestInstallFloorTracksTheReleaseHistory:
     WHY THE FLOOR LAGS BY ONE RELEASE. A floor equal to ``pyproject``'s version is unsatisfiable
     for as long as it takes that release to reach PyPI and its mirrors: measured the same day,
     ``>=0.1.4`` exits 1 with "only personalclaw<=0.1.3 is available". That window would break
-    every user's install AND ``full.yml``'s ``install-smoke``, which runs this file for real on
-    every push to ``main``. The previous release has always shipped already, so a lagging floor
+    every user's install AND ``breadth.yml``'s ``install-smoke``, which runs this file for real
+    every night. The previous release has always shipped already, so a lagging floor
     can never demand a version that does not exist yet. The price is exactly one unguarded step
     — a rollback to the immediately-previous release still installs — which is the attacker's
     weakest move and the cheapest thing to give up.
@@ -1069,14 +1069,14 @@ def fetch_guards(body: str) -> list[str]:
 
 
 def _live_leg(full_text: str) -> tuple[str, str]:
-    """The ``full.yml`` job that exercises the served one-liner — located by BEHAVIOUR.
+    """The ``breadth.yml`` job that exercises the served one-liner — located by BEHAVIOUR.
 
     Found by "the job that mentions the served URL", not by its id, so renaming it stays
     green while deleting it does not.
     """
     matches = {jid: body for jid, body in jobs(full_text).items() if SERVED_URL in body}
     assert matches, (
-        f"no job in full.yml mentions {SERVED_URL}. The installer's live rail is gone, "
+        f"no job in breadth.yml mentions {SERVED_URL}. The installer's live rail is gone, "
         "and the header's smoke claim is false again."
     )
     assert len(matches) == 1, f"expected one live installer leg, found {sorted(matches)}"
@@ -1089,9 +1089,9 @@ class TestLiveInstallerLegIsWired:
     @pytest.fixture(scope="class")
     @classmethod
     def leg(cls) -> tuple[str, str]:
-        return _live_leg(_FULL.read_text(encoding="utf-8"))
+        return _live_leg(_BREADTH.read_text(encoding="utf-8"))
 
-    def test_full_yml_has_a_live_installer_leg(self, leg: tuple[str, str]) -> None:
+    def test_breadth_yml_has_a_live_installer_leg(self, leg: tuple[str, str]) -> None:
         jid, _body = leg
         assert jid, "unreachable — _live_leg asserts this"
 
@@ -1167,7 +1167,7 @@ class TestLiveInstallerLegIsWired:
     def test_the_leg_is_not_continue_on_error(self, leg: tuple[str, str]) -> None:
         """One line would make every red above invisible, and this workflow already uses it.
 
-        ``full.yml``'s ``audit`` job is deliberately ``continue-on-error: true`` (report-only
+        ``breadth.yml``'s ``audit`` job is deliberately ``continue-on-error: true`` (report-only
         supply-chain scan). Copying that line onto this job — a plausible edit the first time
         a flaky network annoys someone — turns the whole installer rail into decoration that
         reports success while failing, which is the defect this file exists to end.
@@ -1273,11 +1273,11 @@ class TestParsersAreNotVacuous:
 
     def test_jobs_finds_the_real_workflows(self) -> None:
         ci = set(jobs(_CI.read_text(encoding="utf-8")))
-        full = set(jobs(_FULL.read_text(encoding="utf-8")))
+        full = set(jobs(_BREADTH.read_text(encoding="utf-8")))
         assert LONG_STANDING_CI_JOBS <= ci, f"parser lost ci.yml jobs: {LONG_STANDING_CI_JOBS - ci}"
         assert (
-            LONG_STANDING_FULL_JOBS <= full
-        ), f"parser lost full.yml jobs: {LONG_STANDING_FULL_JOBS - full}"
+            LONG_STANDING_BREADTH_JOBS <= full
+        ), f"parser lost breadth.yml jobs: {LONG_STANDING_BREADTH_JOBS - full}"
 
     def test_jobs_ignores_step_level_keys(self) -> None:
         parsed = jobs("jobs:\n  only:\n    runs-on: x\n    steps:\n      - name: not-a-job\n")
@@ -1307,7 +1307,7 @@ class TestParsersAreNotVacuous:
         assert not {job for _wf, job in claimed} <= set(present)
 
     def test_live_leg_absent_is_an_error(self) -> None:
-        with pytest.raises(AssertionError, match="At least one|no job in full.yml"):
+        with pytest.raises(AssertionError, match="At least one|no job in breadth.yml"):
             _live_leg("jobs:\n  matrix:\n    runs-on: x\n")
 
     def test_code_only_strips_prose_but_keeps_script(self) -> None:
@@ -1330,7 +1330,7 @@ class TestParsersAreNotVacuous:
 
     def test_fetch_guards_finds_the_real_ones(self) -> None:
         """The live leg must really contain the guards the assertions iterate over."""
-        _jid, body = _live_leg(_FULL.read_text(encoding="utf-8"))
+        _jid, body = _live_leg(_BREADTH.read_text(encoding="utf-8"))
         guards = fetch_guards(body)
         served = [g for g in guards if SERVED_URL in g]
         assert len(served) == 1, (
