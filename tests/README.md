@@ -115,7 +115,10 @@ that run collected carry it.
 - Test files: `tests/test_<module>.py`
 - pytest-asyncio is configured in strict mode — every async test needs
   `@pytest.mark.asyncio`
-- Use the `tmp_path` fixture for filesystem tests
+- Use the `tmp_path` fixture for filesystem tests. `tests/conftest.py` overrides it to name each
+  folder `t<N>-<test name>` from a counter, because pytest's own scans the whole temporary folder
+  on every call and grows slower with every test a worker runs; for the same reason no
+  function-scoped autouse fixture calls `mktemp()` (a row of `tests/test_ci_contract.py`)
 - Use `monkeypatch` for config / environment overrides
 - Mock subprocess providers (e.g. `AcpAgentProvider`) — never spawn real
   external processes in tests
