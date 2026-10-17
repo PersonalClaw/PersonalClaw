@@ -401,11 +401,15 @@ def frontier(
     iterations: dict[str, int] | None = None,
     running_lanes: dict[str, int] | None = None,
     single_active_feature: bool = False,
+    instance_outputs: dict[str, tuple[str, Any]] | None = None,
 ) -> Frontier:
     """Compute what may run now. Pure: no I/O, no clock, no mutation of the arguments.
 
     `outputs` is node-id keyed and only used to evaluate `branch` selectors and loop
     conditions — the frontier reads data to make ROUTING decisions, never to execute.
+    `instance_outputs` (instance path → (node id, output)) is what a fan-out item routes on
+    instead: each item's selectors read that item's own outputs (`BindingContext.scoped_to`),
+    since `outputs` holds only whichever item last wrote a node id.
 
     `single_active_feature` is the run's declared WIP=1 invariant
     (`runtime_hints.execution.single_active_feature`, parsed by `execution_hints`). It caps
@@ -421,7 +425,11 @@ def frontier(
     policies = default_policies(lim, single_active_feature=single_active_feature)
     edges = set(declined_edges or ())
     fr = Frontier()
-    ctx_base = BindingContext(inputs=dict(inputs or {}), node_outputs=dict(outputs or {}))
+    ctx_base = BindingContext(
+        inputs=dict(inputs or {}),
+        node_outputs=dict(outputs or {}),
+        instance_outputs=dict(instance_outputs or {}),
+    )
 
     _visit(
         root,
@@ -917,7 +925,9 @@ def _visit_foreach(
             states=states,
             edges=edges,
             iterations=iterations,
-            ctx=ctx,
+            # This item's own outputs, so a branch inside it routes on ITS selector value and a
+            # nested fan-out resolves ITS items, not whichever item last wrote those node ids.
+            ctx=ctx.scoped_to(ipath),
             fr=fr,
             enabled=True,
             order=order,
@@ -1280,12 +1290,14 @@ def derive_state(
     outputs: dict[str, Any] | None = None,
     inputs: dict[str, Any] | None = None,
     iterations: dict[str, int] | None = None,
+    instance_outputs: dict[str, tuple[str, Any]] | None = None,
 ) -> InstanceState:
     """One subtree's effective state, through the same derivation the scheduler uses.
 
     Public so the controller can ask "has this loop iteration's whole body finished?" without a
     second, divergent notion of completeness — a container-bodied loop advances on that answer,
-    and two implementations of it would disagree exactly where it matters.
+    and two implementations of it would disagree exactly where it matters. `instance_outputs` as
+    in `frontier`; a subtree inside a fan-out item is derived on that item's own outputs.
     """
     return _derive(
         node,
@@ -1293,7 +1305,11 @@ def derive_state(
         states,
         set(declined_edges or ()),
         dict(iterations or {}),
-        BindingContext(inputs=dict(inputs or {}), node_outputs=dict(outputs or {})),
+        BindingContext(
+            inputs=dict(inputs or {}),
+            node_outputs=dict(outputs or {}),
+            instance_outputs=dict(instance_outputs or {}),
+        ).scoped_to(path),
     )
 
 
@@ -1346,8 +1362,17 @@ def _derive(
             return InstanceState.PENDING
         if not items:
             return InstanceState.DONE  # an empty fan-out is vacuously complete
+        # Each item derived on its own outputs, as `_visit_foreach` visits it: a branch inside an
+        # item is done when the case ITS item took is done.
         item_states = [
-            _derive(node.body, f"{path}.body#{i}", states, edges, iterations, ctx)
+            _derive(
+                node.body,
+                f"{path}.body#{i}",
+                states,
+                edges,
+                iterations,
+                ctx.scoped_to(f"{path}.body#{i}"),
+            )
             for i in range(len(items))
         ]
         return foreach_outcome(item_error_policy(node), item_states)

@@ -214,11 +214,10 @@ def reconcile_dispatched_stages(ctl: RunController) -> None:
             inst.completed_at = now_stamp()
             ref, preview = ctl.journal.store_output(path, output)
             inst.output_ref = ref
-            if node_id:
-                # NOW the binding namespace gets the subagent's actual output. Until this
-                # existed a downstream `{{nodes.X}}` on a stage could only ever have read
-                # the placeholder the RUNNING branch left behind.
-                ctl._outputs[node_id] = preview
+            # NOW the binding namespace gets the subagent's actual output. Until this existed a
+            # downstream `{{nodes.X}}` on a stage could only ever have read the placeholder the
+            # RUNNING branch left behind.
+            ctl.record_output(path, node_id, preview)
             ctl.journal.step_completed(
                 path,
                 node_id,

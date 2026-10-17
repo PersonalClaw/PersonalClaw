@@ -307,5 +307,4 @@ def finish_loop(ctl: RunController, parent_path: str, node: Node, iteration: int
     loop_inst.completed_at = now_stamp()
     produced, _present = iteration_output(ctl, parent_path, iteration)
     loop_inst.output_ref, preview = ctl.journal.store_output(parent_path, produced)
-    if node.id:
-        ctl._outputs[node.id] = preview
+    ctl.record_output(parent_path, node.id, preview)
