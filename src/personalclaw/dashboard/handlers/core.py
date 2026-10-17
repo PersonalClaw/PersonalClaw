@@ -467,7 +467,7 @@ async def api_security_stats(_request: web.Request) -> web.Response:
     that said so was a warning in the gateway log.
     """
     from personalclaw.sandbox import child_ceilings_note
-    from personalclaw.security import denied_command_patterns
+    from personalclaw.shell_denylist import denied_command_patterns
 
     denied = len(denied_command_patterns())
 
@@ -514,7 +514,7 @@ async def api_security_denied_commands(_request: web.Request) -> web.Response:
     doctor probe writes. That is deliberate: an owner looking at a diverged baseline is
     an auditable event.
     """
-    from personalclaw.security import (
+    from personalclaw.shell_denylist import (
         baseline_denied_command_patterns,
         denied_command_patterns,
         verify_baseline_denylist,

@@ -34,6 +34,13 @@ logger = logging.getLogger(__name__)
 _OPTIONS_PATTERN = r"\[OPTIONS:[ \t]*([^\]\n]+)\]\s*$"
 _OPTIONS_RE = re.compile(_OPTIONS_PATTERN)
 
+# The Board's reading of the same retired marker, which differs on purpose from the stripper's:
+# it finds a marker ANYWHERE in the text (unanchored, labels may wrap), takes the LAST one's
+# labels, and removes every marker from `prompt_preview`. Sessions persisted before the
+# retirement still carry the marker, and the Board keeps stripping it rather than showing a raw
+# tag.
+_BOARD_OPTIONS_RE = re.compile(r"\[OPTIONS:\s*([^\]]+)\]")
+
 # Inline thinking tags some models embed in their text output.
 _THINKING_TAG_RE = re.compile(
     r"<(?:thinking|antml:thinking)>.*?</(?:thinking|antml:thinking)>",
@@ -88,6 +95,20 @@ def extract_options(text: str) -> tuple[str, list[str]]:
         # Each pass strictly shortens `cleaned` (the match is non-empty), so this ends.
         cleaned = cleaned[: m.start()].rstrip()
     return cleaned, choices
+
+
+def board_options(text: str) -> list[str]:
+    """Extract pipe-separated choices from the LAST [OPTIONS: A | B | C] in text."""
+    matches = _BOARD_OPTIONS_RE.findall(text)
+    if not matches:
+        return []
+    parts = [p.strip() for p in matches[-1].split("|")]
+    return [p for p in parts if p]
+
+
+def without_board_options(text: str) -> str:
+    """*text* with every ``[OPTIONS: …]`` marker the Board reads taken out."""
+    return _BOARD_OPTIONS_RE.sub("", text)
 
 
 def strip_thinking_tags(text: str, *, strip_whitespace: bool = True) -> tuple[str, str]:

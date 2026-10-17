@@ -304,7 +304,7 @@ def _run_hook(cmd: str, *, cwd: Path, timeout: int, env_name: str) -> None:
     from personalclaw import protected_folders
     from personalclaw.apps import app_python
     from personalclaw.command_audit import audit_command_refusal
-    from personalclaw.security import denied_command
+    from personalclaw.shell_denylist import denied_command
 
     # The shell denylist every command path asks: a hook is a command the app's author wrote, and
     # one the owner's rules refuse fails the operation with the rule, before anything runs. So

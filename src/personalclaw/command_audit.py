@@ -1,7 +1,7 @@
 """The record of a command refused before it ran, on a path that runs a command someone wrote.
 
 A loop's or a workflow's check, a workflow step or teardown, a bash action and an app's setup hook
-each ask the shell denylist (``security.denied_command``) before they run anything, and those
+each ask the shell denylist (``shell_denylist.denied_command``) before they run anything, and those
 that run with nobody answering ask the action denylist first (``guardrails.denylist.check_action``).
 A refusal there is written here: one audit row and one WARNING line, the same for every path, so
 Settings → Audit log shows the refusal and the control that made it, never a run. A tool call's
@@ -16,8 +16,9 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from personalclaw.audit_subject import audit_text
-from personalclaw.security import DeniedCommand, redact_for_display
+from personalclaw.security import redact_for_display
 from personalclaw.sel import SecurityEvent, SecurityEventLog
+from personalclaw.shell_denylist import DeniedCommand
 
 if TYPE_CHECKING:
     from personalclaw.guardrails.denylist import DenyDecision
@@ -40,9 +41,10 @@ def audit_command_refusal(
     """One audit row and one WARNING line for a command refused before it ran: which path ran it,
     which control refused it and the rule that control applied, in the words the refusal gave.
 
-    *refused* is the shell denylist's answer (:class:`~personalclaw.security.DeniedCommand`, whose
-    pattern is the rule), the action denylist's (:class:`~personalclaw.guardrails.denylist.
-    DenyDecision`, whose code is the rule and whose sentence the words), or another control's
+    *refused* is the shell denylist's answer
+    (:class:`~personalclaw.shell_denylist.DeniedCommand`, whose pattern is the rule), the action
+    denylist's (:class:`~personalclaw.guardrails.denylist.DenyDecision`, whose code is the rule
+    and whose sentence the words), or another control's
     sentence with *control* naming it (``sensitive_path``), the sentence then being the rule. The
     row is ``refused``, in the audit log's Denied family.
 

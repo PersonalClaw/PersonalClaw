@@ -237,18 +237,19 @@ async def test_the_build_spawn_is_the_shim_carrying_the_build_policy(
 
     assert len(seen) == 1, f"the build must spawn exactly once, saw {len(seen)}"
     argv = seen[0]
-    assert argv[:3] == [sys.executable, "-m", "personalclaw._spawn_exec_shim"], (
-        "the build did not go through the post-exec resource shim: " f"{argv[:3]}"
+    # The shim prefix leads: <python> -P -m personalclaw._spawn_exec_shim <policy> -- <rest>
+    assert argv[:4] == [sys.executable, "-P", "-m", "personalclaw._spawn_exec_shim"], (
+        "the build did not go through the post-exec resource shim: " f"{argv[:4]}"
     )
     # The `build` profile's policy, spelled out rather than recomputed: NOFILE raised to
     # the inherited hard limit (the sentinel the shim resolves in-child) and the OOM bias
     # KEPT. `tool` would carry a numeric NOFILE soft; `none` would carry no shim at all.
-    assert json.loads(argv[3]) == {
+    assert json.loads(argv[4]) == {
         "limits": {"RLIMIT_NOFILE": ["hard", "hard"]},
         "oom_score_adj": 1000,
     }
-    assert argv[4] == "--"
-    assert argv[5] == str(root / "node_modules" / ".bin" / "esbuild")
+    assert argv[5] == "--"
+    assert argv[6] == str(root / "node_modules" / ".bin" / "esbuild")
 
 
 @pytest.mark.asyncio

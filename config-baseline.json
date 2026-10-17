@@ -1520,6 +1520,12 @@
     "type": "int"
   },
   {
+    "default": false,
+    "path": "security.allow_git_push",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
     "default": [],
     "path": "security.autonomy_denylist",
     "sensitive": false,

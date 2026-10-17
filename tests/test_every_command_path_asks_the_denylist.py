@@ -2,8 +2,8 @@
 
 Settings → Security → Shell denylist bound the native bash tool and nothing else: a loop's check, a
 bash action, a workflow step and an app's setup hook each ran a command its owner's patterns refuse.
-They now ask ``security.denied_command``, and this rail keeps every such site asking. It classifies
-every spawn site in ``src/personalclaw`` (the census and keys of
+They now ask ``shell_denylist.denied_command``, and this rail keeps every such site asking. It
+classifies every spawn site in ``src/personalclaw`` (the census and keys of
 ``tests/test_spawn_ceiling_audit.py``: ``file::qualname::callee``) as one of two:
 
 * ``_ASKS`` — the site runs a command someone wrote: the agent, an agent CLI's request, a loop, a
@@ -368,8 +368,8 @@ def test_every_spawn_site_is_classified():
     unmapped = sorted(census - classified)
     assert not unmapped, (
         "A spawn site nobody has classified. Decide whether it runs a command someone wrote (then "
-        "it asks `security.denied_command` before it spawns, and joins _ASKS) or what it runs "
-        "instead (_RUNS_NO_WRITTEN_COMMAND):\n" + "\n".join(f"  {k}" for k in unmapped)
+        "it asks `shell_denylist.denied_command` before it spawns, and joins _ASKS) or what it "
+        "runs instead (_RUNS_NO_WRITTEN_COMMAND):\n" + "\n".join(f"  {k}" for k in unmapped)
     )
     stale = sorted(classified - census)
     assert not stale, "No such spawn site any more; remove:\n" + "\n".join(f"  {k}" for k in stale)
@@ -438,7 +438,7 @@ def test_no_other_site_hands_a_shell_a_command_it_was_given():
         functions = _functions(tree)
         assert not _runs_a_handed_shell_command(functions[qualname], _module_strings(tree)), (
             f"{key} hands a shell a command it was given, so it runs a written command: make it "
-            f"ask `security.denied_command` before it spawns, and move it to _ASKS"
+            f"ask `shell_denylist.denied_command` before it spawns, and move it to _ASKS"
         )
 
 
@@ -600,5 +600,8 @@ def test_the_census_is_not_empty_and_holds_every_asking_site():
     assert len(census) > 100, len(census)
     assert set(_ASKS) <= set(census)
     assert (
-        Path(_src_root(), "security.py").read_text(encoding="utf-8").count(f"def {THE_CHECK}(") == 1
+        Path(_src_root(), "shell_denylist.py")
+        .read_text(encoding="utf-8")
+        .count(f"def {THE_CHECK}(")
+        == 1
     )

@@ -27,7 +27,7 @@ from personalclaw.cancellation import kill_timed_out, terminate_and_reap
 from personalclaw.env import PROGRAM_RESOLUTION_NAMES
 
 if TYPE_CHECKING:
-    from personalclaw.security import DeniedCommand
+    from personalclaw.shell_denylist import DeniedCommand
 
 logger = logging.getLogger(__name__)
 
@@ -154,7 +154,7 @@ def config_problem(config: dict[str, Any]) -> str:
     automation that never runs. What a run is handed (a secret it names, a payload value it runs)
     is judged as it runs."""
     from personalclaw import protected_folders
-    from personalclaw.security import denied_command
+    from personalclaw.shell_denylist import denied_command
 
     command = str((config or {}).get("command") or "").strip()
     denied = denied_command(command) if command else None
@@ -173,7 +173,7 @@ def _refused(
     answer, or *control*'s sentence), and answered with the reason. Nothing ran, and a retry would
     be refused the same way, so it is the owner's to change (``failure_class="user"``)."""
     from personalclaw.command_audit import audit_command_refusal
-    from personalclaw.security import DeniedCommand
+    from personalclaw.shell_denylist import DeniedCommand
 
     audit_command_refusal(
         command,
@@ -224,20 +224,20 @@ class BashActionProvider(ActionProvider):
         # Refused, not sanitised: there is no safe rewrite of a command that names a credential.
         # A relative path is read from where the command runs: the gateway's own folder.
         #
-        # Then the shell denylist every command path asks (`security.denied_command`), here
+        # Then the shell denylist every command path asks (`shell_denylist.denied_command`), here
         # whoever started the action: a schedule, a hook, Run now, a webhook, a workflow node, an
         # approved proposal. And a delete of the owner's home folder, the filesystem root or the
         # folder it runs in (`protected_folders`), which always needs a person's yes and has
         # nobody here to give it. All judge what will RUN: the command, and a payload value it
         # runs as a command (`_run_values`).
-        from personalclaw import protected_folders, security
+        from personalclaw import protected_folders, security, shell_denylist
 
         payload_env = _payload_env(ctx)
         for text in (command, *_run_values(command, payload_env)):
             refusal = security.is_sensitive_bash_command(text, cwd=os.getcwd())
             if refusal:
                 return _refused(command, refusal, ctx, control="sensitive_path")
-            if (denied := security.denied_command(text)) is not None:
+            if (denied := shell_denylist.denied_command(text)) is not None:
                 return _refused(command, denied, ctx)
             if found := protected_folders.protected_delete(text, cwd=os.getcwd()):
                 said = protected_folders.refusal(found, where="a bash action")

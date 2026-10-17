@@ -97,7 +97,7 @@ Every `baseline-tamper` case asserts the same **triple**, and all three legs mat
    benign half, a build that refused everything would pass leg 3.
 
 The class also drives the tamper through the **real** `_read_packaged_baseline` by
-rooting `security.resources` at a temp copy of the data file, rather than substituting a
+rooting `shell_denylist.resources` at a temp copy of the data file, rather than substituting a
 reader that re-implements the parse. The installed
 `src/personalclaw/baseline_denylist.json` is never written to — the copy lives under
 `tmp_path`, and `TestBaselineTamperClass::test_the_tamper_never_touches_the_installed_data_file`
@@ -149,8 +149,8 @@ file, run the class, watch it red, then restore.
 | Make `marketplace.py::_validate_skill_md` return no errors | `degenerate-manifest/missing-frontmatter` |
 | Make `marketplace.py::_stage_files` *skip* an unsafe path instead of raising | `archive/zip-slip-parent-escape` |
 | Have the commit write anything other than the scanned bytes | `integrity-race/refetch-swap` |
-| Rebind `security.py::_BASELINE_SHA256` to the tampered file's own digest | `baseline-tamper/self-consistent-file-rewrite` |
-| Make `security.py::_note_baseline_tamper` always return `False` | `baseline-tamper/snapshot-and-file-both-rebound` |
+| Rebind `shell_denylist.py::_BASELINE_SHA256` to the tampered file's own digest | `baseline-tamper/self-consistent-file-rewrite` |
+| Make `shell_denylist.py::_note_baseline_tamper` always return `False` | `baseline-tamper/snapshot-and-file-both-rebound` |
 
 The last two are chosen for a reason. The archive weakness is the plausible one — a
 gate that quietly drops the bad entry and installs the rest, which looks like

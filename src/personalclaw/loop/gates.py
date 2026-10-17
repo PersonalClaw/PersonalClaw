@@ -66,7 +66,7 @@ def held(cmd: str, *, cwd: str) -> "DenyDecision":
     workflow step saying it is, and so is one that would delete the owner's home folder, the
     filesystem root or *cwd* (``protected_folders``). The shell denylist is left to the caller,
     which asks it next in the words every command path gives its refusal
-    (``security.denied_command``)."""
+    (``shell_denylist.denied_command``)."""
     from personalclaw.guardrails.denylist import check_command
     from personalclaw.guardrails.policy import unattended_dispatch_key
 
@@ -77,13 +77,13 @@ def held(cmd: str, *, cwd: str) -> "DenyDecision":
 
 def refusal(cmd: str, *, cwd: str) -> str:
     """Why *cmd*, run as a check in the folder *cwd*, is refused, or "": by the action denylist
-    (:func:`held`), then by the shell denylist (``security.denied_command``), the order the action
-    denylist asks its own.
+    (:func:`held`), then by the shell denylist (``shell_denylist.denied_command``), the order the
+    action denylist asks its own.
 
     :func:`run_verify_command` asks both before running anything; a caller that records how a
     check went (a loop's pause, a stage's gate row, a workflow node's failure) asks this too, so
     the run says the check was refused and by which rule, not that it "could not run"."""
-    from personalclaw.security import denied_command
+    from personalclaw.shell_denylist import denied_command
 
     cmd = (cmd or "").strip()
     if not cmd:
@@ -248,7 +248,8 @@ async def run_verify_command(
         report.not_run = "no check command is set"
         return None
     from personalclaw.command_audit import audit_command_refusal
-    from personalclaw.security import audit_bash_command, denied_command
+    from personalclaw.security import audit_bash_command
+    from personalclaw.shell_denylist import denied_command
 
     if (decision := held(cmd, cwd=cwd or "")).blocked:
         audit_command_refusal(cmd, decision, source="loop_gate", operation=label)

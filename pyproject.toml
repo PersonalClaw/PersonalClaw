@@ -360,7 +360,7 @@ personalclaw = [
     "py.typed",
     "model_tokens.json",
     "model_pricing.json",
-    # The baseline bash denylist. security.py raises at import if this is missing,
+    # The baseline bash denylist. shell_denylist.py raises at import if this is missing,
     # so a wheel without this line does not "degrade to no denylist" — it fails to start.
     "baseline_denylist.json",
     # THE scanner-rule gloss (#2633) — the one plain-language map behind all three

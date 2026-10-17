@@ -37,6 +37,7 @@ SECURITY_FOLDER = "security"
 #: a security or fail-closed boundary, or leans on one for its setup.
 REGISTRIES: dict[str, str] = {
     "personalclaw.security": "the path and command guards, the redactors and the untrusted fence",
+    "personalclaw.shell_denylist": "the shell denylist every command is screened by",
     "personalclaw.apps.permissions": "which routes an app may call (ROUTE_AUTHZ and its families)",
     "personalclaw.automation_posture": "what an automation may do unattended (POSTURE_SPECS)",
     "personalclaw.safety_flags": "the fail-closed reading of a yes-or-no setting (yes_or_no)",

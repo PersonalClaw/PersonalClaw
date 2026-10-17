@@ -247,7 +247,7 @@ def test_a_command_claude_code_refuses_is_one_personalclaw_refuses(noor: Path) -
     """``permissions.deny`` → ``Bash(rm -rf:*)`` is a command Claude Code refuses. It comes over
     as one the shell denylist refuses, as Codex's ``forbidden`` rules do."""
     from personalclaw.config.loader import AppConfig
-    from personalclaw.security import denied_command, denied_command_patterns
+    from personalclaw.shell_denylist import denied_command, denied_command_patterns
 
     force, rm = r"\bgit\s+push\s+--force\b", r"\brm\s+-rf\b"
     result = scan_source("claude_code", asked=PRESS)

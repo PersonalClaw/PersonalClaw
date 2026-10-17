@@ -25,7 +25,7 @@ the agent's bash tool) passes the writing too (``written``), so a refusal, the
 security log and the gateway log name a secret by its reference and never hold its value.
 
 This is defense-in-depth, not a sandbox: it composes with the always-on built-ins
-(``security.is_sensitive_path``, the shell denylist ``security.denied_command``) and the OS
+(``security.is_sensitive_path``, the shell denylist ``shell_denylist.denied_command``) and the OS
 child sandbox, which remains the containment story. What it adds is a *path-level*
 denylist for autonomous action-provider runs — the machine-readable analog of the
 loop-constraints, configurable via ``security.autonomy_denylist``.
@@ -239,7 +239,7 @@ def check_action(
 
     ``shell_denylist=False`` leaves out the last rule, the shell denylist, for a command path
     that asks it itself right after and words its refusal as every command path does
-    (``security.denied_command``): the rules before it are asked as they are for an action, so
+    (``shell_denylist.denied_command``): the rules before it are asked as they are for an action, so
     an effect-named refusal still wins over a pattern that also catches the command.
 
     ``written`` is the action config as it was written, when the dispatch filled its
@@ -254,7 +254,8 @@ def check_action(
     built-in happened to match. Only reachable on an unexpected raise — since #3424 a corrupt
     ``config.json`` resolves fail-closed by value instead of raising.
     """
-    from personalclaw.security import denied_command, is_sensitive_path
+    from personalclaw.security import is_sensitive_path
+    from personalclaw.shell_denylist import denied_command
 
     config_rules = _load_config_rules()
     if config_rules is None:
@@ -364,8 +365,8 @@ def check_action(
             return gone
 
     # 4. The shell denylist, through the one check every command path asks
-    # (`security.denied_command`), so action dispatch and the bash tool cannot drift apart. The
-    # reason is a clause, like every reason above: each seam words the refusal around it.
+    # (`shell_denylist.denied_command`), so action dispatch and the bash tool cannot drift apart.
+    # The reason is a clause, like every reason above: each seam words the refusal around it.
     for cmd, _said in commands if shell_denylist else ():
         if (denied := denied_command(cmd)) is not None:
             return DenyDecision(
@@ -384,7 +385,8 @@ def check_command(
     """:func:`check_action` for a command a command path is about to run in the folder *cwd*
     (``""``: this process's own, where a command given no folder runs), under *session_key*, the
     identity its work is judged by: every rule before the shell denylist, which the path asks
-    itself next, in the words every command path gives its refusal (``security.denied_command``).
+    itself next, in the words every command path gives its refusal
+    (``shell_denylist.denied_command``).
     *written* is the command as it was written, for a path that filled its ``{{secret:NAME}}`` in
     (the bash tool). The path records a refusal as it records any other (``command_audit``, or a
     tool call's own audit row)."""

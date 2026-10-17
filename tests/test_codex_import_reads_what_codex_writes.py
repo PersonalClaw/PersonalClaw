@@ -476,7 +476,7 @@ def test_prompt_placeholders_follow_codexs_rule(body, hint, content, variables) 
 
 def test_a_command_codex_refuses_is_one_personalclaw_refuses(noor: Path) -> None:
     from personalclaw.config.loader import AppConfig
-    from personalclaw.security import denied_command
+    from personalclaw.shell_denylist import denied_command
 
     result = scan_source("codex", asked=PRESS)
     denied = result.by_category(ImportCategory.DENIED_COMMANDS)

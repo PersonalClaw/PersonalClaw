@@ -101,6 +101,12 @@ def turn_note_message(note: str) -> dict:
     return {"role": "system", "content": system_note_text(note), VOLATILE_KEY: True}
 
 
+def is_turn_note(message: dict) -> bool:
+    """Whether *message* is a turn's tool note (the loop puts one in the history per turn): the
+    one system message the loop marks volatile, because its content changes every turn."""
+    return message.get("role") == "system" and bool(message.get(VOLATILE_KEY))
+
+
 def effective_cache_mode(declared: PromptCache, *, enabled: bool) -> PromptCache:
     """Fold the user's ``agent.prompt_cache_enabled`` switch into ``declared``.
 

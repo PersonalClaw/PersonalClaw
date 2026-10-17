@@ -50,7 +50,7 @@ from typing import Any
 
 import pytest
 
-from personalclaw import security, trust_mode
+from personalclaw import security, shell_denylist, trust_mode
 from personalclaw.agents.native import builtin_tools as BT
 from personalclaw.agents.native.runtime import NativeAgentRuntime
 from personalclaw.agents.provider import AgentRuntimeDefinition
@@ -90,7 +90,7 @@ BENIGN_COMMAND = "echo personalclaw-sh7-negative-control"
 APPROVAL_MODES = ("default", "auto", "yolo", "acceptEdits")
 
 #: The substring the bash tool's denylist refusal always carries
-#: (``security.DeniedCommand.refusal``: "Blocked: the command matches `...`, ...").
+#: (``shell_denylist.DeniedCommand.refusal``: "Blocked: the command matches `...`, ...").
 DENY_MARKER = "Blocked: the command matches `"
 
 
@@ -225,25 +225,25 @@ class TestTheProbeIsRealNotVacuous:
         A user addition would satisfy ``denied_command`` while proving nothing
         about the baseline this change is about.
         """
-        denied = security.denied_command(BASELINE_COMMAND)
+        denied = shell_denylist.denied_command(BASELINE_COMMAND)
         assert denied is not None, f"{BASELINE_COMMAND!r} matches nothing — matrix is vacuous"
         pattern = denied.pattern
         assert not denied.added
         assert (
-            pattern in security.baseline_denied_command_patterns()
+            pattern in shell_denylist.baseline_denied_command_patterns()
         ), f"{pattern!r} is a user addition, not the packaged baseline"
 
     def test_second_probe_command_matches_a_different_baseline_pattern(self):
-        first = security.denied_command(BASELINE_COMMAND)
-        second = security.denied_command(SECOND_BASELINE_COMMAND)
+        first = shell_denylist.denied_command(BASELINE_COMMAND)
+        second = shell_denylist.denied_command(SECOND_BASELINE_COMMAND)
         assert first is not None and second is not None
         first, second = first.pattern, second.pattern
-        assert second in security.baseline_denied_command_patterns()
+        assert second in shell_denylist.baseline_denied_command_patterns()
         assert first != second, "both probes hit the same regex — the matrix tests one pattern"
 
     def test_benign_control_matches_nothing(self):
         """The other half of the floor: if EVERYTHING were refused, refusal means nothing."""
-        assert security.denied_command(BENIGN_COMMAND) is None
+        assert shell_denylist.denied_command(BENIGN_COMMAND) is None
 
     def test_the_denylist_is_the_control_that_fires_not_the_sensitive_path_guard(self):
         """``is_sensitive_bash_command`` runs immediately BEFORE the denylist in the bash
@@ -598,8 +598,8 @@ class TestDenyPrecedesTheApprovalGate:
         assert tool.invoked == [{}], "the fixture cannot run the tool at all — rails are vacuous"
 
     def test_the_runtime_asks_the_tool_and_keeps_no_copy_of_its_screen(self):
-        """The command-level baseline screen (``security.denied_command``) is the bash tool's. The
-        runtime reaches it before the approval gate by asking the tool (``_preflight`` →
+        """The command-level baseline screen (``shell_denylist.denied_command``) is the bash tool's.
+        The runtime reaches it before the approval gate by asking the tool (``_preflight`` →
         ``ToolProvider.preflight``) and the hook chain every approval path asks
         (``screen_tool_call``, which reads the same function), never by calling the screen itself:
         a second copy in the pipeline would be a policy that drifts from the one the tool enforces

@@ -5,7 +5,7 @@ Off by default (``security.allow_git_push``). While it is off, the baseline's pu
 every push, as it always has, and its refusal says where the switch is. While it is on, the rule
 lets a plain push through; everything else the rule catches stays refused. The packaged baseline
 file and its digest are untouched: the exemption is applied where one pattern is matched
-(``security.denied_command``, ``security.is_denied``), never by removing the pattern.
+(``shell_denylist.denied_command``, ``security.is_denied``), never by removing the pattern.
 
 A push still reaches the network, so the approval path asks about it each time in a chat and
 refuses it in a run nobody watches unless the owner's own rules allow it (``run_bounds``). This
@@ -92,7 +92,7 @@ _REMOTE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 def switch_on() -> bool:
     """Whether the owner turned the switch on. Fails closed: a config that cannot be read is off
-    (``config.loader.CONFIG_ON_DISCARDED_READ`` holds it off too)."""
+    (a discarded ``config.json`` read starts from the defaults, where the switch is off)."""
     try:
         from personalclaw.config.loader import AppConfig
 

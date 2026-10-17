@@ -60,7 +60,12 @@ from personalclaw.cancellation import (
 )
 from personalclaw.file_scope import file_places_note
 from personalclaw.guardrails.audit import now_ms, record_attempt
-from personalclaw.guardrails.failure import FailureMode, GuardError, correction_note, is_retryable
+from personalclaw.guardrails.failure import (
+    FailureMode,
+    correction_note,
+    inference_failure_mode,
+    is_retryable,
+)
 from personalclaw.guardrails.loop_breaker import (
     WARN_THRESHOLD,
     LoopBreaker,
@@ -94,12 +99,12 @@ from personalclaw.llm.prompt_cache import (
     VOLATILE_KEY,
     PromptCache,
     effective_cache_mode,
+    is_turn_note,
     mark_cacheable_prefix,
     turn_note_message,
 )
 from personalclaw.llm.reasoning_record import REASONING_KEY, without_reasoning
 from personalclaw.llm.tool_use import uses_tools
-from personalclaw.net.client import refusal_in
 from personalclaw.pre_tool_hooks import HOOK_FAILED, HooksSaid
 from personalclaw.routing.rates import CallPrice, summed
 from personalclaw.safety_flags import yes_or_no
@@ -127,27 +132,6 @@ logger = logging.getLogger(__name__)
 # doesn't visibly stall. Deliberately a constant: config/loader.py is at its line
 # budget, and a knob nobody tunes is a cost with no consumer.
 _INFERENCE_RETRY_BACKOFF_SECS = 0.5
-
-
-def _inference_failure_mode(exc: BaseException) -> FailureMode:
-    """Classify a raised inference exception into the guard's taxonomy, by the rule
-    :mod:`personalclaw.guardrails.failure` documents for the guard, so the loop's rows and the
-    guard's fold into one: a guard error carries its mode, a request the owner's network settings
-    refused is ``EGRESS_REFUSED`` (refused again, and not for another model to answer), a bare
-    timeout is ``TIMEOUT``, and every vendor SDK exception collapses to ``PROVIDER_ERROR``."""
-    if isinstance(exc, GuardError):
-        return exc.mode
-    if refusal_in(exc) is not None:
-        return FailureMode.EGRESS_REFUSED
-    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
-        return FailureMode.TIMEOUT
-    if isinstance(exc, MemoryError):
-        # An allocation that just failed is not a transient: the identical prompt asks for the
-        # identical memory. Measured on the bundled model, the blind retry re-ran a
-        # (9, 27862, 27862) float32 allocation — and on a memory-capped host the second attempt
-        # is the one the kernel kills the whole gateway for.
-        return FailureMode.PROMPT_TOO_LARGE
-    return FailureMode.PROVIDER_ERROR
 
 
 # The operator's blocking hooks on one call: (tool name, its arguments) -> what they said
@@ -906,7 +890,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # The last turn's note leaves as this turn's arrives: it described the tools on offer
         # THEN, and kept in the history each turn carried every earlier turn's catalog as well
         # as its own — a request that grew by a whole catalog a turn and said nothing new.
-        self._messages[:] = [m for m in self._messages if not _is_turn_note(m)]
+        self._messages[:] = [m for m in self._messages if not is_turn_note(m)]
         if turn_note:
             # SYSTEM role: runtime metadata, not something the user said. VOLATILE because
             # the tool catalog + group stubs change every turn and prompt caches match an EXACT
@@ -1084,7 +1068,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                         # ── OVERFLOW RECOVERY, ahead of the classifier ──
                         # A LENGTH rejection is the one inference failure whose retry has
                         # to change the PROMPT, and it must be caught before
-                        # _inference_failure_mode: that collapses a vendor 400 to
+                        # inference_failure_mode: that collapses a vendor 400 to
                         # PROVIDER_ERROR, which is retryable, so the generic path below
                         # would spend the turn's single retry re-sending the same
                         # oversized history — the identical failure, one backoff later.
@@ -1104,7 +1088,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                             before, after = self._compact_now(self._last_context_pct)
                             if after < before:
                                 self._audit_inference_attempt(
-                                    _inference_failure_mode(exc),
+                                    inference_failure_mode(exc),
                                     attempt=1,
                                     started_ms=attempt_started,
                                     passed=False,
@@ -1136,7 +1120,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                             # outcome, not a failure. Retrying an identical prompt would
                             # burn a call to learn what compaction already proved, so
                             # fall through to the raise below.
-                        fmode = _inference_failure_mode(exc)
+                        fmode = inference_failure_mode(exc)
                         can_retry = (
                             not inference_retried
                             and not visible_streamed
@@ -2701,12 +2685,6 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
 
 def _n_tools(n: int) -> str:
     return f"{n} tool" if n == 1 else f"{n} tools"
-
-
-def _is_turn_note(message: dict) -> bool:
-    """Whether *message* is a turn's tool note (``stream`` puts one in the history per turn): the
-    one system message the loop marks volatile, because its content changes every turn."""
-    return message.get("role") == "system" and bool(message.get(VOLATILE_KEY))
 
 
 def _short_json(value: Any) -> str:

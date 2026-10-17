@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from personalclaw import security
+from personalclaw import shell_denylist
 from personalclaw.sel import SecurityEventLog
 
 pytestmark = pytest.mark.security
@@ -46,17 +46,17 @@ def restore_baseline_state(tmp_path, monkeypatch):
     The tests mutate process-global security state, so without this the damage would
     leak into whatever test the xdist worker runs next.
     """
-    live_before = list(security.BUILTIN_DENIED_COMMAND_PATTERNS)
-    snapshot_before = security._BASELINE_PATTERNS
-    reported_before = set(security._BASELINE_TAMPER_REPORTED)
+    live_before = list(shell_denylist.BUILTIN_DENIED_COMMAND_PATTERNS)
+    snapshot_before = shell_denylist._BASELINE_PATTERNS
+    reported_before = set(shell_denylist._BASELINE_TAMPER_REPORTED)
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     SecurityEventLog._instance = None
     SecurityEventLog._initialized = False
     yield
-    security._BASELINE_PATTERNS = snapshot_before
-    security.BUILTIN_DENIED_COMMAND_PATTERNS[:] = live_before
-    security._BASELINE_TAMPER_REPORTED.clear()
-    security._BASELINE_TAMPER_REPORTED.update(reported_before)
+    shell_denylist._BASELINE_PATTERNS = snapshot_before
+    shell_denylist.BUILTIN_DENIED_COMMAND_PATTERNS[:] = live_before
+    shell_denylist._BASELINE_TAMPER_REPORTED.clear()
+    shell_denylist._BASELINE_TAMPER_REPORTED.update(reported_before)
     SecurityEventLog._instance = None
     SecurityEventLog._initialized = False
 
@@ -79,37 +79,39 @@ def _sel_events(home: Path, event_type: str) -> list[dict]:
 
 class TestPackagedSource:
     def test_the_file_ships_and_its_declared_hash_matches_its_patterns(self):
-        version, declared, patterns = security._read_packaged_baseline()
-        assert version == security.BASELINE_DENYLIST_VERSION == 1
-        assert declared == security._baseline_digest(patterns) == EXPECTED_BASELINE_SHA256
+        version, declared, patterns = shell_denylist._read_packaged_baseline()
+        assert version == shell_denylist.BASELINE_DENYLIST_VERSION == 1
+        assert declared == shell_denylist._baseline_digest(patterns) == EXPECTED_BASELINE_SHA256
         assert len(patterns) == len(set(patterns)) == 119
 
     def test_the_loaded_list_is_the_packaged_file(self):
-        _, _, patterns = security._read_packaged_baseline()
-        assert list(security.BUILTIN_DENIED_COMMAND_PATTERNS) == list(patterns)
-        assert security.baseline_denied_command_patterns() == patterns
+        _, _, patterns = shell_denylist._read_packaged_baseline()
+        assert list(shell_denylist.BUILTIN_DENIED_COMMAND_PATTERNS) == list(patterns)
+        assert shell_denylist.baseline_denied_command_patterns() == patterns
 
     def test_every_shipped_pattern_is_a_valid_regex(self):
-        for pat in security.baseline_denied_command_patterns():
+        for pat in shell_denylist.baseline_denied_command_patterns():
             re.compile(pat)
 
     def test_a_declared_hash_that_disagrees_with_the_patterns_is_refused(self, monkeypatch):
         """Corruption / a partial write / an edit that forgot the digest — all fail loudly."""
         good = json.dumps({"version": 1, "sha256": "0" * 64, "patterns": ["mkfs.*"]})
-        monkeypatch.setattr(security, "_read_packaged_baseline", _reader_returning(good))
+        monkeypatch.setattr(shell_denylist, "_read_packaged_baseline", _reader_returning(good))
         with pytest.raises(ValueError, match="integrity failure"):
-            security._read_packaged_baseline()
+            shell_denylist._read_packaged_baseline()
 
     def test_an_empty_pattern_list_is_refused(self, monkeypatch):
         """Fail closed: "the file parsed but shipped nothing" must not mean "deny nothing"."""
-        empty = json.dumps({"version": 1, "sha256": security._baseline_digest([]), "patterns": []})
-        monkeypatch.setattr(security, "_read_packaged_baseline", _reader_returning(empty))
+        empty = json.dumps(
+            {"version": 1, "sha256": shell_denylist._baseline_digest([]), "patterns": []}
+        )
+        monkeypatch.setattr(shell_denylist, "_read_packaged_baseline", _reader_returning(empty))
         with pytest.raises(ValueError, match="ships no patterns"):
-            security._read_packaged_baseline()
+            shell_denylist._read_packaged_baseline()
 
     def test_both_packaging_surfaces_declare_the_data_file(self):
         """A data file must reach the wheel AND the frozen binary — PyInstaller's import
-        analysis cannot see one, and ``security.py`` raises at import without it, so the
+        analysis cannot see one, and ``shell_denylist.py`` raises at import without it, so the
         frozen binary would refuse to start rather than run with a shorter denylist.
 
         The two surfaces now share ONE declaration: the spec derives its ``datas`` from this
@@ -143,7 +145,7 @@ def _reader_returning(raw: str):
         if not patterns:
             raise ValueError("packaged baseline denylist ships no patterns")
         declared = str(doc["sha256"])
-        actual = security._baseline_digest(patterns)
+        actual = shell_denylist._baseline_digest(patterns)
         if actual != declared:
             raise ValueError(
                 f"packaged baseline denylist integrity failure: declares {declared}, "
@@ -157,20 +159,22 @@ def _reader_returning(raw: str):
 class TestSelfHealing:
     def test_a_cold_untampered_read_logs_nothing(self, tmp_path):
         """The fast path must not spam the audit log: two clean reads, zero events."""
-        security.denied_command_patterns()
-        security.denied_command_patterns()
+        shell_denylist.denied_command_patterns()
+        shell_denylist.denied_command_patterns()
         assert _sel_types(tmp_path) == []
 
     def test_clearing_the_list_is_healed_on_the_next_read_and_logged(self, tmp_path):
-        security.BUILTIN_DENIED_COMMAND_PATTERNS.clear()
-        assert security.BUILTIN_DENIED_COMMAND_PATTERNS == []
+        shell_denylist.BUILTIN_DENIED_COMMAND_PATTERNS.clear()
+        assert shell_denylist.BUILTIN_DENIED_COMMAND_PATTERNS == []
 
-        effective = security.denied_command_patterns()
+        effective = shell_denylist.denied_command_patterns()
 
         assert len(effective) == 119
-        assert set(effective) == set(security._BASELINE_PATTERNS)
+        assert set(effective) == set(shell_denylist._BASELINE_PATTERNS)
         # healed in place, so every consumer holding the list object sees the repair
-        assert list(security.BUILTIN_DENIED_COMMAND_PATTERNS) == list(security._BASELINE_PATTERNS)
+        assert list(shell_denylist.BUILTIN_DENIED_COMMAND_PATTERNS) == list(
+            shell_denylist._BASELINE_PATTERNS
+        )
         events = _sel_events(tmp_path, "baseline_denylist_reasserted")
         assert len(events) == 1
         assert events[0]["outcome"] == "healed"
@@ -179,10 +183,10 @@ class TestSelfHealing:
 
     def test_removing_one_pattern_is_healed_and_named_in_the_event(self, tmp_path):
         victim = "mkfs.*"
-        assert victim in security.BUILTIN_DENIED_COMMAND_PATTERNS
-        security.BUILTIN_DENIED_COMMAND_PATTERNS.remove(victim)
+        assert victim in shell_denylist.BUILTIN_DENIED_COMMAND_PATTERNS
+        shell_denylist.BUILTIN_DENIED_COMMAND_PATTERNS.remove(victim)
 
-        assert security.denied_command("mkfs.ext4 /dev/sda1") is not None
+        assert shell_denylist.denied_command("mkfs.ext4 /dev/sda1") is not None
 
         events = _sel_events(tmp_path, "baseline_denylist_reasserted")
         assert len(events) == 1
@@ -192,66 +196,68 @@ class TestSelfHealing:
     def test_a_reordering_is_healed_too(self, tmp_path):
         """The fingerprint is order-sensitive: first-match-wins semantics are part of the
         baseline, so a shuffle is drift even though the set is unchanged."""
-        security.BUILTIN_DENIED_COMMAND_PATTERNS.reverse()
-        security.denied_command_patterns()
-        assert list(security.BUILTIN_DENIED_COMMAND_PATTERNS) == list(security._BASELINE_PATTERNS)
+        shell_denylist.BUILTIN_DENIED_COMMAND_PATTERNS.reverse()
+        shell_denylist.denied_command_patterns()
+        assert list(shell_denylist.BUILTIN_DENIED_COMMAND_PATTERNS) == list(
+            shell_denylist._BASELINE_PATTERNS
+        )
         assert len(_sel_events(tmp_path, "baseline_denylist_reasserted")) == 1
 
     def test_healing_survives_a_rebound_snapshot_by_rereading_the_file(self, tmp_path):
         """Tamper with BOTH the live list and the in-process snapshot — the packaged file
         is the third layer and still restores the full baseline."""
-        security.BUILTIN_DENIED_COMMAND_PATTERNS.clear()
-        security._BASELINE_PATTERNS = ("only-this-one",)
+        shell_denylist.BUILTIN_DENIED_COMMAND_PATTERNS.clear()
+        shell_denylist._BASELINE_PATTERNS = ("only-this-one",)
 
-        effective = security.denied_command_patterns()
+        effective = shell_denylist.denied_command_patterns()
 
         assert len(effective) == 119
         assert "only-this-one" not in effective
-        assert security._BASELINE_PATTERNS == tuple(effective)
+        assert shell_denylist._BASELINE_PATTERNS == tuple(effective)
 
     def test_no_verified_source_left_refuses_to_shrink(self, tmp_path, monkeypatch):
         """Fail closed. With the live list, the snapshot and the packaged file all
         unusable there is nothing trustworthy to restore from — so the effective set is
         the union of what remains, never a smaller set, and the shrink is logged."""
         survivor = "mkfs.*"
-        security.BUILTIN_DENIED_COMMAND_PATTERNS[:] = [survivor]
-        security._BASELINE_PATTERNS = ("aws s3 cp .* s3://.*",)
+        shell_denylist.BUILTIN_DENIED_COMMAND_PATTERNS[:] = [survivor]
+        shell_denylist._BASELINE_PATTERNS = ("aws s3 cp .* s3://.*",)
 
         def boom() -> tuple[int, str, tuple[str, ...]]:
             raise FileNotFoundError("baseline_denylist.json")
 
-        monkeypatch.setattr(security, "_read_packaged_baseline", boom)
+        monkeypatch.setattr(shell_denylist, "_read_packaged_baseline", boom)
 
-        effective = security.denied_command_patterns()
+        effective = shell_denylist.denied_command_patterns()
 
         assert survivor in effective
         assert "aws s3 cp .* s3://.*" in effective
-        assert security.denied_command("mkfs.ext4 /dev/sda1") is not None
+        assert shell_denylist.denied_command("mkfs.ext4 /dev/sda1") is not None
         events = _sel_events(tmp_path, "baseline_denylist_tamper_attempt")
         assert events[0]["outcome"] == "rejected"
         assert events[0]["metadata"]["reason"] == "snapshot_and_packaged_file_both_unverified"
         # The broken state survives the read, and a bash-heavy session reads this per
         # command — one report per distinct broken state, not one per screened command.
         for _ in range(5):
-            security.denied_command_patterns()
+            shell_denylist.denied_command_patterns()
         assert len(_sel_events(tmp_path, "baseline_denylist_tamper_attempt")) == 1
 
     def test_the_two_event_kinds_are_distinct(self, tmp_path, monkeypatch):
         """A heal is ``_reasserted``; a rejected shrink is ``_tamper_attempt``. Neither
         fires on the other's trigger."""
-        security.BUILTIN_DENIED_COMMAND_PATTERNS.clear()
-        security.denied_command_patterns()
+        shell_denylist.BUILTIN_DENIED_COMMAND_PATTERNS.clear()
+        shell_denylist.denied_command_patterns()
         assert _sel_types(tmp_path) == ["baseline_denylist_reasserted"]
 
         rewritten = json.dumps(
             {
                 "version": 99,
-                "sha256": security._baseline_digest(["only-this-one"]),
+                "sha256": shell_denylist._baseline_digest(["only-this-one"]),
                 "patterns": ["only-this-one"],
             }
         )
-        monkeypatch.setattr(security, "_read_packaged_baseline", _reader_returning(rewritten))
-        security.verify_baseline_denylist()
+        monkeypatch.setattr(shell_denylist, "_read_packaged_baseline", _reader_returning(rewritten))
+        shell_denylist.verify_baseline_denylist()
         assert _sel_types(tmp_path) == [
             "baseline_denylist_reasserted",
             "baseline_denylist_tamper_attempt",
@@ -260,7 +266,7 @@ class TestSelfHealing:
 
 class TestPeriodicReverify:
     def test_a_clean_reverify_passes_and_stays_silent(self, tmp_path):
-        report = security.verify_baseline_denylist()
+        report = shell_denylist.verify_baseline_denylist()
         assert report == {
             "version": 1,
             "sha256": EXPECTED_BASELINE_SHA256,
@@ -279,31 +285,31 @@ class TestPeriodicReverify:
         rewritten = json.dumps(
             {
                 "version": 2,
-                "sha256": security._baseline_digest(["harmless"]),
+                "sha256": shell_denylist._baseline_digest(["harmless"]),
                 "patterns": ["harmless"],
             }
         )
-        monkeypatch.setattr(security, "_read_packaged_baseline", _reader_returning(rewritten))
+        monkeypatch.setattr(shell_denylist, "_read_packaged_baseline", _reader_returning(rewritten))
 
-        report = security.verify_baseline_denylist()
+        report = shell_denylist.verify_baseline_denylist()
 
         assert report["file_verified"] is False
         assert report["count"] == 119
-        assert security.denied_command("mkfs.ext4 /dev/sda1") is not None
+        assert shell_denylist.denied_command("mkfs.ext4 /dev/sda1") is not None
         assert len(_sel_events(tmp_path, "baseline_denylist_tamper_attempt")) == 1
 
     def test_a_missing_file_does_not_shrink_what_is_enforced(self, tmp_path, monkeypatch):
         def boom() -> tuple[int, str, tuple[str, ...]]:
             raise FileNotFoundError("baseline_denylist.json")
 
-        monkeypatch.setattr(security, "_read_packaged_baseline", boom)
+        monkeypatch.setattr(shell_denylist, "_read_packaged_baseline", boom)
 
-        report = security.verify_baseline_denylist()
+        report = shell_denylist.verify_baseline_denylist()
 
         assert report["file_verified"] is False
         assert "unreadable" in report["detail"]
         assert report["count"] == 119
-        assert len(security.denied_command_patterns()) == 119
+        assert len(shell_denylist.denied_command_patterns()) == 119
 
     @pytest.mark.asyncio
     async def test_the_doctor_probe_reports_the_verified_state(self):
@@ -324,9 +330,9 @@ class TestPeriodicReverify:
         from personalclaw.resilience import doctor
 
         rewritten = json.dumps(
-            {"version": 7, "sha256": security._baseline_digest(["x"]), "patterns": ["x"]}
+            {"version": 7, "sha256": shell_denylist._baseline_digest(["x"]), "patterns": ["x"]}
         )
-        monkeypatch.setattr(security, "_read_packaged_baseline", _reader_returning(rewritten))
+        monkeypatch.setattr(shell_denylist, "_read_packaged_baseline", _reader_returning(rewritten))
 
         probe = {p.id: p for p in doctor.all_probes()}["security.baseline_denylist"]
         res = await probe.run(doctor.DoctorContext())
@@ -349,7 +355,7 @@ class TestStrictlyAdditiveUserConfig:
         use to try to *remove* an entry; and 200 pseudo-random mixes of baseline entries,
         duplicates and fresh patterns.
         """
-        baseline = security.baseline_denied_command_patterns()
+        baseline = shell_denylist.baseline_denied_command_patterns()
         rng = random.Random(20260814)
 
         configs: list[dict] = [
@@ -379,7 +385,7 @@ class TestStrictlyAdditiveUserConfig:
 
         for section in configs:
             _write_config(tmp_path, section)
-            effective = security.denied_command_patterns()
+            effective = shell_denylist.denied_command_patterns()
 
             assert set(baseline).issubset(set(effective)), section
             assert len(effective) >= len(baseline), section
@@ -389,10 +395,10 @@ class TestStrictlyAdditiveUserConfig:
             assert len(effective) == len(set(effective)), section
 
     def test_a_user_pattern_identical_to_a_baseline_entry_does_not_shorten_the_set(self, tmp_path):
-        baseline = security.baseline_denied_command_patterns()
+        baseline = shell_denylist.baseline_denied_command_patterns()
         _write_config(tmp_path, {"denied_commands": [baseline[0], baseline[-1]]})
 
-        effective = security.denied_command_patterns()
+        effective = shell_denylist.denied_command_patterns()
 
         assert len(effective) == len(baseline)
         assert effective == list(baseline)
@@ -400,11 +406,11 @@ class TestStrictlyAdditiveUserConfig:
     def test_user_additions_still_merge(self, tmp_path):
         _write_config(tmp_path, {"denied_commands": ["my-secret-tool .*", "another .*"]})
 
-        effective = security.denied_command_patterns()
+        effective = shell_denylist.denied_command_patterns()
 
         assert effective[-2:] == ["my-secret-tool .*", "another .*"]
         assert len(effective) == 121
-        assert security.denied_command("my-secret-tool --dump") is not None
+        assert shell_denylist.denied_command("my-secret-tool --dump") is not None
 
     def test_a_shadow_key_cannot_remove_a_baseline_entry(self, tmp_path):
         """``security.denied_commands`` is the only write surface, and it is additive by
@@ -419,11 +425,11 @@ class TestStrictlyAdditiveUserConfig:
             },
         )
 
-        effective = security.denied_command_patterns()
+        effective = shell_denylist.denied_command_patterns()
 
         assert "mkfs.*" in effective
         assert len(effective) == 119
-        assert security.denied_command("mkfs.ext4 /dev/sda1") is not None
+        assert shell_denylist.denied_command("mkfs.ext4 /dev/sda1") is not None
 
 
 def _code_strings(source: str) -> list[str]:
@@ -455,16 +461,16 @@ class TestSharedSource:
         must not open a hole in provider dispatch."""
         from personalclaw.guardrails import denylist
 
-        security.BUILTIN_DENIED_COMMAND_PATTERNS.clear()
+        shell_denylist.BUILTIN_DENIED_COMMAND_PATTERNS.clear()
 
         decision = denylist.check_action("shell", {"command": "mkfs.ext4 /dev/sda1"})
 
         assert decision.blocked is True
         assert "mkfs" in decision.reason
-        assert len(security.BUILTIN_DENIED_COMMAND_PATTERNS) == 119
+        assert len(shell_denylist.BUILTIN_DENIED_COMMAND_PATTERNS) == 119
 
     def test_no_module_keeps_a_second_in_code_copy_of_the_baseline(self):
-        """Two copies is how the two paths drift. Only ``security.py`` may name the
+        """Two copies is how the two paths drift. Only ``shell_denylist.py`` may name the
         packaged file, and nothing may re-declare the patterns.
 
         Read from each module's code strings, not its text: ``dashboard/owner_token_url.py``'s
@@ -477,7 +483,7 @@ class TestSharedSource:
             for p in src.rglob("*.py")
             if any("baseline_denylist.json" in s for s in _code_strings(p.read_text("utf-8")))
         )
-        assert namers == ["security.py"]
+        assert namers == ["shell_denylist.py"]
 
     def test_the_code_string_reader_tells_a_loader_from_a_mention(self):
         """Both directions, so the rail above can neither red on prose nor go blind to code."""
@@ -517,7 +523,7 @@ class TestExistingBehaviourUnchanged:
         ],
     )
     def test_denied_commands_are_still_denied(self, command):
-        assert security.denied_command(command) is not None
+        assert shell_denylist.denied_command(command) is not None
 
     @pytest.mark.parametrize(
         "command",
@@ -533,7 +539,7 @@ class TestExistingBehaviourUnchanged:
         ],
     )
     def test_benign_commands_are_still_allowed(self, command):
-        assert security.denied_command(command) is None
+        assert shell_denylist.denied_command(command) is None
 
     @pytest.mark.parametrize(
         "command",
@@ -548,7 +554,7 @@ class TestExistingBehaviourUnchanged:
         ],
     )
     def test_commands_that_print_credentials_are_denied(self, command):
-        assert security.denied_command(command) is not None
+        assert shell_denylist.denied_command(command) is not None
 
     @pytest.mark.parametrize(
         "command",
@@ -562,7 +568,7 @@ class TestExistingBehaviourUnchanged:
         ],
     )
     def test_ordinary_auth_and_identity_checks_are_allowed(self, command):
-        assert security.denied_command(command) is None
+        assert shell_denylist.denied_command(command) is None
 
 
 class TestSecurityPanelPayload:
@@ -610,11 +616,11 @@ class TestSecurityPanelPayload:
         rewritten = json.dumps(
             {
                 "version": 7,
-                "sha256": security._baseline_digest(["only-this-one"]),
+                "sha256": shell_denylist._baseline_digest(["only-this-one"]),
                 "patterns": ["only-this-one"],
             }
         )
-        monkeypatch.setattr(security, "_read_packaged_baseline", _reader_returning(rewritten))
+        monkeypatch.setattr(shell_denylist, "_read_packaged_baseline", _reader_returning(rewritten))
 
         after = await self._payload()
 
@@ -634,7 +640,7 @@ class TestSecurityPanelPayload:
         def boom() -> tuple[int, str, tuple[str, ...]]:
             raise FileNotFoundError("baseline_denylist.json")
 
-        monkeypatch.setattr(security, "_read_packaged_baseline", boom)
+        monkeypatch.setattr(shell_denylist, "_read_packaged_baseline", boom)
 
         body = await self._payload()
 
@@ -661,7 +667,7 @@ class TestSecurityPanelPayload:
         changes nothing that is enforced. Counting the config list would tell the owner
         they added three protections when they added one.
         """
-        echoed = security.BUILTIN_DENIED_COMMAND_PATTERNS[0]
+        echoed = shell_denylist.BUILTIN_DENIED_COMMAND_PATTERNS[0]
         (tmp_path / "config.json").write_text(
             json.dumps({"security": {"denied_commands": [echoed, "genuinely-new", echoed]}})
         )
