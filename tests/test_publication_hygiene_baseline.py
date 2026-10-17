@@ -13,7 +13,7 @@ What this suite guards, measured on ``origin/main`` before the publication-hygie
   was a parenthetical in ``docs/demo/CLICKPATH.md`` explaining why a *video* was too big to
   commit.
 * ``scratch/`` — 38 files whose CONTENT is load-bearing (the app template is pinned
-  byte-for-byte by ``test_app_from_template.py``; the registry is validated by a ``full.yml``
+  byte-for-byte by ``test_app_from_template.py``; the registry is validated by a CI
   job) under a directory name that tells a public reader to ignore it. Renamed to
   ``staged-repos/``, not deleted, and later removed outright once both repositories it
   staged were published: a second copy of a published repository only drifts from it.

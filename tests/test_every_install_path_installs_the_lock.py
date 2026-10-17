@@ -39,11 +39,11 @@ _RANGE_INSTALLS = {
         "the public installer installs the published wheel from PyPI, whose metadata carries "
         "pyproject's ranges and no lock"
     ),
-    (".github/workflows/full.yml", "uv tool install --python"): (
+    (".github/workflows/breadth.yml", "uv tool install --python"): (
         "rehearses the public installer on this checkout, so it resolves exactly what that "
         "installer will"
     ),
-    (".github/workflows/full.yml", "-e . pip-audit"): (
+    (".github/workflows/breadth.yml", "-e . pip-audit"): (
         "a report-only audit of what a fresh `pip install personalclaw` resolves today, which is "
         "the population the ranges govern; it builds nothing that ships"
     ),

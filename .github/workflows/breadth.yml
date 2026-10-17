@@ -1,0 +1,1079 @@
+# Breadth — nightly, and on dispatch. The platforms and checks a pull request's run does not
+# cover: other Pythons, arm64, macOS on 3.12, coverage, and the checks that may not be reused.
+# A pull request's run (ci.yml) is its tree's one expensive execution, on Ubuntu/3.12 and
+# macOS/3.13; this is what is left (#3913).
+#
+# EVERY RUN WRITES A DIGEST-BOUND EVIDENCE RECORD. Each shard records the exact inputs it ran on
+# (the tree, the runner image and its version, the architecture, Python, uv and Node, and any
+# external input), and `report` writes one canonical record of every shard, uploaded as
+# `breadth-evidence-<sha256 of the record>` and kept 90 days (tools/ci/breadth_evidence.py).
+# Whatever relies on a record names it by run id and digest, and a reader refuses a record that
+# does not hash to that digest. The release gate reads records, never this run's summary.
+#
+# A TREE-KEYED SHARD SKIPS ONLY ON IDENTICAL INPUTS. `freshness` reads the newest record on main,
+# verified under its digest, and each shard compares it with its own runner's inputs: equal in
+# every one, it carries that result forward, red or green, naming the record; any difference,
+# and it runs. A red is never run again on the same inputs to turn it green (#3904). A run whose
+# shards were carried does not satisfy a release on its own: the gate follows the record named.
+#
+# LEGS THAT MAY NOT BE REUSED RUN EVERY NIGHT: the security corpus, the next-Ubuntu canary, the
+# installer smoke and the audit. A TTL, once the catalogue declares one (#3909), is per job.
+#
+# `report` keeps one issue per red leg (a platform and Python), titled `breadth: <leg> is red`,
+# found by that exact title. A green on changed inputs closes it; a green on the inputs the red
+# ran on is a flake, recorded red, and the issue stays open with both runs.
+name: Breadth
+
+on:
+  schedule:
+    - cron: "37 9 * * *"  # nightly, off the hour and clear of the other workflows' slots
+  # On any ref: the release gate (#3911) dispatches it on a tag's commit.
+  workflow_dispatch: {}
+
+# One run per ref at a time, and a run in flight is never cancelled: a later dispatch waits.
+concurrency:
+  group: breadth-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # Every uv step uses a uv-managed CPython, never the runner image's own. When an installed
+  # Python is exactly the version asked for, uv's default preference picks it over a download:
+  # the macos-26 image's python.org 3.13.16 at /usr/local/bin was picked that way, sqlite-vec
+  # does not load in it, and every vector-index test failed on those legs alone.
+  UV_PYTHON_PREFERENCE: only-managed
+
+jobs:
+  freshness:
+    # The newest record on main, verified under its digest, as the map each shard reads. A
+    # record that does not verify, or none, is an empty map: every shard runs.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read   # the earlier runs and their record artifacts
+    outputs:
+      # The tree every job of this run checks out, for a leg whose container has no git.
+      tree: ${{ steps.tree.outputs.tree }}
+      # The night this run belongs to, from its created_at, which every attempt keeps: a
+      # rerun's green on a red's inputs is a flake, whatever its attempt's clock says.
+      night: ${{ steps.night.outputs.night }}
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: the tree this run checks out
+        id: tree
+        run: echo "tree=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+      - name: the night this run belongs to
+        id: night
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          created=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)
+          python3 tools/ci/breadth_evidence.py night --created-at "$created"
+      # On main, main's earlier runs; on another ref (a release gate's tag), that ref's own
+      # first, so a red there is carried rather than run again on the same inputs.
+      - name: the newest earlier record
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python3 tools/ci/breadth_evidence.py previous --repo "$GITHUB_REPOSITORY"
+          --run-id "$GITHUB_RUN_ID" --ref "$GITHUB_REF_NAME"
+          --out "$RUNNER_TEMP/previous/previous.json"
+      - name: Upload the earlier results
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: breadth-previous
+          path: ${{ runner.temp }}/previous/previous.json
+          if-no-files-found: error
+          retention-days: 1
+
+  ubuntu:
+    needs: [freshness]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.13.16"]
+        shard: [1, 2, 3, 4]
+    env:
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+      PERSONALCLAW_TEST_CONTAINER_RUNTIME: "1"
+      PY: ${{ matrix.python }}
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.13.1"
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      # setup-uv only names the interpreter (UV_PYTHON); `uv python find` never downloads one.
+      # Every step below that runs `uv python find` needs it present, carried shard or not, so
+      # a scratch venv is made on it first: that downloads the managed interpreter setup-uv
+      # names, as `uv sync` would, and nothing else.
+      - name: the uv-managed Python this shard runs on
+        run: uv venv "$RUNNER_TEMP/shard-python"
+      - name: the earlier record's results
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: breadth-previous
+          path: ${{ runner.temp }}/previous
+      - name: this shard's inputs, as its runner reports them
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py inputs --out "$RUNNER_TEMP/inputs.json" \
+            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --image "$ImageOS" --image-version "$ImageVersion" --arch "$RUNNER_ARCH" \
+            --python "$("$(uv python find "$PY")" -c 'import platform; print(platform.python_version())')" \
+            --uv "$(uv --version | awk '{print $2}')" \
+            --node "$(node --version 2>/dev/null || echo none)"
+      # Run, or carry the earlier result when every recorded input matches exactly. A
+      # decision that crashes writes no `run=false` and, being continue-on-error, leaves the
+      # job's status as it was, so the shard runs. No earlier results at all (freshness or
+      # this shard's download failed) is not a crash: the decision says run.
+      - name: run, or carry the earlier result
+        id: decide
+        continue-on-error: true
+        run: >-
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py decide --key "ubuntu-24.04-3.13/${{ matrix.shard }}"
+          --inputs "$RUNNER_TEMP/inputs.json"
+          --previous "$RUNNER_TEMP/previous/previous.json"
+          --out "$RUNNER_TEMP/entry/ubuntu-24.04-3.13__${{ matrix.shard }}.json"
+      - name: Install (locked)
+        if: ${{ steps.decide.outputs.run != 'false' }}
+        run: uv sync --locked --extra dev
+      - name: Install tmux (durable sessions — real-daemon test leg)
+        if: ${{ steps.decide.outputs.run != 'false' }}
+        run: |
+          if command -v tmux >/dev/null 2>&1; then tmux -V; exit 0; fi
+          case "$RUNNER_OS" in
+            Linux) sudo apt-get update -qq &&
+                   sudo apt-get install -y --no-install-recommends tmux ;;
+            macOS) brew install tmux ;;
+            *) echo "no tmux installer known for RUNNER_OS=$RUNNER_OS" >&2; exit 1 ;;
+          esac
+          tmux -V
+      - name: pytest (shard ${{ matrix.shard }})
+        id: pytest
+        if: ${{ steps.decide.outputs.run != 'false' }}
+        continue-on-error: true
+        run: uv run pytest --no-cov -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration --junitxml=reports/junit-ubuntu.xml
+      - name: Upload JUnit results (ubuntu-24.04-3.13 · shard ${{ matrix.shard }})
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-ubuntu-${{ matrix.python }}-shard${{ matrix.shard }}
+          path: reports/junit-ubuntu.xml
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: record what this shard ran
+        if: ${{ always() && steps.decide.outputs.run != 'false' }}
+        env:
+          OUTCOME: ${{ steps.pytest.outcome }}
+          HISTORY: ${{ steps.decide.outputs.history }}
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --history "$HISTORY" --ref "$GITHUB_REF_NAME" --out "$RUNNER_TEMP/entry/ubuntu-24.04-3.13__${{ matrix.shard }}.json"
+      - name: Upload this shard's entry
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: breadth-leg-ubuntu-24.04-3.13-${{ matrix.shard }}
+          path: ${{ runner.temp }}/entry/
+          if-no-files-found: error
+          retention-days: 7
+      # Red when the entry is red, ran or carried: a carried red is still red (#3904).
+      - name: the shard's result
+        if: always()
+        run: |
+          "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/ubuntu-24.04-3.13__${{ matrix.shard }}.json"
+
+  macos:
+    needs: [freshness]
+    if: ${{ !cancelled() }}
+    runs-on: macos-26
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        python: ["3.12.15"]
+        shard: [1, 2, 3, 4, 5, 6]
+    env:
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+      PERSONALCLAW_TEST_CONTAINER_RUNTIME: "1"
+      PY: ${{ matrix.python }}
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.13.1"
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      # setup-uv only names the interpreter (UV_PYTHON); `uv python find` never downloads one.
+      # Every step below that runs `uv python find` needs it present, carried shard or not, so
+      # a scratch venv is made on it first: that downloads the managed interpreter setup-uv
+      # names, as `uv sync` would, and nothing else.
+      - name: the uv-managed Python this shard runs on
+        run: uv venv "$RUNNER_TEMP/shard-python"
+      - name: the earlier record's results
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: breadth-previous
+          path: ${{ runner.temp }}/previous
+      - name: this shard's inputs, as its runner reports them
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py inputs --out "$RUNNER_TEMP/inputs.json" \
+            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --image "$ImageOS" --image-version "$ImageVersion" --arch "$RUNNER_ARCH" \
+            --python "$("$(uv python find "$PY")" -c 'import platform; print(platform.python_version())')" \
+            --uv "$(uv --version | awk '{print $2}')" \
+            --node "$(node --version 2>/dev/null || echo none)"
+      # Run, or carry the earlier result when every recorded input matches exactly. A
+      # decision that crashes writes no `run=false` and, being continue-on-error, leaves the
+      # job's status as it was, so the shard runs. No earlier results at all (freshness or
+      # this shard's download failed) is not a crash: the decision says run.
+      - name: run, or carry the earlier result
+        id: decide
+        continue-on-error: true
+        run: >-
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py decide --key "macos-26-3.12/${{ matrix.shard }}"
+          --inputs "$RUNNER_TEMP/inputs.json"
+          --previous "$RUNNER_TEMP/previous/previous.json"
+          --out "$RUNNER_TEMP/entry/macos-26-3.12__${{ matrix.shard }}.json"
+      - name: Install (locked)
+        if: ${{ steps.decide.outputs.run != 'false' }}
+        run: uv sync --locked --extra dev
+      - name: Install tmux (durable sessions — real-daemon test leg)
+        if: ${{ steps.decide.outputs.run != 'false' }}
+        run: |
+          if command -v tmux >/dev/null 2>&1; then tmux -V; exit 0; fi
+          case "$RUNNER_OS" in
+            Linux) sudo apt-get update -qq &&
+                   sudo apt-get install -y --no-install-recommends tmux ;;
+            macOS) brew install tmux ;;
+            *) echo "no tmux installer known for RUNNER_OS=$RUNNER_OS" >&2; exit 1 ;;
+          esac
+          tmux -V
+      - name: pytest (shard ${{ matrix.shard }})
+        id: pytest
+        if: ${{ steps.decide.outputs.run != 'false' }}
+        continue-on-error: true
+        run: uv run pytest --no-cov -n 2 -q --splits 6 --group ${{ matrix.shard }} --splitting-algorithm least_duration --junitxml=reports/junit-macos.xml
+      - name: Upload JUnit results (macos-26-3.12 · shard ${{ matrix.shard }})
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-macos-${{ matrix.python }}-shard${{ matrix.shard }}
+          path: reports/junit-macos.xml
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: record what this shard ran
+        if: ${{ always() && steps.decide.outputs.run != 'false' }}
+        env:
+          OUTCOME: ${{ steps.pytest.outcome }}
+          HISTORY: ${{ steps.decide.outputs.history }}
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --history "$HISTORY" --ref "$GITHUB_REF_NAME" --out "$RUNNER_TEMP/entry/macos-26-3.12__${{ matrix.shard }}.json"
+      - name: Upload this shard's entry
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: breadth-leg-macos-26-3.12-${{ matrix.shard }}
+          path: ${{ runner.temp }}/entry/
+          if-no-files-found: error
+          retention-days: 7
+      # Red when the entry is red, ran or carried: a carried red is still red (#3904).
+      - name: the shard's result
+        if: always()
+        run: |
+          "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/macos-26-3.12__${{ matrix.shard }}.json"
+
+  arm:
+    needs: [freshness]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.13.16"]
+        shard: [1, 2, 3, 4]
+    env:
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+      PERSONALCLAW_TEST_CONTAINER_RUNTIME: "1"
+      PY: ${{ matrix.python }}
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.13.1"
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      # setup-uv only names the interpreter (UV_PYTHON); `uv python find` never downloads one.
+      # Every step below that runs `uv python find` needs it present, carried shard or not, so
+      # a scratch venv is made on it first: that downloads the managed interpreter setup-uv
+      # names, as `uv sync` would, and nothing else.
+      - name: the uv-managed Python this shard runs on
+        run: uv venv "$RUNNER_TEMP/shard-python"
+      - name: the earlier record's results
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: breadth-previous
+          path: ${{ runner.temp }}/previous
+      - name: this shard's inputs, as its runner reports them
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py inputs --out "$RUNNER_TEMP/inputs.json" \
+            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --image "$ImageOS" --image-version "$ImageVersion" --arch "$RUNNER_ARCH" \
+            --python "$("$(uv python find "$PY")" -c 'import platform; print(platform.python_version())')" \
+            --uv "$(uv --version | awk '{print $2}')" \
+            --node "$(node --version 2>/dev/null || echo none)"
+      # Run, or carry the earlier result when every recorded input matches exactly. A
+      # decision that crashes writes no `run=false` and, being continue-on-error, leaves the
+      # job's status as it was, so the shard runs. No earlier results at all (freshness or
+      # this shard's download failed) is not a crash: the decision says run.
+      - name: run, or carry the earlier result
+        id: decide
+        continue-on-error: true
+        run: >-
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py decide --key "ubuntu-24.04-arm-3.13/${{ matrix.shard }}"
+          --inputs "$RUNNER_TEMP/inputs.json"
+          --previous "$RUNNER_TEMP/previous/previous.json"
+          --out "$RUNNER_TEMP/entry/ubuntu-24.04-arm-3.13__${{ matrix.shard }}.json"
+      - name: Install (locked)
+        if: ${{ steps.decide.outputs.run != 'false' }}
+        run: uv sync --locked --extra dev
+      - name: Install tmux (durable sessions — real-daemon test leg)
+        if: ${{ steps.decide.outputs.run != 'false' }}
+        run: |
+          if command -v tmux >/dev/null 2>&1; then tmux -V; exit 0; fi
+          case "$RUNNER_OS" in
+            Linux) sudo apt-get update -qq &&
+                   sudo apt-get install -y --no-install-recommends tmux ;;
+            macOS) brew install tmux ;;
+            *) echo "no tmux installer known for RUNNER_OS=$RUNNER_OS" >&2; exit 1 ;;
+          esac
+          tmux -V
+      - name: pytest (shard ${{ matrix.shard }})
+        id: pytest
+        if: ${{ steps.decide.outputs.run != 'false' }}
+        continue-on-error: true
+        run: uv run pytest --no-cov -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration --junitxml=reports/junit-arm.xml
+      - name: Upload JUnit results (ubuntu-24.04-arm-3.13 · shard ${{ matrix.shard }})
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-arm-${{ matrix.python }}-shard${{ matrix.shard }}
+          path: reports/junit-arm.xml
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: record what this shard ran
+        if: ${{ always() && steps.decide.outputs.run != 'false' }}
+        env:
+          OUTCOME: ${{ steps.pytest.outcome }}
+          HISTORY: ${{ steps.decide.outputs.history }}
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --history "$HISTORY" --ref "$GITHUB_REF_NAME" --out "$RUNNER_TEMP/entry/ubuntu-24.04-arm-3.13__${{ matrix.shard }}.json"
+      - name: Upload this shard's entry
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: breadth-leg-ubuntu-24.04-arm-3.13-${{ matrix.shard }}
+          path: ${{ runner.temp }}/entry/
+          if-no-files-found: error
+          retention-days: 7
+      # Red when the entry is red, ran or carried: a carried red is still red (#3904).
+      - name: the shard's result
+        if: always()
+        run: |
+          "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/ubuntu-24.04-arm-3.13__${{ matrix.shard }}.json"
+
+  coverage-shard:
+    needs: [freshness]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12.15"]
+        shard: [1, 2, 3, 4, 5, 6]
+    env:
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+      PERSONALCLAW_TEST_CONTAINER_RUNTIME: "1"
+      PY: ${{ matrix.python }}
+      COVERAGE_FILE: .coverage.shard${{ matrix.shard }}
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.13.1"
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      # setup-uv only names the interpreter (UV_PYTHON); `uv python find` never downloads one.
+      # Every step below that runs `uv python find` needs it present, carried shard or not, so
+      # a scratch venv is made on it first: that downloads the managed interpreter setup-uv
+      # names, as `uv sync` would, and nothing else.
+      - name: the uv-managed Python this shard runs on
+        run: uv venv "$RUNNER_TEMP/shard-python"
+      - name: the earlier record's results
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: breadth-previous
+          path: ${{ runner.temp }}/previous
+      - name: this shard's inputs, as its runner reports them
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py inputs --out "$RUNNER_TEMP/inputs.json" \
+            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --image "$ImageOS" --image-version "$ImageVersion" --arch "$RUNNER_ARCH" \
+            --python "$("$(uv python find "$PY")" -c 'import platform; print(platform.python_version())')" \
+            --uv "$(uv --version | awk '{print $2}')" \
+            --node "$(node --version 2>/dev/null || echo none)"
+      # Run, or carry the earlier result when every recorded input matches exactly. A
+      # decision that crashes writes no `run=false` and, being continue-on-error, leaves the
+      # job's status as it was, so the shard runs. No earlier results at all (freshness or
+      # this shard's download failed) is not a crash: the decision says run.
+      - name: run, or carry the earlier result
+        id: decide
+        continue-on-error: true
+        run: >-
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py decide --key "coverage/${{ matrix.shard }}"
+          --inputs "$RUNNER_TEMP/inputs.json"
+          --previous "$RUNNER_TEMP/previous/previous.json"
+          --out "$RUNNER_TEMP/entry/coverage__${{ matrix.shard }}.json"
+      - name: Install (locked)
+        if: ${{ steps.decide.outputs.run != 'false' }}
+        run: uv sync --locked --extra dev
+      - name: pytest (shard ${{ matrix.shard }})
+        id: pytest
+        if: ${{ steps.decide.outputs.run != 'false' }}
+        continue-on-error: true
+        run: uv run pytest --cov=personalclaw --splits 6 --group ${{ matrix.shard }} --splitting-algorithm least_duration --junitxml=reports/junit-coverage-shard.xml
+      - name: Upload JUnit results (coverage · shard ${{ matrix.shard }})
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-coverage-shard-${{ matrix.python }}-shard${{ matrix.shard }}
+          path: reports/junit-coverage-shard.xml
+          if-no-files-found: ignore
+          retention-days: 7
+      # A dotfile, so it is uploaded only when asked for by name.
+      - name: Upload coverage data (shard ${{ matrix.shard }})
+        if: ${{ steps.decide.outputs.run != 'false' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-data-shard${{ matrix.shard }}
+          path: .coverage.shard${{ matrix.shard }}
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+      - name: record what this shard ran
+        if: ${{ always() && steps.decide.outputs.run != 'false' }}
+        env:
+          OUTCOME: ${{ steps.pytest.outcome }}
+          HISTORY: ${{ steps.decide.outputs.history }}
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --history "$HISTORY" --ref "$GITHUB_REF_NAME" --out "$RUNNER_TEMP/entry/coverage__${{ matrix.shard }}.json"
+      - name: Upload this shard's entry
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: breadth-leg-coverage-${{ matrix.shard }}
+          path: ${{ runner.temp }}/entry/
+          if-no-files-found: error
+          retention-days: 7
+      # Red when the entry is red, ran or carried: a carried red is still red (#3904).
+      - name: the shard's result
+        if: always()
+        run: |
+          "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/coverage__${{ matrix.shard }}.json"
+
+  coverage:
+    # ── Combines the shards into the one report, and carries the stable `coverage` id ────────
+    # Green only when every shard passed, as ci.yml's `test` is for `test-shard`, and
+    # `!cancelled()` for the reason it gives (#2946). It keeps the whole suite's report or none: with a shard red
+    # there is no meaningful coverage number, so the steps after the gate do not run.
+    needs: [coverage-shard]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - name: every coverage shard passed
+        run: |
+          result='${{ needs.coverage-shard.result }}'
+          # Reachable only when a shard was cancelled while the run lived on: part of the
+          # suite was measured by nothing, so it is red (matrix's doctrine).
+          if [ "$result" = "cancelled" ]; then
+            echo "::error title=coverage shards unproven::a coverage shard was cancelled while" \
+                 "this run was still live, so part of the suite was measured by nothing. Re-run."
+            exit 1
+          fi
+          if [ "$result" != "success" ]; then
+            echo "::error title=coverage shards failed::the coverage shards' result was" \
+                 "'$result' (expected 'success'). Open the red 'coverage-shard (...)' leg(s) above."
+            exit 1
+          fi
+          echo "all coverage shards passed"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.13.1"
+          python-version: "3.12.15"
+          enable-cache: true
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      # A pattern that matches nothing (every shard carried) is not an error; a failed download
+      # is, and goes red.
+      - name: Download the coverage data of every shard
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-data-shard*
+          path: coverage-data/
+          merge-multiple: true
+      - name: Download the coverage shards' entries
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: breadth-leg-coverage-*
+          path: ${{ runner.temp }}/coverage-entries
+          merge-multiple: true
+      - name: Combine the shards into coverage XML
+        run: |
+          set -eu
+          mkdir -p coverage-data
+          # All six or no report: a shard's data missing would publish a smaller number as the
+          # suite's, with nothing to say part of it was never counted.
+          found=$(find coverage-data -name '.coverage.shard*' -type f | wc -l)
+          # How many shards carried their earlier result, from the shards' own entries; -1 when
+          # they are not all there to read.
+          carried=$(python3 -c 'import json,pathlib,sys; es=[json.loads(p.read_text()) for p in pathlib.Path(sys.argv[1]).glob("coverage__*.json")]; print(sum(bool(e.get("reused_from")) for e in es) if len(es) == 6 else -1)' "$RUNNER_TEMP/coverage-entries")
+          # Some or all shards carried on identical inputs, and every shard that ran left its
+          # data: no new whole-suite number, and the records they name keep theirs.
+          if [ "$carried" -gt 0 ] && [ $((found + carried)) -eq 6 ]; then
+            echo "$carried of 6 coverage shards carried their earlier result; no new report"
+            exit 0
+          fi
+          if [ "$found" -ne 6 ]; then
+            echo "::error title=coverage data incomplete::found the data of $found of 6 shards ($carried carried)."
+            exit 1
+          fi
+          uv run coverage combine coverage-data
+          uv run coverage xml -o coverage.xml
+          echo "coverage of the whole suite: $(uv run coverage report --format=total)%"
+      - name: Upload coverage artifacts
+        if: ${{ hashFiles('coverage.xml') != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage
+          path: coverage.xml
+          if-no-files-found: warn
+
+  security-corpus:
+    # The adversarial scanner corpus (five attack classes + the
+    # scanned-bytes==installed-bytes race invariant + the red-on-weakness meta-test).
+    # Its own job, not a line in the matrix, so a corpus regression is legible on its
+    # own; `-n 0` keeps the integrity-race output readable. Published methodology:
+    # docs/security/scanner-testing.md.
+    needs: [freshness]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    # No PERSONALCLAW_HOME — see the matrix job. The corpus writes only to tmp_path.
+    env:
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+      PY: "3.12.15"
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.13.1"
+          python-version: "3.12.15"
+          enable-cache: true
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: this shard's inputs, as its runner reports them
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py inputs --out "$RUNNER_TEMP/inputs.json" \
+            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --image "$ImageOS" --image-version "$ImageVersion" --arch "$RUNNER_ARCH" \
+            --python "$("$(uv python find "$PY")" -c 'import platform; print(platform.python_version())')" \
+            --uv "$(uv --version | awk '{print $2}')" \
+            --node "$(node --version 2>/dev/null || echo none)"
+      - name: pytest (adversarial scanner corpus)
+        id: pytest
+        continue-on-error: true
+        run: >
+          uv run pytest -n 0 --no-cov
+          --junitxml=reports/junit-security-corpus.xml
+          tests/security
+          tests/test_supply_chain_scanner.py
+          tests/test_supply_chain_gates.py
+      # Same argument as ci.yml's `test-shard` upload step.
+      - name: Upload JUnit results (security corpus)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-security-corpus
+          path: reports/junit-security-corpus.xml
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: record what this shard ran
+        if: always()
+        env:
+          OUTCOME: ${{ steps.pytest.outcome }}
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --out "$RUNNER_TEMP/entry/security-corpus__1.json"
+      - name: Upload this shard's entry
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: breadth-leg-security-corpus-1
+          path: ${{ runner.temp }}/entry/
+          if-no-files-found: error
+          retention-days: 7
+      # Red when the entry is red, ran or carried: a carried red is still red (#3904).
+      - name: the shard's result
+        if: always()
+        run: |
+          "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/security-corpus__1.json"
+
+  canary:
+    # The next hosted Ubuntu image, ahead of the move to it: the suite on ubuntu-26.04 and
+    # 3.12, run every night. A red is the image's news, not a gate: `continue-on-error`.
+    # `--basetemp` under RUNNER_TEMP keeps pytest's folders off the image's /tmp policy.
+    # The label is GitHub's (the runner-images list names it); an actionlint older than it
+    # does not know it, and this repository runs none.
+    needs: [freshness]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12.15"]
+        shard: [1, 2, 3, 4]
+    env:
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+      PERSONALCLAW_TEST_CONTAINER_RUNTIME: "1"
+      PY: ${{ matrix.python }}
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.13.1"
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      # setup-uv only names the interpreter (UV_PYTHON); `uv python find` never downloads one.
+      # Every step below that runs `uv python find` needs it present, carried shard or not, so
+      # a scratch venv is made on it first: that downloads the managed interpreter setup-uv
+      # names, as `uv sync` would, and nothing else.
+      - name: the uv-managed Python this shard runs on
+        run: uv venv "$RUNNER_TEMP/shard-python"
+      - name: this shard's inputs, as its runner reports them
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py inputs --out "$RUNNER_TEMP/inputs.json" \
+            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --image "$ImageOS" --image-version "$ImageVersion" --arch "$RUNNER_ARCH" \
+            --python "$("$(uv python find "$PY")" -c 'import platform; print(platform.python_version())')" \
+            --uv "$(uv --version | awk '{print $2}')" \
+            --node "$(node --version 2>/dev/null || echo none)"
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: Install tmux (durable sessions — real-daemon test leg)
+        run: |
+          if command -v tmux >/dev/null 2>&1; then tmux -V; exit 0; fi
+          case "$RUNNER_OS" in
+            Linux) sudo apt-get update -qq &&
+                   sudo apt-get install -y --no-install-recommends tmux ;;
+            macOS) brew install tmux ;;
+            *) echo "no tmux installer known for RUNNER_OS=$RUNNER_OS" >&2; exit 1 ;;
+          esac
+          tmux -V
+      - name: pytest (canary shard ${{ matrix.shard }})
+        id: pytest
+        continue-on-error: true
+        run: uv run pytest --no-cov -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration --basetemp="$RUNNER_TEMP/pytest" --junitxml=reports/junit-canary.xml
+      - name: Upload JUnit results (canary · shard ${{ matrix.shard }})
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-canary-${{ matrix.python }}-shard${{ matrix.shard }}
+          path: reports/junit-canary.xml
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: record what this shard ran
+        if: always()
+        env:
+          OUTCOME: ${{ steps.pytest.outcome }}
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --out "$RUNNER_TEMP/entry/canary__${{ matrix.shard }}.json"
+      - name: Upload this shard's entry
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: breadth-leg-canary-${{ matrix.shard }}
+          path: ${{ runner.temp }}/entry/
+          if-no-files-found: error
+          retention-days: 7
+      # Red when the entry is red, ran or carried: a carried red is still red (#3904).
+      - name: the shard's result
+        if: always()
+        run: |
+          "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/canary__${{ matrix.shard }}.json"
+
+  install-smoke:
+    # ── The front door, finally EXECUTED ────────────────────────────────────────────────────
+    # `curl -fsSL https://personalclaw.dev/install | sh` is the first thing a new user runs, and
+    # until now NOTHING in CI ran it. `deploy/website/install.sh`'s own header claimed this job
+    # already existed (the workflow then named "runs it in a bare ubuntu container weekly").
+    # It did not:
+    # measured 2026-09-06, this workflow had four jobs — matrix, audit, security-corpus,
+    # coverage — and grepping .github/workflows/ for `website/install`, `install.sh` or
+    # `personalclaw.dev/install` returned nothing. The ninth absent-vs-declared-false in this
+    # repo, and the cheapest kind to write: a claim of coverage costs one comment line.
+    #
+    # THREE LEGS, each its own step so the red NAMES the owner:
+    #   · CURRENT CHECKOUT installs the wheel this tree builds and runs the setup a fresh user is
+    #     told to run, before the release reaches PyPI. Red = this tree's package or setup broke.
+    #   · STAGED is the file we edit. Served-only coverage would let a broken edit sit green
+    #     until the website published it, which is the same blind spot in a new costume —
+    #     test-what-we-lint is how a one-line installer error once survived three weeks.
+    #     Red = we broke the installer.
+    #   · SERVED is what users actually get. It is the only leg that can catch a bad wheel on
+    #     PyPI, `uv tool install` regressing, or the site serving a file that does not install —
+    #     none of which live in this repo, and all of which break the front door.
+    #     Red = the site or PyPI regressed.
+    #
+    # WHETHER THE SERVED BYTES ARE THE RIGHT BYTES is not asked here. The website publishes the
+    # installer from the core release it pins, so its own scheduled release-follow check is
+    # where the served file is compared with that release's installer. Core main runs ahead of
+    # every release: the same comparison here was red between each installer edit and the next
+    # website deploy, with nothing wrong on either side.
+    #
+    # WHY NOT THE PR GATE. The legs reach personalclaw.dev, astral.sh and PyPI. A ≤10-min merge
+    # gate that fails when someone else's CDN hiccups trains people to re-run red checks, which
+    # is worse than no check. The half that CAN gate every PR is offline and does:
+    # tests/test_website_installer.py pins sha256(install.sh) to install.sh.sha256, so editing
+    # the installer without updating the pin reds in `lint`/`test` at lint speed. Network here,
+    # forcing function there.
+    #
+    # THE PUBLIC LEGS ARE `!cancelled()`, not fail-fast: "the staged installer is broken" and
+    # "the served one-liner is broken" are different pages for different people, and one must
+    # not mask the other.
+    #
+    # A FETCH FAILURE IS `unproven`, NOT A PASS. Skipping, warning, or `continue-on-error` on the
+    # served leg would reproduce the defect the whole job answers: this repo has read absence as
+    # a negative eight times, most recently a tmux-gated test class that never ran once and
+    # whose skip was counted as a pass. An inconclusive run must cost a red.
+    needs: [freshness]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    # A bare image, deliberately: the one-liner's whole promise is that it works on a machine
+    # with nothing on it. A GitHub runner has python, uv-adjacent tooling and a warm PATH, so
+    # running there would prove something easier than what we ship.
+    # The bare-current-Ubuntu leg: ubuntu:26.04, which `ubuntu:latest` named when this was
+    # pinned, as its linux/amd64 manifest (this runner's platform) of index
+    # sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7. #4585's
+    # scheduled refresh keeps it on the current Ubuntu release, as a reviewed change.
+    container: ubuntu:26.04@sha256:88a381d5b5eeb2b35d3ad70925a362c37ce569daf43ede89ff818ec20e4d3794
+    # Two `uv tool install`s plus a uv bootstrap. 20 covers a cold PyPI; it must not sit on a
+    # runner for the default 360 when a host is black-holing packets.
+    timeout-minutes: 20
+    env:
+      PY: "3.13.16"
+    steps:
+      - name: Runner identity
+        # The container's own system, beside the runner image the job's set-up log names.
+        run: |
+          . /etc/os-release
+          echo "container ${PRETTY_NAME} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      # A bare ubuntu image ships neither curl nor CA roots — installing them IS part of asserting the
+      # bare-machine claim. A failure here is an infrastructure red before any installer ran, and
+      # is legible as such because it is its own step.
+      - name: bare-container prerequisites (curl · CA roots)
+        run: |
+          set -eu
+          apt-get update -qq
+          apt-get install -y --no-install-recommends ca-certificates curl
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.13.1"
+          python-version: "3.13.16"
+      # The two public-installer legs below necessarily install the latest published release.
+      # This source-tree leg closes the pre-publication gap: install the wheel this checkout
+      # builds, remove every system timezone search path, and run the setup command a fresh user
+      # is told to run. `TZ` is an authored IANA name here, so persisting it proves zoneinfo
+      # loaded the package's Python tzdata fallback rather than an OS database. It names the
+      # installer's Python (`PC_PYTHON`) as the installer does: uv ignores the upper bound of
+      # requires-python, so a bare install here would build on the newest Python uv downloads.
+      - name: smoke — current checkout install + setup timezone
+        run: |
+          set -eu
+          UV_TOOL_DIR="$RUNNER_TEMP/uv-tools-current"
+          UV_TOOL_BIN_DIR="$RUNNER_TEMP/uv-bin-current"
+          HOME="$RUNNER_TEMP/home-current"
+          PERSONALCLAW_HOME="$RUNNER_TEMP/personalclaw-home-current"
+          TZ="America/Los_Angeles"
+          PYTHONTZPATH=""
+          export UV_TOOL_DIR UV_TOOL_BIN_DIR HOME PERSONALCLAW_HOME TZ PYTHONTZPATH
+          mkdir -p "$UV_TOOL_DIR" "$UV_TOOL_BIN_DIR" "$HOME" "$PERSONALCLAW_HOME"
+          PATH="$UV_TOOL_BIN_DIR:$PATH"; export PATH
+          uv tool install --python 3.13 .
+          personalclaw setup
+          grep -F '"timezone": "America/Los_Angeles"' "$PERSONALCLAW_HOME/config.json"
+      # ── Leg 1: the staged file, which is the one we can fix ─────────────────────────────────
+      # UV_TOOL_DIR / UV_TOOL_BIN_DIR are redirected into RUNNER_TEMP for two reasons: the smoke
+      # must not install over whatever else the job has, and the two legs must not silently
+      # satisfy each other — a shared tool dir would let leg 2 pass by finding leg 1's binary.
+      # Distinct dirs per leg is what makes the second leg a real second measurement.
+      #
+      # UV_TOOL_BIN_DIR goes on PATH BEFORE the installer runs so the script's own
+      # `have personalclaw` / offer_setup tail is exercised rather than skipped — with no TTY,
+      # `[ -t 0 ]` is false, so it must print the non-interactive line and exit 0, never hang.
+      - name: smoke — the STAGED installer (deploy/website/install.sh)
+        if: ${{ !cancelled() }}
+        run: |
+          set -eu
+          UV_TOOL_DIR="$RUNNER_TEMP/uv-tools-staged"
+          UV_TOOL_BIN_DIR="$RUNNER_TEMP/uv-bin-staged"
+          export UV_TOOL_DIR UV_TOOL_BIN_DIR
+          mkdir -p "$UV_TOOL_DIR" "$UV_TOOL_BIN_DIR"
+          PATH="$UV_TOOL_BIN_DIR:$PATH"; export PATH
+          sh deploy/website/install.sh
+          # Installing proves a wheel downloaded. Running it proves the front door opens.
+          personalclaw --version
+      # ── Leg 2: the actual one-liner, verbatim, as a user pastes it ──────────────────────────
+      # Written as the documented `curl … | sh` pipeline on purpose: piping into sh is the thing
+      # being asserted (no TTY on stdin, a partial transfer must install nothing). Running the
+      # downloaded file as an argument instead would test a path no user takes.
+      #
+      # `set -o pipefail` is why a 404 or a TLS failure cannot pass: without it the pipeline's
+      # status is sh's, and sh happily exits 0 having executed an empty or truncated body — a
+      # green check for having installed nothing. That is the exact shape of failure this job
+      # exists to end, so it must not be reintroduced by the job itself.
+      - name: smoke — the SERVED one-liner (https://personalclaw.dev/install)
+        if: ${{ !cancelled() }}
+        run: |
+          set -eu
+          set -o pipefail
+          UV_TOOL_DIR="$RUNNER_TEMP/uv-tools-served"
+          UV_TOOL_BIN_DIR="$RUNNER_TEMP/uv-bin-served"
+          export UV_TOOL_DIR UV_TOOL_BIN_DIR
+          mkdir -p "$UV_TOOL_DIR" "$UV_TOOL_BIN_DIR"
+          PATH="$UV_TOOL_BIN_DIR:$PATH"; export PATH
+          if ! curl -fsSL --retry 3 --retry-delay 5 --max-time 120 \
+                 https://personalclaw.dev/install | sh; then
+            echo "::error title=install one-liner unproven::unproven — the served one-liner did" \
+                 "not complete. If personalclaw.dev or PyPI is unreachable this run proved" \
+                 "NOTHING; it is red rather than green because an unanswered question is not a" \
+                 "passing answer. Re-run once reachability is confirmed."
+            exit 1
+          fi
+          personalclaw --version
+      # The container has no git, so the tree is freshness's, the one this run checks out. The
+      # served installer is hashed from a file a checked curl wrote: a failed read is recorded
+      # `unreadable` and the leg goes red, never a digest of nothing. The night is an input:
+      # this leg's outside state moves daily, so a later night's green closes its issue and a
+      # same-night rerun's green is a flake.
+      - name: this leg's inputs (the container image, and the installer served today)
+        if: always()
+        env:
+          TREE: ${{ needs.freshness.outputs.tree }}
+          NIGHT: ${{ needs.freshness.outputs.night }}
+        run: |
+          if curl -fsSL --retry 3 --max-time 60 -o "$RUNNER_TEMP/served-install.sh" https://personalclaw.dev/install; then
+            installer=$(sha256sum "$RUNNER_TEMP/served-install.sh" | cut -d' ' -f1)
+          else
+            installer=unreadable
+          fi
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py inputs --out "$RUNNER_TEMP/inputs.json" \
+            --tree "${TREE:?freshness named no tree}" \
+            --image "ubuntu:26.04" \
+            --image-version "sha256:88a381d5b5eeb2b35d3ad70925a362c37ce569daf43ede89ff818ec20e4d3794" \
+            --arch "$RUNNER_ARCH" \
+            --python "$("$(uv python find "$PY")" -c 'import platform; print(platform.python_version())')" \
+            --uv "$(uv --version | awk '{print $2}')" --node none \
+            --external "installer_sha256=$installer" --external "night=${NIGHT:?freshness named no night}"
+          if [ "$installer" = unreadable ]; then
+            echo "::error title=installer unreadable::the served installer could not be read, so this leg's inputs are not known: red"
+            exit 1
+          fi
+      - name: record what this shard ran
+        if: always()
+        env:
+          OUTCOME: ${{ job.status }}
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --out "$RUNNER_TEMP/entry/install-smoke__1.json"
+      - name: Upload this shard's entry
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: breadth-leg-install-smoke-1
+          path: ${{ runner.temp }}/entry/
+          if-no-files-found: error
+          retention-days: 7
+      # Red when the entry is red, ran or carried: a carried red is still red (#3904).
+      - name: the shard's result
+        if: always()
+        run: |
+          "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/install-smoke__1.json"
+
+  audit:
+    # Report-only supply-chain scan — visibility, not a merge gate (substrate, not
+    # bureaucracy). Dependabot drives the actual update PRs.
+    needs: [freshness]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    continue-on-error: true
+    env:
+      PY: "3.12.15"
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.13.1"
+          python-version: "3.12.15"
+          enable-cache: true
+      - name: pip-audit
+        # Install into a uv-managed venv, not `--system`: the runner's /usr is
+        # PEP-668 externally-managed and uv refuses `--system` there (the whole step
+        # then errored out under `bash -e` before pip-audit ever ran, silently
+        # disabling the scan). Report-only, so a finding never gates (|| true).
+        run: |
+          uv venv .venv-audit
+          uv pip install --python .venv-audit/bin/python -e . pip-audit
+          .venv-audit/bin/python -m pip_audit || true
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: npm audit (root workspace)
+        run: npm ci && npm audit || true
+      # The advisories the audit reads move daily, so the night is an input: a later night's
+      # green closes its issue, and a same-night rerun's green is a flake.
+      - name: this leg's inputs, as its runner reports them
+        if: always()
+        env:
+          NIGHT: ${{ needs.freshness.outputs.night }}
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py inputs --out "$RUNNER_TEMP/inputs.json" \
+            --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --image "$ImageOS" --image-version "$ImageVersion" --arch "$RUNNER_ARCH" \
+            --python "$("$(uv python find "$PY")" -c 'import platform; print(platform.python_version())')" \
+            --uv "$(uv --version | awk '{print $2}')" \
+            --node "$(node --version 2>/dev/null || echo none)" \
+            --external "night=${NIGHT:?freshness named no night}"
+      - name: record what this shard ran
+        if: always()
+        env:
+          OUTCOME: ${{ job.status }}
+        run: |
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --out "$RUNNER_TEMP/entry/audit__1.json"
+      - name: Upload this shard's entry
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: breadth-leg-audit-1
+          path: ${{ runner.temp }}/entry/
+          if-no-files-found: error
+          retention-days: 7
+      # Red when the entry is red, ran or carried: a carried red is still red (#3904).
+      - name: the shard's result
+        if: always()
+        run: |
+          "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/audit__1.json"
+
+  report:
+    # Last: settles every leg, writes the run's record under its digest, and keeps the leg
+    # issues. It writes issues only on main; a dispatch on another ref says what it would do.
+    needs: [freshness, ubuntu, macos, arm, coverage-shard, coverage, security-corpus, canary, install-smoke, audit]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      issues: write   # one issue per red leg; nothing else
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download every shard's entry
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: breadth-leg-*
+          path: ${{ runner.temp }}/legs
+          merge-multiple: true
+      - name: settle the legs and write the record
+        id: report
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python3 tools/ci/breadth_evidence.py report --repo "$GITHUB_REPOSITORY"
+          --legs "$RUNNER_TEMP/legs" --run-id "$GITHUB_RUN_ID"
+          --tree "$(git rev-parse 'HEAD^{tree}')"
+          --record "$RUNNER_TEMP/evidence/record.json"
+          --actions "$RUNNER_TEMP/actions.json"
+      # Whatever failed after the record was written, the record is kept: a night's red must
+      # reach the chain the next night reads.
+      - name: Upload the evidence record, named by its digest
+        if: ${{ always() && steps.report.outputs.digest != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: breadth-evidence-${{ steps.report.outputs.digest }}
+          path: ${{ runner.temp }}/evidence/record.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: open, update or close the leg issues
+        if: ${{ github.ref == 'refs/heads/main' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIGEST: ${{ steps.report.outputs.digest }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: >-
+          python3 tools/ci/breadth_evidence.py issues --repo "$GITHUB_REPOSITORY"
+          --actions "$RUNNER_TEMP/actions.json" --run-url "$RUN_URL" --digest "$DIGEST"

@@ -108,26 +108,28 @@ def test_the_client_the_openai_bound_protects_is_still_handed_to_the_sdk() -> No
 
 
 #: The workflow whose matrix is the *only* thing that runs the suite on a given interpreter.
-_FULL_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "full.yml"
+_BREADTH_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "breadth.yml"
 
 
 def _ci_verified_python_minors() -> set[tuple[int, int]]:
-    """Every `(major, minor)` the full matrix really runs the suite on.
+    """Every `(major, minor)` the breadth legs really run the suite on.
 
     Reads the workflow rather than a second hand-kept list, because a hand-kept copy is the
     thing that drifts — and a rail comparing metadata against a stale copy of the matrix
     would pass while the matrix said something else.
     """
-    workflow = yaml.safe_load(_FULL_WORKFLOW.read_text(encoding="utf-8"))
-    matrix = workflow["jobs"]["matrix-shard"]["strategy"]["matrix"]
-    declared = [str(value) for value in (matrix.get("python") or [])]
-    # `include` legs add real jobs (the arm64 pair), so an interpreter reached only there is
-    # still verified. Missing them would let the bound narrow below what CI proves.
-    declared += [
-        str(entry["python"])
-        for entry in (matrix.get("include") or [])
-        if isinstance(entry, dict) and "python" in entry
-    ]
+    workflow = yaml.safe_load(_BREADTH_WORKFLOW.read_text(encoding="utf-8"))
+    declared: list[str] = []
+    for job in workflow["jobs"].values():
+        matrix = (job.get("strategy") or {}).get("matrix") or {}
+        declared += [str(value) for value in (matrix.get("python") or [])]
+        # `include` legs add real jobs, so an interpreter reached only there is still
+        # verified. Missing them would let the bound narrow below what CI proves.
+        declared += [
+            str(entry["python"])
+            for entry in (matrix.get("include") or [])
+            if isinstance(entry, dict) and "python" in entry
+        ]
     minors: set[tuple[int, int]] = set()
     for value in declared:
         # An exact patch (`3.13.16`) is verified at its minor.
@@ -145,7 +147,7 @@ def test_the_matrix_this_rail_reads_still_declares_interpreters() -> None:
     """
     verified = _ci_verified_python_minors()
     assert len(verified) >= 2, (
-        f"{_FULL_WORKFLOW.name} yielded {sorted(verified)} — the matrix parse collapsed, so "
+        f"{_BREADTH_WORKFLOW.name} yielded {sorted(verified)} — the matrix parse collapsed, so "
         "the requires-python and classifier rails below are comparing against nothing"
     )
 
@@ -163,7 +165,7 @@ def test_requires_python_is_bounded_to_the_interpreters_ci_verifies() -> None:
     with (_REPO_ROOT / "pyproject.toml").open("rb") as fh:
         declared = str(tomllib.load(fh)["project"]["requires-python"])
     assert declared.replace(" ", "") == expected, (
-        f"pyproject declares requires-python = {declared!r} but {_FULL_WORKFLOW.name} "
+        f"pyproject declares requires-python = {declared!r} but {_BREADTH_WORKFLOW.name} "
         f"verifies {sorted(verified)}, so the honest spec is {expected!r}. Widening the "
         "range means adding the interpreter to the matrix in the SAME change and making it "
         "pass — an install that pip permits and nothing tests is how 3.14 shipped a "
@@ -211,7 +213,7 @@ def test_python_classifiers_name_exactly_the_verified_interpreters() -> None:
         if value.startswith(prefix) and "." in value.removeprefix(prefix)
     }
     assert declared == verified, (
-        f"Python classifiers name {sorted(declared)} but {_FULL_WORKFLOW.name} verifies "
+        f"Python classifiers name {sorted(declared)} but {_BREADTH_WORKFLOW.name} verifies "
         f"{sorted(verified)} — every version-specific classifier must be an interpreter the "
         "suite actually runs on, and every verified interpreter must be advertised"
     )
