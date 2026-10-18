@@ -1,0 +1,18 @@
+{
+  "//": "Read by domCensus.ts. Kept as data, out of that module's code, so that naming these globals does not make the census itself, or its rail, a module that reaches the DOM.",
+  "domGlobals": [
+    "window", "document", "navigator", "localStorage", "sessionStorage", "indexedDB",
+    "ResizeObserver", "IntersectionObserver", "MutationObserver", "PerformanceObserver",
+    "matchMedia", "getComputedStyle", "requestAnimationFrame", "cancelAnimationFrame",
+    "requestIdleCallback", "HTMLElement", "HTMLInputElement", "HTMLCanvasElement", "SVGElement",
+    "NodeList", "DocumentFragment", "DOMParser", "XMLSerializer", "KeyboardEvent", "MouseEvent",
+    "PointerEvent", "FocusEvent", "InputEvent", "ClipboardEvent", "DragEvent", "TouchEvent",
+    "WheelEvent", "UIEvent", "Path2D", "FileReader", "XMLHttpRequest", "EventSource",
+    "Notification", "ServiceWorker", "CSSStyleSheet", "devicePixelRatio", "innerWidth", "innerHeight"
+  ],
+  "domGlobalsCheckedOnly": [
+    "Element", "Node", "Range", "Selection", "Image", "location", "history", "screen", "alert",
+    "confirm", "prompt", "self", "top", "parent"
+  ],
+  "nodeSafePackages": ["vitest", "typescript"]
+}

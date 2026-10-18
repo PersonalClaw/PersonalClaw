@@ -60,9 +60,12 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+      # `npm run build` is `vite build` alone, so a release typechecks the web itself: this job
+      # is the only check every release artifact is built behind.
       - name: Build the SPA (npm from repo root)
         run: |
           npm ci
+          npm run typecheck:web
           npm run build
       - name: Verify the built SPA's asset licences
         run: python3 scripts/check_asset_licenses.py --built-web

@@ -839,8 +839,16 @@ jobs:
       # never `cd web && npm ci`. typecheck + vitest + build all run against the web workspace.
       - name: npm ci (root)
         run: npm ci
+      # The run's one typecheck: `npm run build` below is `vite build` alone, and nothing else in
+      # this workflow typechecks the web.
       - name: typecheck
         run: npm run typecheck:web
+      # Vitest's own default worker count is one less than the cores, and `web/vitest.config.ts`
+      # holds a bare local run to 3 so a laptop keeps some; this job is the runner's only work,
+      # so it takes every core. Through $GITHUB_ENV so the vitest step stays the one-line
+      # `npm run test:web` that tests/test_ci_tier_enforcement.py reads.
+      - name: vitest on every core
+        run: echo "VITEST_MAX_WORKERS=$(nproc)" | tee -a "$GITHUB_ENV"
       - name: test (vitest)
         # Includes the design-system consistency rails:
         # tokenLint.test.ts (token-lint-strict — no raw hex/px outside the
@@ -882,7 +890,7 @@ jobs:
         # landing on an element. The NATIVE builds are deliberately not here — they need Xcode
         # and the Android SDK, so they are a maintainer step documented in mobile/README.md.
         run: npm run test:mobile
-      - name: build (tsc + vite)
+      - name: build (vite)
         run: npm run build
       # The build copies web/public verbatim and hashes the KaTeX and editor icon fonts out of
       # node_modules. Every font and binary it emitted must match ASSET_LICENSES.json, so a

@@ -2474,7 +2474,7 @@ ROWS: tuple[Row, ...] = (
                 _both(
                     _replace(
                         "ci.yml",
-                        "      - name: build (tsc + vite)\n        run: npm run build\n",
+                        "      - name: build (vite)\n        run: npm run build\n",
                         "",
                     ),
                     _replace(

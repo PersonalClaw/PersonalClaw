@@ -1,13 +1,11 @@
-// Vitest global setup — jest-dom matchers (toBeInTheDocument, toBeDisabled, …)
-// and automatic React cleanup between tests.
+// Setup for the `dom` project only (`vitest.config.ts`): jest-dom matchers (toBeInTheDocument,
+// toBeDisabled, …), automatic React cleanup between tests, and stand-ins for what jsdom lacks.
+// The module-state resets every file needs, in either project, are `resetModuleState.ts`, listed
+// before this file; Vitest runs `afterEach` hooks last registered first, so the cleanup below runs
+// before those resets, as it did when both lived here.
 import '@testing-library/jest-dom/vitest'
 import { cleanup, configure } from '@testing-library/react'
 import { afterEach } from 'vitest'
-// Imported by its concrete path, NOT through `lib/data`, so the eight test files that
-// `vi.mock('../../lib/data', …)` wholesale cannot replace it with a factory that has no
-// `resetDataStore` and take the whole suite down.
-import { resetDataStore } from '../lib/data/store'
-import { resetSignedOutForTests } from '../lib/signedOut'
 
 // `waitFor`'s default timeout is 1000 ms, and it was never raised when this suite's real
 // wall-clock was measured. #1675 raised vitest's `testTimeout` 5 s → 20 s on the finding that
@@ -90,18 +88,4 @@ if (typeof globalThis.Path2D === 'undefined') {
   } as unknown as typeof Path2D
 }
 
-// The data layer's cache is a module singleton, so it OUTLIVES a test. That was already true
-// of the helper it replaced, but harmless there because that hook re-fetched on every mount:
-// a leaked entry only ever changed the first frame. This layer honours declared staleness, so
-// a FRESH leaked entry means the next test's mount does not fetch at all — its `vi.fn()` mock
-// is never called and it waits out its `waitFor` on data the previous test seeded. Measured
-// while migrating: 15 of 22 failures in the first full run were exactly this, across seven
-// files the change never touched (desktopCapabilities alone: 7).
-//
-// Cold cache per test is also just the correct fixture — a test asserting a first paint should
-// not depend on which test ran before it.
-//
-// The tab's signed-out state (`lib/signedOut.ts`) is a module singleton for the same reason, and
-// a leaked one is worse than a warm cache: once set, the api client refuses every request
-// locally, so each later test in the file would fail on a request it never saw sent.
-afterEach(() => { cleanup(); resetDataStore(); resetSignedOutForTests() })
+afterEach(() => { cleanup() })
