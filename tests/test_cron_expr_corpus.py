@@ -17,6 +17,8 @@ import json
 import tomllib
 from pathlib import Path
 
+from table_rows import row
+
 from personalclaw.schedule import validate_cron_expr
 
 CORPUS = Path(__file__).resolve().parents[1] / "web/src/pages/schedule/cronExprCorpus.json"
@@ -73,7 +75,7 @@ def test_croniter_still_agrees_with_the_recorded_verdict(subtests):
     cases = _cases()
     assert len(cases) == 70, "a case was added to or dropped from the corpus: pin the new count"
     for case in cases:
-        with subtests.test(expr=case["expr"]):
+        with row(subtests, expr=case["expr"]):
             assert validate_cron_expr(case["expr"]) is case["valid"], (
                 f"{case['expr']!r} ({case['group']}) — croniter now says "
                 f"{validate_cron_expr(case['expr'])}, the corpus records {case['valid']}. "

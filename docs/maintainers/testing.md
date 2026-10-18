@@ -18,9 +18,9 @@ A variation earns its own test only if it:
 5. **is platform behaviour**, kept on the leg that can show it.
 
 Every other variation is a **row in one table-driven test per property**, using pytest's built-in
-`subtests` fixture:
+`subtests` fixture through `tests/table_rows.py`'s `row()`:
 
-- the test reports every failing row, not only the first;
+- the test reports every failing row, not only the first, each as a subtest named by its input;
 - it asserts the row count, so a table that shrank cannot pass;
 - each failure message carries the row's input;
 - rows that share one fixture reset the state they touch after each row, or assert it unchanged,
@@ -42,27 +42,37 @@ def test_a_false_spelling_reads_false(raw, tmp_path):
 After: one item, every row checked, every failing row named.
 
 ```python
+from table_rows import row
+
 FALSE_SPELLINGS = ["false", "False", "0", "no", "off"]
 
 
 def test_every_false_spelling_reads_false(subtests):
     assert len(FALSE_SPELLINGS) == 5, "a spelling was dropped from the table"
     for raw in FALSE_SPELLINGS:
-        with subtests.test(raw=raw):
+        with row(subtests, raw=raw):
             assert read_flag(raw) is False, f"{raw!r} read {read_flag(raw)!r}"
 ```
 
-A failing row prints as `SUBFAILED(raw='no')` with its own message, and the rows after it still
-run. The same holds inside an `async def` test under pytest-asyncio; `tests/test_ci_variation_census.py`
-proves it on a planted async table. `tests/rails/test_ci_contract.py` is a real table test: every CI
-property is one row, its controls run as subtests.
+A failing row prints as `SUBFAILED(raw='no')` with its own message, a `pytest.skip` in a row as
+that row's `SUBSKIPPED`, and the rows after it still run. The same holds inside an `async def` test
+under pytest-asyncio; `tests/test_ci_variation_census.py` proves it on a planted async table.
+`tests/rails/test_ci_contract.py` is a real table test: every CI property is one row, its controls
+run as subtests.
+
+**Why `row()` and not `subtests.test()` around every row.** `subtests.test()` builds and logs a
+report for every row, and under xdist sends it to the controller too: measured on this suite's
+tables, about 1.4 ms per row in one process and about 3 ms at `-n 2`, against microseconds to a
+millisecond of work the row itself does. `row()` reports a row only when it fails or skips, so a
+passing row costs what its check costs. What goes is the `SUBPASSED` line `-rA` printed per
+passing row; `tests/test_table_rows.py` holds the rest to `subtests.test()`'s behaviour.
 
 When rows share a fixture, undo what each row changes before the next:
 
 ```python
 def test_every_setting_round_trips(subtests, home):
     for key, value in ROWS:
-        with subtests.test(key=key):
+        with row(subtests, key=key):
             before = home.config_text()
             write_setting(home, key, value)
             assert read_setting(home, key) == value
