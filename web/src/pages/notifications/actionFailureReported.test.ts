@@ -20,9 +20,10 @@ import { join } from 'node:path'
 // ⚠️ TWO DELIBERATE ASYMMETRIES, both about POLLING:
 //   • The page's feed read reports through `LoadError` (render state, shown once) and NOT `notify` — it
 //     polls every 10s, so a toast per tick would be spam.
-//   • `NotificationBell`'s read KEEPS its silent catch: it polls every 15s plus on every notification WS
-//     frame, and it does not fabricate — the previous items stay, which is the honest fallback for a
-//     badge. Its three MUTATIONS are user-initiated and do report.
+//   • `NotificationBell`'s read does NOT toast: it polls once a minute plus on every notification WS
+//     frame. It keeps the failure as state instead, so a failed first read shows an unknown count
+//     rather than a false zero, and a later failure keeps the previous items, the honest fallback for
+//     a badge. Its three MUTATIONS are user-initiated and do report.
 
 const SRC = join(process.cwd(), 'src')
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
@@ -66,12 +67,18 @@ describe('a failed notification action is reported', () => {
     expect(errAt, 'a failed first read would otherwise spin the skeleton forever').toBeLessThan(skelAt)
   })
 
-  it("the bell's POLLED read keeps its silent catch, deliberately", () => {
+  it("the bell's POLLED read keeps its failure as state and never toasts it, deliberately", () => {
     // Documented distinction, pinned so a later sweep does not "converge" it into a toast on every poll.
     // The poll became a once-a-minute safety net in #3620 (frames keep the badge current), so the pin
-    // is the reason itself rather than an interval that no longer exists.
+    // is the reason itself rather than an interval that no longer exists. The failure is not swallowed
+    // either: it is kept, so the bell can show an unknown count instead of a false zero
+    // (`ui/bellUnknownWhenUnread.test.tsx` holds the rendering).
     const src = read(BELL)
-    expect(src, 'the poll must not report').toMatch(/api\.notifications\(\)[\s\S]{0,120}\.catch\(\(\) => \{\}\)/)
+    const at = src.indexOf('api.notifications()')
+    expect(at, 'the bell must still read').toBeGreaterThan(-1)
+    const chain = src.slice(at, at + 200)
+    expect(chain, 'the failure is kept as state').toMatch(/\.catch\(\(e\) => setReadErr\(e\)\)/)
+    expect(chain, 'and the poll does not report it').not.toMatch(/notify\(/)
     expect(readFileSync(join(SRC, BELL), 'utf8'), 'and the reason must stay written down')
       .toMatch(/reporting a failed poll would toast every tick/)
   })

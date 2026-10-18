@@ -14,6 +14,7 @@ import { accentChip } from '../design/accent'
 import { notify } from '../app/appSdk'
 import { confirmDelete } from './dialog'
 import { reportingWrite } from '../app/reportingWrite'
+import { InlineError } from './InlineError'
 
 const MAX_SHADE = 5
 
@@ -28,15 +29,24 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
   const [now, setNow] = useState(() => Date.now())
   const ref = useRef<HTMLDivElement>(null)
 
-  // The READ keeps its silent catch on purpose: it polls (and re-reads on every notification WS
-  // frame), so reporting a failed poll would toast every tick. It also does NOT fabricate — the
-  // previous items stay, which is the honest fallback for a badge. The MUTATIONS below are
-  // user-initiated, one toast each, and were the silent ones.
+  const [readErr, setReadErr] = useState<unknown>(null)
+
+  // The READ never toasts: it polls (and re-reads on every notification WS frame), so
+  // reporting a failed poll would toast every tick. It keeps the failure as STATE instead, and does
+  // not fabricate: a later failure leaves the previous items in place, the honest fallback for a badge.
+  // The MUTATIONS below are user-initiated, one toast each, and were the silent ones.
+  //
+  // 🔴 A COUNT IS A CLAIM. With the failure swallowed, a failed FIRST read left `items` null, the
+  // count fell back to 0, and the bell looked exactly like a day with nothing unread, while the
+  // shade said "Loading…" forever. Since Home stopped badging unread notifications, this is the one
+  // unread count on screen, so an unknown count must say it is unknown (see `unknown` below).
   //
   // The frames are what keep the badge current — every notify, ack, unack and removal sends one —
   // so the poll is a once-a-minute safety net (and the tick that refreshes relative times), not
   // the 15s re-read it was on every page.
-  const load = () => api.notifications().then((d) => setItems(d.notifications)).catch(() => {})
+  const load = () => api.notifications()
+    .then((d) => { setItems(d.notifications); setReadErr(null) })
+    .catch((e) => setReadErr(e))
   useVisiblePoll(() => { setNow(Date.now()); load() }, 60_000)
   useChatSocket((m: WsMessage) => { if (m.type.startsWith('notification')) load() }, load)
 
@@ -49,7 +59,12 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
     return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onEsc) }
   }, [open])
 
+  // Unknown only while nothing has ever been read: once a read has landed, a failed poll keeps
+  // showing the last count it read rather than going dark.
+  const unknown = items === null && !!readErr
   const unread = items?.filter((n) => !n.acked).length ?? 0
+  // The header pills' wording for a count that failed to load (`dashboard/widgets/HeroPulse`).
+  const UNKNOWN_READING = 'unread — couldn’t be read'
   // The log comes newest first (`api.notifications`), so the shade is its head.
   const recent = items ? items.slice(0, MAX_SHADE) : []
 
@@ -95,13 +110,21 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
         // user told "menu" then finds a list of buttons with no menu navigation. `aria-expanded` alone
         // honestly describes the disclosure.
         aria-expanded={open}
-        aria-label={unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'}
-        title={unread > 0 ? `${unread} unread notification${unread === 1 ? '' : 's'}` : 'Notifications'}
+        aria-label={unknown ? `Notifications, ${UNKNOWN_READING}` : unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'}
+        title={unknown ? UNKNOWN_READING : unread > 0 ? `${unread} unread notification${unread === 1 ? '' : 's'}` : 'Notifications'}
         className="relative grid size-7 place-items-center rounded-pill transition-colors"
         style={open
           ? accentChip
           : { color: 'var(--color-on-surface-low)' }}>
         <Bell size={16} />
+        {/* The unknown mark: a muted dash where the count would sit. Neutral and still, not coral
+            and not danger: nothing is known to be unread, only that the read failed. */}
+        {unknown && (
+          <span data-type="caption" aria-hidden
+            className="absolute -right-0.5 -top-0.5 grid min-w-[15px] h-[15px] place-items-center rounded-pill bg-surface-high px-1 leading-none text-on-surface-low">
+            —
+          </span>
+        )}
         {/* unread badge springs in on a playful bounce, and RE-POPS on each count
             change (key=unread) so a freshly-arrived notification announces itself
             with a little jump rather than a silent number tick. */}
@@ -139,7 +162,11 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
               )}
             </div>
             <div className="max-h-[min(60vh,420px)] overflow-y-auto p-1">
-              {items === null ? (
+              {unknown ? (
+                <div className="p-s">
+                  <InlineError icon onRetry={load}>Couldn&rsquo;t load your notifications.</InlineError>
+                </div>
+              ) : items === null ? (
                 <div data-type="body-s" className="px-m py-l text-center text-on-surface-low">Loading…</div>
               ) : recent.length === 0 ? (
                 <div className="grid place-items-center px-m py-2xl text-center">
