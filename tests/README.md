@@ -6,11 +6,14 @@ provider registry, auth modes, config schema, Slack flows, app SDK, and more.
 ## Running tests
 
 ```bash
-# Full suite via the OSS Makefile target
+# Full suite, one xdist worker per core, no coverage
 make test
 
-# Or invoke pytest directly
-python -m pytest
+# The same, invoking pytest directly
+python -m pytest -n auto --dist worksteal
+
+# A bare pytest runs in ONE process with no coverage tracer: right for a file,
+# hours for the whole suite. Add --cov=personalclaw to measure coverage.
 
 # Specific file
 python -m pytest tests/test_provider_registry.py -v

@@ -1367,8 +1367,8 @@ def tree_check_reads_before_violations(tree: Tree) -> list[str]:
     return bad
 
 
-#: The root project's venv, whose pytest reads pyproject's addopts (``--cov personalclaw``). A
-#: package's own venv (the client's ``.venv-client``) reads its own config, which has none.
+#: The root project's venv, whose pytest reads pyproject's pytest config. A package's own venv
+#: (the client's ``.venv-client``) reads its own.
 _ROOT_VENV_PYTHON = re.compile(r"(?:^|/)\.venv/bin/python3?$")
 
 
@@ -1398,14 +1398,9 @@ def _root_pytest(words: list[str]) -> bool:
 
 
 def _measures_coverage(run: str) -> bool:
-    """Per command, never per step: a command naming ``--cov``, or a root pytest without the
-    exact word ``--no-cov`` (``--no-cov-on-fail`` is another option, and leaves coverage on)."""
-    for words in _commands(run):
-        if any(w == "--cov" or w.startswith("--cov=") for w in words):
-            return True
-        if _root_pytest(words) and "--no-cov" not in words:
-            return True
-    return False
+    """Per command, never per step: a command naming ``--cov`` or ``--cov=…``. pyproject's
+    addopts measure nothing, so a pytest that does not ask for coverage measures none."""
+    return any(w == "--cov" or w.startswith("--cov=") for words in _commands(run) for w in words)
 
 
 def _strings(value: object) -> list[str]:
@@ -1763,11 +1758,75 @@ def job_timeout_violations(tree: Tree) -> list[str]:
     return bad
 
 
+#: A word that names what pytest collects: a file, a directory under the repository, a node id.
+_TEST_PATH = re.compile(r"^(?:tests|packages|src|harness|scripts|tools)(?:/|$)|\.py(?:::|$)")
+
+
+def _pytest_args(words: list[str]) -> list[str]:
+    """The words after ``pytest`` in a root pytest command."""
+    return words[words.index("pytest") + 1 :] if "pytest" in words else []
+
+
+def _runs_the_suite(words: list[str]) -> bool:
+    """A root pytest that runs the suite, or a shard of it, rather than files it names.
+
+    It is a suite run when it takes a slice of a split (``--splits`` or ``--group``), or when
+    nothing it collects is narrower than the whole suite: it names no path at all (pytest falls
+    back to ``testpaths``), or names only ``tests`` itself. A step that names files or a
+    narrower directory, such as ``lint``'s installer test or the scanner corpus, picks its own.
+    """
+    if not _root_pytest(words):
+        return False
+    args = _pytest_args(words)
+    if any(w in ("--splits", "--group") or w.startswith(("--splits=", "--group=")) for w in args):
+        return True
+    paths = [w for w in args if not w.startswith("-") and _TEST_PATH.search(w)]
+    return all(p.rstrip("/") == "tests" for p in paths)
+
+
+def _sets_workers(args: list[str]) -> bool:
+    return any(
+        w in ("-n", "--numprocesses")
+        or w.startswith("--numprocesses=")
+        or re.fullmatch(r"-n\S+", w)
+        for w in args
+    )
+
+
+def suite_workers_violations(tree: Tree) -> list[str]:
+    """Every pytest step that runs the suite names its own worker count with ``-n``.
+
+    pyproject's ``addopts`` set no worker count, so a suite step that names none runs the whole
+    suite in one process. A step that names its own files (see :func:`_runs_the_suite`) runs in
+    one process by design and is not held to this.
+    """
+    bad: list[str] = []
+    for name, job_id, _job, step in _steps(tree):
+        for words in _commands(str(step.get("run", ""))):
+            if _runs_the_suite(words) and not _sets_workers(_pytest_args(words)):
+                bad.append(f"{name}:{job_id} runs the suite with no -n: {' '.join(words)}")
+    return bad
+
+
+def no_cov_violations(tree: Tree) -> list[str]:
+    """No workflow command passes ``--no-cov``.
+
+    Coverage is off unless a command asks for it with ``--cov``, so ``--no-cov`` undoes nothing.
+    One left in a command reads as though a default still measured coverage.
+    """
+    return [
+        f"{name}:{job_id} passes --no-cov: {' '.join(words)}"
+        for name, job_id, _job, step in _steps(tree)
+        for words in _commands(str(step.get("run", "")))
+        if "--no-cov" in words
+    ]
+
+
 _CI = ".github/workflows/ci.yml"
 _BREADTH = ".github/workflows/breadth.yml"
 _DOCKER = ".github/workflows/docker-single-container.yml"
 _TESTED_IF = "if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}"
-_MACOS_RUN = "uv run pytest --no-cov -n 2 -q"
+_MACOS_RUN = "uv run pytest -n 2 --dist worksteal -q"
 
 
 ROWS: tuple[Row, ...] = (
@@ -2080,8 +2139,8 @@ ROWS: tuple[Row, ...] = (
                     _replace("ci.yml", _MACOS_RUN, f'{_MACOS_RUN} -m "not slow"'),
                     _replace(
                         "ci.yml",
-                        "uv run pytest --no-cov -q --splits 4",
-                        'uv run pytest --no-cov -q -m "not slow" --splits 4',
+                        "uv run pytest -n auto --dist worksteal -q --splits 4",
+                        'uv run pytest -n auto --dist worksteal -q -m "not slow" --splits 4',
                     ),
                 ),
                 fails=False,
@@ -2257,10 +2316,16 @@ ROWS: tuple[Row, ...] = (
                 "uv run pytest --cov=personalclaw -n 2 -q",
             ),
             _plant(
-                "a gate leg without --no-cov (addopts measure coverage)",
+                "--cov on a gate shard",
                 _CI,
-                "uv run pytest --no-cov -q --splits 4",
-                "uv run pytest -q --splits 4",
+                "uv run pytest -n auto --dist worksteal -q --splits 4",
+                "uv run pytest -n auto --dist worksteal --cov=personalclaw -q --splits 4",
+            ),
+            _plant(
+                "--cov personalclaw, the spaced form",
+                _CI,
+                "uv run pytest -n auto --dist worksteal -q --splits 4",
+                "uv run pytest -n auto --dist worksteal --cov personalclaw -q --splits 4",
             ),
             _plant(
                 "runs-on: [macos-14]",
@@ -2304,31 +2369,24 @@ ROWS: tuple[Row, ...] = (
                 "      fail-fast: false\n      matrix:\n        platform: [{os: macos-14}]\n",
             ),
             _plant(
-                "--no-cov-on-fail, which leaves coverage on",
+                "the root venv's python -m pytest with --cov",
                 _CI,
-                "tests/test_provider_boundary_residue.py -n0 --no-cov ",
-                "tests/test_provider_boundary_residue.py -n0 --no-cov-on-fail ",
+                "uv run pytest tests/test_provider_boundary_residue.py ",
+                ".venv/bin/python -m pytest tests/test_provider_boundary_residue.py --cov ",
             ),
             _plant(
-                "uv run --frozen pytest without --no-cov",
+                "a second pytest in a step, with --cov",
                 _CI,
-                "uv run pytest tests/test_provider_boundary_residue.py -n0 --no-cov ",
-                "uv run --frozen pytest tests/test_provider_boundary_residue.py -n0 ",
-            ),
-            _plant(
-                "the root venv's python -m pytest without --no-cov",
-                _CI,
-                "uv run pytest tests/test_provider_boundary_residue.py -n0 --no-cov ",
-                ".venv/bin/python -m pytest tests/test_provider_boundary_residue.py -n0 ",
-            ),
-            _plant(
-                "a second root pytest in a step, without --no-cov",
-                _CI,
-                "          uv run pytest tests/test_website_installer.py -n0 --no-cov"
+                "          uv run pytest tests/test_website_installer.py"
                 " --junitxml=reports/junit-lint-installer.xml\n",
-                "          uv run pytest tests/test_website_installer.py -n0 --no-cov"
+                "          uv run pytest tests/test_website_installer.py"
                 " --junitxml=reports/junit-lint-installer.xml\n"
-                "          uv run pytest tests/test_website_installer.py -n0\n",
+                "          uv run pytest tests/test_website_installer.py --cov=personalclaw\n",
+            ),
+            Control(
+                "a pytest that names no --cov passes: the addopts measure nothing",
+                _nothing,
+                fails=False,
             ),
             Control("coverage in breadth.yml passes", _nothing, fails=False),
         ),
@@ -2515,7 +2573,7 @@ ROWS: tuple[Row, ...] = (
                 _BREADTH,
                 "  report:\n",
                 "  extra:\n    needs: [freshness]\n    runs-on: ubuntu-24.04\n"
-                "    steps:\n      - run: uv run pytest --no-cov -q\n  report:\n",
+                "    steps:\n      - run: uv run pytest -n auto -q\n  report:\n",
             ),
             _plant(
                 "two legs under one key",
@@ -2712,6 +2770,89 @@ ROWS: tuple[Row, ...] = (
                 ).plant,
                 fails=False,
             ),
+        ),
+    ),
+    _toolchain_row(
+        "every pytest step that runs the suite sets its worker count",
+        suite_workers_violations,
+        (
+            _plant(
+                "a suite shard with no -n",
+                _CI,
+                "uv run pytest -n auto --dist worksteal -q --splits 4",
+                "uv run pytest -q --splits 4",
+            ),
+            _plant(
+                "a breadth shard split with --splits= and --group=, with no -n",
+                _BREADTH,
+                "uv run pytest -n auto --dist worksteal -q --splits 4 --group ${{ matrix.shard }}"
+                " --splitting-algorithm least_duration --junitxml=reports/junit-ubuntu.xml",
+                "uv run pytest -q --splits=4 --group=${{ matrix.shard }}"
+                " --splitting-algorithm least_duration --junitxml=reports/junit-ubuntu.xml",
+            ),
+            _plant(
+                "a pytest that names no path, so collects testpaths",
+                _CI,
+                "uv run pytest tests/test_provider_boundary_residue.py ",
+                "uv run pytest ",
+            ),
+            _plant(
+                "a pytest that names tests/ itself",
+                _CI,
+                "uv run pytest tests/test_provider_boundary_residue.py ",
+                "uv run pytest tests/ ",
+            ),
+            _plant(
+                "the root venv's python -m pytest of the suite",
+                _CI,
+                "uv run pytest tests/test_provider_boundary_residue.py ",
+                ".venv/bin/python -m pytest ",
+            ),
+            Control(
+                "a suite shard with -n4 passes",
+                _replace(
+                    "ci.yml",
+                    "uv run pytest -n auto --dist worksteal -q --splits 4",
+                    "uv run pytest -n4 --dist worksteal -q --splits 4",
+                ),
+                fails=False,
+            ),
+            Control(
+                "a suite shard with --numprocesses=4 passes",
+                _replace(
+                    "ci.yml",
+                    "uv run pytest -n auto --dist worksteal -q --splits 4",
+                    "uv run pytest --numprocesses=4 --dist worksteal -q --splits 4",
+                ),
+                fails=False,
+            ),
+            Control("steps that name their own files, with no -n, pass", _nothing, fails=False),
+        ),
+    ),
+    _toolchain_row(
+        "no workflow command passes --no-cov",
+        no_cov_violations,
+        (
+            _plant(
+                "--no-cov on a single-file step",
+                _CI,
+                "tests/test_provider_boundary_residue.py --junitxml",
+                "tests/test_provider_boundary_residue.py --no-cov --junitxml",
+            ),
+            _plant(
+                "--no-cov on a suite shard",
+                _CI,
+                "uv run pytest -n auto --dist worksteal -q --splits 4",
+                "uv run pytest -n auto --dist worksteal --no-cov -q --splits 4",
+            ),
+            _plant(
+                "--no-cov inside a folded multi-line run",
+                _BREADTH,
+                "          uv run pytest\n          --junitxml=reports/junit-security-corpus.xml\n",
+                "          uv run pytest\n          --no-cov\n"
+                "          --junitxml=reports/junit-security-corpus.xml\n",
+            ),
+            Control("the coverage shard's --cov passes", _nothing, fails=False),
         ),
     ),
 )

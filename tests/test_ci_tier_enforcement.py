@@ -70,8 +70,8 @@ def test_the_run_command_scan_is_not_vacuous():
     every pytest step, so their absence means the scan broke, not that CI changed. The
     pytest step is matched by PREFIX rather than exact string: since #2720 the `test` job
     is sharded, so the bare ``uv run pytest`` became
-    ``uv run pytest --no-cov -q --splits 4 --group N …`` — still a single-line pytest step
-    the scan must see, just no longer a flagless one.
+    ``uv run pytest -n auto --dist worksteal -q --splits 4 --group N …`` — still a
+    single-line pytest step the scan must see, just no longer a flagless one.
     """
     commands = _ci_run_commands()
     assert len(commands) >= 10, f"only {len(commands)} run: commands found — scan broke"
