@@ -40,6 +40,10 @@ reference below was rewritten with the rule, from plain loops over the text, so 
   * the authority class excludes every character that ends an authority and holds `@`, so its one
     possessive run IS the authority, and the last `@` in it is `str.rfind`'s answer.
   * the scheme class and the scheme pattern agree character by character.
+
+Each corpus is one table test per property (docs/maintainers/testing.md): every row is a subtest
+named by its input, and each test pins its row count, so a dropped row fails. The cost tests stay
+one test per shape, so each shape's cost is still measured on its own.
 """
 
 from __future__ import annotations
@@ -51,6 +55,7 @@ import string
 import time
 
 import pytest
+from table_rows import row
 
 from personalclaw import address_logins as A
 from personalclaw import security as S
@@ -363,20 +368,28 @@ CORPUS = CREDENTIALS + NEAR_MISSES + LONG_INNOCUOUS + ADVERSARIAL + UNICODE
 class TestTheOutputIsByteIdentical:
     """Any input where the new implementation differs is a defect in the change, not a fix."""
 
-    @pytest.mark.parametrize("text", CORPUS, ids=lambda t: (t[:32] or "empty").replace("\n", "|"))
-    def test_the_corpus_redacts_exactly_as_the_reference(self, text):
-        assert S.redact_credentials(text) == _reference_redact_credentials(text)
+    def test_the_corpus_redacts_exactly_as_the_reference(self, subtests):
+        assert len(CORPUS) == 111, "a row was added to or dropped from CORPUS: pin the new count"
+        for text in CORPUS:
+            with row(subtests, text=text):
+                expected = _reference_redact_credentials(text)
+                got = S.redact_credentials(text)
+                assert got == expected, f"{text!r}: expected {expected!r}, got {got!r}"
 
     @pytest.mark.parametrize("kb", [1, 16, 64])
     def test_a_mixed_document_redacts_exactly_as_the_reference(self, kb):
         text = _mixed_document(kb * 1024)
         assert S.redact_credentials(text) == _reference_redact_credentials(text)
 
-    def test_the_url_pre_pass_alone_is_identical_too(self):
+    def test_the_url_pre_pass_alone_is_identical_too(self, subtests):
         """`redact_url_userinfo` is public — a caller that only handles URLs uses it directly, so
         its own return value is part of the contract, not just its contribution downstream."""
+        assert len(CORPUS) == 111, "a row was added to or dropped from CORPUS: pin the new count"
         for text in CORPUS:
-            assert A.redact_url_userinfo(text) == _reference_redact_url_userinfo(text), text[:60]
+            with row(subtests, text=text):
+                expected = _reference_redact_url_userinfo(text)
+                got = A.redact_url_userinfo(text)
+                assert got == expected, f"{text!r}: expected {expected!r}, got {got!r}"
 
     def test_exhaustive_over_the_characters_that_decide_a_match(self):
         """Every string up to length 5 over the alphabet the rule actually branches on.
@@ -433,6 +446,10 @@ class TestTheOutputIsByteIdentical:
             assert S.redact_credentials(text) == _reference_redact_credentials(text), repr(text)
 
 
+#: Every end an authority run has to stop at: each of `_AUTHORITY_END`, whitespace, and a `://`.
+AUTHORITY_ENDS = sorted(_AUTHORITY_END) + [" ", "\n", "\t", "://"]
+
+
 class TestTheFastScanRestsOnThreeFacts:
     """Pinned because the fast scan is only correct while these hold.
 
@@ -446,11 +463,14 @@ class TestTheFastScanRestsOnThreeFacts:
         allowed to take it without considering any shorter split."""
         assert ":" not in A._SCHEME_CHARS
 
-    @pytest.mark.parametrize("end", sorted(_AUTHORITY_END) + [" ", "\n", "\t", "://"])
-    def test_the_authority_run_stops_at_every_character_that_ends_one(self, end):
+    def test_the_authority_run_stops_at_every_character_that_ends_one(self, subtests):
         """So the one possessive run is the whole authority, and nothing past it is read as one."""
-        m = A._URL_AUTHORITY_RE.match(f"://a@b{end}c@d")
-        assert m is not None and m.group("authority") == "a@b", end
+        assert len(AUTHORITY_ENDS) == 16, "an authority end was added or dropped: pin the new count"
+        for end in AUTHORITY_ENDS:
+            with row(subtests, end=end):
+                m = A._URL_AUTHORITY_RE.match(f"://a@b{end}c@d")
+                got = m.group("authority") if m else None
+                assert got == "a@b", f"{end!r}: expected the authority 'a@b', got {got!r}"
 
     def test_the_authority_run_holds_every_at_sign_in_it(self):
         """So the last `@` of the authority is `rfind`'s answer: `ada:p@ss@host` is one login."""
@@ -614,28 +634,36 @@ REPEATED = [
 class TestRepeatedCredentialsRedactIdentically:
     """The span splice must agree with the old leftmost-replace on repeated credentials."""
 
-    @pytest.mark.parametrize("text", REPEATED, ids=lambda t: t[:36].replace(" ", "_"))
-    def test_a_repeated_credential_redacts_exactly_as_the_reference(self, text):
-        assert S.redact_credentials(text) == _reference_redact_credentials(text)
+    def test_a_repeated_credential_redacts_exactly_as_the_reference(self, subtests):
+        assert len(REPEATED) == 7, "a row was added to or dropped from REPEATED: pin the new count"
+        for text in REPEATED:
+            with row(subtests, text=text):
+                expected = _reference_redact_credentials(text)
+                got = S.redact_credentials(text)
+                assert got == expected, f"{text!r}: expected {expected!r}, got {got!r}"
 
-    @pytest.mark.parametrize("text", REPEATED, ids=lambda t: t[:36].replace(" ", "_"))
-    def test_every_copy_is_masked_not_just_the_first(self, text):
+    def test_every_copy_is_masked_not_just_the_first(self, subtests):
         """The property behind the equivalence, asserted directly rather than inferred.
 
         Byte-identity to a reference proves the two agree; it does not prove either is right. A
         second copy left in cleartext is the whole failure this primitive exists to prevent, so
         that is checked on its own terms.
         """
-        out, _ = S.redact_credentials(text)
-        for cred in ("AKIA", "ASIA", "sk-ant-api03-", "hunter2"):
-            assert cred not in out, f"{cred!r} survived redaction in {text[:48]!r}"
+        assert len(REPEATED) == 7, "a row was added to or dropped from REPEATED: pin the new count"
+        for text in REPEATED:
+            with row(subtests, text=text):
+                out, _ = S.redact_credentials(text)
+                for cred in ("AKIA", "ASIA", "sk-ant-api03-", "hunter2"):
+                    assert cred not in out, f"{cred!r} survived redaction in {text!r}"
 
-    def test_the_fixture_really_does_repeat(self):
+    def test_the_fixture_really_does_repeat(self, subtests):
         """Vacuity floor: a corpus of non-repeating strings would pass the class above while
         testing nothing about the leftmost-vs-found question it exists for."""
+        assert len(REPEATED) == 7, "a row was added to or dropped from REPEATED: pin the new count"
         for text in REPEATED:
-            spans = [m.group() for m in S._CREDENTIAL_PATTERNS.finditer(text)]
-            assert len(spans) > len(set(spans)), f"no credential repeats in {text[:48]!r}"
+            with row(subtests, text=text):
+                spans = [m.group() for m in S._CREDENTIAL_PATTERNS.finditer(text)]
+                assert len(spans) > len(set(spans)), f"no credential repeats in {text!r}"
 
 
 class TestTheSpliceIsEquivalentUnderFuzzing:
