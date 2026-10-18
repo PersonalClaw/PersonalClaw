@@ -305,7 +305,7 @@ re-invents a shape another touches:
   `agents`, `memory.py`, `knowledge/`, `loop/`, `skills/`, app platform
   (`apps/`, `providers/`, `sdk/`), security (`security.py`, `sandbox.py`,
   `sel.py`, `net/`, `trust_mode.py`).
-- `web/` — Vite + React SPA (the only new-UI frontend).
+- `web/` — Vite + React SPA (the only new-UI frontend). UI changes follow [web/REDESIGN.md](web/REDESIGN.md).
 - `docs/` — `reference/` (as-built), `guides/` (user), `architecture/`. The
   maintainer's roadmap plans are **not in this repo** (see *What gets your PR
   rejected*).
