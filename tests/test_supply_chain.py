@@ -525,8 +525,10 @@ def test_the_coverage_job_still_measures_and_keeps_only_its_report() -> None:
     assert measured, "no shard of the suite is measured"
     for run in measured:
         assert (
-            f"--splits {len(shards)}" in run and "--group ${{ matrix.shard }}" in run
+            'tests --shard-list "$RUNNER_TEMP/shard.txt"' in run
         ), f"each shard must measure its own share of the suite, all {len(shards)} of them: {run}"
+    listing = [run for run in runs(shard) if "tools.ci shards list" in run]
+    assert listing and "${{ matrix.shard }}/${{ strategy.job-total }}" in listing[0], listing
     assert coverage.get("needs") == ["coverage-shard"]
     combine = [run for run in runs(coverage) if "coverage combine" in run and "coverage xml" in run]
     assert combine, "no step combines the shards' data into coverage.xml"

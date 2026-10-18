@@ -151,11 +151,33 @@ group and its `cancel-in-progress` would read false. A workflow added later that
 
 ### `test-macos`
 
-Pull requests into `main` run the suite on `macos-26` with Python 3.13, four shards split as
-`test-shard` splits, two xdist workers each and no coverage. With `test-shard` on Ubuntu and
-3.12, every change that merges has run both operating systems and both Pythons. The four
-shards take four of the five macOS runners a run can hold, so concurrent pull requests queue
-on macOS.
+Pull requests into `main` run the suite on `macos-26` with Python 3.13, in four shards of whole
+test files planned from macOS's own durations, two xdist workers each and no coverage. With
+`test-shard` on Ubuntu and 3.12, every change that merges has run both operating systems and
+both Pythons. The four shards take four of the five macOS runners a run can hold, so
+concurrent pull requests queue on macOS.
+
+### The suite's shards
+
+Every suite leg runs in shards of whole test files, planned once per run by
+`python -m tools.ci shards plan` (`tools/ci/shards.py`): in `ci.yml` by the `shard-plan` job,
+and in `breadth.yml` by `freshness`. The plan is longest-processing-time greedy over per-file
+seconds, heaviest file first into the lightest shard; a file with no record weighs the median.
+`shards check` fails the run when a collectable file is in no shard or in two, so nothing is
+dropped or run twice. Each shard downloads the plan, writes its own list with `shards list`
+(which fails, writing nothing, for an empty shard: pytest given no selection collects every
+test), and runs `pytest tests --shard-list FILE`, which collects from `tests` as a whole-suite
+run does but imports only the files the list names (`tests/shard_list.py`). A breadth shard
+records its list's digest as one of its inputs, so a result is carried only onto the files it
+measured. Modules stay whole, so a module-scoped fixture is set up in one shard.
+
+The per-file seconds come from the junit reports of the newest green `main` run of the leg's
+workflow, the leg's own reports only and the first attempt's of each, and nothing is kept.
+That source is interim, until #3948: its shared telemetry record, written by one history
+writer, is where the planner is to read each leg's per-file test time for its own platform
+and worker count, and it does not exist yet. It replaces one class, `LatestGreenMainJunit`,
+behind `DurationsSource`. The durations only balance the shards: when they cannot be read,
+every file weighs the same and the plan is still whole.
 
 ### `breadth.yml`
 
@@ -256,7 +278,7 @@ of the same commit was red is the release gate's question (#3911), not this work
   `main` run, at the workflow or the job level;
 - `test-macos` runs `test-shard`'s split on macOS under exactly the condition that runs it on
   pull requests into `main` and on an untested push: the same pytest words but the worker count
-  and the report path, `--group ${{ matrix.shard }}`, the same job env and defaults, the same
+  and the report path, its own shard of its own leg's plan, the same job env and defaults, the same
   step `if:`, `working-directory`, env and shell, no `exclude`, and no `PYTEST_ADDOPTS` in a
   step's env or written by a step;
 - every job outside the always-run set waits on `tree-check`;
@@ -265,9 +287,12 @@ of the same commit was red is the release gate's question (#3911), not this work
   `{group, labels}` mapping, an expression's quoted literal, or any value of the matrix it
   names), and no coverage on a push or pull request: per command, one that names `--cov` or
   `--cov=…` measures coverage, and nothing else does, because the addopts measure none;
-- every pytest step that runs the suite names its worker count with `-n`: a step that takes a
-  split (`--splits` or `--group`), names no path, or names only `tests`. A step that names its
-  own files runs in one process, pytest's default;
+- every pytest step that runs the suite names its worker count with `-n`: a step that names no
+  path, or names only `tests`, as every shard does. A step that names its own files runs in one
+  process, pytest's default;
+- every suite shard runs its share of its run's one plan: one job plans every leg and checks the
+  plan, and each shard waits on that job, downloads the plan, lists its own leg's shard of N (its
+  matrix size, as the plan names it) and runs pytest over `tests` with that `--shard-list`;
 - no workflow command passes `--no-cov`, which would only undo a default that is not there;
 - `freshness` first and `report` last;
 - `NON_REUSABLE` matches the jobs;

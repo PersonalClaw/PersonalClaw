@@ -16,6 +16,7 @@ import native_omp_guard
 import pycache_guard
 import pytest
 import real_home_guard
+import shard_list
 from hypothesis import HealthCheck, settings
 
 # ── Bytecode-cache rail (#2659) ─────────────────────────────────────────
@@ -251,9 +252,12 @@ def pytest_addoption(parser):
         help="time each fixture's own setup and teardown and write reports/fixture-costs.json "
         "(tests/fixture_costs.py)",
     )
+    # A CI shard's file list (`python -m tools.ci shards list`): collect only those files.
+    shard_list.addoption(parser)
 
 
 def pytest_configure(config):
+    shard_list.configure(config)
     if config.getoption("--fixture-costs"):
         config.pluginmanager.register(fixture_costs.Plugin(config.rootpath), "fixture-costs")
     config.pluginmanager.register(real_home_guard.Plugin(real_home_guard.GUARD), "real-home-guard")
@@ -264,6 +268,15 @@ def pytest_configure(config):
     # folder PERSONALCLAW_TEST_DOWNLOADS names (`tool_homes.downloads`).
     grammars = tool_homes.downloads(config, tool_homes.GRAMMARS)
     _PUT_THE_PROGRAMS_BACK.append(tool_homes.for_collection(tool_homes.BASE, grammars))
+
+
+def pytest_ignore_collect(collection_path, config):
+    """With ``--shard-list``, a test file the shard's list does not name is never imported."""
+    return shard_list.ignore_collect(collection_path, config)
+
+
+def pytest_collection_finish(session):
+    shard_list.collection_finish(session)
 
 
 def pytest_unconfigure(config):
@@ -1598,8 +1611,8 @@ def _restore_pipeline_node_registry() -> object:
     `("ocr", "stub")` / `("vision", "stub")` keys from inside an unrelated test body. That
     cleanup reasoned "each executor test registers its own stubs immediately before use, so
     removing them here cannot affect any other test" — true only for one worker running one
-    file in order, which is not how this suite runs: `--splits 4` partitions per TEST, and
-    `--dist worksteal` then hands tests to workers greedily, so the registering test and the
+    file in order, which is not how this suite runs: `--dist worksteal` hands tests
+    to workers greedily, so the registering test and the
     popping test routinely land on different workers and the stubs escape the file entirely.
 
     Measured on clean `origin/main`, deterministic, two tests, `-n0` — no xdist needed to
