@@ -143,7 +143,9 @@ places:
   API returns and the title in the event payload. It runs on `pull_request_target`, so it checks
   out only the base branch's script and `MAINTAINERS`, and puts no file or git object of the pull
   request on disk. The commits endpoint returns at most 250 commits, so a list short of the pull
-  request's own count fails the check rather than passing half of it.
+  request's own count fails the check rather than passing half of it. It also answers for the
+  pull request as it is when asked, not as the event saw it, so a list whose last commit is not
+  the event's head (a push after the event, or a list cut short or reordered) fails it too.
 - **`provenance.yml`, on every push to `main`,** in `main` mode: rules 1, 2, 3 and 5, over
   `before..sha`. It is a workflow of its own because each push checks only its own range, so a
   run that never finished would leave its commits unchecked for good. One job with no `needs:`
