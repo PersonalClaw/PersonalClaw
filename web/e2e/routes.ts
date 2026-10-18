@@ -103,6 +103,54 @@ export const VIEW_ROUTES: RouteEntry[] = [
   { route: 'knowledge/item/not-a-real-item?read=1', id: 'knowledge-reading', label: 'Knowledge › Reading', needsData: true },
 ]
 
+// ── Substate URLs — every other state the app addresses by URL that renders its own surface ───
+// Each entry is a value of a page's `useQueryParam` (or a sub-path) that swaps the component the
+// route renders: a tab, a view or a mode. The default value of each is the route itself, already
+// in a tier above, and `knowledge?view=graph` is in VIEW_ROUTES, which visual.spec.ts also reads.
+// A tier of its own so the UI quality check covers every one while visual.spec.ts keeps its
+// declared, narrower scope (`routeManifestParity.test.ts`, NARROWER_BY_DESIGN).
+//
+// LEFT OUT, each for its reason. Every one renders the component of an entry here or above, so on
+// the harness's empty home it adds a visit and no new DOM:
+//   · filters and sorts over a list: artifacts ?kind (16) ?sort (2), inbox ?filter (3) ?kind (9),
+//     triggers ?filter (5), notifications ?filter, tools ?risk (3), prompts ?sort (3),
+//     chat/history ?origin (5) ?archived, apps' library and store filters and sorts
+//     (?sort ?status ?type ?cap ?entity ?ssort ?stype ?sentity ?stag ?ssrc), usage ?period (2),
+//     routing ?uc (2) ?qc (4), and triggers/new?pattern (6), which picks one matcher field;
+//   · free text (`?q`, `?include`) and record ids (`?open`, `?peek`, `?panel`, `?item`, `?entity`,
+//     `?intent`, `?collection`, `?file`, `?result`, `?active`, `?split`), which address data the
+//     harness's home does not hold. A record's own page is EXEMPT_FROM_THE_HARNESS's subject.
+//
+// One literal line per entry, never a `.map()`: `assert-no-route-skips.mjs` counts `route: '`
+// literals per tier to derive how many scans the run owes.
+export const SUBSTATE_ROUTES: RouteEntry[] = [
+  { route: 'settings/memory?tab=health', id: 'settings-memory-health', label: 'Settings › memory › health', needsData: true },
+  { route: 'settings/memory?tab=recall', id: 'settings-memory-recall', label: 'Settings › memory › recall', needsData: true },
+  { route: 'settings/memory?tab=inspect', id: 'settings-memory-inspect', label: 'Settings › memory › inspect', needsData: true },
+  { route: 'settings/memory?tab=audit', id: 'settings-memory-audit', label: 'Settings › memory › audit', needsData: true },
+  { route: 'settings/memory?tab=settings', id: 'settings-memory-settings', label: 'Settings › memory › settings', needsData: true },
+  { route: 'knowledge?view=home', id: 'knowledge-home', label: 'Knowledge › home', needsData: true },
+  { route: 'knowledge?view=intents', id: 'knowledge-intents', label: 'Knowledge › intents', needsData: true },
+  { route: 'knowledge?view=tags', id: 'knowledge-tags', label: 'Knowledge › tags', needsData: true },
+  { route: 'knowledge?view=conflicts', id: 'knowledge-conflicts', label: 'Knowledge › conflicts', needsData: true },
+  { route: 'knowledge?view=decisions', id: 'knowledge-decisions', label: 'Knowledge › decisions', needsData: true },
+  { route: 'workflows?tab=defs', id: 'workflows-defs', label: 'Workflows › definitions', needsData: true },
+  { route: 'prompts?tab=system', id: 'prompts-system', label: 'Prompts › system', needsData: true },
+  { route: 'prompts?tab=bundled', id: 'prompts-bundled', label: 'Prompts › bundled', needsData: true },
+  { route: 'prompts?tab=snippets', id: 'prompts-snippets', label: 'Prompts › snippets', needsData: true },
+  { route: 'skills?mode=browse', id: 'skills-browse', label: 'Skills › browse', needsData: true },
+  { route: 'skills?mode=proposals', id: 'skills-proposals', label: 'Skills › proposals', needsData: true },
+  { route: 'apps?view=native', id: 'apps-native', label: 'Store › native', needsData: true },
+  { route: 'apps?view=store', id: 'apps-store', label: 'Store › store', needsData: true },
+  { route: 'triggers?view=week', id: 'triggers-week', label: 'Triggers › week', needsData: true },
+  { route: 'triggers/new', id: 'triggers-new', label: 'Triggers › new › schedule', needsData: true },
+  { route: 'triggers/new?kind=lifecycle', id: 'triggers-new-lifecycle', label: 'Triggers › new › lifecycle', needsData: true },
+  { route: 'triggers/new?kind=event', id: 'triggers-new-event', label: 'Triggers › new › event', needsData: true },
+  { route: 'triggers/new?kind=run_completed', id: 'triggers-new-run_completed', label: 'Triggers › new › run_completed', needsData: true },
+  { route: 'chat/history', id: 'chat-history', label: 'Chat › history', needsData: true },
+  { route: 'chat/history?view=board', id: 'chat-history-board', label: 'Chat › history › board', needsData: true },
+]
+
 // ── Non-nav routable pages — the THIRD axis ─────────────────────────────────
 // `App.tsx`'s `ROUTABLE` set carries pages with no nav tile. They were ALL outside every
 // harness list, so "every authenticated route is axe-scanned" was false for them, and the

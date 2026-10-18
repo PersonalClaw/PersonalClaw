@@ -1,0 +1,52 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: Apps
+  - heading "Apps" [level=#]
+  - paragraph: Where apps come from, plus the settings installed apps contribute — all in one place. Provider apps are configured under Settings › Providers; everything else lives here.
+  - heading "Store sources" [level=#]
+  - paragraph: Where the Store looks for installable apps. A source only ever contributes listings — installing still runs the security scanner, and nothing is installed without your consent.
+  - text: Bundled app source List the published first-party apps repo in the Store. On, opening the Store contacts github.com to read what it offers; off, the Store reaches no network of its own and shows only sources on this machine. This source has no remove button because it ships with PersonalClaw — this switch is how you turn it off.
+  - status
+  - switch "Bundled app source" [checked]
+  - text: Curated app registry Ship the community app registry as a default Store source, so registry apps are discoverable out of the box. Added once as a removable source — turning this off stops it being added again, but does not remove one already there (do that in the Store).
+  - status
+  - switch "Curated app registry" [checked]
+  - heading "Installed app settings" [level=#]
+  - paragraph: Settings contributed by non-provider apps you have installed. An app with nothing to configure does not appear.
+  - text: No installed apps expose configurable settings. Browse the
+  - button "Store"
+  - text: to add some.

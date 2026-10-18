@@ -1,0 +1,59 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - heading "Artifacts" [level=#]
+  - searchbox "Search artifacts"
+  - radiogroup "Artifact kind":
+    - radio "All kinds" [checked]
+    - radio "Widget"
+    - radio "HTML"
+    - radio "React"
+    - radio "Markdown"
+    - radio "SVG"
+    - radio "Infographic"
+    - radio "Document"
+    - radio "Image"
+    - radio "JSON"
+    - radio "Text"
+    - radio "CSV"
+    - radio "Word"
+    - radio "Spreadsheet"
+    - radio "Slides"
+    - radio "PDF"
+    - radio "Video"
+  - button "Filter & sort": Filter
+  - status
+  - heading "No artifacts" [level=#]
+  - paragraph: Artifacts are named, versioned snapshots — widgets, docs, images, and files agents produce. Ask the agent to create a document, spreadsheet or deck; text files can also be saved as an artifact from the Files page.
+  - button "Browse text files"

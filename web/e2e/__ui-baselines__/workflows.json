@@ -1,0 +1,132 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "button \"Browse all definitions\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Start from template\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Definitions\"",
+        "button[role=radio] \"Runs\"",
+        "input \"Search workflows\""
+      ],
+      "390": [
+        "button \"Browse all definitions\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Start from template\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Definitions\"",
+        "button[role=radio] \"Runs\"",
+        "input \"Search workflows\""
+      ],
+      "412": [
+        "button \"Browse all definitions\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Start from template\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Definitions\"",
+        "button[role=radio] \"Runs\"",
+        "input \"Search workflows\""
+      ],
+      "768": [
+        "button \"Browse all definitions\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Start from template\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Definitions\"",
+        "button[role=radio] \"Runs\"",
+        "input \"Search workflows\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<h#> \"Workflows\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+      ],
+      "focus order": [
+        "focus moves backwards from <button .group.flex.flex-col> \"Pursue a goal — goal-pursuit-open-ended\" to <button .group.flex.flex-col> \"Plan a project — project-planning\""
+      ]
+    }
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "button \"Browse all definitions\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Start from template\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Definitions\"",
+        "button[role=radio] \"Runs\"",
+        "input \"Search workflows\""
+      ],
+      "390": [
+        "button \"Browse all definitions\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Start from template\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Definitions\"",
+        "button[role=radio] \"Runs\"",
+        "input \"Search workflows\""
+      ],
+      "412": [
+        "button \"Browse all definitions\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Start from template\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Definitions\"",
+        "button[role=radio] \"Runs\"",
+        "input \"Search workflows\""
+      ],
+      "768": [
+        "button \"Browse all definitions\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Start from template\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Definitions\"",
+        "button[role=radio] \"Runs\"",
+        "input \"Search workflows\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<h#> \"Workflows\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+      ],
+      "focus order": [
+        "focus moves backwards from <button .group.flex.flex-col> \"Pursue a goal — goal-pursuit-open-ended\" to <button .group.flex.flex-col> \"Plan a project — project-planning\""
+      ]
+    }
+  }
+}

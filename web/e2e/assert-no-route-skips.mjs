@@ -1,11 +1,12 @@
-// ── "every authenticated route is axe-scanned in CI" — asserted, not assumed ─────────────
-// A SKIP reads exactly like a PASS in a green job. `npx playwright test e2e/a11y.spec.ts`
-// exits 0 whether it scanned 116 routes or skipped 116 of them, so the CI step alone proves
-// the job RAN, not that anything was measured. This reads the JSON report back and holds it
-// to the manifest:
+// ── "every authenticated route is checked in CI" — asserted, not assumed ─────────────
+// A SKIP reads exactly like a PASS in a green job. `npx playwright test e2e/surfaces.spec.ts`
+// exits 0 whether it checked 180 surfaces or skipped them, so the CI step alone proves the job
+// RAN, not that anything was measured. This reads the JSON report back and holds it to the
+// manifest and to the UI quality matrix (#3941):
 //
-//   · every route-level scan that ran must have PASSED or been retried — never skipped; and
-//   · the NUMBER of route-level scans must equal (every declared route) × (every theme).
+//   · every route-level scan that ran must have PASSED or been retried — never skipped;
+//   · the NUMBER of route-level scans must equal (every declared route) × (every theme); and
+//   · every scan must have run every step of the matrix (`surfaceChecks.ts`'s STEP_NAMES).
 //
 // The expected count is DERIVED from web/e2e/routes.ts rather than hard-coded, so deleting a
 // route list — the one edit that would silently shrink the gate's coverage while leaving it
@@ -18,6 +19,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { stepNamesFromSource, stepTitles } from './uiMatrixSteps.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
@@ -54,6 +56,9 @@ const counts = {
   NON_NAV_ROUTES: [
     ...literalBlock(routesSrc, 'export const NON_NAV_ROUTES: RouteEntry\\[\\] = \\[').matchAll(/route: '/g),
   ].length,
+  SUBSTATE_ROUTES: [
+    ...literalBlock(routesSrc, 'export const SUBSTATE_ROUTES: RouteEntry\\[\\] = \\[').matchAll(/route: '/g),
+  ].length,
 }
 
 // THEMES is a one-line literal, so it needs its own match rather than literalBlock's
@@ -88,14 +93,15 @@ const specs = []
 
 if (specs.length === 0) fail('the JSON report contains no specs at all — the run measured nothing')
 
-// The report is the WHOLE run's, every spec in one invocation, and `walkthrough.spec.ts`'s titles
-// carry the route in parentheses too. The axe sweep is `a11y.spec.ts`'s alone, so only its specs
-// are counted, by the file each spec in Playwright's JSON report names.
-const A11Y_FILE = 'a11y.spec.ts'
-const a11ySpecs = specs.filter((s) => (s.file ?? '').split('/').pop() === A11Y_FILE)
-if (a11ySpecs.length === 0) fail(`the JSON report holds no spec from ${A11Y_FILE} — the axe sweep did not run`)
+// The report is the WHOLE run's, every spec in one invocation, and another spec's title may carry
+// a route in parentheses too. The route scans are the UI quality check's alone (#3941:
+// `surfaces.spec.ts` took them over from `a11y.spec.ts`), so only its specs are counted, by the
+// file each spec in Playwright's JSON report names.
+const SCAN_FILE = 'surfaces.spec.ts'
+const scanSpecs = specs.filter((s) => (s.file ?? '').split('/').pop() === SCAN_FILE)
+if (scanSpecs.length === 0) fail(`the JSON report holds no spec from ${SCAN_FILE} — the UI quality check did not run`)
 
-const routeScans = a11ySpecs.filter((s) => ROUTE_TITLE.test(s.title))
+const routeScans = scanSpecs.filter((s) => ROUTE_TITLE.test(s.title))
 const skipped = routeScans.filter((s) => (s.tests ?? []).some((t) => t.status === 'skipped'))
 
 if (skipped.length > 0) {
@@ -124,3 +130,27 @@ console.log(
     `0 skipped — ` +
     Object.entries(counts).map(([k, v]) => `${k}=${v}`).join(', '),
 )
+
+// ── every scan ran every step of the matrix ──────────────────────────────────────────────
+// One test per (surface, theme) is the saving; it is only coverage if each of those tests ran the
+// whole matrix. A step that stops being called reports nothing, which reads like a clean step, so
+// each scan's step titles are held to the matrix's own list (`surfaceChecks.ts`'s STEP_NAMES).
+const steps = stepNamesFromSource(readFileSync(join(HERE, 'surfaceChecks.ts'), 'utf8'))
+const short = []
+for (const scan of routeScans) {
+  for (const t of scan.tests ?? []) {
+    const result = (t.results ?? []).at(-1)
+    const ran = new Set(stepTitles(result))
+    const missing = steps.filter((s) => !ran.has(s))
+    if (missing.length) short.push(`    ${scan.title}: missing ${missing.join(', ')}`)
+  }
+}
+if (short.length > 0) {
+  fail(
+    `${short.length} route scan(s) did not run every step of the UI quality matrix:\n` +
+      short.slice(0, 20).join('\n') +
+      (short.length > 20 ? `\n    … and ${short.length - 20} more` : '') +
+      `\n\n  A step that does not run reports no finding, which reads exactly like a clean step.`,
+  )
+}
+console.log(`✓ every scan ran all ${steps.length} steps of the UI quality matrix`)

@@ -1,0 +1,170 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"Install from URL\"",
+        "button \"Install\"",
+        "button \"Manage Sources\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Native\"",
+        "button[role=radio] \"Store\"",
+        "input \"Search Store\""
+      ],
+      "390": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"Install from URL\"",
+        "button \"Install\"",
+        "button \"Manage Sources\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Native\"",
+        "button[role=radio] \"Store\"",
+        "input \"Search Store\""
+      ],
+      "412": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"Install from URL\"",
+        "button \"Install\"",
+        "button \"Manage Sources\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Native\"",
+        "button[role=radio] \"Store\"",
+        "input \"Search Store\""
+      ],
+      "768": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"Install from URL\"",
+        "button \"Install\"",
+        "button \"Manage Sources\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Native\"",
+        "button[role=radio] \"Store\"",
+        "input \"Search Store\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<h#> \"Apps\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#",
+        "<p> \"Anthropic Claude chat models (Messages A\" clips at #%: #x# in #x#",
+        "<p> \"Any Anthropic-compatible (Messages API) \" clips at #%: #x# in #x#",
+        "<p> \"DeepSeek chat + reasoner models (OpenAI-\" clips at #%: #x# in #x#",
+        "<p> \"Groq LPU inference (OpenAI-compatible), \" clips at #%: #x# in #x#",
+        "<p> \"Meta Muse Spark chat models via the Meta\" clips at #%: #x# in #x#",
+        "<p> \"Mistral AI models via its OpenAI-compati\" clips at #%: #x# in #x#",
+        "<p> \"OpenAI chat + embedding models (Chat Com\" clips at #%: #x# in #x#",
+        "<p> \"Slack workspace integration. Monitor cha\" clips at #%: #x# in #x#",
+        "<p> \"Text-to-speech using Piper neural voice \" clips at #%: #x# in #x#",
+        "<p> \"Together AI serverless inference (OpenAI\" clips at #%: #x# in #x#"
+      ]
+    }
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"Install from URL\"",
+        "button \"Install\"",
+        "button \"Manage Sources\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Native\"",
+        "button[role=radio] \"Store\"",
+        "input \"Search Store\""
+      ],
+      "390": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"Install from URL\"",
+        "button \"Install\"",
+        "button \"Manage Sources\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Native\"",
+        "button[role=radio] \"Store\"",
+        "input \"Search Store\""
+      ],
+      "412": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"Install from URL\"",
+        "button \"Install\"",
+        "button \"Manage Sources\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Native\"",
+        "button[role=radio] \"Store\"",
+        "input \"Search Store\""
+      ],
+      "768": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"Install from URL\"",
+        "button \"Install\"",
+        "button \"Manage Sources\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Native\"",
+        "button[role=radio] \"Store\"",
+        "input \"Search Store\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<h#> \"Apps\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#",
+        "<p> \"Anthropic Claude chat models (Messages A\" clips at #%: #x# in #x#",
+        "<p> \"Any Anthropic-compatible (Messages API) \" clips at #%: #x# in #x#",
+        "<p> \"DeepSeek chat + reasoner models (OpenAI-\" clips at #%: #x# in #x#",
+        "<p> \"Groq LPU inference (OpenAI-compatible), \" clips at #%: #x# in #x#",
+        "<p> \"Meta Muse Spark chat models via the Meta\" clips at #%: #x# in #x#",
+        "<p> \"Mistral AI models via its OpenAI-compati\" clips at #%: #x# in #x#",
+        "<p> \"OpenAI chat + embedding models (Chat Com\" clips at #%: #x# in #x#",
+        "<p> \"Slack workspace integration. Monitor cha\" clips at #%: #x# in #x#",
+        "<p> \"Text-to-speech using Piper neural voice \" clips at #%: #x# in #x#",
+        "<p> \"Together AI serverless inference (OpenAI\" clips at #%: #x# in #x#"
+      ]
+    }
+  }
+}

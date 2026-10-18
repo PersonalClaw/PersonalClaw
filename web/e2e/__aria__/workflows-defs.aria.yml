@@ -1,0 +1,137 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - heading "Workflows" [level=#]
+  - radiogroup "Workflows view":
+    - radio "Runs"
+    - radio "Definitions" [checked]
+  - button "Start from template"
+  - searchbox "Search workflows"
+  - status
+  - button "audit-sweep"
+  - text: audit-sweep Find issues from several angles at once, adversarially verify each one, fix what survives, and loop until a round finds nothing new. Off v# bundled
+  - button "Run"
+  - button "best-of-n"
+  - text: best-of-n Sample N candidate answers to one prompt in parallel (each at a different temperature), judge them against stated criteria, and select the winner — the engine-native half of the best-of-n skill, calling the same sampling core so template and skill cannot drift. Off v# bundled
+  - button "Run"
+  - button "check-work"
+  - text: "check-work Verification node any workflow can end with: reconstruct completion claims from the supplied text, derive #-# executable checks, run them against the work root, and fail the run when a claimed artifact is not actually there — the engine-native half of the check-work skill, calling the same derivation core. Off v# bundled"
+  - button "Run"
+  - button "code-project"
+  - text: "code-project Build or fix software behind four structural gates: a gated initializer, WIP=#, a reproduction before any edit on a bug, a baseline captured before the first mutation, and a deliverable gate that runs the metric AND the regression command. Off v# bundled"
+  - button "Run"
+  - button "contradiction-review"
+  - text: contradiction-review Persist a claim, let the free deterministic pass settle what it can, then spend one fast-model call judging the rest — and write the typed relations it names into the store, including the structural ones (derived_from, depends_on, part_of) the free pass cannot observe. Off v# bundled
+  - button "Run"
+  - button "council"
+  - text: council Put one question to a council of members who each answer it independently in a different role, then synthesize a single decision that attributes every position, names the real disagreements instead of averaging them, and says what would change the answer. Off v# bundled
+  - button "Run"
+  - button "decision-review"
+  - text: decision-review At a logged decision's horizon, put the prediction the user made back in front of them and ask what actually happened — one card, no model call, no nagging. Off v# bundled
+  - button "Run"
+  - button "deep-research"
+  - text: "deep-research Research a question in judged rounds: sweep search angles, read the sources, fold cited evidence into the run's own RESEARCH.md, and stop when a round adds nothing new. Off v# bundled"
+  - button "Run"
+  - button "design-project"
+  - text: design-project Explore a design through divergent framings, then converge by minimal diff. Off v# bundled
+  - button "Run"
+  - button "design-review"
+  - text: design-review Review a design through independent lenses in parallel, score them, and stage a recommendation for a human. The judges cannot see each other's verdicts. Off v# bundled
+  - button "Run"
+  - button "diagnose-run"
+  - text: "diagnose-run Diagnose a failed run from its ledger: which layer broke, and where. Off v# bundled"
+  - button "Run"
+  - button "dual-sink-watcher"
+  - text: "dual-sink-watcher Read one page and land it in BOTH durable places at once: a queryable knowledge item you can search, and a stable artifact you can open, link and version. One fetch, two sinks, one grounding check between them. The host must be on your egress allow-list first. Off v# bundled"
+  - button "Run"
+  - button "gap-healing"
+  - text: gap-healing Find entities the store keeps referencing but has never written down, draft the missing entries, and file them as proposals for review — never as direct writes. Off v# bundled
+  - button "Run"
+  - button "general-project"
+  - text: general-project Iterate on any task in judged steps until it is genuinely done. Off v# bundled
+  - button "Run"
+  - button "goal-pursuit-monitor"
+  - text: goal-pursuit-monitor Watch a goal that outside events move — check it, then PARK until a self-scheduled wake instead of burning cycles. Between checks the run costs nothing and survives gateway restarts; the next check is a clock trigger the run created for itself. Off v# bundled
+  - button "Run"
+  - button "goal-pursuit-open-ended"
+  - text: goal-pursuit-open-ended Pursue an open-ended goal in judged cycles until progress dries up. Off v# bundled
+  - button "Run"
+  - button "goal-pursuit-verifiable"
+  - text: goal-pursuit-verifiable Pursue a goal that has a command proving it — the command is the judge of record. Off v# bundled
+  - button "Run"
+  - button "knowledge-health"
+  - text: "knowledge-health Deterministic, zero-LLM store check: stubs, orphans, broken citations, unindexed items, past-expiry probes. Cheap enough to run on every write. Off v# bundled"
+  - button "Run"
+  - button "knowledge-lint"
+  - text: "knowledge-lint Semantic pass over the store: cluster near-duplicates, consolidate each cluster preserving every detail, and archive the originals. Cadenced by write count, not the clock. Off v# bundled"
+  - button "Run"
+  - button "knowledge-synthesis"
+  - text: "knowledge-synthesis The three-node pattern: look up what's known, synthesize with it, write the result back as one canonical item. Spends exactly one model call. Off v# bundled"
+  - button "Run"
+  - button "market-monitor"
+  - text: market-monitor Watch one page and speak up ONLY when it changed in a way that matters to you — quiet by default, every alert quoting the page it came from. The host must be on your egress allow-list before the first run. Off v# bundled
+  - button "Run"
+  - button "morning-triage"
+  - text: "morning-triage The scheduled triage digest: collect what accumulated across your inbox, channels and background runs, filter it through your own rules, propose what to do, and deliver one ranked digest through the notification gate. Off v# bundled"
+  - button "Run"
+  - button "optimize-harness"
+  - text: optimize-harness Run a budgeted hill-climbing search over one of PClaw's own templates and file the winner as a proposal. Each candidate is scored against the template's own finished runs; the live template is never written to, a candidate that touches it is dead whatever it scores, and the search stops before it would spend past its dollar budget. Off v# bundled
+  - button "Run"
+  - button "paper-ingest"
+  - text: "paper-ingest Fetch one paper or long article and land it in knowledge as a citable reference: three specialist passes in parallel — digest, claims, identity — one grounding check, one write, on a fixed four-model-call budget. The host must be on your egress allow-list first. Off v# bundled"
+  - button "Run"
+  - button "produce-and-audit"
+  - text: "produce-and-audit Research a subject, produce an artifact, then audit it read-only: an artifact the audit passes is accepted, and you decide on one it does not. Domain-neutral: the thing produced can be a document, a config, a plan or a report. Off v# bundled"
+  - button "Run"
+  - button "project-planning"
+  - text: "project-planning Turn a goal into a plan: understand the scope, research the domain and audit what exists in parallel, then design an approach and stage it for review. Off v# bundled"
+  - button "Run"
+  - button "publish-article"
+  - text: publish-article Draft, review from two angles at once, revise, get your approval, then store it — with the approval itself recorded as a decision so the choice is not re-litigated later. Off v# bundled
+  - button "Run"
+  - button "refine-template"
+  - text: refine-template Read a template's own run-ledger failures and, when the evidence is defensible, propose one typed improvement to it — never applying anything, only filing a reviewable proposal. Off v# bundled
+  - button "Run"
+  - button "rich-ingest"
+  - text: "rich-ingest Turn one transcript into typed knowledge and real tasks in a single pass: a cheap classifier picks the lenses, specialists extract in parallel, each lens persists under its own kind. Off v# bundled"
+  - button "Run"
+  - button "self-qa"
+  - text: self-qa Watch a repo's commits, decide which ones a user could notice, and drive one deep as-a-user scenario against the live UI for each — filing an Inbox item and a Task, with a proof bundle, when a scenario fails. Off v# bundled
+  - button "Run"
+  - button "thesis-tracker"
+  - text: "thesis-tracker Track a falsifiable belief over time: its pillars, what would invalidate it, and every piece of evidence tagged as strengthening, weakening, or neutral. Off v# bundled"
+  - button "Run"
+  - button "trending-repo-digest"
+  - text: "trending-repo-digest Turn a trending-projects listing into a plain-English digest: read the page, pull the items out, say why each one is worth your attention given what you have already seen, and file it as one growing record. The host must be on your egress allow-list first. Off v# bundled"
+  - button "Run"

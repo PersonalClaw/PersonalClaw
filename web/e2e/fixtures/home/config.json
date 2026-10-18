@@ -1,0 +1,13 @@
+{
+  "dashboard": {
+    "user_name": "Keyur"
+  },
+  "learning": {
+    "identity_report_cadence": "off"
+  },
+  "resilience": {
+    "remediation": {
+      "enabled": false
+    }
+  }
+}

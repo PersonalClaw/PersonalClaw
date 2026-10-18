@@ -1,0 +1,97 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: Models
+  - heading "Models" [level=#]
+  - paragraph: Assign discovered models to each use case. Chat and its routing sub-categories store an ordered fallback chain — the first model is the default; later ones take over when an earlier provider is down. Modality means understanding that media as input; Generation means producing it.
+  - heading "Model bindings" [level=#]
+  - paragraph: One model — or an ordered fallback chain — per use case.
+  - button "Chat none configured # available"
+  - text: Chat routing
+  - button "Code & tools uses your Chat chain # available"
+  - button "Reasoning uses your Chat chain # available"
+  - button "Background uses your Chat chain # available"
+  - button "Orchestration uses your Chat chain # available"
+  - button "Loops uses your Chat chain # available"
+  - text: Capabilities
+  - button "Embedding none configured"
+  - button "Speech-to-text none configured"
+  - button "Text-to-speech none configured"
+  - button "Speaker diarization none configured"
+  - text: Image
+  - button "Image · Modality none configured"
+  - button "Image · Generation none configured"
+  - text: Audio
+  - button "Audio · Modality none configured"
+  - button "Audio · Generation none configured"
+  - text: Video
+  - button "Video · Modality none configured"
+  - button "Video · Generation none configured"
+  - heading "HuggingFace token" [level=#]
+  - paragraph: Gated models (e.g. pyannote diarization) need a HuggingFace token with the model's license accepted. PersonalClaw checks each source below and uses the first one HuggingFace confirms is valid.
+  - text: Saved token not set Environment (HF_TOKEN) not set huggingface-cli login PersonalClaw has not been allowed to read the Hugging Face folder other tools share. Turn it on in Settings → Security → Outside PersonalClaw's home.
+  - textbox "HuggingFace token":
+    - /placeholder: hf_…  paste a token to save
+  - button "Save" [disabled]
+  - heading "On this machine" [level=#]
+  - paragraph: Models currently held in memory, and how much of this machine they are using.
+  - progressbar "<theme> memory in use"
+  - text: #.# GiB of #.# GiB in use · #.#% No models are loaded right now. One loads on its first use.
+  - heading "Local runtime" [level=#]
+  - paragraph: Memory headroom for local inference, what the browse list shows, and the timeouts around a model sidecar.
+  - text: Hide models this device cannot run Keep models that do not fit this machine's memory out of the browse list. On by default; turn it off to see the whole catalog.
+  - status
+  - switch "Hide models this device cannot run" [checked]
+  - text: Memory reserve (GiB) Memory held back for your OS and the inference runtime, subtracted before any model-fit verdict. Raise it if models fit on paper but your machine struggles — verdicts get more cautious. It never blocks anything.
+  - spinbutton "Memory reserve (GiB)": "#"
+  - status
+  - text: Memory pressure warning (%) Percent of <theme> RAM in use at which the loaded-models bar above warns. Advisory only — nothing is unloaded for you.
+  - spinbutton "Memory pressure warning (%)": "#"
+  - status
+  - text: Sidecar restart limit How many times in a row a crashed model sidecar is respawned before the runner gives up and reports the failure instead.
+  - spinbutton "Sidecar restart limit": "#"
+  - status
+  - text: Model Test timeout (seconds) How long a model's Test may run before it is stopped and reported as timed out — any model, hosted or on this machine. A Test makes one small real call on click, so this bounds a model that hangs while it loads.
+  - spinbutton "Model Test timeout (seconds)": "#"
+  - status
+  - text: HuggingFace token check interval (seconds) How long a HuggingFace token's validity is cached after a successful check, so listing models does not re-call HuggingFace every time. # re-checks on every read.
+  - spinbutton "HuggingFace token check interval (seconds)": "#"
+  - status
+  - heading "Prompt caching" [level=#]
+  - paragraph: Reuse the stable part of the prompt across turns on providers that support it.
+  - text: Prompt caching Ask providers that support it to cache the stable prompt prefix, cutting cost and latency on multi-turn work. Providers without cache support are unaffected. Turn it off to rule caching out when debugging a provider — what the model is shown, and in what order, is identical either way.
+  - status
+  - switch "Prompt caching" [checked]

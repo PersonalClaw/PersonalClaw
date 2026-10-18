@@ -1,0 +1,147 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: Updates
+  - heading "Updates" [level=#]
+  - paragraph: Keep the PersonalClaw core current — choose a release line, pin a version, decide whether updates apply on their own, and read what changed. Apps update individually from the Store.
+  - heading "Version" [level=#]
+  - status: <update status>
+  - text: "Install type: Git checkout · v#.#.# · Stable channel"
+  - 'button "Check now: ask GitHub once, now, whether a newer release exists"': Check now
+  - heading "Licences" [level=#]
+  - paragraph: PersonalClaw is MIT-licensed. The dashboard also ships third-party open-source code and fonts, each under its own licence.
+  - text: Open-source packages Every package in the dashboard's code, with its version, its licence and the licence's full text.
+  - link "Open the open-source packages' licence notices":
+    - /url: /THIRD_PARTY_NOTICES_NPM.txt
+    - text: Open
+  - text: Fonts The dashboard's typefaces, its math fonts and the code editor's icon font.
+  - link "Open the fonts' licence notices":
+    - /url: /THIRD_PARTY_NOTICES.txt
+    - text: Open
+  - heading "Release line" [level=#]
+  - paragraph: Which releases this install follows. A version pin overrides the channel.
+  - text: Channel Stable follows the newest normal release. Beta includes release candidates. Developer tracks every commit on your checked-out branch (contributors — needs a clean tree).
+  - status
+  - 'button "Update channel: Stable" [pressed]': Stable
+  - 'button "Update channel: Beta"': Beta
+  - 'button "Update channel: Developer"': Developer
+  - text: Version pin Stay on an exact release (e.g. #.#.#) whatever the channel says — the update check and every apply respect it. Leave empty to follow the channel.
+  - textbox "Version pin":
+    - /placeholder: #.#.#
+  - button "Save pin"
+  - status
+  - heading "Automatic updates" [level=#]
+  - paragraph: Whether PersonalClaw looks for new releases on its own, and whether it installs them for you.
+  - text: "Automatic update checks On: PersonalClaw asks GitHub whether a newer release exists when it starts, then every # hours. Off: it never checks for updates on its own. Check now and Update still reach GitHub, each time you press one."
+  - status
+  - switch "Automatic update checks" [checked]
+  - text: Check every Hours between automatic checks (#–#). The default is #.
+  - spinbutton "Check every": "#"
+  - text: hours
+  - status
+  - text: Apply updates Off only notifies you. Staged applies at the next safe point — it holds while a session or subagent is running, and only ever installs the resolved release, never raw main.
+  - status
+  - 'button "Apply updates: Off" [pressed]': "Off"
+  - 'button "Apply updates: Staged"': Staged
+  - heading "Release notes" [level=#]
+  - paragraph: What is in the newest Stable release.
+  - group "Release notes":
+    - heading "v#.#.#" [level=#]
+    - list:
+      - listitem: A change in this release, #.
+      - listitem: A change in this release, #.
+      - listitem: A change in this release, #.
+      - listitem: A change in this release, #.
+      - listitem: A change in this release, #.
+      - listitem: A change in this release, #.
+      - listitem: A change in this release, #.
+      - listitem: A change in this release, #.
+      - listitem: A change in this release, #.
+      - listitem: A change in this release, #.
+      - listitem: A change in this release, #.
+      - listitem: A change in this release, #.
+      - listitem: A change in this release, #.
+      - listitem: A change in this release, #.
+      - listitem: A change in this release, #.
+      - listitem: A change in this release, #.
+      - listitem: A change in this release, #.
+      - listitem: A change in this release, #.
+      - listitem: A change in this release, #.
+      - listitem: A change in this release, #.
+      - listitem: A change in this release, #.
+      - listitem: A change in this release, #.
+      - listitem: A change in this release, #.
+      - listitem: A change in this release, #.
+  - heading "Changelog" [level=#]
+  - paragraph: What's changed recently.
+  - 'link "Open the upgrade notes: what an update asks of you"':
+    - /url: https://github.com/PersonalClaw/PersonalClaw/blob/main/docs/guides/getting-started.md#updating
+    - text: Upgrade notes
+  - group "Changelog":
+    - heading "[Unreleased]" [level=#]
+    - heading "Added" [level=#]
+    - list:
+      - listitem: An entry not released yet, #.
+      - listitem: An entry not released yet, #.
+      - listitem: An entry not released yet, #.
+      - listitem: An entry not released yet, #.
+      - listitem: An entry not released yet, #.
+      - listitem: An entry not released yet, #.
+      - listitem: An entry not released yet, #.
+      - listitem: An entry not released yet, #.
+    - heading "Fixed" [level=#]
+    - list:
+      - listitem: A fix not released yet.
+    - heading "[#.#.#] — #-#-#" [level=#]
+    - paragraph: A patch release.
+    - heading "Fixed" [level=#]
+    - list:
+      - listitem: A fix in this release, #.
+      - listitem: A fix in this release, #.
+      - listitem: A fix in this release, #.
+      - listitem: A fix in this release, #.
+      - listitem: A fix in this release, #.
+      - listitem: A fix in this release, #.
+      - listitem: A fix in this release, #.
+      - listitem: A fix in this release, #.
+      - listitem: A fix in this release, #.
+      - listitem: A fix in this release, #.
+      - listitem: A fix in this release, #.
+      - listitem: A fix in this release, #.
+      - listitem: A fix in this release, #.
+      - listitem: A fix in this release, #.
+      - listitem: A fix in this release, #.
+      - listitem: A fix in this release, #.

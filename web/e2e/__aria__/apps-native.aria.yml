@@ -1,0 +1,229 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - heading "Apps" [level=#]
+  - radiogroup "Native, Library, or Store":
+    - radio "Native" [checked]
+    - radio "Library"
+    - radio "Store"
+  - button "Install from URL"
+  - searchbox "Search apps"
+  - button "Filter & sort"
+  - status
+  - text: Built-in #
+  - button "Artifacts Tools — details"
+  - text: Artifacts Tools v#.#.# Tool provider
+  - button "Actions for Artifacts Tools"
+  - paragraph: Operate the Artifacts entity — save, fetch, update, list, version, and delete named versioned artifacts (widgets, React components, docs).
+  - text: tool bundled Installed
+  - button "Automation Tools — details"
+  - text: Automation Tools v#.#.# Tool provider
+  - button "Actions for Automation Tools"
+  - paragraph: Create and manage automations in chat — 'when a file in ~/notes changes', 'every weekday at #'. Routes each request to the right trigger kind over the unified trigger store.
+  - text: tool bundled Installed
+  - button "Bash Hooks — details"
+  - text: Bash Hooks v#.#.# Action provider
+  - button "Actions for Bash Hooks"
+  - paragraph: Run shell commands on agent lifecycle events. Supports the ACP exit-code-# contract for blocking PreToolUse calls.
+  - text: action bundled Installed
+  - button "Browse the Web — details"
+  - text: Browse the Web v#.#.# Action provider
+  - button "Actions for Browse the Web"
+  - paragraph: "Drive a real browser toward a goal: read pages, follow links, fill and submit forms. Every page is read as untrusted data, every navigation passes the BROWSE egress policy, and a run that exhausts its steps or its budget stops and asks you rather than guessing."
+  - text: action bundled native Installed
+  - button "Bundled offline model — details"
+  - text: Bundled offline model v#.#.# Model provider
+  - button "Actions for Bundled offline model"
+  - paragraph: "A small Apache-#.# chat model, SmolLM#-#M-Instruct, that PersonalClaw downloads when you ask — # MiB, once — so a fresh install can hold a conversation before any provider is bound. After that one download it runs on your machine with no account, no API key and no network. It is deliberately tiny, with no tools, so it is only ever the floor: bind a real model in Settings → Models and this stops being used."
+  - text: model llm local … # more tags Installed
+  - button "Calendar Tools — details"
+  - text: Calendar Tools v#.#.# Tool provider
+  - button "Actions for Calendar Tools"
+  - paragraph: "Read the calendars in the folders you share with PersonalClaw (an .ics file in an allowed working directory, or in a knowledge source that takes .ics files in): what is on a day, and when or where something is, with repeating events expanded in your time zone. It only reads."
+  - text: tool bundled Installed
+  - button "Code Map — details"
+  - text: Code Map v#.#.# Tool provider
+  - button "Actions for Code Map"
+  - paragraph: Navigate a codebase by symbol instead of by grep — look up where a function or class is defined, which files reference it, or what one file contains, from a tree-sitter index that answers in one call.
+  - text: tool bundled Installed
+  - button "Computer Use — details"
+  - text: Computer Use v#.#.# Tool provider
+  - button "Actions for Computer Use"
+  - paragraph: Drive the operator's own desktop applications through the OS accessibility tree — list apps, walk a window into numbered elements, then act on an element by index. Off until the operator arms it out-of-band; every call runs the keystone, app allowlist, index-freshness and secure-field screens and is written to the security event log.
+  - text: tool bundled Installed
+  - button "Core Tools — details"
+  - text: Core Tools v#.#.# Tool provider
+  - button "Actions for Core Tools"
+  - paragraph: Built-in cross-cutting agent tools — skill invocation, notifications, webhook listeners, the wait primitive, and loop control. (Web search/fetch live in Web Tools; subagents, memory, artifacts, and prompts each have their own provider.)
+  - text: tool bundled Installed
+  - button "Create Task Hook — details"
+  - text: Create Task Hook v#.#.# Action provider
+  - button "Actions for Create Task Hook"
+  - paragraph: File a task (via the task provider) when an agent's lifecycle event fires — e.g. open a follow-up on Error or Stop. A native action, no shell-out. Attach to an agent to activate.
+  - text: action bundled native Installed
+  - button "Filesystem & Shell Tools — details"
+  - text: Filesystem & Shell Tools v#.#.# Tool provider
+  - button "Actions for Filesystem & Shell Tools"
+  - paragraph: Always-on platform tools — read/write/edit/list/glob/grep/repo_map, bash, full-result retrieval. Required by the agent.
+  - text: Installed
+  - button "Inbox Operation Hook — details"
+  - text: Inbox Operation Hook v#.#.# Action provider
+  - button "Actions for Inbox Operation Hook"
+  - paragraph: Archive, mark read, mute a thread, dismiss, or write a draft reply on an inbox item when a trigger fires. Every operation is reversible, so an auto-executed one always keeps a one-click undo. A native action, no shell-out.
+  - text: action bundled native Installed
+  - button "Inbox Tools — details"
+  - text: Inbox Tools v#.#.# Tool provider
+  - button "Actions for Inbox Tools"
+  - paragraph: Surface a message to the user's Inbox triage queue — notifications, questions, and FYIs the agent raises when no one is watching the chat — and read what is waiting there.
+  - text: tool bundled Installed
+  - button "Invoke Agent Hook — details"
+  - text: Invoke Agent Hook v#.#.# Action provider
+  - button "Actions for Invoke Agent Hook"
+  - paragraph: Spawn a child agent when a lifecycle event fires — e.g. a coder's Stop hook spawns a code-reviewer. Bounded by a recursion-depth cap, a concurrency cap, and the subagent approval gate; always fire-and-forget so the lifecycle never blocks. Attach to an agent to activate.
+  - text: action bundled native Installed
+  - button "Knowledge Tools — details"
+  - text: Knowledge Tools v#.#.# Tool provider
+  - button "Actions for Knowledge Tools"
+  - paragraph: Operate the Knowledge entity — search the library, create/get/update items, and read library stats for gap detection.
+  - text: tool bundled Installed
+  - button "MCP Tool Servers — details"
+  - text: MCP Tool Servers v#.#.# Tool provider
+  - button "Actions for MCP Tool Servers"
+  - paragraph: "Connect Model Context Protocol (MCP) servers to provide tools: one PersonalClaw starts with a command (stdio), or one at a URL over Streamable HTTP or the older SSE transport."
+  - text: tool bundled Installed
+  - button "Memory Tools — details"
+  - text: Memory Tools v#.#.# Tool provider
+  - button "Actions for Memory Tools"
+  - paragraph: Operate persistent memory — remember lessons/corrections, list and forget them, and recall query-relevant facts on demand.
+  - text: tool bundled Installed
+  - button "Native Agents — details"
+  - text: Native Agents v#.#.# Agent provider
+  - button "Actions for Native Agents"
+  - paragraph: Filesystem-based agent definitions using ACP protocol. Create, edit, and manage agent configurations.
+  - text: agent bundled Installed
+  - button "Native Filesystem Prompts — details"
+  - text: Native Filesystem Prompts v#.#.# Prompt provider
+  - button "Actions for Native Filesystem Prompts"
+  - paragraph: "Stores prompt templates as YAML files under ~/.personalclaw/prompts/. Supports typed variables and {{var}} substitution."
+  - text: prompt bundled Installed
+  - button "Native Knowledge — details"
+  - text: Native Knowledge v#.#.# Knowledge provider
+  - button "Actions for Native Knowledge"
+  - paragraph: The built-in knowledge library — typed items (notes, gists, bookmarks, files) ingested by the node-graph pipeline and reachable by agents via tools.
+  - text: knowledge bundled Installed
+  - button "Native Skills — details"
+  - text: Native Skills v#.#.# Skills provider
+  - button "Actions for Native Skills"
+  - paragraph: Filesystem-based skill definitions. Create, edit, and manage agent skills with markdown procedures.
+  - text: skills bundled Installed
+  - button "Native Tasks — details"
+  - text: Native Tasks v#.#.# Task provider
+  - button "Actions for Native Tasks"
+  - paragraph: Filesystem-backed task management. Create, edit, and organize tasks with labels, priorities, and dependencies.
+  - text: task bundled Installed
+  - button "Notify Hook — details"
+  - text: Notify Hook v#.#.# Action provider
+  - button "Actions for Notify Hook"
+  - paragraph: Raise a dashboard notification when an agent's lifecycle event fires. A native action — no shell-out. Attach to an agent to activate.
+  - text: action bundled native Installed
+  - button "Ollama — details"
+  - text: Ollama v#.#.# Model provider
+  - button "Actions for Ollama"
+  - paragraph: OpenAI-compatible LLM and embedding provider via Ollama. Connect to local or remote Ollama instances for chat and embedding.
+  - text: model llm embedding … # more tags Installed
+  - button "Projects Tools — details"
+  - text: Projects Tools v#.#.# Tool provider
+  - button "Actions for Projects Tools"
+  - paragraph: Operate autonomous project runs — create/start/list and read live progress of code (SDLC), goal, research, design, and general runs. Loops are the project feature's autonomous execution kinds.
+  - text: tool bundled Installed
+  - button "Prompts Tools — details"
+  - text: Prompts Tools v#.#.# Tool provider
+  - button "Actions for Prompts Tools"
+  - paragraph: "Render the saved, parameterized Prompts you maintain — load a prompt by name, fill its {{variable}} placeholders, and act on the result."
+  - text: tool bundled Installed
+  - button "Questions for you — details"
+  - text: Questions for you v#.#.# Tool provider
+  - button "Actions for Questions for you"
+  - paragraph: "Lets the agent ask you a question with choices when it needs your decision to go on, and wait for your answer: the question shows as a card in the chat, in Mission Control's Your turn and in the Inbox. You choose an option, write your own answer, or skip it; stopping the turn withdraws it."
+  - text: tool bundled Installed
+  - button "Run Prompt — details"
+  - text: Run Prompt v#.#.# Action provider
+  - button "Actions for Run Prompt"
+  - paragraph: Run a saved Prompt on a trigger's cadence — the native equivalent of a recurring saved command. The prompt is resolved, rendered through the prompt engine (includes/loops/conditionals), framed as an autonomous run, and executed as an unattended turn. Works on schedule, lifecycle, and event triggers.
+  - text: action bundled native Installed
+  - button "Run Script — details"
+  - text: Run Script v#.#.# Action provider
+  - button "Actions for Run Script"
+  - paragraph: Run a sandboxed Python script (file.py:func under ~/.personalclaw/crons/) deterministically on a trigger — the zero-token counterpart to Invoke Agent.
+  - text: action bundled Installed
+  - button "Run Workflow — details"
+  - text: Run Workflow v#.#.# Action provider
+  - button "Actions for Run Workflow"
+  - paragraph: Start one of your workflows when a trigger fires, with the inputs you set here. The workflow runs in the background and records its own outcome; the workflow's own overlap policy decides what happens when it is already running.
+  - text: action bundled native Installed
+  - button "Send Message Hook — details"
+  - text: Send Message Hook v#.#.# Action provider
+  - button "Actions for Send Message Hook"
+  - paragraph: Deliver a message to a channel (via the configured channel provider) when an agent's lifecycle event fires. Falls back to a dashboard notification when no channel is configured. Attach to an agent to activate.
+  - text: action bundled native Installed
+  - button "Subagents Tools — details"
+  - text: Subagents Tools v#.#.# Tool provider
+  - button "Actions for Subagents Tools"
+  - paragraph: Spawn and track background subagents — run tasks in parallel (results arrive as completion events), list running agents, and fetch a finished agent's full output.
+  - text: tool bundled Installed
+  - button "<theme> Inbox — details"
+  - text: <theme> Inbox v#.#.# Inbox provider
+  - button "Actions for <theme> Inbox"
+  - paragraph: Filesystem-backed inbox for agent approval requests, input requests, and <theme> notifications.
+  - text: inbox bundled Installed
+  - button "Tasks Tools — details"
+  - text: Tasks Tools v#.#.# Tool provider
+  - button "Actions for Tasks Tools"
+  - paragraph: Operate the Tasks entity — create/list/get/update/search tasks, list ready tasks, and create projects and task lists.
+  - text: tool bundled Installed
+  - button "UI Docs Tools — details"
+  - text: UI Docs Tools v#.#.# Tool provider
+  - button "Actions for UI Docs Tools"
+  - paragraph: Search, list and read the web/src/ui design-<theme> kit as documentation-as-data — find the right component or design token to reach for instead of hand-rolling markup.
+  - text: tool bundled Installed
+  - button "Vector Memory — details"
+  - text: Vector Memory v#.#.# Memory provider
+  - button "Actions for Vector Memory"
+  - paragraph: Native in-process vector memory (SQLite + FAISS) for semantic search over agent memory. Runs locally, no external service; embeddings come from the active embedding model.
+  - text: memory bundled Installed
+  - button "Workflow Tools — details"
+  - text: Workflow Tools v#.#.# Tool provider
+  - button "Actions for Workflow Tools"
+  - paragraph: Author, run, steer and inspect composable workflows — save a DAG of stages, start runs, watch progress, edit or rewind a run mid-flight, and answer the gates it stops on.
+  - text: tool bundled Installed

@@ -1,0 +1,142 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"New prompt\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Bundled\"",
+        "button[role=radio] \"Snippets\"",
+        "button[role=radio] \"System\"",
+        "button[role=radio] \"User\"",
+        "input \"Search\""
+      ],
+      "390": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"New prompt\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Bundled\"",
+        "button[role=radio] \"Snippets\"",
+        "button[role=radio] \"System\"",
+        "button[role=radio] \"User\"",
+        "input \"Search\""
+      ],
+      "412": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"New prompt\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Bundled\"",
+        "button[role=radio] \"Snippets\"",
+        "button[role=radio] \"System\"",
+        "button[role=radio] \"User\"",
+        "input \"Search\""
+      ],
+      "768": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"New prompt\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Bundled\"",
+        "button[role=radio] \"Snippets\"",
+        "button[role=radio] \"System\"",
+        "button[role=radio] \"User\"",
+        "input \"Search\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<h#> \"Prompts\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+      ]
+    }
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"New prompt\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Bundled\"",
+        "button[role=radio] \"Snippets\"",
+        "button[role=radio] \"System\"",
+        "button[role=radio] \"User\"",
+        "input \"Search\""
+      ],
+      "390": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"New prompt\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Bundled\"",
+        "button[role=radio] \"Snippets\"",
+        "button[role=radio] \"System\"",
+        "button[role=radio] \"User\"",
+        "input \"Search\""
+      ],
+      "412": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"New prompt\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Bundled\"",
+        "button[role=radio] \"Snippets\"",
+        "button[role=radio] \"System\"",
+        "button[role=radio] \"User\"",
+        "input \"Search\""
+      ],
+      "768": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"New prompt\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Bundled\"",
+        "button[role=radio] \"Snippets\"",
+        "button[role=radio] \"System\"",
+        "button[role=radio] \"User\"",
+        "input \"Search\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<h#> \"Prompts\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+      ]
+    }
+  }
+}

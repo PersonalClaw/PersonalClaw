@@ -35,7 +35,9 @@ const read = (p: string) => readFileSync(join(WEB, p), 'utf8')
 
 const ROUTES_SRC = read('e2e/routes.ts')
 const VISUAL_SRC = read('e2e/visual.spec.ts')
-const A11Y_SRC = read('e2e/a11y.spec.ts')
+// The route scans moved out of `a11y.spec.ts` into the UI quality check (#3941), which runs axe as
+// one step of its matrix on every surface it visits.
+const SURFACES_SRC = read('e2e/surfaces.spec.ts')
 
 interface Entry { route: string; id?: string }
 
@@ -92,7 +94,7 @@ describe('the knowledge graph is reachable as a harness route', () => {
   it('is consumed by BOTH harness specs, so the list is not an inert declaration', () => {
     // The failure this closes: a manifest entry nothing iterates. Declared-and-unread is the
     // worst shape a control can ship in — it reads as coverage and measures nothing.
-    for (const [name, src] of [['visual.spec.ts', VISUAL_SRC], ['a11y.spec.ts', A11Y_SRC]] as const) {
+    for (const [name, src] of [['visual.spec.ts', VISUAL_SRC], ['surfaces.spec.ts', SURFACES_SRC]] as const) {
       expect(src, `${name} must iterate VIEW_ROUTES`).toMatch(/\.\.\.VIEW_ROUTES/)
       expect(src, `${name} must name its artifact by id, so no '?' reaches a filename`)
         .toMatch(/id \?\? route/)

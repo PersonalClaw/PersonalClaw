@@ -1,0 +1,59 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Knowledge"
+  - text: Platform
+  - button "Tasks"
+  - button "Inbox"
+  - button "Triggers"
+  - button "Files"
+  - button "Artifacts"
+  - button "Terminal"
+  - text: Capabilities
+  - button "Agents"
+  - button "Tools"
+  - button "Skills"
+  - button "Learning"
+  - button "Prompts"
+  - button "Workflows"
+  - text: Apps
+  - button "Apps"
+  - button "Show fewer, hide # surfaces": Show fewer
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "<theme> status — Gateway connected"
+  - heading "Projects" [level=#]
+  - button "Loops"
+  - button "Import"
+  - button "New project"
+  - searchbox "Search projects"
+  - status
+  - button "Personal"
+  - text: Personal Built-in no workspace · # lists
+  - button "Repeatable"
+  - text: Repeatable Built-in no workspace · # lists
+- dialog "New project":
+  - text: New project
+  - button "Close"
+  - text: Name
+  - textbox "Name":
+    - /placeholder: Project name…
+  - text: Brief The goal, scope, and background — shared as context with every agent working on this project's sessions and loops.
+  - textbox "Brief":
+    - /placeholder: What is this project for? What does success look like?
+  - text: Workspace Optional — the directory loops + code work in. You can bind or change it later. No workspace bound
+  - button "Bind"
+  - checkbox "Make it your default project — new tasks and loops start here, on every device" [checked]
+  - text: Make it your default project — new tasks and loops start here, on every device
+  - button "Cancel"
+  - button "Create project" [disabled]

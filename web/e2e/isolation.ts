@@ -29,7 +29,7 @@ export const SPEC_ISOLATION: Readonly<Record<string, SpecIsolation>> = {
   },
   'a11y.spec.ts': {
     mode: 'shared',
-    why: 'reads every route; its scripted turns add chat sessions, which no other spec counts',
+    why: 'reads the chat route; its scripted turns add chat sessions, which no other spec counts',
   },
   'appSurface.spec.ts': { mode: 'shared', why: 'reads the fixture app the boot installs' },
   'chat.spec.ts': {
@@ -40,6 +40,10 @@ export const SPEC_ISOLATION: Readonly<Record<string, SpecIsolation>> = {
   'chatHeaderGeometry.spec.ts': { mode: 'shared', why: 'answers its chat reads with route stubs' },
   'focusAndReadingModes.spec.ts': { mode: 'shared', why: 'adds its own chat session and reads only its own' },
   'nonAxeA11yChecks.spec.ts': { mode: 'shared', why: 'plants its defects in the page, writes nothing' },
+  'surfaceMatrix.control.spec.ts': {
+    mode: 'shared',
+    why: 'plants one defect of each kind in the page and reads what the matrix reports, writes nothing',
+  },
   'onboardingGeometry.spec.ts': {
     mode: 'shared',
     why:
@@ -52,10 +56,13 @@ export const SPEC_ISOLATION: Readonly<Record<string, SpecIsolation>> = {
   },
   'sessionMap.spec.ts': { mode: 'shared', why: 'adds its own chat sessions and reads only its own' },
   'streamStall.spec.ts': { mode: 'shared', why: 'adds its own chat session and reads only its own' },
-  'walkthrough.spec.ts': { mode: 'shared', why: 'reads every route, writes nothing' },
   'keyboard.spec.ts': {
     mode: 'shared',
     why: 'answers its approval, inbox and chat-list reads with route stubs; its one scripted turn adds a chat session of its own',
+  },
+  'surfaces.spec.ts': {
+    mode: 'shared',
+    why: 'reads every route and opened surface; it writes only its own baseline files, never to the gateway',
   },
   'visual.spec.ts': {
     mode: 'shared',

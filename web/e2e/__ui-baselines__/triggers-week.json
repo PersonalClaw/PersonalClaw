@@ -1,0 +1,126 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"New trigger\"",
+        "button \"Next week\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Previous week\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"List\"",
+        "button[role=radio] \"Week\""
+      ],
+      "390": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"New trigger\"",
+        "button \"Next week\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Previous week\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"List\"",
+        "button[role=radio] \"Week\""
+      ],
+      "412": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"New trigger\"",
+        "button \"Next week\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Previous week\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"List\"",
+        "button[role=radio] \"Week\""
+      ],
+      "768": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"New trigger\"",
+        "button \"Next week\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Previous week\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"List\"",
+        "button[role=radio] \"Week\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<h#> \"Triggers\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+      ]
+    }
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"New trigger\"",
+        "button \"Next week\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Previous week\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"List\"",
+        "button[role=radio] \"Week\""
+      ],
+      "390": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"New trigger\"",
+        "button \"Next week\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Previous week\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"List\"",
+        "button[role=radio] \"Week\""
+      ],
+      "412": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"New trigger\"",
+        "button \"Next week\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Previous week\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"List\"",
+        "button[role=radio] \"Week\""
+      ],
+      "768": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"New trigger\"",
+        "button \"Next week\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Previous week\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"List\"",
+        "button[role=radio] \"Week\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<h#> \"Triggers\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+      ]
+    }
+  }
+}

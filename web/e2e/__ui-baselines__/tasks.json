@@ -1,0 +1,142 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"New task\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Cards view\"",
+        "button[role=radio] \"Dependency graph\"",
+        "button[role=radio] \"Kanban board\"",
+        "button[role=radio] \"List view\"",
+        "input \"Search tasks\""
+      ],
+      "390": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"New task\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Cards view\"",
+        "button[role=radio] \"Dependency graph\"",
+        "button[role=radio] \"Kanban board\"",
+        "button[role=radio] \"List view\"",
+        "input \"Search tasks\""
+      ],
+      "412": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"New task\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Cards view\"",
+        "button[role=radio] \"Dependency graph\"",
+        "button[role=radio] \"Kanban board\"",
+        "button[role=radio] \"List view\"",
+        "input \"Search tasks\""
+      ],
+      "768": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"New task\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Cards view\"",
+        "button[role=radio] \"Dependency graph\"",
+        "button[role=radio] \"Kanban board\"",
+        "button[role=radio] \"List view\"",
+        "input \"Search tasks\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<h#> \"Tasks\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+      ]
+    }
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"New task\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Cards view\"",
+        "button[role=radio] \"Dependency graph\"",
+        "button[role=radio] \"Kanban board\"",
+        "button[role=radio] \"List view\"",
+        "input \"Search tasks\""
+      ],
+      "390": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"New task\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Cards view\"",
+        "button[role=radio] \"Dependency graph\"",
+        "button[role=radio] \"Kanban board\"",
+        "button[role=radio] \"List view\"",
+        "input \"Search tasks\""
+      ],
+      "412": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"New task\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Cards view\"",
+        "button[role=radio] \"Dependency graph\"",
+        "button[role=radio] \"Kanban board\"",
+        "button[role=radio] \"List view\"",
+        "input \"Search tasks\""
+      ],
+      "768": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"New task\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Cards view\"",
+        "button[role=radio] \"Dependency graph\"",
+        "button[role=radio] \"Kanban board\"",
+        "button[role=radio] \"List view\"",
+        "input \"Search tasks\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<h#> \"Tasks\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawHomeChatProjectsKnowledgePla\" clips at #%: #x# in #x#"
+      ]
+    }
+  }
+}

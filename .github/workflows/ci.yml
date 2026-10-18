@@ -1195,11 +1195,12 @@ jobs:
         env:
           PLAYWRIGHT_JSON_OUTPUT_NAME: e2e-report.json
         run: npx playwright test --grep-invert @visual
-      # A SKIP reads exactly like a PASS in a green job, and the axe sweep's claim is a COUNT
-      # ("every authenticated route"). So the count is asserted against the manifest rather than
-      # trusted: zero route-level skips, and scans == declared routes × themes. It counts
-      # `a11y.spec.ts`'s specs only, by the file the report names for each. Runs whatever the
-      # browser run answered, so a red elsewhere does not hide a coverage loss.
+      # A SKIP reads exactly like a PASS in a green job, and the UI quality check's claim is a
+      # COUNT ("every authenticated route"). So the count is asserted against the manifest rather
+      # than trusted: zero route-level skips, scans == declared routes × themes, and every scan
+      # carrying every step of the matrix. It counts `surfaces.spec.ts`'s specs only, by the file
+      # the report names for each. Runs whatever the browser run answered, so a red elsewhere does
+      # not hide a coverage loss.
       - name: every authenticated route was actually SCANNED (not skipped)
         if: ${{ !cancelled() }}
         working-directory: web
