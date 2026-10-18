@@ -56,17 +56,31 @@ SEND = "send_report"
 #: A read, which a read-only run runs without asking anyone, and which takes as long as the draft.
 READ = "read_inbox"
 
-#: How long the draft and the read take: well past the one-second timeout the tests give the run.
+#: How long the draft and the read take when no test holds them.
 SLOW_SECS = 3.0
+
+#: The timeout the timeout tests give the run. It is counted from when the turn is posted, not
+#: from when the draft starts, so it has to cover the gateway reaching the draft: at 1 s, a
+#: loaded runner had not started the draft when the timeout passed, and the run stopped a turn
+#: that had run nothing (`[] == ['draft_report']`). Those tests hold the draft until the run has
+#: returned (`_Tools.held`), so however long the timeout is, it passes while the draft runs.
+TIMEOUT_SECS = 5
 
 
 class _Tools(ToolProvider):
     """Two tools that ask before they run and a read that asks nobody, each keeping what ran. The
-    draft and the read take a while."""
+    draft and the read take a while: :data:`SLOW_SECS`, or, once a test calls :meth:`hold`, until
+    it lets them go."""
 
     def __init__(self) -> None:
         self.ran: list[str] = []
         self.drafting = threading.Event()
+        self.held = False
+        self.released = threading.Event()
+
+    def hold(self) -> None:
+        """Keep the draft and the read running until :attr:`released` is set (30 s at most)."""
+        self.held = True
 
     @property
     def name(self) -> str:
@@ -92,7 +106,13 @@ class _Tools(ToolProvider):
         self.ran.append(tool_name)
         if tool_name in (DRAFT, READ):
             self.drafting.set()
-            await asyncio.sleep(SLOW_SECS)
+            if not self.held:
+                await asyncio.sleep(SLOW_SECS)
+            else:
+                # Polled, so a stop that cancels the call ends it at once.
+                deadline = time.monotonic() + 30.0
+                while not self.released.is_set() and time.monotonic() < deadline:
+                    await asyncio.sleep(0.05)
         return ToolResult(success=True, output="done")
 
 
@@ -296,19 +316,22 @@ def _the_runs_trust_ended(session_key: str) -> list[dict]:
 def test_a_run_whose_timeout_passes_stops_its_turn_in_the_gateway(tmp_path, capsys, signed_in):
     """The timeout passes while the draft runs. The run stops the turn in the gateway and ends the
     Trust it gave its chat before it exits: the send the model asks for next never runs, and the
-    report names the timeout."""
+    report names the timeout. The draft is held until the run returns, then let go: a turn the run
+    did not stop would go on to the send."""
     with _Gateway(tmp_path, _drafts_then_sends()) as gw:
+        gw.tools.hold()
         code = _type(
             "-p",
             "draft and send the report",
             "--allow",
             "--timeout",
-            "1",
+            str(TIMEOUT_SECS),
             "--format",
             "json",
             "--port",
             str(gw.port),
         )
+        gw.tools.released.set()
         chat = gw.turn_has_ended()
         trust_after = (chat._trust, gw.state.standing_grant(chat))
 
@@ -318,7 +341,7 @@ def test_a_run_whose_timeout_passes_stops_its_turn_in_the_gateway(tmp_path, caps
     assert trust_after == (False, ""), "the run's Trust outlived the run"
     doc = json.loads(out)
     assert doc["outcome"] == cli_run.TIMED_OUT, doc
-    assert "the turn did not finish within 1s" in err, err
+    assert f"the turn did not finish within {TIMEOUT_SECS}s" in err, err
     assert "stopped the turn in the gateway" in err, err
     assert "this run's write grant has ended." in err, err
     assert _the_runs_trust_ended(chat.key), "the end of the run's Trust left no audit row"
@@ -330,14 +353,18 @@ def test_a_read_only_run_whose_timeout_passes_stops_its_turn_and_names_no_grant(
     """A read-only run's read is still running when its timeout passes: the run stops the turn
     in the gateway too. It has no write grant to end, and does not claim one."""
     with _Gateway(tmp_path, _ScriptedModel([_calls(READ, "call-1"), _says("Read it.")])) as gw:
-        code = _type("-p", "what is in my inbox?", "--timeout", "1", "--port", str(gw.port))
+        gw.tools.hold()
+        code = _type(
+            "-p", "what is in my inbox?", "--timeout", str(TIMEOUT_SECS), "--port", str(gw.port)
+        )
+        gw.tools.released.set()
         ended = chat_phase.served(gw.turn_has_ended())["last_outcome"]
 
     out, err = capsys.readouterr()
     assert code == 1, err
     assert gw.tools.ran == [READ]
     assert ended == TURN_STOPPED, f"the turn went on to its end in the gateway: {ended}"
-    assert "the turn did not finish within 1s" in err, err
+    assert f"the turn did not finish within {TIMEOUT_SECS}s" in err, err
     assert "stopped the turn in the gateway" in err, err
     assert "write grant" not in err, err
     assert out == "", out
