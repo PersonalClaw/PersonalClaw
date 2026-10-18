@@ -30,8 +30,18 @@ Each test maps to an acceptance criterion of an implementation task.
 - Every pose of the v0.3.0 set at 18, 24, 48 and 96 px, in light and dark, in three colour schemes,
   and as its reduced-motion still, each with its state line beside it: component snapshots that run
   in CI on Linux baselines.
-- Every surface (peek, compact, expanded with each alert kind, floating with a bubble, the tray
-  faces, the phone's two views) in light and dark, and in high contrast.
+- Every surface (peek, compact, expanded with each alert kind, floating with a bubble, the tray's
+  still orbs, the phone's two views) in light and dark, and in high contrast.
+- At 18 px, each family's still is told apart from the other three by the orb's density and its
+  badge alone, and so is each tray still as a one-colour template image: the maintainer's review
+  of the contact sheet ([`character.md`](character.md#the-poses)).
+- Side by side with other products' status indicators and assistant orbs, from public material,
+  nothing the buddy adds to the agent orb (its outline, badge, wash, poses, gestures and presence),
+  nor the whole orb, shows a drawn form or choreography a viewer would recognise as another
+  product's. The dots and their states are the agent orb's licensed base
+  ([`agent-orb.md`](../agent-orb.md#the-component)), shared on purpose, so they are not judged on
+  their own. The result is recorded beside [the choice](character.md#the-choice), naming none of
+  them, and the originality record cites it ([#4570]).
 - Copy: no rendered line exceeds its surface's limit with names up to 200 characters.
 
 ## Motion
@@ -95,3 +105,4 @@ Later work: play ([#3894]) and drop and quick ask ([#3895]).
 [#3894]: https://github.com/PersonalClaw/PersonalClaw/issues/3894
 [#3895]: https://github.com/PersonalClaw/PersonalClaw/issues/3895
 [#3902]: https://github.com/PersonalClaw/PersonalClaw/issues/3902
+[#4570]: https://github.com/PersonalClaw/PersonalClaw/issues/4570

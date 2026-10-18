@@ -19,9 +19,16 @@ Only a test keeps the two from drifting, and this is it. It holds the record's o
   later-work section opens with a line naming its task.
 * **Every timing the state machine names** has a value, a reader and a reduced-motion answer in
   the motion guide (``docs/design/motion.md`` §9).
-* **The buddy's body colour has its token's name now**, though its values wait for the chosen
-  character: ``web/DESIGN.md`` names it among the neutral colours, and the character brief calls
-  it by the same name, the one the character's values go under and the renderer reads.
+* **The buddy has no colour of its own.** Its orb takes the agent orb's colour, the scheme's
+  primary, while an agent is alive, and a neutral the design system already has where nothing
+  is. ``web/DESIGN.md`` says so among the neutral colours and the character brief among
+  its constraints, each pointing at the agent orb's design and naming only tokens ``tokens.css``
+  defines; no file of the record, nor ``web/DESIGN.md``, names a colour token of the buddy's own.
+* **What the buddy shares with the agent orb, and what it adds, each have one home.** The agent
+  orb's design says what the two share, and the rig's candidates list what the buddy adds. The
+  brief's first constraint links both, and the originality checks in the brief and in the test
+  plan link the agent orb's component, whose dots the buddy shares on purpose. None of them keeps
+  a list of its own, which would drift from the one it copies.
 
 Each check returns what is wrong, as sentences. The last test plants one defect for each check and
 sees it reported, so none of them can pass by looking at nothing.
@@ -44,9 +51,9 @@ FOLDER = REPO / "docs" / "design" / "buddy"
 MATRIX_DATA = FOLDER / "interruption-matrix.json"
 MATRIX_TABLE = FOLDER / "interruption-matrix.md"
 STATE_MACHINE = FOLDER / "state-machine.md"
-CHARACTER = FOLDER / "character.md"
 MOTION_GUIDE = REPO / "docs" / "design" / "motion.md"
 DESIGN = REPO / "web" / "DESIGN.md"
+TOKENS = REPO / "web" / "src" / "design" / "tokens.css"
 
 SITUATIONS = (
     "hidden",
@@ -152,13 +159,28 @@ LATER = "Later work"
 #: The motion guide's section for the buddy's timings, and the columns each of its tables has.
 TIMINGS = "9. The desktop buddy's timings"
 TIMING_COLUMNS = ["Token", "Value", "What it times", "Read by", "Under reduced motion"]
-#: The token of the buddy's warm-neutral body: the name the chosen character gives its light and
-#: dark values under, and the renderer reads. Where each file says it, as (the file's name, the
-#: heading it is under, a word only the entry about the body has under that heading).
-BODY_TOKEN = "--color-buddy-body"
-BODY_ENTRIES = (
+#: The buddy's orb takes the agent orb's colour while an agent is alive, and mints none of its
+#: own. Where each file says so, as (the file's name, the heading it is under, a word only the
+#: entry about the buddy's colours has under that heading). Each entry links the agent orb's
+#: design.
+COLOUR_ENTRIES = (
     ("web/DESIGN.md", "Neutral", "buddy"),
-    ("character.md", "Constraints", "warm-neutral"),
+    ("character.md", "Constraints", "colours"),
+)
+AGENT_ORB = "agent-orb.md"
+#: A colour token of the buddy's own, under any name.
+OWN_COLOUR = re.compile(r"--color-buddy[a-z0-9-]*")
+#: The entries that weigh the buddy against the agent orb, as (the file's name, the heading it is
+#: under, words only that entry has under that heading, the links it must have, as written).
+COMPARISONS = (
+    (
+        "character.md",
+        "Constraints",
+        "drawn the way the agent orb is",
+        ("../agent-orb.md#phase-to-state", "rig.md#candidates"),
+    ),
+    ("character.md", "Constraints", "**original:**", ("../agent-orb.md#the-component",)),
+    ("test-plan.md", "Pixels", "side by side", ("../agent-orb.md#the-component",)),
 )
 
 _FENCE = re.compile(r"^\s*(```|~~~)")
@@ -167,6 +189,7 @@ _RULE = re.compile(r"^\|(\s*:?-+:?\s*\|)+\s*$")
 _LINK = re.compile(r"\[[^\]]*\]\(\s*([^)\s]+)")
 _TOKEN = re.compile(r"`([A-Za-z]+)`")
 _COLOR = re.compile(r"`(--color-[a-z0-9-]+)`")
+_DEFINED = re.compile(r"^\s*(--color-[a-z0-9-]+)\s*:", re.MULTILINE)
 _TASK = re.compile(r"#\d+")
 
 Table = tuple[str, str, str, list[str], list[list[str]]]
@@ -541,28 +564,61 @@ def timing_problems(machine: str, guide: str) -> list[str]:
     return found
 
 
-def body_token_problems(texts: dict[str, str]) -> list[str]:
-    """Where the buddy's body colour goes without its token's name, or under another, each a
-    sentence. *texts* holds each file of ``BODY_ENTRIES`` by its name: in each, the entry about
-    the body names one ``--color-`` token, and that token is ``BODY_TOKEN``."""
-    found = []
-    for name, heading, word in BODY_ENTRIES:
+def colour_problems(texts: dict[str, str], defined: set[str]) -> list[str]:
+    """Where the buddy's colours are not the agent orb's, each a sentence. *texts* holds the
+    record's files and ``web/DESIGN.md`` by name, and none of them names a colour token of the
+    buddy's own. In each file of ``COLOUR_ENTRIES``, one entry speaks of the buddy's colours: it
+    links the agent orb's design, and every ``--color-`` token it names is in *defined*, the
+    tokens ``tokens.css`` defines."""
+    found = [
+        f"{name}: the buddy names a colour of its own, {sorted(set(OWN_COLOUR.findall(text)))}"
+        for name, text in texts.items()
+        if OWN_COLOUR.search(text)
+    ]
+    for name, heading, word in COLOUR_ENTRIES:
         entries = [item for item in bullets(texts[name], heading) if word in item.lower()]
-        named = sorted({token for item in entries for token in _COLOR.findall(item)})
         if len(entries) != 1:
             found.append(
-                f"{name}: {len(entries)} entries under {heading!r} are the body's, not one"
+                f"{name}: {len(entries)} entries under {heading!r} are the buddy's colours, not one"
             )
-        elif named != [BODY_TOKEN]:
-            found.append(f"{name}: the buddy's body goes by {named}, not by `{BODY_TOKEN}`")
+            continue
+        targets = [target.partition("#")[0] for target in _LINK.findall(entries[0])]
+        if not any(Path(target).name == AGENT_ORB for target in targets):
+            found.append(f"{name}: the buddy's colours do not point at the agent orb's {AGENT_ORB}")
+        unknown = sorted(set(_COLOR.findall(entries[0])) - defined)
+        if unknown:
+            found.append(f"{name}: the buddy's colours name {unknown}, which tokens.css lacks")
     return found
 
 
-def _body_texts() -> dict[str, str]:
-    return {
-        "web/DESIGN.md": DESIGN.read_text(encoding="utf-8"),
-        "character.md": CHARACTER.read_text(encoding="utf-8"),
-    }
+def comparison_problems(texts: dict[str, str]) -> list[str]:
+    """Where an entry that weighs the buddy against the agent orb does not point at the places
+    that say what the two share and what the buddy adds, each a sentence. *texts* holds the
+    record's files by name. Each entry of ``COMPARISONS`` is the one item under its heading with
+    its words, and it has every link the table names."""
+    found = []
+    for name, heading, words, wanted in COMPARISONS:
+        entries = [item for item in bullets(texts[name], heading) if words in item.lower()]
+        if len(entries) != 1:
+            found.append(f"{name}: {len(entries)} entries under {heading!r} say {words!r}, not one")
+            continue
+        links = set(_LINK.findall(entries[0]))
+        found += [
+            f"{name}: the entry that says {words!r} does not link {link}"
+            for link in wanted
+            if link not in links
+        ]
+    return found
+
+
+def _record_texts() -> dict[str, str]:
+    texts = {name: (FOLDER / name).read_text(encoding="utf-8") for name in RECORD}
+    texts["web/DESIGN.md"] = DESIGN.read_text(encoding="utf-8")
+    return texts
+
+
+def _defined_colours() -> set[str]:
+    return set(_DEFINED.findall(TOKENS.read_text(encoding="utf-8")))
 
 
 # ── the record as committed ──────────────────────────────────────────────────────────────────
@@ -602,8 +658,16 @@ def test_every_named_timing_has_a_value_a_reader_and_a_reduced_motion_answer() -
     assert timing_problems(machine, MOTION_GUIDE.read_text(encoding="utf-8")) == []
 
 
-def test_the_buddys_body_token_is_named_before_its_values() -> None:
-    assert body_token_problems(_body_texts()) == []
+def test_the_buddy_takes_the_agent_orbs_colour_and_names_none_of_its_own() -> None:
+    defined = _defined_colours()
+    assert {"--color-primary", "--color-on-surface-var"} <= defined, "tokens.css was misread"
+    assert colour_problems(_record_texts(), defined) == []
+
+
+def test_the_buddy_points_at_what_it_shares_with_the_agent_orb_and_what_it_adds() -> None:
+    wanted = sorted({link.partition("#") for *_, links in COMPARISONS for link in links})
+    assert anchor_problems(FOLDER, [(place, anchor) for place, _, anchor in wanted]) == []
+    assert comparison_problems(_record_texts()) == []
 
 
 def test_anchors_follow_githubs_rule() -> None:
@@ -624,10 +688,11 @@ def _edited(edit: Callable[[dict[str, Any]], object]) -> dict[str, Any]:
     return data
 
 
-def _body_texts_with(name: str, token: str) -> dict[str, str]:
-    """The body's files as committed, with *name* calling the body's token *token* instead."""
-    texts = _body_texts()
-    texts[name] = texts[name].replace(f"`{BODY_TOKEN}`", token)
+def _record_texts_with(name: str, old: str, new: str) -> dict[str, str]:
+    """The record's texts as committed, with every *old* in *name* replaced by *new*."""
+    texts = _record_texts()
+    assert old in texts[name], f"{old!r} is no longer in {name}, so nothing would be planted"
+    texts[name] = texts[name].replace(old, new)
     return texts
 
 
@@ -727,17 +792,45 @@ def test_each_check_reports_a_planted_defect(subtests: Any, tmp_path: Path) -> N
             "`plantedWait` is named, and has no row in §9",
         ),
         (
-            "the body's token left unnamed until its values come",
-            lambda: body_token_problems(_body_texts_with("web/DESIGN.md", "its token")),
-            "web/DESIGN.md: the buddy's body goes by [], not by",
+            "a colour of the buddy's own, named in any file of the record",
+            lambda: colour_problems(
+                _record_texts_with(
+                    "surfaces.md",
+                    "# Buddy surfaces\n",
+                    "# Buddy surfaces\n\n`--color-buddy-pill`\n",
+                ),
+                _defined_colours(),
+            ),
+            "surfaces.md: the buddy names a colour of its own, ['--color-buddy-pill']",
         ),
         (
-            "the brief calling the body's token by another name",
-            lambda: body_token_problems(_body_texts_with("character.md", "`--color-buddy-shell`")),
-            "character.md: the buddy's body goes by ['--color-buddy-shell']",
+            "the design system's entry no longer pointing at the agent orb",
+            lambda: colour_problems(
+                _record_texts_with("web/DESIGN.md", "agent-orb.md", "patterns.md"),
+                _defined_colours(),
+            ),
+            "web/DESIGN.md: the buddy's colours do not point at the agent orb's",
+        ),
+        (
+            "the brief naming a neutral the design system does not have",
+            lambda: colour_problems(
+                _record_texts_with(
+                    "character.md", "`--color-on-surface-var`", "`--color-on-surface-warm`"
+                ),
+                _defined_colours(),
+            ),
+            "character.md: the buddy's colours name ['--color-on-surface-warm']",
+        ),
+        (
+            "the brief's first constraint no longer pointing at what the buddy adds",
+            lambda: comparison_problems(
+                _record_texts_with("character.md", "(rig.md#candidates)", "(rig.md)")
+            ),
+            "character.md: the entry that says 'drawn the way the agent orb is' does not link"
+            " rig.md#candidates",
         ),
     ]
-    assert len(planted) == 14, "a planted defect was dropped from the table"
+    assert len(planted) == 16, "a planted defect was dropped from the table"
     for name, check, expected in planted:
         with table_rows.row(subtests, defect=name):
             reported = check()

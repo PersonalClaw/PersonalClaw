@@ -24,9 +24,9 @@ the owner would want to know without looking, and never for an ambient update.
 | Poked, annoyed, dizzy | three short voice-like blips, rising in fuss | under 400 ms each |
 | Phase changes, work starting, in-sight updates, fidgets, the greeting, presence changes | silence | — |
 
-Settled for its return on 2026-10-14: the drop's sound is a soft closing note on the claw's catch,
-not a gulp, and with the hit chain ending at annoyed the blips are for poked and annoyed only
-([#4570]). [#3900] changes the map to these when it resumes.
+Settled for its return on 2026-10-14: the drop's sound is a soft closing note on the catch, not a
+gulp, and with the hit chain ending at annoyed the blips are for poked and annoyed only ([#4570]).
+[#3900] changes the map to these when it resumes.
 
 ### Rules
 

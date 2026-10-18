@@ -1,6 +1,6 @@
 # Buddy copy
 
-The face does the attention work; one line underneath says what changed. Every state has exactly
+The orb does the attention work; one line underneath says what changed. Every state has exactly
 one line, and every surface has a length it never exceeds. The line names what changed or what is
 happening without leaning on the pose, the colour or the animation ([#3899]).
 
@@ -13,7 +13,7 @@ happening without leaning on the pose, the colour or the animation ([#3899]).
   [#3899]'s to add.
 - The work's own name first, then what it is doing. The buddy never speaks as "I" and never
   apologises.
-- No exclamation marks, no emoji, no jokes in the line. Personality belongs to the face.
+- No exclamation marks, no emoji, no jokes in the line. Personality belongs to the orb.
 - Numbers as digits. Times as the app shows them.
 - Approval, question and error text is the app's own: the buddy reuses the approval prompt's brief
   and the existing decline wording word for word, because security copy is never reworded. Its

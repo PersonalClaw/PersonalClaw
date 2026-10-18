@@ -4,8 +4,10 @@ Motion explains what changed and then gets out of the way: every transition reso
 settles into stillness. The buddy uses the app's motion system as it is
 ([`docs/design/motion.md`](../motion.md)): the four spring presets (`snappy`, `smooth`, `fluid`,
 `playful`) for anything that moves in space, the effects curve for opacity and colour, `expr()` for
-amplitude and the bounciness dial for overshoot. In v0.3.0 it mints no spring of its own. Under
-reduced motion every transition becomes an instant change.
+amplitude and the bounciness dial for overshoot. The orb's dots move as the agent orb's do, in their
+own motion for each state ([`agent-orb.md`](../agent-orb.md#phase-to-state)), and everything the
+buddy adds moves on the presets. In v0.3.0 it mints no spring of its own. Under reduced motion every
+transition becomes an instant change.
 
 ## Timing tokens
 
@@ -24,20 +26,20 @@ that move the buddy between its four families.
 
 | Transition | Trigger | Moves | Preset / curve | Length | Cut | Reduced motion |
 |---|---|---|---|---|---|---|
-| Peek in | pointer on the top-edge zone | the face slides down until the eyes clear the edge | `smooth` | ~200 ms | yes | the eyes appear |
-| Compact in | work starts while visible | the island grows out of the edge, the face enters | `smooth`; the line fades on the effects curve | ~250 ms | yes | instant |
-| Expand | hover, click or an alert | the island grows into the card; the focused face is the shared element and scales to 48; content follows with a short stagger | open on `playful` (a slight overshoot), content on `regionStagger` | ~320 ms | no | instant |
+| Peek in | pointer on the top-edge zone | the orb slides down from the top edge until its badge clears it | `smooth` | ~200 ms | yes | the orb appears |
+| Compact in | work starts while visible | the island grows out of the edge, the orb enters | `smooth`; the line fades on the effects curve | ~250 ms | yes | instant |
+| Expand | hover, click or an alert | the island grows into the card; the focused orb is the shared element and scales to 48; content follows with a short stagger | open on `playful` (a slight overshoot), content on `regionStagger` | ~320 ms | no | instant |
 | Collapse | the collapse timer or Esc | the card shrinks back into the island | the effects curve, no overshoot | ~220 ms | yes | instant |
 | Phase change | the focused work's phase | the current pose exits, the next enters; the badge swaps with a small pop; the step window scrolls one line | exit and entrance on `snappy`; the badge on `snappy`; the scroll on `smooth` | under `beat` | yes | instant pose and badge change |
-| Working hold | while a tool or step runs | the badge's dots move in turn; the current step's label fills with the alive colour; a slow blink | the effects curve | loops while working | — | still badge, static label |
-| Alert arrives | an alert | the face looks at the owner, the body leans in, the alert badge pops, the wash rises from below | `snappy` for the lean and the badge; the effects curve for the wash | ~300 ms | only by listening | instant pose, badge and wash |
-| Answer: yes | Allow, Send, an option | a nod, the check badge | `snappy` | ~300 ms | no | the check badge |
+| Working hold | while a tool or step runs | the orb stirs, its dots moving in the agent orb's state for the phase; the current step's label fills with the alive colour | the agent orb's own motion for the dots; the effects curve for the label | loops while working | — | the active still, static label |
+| Alert arrives | an alert | the orb holds for an approval (its dots draw in tight) or raises for a question (it lifts a little), and goes still; the alert badge pops; the wash rises from below | `snappy` for the hold or the raise and the badge; the effects curve for the wash | ~300 ms | only by listening | instant pose, badge and wash |
+| Answer: yes | Allow, Send, an option | a nod (the orb dips once), the check badge | `snappy` | ~300 ms | no | the check badge |
 | Answer: no | Deny, Dismiss | a small side shake | `snappy`, amplitude by `expr()` | ~300 ms | no | instant |
-| Error | work fails | the body sinks a little and comes back up, the eyes flatten, the danger wash rises | `smooth`, then the effects curve | ~600 ms | only by listening | the error pose |
-| Done | the focused work finishes | the badge turns to a check, the wash clears, the eyes lift and go soft, one flourish of the claw | `playful`, scaled by `expr()` | ~700 ms, then held for `finishedHold` | yes, by an alert or listening | the done pose |
-| Listening | push-to-talk starts | the face leans toward the owner, the eyes widen, the microphone badge pops | `snappy` | ~200 ms | no | instant |
-| Dock and undock | a drop in or out of the dock zone | the island shape forms from or melts into the character | `smooth` | ~300 ms | no | instant |
-| Doze and wake | sleep, absence, return | the eyes close slowly and the body dims; on wake, the eyes open and the body brightens | the effects curve | ~600 ms | yes | instant |
+| Error | work fails | the orb droops, its dots sinking toward the lower edge and settling there as they take the neutral; the danger wash rises | `smooth`, then the effects curve | ~600 ms | only by listening | the error pose |
+| Done | the focused work finishes | the badge turns to a check, and the dots flourish once (a swirl around the orb) and come to rest, soft, in the neutral | `playful`, scaled by `expr()` | ~700 ms, then held for `finishedHold` | yes, by an alert or listening | the done pose |
+| Listening | push-to-talk starts | the orb swells a little toward the owner and its dots take the agent orb's listening state; the microphone badge pops | `snappy` | ~200 ms | no | instant |
+| Dock and undock | a drop in or out of the dock zone | the island shape forms from or melts into the orb | `smooth` | ~300 ms | no | instant |
+| Doze and wake | sleep, absence, return | the dots slow to a stop and the orb dims; on wake, it brightens and its dots move again | the effects curve | ~600 ms | yes | instant |
 | Badge unfolds | pointer on the badge | the badge widens into the state's words, and folds back | `snappy` open, the effects curve close | ~200 ms | yes | instant |
 
 Two pops are open for gate two ([#3892]). The redesign moves nothing on a high-frequency action and
@@ -51,9 +53,9 @@ cell change together.
 
 ## The dials
 
-- **Expressiveness** scales amplitude through `expr()`: how far it leans, the shake's distance, the
-  size of the done flourish. At its floor the buddy still changes pose for every state; it just
-  moves less.
+- **Expressiveness** scales amplitude through `expr()`: how far the orb lifts, sinks or swells, the
+  shake's distance, the size of the done flourish. At its floor the buddy still changes pose for
+  every state; it just moves less.
 - **Bounciness** scales overshoot through the presets' own damping. At zero nothing overshoots.
 - **Reduced motion** (the system setting) turns every row above into its last column: no spatial
   movement, no shimmer, no springs.
@@ -76,22 +78,22 @@ Later work: play ([#3894]), and the file rows with drop and quick ask ([#3895]).
 
 | Transition | Trigger | Moves | Preset / curve | Length | Cut | Reduced motion |
 |---|---|---|---|---|---|---|
-| Greeting | the first peek of a session | a quick pop to full size, one wave of the claw, a blink | `playful`, scaled by `expr()` | under 1.6 s | yes | nothing plays |
-| Follow | the pointer moves | the eyes, then the head, turn toward the pointer, overshoot a little and settle | the `gaze` spring | continuous while the pointer moves | yes | the eyes do not follow |
-| Poked | one hit | a flinch: a quick squash and a blink, then recovery | `snappy` | `hitWindow` | yes | nothing plays |
-| Annoyed | a hit while the poke still plays | the eyes narrow, the body leans in and grows a little | `snappy` | ~400 ms, held to `hitWindow` | yes | nothing plays |
-| Dizzy | a hit while annoyed still plays | the head turns away and comes back around, the eyes wobble, then settle | `playful` | `dizzyHold` | yes | nothing plays |
-| Drag | a drag | the body dangles behind the pointer and settles on release | `dragSpring` | while dragging | — | the body follows the pointer rigidly |
-| File over | a file held over it | the claw opens, the eyes widen | `snappy` | ~200 ms | yes | the open pose |
-| Swallow | a drop | the body becomes a container, takes the file in, closes with a happy blink, and turns back into itself | `playful` | under 1.4 s | no | the swallowed pose, then the choice |
+| Greeting | the first peek of a session | a quick pop to full size, one wave (a ripple out through the dots), a blink | `playful`, scaled by `expr()` | under 1.6 s | yes | nothing plays |
+| Follow | the pointer moves | the orb's lean turns toward the pointer, overshoots a little and settles | the `gaze` spring | continuous while the pointer moves | yes | the orb does not follow |
+| Poked | one hit | a flinch: the dots scatter a little and regather, a blink, then recovery | `snappy` | `hitWindow` | yes | nothing plays |
+| Annoyed | a hit while the poke still plays | a shiver runs through the dots, and the orb grows a little | `snappy` | ~400 ms, held to `hitWindow` | yes | nothing plays |
+| Dizzy | a hit while annoyed still plays | the dots wobble out of step, then settle | `playful` | `dizzyHold` | yes | nothing plays |
+| Drag | a drag | the orb dangles behind the pointer and settles on release | `dragSpring` | while dragging | — | the orb follows the pointer rigidly |
+| File over | a file held over it | the orb's dots spread wide, ready to catch | `snappy` | ~200 ms | yes | the spread pose |
+| Swallow | a drop | the orb becomes a container, takes the file in, closes with a happy blink, and comes back round | `playful` | under 1.4 s | no | the swallowed pose, then the choice |
 
 Under reduced motion no play reaction plays, not even as an instant pose ([#3894]). Fidgets, a
 blink inside `blinkRange` and an occasional look around, are scheduled only while visible and the
 owner is active. The expressiveness dial also scales how big the greeting's wave is.
 
 Settled for their return on 2026-10-14: there is no dizzy, since the hit chain ends at annoyed, and
-the drop is the claw's catch (the transition "Catch", the pose "holding") in place of the swallow
-([#4570]).
+the drop is a catch (the transition "Catch", the pose "holding") in place of the swallow ([#4570]):
+for the orb, its spread dots close around the file and hold it up.
 
 ### The gaze spring
 

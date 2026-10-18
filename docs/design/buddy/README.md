@@ -1,10 +1,10 @@
 # Desktop buddy
 
-PersonalClaw's own character, living at the top edge of the screen or floating where the owner puts
-it. It shows what the agents are doing while the owner works in other apps, and asks only when
-something needs the owner. It is a new face on signals PersonalClaw already has, not a second app,
-and it adds no authority: it never approves, sends or runs anything without an explicit click or
-key press.
+One orb of dots, in the same visual language as the chat's agent orb, living at the top edge of the
+screen or floating where the owner puts it. It shows what the agents are doing while the owner
+works in other apps, and asks only when something needs the owner. It is a new view of signals
+PersonalClaw already has, not a second app, and it adds no authority: it never approves, sends or
+runs anything without an explicit click or key press.
 
 v0.3.0 ships it as an opt-in status surface, off by default: the exact state of the work in focus,
 one Waiting on You list, one Running Now list, one focused status card, and Open in PersonalClaw.
@@ -26,16 +26,16 @@ each task's approved update and settled answers change it.
 
 ## How it behaves
 
-- **Two layers in v0.3.0, with a fixed priority.** The truth layer decides what the face and its
+- **Two layers in v0.3.0, with a fixed priority.** The truth layer decides what the orb and its
   one line say: the phase of the work in focus and the system's state. The presence layer decides
   how much room it has. Presence changes the room, never the words, and a truth change always shows.
 - **Hidden unless work is running or something waits on the owner, and free while hidden:** no
   timers, no animation frames, no pointer sampling, and no polling, media or audio work.
 - **It peeks** when the owner rests the pointer on the top edge, shows the work in focus while the
   owner is active, opens on a hover, a click or an alert, and folds back on its own.
-- **One piece of work in focus, the rest in sight.** The focused work gets its face, its state and
+- **One piece of work in focus, the rest in sight.** The focused work gets its orb, its state and
   its run as a three-line step window that scrolls as steps finish; every other piece of live work
-  is a small face and one line.
+  is a small orb and one line.
 - **Only approvals, questions and errors interrupt.** They come one at a time, in the order every
   surface keeps (consequence, then age), stay until answered, and show their brief exactly as the
   app does. ⌘Enter (Ctrl+Enter elsewhere) approves the request that has focus, Esc closes without
@@ -43,9 +43,9 @@ each task's approved update and settled answers change it.
   first.
 - **It respects** absence (it hides while the owner is away and says what happened on return),
   quiet hours (a quiet peek) and full-screen apps (alerts only). Listening always wins.
-- **One character and one state contract on every surface:** the top-edge island or the floating
-  character, the tray and dock faces (a state, not a red count), notifications (the face and one
-  line), and the phone companion's two views.
+- **One orb and one state contract on every surface:** the top-edge island or the floating orb,
+  the tray's and the dock's still orbs (a state, not a red count), notifications (the still orb and
+  one line), and the phone companion's two views.
 - **Reduced motion and the expressiveness and bounciness dials are honoured everywhere,** and every
   colour scheme retints it.
 
@@ -53,8 +53,11 @@ each task's approved update and settled answers change it.
 
 1. This record, and the shared signals: one phase contract ([#3833]), one list of what is waiting
    on the owner ([#3888]) and one list of what is running now ([#3889]).
-2. The character, chosen by the maintainer from three directions at real sizes (**gate one**,
-   [#3830]), and the rig, chosen by a measured spike ([#3887]), side by side.
+2. The character (**gate one**, [#3830]) and the rig ([#3887]), side by side. Gate one's choice
+   was made on 2026-10-18: none of the three character directions, but an orb of dots in the agent
+   orb's visual language ([the choice](character.md#the-choice)). Its poses are drawn next, for the
+   maintainer's review at real sizes. The rig, chosen by a measured spike, decides how the buddy
+   extends the agent orb's drawing ([the starting position](rig.md#starting-position)).
 3. The state machine ([#3890]) and the renderer ([#3891]), then the playground ([#3892]), which the
    maintainer plays before any surface ships (**gate two**).
 4. The window ([#3831]), presence and alerts ([#3832]) and the expanded card ([#3893]).
@@ -113,10 +116,10 @@ later work below.
   [maximum length per surface](copy.md#maximum-length-per-surface) and [tests](copy.md#tests).
 - [`settings.md`](settings.md): every setting's default and home, the opt-in that is off by default
   among them, and [where each setting lives, and why](settings.md#where-each-setting-lives-and-why).
-- [`character.md`](character.md): [constraints](character.md#constraints),
-  [three directions to explore](character.md#three-directions-to-explore),
-  [the choice](character.md#the-choice), still open,
-  [the poses](character.md#poses-every-direction-must-cover) and
+- [`character.md`](character.md): the orb of dots, with its [constraints](character.md#constraints),
+  [the choice](character.md#the-choice), made on 2026-10-18, with
+  [the three directions it rejected](character.md#three-directions-to-explore),
+  [the poses](character.md#the-poses) and
   [the gesture vocabulary](character.md#the-gesture-vocabulary).
 - [`rig.md`](rig.md): [candidates](rig.md#candidates), [what is measured](rig.md#what-is-measured)
   and [the starting position](rig.md#starting-position).
