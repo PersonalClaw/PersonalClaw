@@ -39,7 +39,7 @@ import pytest
 
 from personalclaw.workflows import journal as J
 from personalclaw.workflows import run_cockpit, service, store
-from personalclaw.workflows.models import InstanceState, RunStatus
+from personalclaw.workflows.models import InstanceState, RunStatus, now_stamp
 
 pytestmark = pytest.mark.anyio
 
@@ -550,6 +550,12 @@ async def test_a_cancel_counts_the_generations_it_cut_off_and_keeps_one_duration
         # A model on this machine is sent one request at a time (`guardrails.local_queue`): one
         # candidate is generating, and the other three wait their turn without being sent.
         assert fake.held == 1, f"{fake.held} generations were sent to one local model at once"
+        # A run's stamps are whole seconds, so a run cancelled inside the second it started in
+        # truly lasted 0s. A Stop now acts at once rather than on the next tick, so let the run
+        # cross into its next second first, or `elapsed_seconds > 0` below could not be true.
+        started_at = store.get(run_id).started_at
+        while now_stamp() == started_at:
+            await asyncio.sleep(0.02)
 
         assert service.cancel_run(run_id, supervisor=supervisor).get("ok")
         assert await _terminal(supervisor, run_id) is RunStatus.CANCELLED

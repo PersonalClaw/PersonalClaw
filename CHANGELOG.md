@@ -21,6 +21,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **An answered approval, a Stop or an edit takes effect immediately.**
 - **The gateway image runs its bundled agent CLIs on Node 24, where it shipped Debian's Node 20, which no longer gets security fixes.**
 - **A message you send while a turn runs is no longer stopped after 10 minutes when its turn comes: it runs until it is done, as one sent to an idle chat does, and a turn nobody is watching, such as a subagent's report or a loop's cycle, is stopped only once it has made no progress for its whole limit, saying how far it got.**
 - **Best-of-n on Claude Haiku 5.5 gets an answer from every candidate, where each one asked for a temperature other than 1 failed: the model refuses a custom temperature, top_p or top_k, so none is sent and best-of-n says so.**

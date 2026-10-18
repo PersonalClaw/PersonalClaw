@@ -290,9 +290,17 @@ class TestSurfaceAndTimeoutCoexist:
     async def test_a_gate_with_a_deadline_still_surfaces_immediately(self) -> None:
         """A run that parks quietly for 45s and only then surfaces is a run nobody knows to
         answer."""
-        c, status = await _blocked({"timeout_secs": 60})
-        assert status == RunStatus.NEEDS_INPUT
-        assert HI.list_continuations(c.run.id)
+        spec = _gate_spec({"timeout_secs": 60})
+        run = store.create(WorkflowRun(id="", workflow_name="gated"))
+        store.write_spec(run.id, spec)
+        c = RunController(run, spec, services=EngineServices())
+        # The deadline keeps the loop alive, so wait for the ask to surface, not for the loop.
+        try:
+            assert await c.wait_for_terminal(timeout=20) == RunStatus.NEEDS_INPUT
+            assert HI.list_continuations(c.run.id)
+            assert not c._terminal.is_set(), "surfaced, and still waiting out its deadline"
+        finally:
+            await c.stop()
 
     async def test_a_surfaced_gate_can_still_time_out(self) -> None:
         """And the deadline is not decorative — a surfaced run is waiting, not finished."""

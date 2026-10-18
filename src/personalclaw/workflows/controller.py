@@ -400,6 +400,14 @@ class RunController:
         #: each ended case once more, writing the value its step already holds.
         self._branch_recorded: dict[str, Any] = {}
         self._terminal = asyncio.Event()
+        #: Set when an answer gives the run work again (`resume`), so a live tick loop wakes at
+        #: once instead of on its next tick. It only ever shortens a wait: the loop still decides
+        #: everything in `_step`, which clears it first, under the lock, so an answer that lands
+        #: mid-step wakes the next wait rather than being lost.
+        self._woken = asyncio.Event()
+        #: Set when the run surfaces `needs_input`, so a blocking caller (`wait_for_terminal`)
+        #: returns the ask at once instead of on its next progress beat.
+        self._parked = asyncio.Event()
         self._load_outputs()
 
     # ── construction helpers ──
@@ -512,6 +520,9 @@ class RunController:
         deadline = (time.monotonic() + timeout) if timeout > 0 else 0.0
 
         while True:
+            # Cleared BEFORE the status is read: a park surfaced after this read wakes the wait
+            # below, and one surfaced before it is seen by the read.
+            self._parked.clear()
             if self._terminal.is_set():
                 break
             # needs_input is a STOPPING point for a blocking caller, not a terminal state.
@@ -522,16 +533,23 @@ class RunController:
             if deadline and remaining <= 0:
                 break
             wait = min(progress_every, remaining) if deadline else progress_every
+            ended = asyncio.ensure_future(self._terminal.wait())
+            parked = asyncio.ensure_future(self._parked.wait())
             try:
-                await asyncio.wait_for(self._terminal.wait(), timeout=wait)
-                break
-            except asyncio.TimeoutError:
-                if on_progress is not None:
-                    try:
-                        on_progress(self.progress_snapshot())
-                    except Exception:
-                        # A broken observer must never affect the run it is watching.
-                        logger.debug("blocking-mode progress callback failed", exc_info=True)
+                done, _ = await asyncio.wait(
+                    {ended, parked}, timeout=wait, return_when=asyncio.FIRST_COMPLETED
+                )
+            finally:
+                ended.cancel()
+                parked.cancel()
+            if done:
+                continue  # re-read: ended, or parked on a question
+            if on_progress is not None:
+                try:
+                    on_progress(self.progress_snapshot())
+                except Exception:
+                    # A broken observer must never affect the run it is watching.
+                    logger.debug("blocking-mode progress callback failed", exc_info=True)
         return self.run.status
 
     def progress_snapshot(self) -> dict[str, Any]:
@@ -632,7 +650,7 @@ class RunController:
                         # _step call decides completion or deadlock. Yield rather than spin.
                         await asyncio.sleep(0)
                     else:
-                        await asyncio.sleep(delay)
+                        await self._wait_for_wake(delay)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # a controller crash must not leave a silent zombie
@@ -755,6 +773,7 @@ class RunController:
         This is also the designated safe point for mid-flight mutation: the
         lock is held and no node is mid-launch.
         """
+        self._woken.clear()
         if store.cancel_requested(self.run.id):
             await self._honor_cancel()
             return True
@@ -870,6 +889,7 @@ class RunController:
                 gate_answers.ensure_continuation(self, path)
             if asks and self.run.status != RunStatus.NEEDS_INPUT:
                 gate_answers.surface_needs_input(self)
+                self._parked.set()
             if waiting and self._next_wake_delay() is None:
                 # Nothing will wake this run: no deadline, no in-flight work. NOW it is
                 # terminal. With a deadline still pending the loop keeps ticking so the
@@ -1053,7 +1073,10 @@ class RunController:
         # again, and the loop that would schedule it has already exited — without this the
         # answer lands, the node flips DONE, and the run sits there forever with its
         # downstream nodes never launched. Every unit test
-        # called `run_to_completion` by hand afterwards and so never saw it.
+        # called `run_to_completion` by hand afterwards and so never saw it. A loop that is still
+        # alive (other branches in flight, or a gate deadline keeping it ticking) is woken
+        # instead, so the answer moves the run on now rather than on its next tick.
+        self._woken.set()
         self._resume_loop()
         return {"ok": True, "approved": approved, "node_id": cont.node_id}
 
@@ -1067,7 +1090,7 @@ class RunController:
         if self.run.is_terminal:
             return
         if self._task is not None and not self._task.done():
-            return  # still running — it will pick the woken node up on its next tick
+            return  # still running — `resume` has woken it; its next tick is the backstop
         try:
             asyncio.get_running_loop()
         except RuntimeError:
@@ -1173,6 +1196,8 @@ class RunController:
             return body
         mid_flight.queue_mutation(self, result, actor)
         body["queued"] = True
+        # A live loop applies the batch at its drain point now, not on its next tick.
+        self._woken.set()
         if self.run.status == RunStatus.NEEDS_INPUT:
             self._resume_loop()
         return body
@@ -1565,7 +1590,15 @@ class RunController:
         tasks = [e.task for e in self._inflight.values()]
         if not tasks:
             return
-        await asyncio.wait(tasks, timeout=TICK_WAKE_SECS, return_when=asyncio.FIRST_COMPLETED)
+        # An answered gate wakes this wait too: the answered node's successors are work this loop
+        # can launch now, and they must not queue behind a stage that runs for ten minutes.
+        woken = asyncio.ensure_future(self._woken.wait())
+        try:
+            await asyncio.wait(
+                [*tasks, woken], timeout=TICK_WAKE_SECS, return_when=asyncio.FIRST_COMPLETED
+            )
+        finally:
+            woken.cancel()
         async with self._lock:
             liveness.enforce_stall_timeouts(self)
             self._apply_finished()
@@ -1576,6 +1609,15 @@ class RunController:
             # unrelated caller happened to save. `service.status()` reads the store, so that is the
             # difference between a running run showing its spend and showing zero.
             self._save_run()
+
+    async def _wait_for_wake(self, delay: float) -> None:
+        """Wait *delay* seconds, or less when an answer wakes the run (`resume`).
+
+        The tick stays the cadence for deadlines, holds and polls, and the backstop if a wake
+        is ever missed; the event only shortens the wait.
+        """
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(self._woken.wait(), timeout=delay)
 
     def _apply_finished(self) -> None:
         """Apply the result of every in-flight node that has finished, under the lock."""
@@ -2317,12 +2359,14 @@ class RunController:
         await self._finish(RunStatus.PAUSED, error=declines.waiting_words(self))
 
     def wake(self) -> None:
-        """Restart the tick loop of a controller whose loop has exited (a paused run).
+        """Have the tick loop read the run's sticky intents now.
 
         What the service calls after clearing a sticky pause (resume) or writing a sticky cancel:
-        both are intents the TICK LOOP applies, and a paused run's loop is not running to read
-        them. A no-op for a live loop — it reads the intent on its next step anyway.
+        both are intents the TICK LOOP applies. A live loop is woken so a Stop acts at once
+        rather than on its next tick; a paused run's loop is not running to read them, so it is
+        restarted.
         """
+        self._woken.set()
         self._resume_loop()
 
     def _spend_refused(self) -> bool:

@@ -544,8 +544,13 @@ class TestWaitAndGates:
         }
         run = _make_run(spec)
         c = RunController(run, spec, services=EngineServices())
-        assert await c.run_to_completion(timeout=20) == RunStatus.NEEDS_INPUT
-        assert c.run.attention["kind"] == "approval"
+        # The gate waits the owner's approval window, so its loop stays alive to time it out:
+        # wait for the run to surface the ask, not for a loop that will not end on its own.
+        try:
+            assert await c.wait_for_terminal(timeout=20) == RunStatus.NEEDS_INPUT
+            assert c.run.attention["kind"] == "approval"
+        finally:
+            await c.stop()
 
     async def test_a_wait_deadline_survives_a_restart(self) -> None:
         """The deadline lived only in the controller's
@@ -630,7 +635,9 @@ class TestCancellation:
         c = RunController(run, spec, services=EngineServices(completion=slow))
         await c.start()
         await asyncio.sleep(0.2)
+        # As `service.cancel_run` does: the sticky intent, then a wake so the live loop reads it.
         store.request_cancel(run.id)
+        c.wake()
         assert await c.run_to_completion(timeout=20) == RunStatus.CANCELLED
 
     async def test_the_intent_survives_with_no_controller_running(self) -> None:

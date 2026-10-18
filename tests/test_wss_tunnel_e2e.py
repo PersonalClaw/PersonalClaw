@@ -219,18 +219,22 @@ class _TlsTunnel:
         before noticing. `abort()` drops the connection at once, which is both the honest
         simulation of a tunnel being killed and what keeps the gateway's handler from outliving
         the test.
+
+        The live sockets are aborted BEFORE the listener is awaited: `Server.wait_closed()`
+        returns only once every connection it accepted has closed, so awaiting it first waited
+        out the gateway's heartbeat with the sockets still open.
         """
-        if self._server is not None:
-            self._server.close()
-            await self._server.wait_closed()
-            self._server = None
+        server, self._server = self._server, None
+        if server is not None:
+            server.close()
         for w in self._writers:
             try:
                 w.transport.abort()
             except Exception:  # noqa: BLE001
                 pass
         self._writers.clear()
-        await asyncio.sleep(0.05)
+        if server is not None:
+            await server.wait_closed()
 
 
 # ── the gateway: the real route, the real middleware, plus a peer recorder ────────────────────

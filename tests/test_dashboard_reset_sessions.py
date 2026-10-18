@@ -109,9 +109,10 @@ class TestResetAllSessionsShutdown:
     @pytest.mark.asyncio
     async def test_force_kills_hung_provider_after_timeout(self, monkeypatch) -> None:
         """When ``shutdown()`` hangs past the budget, ``_sync_kill_provider`` runs."""
-        # Shorten timeout so the test doesn't take 5s. The production default
-        # is 5.0 but tests only need to verify the timeout->kill path fires.
-        monkeypatch.setattr("personalclaw.dashboard.handlers._SHUTDOWN_TIMEOUT_SECS", 0.05)
+        # Shorten the budget so the test doesn't wait out the production one: it only needs
+        # the timeout->kill path to fire. Patched where `_safe_shutdown` reads it, the module
+        # that defines it; the package's re-export is a copy nothing reads.
+        monkeypatch.setattr("personalclaw.dashboard.handlers.sessions._SHUTDOWN_TIMEOUT_SECS", 0.05)
 
         async def _never_returns() -> None:
             await asyncio.sleep(60)
@@ -138,7 +139,7 @@ class TestResetAllSessionsShutdown:
         complete so ``asyncio.gather`` doesn't abort other providers' shutdowns
         and ``start_pool`` runs.
         """
-        monkeypatch.setattr("personalclaw.dashboard.handlers._SHUTDOWN_TIMEOUT_SECS", 0.05)
+        monkeypatch.setattr("personalclaw.dashboard.handlers.sessions._SHUTDOWN_TIMEOUT_SECS", 0.05)
 
         async def _never_returns() -> None:
             await asyncio.sleep(60)
