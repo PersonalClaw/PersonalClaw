@@ -203,91 +203,162 @@ class TestLibraryContents:
             assert _raw(name).get("name") == name
 
 
-@pytest.mark.parametrize("name", sorted(EXPECTED))
 class TestEachTemplate:
-    def test_it_validates_STRICTLY(self, name: str) -> None:
+    def test_it_validates_STRICTLY(self, subtests) -> None:
         """Strict, so a template does not ship a warning it then propagates to every run made
         from it. This is the only test that parses these files at all."""
-        result = validate_spec(_pipeline(_raw(name)), strict=True)
-        assert result.issues == [], [i.to_dict() for i in result.issues]
+        rows = sorted(EXPECTED)
+        assert len(rows) == 32 and set(rows) == set(
+            template_names()
+        ), "the bundled library changed: pin the new count in EXPECTED"
+        for name in rows:
+            with subtests.test(name=name):
+                result = validate_spec(_pipeline(_raw(name)), strict=True)
+                assert result.issues == [], [i.to_dict() for i in result.issues]
 
-    def test_it_loads_as_a_WorkflowDef(self, name: str) -> None:
-        loaded = read_template(name)
-        assert isinstance(loaded, WorkflowDef)
-        assert loaded.name == name
+    def test_it_loads_as_a_WorkflowDef(self, subtests) -> None:
+        rows = sorted(EXPECTED)
+        assert len(rows) == 32 and set(rows) == set(
+            template_names()
+        ), "the bundled library changed: pin the new count in EXPECTED"
+        for name in rows:
+            with subtests.test(name=name):
+                loaded = read_template(name)
+                assert isinstance(loaded, WorkflowDef)
+                assert loaded.name == name
 
-    def test_it_is_served_with_macros_already_expanded(self, name: str) -> None:
+    def test_it_is_served_with_macros_already_expanded(self, subtests) -> None:
         """The invariant: nothing downstream of this provider knows macros exist."""
-        loaded = read_template(name)
-        assert loaded is not None
-        assert has_macros(loaded.to_dict()) is False
+        rows = sorted(EXPECTED)
+        assert len(rows) == 32 and set(rows) == set(
+            template_names()
+        ), "the bundled library changed: pin the new count in EXPECTED"
+        for name in rows:
+            with subtests.test(name=name):
+                loaded = read_template(name)
+                assert loaded is not None
+                assert has_macros(loaded.to_dict()) is False
 
-    def test_it_declares_itself_bundled(self, name: str) -> None:
+    def test_it_declares_itself_bundled(self, subtests) -> None:
         """`source` drives the UI's read-only affordances (no delete, "instantiate to edit")."""
-        loaded = read_template(name)
-        assert loaded is not None
-        assert loaded.source == "bundled"
+        rows = sorted(EXPECTED)
+        assert len(rows) == 32 and set(rows) == set(
+            template_names()
+        ), "the bundled library changed: pin the new count in EXPECTED"
+        for name in rows:
+            with subtests.test(name=name):
+                loaded = read_template(name)
+                assert loaded is not None
+                assert loaded.source == "bundled"
 
-    def test_it_has_a_description_a_user_can_choose_from(self, name: str) -> None:
+    def test_it_has_a_description_a_user_can_choose_from(self, subtests) -> None:
         """The template picker shows this line and nothing else — an empty one makes the
         template indistinguishable from its neighbours."""
-        desc = str(_raw(name).get("description", ""))
-        assert len(desc) > 40, f"{name}: description is too thin to choose by"
+        rows = sorted(EXPECTED)
+        assert len(rows) == 32 and set(rows) == set(
+            template_names()
+        ), "the bundled library changed: pin the new count in EXPECTED"
+        for name in rows:
+            with subtests.test(name=name):
+                desc = str(_raw(name).get("description", ""))
+                assert len(desc) > 40, f"{name}: description is too thin to choose by"
 
-    def test_every_declared_input_is_documented(self, name: str) -> None:
+    def test_every_declared_input_is_documented(self, subtests) -> None:
         """An input with no `help` shows a bare field name in the run dialog, and the user has
         to read the spec to learn what it wants."""
-        for key, param in (_raw(name).get("inputs") or {}).items():
-            assert str(param.get("help", "")).strip(), f"{name}.{key} has no help text"
+        rows = sorted(EXPECTED)
+        assert len(rows) == 32 and set(rows) == set(
+            template_names()
+        ), "the bundled library changed: pin the new count in EXPECTED"
+        for name in rows:
+            with subtests.test(name=name):
+                for key, param in (_raw(name).get("inputs") or {}).items():
+                    assert str(param.get("help", "")).strip(), f"{name}.{key} has no help text"
 
-    def test_a_required_input_has_no_default(self, name: str) -> None:
+    def test_a_required_input_has_no_default(self, subtests) -> None:
         """Contradictory otherwise: a default means it can be omitted."""
-        for key, param in (_raw(name).get("inputs") or {}).items():
-            if param.get("required"):
-                assert param.get("default") in (None, ""), f"{name}.{key} is required AND defaulted"
+        rows = sorted(EXPECTED)
+        assert len(rows) == 32 and set(rows) == set(
+            template_names()
+        ), "the bundled library changed: pin the new count in EXPECTED"
+        for name in rows:
+            with subtests.test(name=name):
+                for key, param in (_raw(name).get("inputs") or {}).items():
+                    if param.get("required"):
+                        assert param.get("default") in (
+                            None,
+                            "",
+                        ), f"{name}.{key} is required AND defaulted"
 
-    def test_it_carries_steering_examples(self, name: str) -> None:
+    def test_it_carries_steering_examples(self, subtests) -> None:
         """Metadata the widget surfaces and `workflow_plan` uses as few-shot. A
         template with none is one a model has to guess how to drive."""
-        examples = _raw(name).get("metadata", {}).get("steering_examples") or []
-        assert examples, f"{name} has no steering_examples"
-        kinds = {e.get("event") for e in examples}
-        # Both a kickoff and a mid-flight example: the second is what teaches a model that
-        # editing a running workflow is a normal thing to do.
-        assert "kickoff" in kinds, f"{name} has no kickoff example"
-        assert "mutation" in kinds, f"{name} has no mid-flight mutation example"
+        rows = sorted(EXPECTED)
+        assert len(rows) == 32 and set(rows) == set(
+            template_names()
+        ), "the bundled library changed: pin the new count in EXPECTED"
+        for name in rows:
+            with subtests.test(name=name):
+                examples = _raw(name).get("metadata", {}).get("steering_examples") or []
+                assert examples, f"{name} has no steering_examples"
+                kinds = {e.get("event") for e in examples}
+                # Both a kickoff and a mid-flight example: the second is what teaches a model that
+                # editing a running workflow is a normal thing to do.
+                assert "kickoff" in kinds, f"{name} has no kickoff example"
+                assert "mutation" in kinds, f"{name} has no mid-flight mutation example"
 
-    def test_every_binding_reference_resolves_within_the_spec(self, name: str) -> None:
+    def test_every_binding_reference_resolves_within_the_spec(self, subtests) -> None:
         """A `{{nodes.x.output}}` naming a node that does not exist is a mid-run binding error —
         after the upstream nodes already spent their tokens. The validator checks this; this test
         exists so the failure is attributed to THIS template by name."""
-        result = validate_spec(_pipeline(_raw(name)), strict=True)
-        unknown = [i for i in result.issues if i.code == "WF_UNKNOWN_NODE_REF"]
-        assert not unknown, [i.to_dict() for i in unknown]
+        rows = sorted(EXPECTED)
+        assert len(rows) == 32 and set(rows) == set(
+            template_names()
+        ), "the bundled library changed: pin the new count in EXPECTED"
+        for name in rows:
+            with subtests.test(name=name):
+                result = validate_spec(_pipeline(_raw(name)), strict=True)
+                unknown = [i for i in result.issues if i.code == "WF_UNKNOWN_NODE_REF"]
+                assert not unknown, [i.to_dict() for i in unknown]
 
-    def test_every_action_node_names_a_registered_provider(self, name: str) -> None:
+    def test_every_action_node_names_a_registered_provider(self, subtests) -> None:
         """An unregistered provider fails at dispatch — typically after a `stage` above it has
         already done real work. `ALLOWED_HOOK_PROVIDERS` is the registered catalog's mirror."""
-        from personalclaw.validation import ALLOWED_HOOK_PROVIDERS
+        rows = sorted(EXPECTED)
+        assert len(rows) == 32 and set(rows) == set(
+            template_names()
+        ), "the bundled library changed: pin the new count in EXPECTED"
+        for name in rows:
+            with subtests.test(name=name):
+                from personalclaw.validation import ALLOWED_HOOK_PROVIDERS
 
-        root = Node.from_dict(_pipeline(_raw(name))["root"])
-        for path, node in walk(root):
-            if node.kind.value == "action":
-                provider = str((node.config or {}).get("provider", ""))
-                assert provider in ALLOWED_HOOK_PROVIDERS, f"{name} at {path}: {provider!r}"
+                root = Node.from_dict(_pipeline(_raw(name))["root"])
+                for path, node in walk(root):
+                    if node.kind.value == "action":
+                        provider = str((node.config or {}).get("provider", ""))
+                        assert provider in ALLOWED_HOOK_PROVIDERS, f"{name} at {path}: {provider!r}"
 
-    def test_a_high_risk_template_says_so(self, name: str) -> None:
+    def test_a_high_risk_template_says_so(self, subtests) -> None:
         """The Store shows `risk` as the install-consent surface. A template that writes files
         and runs commands while declaring `low` misrepresents what accepting it means."""
-        raw = _raw(name)
-        root = Node.from_dict(_pipeline(raw)["root"])
-        writes = any(
-            n.kind.value == "action" and str((n.config or {}).get("provider", "")) == "bash"
-            for _p, n in walk(root)
-        )
-        risk = str(raw.get("metadata", {}).get("risk", "low"))
-        if writes:
-            assert risk in ("medium", "high"), f"{name} runs commands but declares risk={risk}"
+        rows = sorted(EXPECTED)
+        assert len(rows) == 32 and set(rows) == set(
+            template_names()
+        ), "the bundled library changed: pin the new count in EXPECTED"
+        for name in rows:
+            with subtests.test(name=name):
+                raw = _raw(name)
+                root = Node.from_dict(_pipeline(raw)["root"])
+                writes = any(
+                    n.kind.value == "action" and str((n.config or {}).get("provider", "")) == "bash"
+                    for _p, n in walk(root)
+                )
+                risk = str(raw.get("metadata", {}).get("risk", "low"))
+                if writes:
+                    assert risk in (
+                        "medium",
+                        "high",
+                    ), f"{name} runs commands but declares risk={risk}"
 
 
 class TestConventions:
@@ -622,11 +693,16 @@ class TestEveryPipeCallParses:
         assert loaded is not None, f"{name} does not load"
         return loaded.to_dict()
 
-    @pytest.mark.parametrize("name", sorted(EXPECTED))
-    def test_every_pipe_call_parses(self, name: str) -> None:
-        issues = validate_spec(self._served(name), strict=True).issues
-        bad = [f"{i.path}: {i.message}" for i in issues if i.code in _PIPE_CODES]
-        assert not bad, f"{name} ships pipe calls resolution cannot evaluate: {bad}"
+    def test_every_pipe_call_parses(self, subtests) -> None:
+        rows = sorted(EXPECTED)
+        assert len(rows) == 32 and set(rows) == set(
+            template_names()
+        ), "the bundled library changed: pin the new count in EXPECTED"
+        for name in rows:
+            with subtests.test(name=name):
+                issues = validate_spec(self._served(name), strict=True).issues
+                bad = [f"{i.path}: {i.message}" for i in issues if i.code in _PIPE_CODES]
+                assert not bad, f"{name} ships pipe calls resolution cannot evaluate: {bad}"
 
     def test_the_rule_sees_the_library_s_pipe_calls(self) -> None:
         """The vacuity floor, below the measured 78/44/16 so ordinary edits do not red it."""

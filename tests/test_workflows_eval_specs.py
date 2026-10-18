@@ -13,8 +13,6 @@ Two findings measured here, both encoded as regressions:
   eval exists to check.
 """
 
-import pytest
-
 from personalclaw.workflows import bundled_defs
 from personalclaw.workflows.eval_specs import (
     FIXTURES_PER_TEMPLATE,
@@ -60,15 +58,20 @@ def test_the_walk_finds_nodes_inside_a_BRANCH():
     assert {"hit", "miss"} <= found
 
 
-@pytest.mark.parametrize("name", TEMPLATES)
-def test_the_walk_agrees_with_the_engine_about_every_shipped_template(name):
+def test_the_walk_agrees_with_the_engine_about_every_shipped_template(subtests):
     """The derivation reads the same tree the engine runs. A walk that saw fewer nodes would derive
     a benchmark for a template that does not exist."""
-    from personalclaw.workflows.models import Node, walk
+    rows = TEMPLATES
+    assert len(rows) == 32 and rows == sorted(
+        bundled_defs.template_names()
+    ), "the bundled library changed: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            from personalclaw.workflows.models import Node, walk
 
-    spec, _metadata = parts(name)
-    engine = walk(Node.from_dict(spec["root"]))
-    assert len(_walk(spec["root"])) == len(engine)
+            spec, _metadata = parts(name)
+            engine = walk(Node.from_dict(spec["root"]))
+            assert len(_walk(spec["root"])) == len(engine)
 
 
 def test_a_malformed_spec_walks_to_nothing_rather_than_raising():
@@ -124,22 +127,37 @@ def test_knowledge_health_is_genuinely_free():
 # ── fixtures come from the template's own matchable surface ──
 
 
-@pytest.mark.parametrize("name", TEMPLATES)
-def test_every_shipped_template_derives_at_least_one_fixture(name):
+def test_every_shipped_template_derives_at_least_one_fixture(subtests):
     """A benchmark that silently omitted a template would leave the newest one — the most likely to
     be wrong — untested while reporting a pass."""
-    assert spec_for(name).fixtures
+    rows = TEMPLATES
+    assert len(rows) == 32 and rows == sorted(
+        bundled_defs.template_names()
+    ), "the bundled library changed: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            assert spec_for(name).fixtures
 
 
-@pytest.mark.parametrize("name", TEMPLATES)
-def test_a_fixture_expects_its_OWN_template(name):
-    assert all(f.expected_template == name for f in spec_for(name).fixtures)
+def test_a_fixture_expects_its_OWN_template(subtests):
+    rows = TEMPLATES
+    assert len(rows) == 32 and rows == sorted(
+        bundled_defs.template_names()
+    ), "the bundled library changed: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            assert all(f.expected_template == name for f in spec_for(name).fixtures)
 
 
-@pytest.mark.parametrize("name", TEMPLATES)
-def test_fixtures_are_capped(name):
+def test_fixtures_are_capped(subtests):
     """This runs on every CI pass. A suite that costs minutes gets marked slow and then skipped."""
-    assert len(spec_for(name).fixtures) <= FIXTURES_PER_TEMPLATE
+    rows = TEMPLATES
+    assert len(rows) == 32 and rows == sorted(
+        bundled_defs.template_names()
+    ), "the bundled library changed: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            assert len(spec_for(name).fixtures) <= FIXTURES_PER_TEMPLATE
 
 
 def test_a_fixture_intent_is_built_from_keywords_a_user_would_TYPE():
@@ -163,16 +181,21 @@ def test_a_template_with_no_matchable_surface_still_enters_the_suite():
     assert derived.fixtures[0].intent == "lonely template"
 
 
-@pytest.mark.parametrize("name", TEMPLATES)
-def test_a_fixture_never_expects_a_parameter_the_TREE_does_not_read(name):
+def test_a_fixture_never_expects_a_parameter_the_TREE_does_not_read(subtests):
     """The mirror of a declared input nothing reads. A fixture asserting a phantom parameter
     would fail forever on a correct template, which trains a maintainer to loosen the assertion."""
-    from personalclaw.workflows.contracts import resolve_unfilled_inputs
+    rows = TEMPLATES
+    assert len(rows) == 32 and rows == sorted(
+        bundled_defs.template_names()
+    ), "the bundled library changed: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            from personalclaw.workflows.contracts import resolve_unfilled_inputs
 
-    spec, _metadata = parts(name)
-    readable = {p.name for p in resolve_unfilled_inputs(spec)}
-    for fixture in spec_for(name).fixtures:
-        assert set(fixture.expected_params) <= readable
+            spec, _metadata = parts(name)
+            readable = {p.name for p in resolve_unfilled_inputs(spec)}
+            for fixture in spec_for(name).fixtures:
+                assert set(fixture.expected_params) <= readable
 
 
 def test_expected_params_are_the_REQUIRED_subset():
@@ -231,9 +254,14 @@ def test_gates_are_asserted_to_SURVIVE_parameterization():
     assert any("gates survive" in c and "g" in c for c in checks)
 
 
-@pytest.mark.parametrize("name", TEMPLATES)
-def test_every_shipped_template_derives_structural_checks(name):
-    assert spec_for(name).structural_checks
+def test_every_shipped_template_derives_structural_checks(subtests):
+    rows = TEMPLATES
+    assert len(rows) == 32 and rows == sorted(
+        bundled_defs.template_names()
+    ), "the bundled library changed: pin the new count"
+    for name in rows:
+        with subtests.test(name=name):
+            assert spec_for(name).structural_checks
 
 
 # ── parameterization checks ──
