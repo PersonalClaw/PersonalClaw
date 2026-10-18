@@ -63,7 +63,7 @@ RUN NODE_OPTIONS=--max-old-space-size=4096 npm run build --workspace=web
 # nginx:1.27-alpine (1.27.5), as its multi-arch index. Platform manifests:
 #   linux/amd64 sha256:62223d644fa234c3a1cc785ee14242ec47a77364226f1c811d2f669f96dc2ac8
 #   linux/arm64 sha256:63ffc0d1f14e4082b832c6a42e606e9a0384a526f16ddd720af7c1f018f2f7c4
-FROM mirror.gcr.io/library/nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10 AS runtime
+FROM mirror.gcr.io/library/nginx:1.31-alpine@sha256:892bb2152464f0c5d8972593a5f5afaf8054552580b699d95f8ff4af08c2d33d AS runtime
 
 # Copy built SPA (vite outputs to web/dist under the workspace root)
 COPY --from=builder /app/web/dist /usr/share/nginx/html

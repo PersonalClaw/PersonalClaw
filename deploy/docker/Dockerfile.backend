@@ -6,7 +6,7 @@
 # Platform manifests:
 #   linux/amd64 sha256:8fb4cfa1a2616d7b8e0c2175cc6ad68f5729c34ea8488c0b360d2934b7be9024
 #   linux/arm64 sha256:cf97c3b79da1c706532c7042f851654d97d3b88c8ca6520acda9cf4479ea9b14
-FROM mirror.gcr.io/library/python:3.13.16-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f AS base
+FROM mirror.gcr.io/library/python:3.15.0-slim@sha256:2da676046630d7bf14c6764ae1143dc7fa0377a53f94bf5a642f0b214aca5bce AS base
 
 # ── Stage 1: install dependencies only (cached until pyproject.toml or uv.lock changes) ─
 FROM base AS deps
