@@ -909,6 +909,28 @@ async def test_the_driver_dispatches_a_real_located_mouse_event() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_press_whose_reply_was_discarded_is_still_released() -> None:
+    """🔴 Red before: a press whose reply came back across a frame's blank raised, the release
+    was never sent, and the page went on holding a mouse button down. The release follows, and
+    the press's own error is the one raised."""
+    from personalclaw.browse.cdp import PageReplyDiscarded
+
+    class _DiscardsThePress(_Transport):
+        async def send(self, method: str, params: dict | None = None) -> dict:
+            await super().send(method, params)
+            if (params or {}).get("type") == "mousePressed":
+                raise PageReplyDiscarded("Input.dispatchMouseEvent's reply was discarded")
+            return {}
+
+    transport = _DiscardsThePress()
+    with pytest.raises(PageReplyDiscarded):
+        await CdpPageDriver(transport).click_at(120.0, 340.0)
+
+    events = [p["type"] for m, p in transport.sent if m == DISPATCH_MOUSE_EVENT]
+    assert events == ["mouseMoved", "mousePressed", "mouseReleased"], events
+
+
+@pytest.mark.asyncio
 async def test_the_driver_reads_the_css_viewport() -> None:
     driver = CdpPageDriver(_Transport())
     assert await driver.viewport() == (1024.0, 768.0)

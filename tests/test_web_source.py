@@ -1736,6 +1736,9 @@ class _GatewaySocket:
     def set_event_listener(self, listener) -> None:
         return None
 
+    async def drain_events(self) -> None:
+        return None
+
     async def close(self) -> None:
         self.closed += 1
 

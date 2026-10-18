@@ -120,9 +120,14 @@ that does **not** buy:
 * **A fresh realm has a fresh, unguarded copy of everything.** A same-origin ``<iframe>`` is a
   new document, so whether it is guarded depends on the injection covering child frames.
   Measured on Chromium 1234 via raw CDP: ``addScriptToEvaluateOnNewDocument`` **does** run in
-  child frames, including ``srcdoc`` and ``about:blank`` ones, so ``frame.contentWindow.fetch``
-  is guarded — ``tests/test_browse_safety_script.py`` asserts this against a live browser so a
-  future engine change that silently reopens the hole reds CI rather than passing quietly.
+  child frames that share the page's process, including ``srcdoc`` and ``about:blank`` ones, so
+  ``frame.contentWindow.fetch`` is guarded — ``tests/test_browse_safety_script.py`` asserts this
+  against a live browser so a future engine change that silently reopens the hole reds CI rather
+  than passing quietly. A frame the browser runs in a process of its own is a separate target the
+  page's injection does not reach, and the browse session does not add the guard there:
+  ``tests/test_browse_cdp_live.py``'s ``l6`` case
+  (``test_a_dedicated_worker_runs_exactly_where_the_page_guard_does_not_reach``) asserts, on the
+  site-isolated browser, that such a frame runs without it.
 * A page can still detect the guard (a non-configurable ``fetch`` that always rejects is a
   giveaway, and ``toString()`` shows the source). Full stealth and a hard in-page policy
   guard are in tension by construction: stealth can hide the *automation*, not the *policy*. The

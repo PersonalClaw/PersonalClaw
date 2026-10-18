@@ -355,6 +355,8 @@ class _LoopState:
     submissions: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     recent: list[str] = field(default_factory=list)
+    #: How many of the session's frame blocks the run has been told of.
+    frame_blocks_seen: int = 0
     warned_stuck: str = ""
     #: The ref of a credential field the agent tried to fill. Set by :func:`_actuate` and
     #: read by the loop, which parks on it. A flag rather than a raised exception because the
@@ -514,11 +516,53 @@ async def _read_once(page: PageDriver, url: str) -> tuple[str, str]:
     return html, screen_url(await page.current_url() or url)
 
 
+#: How many blanked frames one step's prompt names; the rest are counted.
+_FRAME_WARNINGS_PER_STEP = 3
+
+
+def _note_frame_blocks(st: _LoopState, session: Any) -> None:
+    """Tell the run of each frame of its page that was blocked since it was last told, and what
+    was done about it: a control it is looking for may have lived in that frame. A refused
+    navigation is reported where it is refused, and is no frame.
+
+    Said as it happened (:attr:`~personalclaw.browse.cdp.NavigationOutcome.blanked`): the frame
+    blanked on its own, the whole page blanked when the frame's own blank failed, or a frame left
+    paused and never loaded, where nothing was blanked.
+
+    The first :data:`_FRAME_WARNINGS_PER_STEP` are named and the rest counted: each line sits
+    outside the page's fence and names a host the page chose, so a page that blocks frame after
+    frame must not grow the prompt with them."""
+    from personalclaw.browse.cdp import BLANKED_PAGE, LEFT_UNLOADED
+
+    blocks = list(getattr(session, "blocks", None) or ())
+    frames = [b for b in blocks if getattr(b, "frame", False) is True]
+    new = frames[st.frame_blocks_seen :]
+    for block in new[:_FRAME_WARNINGS_PER_STEP]:
+        host = screen_url(str(getattr(block, "host", "") or "")) or "this page"
+        reason = str(getattr(block, "reason", "") or "it is not allowed")
+        done = getattr(block, "blanked", "")
+        if done == BLANKED_PAGE:
+            what = "could not be blanked on its own, so the whole page was blanked"
+        elif done == LEFT_UNLOADED:
+            what = "was left unloaded"
+        else:
+            what = "was blanked"
+        st.warnings.append(f"a frame from {host} {what}: {reason}")
+    more = len(new) - _FRAME_WARNINGS_PER_STEP
+    if more > 0:
+        st.warnings.append(
+            f"{more} more frame{'s' if more > 1 else ''} of this page "
+            f"{'were' if more > 1 else 'was'} blocked"
+        )
+    st.frame_blocks_seen = len(frames)
+
+
 async def _read_page(page: PageDriver, url: str, session: Any) -> tuple[str, str]:
     """Read the page's HTML and its screened URL, once more when the first read's reply was
     discarded on a session that is still sound.
 
-    A reply is discarded when a denied redirect was torn down while it was in flight
+    A reply is discarded when a denied redirect was torn down, or a denied frame blanked after
+    its document loaded, while it was in flight
     (:class:`~personalclaw.browse.cdp.PageReplyDiscarded`). When that teardown succeeded the
     session is sound, and the second read waits for the teardown and reads the blanked page, so
     an ordinary blocked redirect does not end a healthy run. Only reads are sent again, never an
@@ -687,6 +731,7 @@ async def run_browse_loop(
                 blocked_urls=tuple(st.blocked),
             )
 
+        _note_frame_blocks(st, session)
         extraction = extract_page(html, url=url)
         try:
             screenshot = await page.screenshot()

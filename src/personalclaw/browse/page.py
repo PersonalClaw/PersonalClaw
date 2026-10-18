@@ -30,6 +30,7 @@ megabyte of context.
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import logging
 import re
@@ -242,9 +243,10 @@ class CdpPageDriver:
 
         "Located" in the same sense the desktop driver means it (``macos_ffi.click_located``): the
         event is delivered to THIS page target over the session's own socket, so it cannot land in
-        another tab or move anything the operator owns. There is no browse analogue of
-        ``click_global`` and there must never be one — a coordinate that could escape the page is a
-        different capability from driving a page.
+        another tab or move anything the operator owns. It lands in whatever frame of the page is
+        under the point, which is why a denied frame is blanked rather than left for it. There is
+        no browse analogue of ``click_global`` and there must never be one — a coordinate that
+        could escape the page is a different capability from driving a page.
 
         Refuses a non-finite or negative coordinate rather than posting it: CDP accepts an
         off-viewport point silently, so a scaling bug would become an event nobody can find.
@@ -255,22 +257,40 @@ class CdpPageDriver:
             if value != value or value in (float("inf"), float("-inf")) or value < 0:
                 raise PageActionError(f"a located click needs a finite, non-negative {name}")
         base = {"x": float(x), "y": float(y)}
-        for phase, button, buttons in (
-            ("mouseMoved", "none", 0),
-            ("mousePressed", "left", 1),
-            ("mouseReleased", "left", 0),
-        ):
-            params = {**base, "type": phase, "button": button, "buttons": buttons}
+
+        def event(phase: str, button: str, buttons: int) -> dict[str, Any]:
+            params: dict[str, Any] = {**base, "type": phase, "button": button, "buttons": buttons}
             if phase != "mouseMoved":
                 params["clickCount"] = 1
-            await self._transport.send(DISPATCH_MOUSE_EVENT, params)
+            return params
+
+        await self._transport.send(DISPATCH_MOUSE_EVENT, event("mouseMoved", "none", 0))
+        # The release follows a press that was sent, whatever its reply: a press whose reply was
+        # discarded (a frame of the page was blanked while it ran) still reached the page, and
+        # without the release the page would go on holding the button down. The press's own
+        # error is the one raised.
+        try:
+            await self._transport.send(DISPATCH_MOUSE_EVENT, event("mousePressed", "left", 1))
+        except BaseException:
+            with contextlib.suppress(Exception):
+                await self._transport.send(DISPATCH_MOUSE_EVENT, event("mouseReleased", "left", 0))
+            raise
+        await self._transport.send(DISPATCH_MOUSE_EVENT, event("mouseReleased", "left", 0))
 
     async def scroll(self, direction: str) -> None:
         delta = "-window.innerHeight" if str(direction).lower() == "up" else "window.innerHeight"
         await self._eval(f"window.scrollBy(0, {delta}); 'ok'")
 
     async def go_back(self) -> None:
-        await self._eval("history.back(); 'ok'")
+        """Go back one page, through the gated session, which judges each history entry before it
+        is loaded as it judges a navigation
+        (:meth:`~personalclaw.browse.cdp.GatedCdpSession.go_back`): to the latest earlier entry
+        whose address differs from the page's own and that the run may reach. Nothing is loaded
+        when there is no earlier page; when every earlier page is denied, nothing is loaded and
+        the action fails with why."""
+        outcome = await self._transport.go_back()
+        if not outcome.ok and not outcome.allowed:
+            raise PageActionError(f"GO_BACK: {outcome.reason}")
 
     # ── capture ──────────────────────────────────────────────────────────────
 

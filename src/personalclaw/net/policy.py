@@ -224,7 +224,11 @@ SYNC = EgressPolicy(
 # the browser to open, plus its redirect hops. Once the page is live, Chrome egresses on its own
 # for things we never evaluated:
 #   * subresources the document requests (img/script/link/xhr/fetch/EventSource/WebSocket),
-#   * cross-origin iframes and anything their scripts fetch,
+#   * a frame's own document request and what an allowed frame's scripts fetch. A denied frame
+#     is blanked once judged: before its document loads when it first moves into a process of
+#     its own, and only once its document has loaded otherwise (a frame in the page's own
+#     process, and a frame already in a process of its own that is navigated again, by itself or
+#     by its page, which the browser does not attach again),
 #   * ``window.open`` / ``target=_blank`` and JS/meta-refresh navigations that never round-trip
 #     through the CDP command we guard,
 #   * service workers and shared/dedicated workers, which outlive the navigation,
@@ -233,7 +237,8 @@ SYNC = EgressPolicy(
 # ``guard.evaluate`` sees them. The injected safety script (the other third) narrows the
 # in-page, same-context JavaScript surface — it runs in the document, so that is the part it can
 # reach. What remains OPEN after both halves land is the network-stack surface: subresource,
-# worker and cross-origin-iframe egress, which no in-page script can intercept. Closing that
+# worker and frame egress (a frame's document request, and an allowed frame's own fetches), which
+# no in-page script can intercept. Closing that
 # needs enforcement at a layer Chrome must traverse — ``Fetch.enable``/``Network`` request
 # interception, or a mandatory local proxy — and is deliberately NOT claimed by this change.
 BROWSE = EgressPolicy(
