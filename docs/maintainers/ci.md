@@ -228,12 +228,13 @@ runs whose history the collector wrote, red ones included and cancelled ones ski
 platform and worker count the leg's newest history recorded. It is the only source. Until the
 first collected `main` run there is no record, and the plan weighs every file the same and says
 so; that measured 1.29x on Linux and 1.33x on macOS on `main`'s run of d75e54a0, and lasts one
-plan per leg. Only history a run on `main` in this repository produced is read: a fork's run
-can upload an artifact of the same name. One run is not enough: a file's seconds swing with the runner it lands
-on (one file took 71-146 s over seven main runs), and replayed over those runs the median of
-three planned within 1.06x where one run planned up to 1.30x. Red runs count because their
-reports still time every file they ran; reading green runs only froze the source for as long as
-`main` was red.
+plan per leg. Only history the collector's own run uploaded is read: a `ci-telemetry.yml` run,
+on `workflow_run`, on `main`, in this repository, whose history's first line names the CI run it
+is read for. Any run, a fork's pull request included, can upload an artifact of the same name.
+One run is not enough: a file's seconds swing with the runner it lands on (one file took
+71-146 s over seven main runs), and replayed over those runs the median of three planned within
+1.06x where one run planned up to 1.30x. Red runs count because their reports still time every
+file they ran; reading green runs only froze the source for as long as `main` was red.
 
 What no plan can balance is the runner itself. Over the same seven runs, all of one shard's
 files together ran 0.66-1.52x their median on Linux and 0.70-1.95x on macOS, the whole
