@@ -48,12 +48,12 @@ let
 
   app = python.pkgs.buildPythonPackage {
     pname = "personalclaw";
-    version = "0.2.1";
+    version = "0.2.2";
     format = "wheel";
 
     src = fetchurl {
-      url = "https://files.pythonhosted.org/packages/eb/bf/c151e5151e184607a17083a2065d1b1b3d732ee1b63a1a1c637766fdbf49/personalclaw-0.2.1-py3-none-any.whl";
-      hash = "sha256-kfCU6wCXdxSlknETdRsT8Dt1WLa6pnMfybKtG2s8W7g=";
+      url = "https://files.pythonhosted.org/packages/d7/12/1ce240573b530e129d03d1d461929fc94a51356a3c1a9552f671dc686e70/personalclaw-0.2.2-py3-none-any.whl";
+      hash = "sha256-69gXSQYE8eKk+UfEoDrRirdSoNasmyIiusHManlK8QM=";
     };
 
     # `pysqlite3-binary` is not in nixpkgs, and it is an OPTIONAL ACCELERATOR, not a

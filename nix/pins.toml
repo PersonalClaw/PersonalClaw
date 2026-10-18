@@ -1,4 +1,4 @@
-# uv.lock's entries at v0.2.1, the release nix/personalclaw.nix packages, for the packages
+# uv.lock's entries at v0.2.2, the release nix/personalclaw.nix packages, for the packages
 # the Nix channel builds from the lock's own wheels instead of taking from nixpkgs (see
 # nix/python.nix). Written by scripts/nix_pins.py and checked against that tag by CI: to pin
 # another package, add it to PINS there and run `python3 scripts/nix_pins.py`.
