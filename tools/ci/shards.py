@@ -188,12 +188,13 @@ Identity = tuple[str | None, int | None]
 
 
 def history_seconds(
-    archive: bytes, leg: Leg, files: Sequence[str]
+    archive: bytes, leg: Leg, files: Sequence[str], *, run: int
 ) -> dict[Identity, dict[str, float]]:
     """Per-file first-attempt seconds of ``leg``'s reports in one history archive, by the
     platform and worker count the reports recorded, so seconds measured on one never weigh
     another. Read line by line, each line within :data:`MAX_HISTORY_LINE_BYTES` and the whole
-    within :data:`MAX_HISTORY_BYTES`; a history not in the one schema raises ``ValueError``."""
+    within :data:`MAX_HISTORY_BYTES`. A history not in the one schema, or whose run line
+    describes another run than ``run``, raises ``ValueError``."""
     modules = {f[: -len(".py")].replace("/", "."): f for f in files if f.endswith(".py")}
     grouped: dict[Identity, dict[str, float]] = {}
     budget = MAX_HISTORY_BYTES
@@ -222,6 +223,10 @@ def history_seconds(
                             or line.get("version") != telemetry.VERSION
                         ):
                             raise ValueError(f"{member.filename} is not in the one schema")
+                        if line.get("run_id") != run:
+                            raise ValueError(
+                                f"the history describes run {line.get('run_id')}, not run {run}"
+                            )
                         continue
                     if line.get("kind") != "test" or line.get("attempt") != 1:
                         continue
@@ -254,8 +259,9 @@ class TelemetryRecord:
     run's, and only the leg's own reports. The leg's platform and worker count are those its
     newest history recorded, and an older run counts only with the same ones: when a leg moves
     to another Python or another ``-n``, its plan reads the new figures from the first run that
-    recorded them. Only history a run on main in this repository produced is read: an artifact
-    of that name from a fork's run, on a branch the fork named main, is a candidate's. A run
+    recorded them. Only history the collector's own run uploaded (``ci-telemetry.yml``, on
+    ``workflow_run``, on main, in this repository) and whose run line names that CI run is read:
+    any run, a fork's pull request included, can upload an artifact of that name. A run
     with no such history, an archive over :data:`MAX_HISTORY_ARCHIVE_BYTES`, or a history the
     reader cannot read is skipped, and an unreadable one is named in the job's log. Each history
     is downloaded once, whatever number of legs read it. Nothing is written or kept."""
@@ -272,6 +278,25 @@ class TelemetryRecord:
             self._archives[run] = self._download(run)
         return self._archives[run]
 
+    def _is_collector(self, uploader: object) -> bool:
+        """Whether the run that uploaded an artifact is the collector's own: a
+        ``ci-telemetry.yml`` run triggered by ``workflow_run``, on main, in this repository.
+
+        An artifact names the run that uploaded it, and the collector uploads each CI run's
+        history from a run of its own, so that run, never the CI run, is what is checked. Any
+        run can upload an artifact of any name; only the collector's is the record."""
+        if not isinstance(uploader, int):
+            return False
+        run = json.loads(self.text("api", f"repos/{self.repo}/actions/runs/{uploader}"))
+        head = run.get("head_repository") or {}
+        return (
+            run.get("path") == telemetry.COLLECTOR_PATH
+            and run.get("event") == "workflow_run"
+            and run.get("head_branch") == "main"
+            and isinstance(head, Mapping)
+            and head.get("full_name") == self.repo
+        )
+
     def _download(self, run: int) -> bytes | None:
         name = HISTORY_ARTIFACT.format(run=run, attempt=1)
         listed = json.loads(
@@ -282,9 +307,9 @@ class TelemetryRecord:
             made_by = artifact.get("workflow_run") or {}
             if (
                 artifact.get("expired")
-                or made_by.get("id") != run
                 or made_by.get("head_branch") != "main"
                 or made_by.get("head_repository_id") != made_by.get("repository_id")
+                or not self._is_collector(made_by.get("id"))
             ):
                 continue
             found.append((int(artifact["id"]), int(artifact.get("size_in_bytes") or 0)))
@@ -307,7 +332,7 @@ class TelemetryRecord:
         if archive is None:
             return None
         try:
-            grouped = history_seconds(archive, leg, files)
+            grouped = history_seconds(archive, leg, files, run=run)
         except (
             zipfile.BadZipFile,
             zlib.error,

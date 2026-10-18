@@ -193,14 +193,31 @@ def _history(run: int, *tests: tuple, schema: str = telemetry.SCHEMA) -> bytes:
     return _zip(f"history-{run}-1.jsonl", _jsonl(run, *tests, schema=schema))
 
 
+def _producer_of(run: int) -> int:
+    """The collector run that uploads run ``run``'s history: on GitHub an artifact names the run
+    that uploaded it, which is the ``ci-telemetry.yml`` run, never the CI run it describes."""
+    return run * 100 + 1
+
+
+#: The uploading run, as ``actions/runs/<id>`` reports it.
+COLLECTOR_RUN = {
+    "path": telemetry.COLLECTOR_PATH,
+    "event": "workflow_run",
+    "head_branch": "main",
+    "head_repository": {"full_name": "o/r"},
+}
+
+
 class _Gh:
-    """``gh`` as the record calls it: main's completed runs, and each run's attempt-1 history
-    artifact, listed by name the way the API lists it, with the run that made it."""
+    """``gh`` as the record calls it: main's completed runs, each run's attempt-1 history
+    artifact listed by name the way the API lists it, with the run that uploaded it, and that
+    uploading run. As on GitHub, the uploader is the collector's own run, not the CI run."""
 
     def __init__(self, histories: dict[int, bytes | None] | None = None) -> None:
         self.histories: dict[int, bytes | None] = histories or {}
         self.sizes: dict[int, int] = {}
         self.made_by: dict[int, dict] = {}
+        self.producers: dict[int, dict] = {}
         self.owners: dict[int, str] = {}
         self.conclusions: dict[int, str] = {}
         self.asked: list[str] = []
@@ -218,13 +235,20 @@ class _Gh:
                 f"{r} {self.conclusions.get(r, 'success')} {self.owners.get(r, 'o/r')}"
                 for r in sorted(self.histories, reverse=True)
             )
+        if "/actions/runs/" in path and "?" not in path:
+            producer = int(path.rsplit("/", 1)[1])
+            known = {_producer_of(r) for r in self.histories}
+            # Any other id is some other workflow's run: a pull request's CI run, say.
+            other = dict(COLLECTOR_RUN, path=telemetry.CI_PATH, event="pull_request")
+            uploaded = dict(COLLECTOR_RUN if producer in known else other)
+            return json.dumps(dict(uploaded, **self.producers.get(producer, {}), id=producer))
         if "/actions/artifacts?name=" in path:
             _, _, run_text, attempt = path.split("name=")[1].split("&")[0].split("-")
             run = int(run_text)
             data = self.histories.get(run)
             if data is None or attempt != "1":
                 return json.dumps({"artifacts": []})
-            made = {"id": run, "head_branch": "main", "head_repository_id": REPO_ID}
+            made = {"id": _producer_of(run), "head_branch": "main", "head_repository_id": REPO_ID}
             made["repository_id"] = REPO_ID
             artifact = {
                 "id": run * 10,
@@ -631,6 +655,35 @@ def test_a_history_of_that_name_another_run_made_is_never_downloaded(made_by: di
     durations, said = _record(gh).durations(LEG, FILES)
     assert durations == {} and "every file weighs the same" in said
     assert gh.downloads == []
+
+
+@pytest.mark.parametrize(
+    "producer",
+    [
+        {"event": "pull_request"},
+        {"path": telemetry.CI_PATH},
+        {"head_branch": "feature-x"},
+        {"head_repository": {"full_name": "someone/fork"}},
+    ],
+    ids=["a pull request's run", "another workflow", "another branch", "a fork's run"],
+)
+def test_only_the_collectors_own_upload_is_read(producer: dict) -> None:
+    """A history is read only when the run that uploaded it is the collector: a
+    ``ci-telemetry.yml`` run, triggered by ``workflow_run``, on main, in this repository."""
+    gh = _Gh({50: _history(50, ("junit-test-shard-1", "tests.test_a::t", 2.0))})
+    gh.producers[_producer_of(50)] = producer
+    durations, said = _record(gh).durations(LEG, FILES)
+    assert durations == {} and "every file weighs the same" in said
+    assert gh.downloads == []
+
+
+def test_a_history_whose_run_line_names_another_run_is_skipped(capsys) -> None:
+    """The collector writes the CI run's id in the history's first line; a history uploaded
+    under run 50's name that describes run 40 is not run 50's."""
+    gh = _Gh({50: _history(40, ("junit-test-shard-1", "tests.test_a::t", 2.0))})
+    durations, _ = _record(gh).durations(LEG, FILES)
+    assert durations == {}
+    assert "describes run 40, not run 50" in capsys.readouterr().out
 
 
 def test_a_forks_run_listed_under_main_is_skipped() -> None:

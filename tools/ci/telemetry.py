@@ -108,6 +108,8 @@ WORKFLOWS = ".github/workflows"
 #: The two workflows whose runs are collected, by the ``path`` the API reports for a run.
 CI_PATH = f"{WORKFLOWS}/ci.yml"
 BREADTH_PATH = f"{WORKFLOWS}/breadth.yml"
+#: The collector's own workflow: the run that uploads each history, which a reader checks.
+COLLECTOR_PATH = f"{WORKFLOWS}/ci-telemetry.yml"
 
 #: The workflows whose runs are collected, and the events that count for each.
 COUNTED = {

@@ -35,7 +35,7 @@ def test_its_crons_are_the_ones_the_workflows_name() -> None:
 
 import yaml  # noqa: E402
 
-_COLLECTOR = _WORKFLOWS / "ci-telemetry.yml"
+_COLLECTOR = REPO / telemetry.COLLECTOR_PATH
 
 
 def _collector() -> dict:
@@ -120,3 +120,14 @@ def test_the_collector_holds_no_write() -> None:
     wf = _collector()
     assert wf["permissions"] == {"contents": "read", "actions": "read"}
     assert all("permissions" not in job for job in wf["jobs"].values())
+
+
+def test_the_collector_path_names_the_workflow_that_uploads_the_history() -> None:
+    """The shard planner reads a history only when its uploader ran this workflow."""
+    assert _COLLECTOR.is_file()
+    uploads = [
+        step
+        for step in _collector()["jobs"]["collect"]["steps"]
+        if str(step.get("uses", "")).startswith("actions/upload-artifact@")
+    ]
+    assert len(uploads) == 1
