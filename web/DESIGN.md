@@ -172,6 +172,7 @@ A restrained dark neutral ramp with a single committed coral accent and a warm g
 - **Surface ramp** (#131314 → #1b1b1b → #1e1f20 → #282a2c → #333537): elevation by tone, not shadow. Panels, cards, hover fills, and the highest tier for pressed/selected chrome.
 - **Ink** (#e3e3e3): primary text. **Ink Variant** (#c4c7c5): secondary text and idle icons. **Ink Low** (#9a9b9c): metadata only, never body copy.
 - **Outline Variant** (#444746): hairline dividers and input strokes; full-strength outline (#8e918f) is reserved for focus/emphasis.
+- **Buddy Body** (`--color-buddy-body`, and `buddy-body` in the front matter): the desktop buddy's body at rest, a warm neutral where every surface above is a cool grey, with one value for light and one for dark. The name is set here, and the two values come with the buddy's character, which the maintainer chooses at the buddy's first gate ([#3830](https://github.com/PersonalClaw/PersonalClaw/issues/3830)): that task adds them under this name to the front matter, `tokens.css` and the token registry, checked for contrast against both canvases ([`docs/design/buddy/character.md`](../docs/design/buddy/character.md#the-choice)).
 
 ### Semantic
 - **OK Green** (#0ebc5f), **Warn Orange** (#ff8d41), **Danger Red** (#f55e57), **Info Blue** (#4e8ff8) — status pills, alerts, destructive actions. Aliased as success/warning/error; never used decoratively.
@@ -179,6 +180,8 @@ A restrained dark neutral ramp with a single committed coral accent and a warm g
 ### Named Rules
 **The One Voice Rule.** Coral is the only accent allowed to mean "the agent" — selection, focus, primary action, live activity. If coral appears where nothing is active, actionable, or alive, remove it.
 **The Tone-Not-Line Rule.** Depth and grouping come from the surface ramp; borders are 1px hairlines (#444746) or nothing. Never a colored side-stripe.
+
+The desktop buddy keeps the One Voice Rule and the Glow-Is-Alive Rule (§4): its body takes coral only while an agent is alive, and the semantic colours reach it only as a badge or a wash, never as its whole body ([`docs/design/buddy/character.md`](../docs/design/buddy/character.md#constraints)).
 
 ## 3. Typography
 
@@ -248,6 +251,7 @@ Controls are pill-shaped, tonal, and springy; every interactive component has de
 ### Motion (component-level doctrine)
 - **Spatial springs** (stiffness 200–800, visible overshoot) for position/scale; **effects curve** (0.2s, `cubic-bezier(0.2,0,0,1)`, critically damped) for opacity/color.
 - **Four named presets — `physics.snappy` / `smooth` / `fluid` / `playful`** — are the whole spring vocabulary; `playful` marks the ~3–4 sanctioned personality moments (menu open, success bloom). All four interpolate toward calm via the user's bounciness setting and all four collapse to an instant swap under reduced motion. Full author guide, including the budget and the gesture helpers: [`docs/design/motion.md`](../docs/design/motion.md).
+- **Later work, with the buddy's play layer** ([#3894](https://github.com/PersonalClaw/PersonalClaw/issues/3894)): the desktop buddy's gaze follow becomes a sanctioned personality moment. It moves on `gaze`, the one spring the buddy adds, minted in `motion.ts` beside the four presets and following the bounciness dial and reduced motion as they do ([`docs/design/motion.md` §9](../docs/design/motion.md#9-the-desktop-buddys-timings)).
 
 ## 6. Do's and Don'ts
 

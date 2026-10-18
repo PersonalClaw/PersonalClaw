@@ -24,8 +24,7 @@ imitates another product, and none brings in another product's assets, code or t
 - [`docs/design/information-architecture.md`](../docs/design/information-architecture.md) owns
   navigation, screen layouts and where each indicator lives.
 - [`docs/design/agent-orb.md`](../docs/design/agent-orb.md) owns the agent orb.
-- `docs/design/buddy/` owns the desktop buddy, written by
-  [#3886](https://github.com/PersonalClaw/PersonalClaw/issues/3886).
+- [`docs/design/buddy/`](../docs/design/buddy/README.md) owns the desktop buddy.
 
 ## 2. Review skills, and on what
 
@@ -233,8 +232,7 @@ desktop app already take.
 - Sound is off by default.
 - No other product's character, name, icon or sounds.
 
-Everything else is in `docs/design/buddy/`
-([#3886](https://github.com/PersonalClaw/PersonalClaw/issues/3886)).
+Everything else is in [`docs/design/buddy/`](../docs/design/buddy/README.md).
 
 ## 8. Definition of done for a UI PR
 
