@@ -18,6 +18,8 @@ patch core module paths (they run in the dev tree, not as an installed app).
 from __future__ import annotations
 
 import ast
+import subprocess
+import sys
 from pathlib import Path
 
 import app_roots
@@ -32,6 +34,23 @@ from app_roots import _app_roots, _holds_app_bundles, _sibling_apps_root
 #: branches' worktrees** — so this rail's verdict was a function of other people's uncommitted
 #: work, and a violation in scratch state reded a branch that had never opened the file.
 _NOT_APP_SOURCE = frozenset({"__pycache__", ".venv", "node_modules", ".worktrees", ".git"})
+
+
+def _tracked_sources(root: Path) -> list[Path]:
+    """The ``.py`` files git tracks under an apps checkout, so another lane's untracked or
+    ignored files there (a scratch probe, a build output) are never read as app source.
+
+    A root that is not inside a git checkout (a plain folder named by the environment) has
+    nothing to ask, so all of it is read."""
+    listed = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-z", "--cached", "--", "*.py"],
+        capture_output=True,
+        text=True,
+    )
+    if listed.returncode != 0:
+        return sorted(root.rglob("*.py"))
+    files = (root / name for name in listed.stdout.split("\0") if name)
+    return sorted(f for f in files if f.is_file())
 
 
 def _app_source_files() -> list[tuple[Path, Path]]:
@@ -52,7 +71,7 @@ def _app_source_files() -> list[tuple[Path, Path]]:
         if root.resolve().is_relative_to(package):
             files = source_index.under(source_index.package_files(), root.resolve())
         else:
-            files = sorted(root.rglob("*.py"))
+            files = _tracked_sources(root)
         for p in files:
             if _NOT_APP_SOURCE & set(p.relative_to(root).parts):
                 continue
@@ -180,3 +199,44 @@ def test_each_app_file_sdk_clean(app_file):
     """Per-file view (so a failure names the exact app file)."""
     bad = _offending_imports(Path(app_file))
     assert not bad, f"{app_file} imports non-SDK core: {sorted(set(bad))}"
+
+
+def _apps_checkout(tmp_path: Path, tracked_import: str) -> Path:
+    """A sibling apps checkout: one app whose tracked file imports *tracked_import*, and an
+    untracked probe under ``.local/scratch/`` that reaches into core, as a lane's probe does."""
+    apps = tmp_path / "ws" / "PersonalClawApps"
+    (apps / "demo-app").mkdir(parents=True)
+    (apps / "demo-app" / "app.json").write_text("{}", encoding="utf-8")
+    (apps / "demo-app" / "main.py").write_text(f"import {tracked_import}\n", encoding="utf-8")
+    probe = apps / ".local" / "scratch" / "probe"
+    probe.mkdir(parents=True)
+    (probe / "probe.py").write_text("import personalclaw.gateway\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(apps)], check=True)
+    subprocess.run(["git", "-C", str(apps), "add", "demo-app"], check=True)
+    return apps
+
+
+def _violations(monkeypatch, apps: Path) -> list[str]:
+    monkeypatch.setattr(sys.modules[__name__], "_app_roots", lambda: [apps])
+    return [str(f.relative_to(apps)) for _root, f in _app_source_files() if _offending_imports(f)]
+
+
+def test_an_untracked_probe_in_the_apps_checkout_is_not_app_source(tmp_path, monkeypatch):
+    """Another lane's scratch probe is not app source: only the files git tracks there are."""
+    apps = _apps_checkout(tmp_path, "personalclaw.sdk")
+    assert _violations(monkeypatch, apps) == []
+
+
+def test_a_tracked_app_file_that_imports_core_internals_still_fails(tmp_path, monkeypatch):
+    apps = _apps_checkout(tmp_path, "personalclaw.gateway")
+    assert _violations(monkeypatch, apps) == ["demo-app/main.py"]
+
+
+def test_an_apps_folder_outside_any_git_checkout_is_read_whole(tmp_path, monkeypatch):
+    """A folder the environment names need not be a checkout; then every file in it is read."""
+    apps = tmp_path / "plain-apps"
+    (apps / "demo-app").mkdir(parents=True)
+    (apps / "demo-app" / "app.json").write_text("{}", encoding="utf-8")
+    (apps / "demo-app" / "main.py").write_text("import personalclaw.gateway\n", encoding="utf-8")
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    assert _violations(monkeypatch, apps) == ["demo-app/main.py"]
