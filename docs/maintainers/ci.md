@@ -100,6 +100,39 @@ id is accepted, and a shallow clone refuses, because it cannot show ancestry.
 Until the catalogue lands, these rows run in the candidate's own suite, so a candidate could
 delete one. Its validator then runs the table from the default branch.
 
+## The verdict
+
+`tools/ci/verdict.py` is the one function that turns a plan's job results into green or red. It
+is green only when the plan is not empty, every planned job has a result, every result for it on
+every attempt is `success`, and every result names the candidate's head and partner revisions.
+Each of these reads red, with a reason naming the job:
+
+- a planned job with no result, or one that was cancelled, skipped or failed;
+- a result word GitHub does not use;
+- a result with no head, or for an older head, or for an older head of a partner repository;
+- a red on an earlier attempt, even when a rerun went green;
+- an empty plan;
+- a job outside the plan that failed, was cancelled or gave a result word GitHub does not use,
+  on any attempt. One outside the plan that was skipped or passed changes nothing.
+
+It reads GitHub's `toJSON(needs)` and refuses any other shape: each job is named once, holding
+exactly `result` and `outputs`. JSON keeps only the last of a repeated key, so a job's failure
+followed by its success would otherwise read green. `needs` holds each job's latest attempt
+only, so the command cannot see a red on an earlier attempt; the controller will read attempts
+from the API. The head it stamps on a pull request's results is the pull request's head, never
+`github.sha`, which is the test-merge commit.
+
+`python -m tools.ci verdict`, or `python3 -I tools/ci/verdict.py` from a trusted job's checkout of
+the default branch, exits 0 green, 1 red and 2 on input it cannot read. Any usage error is input
+it cannot read: there is no `-h`, because a help page would exit 0 having judged nothing, and an
+option given twice is refused rather than the last one winning. It appends its reasons, or why
+it could not read its input, to the step summary.
+
+Nothing calls it yet. The results stage of each candidate workflow and the default branch's
+controller will, so a candidate and its judge read the same results the same way.
+`tests/test_ci_verdict.py` holds every red to a row, every refusal to a row naming its reason,
+and a green plan to a control.
+
 ## A push to main, and the nightly breadth
 
 ### The tested tree
