@@ -247,11 +247,32 @@ def _verify_panel(node: dict[str, Any]) -> dict[str, Any]:
 
     `pipeline: true` so item 3 verifies while item 1 is still going: the items are independent
     and a barrier here would waste the difference between the fastest and slowest.
+
+    ONE finding per verifier. `findings` must name a LIST: the fan-out runs one refuter per entry,
+    and a value that is not a list (an object of lists, say) is one item, judged whole by a single
+    verifier.
+
+    Each item's output is the finding with its verdict on it, `refuted` and `refute_reason`: a
+    `_seed` step holds the finding marked `refuted: null` ("no usable verdict"), and the refuter's
+    answer is layered over it as the item's output (`node_bindings.subtree_output`). The refuter
+    may fail without failing the item (`allow_failure`): a verifier that errored, timed out or
+    answered outside its schema is not evidence the finding is fake, so the finding is KEPT, still
+    `refuted: null`. `_confirmed` drops only an explicit `refuted: true`, reading the fan-out's own
+    output, the list of every item's result:
+
+    * `kept` — every finding not refuted: the survivors and the unverified, each marked;
+    * `survived` — the ones a verifier ruled on and did not refute;
+    * `unverified` — the ones no verifier ruled on.
+
+    `context` is what the findings are about (the code, the document): appended to every
+    refuter's prompt, because a verifier that cannot see the target can only guess.
     """
     mid = _id_of(node, "verify_panel")
     findings = _need(node, "findings", "verify_panel")
     tier = _tier(node, "standard")
-    extra = str((node.get("config") or {}).get("guidance", "") or "")
+    cfg = node.get("config") or {}
+    extra = str(cfg.get("guidance", "") or "")
+    context = str(cfg.get("context", "") or "")
 
     return {
         "kind": "sequence",
@@ -263,32 +284,51 @@ def _verify_panel(node: dict[str, Any]) -> dict[str, Any]:
                 "config": {
                     "items": findings,
                     "pipeline": True,
-                    # A verifier that errors is not evidence the finding is fake, so the item
-                    # is skipped rather than sinking the whole sweep.
+                    # An item whose seed itself failed has no finding to keep: skipped, counted on
+                    # the fan-out's caption, never sinking the whole sweep.
                     "on_item_error": "skip",
                 },
                 "body": {
-                    "kind": "infer",
-                    "id": f"{mid}_refute",
-                    "config": {
-                        "model_tier": tier,
-                        "prompt": (
-                            "Try to REFUTE this finding. Look for reasons it is wrong, already "
-                            "handled, or not reachable in practice. Default to refuted=true "
-                            "when you are uncertain — a finding that survives a genuine attempt "
-                            "to disprove it is worth acting on; one that merely sounds "
-                            "plausible is not."
-                            + (f"\n\n{extra}" if extra else "")
-                            + '\n\nReturn JSON: {"refuted": bool, "reason": "why", '
-                            '"severity": "Critical|Major|Minor|Nit"}.'
-                            "\n\nFinding:\n{{item}}"
-                        ),
-                        "schema": {
-                            "refuted": "boolean",
-                            "reason": "string",
-                            "severity": "string",
+                    "kind": "sequence",
+                    "id": f"{mid}_one",
+                    "children": [
+                        {
+                            "kind": "transform",
+                            "id": f"{mid}_seed",
+                            "config": {
+                                "expr": (
+                                    "{{item | tag('refuted', null) | tag('refute_reason', "
+                                    "'no usable verdict: the verifier did not rule')}}"
+                                )
+                            },
                         },
-                    },
+                        {
+                            "kind": "infer",
+                            "id": f"{mid}_refute",
+                            "config": {
+                                "model_tier": tier,
+                                # Its failure leaves the finding as the seed has it: unverified.
+                                "allow_failure": True,
+                                "prompt": (
+                                    "Try to REFUTE this finding. Look for reasons it is wrong, "
+                                    "already handled, or not reachable in practice. Default to "
+                                    "refuted=true when you are uncertain — a finding that "
+                                    "survives a genuine attempt to disprove it is worth acting "
+                                    "on; one that merely sounds plausible is not."
+                                    + (f"\n\n{extra}" if extra else "")
+                                    + '\n\nReturn JSON: {"refuted": bool, '
+                                    '"refute_reason": "why"}.'
+                                    "\n\nFinding:\n{{item}}"
+                                    + (
+                                        f"\n\nWhat the finding is about:\n{context}"
+                                        if context
+                                        else ""
+                                    )
+                                ),
+                                "schema": {"refuted": "boolean", "refute_reason": "string"},
+                            },
+                        },
+                    ],
                 },
             },
             {
@@ -296,8 +336,13 @@ def _verify_panel(node: dict[str, Any]) -> dict[str, Any]:
                 "id": f"{mid}_confirmed",
                 "config": {
                     "expr": {
-                        "verdicts": f"{{{{nodes.{mid}_refute.output}}}}",
-                        "source_findings": findings,
+                        "kept": f"{{{{nodes.{mid}_verify.output | reject('refuted', true)}}}}",
+                        "survived": (
+                            f"{{{{nodes.{mid}_verify.output | filter('refuted', false)}}}}"
+                        ),
+                        "unverified": (
+                            f"{{{{nodes.{mid}_verify.output | filter('refuted', null)}}}}"
+                        ),
                     }
                 },
             },

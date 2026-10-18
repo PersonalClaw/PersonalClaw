@@ -255,9 +255,9 @@ WF_ERROR_CODES: dict[str, str] = {
         "right tool for ordering that is not dataflow."
     ),
     "WF_UNSATISFIABLE_OUTPUT_REF": (
-        "A node reads `{{nodes.<id>...}}` that cannot resolve: `<id>` is a sequence, parallel "
-        "or foreach, which records no output of its own, or the key read under "
-        "`{{nodes.<id>.output.<key>}}` is not one the producer's "
+        "A node reads `{{nodes.<id>...}}` that cannot resolve: `<id>` is a sequence or parallel, "
+        "which records no output of its own, or a foreach read by a field of its list, or the "
+        "key read under `{{nodes.<id>.output.<key>}}` is not one the producer's "
         "`output_contract.required_keys` guarantees, or `<id>` is a branch and the read names a "
         "field beside its `case` and `produced`, or one under `produced` that a case it can take "
         "does not produce, so the read fails whenever that case is taken."

@@ -153,6 +153,7 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
     # this cycle's last step just finished has no tick behind it yet to record what that case
     # produced, so it is recorded first, and the cycle reads it as the next step would.
     node_bindings.record_branch_outputs(ctl)
+    node_bindings.record_foreach_outputs(ctl)
     layered, _ = node_bindings.iteration_output(ctl, parent_path, iteration)
     # A loop inside a fan-out item tests its condition on that item's own outputs.
     ctx = node_bindings.item_context(

@@ -195,7 +195,16 @@ case). A step reading a branch consumes every step inside its cases, so rewindin
 them re-runs the reader. Until a branch carried what its case produced, deep-research
 swept with `{"case": "survey"}` where its angles, breadth and depth belonged, and
 produce-and-audit produced from `{"case": "standard"}` as everything it had gathered.
-A `sequence`, `parallel` or `foreach`
+A `foreach` that ends in success records the list of what each of its items produced,
+in item order, each item's output read the way a loop's cycle is
+(`node_bindings.record_foreach_outputs`), stored with its instance so a resumed run
+reads it back: a step after it reads `{{nodes.<foreach>.output}}`. An item that failed
+or was skipped is left out, and the fan-out's own row says how many and why
+(`degraded_reason`). The list is skipped where a subtree is layered, since each item's
+steps already count there. Validation refuses a field read of it
+(`{{nodes.<foreach>.output.title}}`), which names `| map('title')`. The body's own step
+id still names one item, the last to finish.
+A `sequence` or `parallel`
 records nothing of its own, so validation refuses a read of one when the spec is saved
 (`WF_UNSATISFIABLE_OUTPUT_REF`): read the step inside it whose output you need. A loop
 that should carry a running account across its cycles has each cycle return it, built

@@ -115,9 +115,11 @@
           "id": "collected",
           "config": {
             "expr": {
-              "correctness": "{{nodes.find_correctness.output.findings}}",
-              "safety": "{{nodes.find_safety.output.findings}}",
-              "clarity": "{{nodes.find_clarity.output.findings}}"
+              "findings": [
+                "{{nodes.find_correctness.output.findings | tag('lens', 'correctness')}}",
+                "{{nodes.find_safety.output.findings | tag('lens', 'safety')}}",
+                "{{nodes.find_clarity.output.findings | tag('lens', 'clarity')}}"
+              ]
             }
           }
         },
@@ -125,7 +127,8 @@
           "macro": "verify_panel",
           "id": "verify",
           "config": {
-            "findings": "{{nodes.collected.output}}",
+            "findings": "{{nodes.collected.output.findings | flatten}}",
+            "context": "{{inputs.target}}",
             "guidance": "The finders were asked to be thorough, which makes some of these plausible rather than real. Refute the ones that are."
           }
         },
@@ -140,7 +143,7 @@
               "kind": "stage",
               "id": "apply_fixes",
               "config": {
-                "prompt": "Fix the CONFIRMED findings below — the ones that survived refutation. Leave the refuted ones alone.\n\nFix the cause, not the symptom, and stop if a fix would need a decision you cannot make; a half-applied fix is worse than a reported finding.\n\nTarget:\n{{inputs.target}}\n\nConfirmed:\n{{nodes.verify_confirmed.output}}"
+                "prompt": "Fix the findings below — the ones no verifier refuted. Each carries its verdict: `refuted: false` survived a verifier's attempt to disprove it; `refuted: null` was never ruled on, so check it against the target yourself before you change anything for it.\n\nFix the cause, not the symptom, and stop if a fix would need a decision you cannot make; a half-applied fix is worse than a reported finding.\n\nTarget:\n{{inputs.target}}\n\nFindings to fix:\n{{nodes.verify_confirmed.output.kept}}"
               }
             }
           },
@@ -160,7 +163,7 @@
           "id": "completeness_critic",
           "config": {
             "model_tier": "reasoning",
-            "prompt": "What did this round MISS? An angle not swept, a claim not verified, a part of the target never read. Return an empty list when the round genuinely covered everything — that is what stops the loop.\n\nReturn JSON: {\"new_findings\": [\"…\"], \"uncovered\": [\"…\"]}.\n\nTarget:\n{{inputs.target}}\n\nThis round:\n{{nodes.verify_confirmed.output}}",
+            "prompt": "What did this round MISS? An angle not swept, a claim not verified, a part of the target never read. Return an empty list when the round genuinely covered everything — that is what stops the loop.\n\nReturn JSON: {\"new_findings\": [\"…\"], \"uncovered\": [\"…\"]}.\n\nTarget:\n{{inputs.target}}\n\nThis round's findings, none of them refuted:\n{{nodes.verify_confirmed.output.kept}}",
             "schema": {
               "new_findings": "array",
               "uncovered": "array"

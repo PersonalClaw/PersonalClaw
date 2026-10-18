@@ -1200,14 +1200,16 @@ def _validate_dep_ordering(res: ValidationResult, edges: list[DepEdge]) -> None:
 def _validate_recorded_outputs(
     res: ValidationResult, tree: dict[str, Node], edges: list[DepEdge]
 ) -> set[DepEdge]:
-    """Refuse a binding that reads a node which records no output (`models.NO_OUTPUT_KINDS`).
+    """Refuse a binding that reads a node which records no output (`models.NO_OUTPUT_KINDS`), and a
+    field read of a fan-out, whose output is a list.
 
-    A `sequence`, `parallel` or `foreach` runs the steps inside it and has no output of its own,
+    A `sequence` or `parallel` runs the steps inside it and has no output of its own,
     so a `{{nodes.<id>…}}` naming one can never resolve: the reader met "unresolved reference"
     mid-run, after everything before it had spent its tokens. The kinds come from the one
     definition the engine records outputs by, so a read this accepts is one a run can resolve: a
-    `loop` records its last cycle's output and a `branch` its routing and what its taken case
-    produced (which fields a read may name is `_validate_branch_reads`'). This used to accept a read
+    `loop` records its last cycle's output, a `branch` its routing and what its taken case
+    produced (which fields a read may name is `_validate_branch_reads`'), and a `foreach` the list
+    of what its items produced. This used to accept a read
     of any node while the engine recorded no loop's output, so three bundled templates failed at
     the step after their loop. Refused under the code an unresolvable read already carries, and
     returned so the ordering rule does not also advise moving a producer that will never produce
@@ -1218,10 +1220,29 @@ def _validate_recorded_outputs(
         producer = tree.get(edge.producer_path)
         if edge.origin != EDGE_BINDING or producer is None:
             continue
+        reader = repr(edge.reader_id) if edge.reader_id else edge.reader_path
+        if producer.kind is NodeKind.FOREACH:
+            # A fan-out records a LIST, one entry per item that gave a result: an index or a
+            # pipe over it resolves, a field name never does.
+            named = [read for read in edge.output_reads if read and not read[0].isdigit()]
+            if named:
+                unreadable.add(edge)
+                _add(
+                    res,
+                    "WF_UNSATISFIABLE_OUTPUT_REF",
+                    (
+                        f"{reader} reads {{{{nodes.{edge.producer_id}.output."
+                        f"{'.'.join(named[0])}}}}}, but {edge.producer_id!r} is a foreach, whose "
+                        "output is the list of what each of its items produced, so it has no "
+                        f"field {named[0][0]!r}. Read the list (`| map('{named[0][0]}')` takes "
+                        "that field from each entry), or an entry by its index"
+                    ),
+                    edge.reader_path,
+                )
+            continue
         if producer.kind not in NO_OUTPUT_KINDS:
             continue
         unreadable.add(edge)
-        reader = repr(edge.reader_id) if edge.reader_id else edge.reader_path
         _add(
             res,
             "WF_UNSATISFIABLE_OUTPUT_REF",
@@ -1261,7 +1282,9 @@ def _produced_keys(node: Node) -> frozenset[str] | None:
         if (isinstance(schema, dict) and schema) or cfg.get("judge_contract"):
             return None
         return frozenset({"result"}) | gated
-    if node.kind in NO_OUTPUT_KINDS:
+    if node.kind in NO_OUTPUT_KINDS or node.kind is NodeKind.FOREACH:
+        # A fan-out's own record is skipped where a subtree is layered (`_accumulated_outputs`),
+        # so what a case holding one produces is what its items' steps produce.
         parts = [_produced_keys(child) for child in node.child_nodes()]
         known = [part for part in parts if part is not None]
         return frozenset().union(*known) if len(known) == len(parts) else None

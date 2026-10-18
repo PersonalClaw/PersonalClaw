@@ -7,8 +7,9 @@ failed "unresolved reference" once the loop had run, which is where three bundle
 any node, so nothing said so when the workflow was saved.
 
 Now a loop that ends done records its last cycle's output under its id, stored with its instance so
-a resumed run reads it back; and a read of a kind that records nothing (a sequence, parallel or
-foreach) is refused when the spec is saved, from the one definition the engine records outputs by
+a resumed run reads it back; a foreach records the list of what its items produced; and a read of
+a kind that records nothing (a sequence or parallel) is refused when the spec is saved, from the
+one definition the engine records outputs by
 (`models.NO_OUTPUT_KINDS`). The table test runs every node kind through both the validator and
 the engine and holds them to the same answer. And a value that begins and ends with a reference
 is split into references the way validation splits it, so a value holding two resolves both.
@@ -150,7 +151,7 @@ async def test_a_loop_handed_to_a_person_records_nothing_and_its_reader_does_not
 # ── a read that can never resolve is refused when the spec is saved ──────────
 
 
-@pytest.mark.parametrize("kind", ["sequence", "parallel", "foreach"])
+@pytest.mark.parametrize("kind", ["sequence", "parallel"])
 def test_a_read_of_a_step_that_records_nothing_is_refused_when_saved(kind: str) -> None:
     """🔴 Red before: the spec validated, and every run of it failed at the reader."""
     result = validate_spec(_then_read(PRODUCERS[kind]))
@@ -170,9 +171,10 @@ def test_an_artifact_read_of_a_step_that_records_nothing_is_refused_too() -> Non
     assert "WF_UNSATISFIABLE_OUTPUT_REF" in _codes(spec)
 
 
-@pytest.mark.parametrize("kind", ["loop", "branch", "transform"])
+@pytest.mark.parametrize("kind", ["loop", "branch", "transform", "foreach"])
 def test_a_read_of_a_step_that_records_an_output_validates(kind: str) -> None:
-    """The other side: a loop records its last cycle's output and a branch its routing."""
+    """The other side: a loop records its last cycle's output, a branch its routing, and a
+    foreach the list of what its items produced."""
     assert validate_spec(_then_read(PRODUCERS[kind]), strict=True).ok
 
 
@@ -186,7 +188,7 @@ async def test_a_run_that_meets_a_read_of_a_sequence_says_why_it_cannot_resolve(
     failure = ctl.instances["root.children[1]"].failure
     assert failure is not None
     assert "unresolved reference at 'p'" in failure.cause_plain
-    assert "A sequence, parallel or foreach records none of its own" in failure.remediation
+    assert "A sequence or parallel records none of its own" in failure.remediation
 
 
 # ── the validator and the engine give the same answer, kind by kind ─────────
@@ -212,8 +214,8 @@ async def test_the_validator_accepts_exactly_the_reads_the_engine_resolves() -> 
     # Both answers occur, and the refused ones are exactly the definition's kinds: a table in
     # which everything resolved, or nothing did, would agree for the wrong reason.
     refused = {kind for kind, (accepted, _resolved) in table.items() if not accepted}
-    assert refused == {"sequence", "parallel", "foreach"}
-    assert set(table) - refused == {"loop", "branch", "transform"}
+    assert refused == {"sequence", "parallel"}
+    assert set(table) - refused == {"loop", "branch", "transform", "foreach"}
     from personalclaw.workflows.models import NO_OUTPUT_KINDS
 
     assert {kind.value for kind in NO_OUTPUT_KINDS} == refused
