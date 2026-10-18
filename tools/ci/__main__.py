@@ -5,12 +5,13 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 
-from . import audit, rails_census, shards, variation_census
+from . import audit, rails_census, shards, telemetry, variation_census
 
 COMMANDS: dict[str, Callable[[list[str]], int]] = {
     "audit": audit.main,
     "rails": rails_census.main,
     "shards": shards.main,
+    "telemetry": telemetry.main,
     "variation-census": variation_census.main,
 }
 

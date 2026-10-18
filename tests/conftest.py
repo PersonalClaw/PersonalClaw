@@ -16,6 +16,7 @@ import native_omp_guard
 import pycache_guard
 import pytest
 import real_home_guard
+import run_facts
 import shard_list
 from hypothesis import HealthCheck, settings
 
@@ -266,6 +267,8 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     shard_list.configure(config)
+    # Where this process ran (platform, xdist workers), for the telemetry record (#3948).
+    run_facts.configure(config)
     if config.getoption("--fixture-costs"):
         config.pluginmanager.register(fixture_costs.Plugin(config.rootpath), "fixture-costs")
     config.pluginmanager.register(real_home_guard.Plugin(real_home_guard.GUARD), "real-home-guard")

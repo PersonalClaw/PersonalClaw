@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.ci import shards
+from tools.ci import shards, telemetry
 
 PYPROJECT = '[tool.pytest.ini_options]\ntestpaths = ["tests"]\n'
 
@@ -151,56 +151,60 @@ def test_a_planted_x_test_file_lands_in_a_bucket(tmp_path: Path) -> None:
     assert "tests/x_test.py" in {f for b in buckets for f in b}
 
 
-# ── the junit reader ──────────────────────────────────────────────────────────────────────────
+# ── the durations source: #3948's telemetry record ──────────────────────────────────────────
 
 FILES = ["tests/test_a.py", "tests/sub/test_s.py", "tests/test_ab.py"]
+LEG = shards.Leg("test-shard", "ci.yml", "junit-test-shard-", 4)
+LINUX = "linux-x86_64-3.12.15"
+REPO_ID = 1
 
 
-def _junit(*cases: tuple[str, str, float]) -> bytes:
-    body = "".join(f'<testcase classname="{c}" name="{n}" time="{t}"/>' for c, n, t in cases)
-    return f'<?xml version="1.0"?><testsuites><testsuite>{body}</testsuite></testsuites>'.encode()
-
-
-def test_the_junit_reader_maps_each_case_to_its_file_by_the_longest_dotted_prefix() -> None:
-    xml = _junit(
-        ("tests.test_a", "test_one", 1.5),
-        ("tests.test_a.TestOuter.TestInner", "test_two[case-1]", 2.0),
-        ("tests.test_ab", "test_three", 4.0),
-        ("tests.sub.test_s", "test_four", 0.25),
-        ("", "tests.test_a", 0.0),
-        ("tests.test_unknown", "test_five", 100.0),
-        ("conftest", "test_six", 7.0),
-    )
-    assert shards.junit_seconds(xml, FILES) == {
-        "tests/test_a.py": 3.5,
-        "tests/test_ab.py": 4.0,
-        "tests/sub/test_s.py": 0.25,
-    }
-
-
-def test_the_junit_reader_refuses_what_is_not_junit() -> None:
-    with pytest.raises(ValueError):
-        shards.junit_seconds(b"not xml", FILES)
-
-
-# ── the durations source: the latest green main run's junit reports (interim until #3948) ──────
-
-
-def _zip(name: str, data: bytes) -> bytes:
+def _zip(name: str, data: bytes, *, deflate: bool = False) -> bytes:
     buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w") as archive:
+    method = zipfile.ZIP_DEFLATED if deflate else zipfile.ZIP_STORED
+    with zipfile.ZipFile(buffer, "w", method) as archive:
         archive.writestr(name, data)
     return buffer.getvalue()
 
 
-class _Gh:
-    """``gh`` as the source calls it: runs, artifact listings and artifact zips."""
+def _jsonl(run: int, *tests: tuple, schema: str = telemetry.SCHEMA) -> bytes:
+    """One collected history: a run line, then a test line per ``(report, test, seconds)``,
+    each on ``LINUX`` with 4 workers unless the tuple names a platform and a worker count."""
+    head = {"kind": "run", "schema": schema, "version": telemetry.VERSION, "run_id": run}
+    lines = [dict(head, attempt=1)]
+    for report, test, seconds, *where in tests:
+        platform, workers = where or (LINUX, 4)
+        lines.append(
+            {
+                "kind": "test",
+                "run_id": run,
+                "attempt": 1,
+                "report": report,
+                "test": test,
+                "seconds": seconds,
+                "platform": platform,
+                "workers": workers,
+            }
+        )
+    return "".join(json.dumps(x) + "\n" for x in lines).encode()
 
-    def __init__(self) -> None:
-        self.runs: list[int | tuple[int, str]] = []
-        self.artifacts: dict[int, list[tuple[int, str, bool]]] = {}
-        self.zips: dict[int, bytes] = {}
+
+def _history(run: int, *tests: tuple, schema: str = telemetry.SCHEMA) -> bytes:
+    return _zip(f"history-{run}-1.jsonl", _jsonl(run, *tests, schema=schema))
+
+
+class _Gh:
+    """``gh`` as the record calls it: main's completed runs, and each run's attempt-1 history
+    artifact, listed by name the way the API lists it, with the run that made it."""
+
+    def __init__(self, histories: dict[int, bytes | None] | None = None) -> None:
+        self.histories: dict[int, bytes | None] = histories or {}
+        self.sizes: dict[int, int] = {}
+        self.made_by: dict[int, dict] = {}
+        self.owners: dict[int, str] = {}
+        self.conclusions: dict[int, str] = {}
         self.asked: list[str] = []
+        self.downloads: list[int] = []
         self.broken = False
 
     def text(self, *args: str) -> str:
@@ -211,118 +215,38 @@ class _Gh:
         if "/runs?" in path:
             assert "branch=main" in path and "status=completed" in path, path
             return "\n".join(
-                f"{r} {'success'}" if isinstance(r, int) else f"{r[0]} {r[1]}" for r in self.runs
+                f"{r} {self.conclusions.get(r, 'success')} {self.owners.get(r, 'o/r')}"
+                for r in sorted(self.histories, reverse=True)
             )
-        if "/artifacts?" in path:
-            run = int(path.split("/runs/")[1].split("/")[0])
-            return "\n".join(
-                f"{i} {n}" for i, n, expired in self.artifacts.get(run, []) if not expired
-            )
-        raise AssertionError(f"the source asked gh for {args}")
+        if "/actions/artifacts?name=" in path:
+            _, _, run_text, attempt = path.split("name=")[1].split("&")[0].split("-")
+            run = int(run_text)
+            data = self.histories.get(run)
+            if data is None or attempt != "1":
+                return json.dumps({"artifacts": []})
+            made = {"id": run, "head_branch": "main", "head_repository_id": REPO_ID}
+            made["repository_id"] = REPO_ID
+            artifact = {
+                "id": run * 10,
+                "expired": False,
+                "size_in_bytes": self.sizes.get(run, len(data)),
+                "workflow_run": dict(made, **self.made_by.get(run, {})),
+            }
+            return json.dumps({"artifacts": [artifact]})
+        raise AssertionError(f"the record asked gh for {args}")
 
     def binary(self, *args: str) -> bytes:
         path = next(a for a in args[1:] if not a.startswith("-"))
         self.asked.append(path)
-        return self.zips[int(path.split("/artifacts/")[1].split("/")[0])]
+        run = int(path.split("/artifacts/")[1].split("/")[0]) // 10
+        self.downloads.append(run)
+        data = self.histories[run]
+        assert data is not None
+        return data
 
 
-LEG = shards.Leg("test-shard", "ci.yml", "junit-test-shard-", 4)
-
-
-def _source(gh: _Gh) -> shards.RecentMainJunit:
-    return shards.RecentMainJunit("o/r", text=gh.text, binary=gh.binary)
-
-
-def test_the_source_reads_the_newest_green_main_run_that_holds_the_legs_reports() -> None:
-    gh = _Gh()
-    gh.runs = [30, 20]
-    gh.artifacts = {30: [(1, "junit-lint", False)], 20: [(5, "junit-test-shard-1", False)]}
-    gh.zips = {5: _zip("junit-test-shard-1.xml", _junit(("tests.test_a", "t", 2.5)))}
-    durations, said = _source(gh).durations(LEG, FILES)
-    assert durations == {"tests/test_a.py": 2.5}
-    assert "run 20" in said
-
-
-def test_a_rerun_never_overwrites_the_first_attempts_report() -> None:
-    """Two artifacts share a name after a rerun: the lower id, the first attempt's, is read."""
-    gh = _Gh()
-    gh.runs = [20]
-    gh.artifacts = {20: [(9, "junit-test-shard-1", False), (5, "junit-test-shard-1", False)]}
-    gh.zips = {
-        5: _zip("r.xml", _junit(("tests.test_a", "t", 2.0))),
-        9: _zip("r.xml", _junit(("tests.test_a", "t", 50.0))),
-    }
-    durations, _ = _source(gh).durations(LEG, FILES)
-    assert durations == {"tests/test_a.py": 2.0}
-
-
-def test_the_source_reads_only_its_own_legs_reports() -> None:
-    """A leg is a platform and worker count: macOS's reports never weigh an ubuntu leg."""
-    gh = _Gh()
-    gh.runs = [20]
-    gh.artifacts = {20: [(5, "junit-test-shard-1", False), (6, "junit-test-macos-1", False)]}
-    gh.zips = {
-        5: _zip("a.xml", _junit(("tests.test_a", "t", 2.0))),
-        6: _zip("b.xml", _junit(("tests.test_a", "t", 90.0))),
-    }
-    durations, _ = _source(gh).durations(LEG, FILES)
-    assert durations == {"tests/test_a.py": 2.0}
-    assert not any("/artifacts/6/" in a for a in gh.asked)
-
-
-def test_the_source_says_so_when_no_green_main_run_holds_reports() -> None:
-    gh = _Gh()
-    gh.runs = [30]
-    gh.artifacts = {30: [(1, "junit-test-shard-1", True)]}
-    durations, said = _source(gh).durations(LEG, FILES)
-    assert durations == {} and "no completed main run" in said
-
-
-def _runs_of(gh: _Gh, seconds: dict[int, float], conclusions: dict[int, str] | None = None) -> None:
-    """Main runs, newest first, each holding one report that gives tests/test_a.py its seconds."""
-    conclusions = conclusions or {}
-    gh.runs = [(run, conclusions.get(run, "success")) for run in sorted(seconds, reverse=True)]
-    gh.artifacts = {run: [(run * 10, "junit-test-shard-1", False)] for run in seconds}
-    gh.zips = {
-        run * 10: _zip("r.xml", _junit(("tests.test_a", "t", s))) for run, s in seconds.items()
-    }
-
-
-def test_the_source_takes_each_files_median_over_the_newest_three_runs() -> None:
-    """One run's seconds swing with its runners (measured: the same file 71-146 s in seven main
-    runs), so a plan from one run inherits that run's noise. Three runs' median does not."""
-    gh = _Gh()
-    _runs_of(gh, {50: 2.0, 40: 90.0, 30: 3.0, 20: 500.0})
-    durations, said = _source(gh).durations(LEG, FILES)
-    assert durations == {"tests/test_a.py": 3.0}
-    assert "50" in said and "40" in said and "30" in said and "20" not in said
-    assert not any("/artifacts/200/" in a for a in gh.asked), "a fourth run is never read"
-
-
-def test_a_red_main_run_still_measures_its_files_and_a_cancelled_one_does_not() -> None:
-    """Green-only froze the source: while main was red, eight main plans in a row read the same
-    one run. A red run's reports still time every file it ran; a cancelled run stopped part-way,
-    so its times are not the files' own."""
-    gh = _Gh()
-    _runs_of(gh, {50: 2.0, 40: 900.0, 30: 4.0, 20: 6.0}, {50: "failure", 40: "cancelled"})
-    durations, said = _source(gh).durations(LEG, FILES)
-    assert durations == {"tests/test_a.py": 4.0}
-    assert "40" not in said.split("reports")[0]
-
-
-def test_a_file_one_run_did_not_report_takes_the_median_of_the_runs_that_did() -> None:
-    gh = _Gh()
-    _runs_of(gh, {50: 2.0, 40: 4.0, 30: 10.0})
-    gh.zips[400] = _zip("r.xml", _junit(("tests.test_ab", "t", 7.0)))
-    durations, _ = _source(gh).durations(LEG, FILES)
-    assert durations == {"tests/test_a.py": 6.0, "tests/test_ab.py": 7.0}
-
-
-def test_fewer_than_three_runs_are_read_as_they_are() -> None:
-    gh = _Gh()
-    _runs_of(gh, {50: 2.0})
-    durations, said = _source(gh).durations(LEG, FILES)
-    assert durations == {"tests/test_a.py": 2.0} and "50" in said
+def _record(gh: _Gh) -> shards.TelemetryRecord:
+    return shards.TelemetryRecord("o/r", text=gh.text, binary=gh.binary)
 
 
 # ── the command line ──────────────────────────────────────────────────────────────────────────
@@ -342,10 +266,16 @@ def _plan(tmp_path: Path, monkeypatch, gh: _Gh, *legs: str) -> tuple[int, dict]:
 
 
 def test_plan_writes_one_plan_for_every_leg(tmp_path: Path, monkeypatch) -> None:
-    gh = _Gh()
-    gh.runs = [20]
-    gh.artifacts = {20: [(5, "junit-test-shard-1", False)]}
-    gh.zips = {5: _zip("r.xml", _junit(("tests.test_a", "t", 30.0), ("tests.test_ab", "t", 1.0)))}
+    gh = _Gh(
+        {
+            20: _history(
+                20,
+                ("junit-test-shard-1", "tests.test_a::t", 30.0),
+                ("junit-test-shard-1", "tests.test_ab::t", 1.0),
+                ("junit-test-macos-1", "tests.test_a::t", 30.0),
+            )
+        }
+    )
     code, plan = _plan(
         tmp_path,
         monkeypatch,
@@ -359,7 +289,7 @@ def test_plan_writes_one_plan_for_every_leg(tmp_path: Path, monkeypatch) -> None
     assert len(plan["legs"]["test-shard"]["buckets"]) == 2
     assert len(plan["legs"]["test-macos"]["buckets"]) == 3
     assert "tests/test_a.py" in plan["legs"]["test-shard"]["buckets"][0], "heaviest first"
-    assert "run 20" in plan["legs"]["test-shard"]["durations"]
+    assert "telemetry runs 20" in plan["legs"]["test-shard"]["durations"]
 
 
 def test_plan_still_writes_a_complete_plan_when_durations_are_unreadable(
@@ -466,7 +396,9 @@ def _corrupt_deflate() -> bytes:
     BadZipFile, on read."""
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("r.xml", _junit(*[("tests.test_a", "t", 1.0)] * 200))
+        archive.writestr(
+            "history-20-1.jsonl", _jsonl(20, *[("junit-test-shard-1", "t", 1.0)] * 200)
+        )
     raw = buffer.getvalue()
     return raw[:40] + bytes(b ^ 0xFF for b in raw[40:120]) + raw[120:]
 
@@ -511,18 +443,17 @@ def test_a_durations_fetch_that_errors_still_gives_a_checked_plan(
     [b"not a zip", b"", _corrupt_deflate()],
     ids=["not a zip", "empty", "a member that does not inflate"],
 )
-def test_a_corrupt_report_archive_still_gives_a_checked_plan(
+def test_a_corrupt_history_archive_still_gives_a_checked_plan(
     archive: bytes, tmp_path: Path, monkeypatch, capsys
 ) -> None:
-    gh = _Gh()
-    gh.runs = [20]
-    gh.artifacts = {20: [(5, "junit-test-shard-1", False)]}
-    gh.zips = {5: archive}
+    """A history that cannot be read is skipped and named in the log; with no other the plan
+    weighs every file the same, and says so."""
+    gh = _Gh({20: archive})
     code, plan = _plan(tmp_path, monkeypatch, gh, "test-shard:ci.yml:junit-test-shard-:2")
     assert code == 0
     leg = plan["legs"]["test-shard"]
-    assert "unreadable" in leg["durations"]
-    assert "::warning title=shard durations unreadable::" in capsys.readouterr().out
+    assert "every file weighs the same" in leg["durations"]
+    assert "::warning title=telemetry history unreadable::run 20" in capsys.readouterr().out
     out = tmp_path / "plan" / "plan.json"
     assert shards.main(["check", "--plan", str(out), "--root", str(tmp_path)]) == 0
 
@@ -554,6 +485,8 @@ class _KeepGh:
         self.asked.append(path)
         if self.broken:
             raise subprocess.CalledProcessError(1, ["gh", *args], stderr="HTTP 502")
+        if "/actions/artifacts?name=" in path:
+            return json.dumps({"artifacts": []})
         if "/runs?" in path:
             assert "branch=main" in path, path
             return "\n".join(str(r) for r in self.plans) if "status=completed" in path else ""
@@ -642,3 +575,162 @@ def test_the_run_never_keeps_its_own_plan(tmp_path: Path, monkeypatch) -> None:
     gh = _KeepGh({99: _earlier(ODD)})
     leg = _keep(tmp_path, monkeypatch, gh)
     assert leg["buckets"] != ODD and "kept" not in leg["durations"]
+
+
+# ── the record: what it reads, and what it never reads ─────────────────────────────────────────
+
+
+def test_the_record_gives_each_files_median_over_the_newest_three_runs_first_attempts() -> None:
+    """Each file's seconds per run are its tests' first-attempt seconds in the leg's own
+    reports; the record takes the median over the three newest runs with a history."""
+    t = "tests.test_a::t"
+    gh = _Gh(
+        {
+            50: _history(
+                50, ("junit-test-shard-1", t, 2.0), ("junit-test-shard-2", "tests.test_a.K::u", 1.0)
+            ),
+            40: _history(40, ("junit-test-shard-1", t, 90.0)),
+            30: _history(30, ("junit-test-shard-1", t, 4.0), ("junit-test-macos-1", t, 500.0)),
+            20: _history(20, ("junit-test-shard-1", t, 900.0)),
+        }
+    )
+    durations, said = _record(gh).durations(LEG, FILES)
+    assert durations == {"tests/test_a.py": 4.0}, "median of 3, 90 and 4; macOS's is another leg"
+    assert "telemetry runs 50, 40, 30" in said and LINUX in said and "4 workers" in said
+    assert 20 not in gh.downloads, "a fourth run is never read"
+
+
+def test_the_record_reads_only_attempt_one_the_first_results() -> None:
+    gh = _Gh({50: _history(50, ("junit-test-shard-1", "tests.test_a::t", 2.0))})
+    _record(gh).durations(LEG, FILES)
+    asked = [a for a in gh.asked if "name=" in a]
+    assert asked and all("telemetry-history-50-1&" in a for a in asked), asked
+
+
+def test_a_run_with_no_history_is_skipped() -> None:
+    gh = _Gh({50: None, 40: _history(40, ("junit-test-shard-1", "tests.test_ab::t", 7.0))})
+    durations, said = _record(gh).durations(LEG, FILES)
+    assert durations == {"tests/test_ab.py": 7.0} and "runs 40" in said
+
+
+@pytest.mark.parametrize(
+    "made_by",
+    [
+        {"id": 999, "head_repository_id": 2},
+        {"head_repository_id": 2},
+        {"head_branch": "feature-x"},
+        {"id": 999},
+    ],
+    ids=["a fork's run", "a fork's run of that id", "another branch", "another run"],
+)
+def test_a_history_of_that_name_another_run_made_is_never_downloaded(made_by: dict) -> None:
+    """A pull request's run, a fork's included, can upload an artifact with any name. Only one
+    made by that very run, on main, in this repository, is read."""
+    gh = _Gh({50: _history(50, ("junit-test-shard-1", "tests.test_a::t", 2.0))})
+    gh.made_by[50] = made_by
+    durations, said = _record(gh).durations(LEG, FILES)
+    assert durations == {} and "every file weighs the same" in said
+    assert gh.downloads == []
+
+
+def test_a_forks_run_listed_under_main_is_skipped() -> None:
+    """The API lists a fork's pull-request run from a branch the fork named main under
+    branch=main; the record reads only this repository's runs."""
+    gh = _Gh(
+        {
+            50: _history(50, ("junit-test-shard-1", "tests.test_a::t", 999.0)),
+            40: _history(40, ("junit-test-shard-1", "tests.test_a::t", 2.0)),
+        }
+    )
+    gh.owners[50] = "someone/fork"
+    durations, said = _record(gh).durations(LEG, FILES)
+    assert durations == {"tests/test_a.py": 2.0} and "runs 40" in said and 50 not in gh.downloads
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        _history(40, ("junit-test-shard-1", "tests.test_a::t", 2.0), schema="something-else"),
+        _zip("history-40-1.jsonl", b"not json\n"),
+        b"not a zip",
+    ],
+    ids=["another schema", "not json", "not a zip"],
+)
+def test_a_history_the_reader_does_not_understand_is_skipped_and_named(data: bytes, capsys) -> None:
+    gh = _Gh({40: data})
+    durations, said = _record(gh).durations(LEG, FILES)
+    assert durations == {} and "no telemetry history" in said
+    assert "::warning title=telemetry history unreadable::run 40" in capsys.readouterr().out
+
+
+def test_a_history_archive_over_the_limit_is_never_downloaded() -> None:
+    gh = _Gh({40: _history(40, ("junit-test-shard-1", "tests.test_a::t", 2.0))})
+    gh.sizes[40] = shards.MAX_HISTORY_ARCHIVE_BYTES + 1
+    durations, _ = _record(gh).durations(LEG, FILES)
+    assert durations == {} and gh.downloads == []
+
+
+def test_a_history_line_over_its_bound_is_refused_before_it_is_read_whole(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(shards, "MAX_HISTORY_LINE_BYTES", 300)
+    long_test = "tests.test_a::" + "t" * 400
+    gh = _Gh({40: _history(40, ("junit-test-shard-1", long_test, 2.0))})
+    durations, _ = _record(gh).durations(LEG, FILES)
+    assert durations == {}
+    assert "a history line passes 300 bytes" in capsys.readouterr().out
+
+
+def test_a_history_over_its_total_bound_is_refused(monkeypatch, capsys) -> None:
+    rows = [("junit-test-shard-1", "tests.test_a::t", 1.0)] * 50
+    data = _history(40, *rows)
+    monkeypatch.setattr(shards, "MAX_HISTORY_BYTES", len(_jsonl(40, *rows)) - 1)
+    durations, _ = _record(_Gh({40: data})).durations(LEG, FILES)
+    assert durations == {}
+    assert "the history passes" in capsys.readouterr().out
+
+
+def test_the_record_reads_only_the_platform_and_workers_its_newest_history_recorded() -> None:
+    """A leg that moves to another ``-n`` plans from the first run that recorded the new count:
+    the older runs, on the old count, never weigh it."""
+    t = "tests.test_a::t"
+    gh = _Gh(
+        {
+            50: _history(50, ("junit-test-shard-1", t, 3.0, LINUX, 3)),
+            40: _history(40, ("junit-test-shard-1", t, 9.0, LINUX, 2)),
+            30: _history(30, ("junit-test-shard-1", t, 5.0, LINUX, 3)),
+            20: _history(20, ("junit-test-shard-1", t, 9.0, "darwin-arm64-3.13.16", 3)),
+        }
+    )
+    durations, said = _record(gh).durations(LEG, FILES)
+    assert durations == {"tests/test_a.py": 4.0}, "the median of runs 50 and 30 only"
+    assert "runs 50, 30" in said and "3 workers" in said
+
+
+def test_each_history_is_downloaded_once_for_every_leg() -> None:
+    t = "tests.test_a::t"
+    gh = _Gh(
+        {
+            run: _history(run, ("junit-test-shard-1", t, 2.0), ("junit-test-macos-1", t, 4.0))
+            for run in (50, 40, 30)
+        }
+    )
+    record = _record(gh)
+    macos = shards.Leg("test-macos", "ci.yml", "junit-test-macos-", 4)
+    assert record.durations(LEG, FILES)[0] == {"tests/test_a.py": 2.0}
+    assert record.durations(macos, FILES)[0] == {"tests/test_a.py": 4.0}
+    assert sorted(gh.downloads) == [30, 40, 50]
+
+
+def test_with_no_record_yet_the_plan_weighs_every_file_the_same_and_says_so(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Until the first collected main run the record holds nothing, and there is no other
+    source: the plan is whole, unbalanced, and says why."""
+    gh = _Gh()
+    code, plan = _plan(tmp_path, monkeypatch, gh, "test-shard:ci.yml:junit-test-shard-:2")
+    assert code == 0
+    leg = plan["legs"]["test-shard"]
+    assert "no telemetry history" in leg["durations"]
+    assert "every file weighs the same" in leg["durations"]
+    assert not any("junit-" in a for a in gh.asked if "/artifacts" in a), "no junit is read"
