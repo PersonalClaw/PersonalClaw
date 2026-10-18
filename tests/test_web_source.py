@@ -31,7 +31,11 @@ import pytest
 
 from personalclaw.knowledge.source_engine import SourceEngine
 from personalclaw.knowledge.store import KnowledgeStore
-from personalclaw.knowledge_providers.base import HEALTH_NEEDS_RENDER, HEALTH_OK
+from personalclaw.knowledge_providers.base import (
+    HEALTH_NEEDS_BROWSE,
+    HEALTH_NEEDS_RENDER,
+    HEALTH_OK,
+)
 from personalclaw.knowledge_providers.web_source import (
     DEFAULT_MIN_WORDS_TITLE,
     DETECTOR_JSON_LD,
@@ -1011,10 +1015,12 @@ async def test_browse_tier_soft_fails_when_no_gateway_is_configured(store):
         render=_Render(_js_shell()),
     )
     assert await _poll(engine, store, sid) == 0
-    assert store.get_source(sid)["last_escalations"] == [
+    row = store.get_source(sid)
+    assert row["last_escalations"] == [
         "escalated to render tier; still no items after JS render",
-        "escalated to browse tier; still no items after browse render",
+        "browse tier read no page: no gateway browser is configured (cdp_url is empty)",
     ]
+    assert row["health_status"] == HEALTH_NEEDS_BROWSE
 
 
 # ── tier 3: the post-navigate settle ────────────────────────────────────────────────
@@ -1711,3 +1717,68 @@ def test_script_text_is_reachable_but_never_read_as_item_text():
     assert el.text == "Visible"
     script = select_one(dom, "script")
     assert script is not None and "var secret = 1;" in script.raw_text
+
+
+class _GatewaySocket:
+    """A gateway page wire for the production opener: answers the session's setup with a blank
+    tab and records every command, so a test can see that nothing of the page was read."""
+
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+        self.closed = 0
+
+    async def send(self, method, params=None):
+        self.sent.append(method)
+        if method == "Page.getFrameTree":
+            return {"frameTree": {"frame": {"id": "TOP", "url": "about:blank"}}}
+        return {}
+
+    def set_event_listener(self, listener) -> None:
+        return None
+
+    async def close(self) -> None:
+        self.closed += 1
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_a_browse_tick_refused_at_preflight_says_why_instead_of_blaming_the_url(
+    store, monkeypatch
+):
+    """🔴 Red before: the tier parsed the refused tick's empty HTML, found no items, and told the
+    owner to point the source at a listing page, while the reason (the navigation was refused)
+    never reached the source row. Driven through the production opener and gated session."""
+    import socket
+
+    from personalclaw.browse.transport import WebSocketCdpTransport
+    from personalclaw.knowledge_providers import web_source as ws
+    from personalclaw.net import guard
+
+    wire = _GatewaySocket()
+
+    async def _connect(*_a, **_k):
+        return wire
+
+    def _no_dns(host):
+        raise socket.gaierror(f"no address for {host}")
+
+    monkeypatch.setattr(WebSocketCdpTransport, "connect", staticmethod(_connect))
+    monkeypatch.setattr(guard, "_resolve", _no_dns)
+    monkeypatch.setattr(ws, "make_browse_settle", lambda **_k: None)
+    sid, _p, engine, _q = _setup(
+        store,
+        _Fetcher(_Resp(_js_shell())),
+        budget={"allow_render": True, "allow_browse": True, "cdp_url": "ws://gw/1"},
+        render=_Render(_js_shell()),
+    )
+
+    assert await _poll(engine, store, sid) == 0
+
+    row = store.get_source(sid)
+    assert row["last_escalations"][1].startswith(
+        "browse tier read no page: browse tick navigation refused:"
+    ), row["last_escalations"]
+    assert row["health_status"] == HEALTH_NEEDS_BROWSE
+    assert not LISTING_PAGE_GUIDANCE.startswith(row["last_error_summary"] or "\0")
+    assert "Runtime.evaluate" not in wire.sent, "nothing of the tab may be read"
+    assert wire.closed == 1, "the session is still released"

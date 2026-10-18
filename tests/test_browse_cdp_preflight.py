@@ -193,6 +193,7 @@ def _frame(url: str) -> dict:
 # ── the ordering clause ───────────────────────────────────────────────────────
 
 
+@pytest.mark.security
 @pytest.mark.asyncio
 async def test_denied_host_sends_zero_page_navigate():
     """THE clause: the block happens BEFORE ``Page.navigate`` reaches the wire."""
@@ -424,6 +425,7 @@ async def test_operator_deny_list_is_on_the_path(operator_egress, sel_rows):
 # ── fail closed, every way in ─────────────────────────────────────────────────
 
 
+@pytest.mark.security
 @pytest.mark.asyncio
 async def test_a_denied_host_stays_denied_when_the_config_read_fails(monkeypatch):
     """An unparseable operator config must not UN-deny a host, at this seam.
@@ -504,6 +506,7 @@ async def test_an_empty_url_is_denied_without_navigating():
     assert outcome.allowed is False
 
 
+@pytest.mark.security
 @pytest.mark.asyncio
 async def test_a_guard_exception_fails_closed(monkeypatch, sel_rows):
     transport = FakeTransport()
@@ -521,6 +524,7 @@ async def test_a_guard_exception_fails_closed(monkeypatch, sel_rows):
     assert len(sel_rows) == 1
 
 
+@pytest.mark.security
 @pytest.mark.asyncio
 async def test_a_missing_browse_profile_fails_closed(monkeypatch):
     """A build without BROWSE must REFUSE, not fall back to STRICT.
@@ -552,6 +556,7 @@ async def test_navigate_before_start_is_refused():
     assert "never started" in outcome.reason
 
 
+@pytest.mark.security
 @pytest.mark.asyncio
 async def test_a_failed_script_injection_leaves_a_session_that_cannot_navigate():
     transport = FakeTransport(fail_on={cdp.ADD_SCRIPT})
@@ -566,6 +571,7 @@ async def test_a_failed_script_injection_leaves_a_session_that_cannot_navigate()
     assert outcome.allowed is False
 
 
+@pytest.mark.security
 @pytest.mark.asyncio
 async def test_a_missing_safety_script_module_fails_closed(monkeypatch):
     """The sibling module unimportable is setup failure, not a session that browses unguarded.
@@ -588,6 +594,7 @@ async def test_a_missing_safety_script_module_fails_closed(monkeypatch):
     assert transport.count(cdp.NAVIGATE) == 0
 
 
+@pytest.mark.security
 @pytest.mark.asyncio
 async def test_a_transport_failure_is_not_reported_as_a_navigation():
     transport = FakeTransport(fail_on={cdp.NAVIGATE})
@@ -820,9 +827,12 @@ async def test_a_page_read_that_straddles_a_teardown_is_discarded():
     await transport.listener(cdp.FRAME_NAVIGATED, _frame("https://denied.example/evil"))
     page_reply.set_result({"result": {"value": "<html>denied</html>"}})
 
-    with pytest.raises(cdp.CdpSessionError, match="discarded"):
+    with pytest.raises(cdp.PageReplyDiscarded, match="discarded"):
         await read
     assert session.quarantine_reason == ""
+    assert not issubclass(
+        cdp.PageReplyDiscarded, cdp.CdpSessionError
+    ), "a discarded reply on a sound session is not the session being unusable"
 
 
 @pytest.mark.asyncio
@@ -966,8 +976,9 @@ async def test_a_navigation_that_loads_no_document_is_not_ok(reply):
 @pytest.mark.security
 @pytest.mark.asyncio
 async def test_a_browse_run_whose_first_navigation_loads_no_document_reads_nothing():
-    """End to end: the browse loop parks on the not-ok outcome before any read or model call."""
-    from personalclaw.browse.loop import PARK_NAVIGATION_BLOCKED, run_browse_loop
+    """End to end: the browse loop stops on the not-ok outcome before any read or model call, as
+    a run whose start URL loaded no page, not as an egress block: the gate allowed it."""
+    from personalclaw.browse.loop import run_browse_loop
     from personalclaw.browse.page import CdpPageDriver
 
     transport = FakeTransport()
@@ -987,7 +998,9 @@ async def test_a_browse_run_whose_first_navigation_loads_no_document_reads_nothi
         decide=decide,
     )
 
-    assert result.parked and result.park_reason == PARK_NAVIGATION_BLOCKED
+    assert result.ok is False and not result.parked
+    assert result.error == "the start URL loaded no page: net::ERR_ABORTED"
+    assert result.blocked_urls == ()
     assert decided == []
     assert "Runtime.evaluate" not in transport.methods
 
@@ -1427,3 +1440,87 @@ async def test_each_openers_driver_is_closed_by_the_session_it_returns(monkeypat
     with pytest.raises(cdp.CdpSessionError):
         await driver.current_url()
     assert fake.sent == before
+
+
+# ── a reply discarded on a sound session is read once more ───────────────────
+
+
+class _RedirectDuringRead(FakeTransport):
+    """The page redirects itself to a denied host while the first *straddled* reads are in flight,
+    so each of those replies straddles a teardown. ``stop_fails`` makes that teardown quarantine."""
+
+    def __init__(self, *, straddled: int = 1, stop_fails: bool = False) -> None:
+        super().__init__()
+        self.straddled = straddled
+        self.stop_fails = stop_fails
+
+    async def send(self, method: str, params: dict | None = None) -> dict:
+        if method == cdp.STOP_LOADING and self.stop_fails:
+            raise RuntimeError("the CDP socket closed")
+        reply = await super().send(method, params)
+        if method == "Runtime.evaluate" and self.straddled > 0:
+            self.straddled -= 1
+            await self.listener(cdp.FRAME_NAVIGATED, _frame("https://denied.example/evil"))
+        return reply
+
+
+async def _browse(transport: FakeTransport):
+    from personalclaw.browse.loop import run_browse_loop
+    from personalclaw.browse.page import CdpPageDriver
+
+    session = _session(transport)
+
+    async def decide(prompt: str) -> str:
+        return "DONE"
+
+    result = await run_browse_loop(
+        goal="read the page",
+        start_url="https://allowed.example/page",
+        session=session,
+        page=CdpPageDriver(session.page_transport),
+        decide=decide,
+    )
+    return session, result
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_a_read_discarded_by_a_successful_teardown_is_read_again_and_the_run_goes_on():
+    """🔴 Red before: the read's reply straddled the teardown of a denied redirect, which
+    succeeded, and was discarded as if the session were unusable, so a healthy run ended with
+    "the page could not be read". The read is sent once more, after the page was blanked."""
+    transport = _RedirectDuringRead(straddled=1)
+    session, result = await _browse(transport)
+
+    assert session.quarantine_reason == ""
+    assert result.ok is True and result.error == ""
+    evaluates = [i for i, (m, _) in enumerate(transport.sent) if m == "Runtime.evaluate"]
+    blank = transport.sent.index((cdp.NAVIGATE, {"url": cdp.BLANK_URL}))
+    assert len(evaluates) == 3, "the discarded read, then the page's HTML and URL once more"
+    assert evaluates[1] > blank, "the second read reached the page only after it was blanked"
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_a_read_discarded_twice_ends_the_run_and_is_not_read_a_third_time():
+    """Fail closed: one more read only. A page that redirects itself to a denied host during
+    every read ends the run rather than be read in a loop."""
+    transport = _RedirectDuringRead(straddled=10)
+    _session_, result = await _browse(transport)
+
+    assert result.ok is False and "the page could not be read" in result.error
+    assert transport.count("Runtime.evaluate") == 2
+
+
+@pytest.mark.security
+@pytest.mark.asyncio
+async def test_a_read_discarded_by_a_teardown_that_quarantined_is_not_read_again():
+    """Fail closed: when the teardown quarantined the session, the denied page may still be
+    loaded, so the discarded read is not sent again and the run ends."""
+    transport = _RedirectDuringRead(straddled=1, stop_fails=True)
+    session, result = await _browse(transport)
+
+    assert session.quarantine_reason
+    assert result.ok is False and "the page could not be read" in result.error
+    assert "reply was discarded" in result.error, "the run reports the discard, not a retry"
+    assert transport.count("Runtime.evaluate") == 1

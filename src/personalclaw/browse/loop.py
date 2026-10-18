@@ -502,6 +502,41 @@ async def verify_submission(
     )
 
 
+async def _read_once(page: PageDriver, url: str) -> tuple[str, str]:
+    html = await page.html()
+    # 🔴 SCREENED at the point it is read, which is the only place the browser's own
+    # URL enters this process. One call therefore covers all six consumers at once — the
+    # outline's `# <url>` header, the fence's `source`/`source_id` (both reach the prompt),
+    # the Links DSL's base, `final_url` in the run payload, the user-facing park sentence,
+    # and the SEL row. The post-login redirect is exactly where an OAuth `code=` or an
+    # implicit-flow `#access_token=` sits, so this is not a hypothetical path: it is THE
+    # path a token would take into a prompt.
+    return html, screen_url(await page.current_url() or url)
+
+
+async def _read_page(page: PageDriver, url: str, session: Any) -> tuple[str, str]:
+    """Read the page's HTML and its screened URL, once more when the first read's reply was
+    discarded on a session that is still sound.
+
+    A reply is discarded when a denied redirect was torn down while it was in flight
+    (:class:`~personalclaw.browse.cdp.PageReplyDiscarded`). When that teardown succeeded the
+    session is sound, and the second read waits for the teardown and reads the blanked page, so
+    an ordinary blocked redirect does not end a healthy run. Only reads are sent again, never an
+    action. A second discard, a quarantined session or any other error is raised."""
+    try:
+        return await _read_once(page, url)
+    except Exception as exc:
+        if not _discarded_on_a_sound_session(exc, session):
+            raise
+    return await _read_once(page, url)
+
+
+def _discarded_on_a_sound_session(exc: BaseException, session: Any) -> bool:
+    from personalclaw.browse.cdp import PageReplyDiscarded
+
+    return isinstance(exc, PageReplyDiscarded) and not getattr(session, "quarantine_reason", "")
+
+
 # ── the loop ──────────────────────────────────────────────────────────────────
 
 
@@ -579,6 +614,13 @@ async def run_browse_loop(
 
     url = start_url.strip()
     nav = await session.navigate(url)
+    if not getattr(nav, "ok", False) and getattr(nav, "allowed", False):
+        # The gate allowed it and the browser loaded nothing (a 204, an abort, a download, a
+        # connection or TLS failure): a failed run, not an egress block, and the URL is not blocked.
+        detail = str(getattr(nav, "error", "") or getattr(nav, "reason", "") or "no page loaded")
+        return BrowseLoopResult(
+            ok=False, goal=goal, error=f"the start URL loaded no page: {detail}"
+        )
     if not getattr(nav, "ok", False):
         st.blocked.append(screen_url(url))
         return _park(
@@ -632,15 +674,7 @@ async def run_browse_loop(
                 )
 
         try:
-            html = await page.html()
-            # 🔴 SCREENED at the point it is read, which is the only place the browser's own
-            # URL enters this process. One call therefore covers all six consumers at once — the
-            # outline's `# <url>` header, the fence's `source`/`source_id` (both reach the prompt),
-            # the Links DSL's base, `final_url` in the run payload, the user-facing park sentence,
-            # and the SEL row. The post-login redirect is exactly where an OAuth `code=` or an
-            # implicit-flow `#access_token=` sits, so this is not a hypothetical path: it is THE
-            # path a token would take into a prompt.
-            url = screen_url(await page.current_url() or url)
+            html, url = await _read_page(page, url, session)
         except Exception as exc:
             return BrowseLoopResult(
                 ok=False,
@@ -751,7 +785,13 @@ async def run_browse_loop(
             if safe_target in st.visited:
                 st.warnings.append(f"you have already visited {safe_target}")
             nav = await session.navigate(action.url)
-            if not getattr(nav, "ok", False):
+            if not getattr(nav, "ok", False) and getattr(nav, "allowed", False):
+                # Allowed, but the browser loaded nothing: the tab still holds the page it held.
+                # Not an egress block, so the URL is not recorded as blocked.
+                detail = str(getattr(nav, "error", "") or getattr(nav, "reason", "") or "no page")
+                st.warnings.append(f"navigation to {safe_target} loaded no page: {detail}")
+                outcome_note = f"loaded no page: {detail}"
+            elif not getattr(nav, "ok", False):
                 st.blocked.append(safe_target)
                 detail = str(getattr(nav, "reason", "") or getattr(nav, "error", "") or "denied")
                 st.warnings.append(f"navigation to {safe_target} was refused: {detail}")

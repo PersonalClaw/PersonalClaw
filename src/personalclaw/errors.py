@@ -132,7 +132,8 @@ ERROR_CODES: dict[str, str] = {
     ),
     "ERR_BROWSE_FAILED": (
         "A browse run ended without reaching its goal — the first navigation was denied by "
-        "the BROWSE egress policy, the page could not be read, or the decision call failed. "
+        "the BROWSE egress policy, the start URL loaded no page, the page could not be read, or "
+        "the decision call failed. "
         "Distinct from a PARK, which succeeds with notes and asks for a human."
     ),
     "ERR_BROWSE_TARGET_UNKNOWN": (

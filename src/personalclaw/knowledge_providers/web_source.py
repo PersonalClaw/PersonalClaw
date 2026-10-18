@@ -1226,7 +1226,19 @@ class WebSourceProvider(KnowledgeSourceProvider):
                 detector=detector,
                 cursor_state=cursor_state,
             )
-        browsed_dom = parse_html(str(getattr(browsed, "html", "") or ""))
+        browsed_html = str(getattr(browsed, "html", "") or "")
+        if not browsed_html and not getattr(browsed, "ok", False):
+            # The tick read no page (no gateway, a refused navigation, a session that refused to
+            # start): its note is the reason. Detecting on nothing would blame the URL instead.
+            why = str(getattr(browsed, "note", "") or "") or "the browse tick read no page"
+            return _Collected(
+                escalations=[render_note, f"browse tier read no page: {why}"[:200]],
+                guidance=BROWSE_TIER_GUIDANCE,
+                health_status=HEALTH_NEEDS_BROWSE,
+                detector=detector,
+                cursor_state=cursor_state,
+            )
+        browsed_dom = parse_html(browsed_html)
         detector, items = await self._detect(
             browsed_dom, page_url=url, spec=spec, budget=budget, policy=policy
         )
