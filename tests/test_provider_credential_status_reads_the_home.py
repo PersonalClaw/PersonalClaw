@@ -21,14 +21,10 @@ whole job is to report whether the credential is there.
 from __future__ import annotations
 
 import json
-import pathlib
 import re
 from dataclasses import dataclass, field
 
 import pytest
-import source_index
-
-_SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "personalclaw"
 
 
 @dataclass
@@ -106,26 +102,6 @@ async def test_a_provider_declaring_no_credential_has_no_key_in_the_store(monkey
     entries = [_Entry("ollama", "openai_compatible", "llama3", None)]
 
     assert await _statuses(monkeypatch, tmp_path, entries) == {"ollama": False}
-
-
-def test_no_call_site_passes_the_credentials_file_as_the_home():
-    """The rail, because the fix is one argument and the mistake is invisible at the call site.
-
-    `CredentialStore(home)` and `CredentialStore(home / "credentials.json")` are both valid
-    Python that construct without raising — the store simply resolves a path that cannot exist
-    and every `resolve` raises `KeyError`. Nothing else in the tree fails, which is how this
-    survived. Asserted over the source so a future call site cannot re-make it.
-    """
-    offenders = []
-    pattern = re.compile(r"CredentialStore\([^#]*?credentials\.json")
-    for path in source_index.package_files():
-        for num, line in enumerate(source_index.text(path).splitlines(), 1):
-            if pattern.search(line):
-                offenders.append(f"{path.relative_to(_SRC)}:{num}: {line.strip()}")
-    assert not offenders, (
-        "CredentialStore takes the HOME and reads `<home>/.env` itself; these pass a file, "
-        "so the store reads beneath it and finds nothing:\n" + "\n".join(offenders)
-    )
 
 
 def test_the_rail_would_catch_the_defect_it_was_written_for():

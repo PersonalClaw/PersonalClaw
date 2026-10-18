@@ -153,21 +153,6 @@ def test_this_installs_cli_answers_an_unknown_step_in_json(isolated_install) -> 
     assert answer["commands"] == ["adjudicate", "experience", "preflight", "scope-check"]
 
 
-def test_the_optimize_module_is_not_a_second_entry_point() -> None:
-    """One way in: the CLI's command. The module no longer runs on its own under ``-m``."""
-    import ast
-
-    import personalclaw.evals.optimize as optimize
-
-    tree = ast.parse(Path(optimize.__file__).read_text(encoding="utf-8"))
-    mains = [
-        node
-        for node in tree.body
-        if isinstance(node, ast.If) and "__main__" in ast.unparse(node.test)
-    ]
-    assert mains == []
-
-
 # ── a step runs where the home cannot gain an entry ──────────────────────────
 
 

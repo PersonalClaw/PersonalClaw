@@ -29,16 +29,17 @@ a word this file has not decided about — a new DM policy must state whether a 
 
 from __future__ import annotations
 
-import ast
 import asyncio
-import inspect
 
+import channel_inbound_policy_gate_shared
 import pytest
 
 from personalclaw import channel_inbound as ci
 from personalclaw import channel_trust as ct
 from personalclaw.channel_transports.base import ChannelMessage
 from personalclaw.testing.channel_conformance import CapturingState
+
+isolated = channel_inbound_policy_gate_shared.isolated
 
 PROVIDER = "telegram"
 
@@ -52,21 +53,6 @@ PROVIDER = "telegram"
 #:
 #: Keyed by policy so :data:`channel_trust.DM_POLICIES` is the authority on the key set.
 CODE_OPENS_THE_DOOR: dict[str, bool] = {"pairing": True, "owner_only": False, "open": False}
-
-
-@pytest.fixture(autouse=True)
-def isolated(tmp_path, monkeypatch):
-    """Point the trust store, SEL and the door's record of deliveries at ``tmp_path``; the
-    real home is never touched."""
-    import personalclaw.config.loader as cfg
-    import personalclaw.providers.entity_routes as er
-
-    monkeypatch.setattr(cfg, "config_dir", lambda: tmp_path)
-    monkeypatch.setattr(
-        er, "_entity_settings_path", lambda entity: tmp_path / "entity_settings" / f"{entity}.json"
-    )
-    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    yield tmp_path
 
 
 @pytest.fixture
@@ -284,50 +270,3 @@ def test_the_door_is_not_simply_refusing_everything(turns):
 
 
 # ── structural: the door reaches no verdict the gate would not have reached ──
-
-
-def test_admit_returns_only_what_the_gate_returned():
-    """``admit`` must hold no verdict of its own — the pin on the fix's shape.
-
-    The defect was not a wrong policy check, it was a *second* decision site above the one
-    decision function. A behavioural test can only catch the cases it enumerates; this
-    catches any re-added early return, whatever policy it does or does not consult.
-    """
-    tree = ast.parse(inspect.getsource(ci.admit))
-    returns = [n for n in ast.walk(tree) if isinstance(n, ast.Return)]
-
-    assert (
-        len(returns) == 1
-    ), f"admit has {len(returns)} return statements; the gate is the only one"
-    value = returns[0].value
-    assert isinstance(value, ast.Call) and getattr(value.func, "id", "") == "guard_inbound", (
-        "admit returns something other than guard_inbound's verdict — a second trust "
-        "decision site above the gate is exactly the defect this file pins"
-    )
-    assert not [
-        n for n in ast.walk(tree) if isinstance(n, ast.Call) and "redeem" in ast.dump(n.func)
-    ], "admit redeems a pairing code again; redemption belongs inside guard_inbound"
-
-
-def test_channel_inbound_imports_no_trust_primitive_but_the_gate():
-    """The module-level pin: importing the primitives is what let the door use them.
-
-    ``redeem_pairing_code`` / ``is_allowed_sender`` are the two the pre-gate block used.
-    The door needs neither — it needs one gate — and not importing them is what keeps the
-    next contributor from assembling a policy here by hand. Beside the gate and its verdict
-    type it reaches only the gate's one reporter, which decides nothing: the door refuses a
-    message with no id through it, so that refusal is said in the gate's words.
-    """
-    src = ast.parse(inspect.getsource(ci))
-    imported = {
-        alias.asname or alias.name
-        for node in ast.walk(src)
-        if isinstance(node, ast.ImportFrom) and (node.module or "").endswith("channel_trust")
-        for alias in node.names
-    }
-
-    assert "guard_inbound" in imported, "floor: the door must still import the gate"
-    assert imported <= {"TrustVerdict", "guard_inbound", "report_inbound_verdict"}, (
-        "channel_inbound imports trust primitives beyond the gate and its verdict type "
-        f"({sorted(imported)}) — those are the ingredients of a second policy"
-    )

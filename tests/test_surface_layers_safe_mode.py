@@ -19,11 +19,13 @@ import asyncio
 import json
 from pathlib import Path
 
-import pytest
+import surface_layers_safe_mode_shared
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 
 from personalclaw import surface_layers
+
+_clean_latch = surface_layers_safe_mode_shared._clean_latch
 
 
 def _run(coro):
@@ -32,13 +34,6 @@ def _run(coro):
 
 def _body(resp: web.Response) -> dict:
     return json.loads(resp.text or "{}")
-
-
-@pytest.fixture(autouse=True)
-def _clean_latch():
-    surface_layers.reset_for_tests()
-    yield
-    surface_layers.reset_for_tests()
 
 
 # ── the latch ────────────────────────────────────────────────────────────────
@@ -199,31 +194,6 @@ class TestTheStatusReport:
 
 
 class TestTheTileActionRoute:
-    def test_the_route_is_registered_and_its_handler_is_exported(self) -> None:
-        """A handler nothing routes to is this repo's most repeated failure shape.
-
-        Audited STATICALLY (ast over `dashboard/routes.py`), which is the house precedent —
-        `test_api_manifest_drift` documents why: booting the dashboard to walk the live table
-        has security-critical startup side effects. The handler half is checked by IMPORT, so
-        a registered path pointing at a name that does not exist still fails here."""
-        import ast
-
-        import personalclaw.dashboard.routes as routes_mod
-        from personalclaw.dashboard.handlers import views as views_mod
-
-        tree = ast.parse(Path(routes_mod.__file__).read_text(encoding="utf-8"))
-        paths = {
-            node.args[0].value
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr in ("add_post", "add_get", "add_put", "add_delete")
-            and node.args
-            and isinstance(node.args[0], ast.Constant)
-            and isinstance(node.args[0].value, str)
-        }
-        assert "/api/dashboard/views/{view_id}/tiles/action" in paths
-        assert callable(views_mod.api_dashboard_view_tile_action)
 
     def test_a_missing_ref_is_a_400(self) -> None:
         from personalclaw.dashboard.handlers.views import api_dashboard_view_tile_action

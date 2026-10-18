@@ -36,7 +36,7 @@ import threading
 import time
 
 import pytest
-from test_loop_worktree_sparse import _repo, _tree  # reuse the canonical fixtures
+from loop_worktree_sparse_shared import _repo, _tree  # reuse the canonical fixtures
 
 from personalclaw.loop import worktree as wt
 

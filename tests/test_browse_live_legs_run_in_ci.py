@@ -41,78 +41,16 @@ import re
 
 import browse_chrome
 import pytest
+from browse_live_legs_run_in_ci_shared import _CI, _ROOT, jobs, run_commands
 
-_ROOT = pathlib.Path(__file__).resolve().parents[1]
 _TESTS = _ROOT / "tests"
-_CI = _ROOT / ".github" / "workflows" / "ci.yml"
 
 #: The job id as it stands today. Used only in failure messages — the assertions locate the leg
 #: by behaviour, so renaming the job is not a regression and must not read as one.
 EXPECTED_LEG = "e2e"
 
-#: Job ids that have been in this workflow long enough that their absence means the parser
-#: broke rather than that CI changed. The vacuity floor for :func:`jobs`.
-LONG_STANDING_JOBS = frozenset({"lint", "test", "web", "rails", "harness", "client"})
-
 
 # ── the parser ────────────────────────────────────────────────────────────────
-
-
-def jobs(text: str) -> dict[str, str]:
-    """Job id → the block of ``text`` belonging to it.
-
-    A job id is the only key at two-space indent in this file: a job's own keys (``runs-on``,
-    ``env``, ``steps``) sit at four, and steps deeper still. So the scan needs no YAML.
-    """
-    found: dict[str, list[str]] = {}
-    current: str | None = None
-    in_jobs = False
-    for line in text.splitlines():
-        if re.match(r"^jobs:\s*$", line):
-            in_jobs = True
-            continue
-        if not in_jobs:
-            continue
-        if line.strip() and not line.startswith(" ") and not line.startswith("#"):
-            break  # back to a top-level key: the jobs mapping ended
-        header = re.match(r"^ {2}([A-Za-z][\w-]*):\s*(#.*)?$", line)
-        if header:
-            current = header.group(1)
-            found[current] = []
-            continue
-        if current is not None:
-            found[current].append(line)
-    return {name: "\n".join(body) for name, body in found.items()}
-
-
-def run_commands(block: str) -> list[str]:
-    """Every shell command a job's steps run — single-line ``run:`` values and scalar bodies.
-
-    Block scalars matter here: an install step is exactly the sort of thing someone later folds
-    into a ``run: |``, and a scan that only saw single lines would then report "this leg does not
-    install a browser" (a false red) or, worse, miss a moved pytest invocation.
-    """
-    out: list[str] = []
-    body_indent: int | None = None
-    for line in block.splitlines():
-        if body_indent is not None:
-            stripped = line.strip()
-            indent = len(line) - len(line.lstrip())
-            if stripped and indent < body_indent:
-                body_indent = None
-            elif stripped and not stripped.startswith("#"):
-                out.append(stripped)
-                continue
-        head = re.match(r"^(\s*)-?\s*run:\s*(.*?)\s*$", line)
-        if not head:
-            continue
-        value = head.group(2)
-        if value in ("|", ">", "|-", ">-", "|+", ">+"):
-            body_indent = len(head.group(1)) + 2
-        elif value and not value.startswith("#"):
-            out.append(value)
-            body_indent = None
-    return out
 
 
 def env_value(block: str, key: str) -> str | None:
@@ -234,21 +172,6 @@ def the_leg(text: str) -> tuple[str, str]:
 # ── the rails ─────────────────────────────────────────────────────────────────
 
 
-def test_the_job_scan_is_not_vacuous() -> None:
-    """If :func:`jobs` returned nothing, every assertion below would pass."""
-    parsed = jobs(_CI.read_text(encoding="utf-8"))
-    missing = LONG_STANDING_JOBS - set(parsed)
-    assert not missing, f"the job scan lost long-standing jobs {sorted(missing)} — parser broke"
-    # The pytest step's HOME is derived, not pinned to a job id (the same discipline the module
-    # docstring states for the browse leg): since #2720 the `test` job is an aggregation gate and
-    # the `uv run pytest …` step moved to `test-shard`, so anchor the run: scan on any job that
-    # runs it rather than on `test` specifically.
-    all_run = [cmd for block in parsed.values() for cmd in run_commands(block)]
-    assert any(
-        cmd.startswith("uv run pytest") for cmd in all_run
-    ), "the run: scan broke, not ci.yml"
-
-
 def test_the_module_walk_is_not_vacuous() -> None:
     """The derived inventory must find the proof modules — and must NOT find this one.
 
@@ -344,15 +267,6 @@ def test_every_path_the_leg_names_exists() -> None:
     name, block = the_leg(_CI.read_text(encoding="utf-8"))
     absent = sorted(path for path in modules_named(block) if not (_ROOT / path).is_file())
     assert not absent, f"job `{name}` names test paths that do not exist: {absent}"
-
-
-def test_the_leg_runs_on_the_pull_request_gate() -> None:
-    """ci.yml, not breadth.yml: a proof that only runs after merge is not a merge gate."""
-    header = _CI.read_text(encoding="utf-8").split("jobs:")[0]
-    assert re.search(r"^\s*pull_request:", header, re.M), (
-        "ci.yml no longer triggers on pull_request, so the browse proof moved off the merge "
-        "gate. Re-derive this rail against whatever gates a merge now."
-    )
 
 
 # ── the detectors, both directions ────────────────────────────────────────────

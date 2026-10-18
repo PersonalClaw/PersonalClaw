@@ -26,13 +26,15 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-import source_index
+import task_collection_completeness_shared
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from fakes import FakeTaskProvider, only_task_provider
 
 from personalclaw.tasks import handlers, registry
 from personalclaw.tasks.models import Task, TaskDependency, TaskStatus
+
+_own_home = task_collection_completeness_shared._own_home
 
 
 def _task(tid: str, **kw) -> Task:
@@ -44,13 +46,6 @@ def _many(n: int, prefix: str = "t") -> list[Task]:
     return [
         _task(f"{prefix}-{i:05d}", updated_at=f"2026-01-01T00:00:{n - i:02d}Z") for i in range(n)
     ]
-
-
-@pytest.fixture(autouse=True)
-def _own_home(tmp_path, monkeypatch):
-    """Never the real home: `_ensure_native` would otherwise read the owner's tasks."""
-    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    yield
 
 
 # ── the aggregator pages a provider to completeness ──────────────────────────────────────────
@@ -343,21 +338,3 @@ async def test_mine_pages_correctly_rather_than_shrinking_the_page(monkeypatch):
 
 
 # ── the "all of them" callers no longer spell it with a number ────────────────────────────────
-
-
-def test_no_caller_still_asks_for_everything_with_a_magic_limit():
-    """The census that motivated the primitive, kept executable. Fourteen call sites meant "all
-    of them" and said `limit=10_000` / `limit=500`; each was a silent truncation waiting for a
-    busy install (a loop's progress count, a project delete, a reset gate). A window is fine
-    where a window is intended — those callers name a small explicit one."""
-    import pathlib
-    import re
-
-    root = pathlib.Path(__file__).resolve().parents[1] / "src"
-    offenders = [
-        f"{path.relative_to(root)}:{i}"
-        for path in source_index.package_files()
-        for i, line in enumerate(source_index.text(path).splitlines(), 1)
-        if re.search(r"list_all_tasks\([^)]*limit=(?:500|10_000|10000)", line)
-    ]
-    assert offenders == [], f"these mean collect_tasks(): {offenders}"

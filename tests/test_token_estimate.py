@@ -22,29 +22,14 @@ silently stopped matching would otherwise make this file pass by measuring nothi
 
 from __future__ import annotations
 
-import re
-from pathlib import Path
-
 import pytest
-import source_index
+from token_estimate_shared import _CANONICAL, _LOCAL_DEFINITION, _SRC
 
 from personalclaw.agents.native.runtime import NativeAgentRuntime
 from personalclaw.token_estimate import (
     CONSERVATIVE_CHARS_PER_TOKEN,
     NOMINAL_CHARS_PER_TOKEN,
 )
-
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-_SRC = _REPO_ROOT / "src" / "personalclaw"
-
-#: The canonical home. Every other module must import from it, not restate it.
-_CANONICAL = _SRC / "token_estimate.py"
-
-#: A local definition of the ratio, under any of the names the ten sites had used. Matches
-#: ``CHARS_PER_TOKEN = 4``, ``_CHARS_PER_TOKEN = 3.0`` and ``CHARS_PER_TOKEN: int = 4``; a
-#: RHS that names another constant (``= NOMINAL_CHARS_PER_TOKEN``) is a re-export, not a
-#: redefinition, so it deliberately does not match.
-_LOCAL_DEFINITION = re.compile(r"_?CHARS_PER_TOKEN(?::\s*[a-z]+)?\s*=\s*[0-9]", re.IGNORECASE)
 
 #: The four modules that divided by a bare literal with no constant at all — the half of
 #: the clause a name-only census cannot see.
@@ -61,20 +46,6 @@ class TestOneDefinition:
         """Failability control: prove the census pattern matches before trusting its zero."""
         found = _LOCAL_DEFINITION.findall(_CANONICAL.read_text(encoding="utf-8"))
         assert len(found) == 2, f"expected the two canonical definitions, found {found}"
-
-    def test_no_module_defines_its_own_ratio(self) -> None:
-        offenders: list[str] = []
-        for path in source_index.package_files():
-            if path == _CANONICAL:
-                continue
-            text = source_index.text(path)
-            for lineno, line in enumerate(text.splitlines(), start=1):
-                if _LOCAL_DEFINITION.search(line):
-                    offenders.append(f"{path.relative_to(_SRC)}:{lineno}: {line.strip()}")
-        assert offenders == [], (
-            "these modules restate the chars-per-token ratio instead of importing it from "
-            "personalclaw.token_estimate:\n" + "\n".join(offenders)
-        )
 
     @pytest.mark.parametrize("relpath", _BARE_DIVISOR_FILES)
     def test_the_bare_divisor_sites_import_the_constant(self, relpath: str) -> None:

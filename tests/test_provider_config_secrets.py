@@ -18,78 +18,14 @@ two implementations of one rule are how the routes diverged in the first place.
 from __future__ import annotations
 
 import json
-from contextlib import asynccontextmanager
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
-import source_index
-from aiohttp import web
-from aiohttp.test_utils import TestClient, TestServer
+from provider_config_secrets_shared import _client, _config_file, _save
 
 from personalclaw.apps.secret_fields import SECRET_MASK
 
 _SECRET = "fake-bot-token-1"
-
-_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "bot_token": {"type": "string", "x-meta": {"label": "Bot Token", "sensitive": True}},
-        "app_token": {"type": "string", "x-meta": {"label": "App Token", "sensitive": True}},
-        "command": {"type": "string"},
-    },
-}
-
-
-class _FakeProviderConfig:
-    type = "channel"
-    entity = ""
-    capabilities: list[str] = []
-    multiInstance = False
-    settingsSchema = _SCHEMA
-
-
-class _FakeExt:
-    name = "fake-channel"
-    enabled = False  # keep PATCH off the registry re-cycle path
-    error = ""
-    provider_config = _FakeProviderConfig()
-
-
-class _FakeRegistry:
-    def get(self, name):
-        return _FakeExt() if name == "fake-channel" else None
-
-
-@asynccontextmanager
-async def _client(tmp_path: Path):
-    from personalclaw.apps import manager
-    from personalclaw.providers import routes as provider_routes
-
-    with (
-        patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
-        patch.object(manager, "config_dir", return_value=tmp_path),
-        patch.object(provider_routes, "get_provider_registry", lambda: _FakeRegistry()),
-    ):
-        app = web.Application()
-        provider_routes.register_routes(app)
-        async with TestClient(TestServer(app)) as client:
-            yield client
-
-
-async def _save(client, values: dict):
-    """PATCH the form the way Settings → Providers does: over the revision of the config it read
-    — the form sends every field it shows, so a save names the copy it replaces
-    (`personalclaw/stale_write.py`)."""
-    read = await client.get("/api/providers/fake-channel/config")
-    revision = (await read.json())["revision"]
-    return await client.patch(
-        "/api/providers/fake-channel/config", json=values, headers={"If-Match": f'"{revision}"'}
-    )
-
-
-def _config_file(tmp_path: Path) -> Path:
-    return tmp_path / "apps" / "fake-channel" / "data" / "config.json"
 
 
 def _stored(tmp_path: Path) -> dict:
@@ -191,29 +127,6 @@ async def test_a_patch_naming_another_owners_key_is_refused(tmp_path):
         assert "ghp-vault-value" not in text
         assert _config_file(tmp_path).read_text(encoding="utf-8") == before
         assert _stored(tmp_path)["bot_token"] == _SECRET
-
-
-def test_the_masking_policy_has_exactly_one_implementation():
-    """The rail. Every config route must resolve the mask sentinel to the same module.
-
-    The divergence existed because the Apps handler owned a private ``_SECRET_MASK`` +
-    ``_mask_secret_config`` while the Providers handler owned nothing. Keyed on the sentinel
-    VALUE rather than a symbol name, because a second copy is what forks the policy — and a
-    copy is exactly as likely to be spelled inline as named. (``doctor.py`` has an unrelated
-    ``_SECRET_MASK`` naming an unresolved-secret placeholder for workflow previews; it is a
-    different concept with a different value, which is why the value is the test.)
-    """
-    src = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
-    carriers = sorted(
-        str(p.relative_to(src))
-        for p in source_index.package_files()
-        if SECRET_MASK in source_index.text(p)
-    )
-    assert carriers == ["apps/secret_fields.py"], (
-        f"the sensitive-field mask sentinel appears in more than one module: {carriers}. "
-        "One rule, one owner — a second copy is how /api/apps and /api/providers came to "
-        "disagree about whether a token is write-only."
-    )
 
 
 @pytest.mark.parametrize(

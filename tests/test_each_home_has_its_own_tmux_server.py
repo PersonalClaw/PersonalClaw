@@ -13,7 +13,6 @@ service and wiping a home stop that home's server and remove its socket.
 
 from __future__ import annotations
 
-import ast
 import asyncio
 import os
 import shutil
@@ -22,12 +21,8 @@ import tempfile
 from pathlib import Path
 
 import pytest
-import source_index
 
-import personalclaw
 from personalclaw import tmux_substrate
-
-SRC = Path(personalclaw.__file__).resolve().parent
 
 
 @pytest.fixture
@@ -95,25 +90,6 @@ def test_a_home_too_long_for_a_socket_still_gets_a_server_of_its_own(tmp_path, m
         assert len(os.fsencode(tmux_substrate.socket_path(home))) <= 103
         flags.append(argv[1:3])
     assert flags[0] != flags[1]
-
-
-def test_no_tmux_command_is_built_outside_the_substrate():
-    """Three private copies in the terminal handler kept naming the machine-wide socket."""
-    stray = []
-    for py, tree in source_index.package_trees():
-        rel = py.relative_to(SRC).as_posix()
-        if rel == "tmux_substrate.py" or rel.startswith("skills/bundled/"):
-            continue
-        for node in ast.walk(tree):
-            args = []
-            if isinstance(node, (ast.List, ast.Tuple)):
-                args = node.elts
-            elif isinstance(node, ast.Call):
-                args = node.args
-            first = args[0] if args else None
-            if isinstance(first, ast.Constant) and first.value == "tmux":
-                stray.append(f"{rel}:{node.lineno}")
-    assert stray == [], stray
 
 
 def _stale_socket(path: Path) -> None:

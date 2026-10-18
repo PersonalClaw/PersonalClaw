@@ -158,17 +158,3 @@ def test_misplaced_names_a_rail_outside_tests_rails_and_a_suite_module_inside(
         "tests/rails/test_suite_inside.py",
         "tests/test_rail_outside.py",
     ]
-
-
-def test_a_pending_split_is_allowed_only_while_it_is_listed(tmp_path: Path) -> None:
-    rail = ROWS[5][1]
-    _plant(tmp_path, "tests/test_waits.py", rail)
-    modules = rails_census.census(tmp_path)
-    assert rails_census.misplaced(modules, pending={"tests/test_waits.py"}) == []
-    assert rails_census.misplaced(modules, pending=set()) != []
-
-
-def test_a_pending_name_that_is_no_longer_a_rail_outside_fails(tmp_path: Path) -> None:
-    _plant(tmp_path, "tests/test_done.py", ROWS[-1][1])
-    bad = rails_census.misplaced(rails_census.census(tmp_path), pending={"tests/test_done.py"})
-    assert bad and "pending" in bad[0]

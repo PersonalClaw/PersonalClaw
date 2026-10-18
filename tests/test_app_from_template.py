@@ -22,15 +22,13 @@ default cannot reach a release).
 
 from __future__ import annotations
 
-import argparse
-import http.server
 import io
-import json
 import tarfile
-import threading
 from pathlib import Path
 
+import app_from_template_shared
 import pytest
+from app_from_template_shared import _args, _egress
 
 from personalclaw.cli_app_new import (
     MAX_MEMBERS,
@@ -45,8 +43,9 @@ from personalclaw.cli_app_new import (
     from_template,
     scaffold,
 )
-from personalclaw.config.loader import config_dir
 from personalclaw.sel import sel
+
+local_archive_server = app_from_template_shared.local_archive_server
 
 # ---------------------------------------------------------------------------
 # Archive fixtures
@@ -79,77 +78,6 @@ def _dir_member(name: str) -> tarfile.TarInfo:
     info.type = tarfile.DIRTYPE
     info.mode = 0o755
     return info
-
-
-@pytest.fixture(scope="module")
-def template_tree(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """The template repository's shape: a fresh tool scaffold plus its root-level CI workflow."""
-    app = scaffold(
-        "app-template",
-        "tool",
-        dest=tmp_path_factory.mktemp("template-repo"),
-        display_name="App Template",
-        description="The PersonalClaw app template: clone it, rename it, ship it.",
-        author="PersonalClaw contributors",
-    )
-    workflow = app.path / ".github" / "workflows" / "ci.yml"
-    workflow.parent.mkdir(parents=True)
-    workflow.write_text("name: ci\non: [push]\n", encoding="utf-8")
-    # Vacuity: every positive test below extracts this tree, so it must hold the files the
-    # platform leg installs from.
-    for rel in ("app.json", "provider.py", ".github/workflows/ci.yml"):
-        assert (app.path / rel).is_file(), f"the template fixture is missing {rel}"
-    return app.path
-
-
-def _template_tarball(tree: Path, root: str = "app-template-main") -> bytes:
-    """*tree*, packed the way GitHub packs a repo tarball (one wrapper dir)."""
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        tar.add(tree, arcname=root, recursive=True)
-    return buf.getvalue()
-
-
-class _Handler(http.server.BaseHTTPRequestHandler):
-    """Serves whatever ``self.server.reply`` says: (status, headers, body)."""
-
-    def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's contract
-        status, headers, body = self.server.reply  # type: ignore[attr-defined]
-        self.send_response(status)
-        for key, value in headers.items():
-            self.send_header(key, value)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, *args: object) -> None:
-        return
-
-
-def _egress(**settings: list[str]) -> None:
-    """This test home's Settings → Security → Network egress."""
-    (config_dir() / "config.json").write_text(
-        json.dumps({"security": {"egress": settings}}), encoding="utf-8"
-    )
-
-
-@pytest.fixture
-def local_archive_server(monkeypatch: pytest.MonkeyPatch):
-    """A loopback HTTP server the transport is allowed to talk to, for this test only: the
-    template allowlists name it, and so does Allowed hosts, as an owner serving one would."""
-    server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
-    server.reply = (200, {"Content-Type": "application/gzip"}, b"")  # type: ignore[attr-defined]
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    monkeypatch.setattr("personalclaw.cli_app_new.TEMPLATE_SCHEMES", frozenset({"http"}))
-    monkeypatch.setattr("personalclaw.cli_app_new.TEMPLATE_HOSTS", frozenset({"127.0.0.1"}))
-    _egress(allow_hosts=["127.0.0.1"])
-    try:
-        yield server, f"http://127.0.0.1:{server.server_address[1]}/tar.gz"
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
 
 
 def test_the_scaffold_readme_sends_the_owner_token_in_the_header_not_the_url(tmp_path) -> None:
@@ -256,19 +184,6 @@ def test_a_redirect_is_refused(local_archive_server) -> None:
     with pytest.raises(ScaffoldError) as exc:
         fetch_template_archive(url)
     assert "redirect" in str(exc.value).lower()
-
-
-def test_a_200_tarball_is_fetched_and_extracted(
-    local_archive_server, template_tree: Path, tmp_path: Path
-) -> None:
-    """The whole default path — validate, fetch, extract — over a real socket."""
-    server, url = local_archive_server
-    server.reply = (200, {"Content-Type": "application/gzip"}, _template_tarball(template_tree))
-    result = from_template(dest=tmp_path, url=url)
-    assert result.source == url
-    assert result.path == tmp_path / "app-template"
-    assert "app.json" in result.files
-    assert (result.path / "provider.py").is_file()
 
 
 # ---------------------------------------------------------------------------
@@ -399,41 +314,10 @@ def test_a_non_tarball_body_is_refused(tmp_path: Path, monkeypatch: pytest.Monke
 # ---------------------------------------------------------------------------
 
 
-def test_an_existing_non_empty_target_is_refused_unless_forced(
-    template_tree: Path, tmp_path: Path
-) -> None:
-    data = _template_tarball(template_tree)
-    first = from_template(dest=tmp_path, archive=_write(tmp_path, data))
-    assert first.files
-    with pytest.raises(ScaffoldError) as exc:
-        from_template(dest=tmp_path, archive=_write(tmp_path, data))
-    assert "not empty" in str(exc.value)
-    again = from_template(dest=tmp_path, archive=_write(tmp_path, data), force=True)
-    assert again.path == first.path
-
-
-def test_a_symlinked_target_is_refused(template_tree: Path, tmp_path: Path) -> None:
-    real = tmp_path / "elsewhere"
-    real.mkdir()
-    (tmp_path / "dst").mkdir()
-    (tmp_path / "dst" / "app-template").symlink_to(real, target_is_directory=True)
-    with pytest.raises(ScaffoldError) as exc:
-        from_template(
-            dest=tmp_path / "dst", archive=_write(tmp_path, _template_tarball(template_tree))
-        )
-    assert "symlink" in str(exc.value)
-
-
 def test_a_missing_archive_is_refused(tmp_path: Path) -> None:
     with pytest.raises(ScaffoldError) as exc:
         from_template(dest=tmp_path, archive=tmp_path / "nope.tar.gz")
     assert "not found" in str(exc.value)
-
-
-def _write(tmp_path: Path, data: bytes) -> Path:
-    path = tmp_path / "template.tar.gz"
-    path.write_bytes(data)
-    return path
 
 
 # ---------------------------------------------------------------------------
@@ -441,81 +325,9 @@ def _write(tmp_path: Path, data: bytes) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def test_the_github_wrapper_directory_is_stripped(template_tree: Path, tmp_path: Path) -> None:
-    """A GitHub tarball wraps the repo in ``<repo>-<ref>/``; the app must land at the root."""
-    result = from_template(
-        dest=tmp_path, archive=_write(tmp_path, _template_tarball(template_tree, "app-template-v9"))
-    )
-    assert (result.path / "app.json").is_file()
-    assert not (result.path / "app-template-v9").exists()
-    assert (result.path / ".github" / "workflows" / "ci.yml").is_file()
-
-
-def test_the_fetched_template_installs_and_registers_its_provider(
-    template_tree: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The clone-to-installed claim, driven through the real install path in a fake home."""
-    import personalclaw.config.loader as loader
-    from personalclaw.apps import app_manager, manager
-    from personalclaw.providers.registry import get_provider_registry
-
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setattr(loader, "config_dir", lambda: home)
-    monkeypatch.setattr(manager, "config_dir", lambda: home)
-
-    result = from_template(
-        dest=tmp_path / "dst", archive=_write(tmp_path, _template_tarball(template_tree))
-    )
-    registry = get_provider_registry()
-    try:
-        installed = app_manager.install(result.path, origin="local", confirm=True)
-        assert installed.ok, f"install refused: {installed.error}"
-        assert app_manager.enable("app-template")
-        ext = registry.get("app-template")
-        assert ext is not None, "the template installed but registered no provider"
-        assert ext.enabled, f"registered but not enabled — {ext.error}"
-        assert ext.provider_config.type == "tool"
-    finally:
-        app_manager.disable("app-template")
-        registry.deregister("app-template")
-
-
 # ---------------------------------------------------------------------------
 # CLI wiring
 # ---------------------------------------------------------------------------
-
-
-def _args(**kwargs: object) -> argparse.Namespace:
-    base = dict(
-        app_cmd="new",
-        name=None,
-        type=None,
-        list_types=False,
-        dest=".",
-        display_name="",
-        description="",
-        author="",
-        force=False,
-        from_template=False,
-        template_url="",
-        template_archive="",
-    )
-    base.update(kwargs)
-    return argparse.Namespace(**base)
-
-
-def test_the_cli_fetches_from_a_local_archive(
-    template_tree: Path, tmp_path: Path, capsys: pytest.CaptureFixture
-) -> None:
-    archive = _write(tmp_path, _template_tarball(template_tree))
-    code = app_cmd(
-        _args(from_template=True, dest=str(tmp_path / "dst"), template_archive=str(archive))
-    )
-    assert code == 0
-    out = capsys.readouterr().out
-    assert "app.json" in out
-    assert (tmp_path / "dst" / "app-template" / "app.json").is_file()
 
 
 def test_the_cli_refuses_a_name_with_from_template(capsys: pytest.CaptureFixture) -> None:

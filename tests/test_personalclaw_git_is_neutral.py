@@ -32,7 +32,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-import source_index
+from personalclaw_git_is_neutral_shared import _bound_argvs
 
 from personalclaw.net.git import (
     TRANSPORT_REFUSALS,
@@ -597,123 +597,6 @@ def test_the_updater_runs_no_program_its_checkout_names(scratch, repo):
 
 
 # ── the rail: every git spawn in the tree is neutral ───────────────────────────────────────
-
-#: Clones into a directory PersonalClaw has just made. Their configuration is what git writes
-#: for the clone, so nothing an agent wrote reaches them; and a Store source may be a local
-#: path, which the neutral settings refuse.
-_FRESH_CLONE = {
-    "apps/catalog.py::_read_git_registry::subprocess.run",
-    "apps/catalog.py::_scan_git_source::subprocess.run",
-    "apps/source.py::_clone_git::subprocess.run",
-    # Its own, stricter settings: no configuration file at all, HTTPS only, no credentials.
-    "net/git.py::run_git_guarded::subprocess.run",
-}
-
-
-def _tail(call: ast.Call) -> str:
-    from test_spawn_ceiling_audit import _callee
-
-    return _callee(call).split(".")[-1]
-
-
-def _argv_kind(node: ast.AST, bound: dict[str, str]) -> str:
-    """``neutral`` for an argv ``git_argv`` built, ``raw`` for one that starts with a literal
-    ``"git"``, ``""`` for anything else. *bound* maps the names a function set to one of those."""
-    if isinstance(node, ast.Starred):
-        return _argv_kind(node.value, bound)
-    if isinstance(node, ast.Call) and _tail(node) == "spawn_shim_argv" and node.args:
-        return _argv_kind(node.args[0], bound)
-    if isinstance(node, ast.Call) and _tail(node) == "git_argv":
-        return "neutral"
-    if isinstance(node, ast.Name):
-        return bound.get(node.id, "")
-    if isinstance(node, ast.BinOp):  # ["git", ...] + args
-        return _argv_kind(node.left, bound)
-    if isinstance(node, (ast.List, ast.Tuple)) and node.elts:
-        return _argv_kind(node.elts[0], bound)
-    if isinstance(node, ast.Constant) and node.value == "git":
-        return "raw"
-    return ""
-
-
-def _bound_argvs(fn: ast.AST) -> dict[str, str]:
-    out: dict[str, str] = {}
-    for node in ast.walk(fn):
-        if isinstance(node, ast.Assign):
-            kind = _argv_kind(node.value, {})
-            for target in node.targets:
-                if kind and isinstance(target, ast.Name):
-                    out[target.id] = kind
-    return out
-
-
-def _git_spawn_census() -> dict[str, set[str]]:
-    """``file::qualname::callee`` → the kinds of git argv its spawn calls use."""
-    from test_spawn_ceiling_audit import _SPAWN_CALLEES, _callee, _normalize, _src_root
-
-    root = _src_root()
-    out: dict[str, set[str]] = {}
-    for path, tree in source_index.package_trees():
-        rel = path.relative_to(root).as_posix()
-
-        class V(ast.NodeVisitor):
-            def __init__(self) -> None:
-                self.q: list[str] = []
-                self.bound: list[dict[str, str]] = [{}]
-
-            def visit_FunctionDef(self, n) -> None:
-                self.q.append(n.name)
-                self.bound.append({**self.bound[-1], **_bound_argvs(n)})
-                self.generic_visit(n)
-                self.bound.pop()
-                self.q.pop()
-
-            visit_AsyncFunctionDef = visit_FunctionDef
-
-            def visit_ClassDef(self, n) -> None:
-                self.q.append(n.name)
-                self.generic_visit(n)
-                self.q.pop()
-
-            def visit_Call(self, n: ast.Call) -> None:
-                callee = _normalize(_callee(n))
-                if callee in _SPAWN_CALLEES and n.args:
-                    kind = _argv_kind(n.args[0], self.bound[-1])
-                    if kind:
-                        key = f"{rel}::{'.'.join(self.q) or '<module>'}::{callee}"
-                        out.setdefault(key, set()).add(kind)
-                self.generic_visit(n)
-
-        V().visit(tree)
-    return out
-
-
-def test_every_git_personalclaw_runs_is_neutral_but_a_fresh_clone():
-    census = _git_spawn_census()
-    raw = {key for key, kinds in census.items() if "raw" in kinds}
-    assert raw == _FRESH_CLONE, (
-        "a git spawn builds its argv by hand. Use `net.git.git_argv(args)` so a repository's own "
-        f"configuration cannot run a program as the gateway:\n  {sorted(raw - _FRESH_CLONE)}\n"
-        f"no longer a raw git spawn (drop it from _FRESH_CLONE): {sorted(_FRESH_CLONE - raw)}"
-    )
-
-
-def test_the_git_census_sees_the_neutral_sites():
-    """Non-vacuity: the census finds the call sites that run git through ``git_argv``."""
-    neutral = {key for key, kinds in _git_spawn_census().items() if "neutral" in kinds}
-    for key in (
-        "durability/state_history.py::_git::subprocess.run",
-        "self_update.py::_run_git::subprocess.run",
-        "self_update.py::commits_behind_upstream::asyncio.create_subprocess_exec",
-        "dashboard/handlers/updates.py::_do_update_check::asyncio.create_subprocess_exec",
-        "loop/worktree.py::_git::subprocess.run",
-        "selfqa/fix_branch.py::_git::subprocess.run",
-        "dashboard/handlers/files.py::_git::asyncio.create_subprocess_exec",
-        "workflows/review_service.py::_git::asyncio.create_subprocess_exec",
-        "triggers/liveness.py::_dirty_git_active::subprocess.run",
-        "cli_doctor.py::_git_is_inside_work_tree::subprocess.run",
-    ):
-        assert key in neutral, key
 
 
 def test_the_census_would_see_a_raw_git_built_in_a_variable():

@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import ast
 import re
-from pathlib import Path
 
+import pre_edit_read_gate_shared
 import pytest
+from pre_edit_read_gate_shared import _BUILTIN_TOOLS_SRC, _UNGATEABLE_WRITE_PATHS
 
 from personalclaw.agents.native import read_gate
 from personalclaw.agents.native.builtin_tools import (
@@ -24,16 +25,7 @@ from personalclaw.agents.native.builtin_tools import (
     NativeBuiltinToolProvider,
 )
 
-_BUILTIN_TOOLS_SRC = Path(read_gate.__file__).with_name("builtin_tools.py")
-
-
-@pytest.fixture(autouse=True)
-def _clean_ledger():
-    # The ledger is process-global; reset around every test so a leaked observation from
-    # one test cannot admit a write another test asserts is refused (or vice versa).
-    read_gate.reset_all()
-    yield
-    read_gate.reset_all()
+_clean_ledger = pre_edit_read_gate_shared._clean_ledger
 
 
 @pytest.fixture
@@ -254,81 +246,6 @@ async def test_missing_old_str_still_reports_the_tools_own_error(ws):
 
 
 # ── the bypass rail ────────────────────────────────────────────────────────────
-
-#: Calls that write CONTENT to a filesystem path. A handler performing one of these is a
-#: write path and must be covered by the seam's registry. Deletion/rename (``unlink``,
-#: ``rename``) are deliberately out: the gate is about content computed against a stale
-#: version, and including ``unlink`` credited ``_t_bash`` for deleting its own temp script.
-_CONTENT_WRITE_CALLS = frozenset(
-    {
-        "write_text",
-        "write_bytes",
-        "atomic_write",
-        "atomic_write_bytes",
-        "copyfile",
-        "copy",
-        "copy2",
-        "replace",  # os.replace / shutil.replace — a rename-into-place IS a content write
-    }
-)
-
-#: Write paths that CANNOT be gated on an observed target, declared so the exemption is
-#: visible and tested rather than silently missing from the registry. ``bash`` takes a
-#: command, not a path: ``sed -i`` / ``> file`` mutate files the gate never sees a name
-#: for. It is fenced by approval + risk level + the bash denylist instead, and this row
-#: is the honest statement of the residual hole.
-_UNGATEABLE_WRITE_PATHS = {"bash": "takes an opaque command, not a target path"}
-
-
-def _write_handlers_in_builtin_tools() -> set[str]:
-    """Every ``_t_<tool>`` handler in builtin_tools.py whose body mutates a path.
-
-    An AST walk, not a grep: a handler is attributed by the function it is lexically
-    inside, so a mutating call cannot be credited to the wrong tool (and a mention in a
-    docstring or comment is not a call at all).
-    """
-    tree = ast.parse(_BUILTIN_TOOLS_SRC.read_text(encoding="utf-8"))
-    found: set[str] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if not node.name.startswith("_t_"):
-            continue
-        for sub in ast.walk(node):
-            if not isinstance(sub, ast.Call):
-                continue
-            fn = sub.func
-            name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", "")
-            # `str.replace` is pervasive and harmless; only a path receiver mutates.
-            if name == "replace" and not (
-                isinstance(fn, ast.Attribute)
-                and isinstance(fn.value, ast.Name)
-                and fn.value.id in {"os", "path", "shutil"}
-            ):
-                continue
-            if name in _CONTENT_WRITE_CALLS:
-                found.add(node.name[len("_t_") :])
-    return found
-
-
-def test_rail_every_write_path_is_covered_by_the_one_seam():
-    discovered = _write_handlers_in_builtin_tools()
-    # VACUITY: a scan that matches nothing would "pass" while covering nothing. If the
-    # write handlers get renamed or the call vocabulary drifts, FAIL here.
-    assert discovered, (
-        "the write-path scan matched ZERO handlers — the rail is vacuous. Update "
-        f"_CONTENT_WRITE_CALLS / the _t_ prefix against {_BUILTIN_TOOLS_SRC}."
-    )
-    assert {
-        "write_file",
-        "edit_file",
-    } <= discovered, f"the two known write paths must be discoverable; got {sorted(discovered)}"
-    uncovered = discovered - set(_READ_GATED_WRITE_TOOLS) - set(_UNGATEABLE_WRITE_PATHS)
-    assert not uncovered, (
-        f"write path(s) {sorted(uncovered)} write file content but are not in "
-        "_READ_GATED_WRITE_TOOLS, so they bypass the pre-edit read gate. Add a row "
-        "there (do NOT re-implement the gate in the handler)."
-    )
 
 
 def test_rail_the_ungateable_write_path_is_declared_not_forgotten():

@@ -502,7 +502,7 @@ async def test_a_tool_you_try_from_the_tools_page_reads_your_memory(
 @contextmanager
 def _a_tool_that_notes_whose_work_it_runs_as(monkeypatch) -> Iterator[list[str]]:
     """A tool on the route's surface that notes the session its calls back would name."""
-    from test_tools_handler import _disable, _install_provider, _RecordingProvider
+    from tools_handler_shared import _disable, _install_provider, _RecordingProvider
 
     seen: list[str] = []
 

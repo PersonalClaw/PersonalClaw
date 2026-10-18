@@ -37,11 +37,14 @@ import inspect
 import json
 import pathlib
 
+import computer_use_dispatch_shared
 import pytest
 
 from personalclaw.computer_use import driver_host, enable_state, gate, policy, service
 from personalclaw.computer_use import tools as ct
 from personalclaw.sel import SecurityEventLog
+
+_isolated = computer_use_dispatch_shared._isolated
 
 ARMED_APP = "TextEdit"
 
@@ -50,22 +53,6 @@ ORDINARY_FIELD = {"role": "AXTextField", "label": "Subject", "value": "Lunch on 
 SECURE_FIELD = {"role": "AXTextField", "subrole": "AXSecureTextField", "label": "Password"}
 
 FINGERPRINT = "fp-1"
-
-
-@pytest.fixture(autouse=True)
-def _isolated(tmp_path, monkeypatch):
-    """Redirect the keystone to ``tmp_path`` and clear the snapshot store, every test.
-
-    Autouse and unconditional: a dispatch test that resolved the real keystone would read the
-    developer's own machine's arming state, so the suite would pass or fail differently on an
-    armed laptop than in CI — and the refusal messages quote the resolved path.
-    """
-    monkeypatch.setenv(enable_state.ENABLE_PATH_ENV, str(tmp_path / "enable.json"))
-    enable_state.reset_enable_state()
-    service.reset_snapshots()
-    yield
-    enable_state.reset_enable_state()
-    service.reset_snapshots()
 
 
 def _arm(tmp_path, *apps: str) -> None:
@@ -195,50 +182,6 @@ def test_the_ordering_rail_detects_a_screen_moved_after_the_action():
     mis_ordered()
     assert order.index("driver") < order.index("check_input_target")
     assert order != ["enable", "check_app", "driver", "check_input_target", "sel", "driver"]
-
-
-def _dispatch_call_order() -> list[str]:
-    """The screens as they appear in ``computer_dispatch``'s SOURCE, in line order."""
-    tree = ast.parse(inspect.getsource(service.computer_dispatch))
-    watched = {
-        "require_enabled",
-        "check_app",
-        "_require_fresh_element",
-        "check_input_target",
-        "_audit",
-        "_run_driver",
-    }
-    calls = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            name = (
-                node.func.attr
-                if isinstance(node.func, ast.Attribute)
-                else getattr(node.func, "id", "")
-            )
-            if name in watched:
-                calls.append((node.lineno, node.col_offset, name))
-    return [name for _line, _col, name in sorted(calls)]
-
-
-def test_the_dispatch_calls_the_screens_in_source_order():
-    """A structural companion to the runtime trace, catching the case the trace cannot: a step
-    that exists on a branch the happy path never takes. The runtime rail proves the order that
-    RAN; this proves the order that is WRITTEN, so a screen relocated below the driver call
-    reds even if no test happens to exercise that branch."""
-    order = _dispatch_call_order()
-    assert order[0] == "require_enabled", f"the keystone is not the first call: {order}"
-    assert (
-        order.index("check_app")
-        < order.index("_require_fresh_element")
-        < order.index("check_input_target")
-        < order.index("_run_driver")
-    ), order
-    # Every _audit call precedes the acting driver call: the audit at step 5 is written BEFORE
-    # the desktop is touched, so a driver that wedges or is killed still leaves evidence.
-    assert max(i for i, name in enumerate(order) if name == "_audit") < max(
-        i for i, name in enumerate(order) if name == "_run_driver"
-    ), order
 
 
 # ── 2. the screens refuse THROUGH the dispatch ────────────────────────────────

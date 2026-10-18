@@ -835,7 +835,7 @@ class TestThePlatformGates:
 
     def test_this_module_is_declared_as_an_unattended_dispatch_seam(self) -> None:
         """The rail that keeps the two gates above from being deleted quietly."""
-        from tests.test_action_provider_chokepoints import DENYLIST_SEAMS, EXECUTION_SITES
+        from action_provider_chokepoints_shared import DENYLIST_SEAMS, EXECUTION_SITES
 
         assert "personalclaw.proactive.autoexec" in {m for m, _ in EXECUTION_SITES}
         assert "personalclaw.proactive.autoexec" in {m for m, _ in DENYLIST_SEAMS}

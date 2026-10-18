@@ -9,7 +9,6 @@ it from resurfacing.
 from __future__ import annotations
 
 import pytest
-import source_index
 
 from personalclaw.agents.native.tools import InProcessMcpToolProvider
 from personalclaw.tool_providers.registry import (
@@ -34,17 +33,3 @@ async def test_inprocess_provider_defaults_to_core():
     p = InProcessMcpToolProvider()
     assert p.name == "personalclaw-core"
     assert len(await p.list_tools()) > 0
-
-
-def test_get_mcp_registry_has_no_importers():
-    """The dead symbol must stay dead: no source module may import it (it does not
-    exist, so any importer silently degrades to zero tools)."""
-    import pathlib
-
-    root = pathlib.Path(__file__).resolve().parent.parent / "src" / "personalclaw"
-    offenders = []
-    for p in source_index.package_files():
-        text = source_index.text(p)
-        if "import get_mcp_registry" in text or "mcp_discovery import get_mcp_registry" in text:
-            offenders.append(str(p.relative_to(root)))
-    assert offenders == [], f"dead get_mcp_registry import resurfaced in: {offenders}"

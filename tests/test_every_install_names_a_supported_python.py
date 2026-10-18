@@ -30,120 +30,34 @@ import os
 import pathlib
 import re
 import subprocess
-import tomllib
 
+import every_install_names_a_supported_python_shared
 import pytest
+from every_install_names_a_supported_python_shared import (
+    _INSTALLER,
+    _ROOT,
+    _files,
+    install_commands,
+    matrix_pythons,
+    names_a_supported_python,
+    requires_python,
+)
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
-_ROOT = pathlib.Path(__file__).resolve().parents[1]
-_INSTALLER = _ROOT / "deploy" / "website" / "install.sh"
-_PYPROJECT = _ROOT / "pyproject.toml"
-_BREADTH = _ROOT / ".github" / "workflows" / "breadth.yml"
+pc_python = every_install_names_a_supported_python_shared.pc_python
 
-#: Where a user, a contributor or CI is handed a command that installs PersonalClaw.
-_COMMAND_SOURCES = (
-    "README.md",
-    "AGENTS.md",
-    "CONTRIBUTING.md",
-    "docs/**/*.md",
-    "deploy/**/*.md",
-    "deploy/website/install.sh",
-    ".github/workflows/*.yml",
-)
 
 #: The files whose PROSE states which Python PersonalClaw runs on. The CHANGELOG is history and
 #: is not read: a released entry records what was true of its release.
 _PROSE_SOURCES = ("README.md", "AGENTS.md", "CONTRIBUTING.md", "docs/**/*.md")
 
-#: Files that hand a user a PersonalClaw install command today. The census below must find one in
-#: each, or the rule over the census is vacuous.
-_MUST_CARRY_A_COMMAND = frozenset(
-    {
-        "README.md",
-        "docs/guides/getting-started.md",
-        "docs/guides/platforms.md",
-        "deploy/website/install.sh",
-        ".github/workflows/breadth.yml",
-    }
-)
-
-#: ``uv tool install|upgrade …`` and ``pipx install|reinstall …``, up to the end of the command.
-_COMMAND = re.compile(r"\b(?:uv tool (?:install|upgrade)|pipx (?:install|reinstall))\b[^`\n|&;)]*")
-
 
 # ── readers (text in, answer out, so the controls at the bottom can drive them) ─────────────
 
 
-def installer_python(text: str) -> str | None:
-    """The installer's ``PC_PYTHON="X.Y"``, or ``None`` when it names none."""
-    match = re.search(r'^PC_PYTHON="([^"]*)"\s*$', text, flags=re.MULTILINE)
-    return match.group(1) if match else None
-
-
-def requires_python() -> SpecifierSet:
-    project = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))["project"]
-    return SpecifierSet(project["requires-python"])
-
-
 def has_upper_bound(spec: SpecifierSet) -> bool:
     return any(s.operator in ("<", "<=") for s in spec)
-
-
-def matrix_pythons(text: str) -> list[str]:
-    """The Python minors (``X.Y``) of every ``python: [...]`` matrix list in a workflow.
-
-    The matrix names exact patches (``3.13.16``), which the installer's ``PC_PYTHON`` never
-    does: it names the minor uv picks the newest patch of, so the two meet at the minor.
-    """
-    found: list[str] = []
-    for listed in re.findall(r"^\s*python:\s*\[([^\]]*)\]", text, flags=re.MULTILINE):
-        found += re.findall(r"\d+\.\d+(?:\.\d+)?", listed)
-    return sorted({".".join(v.split(".")[:2]) for v in found})
-
-
-def _files(patterns: tuple[str, ...]) -> list[pathlib.Path]:
-    found: set[pathlib.Path] = set()
-    for pattern in patterns:
-        found.update(p for p in _ROOT.glob(pattern) if p.is_file())
-    return sorted(found)
-
-
-def install_commands(path: str, text: str) -> list[str]:
-    """Every command in *text* that installs PersonalClaw itself (a shell or YAML comment is not).
-
-    PersonalClaw is named by its package (extras and specifiers included), by the installer's
-    ``$PC_PACKAGE``, or as ``.`` — a checkout. A command for some other tool is not this rule's.
-    """
-    commands = []
-    code = path.endswith((".sh", ".yml"))
-    for line in text.splitlines():
-        if code and line.lstrip().startswith("#"):
-            continue
-        for command in _COMMAND.findall(line):
-            words = [w.strip("'\"") for w in command.split()]
-            if any(w == "." or re.match(r"(?:personalclaw|\$PC_PACKAGE)\b", w) for w in words):
-                commands.append(command.strip())
-    return commands
-
-
-def named_python(command: str) -> str | None:
-    """The value of ``--python`` in *command* (quotes dropped), or ``None`` when it names none."""
-    match = re.search(r"--python[ =](\"[^\"]*\"|'[^']*'|\S+)", command)
-    return match.group(1).strip("'\"") if match else None
-
-
-def names_a_supported_python(command: str, version: str, spec: SpecifierSet) -> bool:
-    """The installer's version, its constant, the matching interpreter name, or the whole range."""
-    value = named_python(command)
-    if value is None:
-        return False
-    if value in (version, f"python{version}", "$PC_PYTHON"):
-        return True
-    try:
-        return SpecifierSet(value) == spec
-    except ValueError:
-        return False
 
 
 def open_ended_claims(text: str) -> list[str]:
@@ -158,12 +72,6 @@ def uv_brings_claims(text: str) -> list[str]:
         r"\bPython\s+\**(\d+\.\d+)",
         text,
     )
-
-
-@pytest.fixture(scope="module")
-def pc_python() -> str:
-    """The installer's ``PC_PYTHON``; ``""`` when it names none, which the first case reports."""
-    return installer_python(_INSTALLER.read_text(encoding="utf-8")) or ""
 
 
 def test_the_installer_names_the_python_it_installs_on(pc_python) -> None:
@@ -256,42 +164,7 @@ def test_the_installers_python_is_one_the_release_supports(pc_python) -> None:
     )
 
 
-def test_the_installers_python_is_one_ci_tests(pc_python) -> None:
-    tested = matrix_pythons(_BREADTH.read_text(encoding="utf-8"))
-    assert tested, "found no `python: [...]` matrix in breadth.yml, so this check reads nothing"
-    assert pc_python in tested, (
-        f"PC_PYTHON={pc_python} is not in breadth.yml's legs {tested}: the installer would put "
-        "every new user on a Python no test ran on"
-    )
-
-
 # ── every other command and sentence agrees with it ────────────────────────────────────────
-
-
-def test_every_install_command_names_a_supported_python(pc_python) -> None:
-    spec = requires_python()
-    offenders = []
-    for path in _files(_COMMAND_SOURCES):
-        rel = path.relative_to(_ROOT).as_posix()
-        for command in install_commands(rel, path.read_text(encoding="utf-8")):
-            if not names_a_supported_python(command, pc_python, spec):
-                offenders.append(f"{rel}: `{command}`")
-    assert not offenders, (
-        f"these install PersonalClaw without naming a Python ({pc_python}, as the installer does, "
-        f"or the range {spec}); uv then picks the newest it can find or download:\n"
-        + "\n".join(offenders)
-    )
-
-
-def test_the_census_finds_the_commands_users_are_handed() -> None:
-    """Vacuity floor: a census that matched nothing would make the rule above unfailable."""
-    found = {
-        path.relative_to(_ROOT).as_posix()
-        for path in _files(_COMMAND_SOURCES)
-        if install_commands(path.relative_to(_ROOT).as_posix(), path.read_text(encoding="utf-8"))
-    }
-    missing = sorted(_MUST_CARRY_A_COMMAND - found)
-    assert not missing, f"the census found no PersonalClaw install command in {missing}"
 
 
 def test_no_doc_promises_every_python_from_a_version_on() -> None:

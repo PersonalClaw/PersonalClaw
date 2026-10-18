@@ -21,7 +21,6 @@ that loop could stop it, and a spinning wait must fail this test rather than han
 
 from __future__ import annotations
 
-import ast
 import asyncio
 import threading
 import time
@@ -29,11 +28,9 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Coroutine
 
 import pytest
-import source_index
+from a_wait_for_background_work_ends_when_the_work_has_shared import _waits_for_a_set_to_empty
 
 from personalclaw.cancellation import settle
-
-_REPO = Path(__file__).resolve().parent.parent
 
 #: Long enough for an idle wait on a loaded host; a spinning one never ends.
 _BOUND_SECS = 20.0
@@ -158,42 +155,6 @@ def test_the_capture_drain_ends_when_its_last_recording_has_only_just_finished(
 # ── the rail: no wait loops on a held set's membership ──
 
 
-def _gathers(call: ast.Call) -> bool:
-    func = call.func
-    return (isinstance(func, ast.Attribute) and func.attr == "gather") or (
-        isinstance(func, ast.Name) and func.id == "gather"
-    )
-
-
-def _waits_for_a_set_to_empty(source: str | ast.Module) -> list[int]:
-    """The lines of each ``while S:`` loop whose body gathers ``*…S…``: a wait for S to empty."""
-    found = []
-    if isinstance(source, ast.Module):
-        tree = source
-    else:
-        try:
-            tree = ast.parse(source)
-        except SyntaxError:  # a fixture that is not code runs no loop
-            return []
-    for loop in ast.walk(tree):
-        if not isinstance(loop, ast.While):
-            continue
-        held = ast.dump(loop.test)
-        for call in ast.walk(loop):
-            if (
-                isinstance(call, ast.Call)
-                and _gathers(call)
-                and any(
-                    isinstance(arg, ast.Starred)
-                    and any(ast.dump(part) == held for part in ast.walk(arg.value))
-                    for arg in call.args
-                )
-            ):
-                found.append(loop.lineno)
-                break
-    return found
-
-
 def test_the_rail_sees_a_wait_for_a_set_to_empty_and_passes_one_for_its_tasks() -> None:
     """The rail's positive control: the shapes the tree held are found, the replacement is not."""
     held_shapes = [
@@ -210,26 +171,3 @@ def test_the_rail_sees_a_wait_for_a_set_to_empty_and_passes_one_for_its_tasks() 
         "        await asyncio.gather(*pending, return_exceptions=True)\n"
     )
     assert _waits_for_a_set_to_empty(replacement) == []
-
-
-def test_no_wait_in_the_tree_loops_until_a_held_set_empties() -> None:
-    """Read lazily, one file at a time, and only the files that gather in a loop at all."""
-    offenders = []
-    scanned = 0
-    # The package is the suite's one source index; the tests folder, not one of its roots, is
-    # walked and read here.
-    package = [(path, True) for path in source_index.package_files()]
-    tests = [(path, False) for path in sorted((_REPO / "tests").rglob("*.py"))]
-    for path, indexed in (*package, *tests):
-        source = source_index.text(path) if indexed else path.read_text(encoding="utf-8")
-        if "gather(" not in source or "while " not in source:
-            continue
-        scanned += 1
-        found = _waits_for_a_set_to_empty(source_index.tree(path) if indexed else source)
-        offenders += [f"{path.relative_to(_REPO)}:{line}" for line in found]
-    assert scanned >= 5, f"the scan read only {scanned} file(s) that gather in a loop"
-    assert not offenders, (
-        "these wait for a set of background tasks to empty, which spins forever once its last "
-        "task has just finished; wait with `personalclaw.cancellation.settle(held)`: "
-        + ", ".join(offenders)
-    )

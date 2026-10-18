@@ -24,7 +24,6 @@ import json
 from pathlib import Path
 
 import pytest
-import source_index
 
 from personalclaw import surface_overlay as so
 from personalclaw.errors import ERROR_CODES
@@ -379,23 +378,3 @@ def test_the_route_is_registered_in_the_shipped_reference():
         encoding="utf-8"
     )
     assert "/api/surfaces/overlays" in routes
-
-
-def test_every_overlayable_surface_has_a_frontend_call_site():
-    """🪤 A surface id nothing renders would be an invisible failure.
-
-    The closed `OVERLAYABLE_SURFACES` set is only honest if each id has a
-    ``<SurfaceOverlay surface="…" />`` on a real page. Adding an id without the call site
-    reddens here rather than accepting overlays that render nowhere.
-    """
-    web = Path(__file__).resolve().parents[1] / "web" / "src"
-    sources = "\n".join(
-        source_index.text(p)
-        for p in source_index.web_files()
-        if p.suffix == ".tsx" and p.is_relative_to(web) and not p.name.endswith(".test.tsx")
-    )
-    assert "<SurfaceOverlay" in sources, "the band has no call site at all"
-    for surface in sorted(so.OVERLAYABLE_SURFACES):
-        assert (
-            f'<SurfaceOverlay surface="{surface}"' in sources
-        ), f"OVERLAYABLE_SURFACES declares {surface!r} but no page renders a band for it"

@@ -27,9 +27,16 @@ helpers that start such things (:data:`OUTSIDE_HELPERS`). A local child (``git``
 a fresh interpreter) and an in-process ``TestServer``/``TestClient`` stay inside it.
 
 A module is a rail when at least one of its tests reads the tree and none leaves the process.
-A module with a test of each kind is **mixed**: it is split, its tree half moved and its other
-half kept in the suite. A security-marked module (``pytestmark = pytest.mark.security``) stays
-where it is whatever it reads: those tests run on every shard and are never selected out.
+A module with a test of each kind is **mixed**, and is split: its tree half lives in
+``tests/rails/test_<name>_tree.py``, its behaviour half stays, and what both use lives in a helper
+module beside the suite, so no rail imports a behaviour test module. A security-marked module
+(``pytestmark = pytest.mark.security``) stays where it is whatever it reads: those tests run on
+every shard and are never selected out.
+
+A name a test imports from a helper module under ``tests/`` (any module there that is not a
+test module) counts as it would in the helper: a path the helper derives from ``__file__`` is a
+repository path, and a function or constant there that reads the tree reads it for the test.
+Helpers are read with ``ast`` too (:func:`helper_facts`), never imported.
 """
 
 from __future__ import annotations
@@ -38,18 +45,12 @@ import argparse
 import ast
 import json
 import sys
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
 #: Where rails live. Nothing else under ``tests/`` may hold one.
 RAILS = "tests/rails"
-
-#: The rails that still hold behaviour tests, one repository-relative path a line, waiting for
-#: the split that moves their tree tests into :data:`RAILS`. A transition list: it only shrinks,
-#: and goes when the last split lands. Under ``tools/ci/``, so a change that adds to it is
-#: judged by the default branch's definitions (``tools/ci/trust.py``).
-PENDING_SPLIT = "tools/ci/rails-pending-split.txt"
 
 #: The suite's test helpers that read the tree for a rail.
 TREE_HELPERS = frozenset({"source_index", "controller_sources"})
@@ -132,6 +133,12 @@ class _Module:
         self.constants: set[str] = set()
         #: Local names that stand for a tree helper or an outside helper, by what they are.
         self.aliases: dict[str, str] = {}
+        #: Local names bound by ``from m import name``: their module's leaf and original name.
+        self.imported: dict[str, tuple[str, str]] = {}
+        #: Local names that stand for a helper module's repository path, or its tree reader
+        #: (with the reason it reads), filled by :meth:`know` from :func:`helper_facts`.
+        self.helper_paths: set[str] = set()
+        self.helper_readers: dict[str, str] = {}
         for node in tree.body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 self.functions[node.name] = node
@@ -152,6 +159,18 @@ class _Module:
                 leaf = each.module.rsplit(".", 1)[-1]
                 for alias in each.names:
                     self.aliases[alias.asname or alias.name] = leaf
+                    self.imported[alias.asname or alias.name] = (leaf, alias.name)
+
+    def know(self, facts: Mapping[str, HelperFacts]) -> None:
+        """Read the names this module imports from a helper the way the helper uses them."""
+        for local, (leaf, name) in self.imported.items():
+            found = facts.get(leaf)
+            if found is None:
+                continue
+            if name in found.paths:
+                self.helper_paths.add(local)
+            if name in found.readers:
+                self.helper_readers[local] = f"{leaf}.{name}: {found.readers[name]}"
 
     def helper(self, name: str) -> str | None:
         """The tree or outside helper a local name stands for, if any."""
@@ -181,7 +200,7 @@ def _repository_path(expr: ast.AST, module: _Module, params: set[str]) -> bool:
                 return False
             if sub.id in module.constants or module.helper(sub.id) in TREE_HELPERS:
                 return True
-            if module.aliases.get(sub.id) in ROOT_HELPERS:
+            if module.aliases.get(sub.id) in ROOT_HELPERS or sub.id in module.helper_paths:
                 return True
         if isinstance(sub, ast.Attribute) and sub.attr == "__file__":
             return True
@@ -203,7 +222,9 @@ def _own_reasons(node: ast.AST, module: _Module, params: set[str]) -> tuple[str 
     for sub in ast.walk(node):
         if id(sub) in docstrings:
             continue  # prose about a path reads nothing
-        if isinstance(sub, ast.Name) and module.helper(sub.id):
+        if isinstance(sub, ast.Name) and sub.id in module.helper_readers:
+            tree_why = tree_why or f"reads {module.helper_readers[sub.id]}"
+        elif isinstance(sub, ast.Name) and module.helper(sub.id):
             helper = module.helper(sub.id)
             if helper in TREE_HELPERS:
                 tree_why = tree_why or f"reads {helper}"
@@ -370,10 +391,12 @@ def _tests(
                     yield f"{node.name}.{item.name}", item, node
 
 
-def classify(rel: str, source: str) -> Module:
-    """The verdict on one test module, from its source."""
+def classify(rel: str, source: str, helpers: Mapping[str, HelperFacts] | None = None) -> Module:
+    """The verdict on one test module, from its source, reading what it imports from the
+    helpers in *helpers* (:func:`helper_facts`) as those helpers use it."""
     tree = ast.parse(source, filename=rel)
     module = _Module(tree)
+    module.know(helpers or {})
     reach = _Reach(module)
     found = Module(path=rel)
     class_level: dict[int, tuple[str | None, str | None]] = {}
@@ -426,74 +449,86 @@ def test_modules(root: Path) -> Iterator[Path]:
             yield path
 
 
+@dataclass(frozen=True)
+class HelperFacts:
+    """What one helper module's top-level names are, for the tests that import them."""
+
+    #: Names bound to a path the helper derives from ``__file__`` or another such path.
+    paths: frozenset[str]
+    #: Names whose code reads the tree, each with the first reason found.
+    readers: Mapping[str, str]
+
+
+def _facts_of(source: str, facts: Mapping[str, HelperFacts]) -> HelperFacts:
+    tree = ast.parse(source)
+    module = _Module(tree)
+    module.know(facts)
+    reach = _Reach(module)
+    paths: set[str] = set()
+    readers: dict[str, str] = {}
+    for node in tree.body:
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            names = {s.id for t in targets for s in ast.walk(t) if isinstance(s, ast.Name)}
+            if _repository_path(node.value, module, set()):
+                paths |= names
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names = {node.name}
+        else:
+            continue
+        why, _outside = reach.of(node)
+        if why:
+            readers.update(dict.fromkeys(names, why))
+    return HelperFacts(frozenset(paths), readers)
+
+
+def helper_facts(root: Path) -> dict[str, HelperFacts]:
+    """For each helper module under ``root/tests`` (a ``.py`` file that is neither a test module
+    nor a ``conftest.py``), by module name, what its names are. A helper that imports another
+    is read in the light of that one, so a chain of helpers resolves."""
+    sources = {
+        path.stem: path.read_text(encoding="utf-8")
+        for path in sorted((root / "tests").rglob("*.py"))
+        if "__pycache__" not in path.parts
+        and not path.name.startswith("test_")
+        and path.name != "conftest.py"
+    }
+    facts: dict[str, HelperFacts] = {}
+    for _ in range(4):
+        known = {stem: _facts_of(source, facts) for stem, source in sources.items()}
+        if known == facts:
+            break
+        facts = known
+    return facts
+
+
 def census(root: Path) -> list[Module]:
     """The verdict on every test module under ``root/tests``."""
+    facts = helper_facts(root)
     return [
-        classify(path.relative_to(root).as_posix(), path.read_text(encoding="utf-8"))
+        classify(path.relative_to(root).as_posix(), path.read_text(encoding="utf-8"), facts)
         for path in test_modules(root)
     ]
 
 
-def pending_split(root: Path) -> set[str]:
-    """The modules :data:`PENDING_SPLIT` names under ``root``: rails that still hold behaviour
-    tests, waiting for their split. Blank lines and ``#`` comments are skipped."""
-    path = root / PENDING_SPLIT
-    if not path.is_file():
-        return set()
-    lines = path.read_text(encoding="utf-8").splitlines()
-    return {line.strip() for line in lines if line.strip() and not line.startswith("#")}
-
-
-def misplaced(modules: Iterable[Module], pending: Iterable[str] = ()) -> list[str]:
+def misplaced(modules: Iterable[Module]) -> list[str]:
     """Rails outside :data:`RAILS`, mixed modules anywhere, and modules under :data:`RAILS`
-    that are not rails, each as one line naming the module and why.
-
-    A module named in *pending* is waiting for its split, so it may stay where it is while it
-    is a rail or mixed. A pending name that is neither any more (split, moved, renamed or gone)
-    is reported, so the list only shrinks."""
-    waiting = set(pending)
+    that are not rails, each as one line naming the module and why."""
     bad: list[str] = []
-    seen: set[str] = set()
     for found in modules:
-        seen.add(found.path)
         inside = found.path.startswith(RAILS + "/")
-        if found.path in waiting:
-            if inside or found.kind not in ("rail", "mixed"):
-                bad.append(
-                    f"{found.path} is pending a split in {PENDING_SPLIT} but is "
-                    f"{'under ' + RAILS + '/' if inside else 'a ' + found.kind + ' module'} "
-                    "now: drop it from the list"
-                )
-            continue
         if found.kind == "rail" and not inside:
             bad.append(f"{found.path} is a rail outside {RAILS}/: {found.line().split('(', 1)[1]}")
         elif found.kind == "mixed":
             bad.append(f"{found.path} is mixed; split it: {found.line().split('(', 1)[1]}")
         elif inside and found.kind != "rail":
             bad.append(f"{found.path} is under {RAILS}/ but is not a rail ({found.kind})")
-    bad += [
-        f"{name} is pending a split in {PENDING_SPLIT} but is not a test module now: drop it"
-        for name in sorted(waiting - seen)
-    ]
     return bad
 
 
-#: How many names :data:`PENDING_SPLIT` held when it was written. The list only shrinks, so a
-#: longer one means a name was added: lower this as splits land, never raise it.
-PENDING_CEILING = 216
-
-
-def violations(root: Path, ceiling: int = PENDING_CEILING) -> list[str]:
-    """Everything wrong with ``root``'s rails: :func:`misplaced` under its pending list, and a
-    pending list longer than *ceiling*."""
-    pending = pending_split(root)
-    bad = misplaced(census(root), pending)
-    if len(pending) > ceiling:
-        bad.append(
-            f"{PENDING_SPLIT} names {len(pending)} modules, more than its ceiling of {ceiling}: "
-            "the list only shrinks, so move a new rail into tests/rails/ instead of listing it"
-        )
-    return bad
+def violations(root: Path) -> list[str]:
+    """Everything wrong with ``root``'s rails: :func:`misplaced` over its census."""
+    return misplaced(census(root))
 
 
 def main(argv: list[str] | None = None) -> int:

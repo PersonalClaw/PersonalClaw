@@ -34,10 +34,7 @@ the export reading inert, which is the opposite of the point.
 
 from __future__ import annotations
 
-import ast
-from pathlib import Path
-
-import pytest
+from context_gauge_sdk_surface_shared import _CONTRACT
 
 from personalclaw.sdk.model import (
     ContextGauge,
@@ -45,23 +42,6 @@ from personalclaw.sdk.model import (
     model_context_window,
     prompt_text_chars,
 )
-
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-_SDK_MODEL = _REPO_ROOT / "src" / "personalclaw" / "sdk" / "model.py"
-
-#: The context-window / gauge contract, and who consumes each symbol. A symbol may only
-#: leave this list when its named consumers no longer import it.
-_CONTRACT = {
-    "declared_context_window": "the bundled ollama-models app, and every app that pops the "
-    "operator's per-binding context_window option",
-    "model_context_window": "the first-party bedrock-models app (separate repo) — a BUDGET "
-    "resolution, which must always answer",
-    "ContextGauge": "the bundled ollama-models app — turns a provider token report into a "
-    "monotone, in-range, honest reading, and holds the per-binding reference that catches a "
-    "silently truncated one",
-    "prompt_text_chars": "the bundled ollama-models app — the size of the prompt that was "
-    "SENT, which is what makes the reading monotone",
-}
 
 
 def test_every_contract_symbol_resolved_through_the_facade() -> None:
@@ -79,24 +59,6 @@ def test_every_contract_symbol_resolved_through_the_facade() -> None:
     )
     for name, obj in resolved.items():
         assert callable(obj), f"{name} resolved to a non-callable ({obj!r})"
-
-
-@pytest.mark.parametrize("symbol", sorted(_CONTRACT))
-def test_the_symbol_is_in_dunder_all(symbol: str) -> None:
-    """``__all__`` is the declared surface, and it is what the inertness census reads. A
-    symbol importable but unlisted is a surface an app cannot rely on."""
-    tree = ast.parse(_SDK_MODEL.read_text(encoding="utf-8"))
-    declared: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets
-        ):
-            declared = {
-                el.value
-                for el in getattr(node.value, "elts", [])
-                if isinstance(el, ast.Constant) and isinstance(el.value, str)
-            }
-    assert symbol in declared, f"{symbol!r} is not in personalclaw.sdk.model.__all__"
 
 
 def test_the_two_window_resolvers_answer_DIFFERENT_questions() -> None:

@@ -6,11 +6,7 @@ Properties tested:
     * No residue of deleted code paths (banned symbols) in the source tree
 """
 
-import re
-from pathlib import Path
-
 import pytest
-import source_index
 
 pytest.importorskip("hypothesis")
 
@@ -22,9 +18,6 @@ from personalclaw.auth.modes import (  # noqa: E402
     AuthMode,
     effective_bind,
 )
-
-REPO_SRC = Path(__file__).resolve().parent.parent / "src"
-
 
 # ── Loopback invariant ────────────────────────────────────────────────────────
 
@@ -78,32 +71,3 @@ def test_from_env_unknown_value_falls_back_to_local_token(monkeypatch):
 
 
 # ── No residue of deleted code paths ──────────────────────────────────────────
-
-_RESIDUE_TERMS = [
-    r"\bAcpProvider\b",  # old class name, replaced by AcpAgentProvider
-    r"SlackMcpClient",  # deleted class
-    r"_find_slack_mcp",  # deleted function
-]
-
-
-@pytest.mark.parametrize("term", _RESIDUE_TERMS)
-def test_no_residue_in_python_src(term):
-    """Symbols of deleted code paths must not appear in src/."""
-    pattern = re.compile(term)
-    violations: list[str] = []
-
-    for py_file in source_index.package_files():
-        # Skip test files for the residue pattern check
-        if "test" in py_file.parts:
-            continue
-        text = source_index.text(py_file)
-        for lineno, line in enumerate(text.splitlines(), 1):
-            stripped = line.strip()
-            # Skip pure comment lines — residue in comments is documentation
-            if stripped.startswith("#"):
-                continue
-            if pattern.search(line):
-                rel = py_file.relative_to(REPO_SRC.parent)
-                violations.append(f"  {rel}:{lineno}: {line.strip()[:120]}")
-
-    assert not violations, f"banned term {term!r} found in source:\n" + "\n".join(violations[:10])

@@ -13,17 +13,14 @@ import re
 import subprocess
 from pathlib import Path
 
-import pytest
-import yaml
+from asset_licenses_shared import REPO_ROOT, _asset_checks
 
 from scripts import check_asset_licenses as assets
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
 PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 32
 FONT = b"wOF2\0\1font-bytes"
 UPSTREAM = "Copyright 2020 The Upstream Project Authors"
 _FONT_SUFFIXES = (".woff2", ".woff", ".ttf", ".otf", ".eot")
-_CHECK = re.compile(r"^(?:uv run )?python3? scripts/check_asset_licenses\.py( --built-web)?$")
 
 
 def _sha(blob: bytes) -> str:
@@ -732,35 +729,6 @@ def test_the_command_passes_a_whole_record_and_names_the_fix_for_a_broken_one(
 
 
 # ── CI wiring ──────────────────────────────────────────────────────────────────────────────
-
-
-def _asset_checks(workflow_text: str) -> list[tuple[bool, bool]]:
-    """``(built_web, after_a_web_build)`` for every EXECUTED asset-licence check."""
-    workflow = yaml.safe_load(workflow_text)
-    checks = []
-    for job in (workflow.get("jobs") or {}).values():
-        built_at = None
-        for index, step in enumerate(job.get("steps") or []):
-            run = step.get("run") if isinstance(step, dict) else None
-            if not isinstance(run, str):
-                continue
-            for raw in run.splitlines():
-                line = raw.strip()
-                if line == "npm run build" and built_at is None:
-                    built_at = index
-                match = _CHECK.match(line)
-                if match:
-                    checks.append((bool(match.group(1)), built_at is not None and built_at < index))
-    return checks
-
-
-@pytest.mark.parametrize("workflow", [".github/workflows/ci.yml", ".github/workflows/release.yml"])
-def test_each_workflow_checks_the_tree_and_the_web_build_it_made(workflow):
-    checks = _asset_checks((REPO_ROOT / workflow).read_text(encoding="utf-8"))
-    assert (False, False) in checks or (False, True) in checks, f"{workflow}: no tree check"
-    built = [after_build for built_web, after_build in checks if built_web]
-    assert built, f"{workflow}: no --built-web check"
-    assert all(built), f"{workflow}: --built-web runs before `npm run build`"
 
 
 def test_a_commented_out_check_does_not_count():

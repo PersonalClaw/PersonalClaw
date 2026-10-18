@@ -23,10 +23,13 @@ from __future__ import annotations
 import types
 
 import pytest
+import triggers_web_poll_shared
 
 from personalclaw.triggers import web_poll
 from personalclaw.triggers.models import Trigger
 from personalclaw.triggers.store import TriggerStore
+
+_isolate_knowledge = triggers_web_poll_shared._isolate_knowledge
 
 NOW = 1_800_000_000.0
 
@@ -37,23 +40,6 @@ FEED_THREE = FEED_TWO.replace("</rss>", "<item><guid>post-3</guid></item></rss>"
 @pytest.fixture
 def store(tmp_path):
     return TriggerStore(base_dir=tmp_path)
-
-
-@pytest.fixture(autouse=True)
-def _isolate_knowledge(tmp_path_factory, monkeypatch):
-    """Point the DEFAULT knowledge-digest routing at a per-test tmp DB.
-
-    A fire now writes fresh items to the knowledge store, and a test that fires without an injected
-    `knowledge_store` would otherwise reach `get_knowledge_store()` → the real `~/.personalclaw`
-    knowledge.db (config_dir() resolves there when PERSONALCLAW_HOME is unset). Same real-home
-    hazard and remedy as conftest's trigger-store fixture. Returned so a test can assert on it; a
-    test that passes its own `knowledge_store` is unaffected."""
-    from personalclaw.knowledge.store import KnowledgeStore
-
-    kdb = tmp_path_factory.mktemp("pclaw-knowledge") / "k.db"
-    kstore = KnowledgeStore(str(kdb))
-    monkeypatch.setattr("personalclaw.knowledge.get_knowledge_store", lambda: kstore)
-    return kstore
 
 
 class _SpyKnowledge:
@@ -454,38 +440,6 @@ def test_a_CORRUPT_sidecar_reads_as_unseeded_rather_than_raising(tmp_path):
 
 
 # ── the egress chokepoint + privacy ──
-
-
-def test_the_DEFAULT_fetcher_is_the_EGRESS_CHOKEPOINT():
-    """🔴 A watch pointed at `http://169.254.169.254/` is an SSRF against the machine's own metadata
-    service. `net.fetch` is where host classification, private-IP denial, redirect-hop re-checks,
-    the byte cap and the timeout already live — a direct fetch here would bypass all of it.
-
-    Asserted on the source because the property is WHICH layer is called, and a behavioural test
-    would need a network."""
-    import ast
-    import inspect
-
-    src = inspect.getsource(web_poll._fetch)
-    assert "from personalclaw.net import fetch" in src
-
-    # Parsed rather than grepped: the docstring NAMES `urllib`/`httpx` as the layers this must not
-    # use, so a substring check trips on its own prose. The property is which modules the code
-    # imports, which is a question about the AST.
-    tree = ast.parse(inspect.getsource(web_poll))
-    imported = {
-        node.module.split(".")[0]
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom) and node.module
-    } | {
-        alias.name.split(".")[0]
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Import)
-        for alias in node.names
-    }
-    assert not (
-        imported & {"urllib", "httpx", "requests", "aiohttp", "socket"}
-    ), f"web_poll must fetch ONLY through the egress chokepoint; it imports {sorted(imported)}"
 
 
 def test_the_seen_set_stores_HASHES_not_urls(store, tmp_path):

@@ -18,12 +18,11 @@ request the work of whoever made it, so no test hands a handler a request no rea
 
 from __future__ import annotations
 
-import ast
 import json
 from pathlib import Path
 
 import pytest
-import source_index
+from a_requests_work_is_the_caller_its_sign_in_proves_shared import _header_reads
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from chat_test_helpers import _make_state
@@ -392,63 +391,6 @@ def test_the_memory_your_folder_chat_reads_first_is_its_folders(home):
 
 
 # ── the rail: one reader of the session a request names ─────────────────────────────────────
-
-#: The one module that reads the session a request names, and judges it by who signed the
-#: request in (``approval_answer.work_of_request``, beside the principal it builds on).
-THE_RULE = "personalclaw/approval_answer.py"
-
-SRC = Path(__file__).resolve().parents[1] / "src"
-
-
-def _header_reads(source: str | ast.Module) -> list[int]:
-    """The lines of *source* that read ``X-Session-Key`` off a request's headers: a
-    ``….headers.get("X-Session-Key"…)`` call, a ``….headers["X-Session-Key"]`` load, or a
-    ``"X-Session-Key" in ….headers`` test. Sending the header (a client building its headers)
-    is not a read."""
-    lines: list[int] = []
-    tree = source if isinstance(source, ast.Module) else ast.parse(source)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            owner = node.func.value
-            if (
-                node.func.attr == "get"
-                and isinstance(owner, ast.Attribute)
-                and owner.attr == "headers"
-                and node.args
-                and isinstance(node.args[0], ast.Constant)
-                and str(node.args[0].value).lower() == "x-session-key"
-            ):
-                lines.append(node.lineno)
-        elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load):
-            if (
-                isinstance(node.value, ast.Attribute)
-                and node.value.attr == "headers"
-                and isinstance(node.slice, ast.Constant)
-                and str(node.slice.value).lower() == "x-session-key"
-            ):
-                lines.append(node.lineno)
-        elif isinstance(node, ast.Compare) and isinstance(node.left, ast.Constant):
-            if str(node.left.value).lower() == "x-session-key" and any(
-                isinstance(c, ast.Attribute) and c.attr == "headers" for c in node.comparators
-            ):
-                lines.append(node.lineno)
-    return lines
-
-
-def test_only_the_one_rule_reads_the_session_a_request_names():
-    readers = {
-        path.relative_to(SRC).as_posix(): found
-        for path, tree in source_index.package_trees()
-        if (found := _header_reads(tree))
-    }
-
-    # The control: the rule itself reads it, so a scan that read nothing would fail here.
-    assert readers.pop(THE_RULE, None), "the scan found no read of the header at all"
-    assert readers == {}, (
-        "these read the session a request names in X-Session-Key themselves; ask "
-        "approval_answer.work_of_request, which judges it by who signed the request in: "
-        f"{readers}"
-    )
 
 
 def test_the_rail_sees_each_way_a_handler_reads_the_header():

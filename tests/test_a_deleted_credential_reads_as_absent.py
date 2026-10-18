@@ -17,11 +17,11 @@ from __future__ import annotations
 import json
 
 import pytest
+from provider_config_secrets_shared import _client as _providers_client
+from provider_config_secrets_shared import _config_file, _save
 from test_app_api import _app_src
 from test_app_api import _client as _apps_client
 from test_app_api import _consented_install, _save_config
-from test_provider_config_secrets import _client as _providers_client
-from test_provider_config_secrets import _config_file, _save
 
 from personalclaw.apps.secret_fields import SECRET_MASK
 from personalclaw.config import secret_refs

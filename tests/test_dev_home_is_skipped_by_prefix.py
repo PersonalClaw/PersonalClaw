@@ -36,8 +36,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-from tests.test_licence_governance import _walk, declaration_sites
+from licence_governance_shared import _walk, declaration_sites
 
 #: Every spelling measured in the reporting checkout, plus the canonical one. The suffixed
 #: forms are the whole point: each was invisible to `git status` and walked by the census.
@@ -123,7 +122,7 @@ def test_the_skip_and_gitignore_give_the_same_answer() -> None:
     """
     import fnmatch
 
-    from tests.test_licence_governance import _ROOT, _SKIP_DIR_PREFIXES, _is_skipped_dir
+    from licence_governance_shared import _ROOT, _SKIP_DIR_PREFIXES, _is_skipped_dir
 
     ignore = (_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
     rules = [ln.strip() for ln in ignore if ln.strip().startswith("/.dev-home")]

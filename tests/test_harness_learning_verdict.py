@@ -9,13 +9,11 @@ only thing the sibling adds is a directional relabel.
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 
 import pytest
+from harness_learning_verdict_shared import MODULE
 
 from harness import fanout_measure, learning_verdict
-
-MODULE = Path(learning_verdict.__file__)
 
 
 def _trials(*scores, tokens=1000):
@@ -34,24 +32,6 @@ def test_the_three_thresholds_are_the_SAME_objects_not_equal_copies():
     assert learning_verdict.MIN_TRIALS_PER_ARM is fanout_measure.MIN_TRIALS_PER_ARM
     assert learning_verdict.Arm is fanout_measure.Arm
     assert learning_verdict.Trial is fanout_measure.Trial
-
-
-def test_the_sibling_defines_no_threshold_of_its_own():
-    """The structural half: an AST census, so a future edit that re-derives a threshold reds here
-    rather than passing because the number happened to match."""
-    tree = ast.parse(MODULE.read_text(encoding="utf-8"))
-    numeric_consts = {
-        target.id: node.value.value
-        for node in tree.body
-        if isinstance(node, ast.Assign)
-        for target in node.targets
-        if isinstance(target, ast.Name)
-        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, (int, float))
-        if not isinstance(node.value.value, bool)
-    }
-    assert (
-        numeric_consts == {}
-    ), f"the sibling minted its own numeric threshold(s): {numeric_consts}"
 
 
 def test_the_sibling_calls_compare_rather_than_reimplementing_the_check_order(monkeypatch):

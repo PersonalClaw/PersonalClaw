@@ -38,293 +38,28 @@ from __future__ import annotations
 
 import ast
 import asyncio
-import re
-from collections import Counter
-from collections.abc import Callable
-from dataclasses import dataclass
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-import source_index
+from automation_spend_is_metered_shared import (
+    _resolves,
+    census,
+    guarded_axes,
+    resolution_verdict,
+    verdict,
+)
 
 import personalclaw.agents.native.runtime as runtime_mod
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 from personalclaw.llm.capabilities import Capability, ProviderCapability
 from personalclaw.llm.registry import ProviderEntry, ProviderRegistry
 
-SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
-
-#: Surfaces a person is working in. The daily cap is for automations; these stay on the chat
-#: binding, as a chat does. Keyed by (file under ``src/personalclaw``, function qualname).
-INTERACTIVE: dict[tuple[str, str], str] = {
-    ("dashboard/handlers/agent_marketplace.py", "api_agent_marketplace_test"): (
-        "an agent's test run from its page: a person pressed the button and reads the reply"
-    ),
-    ("dashboard/handlers/optimizer.py", "handle_optimize._optimize"): (
-        "the composer's prompt rewrite: a person pressed the button and waits for the text"
-    ),
-    ("rooms/turn.py", "member_session"): (
-        "a room member answering in a room a person reads; `routing/usage.py` counts a room's "
-        "turns as interactive spend"
-    ),
-}
-
-#: Calls whose axis a named function decides, keyed like INTERACTIVE: the call passes
-#: ``model_axis=<function>(...)``, and the tests below pin what the function answers. A chat's
-#: turn is on the chat binding, or on Code & tools when it works in a folder of its own, both of
-#: which the cap leaves alone as the Guardrails page says, unless it is a loop's worker or planner.
-#: A side question a person asks beside their chat is answered on the chat's own axis, while they
-#: wait. A finished subagent's announcement keeps the chat binding in a channel thread, a person's
-#: conversation, and is metered in any other parent.
-DECIDED: dict[tuple[str, str], str] = {
-    ("dashboard/chat_runner.py", "run_chat"): "model_axis_for",
-    ("dashboard/side.py", "_run_side_turn"): "chat_model_axis",
-    ("gateway.py", "GatewayOrchestrator._init_subagents._subagent_done"): "announce_axis",
-}
-
-#: The manager's own re-acquisitions: they replay a request someone already made, whole.
-REACQUIRES: dict[tuple[str, str], str] = {
-    ("session.py", "SessionManager.get_or_create"): (
-        "rebuilds a stale runtime with the request its caller has just made, axis included"
-    ),
-}
-
-#: What hands a caller a model to call directly, with no runtime acquired.
-RESOLVERS = frozenset(
-    {"resolve_provider_for_use_case", "resolve_metered_model", "resolve_image_reader"}
-)
-
-#: The resolvers' own modules: what they call there is the resolution itself, and a runtime's
-#: inner model (``_build_native_runtime``) is metered by the axis its acquisition names.
-RESOLVER_HOMES = frozenset({"providers/provider_bridge.py", "providers/image_input.py"})
-
-#: Direct resolutions that stay unmetered, keyed like INTERACTIVE, with the reason.
-UNMETERED_RESOLUTIONS: dict[tuple[str, str], str] = {
-    ("dashboard/chat_runner.py", "_describe_screen_frame"): (
-        "the reading of the screen a person shared into their own chat turn, for the turn they "
-        "are waiting on, and unmetered like it"
-    ),
-    ("dashboard/handlers/model_check.py", "api_onboarding_model_check"): (
-        "onboarding's check that a chat model builds, which a person pressed: it builds the model "
-        "and calls nothing"
-    ),
-}
-
-
-def guarded_axes() -> frozenset[str]:
-    """The axes the guard wraps, as ``provider_bridge`` decides them — and the one line there that
-    asks, so a constant nothing reads cannot stand in for the rule."""
-    from personalclaw.providers import provider_bridge
-
-    text = Path(provider_bridge.__file__).read_text(encoding="utf-8")
-    assert re.search(
-        r'if _metered or use_case in METERED_AXES:\n\s+kwargs\["_guard_use_case"\]', text
-    ), "the guard's axis test moved: this rail reads it to know which axes are metered"
-    axes = frozenset(provider_bridge.METERED_AXES)
-    assert axes and "chat" not in axes, axes
-    return axes
-
-
-@dataclass(frozen=True)
-class Site:
-    path: str
-    qualname: str
-    line: int
-    call: ast.Call
-    func: ast.AST | None
-
-
-class _Census(ast.NodeVisitor):
-    """Every call *counted* answers for, with the function it sits in."""
-
-    def __init__(self, path: str, counted: Callable[[ast.Call], bool]) -> None:
-        self.path = path
-        self.counted = counted
-        self.stack: list[str] = []
-        self.funcs: list[ast.AST] = []
-        self.sites: list[Site] = []
-
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        self.stack.append(node.name)
-        self.generic_visit(node)
-        self.stack.pop()
-
-    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
-        self.stack.append(node.name)
-        self.funcs.append(node)
-        self.generic_visit(node)
-        self.funcs.pop()
-        self.stack.pop()
-
-    visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
-
-    def visit_Call(self, node: ast.Call) -> None:
-        if self.counted(node):
-            func = self.funcs[-1] if self.funcs else None
-            self.sites.append(Site(self.path, ".".join(self.stack), node.lineno, node, func))
-        self.generic_visit(node)
-
-
-def _acquires(call: ast.Call) -> bool:
-    return isinstance(call.func, ast.Attribute) and call.func.attr == "get_or_create"
-
-
-def _resolves(call: ast.Call) -> bool:
-    return _called(call) in RESOLVERS
-
-
-def census(tree: ast.AST, path: str, counted: Callable[[ast.Call], bool] = _acquires) -> list[Site]:
-    visitor = _Census(path, counted)
-    visitor.visit(tree)
-    return visitor.sites
-
-
-def _called(expr: ast.AST | None) -> str:
-    """The bare name *expr* calls, for ``f(...)`` and ``mod.f(...)``; ``""`` for anything else."""
-    if not isinstance(expr, ast.Call):
-        return ""
-    func = expr.func
-    return func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
-
-
-def verdict(site: Site, guarded: frozenset[str]) -> str:
-    """``guarded`` | ``decided`` | ``reacquires`` | ``interactive`` | ``""`` (unaccounted)."""
-    keywords = {k.arg: k.value for k in site.call.keywords if k.arg}
-    axis = keywords.get("model_axis")
-    if isinstance(axis, ast.Constant) and axis.value in guarded:
-        return "guarded"
-    decider = DECIDED.get((site.path, site.qualname))
-    if decider and _called(axis) == decider:
-        return "decided"
-    where = (site.path, site.qualname)
-    if where in REACQUIRES and any(k.arg is None for k in site.call.keywords):
-        return "reacquires"
-    if where in INTERACTIVE:
-        return "interactive"
-    return ""
-
-
-def resolution_verdict(site: Site, guarded: frozenset[str]) -> str:
-    """``guarded`` | ``metered`` | ``listed`` | ``""`` (unaccounted), for a direct resolution."""
-    keywords = {k.arg: k.value for k in site.call.keywords if k.arg}
-    resolver = _called(site.call)
-    if resolver == "resolve_metered_model":
-        return "metered"
-    if resolver == "resolve_image_reader":
-        asked = keywords.get("metered")
-        if isinstance(asked, ast.Constant) and asked.value is True:
-            return "metered"
-    if resolver == "resolve_provider_for_use_case":
-        axis = site.call.args[0] if site.call.args else keywords.get("use_case")
-        if isinstance(axis, ast.Constant) and axis.value in guarded:
-            return "guarded"
-    if (site.path, site.qualname) in UNMETERED_RESOLUTIONS:
-        return "listed"
-    return ""
-
-
-def src_sites(counted: Callable[[ast.Call], bool] = _acquires) -> list[Site]:
-    sites: list[Site] = []
-    for path, tree in source_index.package_trees():
-        rel = path.relative_to(SRC).as_posix()
-        if counted is _resolves and rel in RESOLVER_HOMES:
-            continue
-        sites.extend(census(tree, rel, counted))
-    return sites
-
-
 # ── the rail ───────────────────────────────────────────────────────────────────────────────
 
 
-def test_every_runtime_acquisition_is_metered_or_is_a_person_s_surface():
-    guarded = guarded_axes()
-    sites = src_sites()
-    unaccounted = [f"{s.path}:{s.line} in {s.qualname}" for s in sites if not verdict(s, guarded)]
-    assert not unaccounted, (
-        "these calls acquire a runtime on no metered axis, so the daily cap never counts what "
-        'they spend. Name the axis the work is (`model_axis="orchestration"` for agent work '
-        "nobody typed), or — only for a surface a person is working in — add it to INTERACTIVE "
-        "with the reason:\n  " + "\n  ".join(unaccounted)
-    )
-    # A listing is ONE decision about ONE call. A second unmetered call in the same function is
-    # a new decision, not the old one: the scheduled job's reading of its subagent's result sat
-    # beside the channel announcement in one function, on no axis, and a per-function allowance
-    # would have waved it through.
-    unmetered = Counter(
-        (s.path, s.qualname) for s in sites if verdict(s, guarded) in ("interactive", "reacquires")
-    )
-    doubled = {where: n for where, n in unmetered.items() if n > 1}
-    assert not doubled, doubled
-
-
-def test_the_census_is_not_vacuous():
-    """A census that parsed nothing would pass the rail above for free."""
-    guarded = guarded_axes()
-    verdicts = [verdict(s, guarded) for s in src_sites()]
-    assert len(verdicts) >= 10, len(verdicts)
-    for kind in ("guarded", "decided", "reacquires", "interactive"):
-        assert kind in verdicts, f"no site reads {kind!r}: the classifier or the census drifted"
-
-
-def test_every_listed_exemption_still_names_a_real_call():
-    """A listed site that no longer exists is an allowance waiting for the next call to use it."""
-    guarded = guarded_axes()
-    sites = src_sites()
-    for listing, kind in (
-        (INTERACTIVE, "interactive"),
-        (REACQUIRES, "reacquires"),
-        (DECIDED, "decided"),
-    ):
-        for where in listing:
-            used = [s for s in sites if (s.path, s.qualname) == where]
-            assert used, f"{where} is listed but acquires nothing now: drop it"
-            assert any(verdict(s, guarded) == kind for s in used), (where, kind)
-
-
 # ── the direct resolutions ─────────────────────────────────────────────────────────────────
-
-
-def test_every_direct_model_resolution_is_metered_or_is_a_person_s_surface():
-    guarded = guarded_axes()
-    sites = src_sites(_resolves)
-    unaccounted = [
-        f"{s.path}:{s.line} in {s.qualname}" for s in sites if not resolution_verdict(s, guarded)
-    ]
-    assert not unaccounted, (
-        "these calls resolve a model on no metered axis and call it, so the daily cap never counts "
-        "what they spend. Resolve it with `resolve_metered_model` (the image reader with "
-        "`metered=True`), or, only for a surface a person is working in, add it to "
-        "UNMETERED_RESOLUTIONS with the reason:\n  " + "\n  ".join(unaccounted)
-    )
-    listed = Counter(
-        (s.path, s.qualname) for s in sites if resolution_verdict(s, guarded) == "listed"
-    )
-    doubled = {where: n for where, n in listed.items() if n > 1}
-    assert not doubled, doubled
-
-
-def test_the_resolution_census_is_not_vacuous():
-    """The tree holds both kinds a direct resolution may be. None resolves a guarded axis through
-    the general resolver any more: every call automation makes is resolved as the model itself
-    (``resolve_metered_model``), which never builds an agent CLI. That verdict's classifier is
-    still read, by the snippets below."""
-    guarded = guarded_axes()
-    verdicts = [resolution_verdict(s, guarded) for s in src_sites(_resolves)]
-    assert len(verdicts) >= 8, len(verdicts)
-    for kind in ("metered", "listed"):
-        assert kind in verdicts, f"no resolution reads {kind!r}: the classifier or census drifted"
-
-
-def test_every_listed_unmetered_resolution_still_names_a_real_call():
-    guarded = guarded_axes()
-    sites = src_sites(_resolves)
-    for where in UNMETERED_RESOLUTIONS:
-        used = [s for s in sites if (s.path, s.qualname) == where]
-        assert used, f"{where} is listed but resolves nothing now: drop it"
-        assert any(resolution_verdict(s, guarded) == "listed" for s in used), where
 
 
 @pytest.mark.parametrize(
@@ -371,24 +106,6 @@ def test_the_classifier_on_a_planted_call(snippet: str, expected: str):
 
 
 # ── the one session a person answers on a metered axis ─────────────────────────────────────
-
-#: The one call that may acquire a runtime the cap does not count on a metered axis, and the one
-#: function that decides it: an Attended loop's planner and workers are answered by a person, so
-#: their spend is their owner's, as a chat's is (``loop.posture``). The guard still wraps them.
-UNMETERED_DECIDED: dict[tuple[str, str], str] = {
-    ("dashboard/chat_runner.py", "run_chat"): "spend_metered",
-}
-
-
-def test_only_a_loops_mode_takes_a_session_off_the_cap():
-    """Every acquisition that says ``unmetered=`` is the one listed, and it says it through the
-    posture function, negated: nothing hands a runtime an unmetered flag of its own."""
-    saying = [s for s in src_sites() if any(k.arg == "unmetered" for k in s.call.keywords)]
-    assert [(s.path, s.qualname) for s in saying] == list(UNMETERED_DECIDED), saying
-    for site in saying:
-        value = next(k.value for k in site.call.keywords if k.arg == "unmetered")
-        assert isinstance(value, ast.UnaryOp) and isinstance(value.op, ast.Not), ast.dump(value)
-        assert _called(value.operand) == UNMETERED_DECIDED[(site.path, site.qualname)]
 
 
 # ── the loop's planner ─────────────────────────────────────────────────────────────────────

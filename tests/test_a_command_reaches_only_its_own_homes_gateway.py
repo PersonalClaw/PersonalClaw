@@ -35,17 +35,19 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-import source_index
+from a_command_reaches_only_its_own_homes_gateway_shared import (
+    SECRET_FILE_NAMED_BY,
+    _makes_a_home_gateway,
+    _names_the_secret_file,
+    _opens_by_itself,
+    _puts_the_secret_in_a_header,
+)
 from fakes import GatewayStandIn, gateway_stand_in, home_fingerprint, released_port
 
-import personalclaw
 from personalclaw import cli, cli_server
 from personalclaw.config import loader as config_loader
 from personalclaw.dashboard import origin, token_auth
 from personalclaw.dashboard.handlers.core import api_logout, api_token_local
-
-SRC = Path(personalclaw.__file__).resolve().parent
-HARNESS = SRC.parents[1] / "harness"
 
 THIS_HOMES_SECRET = "this-homes-local-secret-for-the-test"
 OTHER_HOMES_SECRET = "another-homes-local-secret-for-the-test"
@@ -718,92 +720,6 @@ def test_a_core_tools_call_does_not_follow_a_redirect(home, other_home, monkeypa
 
 # ── the rail ────────────────────────────────────────────────────────────────────────────────────
 
-#: Every module that names the local secret's file, and why none of them sends the secret anywhere
-#: but to a gateway that has shown it is this home's.
-SECRET_FILE_NAMED_BY = {
-    "home_gateway.py": "the one client: it reads the secret for a gateway that showed it is "
-    "this home's, and sends it there alone",
-    "dashboard/server.py": "the gateway writes it, each time it starts",
-    "mcp_core.py": "a child of the gateway (an agent CLI's tool server), addressed through "
-    "gateway_base by the gateway that declared its home and port to it, and sending through "
-    "home_gateway's loopback transport",
-    "inbound/auth.py": "compares an inbound token with it, so that none can equal it",
-    "security.py": "names it among PersonalClaw's own secrets, which no agent may read",
-    "packs/deny.py": "keeps it out of an exported pack",
-    "durability/inventory.py": "lists it as a credential, which a backup and an export leave out",
-    "durability/state_history.py": "keeps it out of the home's state history",
-    "turn_checkpoints.py": "keeps it out of a turn's checkpoint",
-    "workflows/project_export.py": "keeps it out of a project export",
-}
-
-
-def _docstrings(tree: ast.AST) -> set[int]:
-    found: set[int] = set()
-    for node in ast.walk(tree):
-        body = getattr(node, "body", None)
-        if isinstance(body, list) and body and isinstance(body[0], ast.Expr):
-            if isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str):
-                found.add(id(body[0].value))
-    return found
-
-
-def _trees(root: Path) -> Iterator[tuple[str, ast.Module]]:
-    """Every ``.py`` file under *root* with its tree. The package is the suite's one source
-    index; any other root (the dev tools under ``harness/``) is walked and parsed here."""
-    if root == SRC:
-        for path, tree in source_index.package_trees():
-            yield path.relative_to(root).as_posix(), tree
-        return
-    for path in sorted(root.rglob("*.py")):
-        yield path.relative_to(root).as_posix(), ast.parse(path.read_text(encoding="utf-8"))
-
-
-def _names_the_secret_file(tree: ast.AST) -> bool:
-    docs = _docstrings(tree)
-    return any(
-        isinstance(node, ast.Constant) and node.value == ".local_secret" and id(node) not in docs
-        for node in ast.walk(tree)
-    )
-
-
-def _makes_a_home_gateway(tree: ast.AST) -> bool:
-    return any(
-        isinstance(node, ast.Call)
-        and (
-            getattr(node.func, "id", "") == "HomeGateway"
-            or getattr(node.func, "attr", "") == "HomeGateway"
-        )
-        for node in ast.walk(tree)
-    )
-
-
-def test_only_the_one_client_reads_the_secret_to_send_it():
-    """A module that reads ``.local_secret`` can send it anywhere; the client that sends it is
-    ``home_gateway``, and every other module that names the file says why it sends it nowhere."""
-    found = {rel for rel, tree in _trees(SRC) if _names_the_secret_file(tree)}
-    assert found == set(SECRET_FILE_NAMED_BY), (
-        "a module names the local secret's file without being one the rail knows: send the secret "
-        "through home_gateway.reach(), or say here why the module never sends it: "
-        f"{sorted(found ^ set(SECRET_FILE_NAMED_BY))}"
-    )
-    tools = [rel for rel, tree in _trees(HARNESS) if _names_the_secret_file(tree)]
-    assert tools == [], f"a dev tool reads the secret itself: {tools}"
-
-
-def test_only_reach_makes_a_home_gateway():
-    """A ``HomeGateway`` is the proof a gateway showed it is this home's: made anywhere but
-    ``reach``, it would be a port taken on trust with the secret's door open."""
-    makers = [rel for rel, tree in _trees(SRC) if _makes_a_home_gateway(tree)]
-    assert makers == ["home_gateway.py"], makers
-    tree = source_index.tree(SRC / "home_gateway.py")
-    functions = [
-        node.name
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and _makes_a_home_gateway(node)
-    ]
-    assert functions == ["reach"], functions
-    assert [rel for rel, tree in _trees(HARNESS) if _makes_a_home_gateway(tree)] == []
-
 
 def test_the_rail_sees_a_planted_reader_and_a_planted_maker(tmp_path):
     """Calibration both ways: each check finds what it is for, and not a docstring."""
@@ -819,70 +735,6 @@ def test_the_rail_sees_a_planted_reader_and_a_planted_maker(tmp_path):
     prose = ast.parse('"""Only the docstring says .local_secret."""\nX = 1\n')
     assert not _names_the_secret_file(prose)
     assert len(SECRET_FILE_NAMED_BY) >= 8, "the census lost the modules it knows"
-
-
-#: The headers that carry this home's secret to its gateway.
-_SECRET_HEADERS = {"X-Local-Secret", "X-Internal-Secret"}
-
-
-def _puts_the_secret_in_a_header(tree: ast.AST) -> bool:
-    """Whether *tree* builds a request header that carries the home's secret: a header table with
-    one of :data:`_SECRET_HEADERS` as a key, or a call that names the header (``secret_header=``).
-    """
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Dict) and any(
-            isinstance(key, ast.Constant) and key.value in _SECRET_HEADERS for key in node.keys
-        ):
-            return True
-        if (
-            isinstance(node, ast.Subscript)
-            and isinstance(node.ctx, ast.Store)
-            and isinstance(node.slice, ast.Constant)
-            and node.slice.value in _SECRET_HEADERS
-        ):
-            return True
-        if isinstance(node, ast.keyword) and node.arg == "secret_header":
-            return True
-    return False
-
-
-def _opens_by_itself(tree: ast.AST) -> list[int]:
-    """The lines where *tree* sends a request through urllib's own opener (``urlopen``, which
-    hands it to a proxy the environment names and follows a redirect), or builds an opener."""
-    return sorted(
-        node.lineno
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and (getattr(node.func, "attr", None) or getattr(node.func, "id", None))
-        in {"urlopen", "build_opener"}
-    )
-
-
-def test_every_request_that_carries_the_secret_goes_through_the_one_loopback_transport():
-    """A module that puts the home's secret in a request header sends the request through
-    ``home_gateway.open_loopback``: no proxy from the environment, no redirect followed. The
-    senders are found in the tree, so a new one is held to this as it is written."""
-    trees = {rel: tree for rel, tree in _trees(SRC)}
-    trees.update({f"harness/{rel}": tree for rel, tree in _trees(HARNESS)})
-    senders = {rel for rel, tree in trees.items() if _puts_the_secret_in_a_header(tree)}
-    known = {
-        "home_gateway.py",
-        "cli_server.py",
-        "auth/cli.py",
-        "schedule_trigger.py",
-        "mcp_core.py",
-        "mcp_shared.py",
-    }
-    assert known <= senders, f"the census no longer sees {sorted(known - senders)}"
-    own = {
-        rel: lines
-        for rel in sorted(senders - {"home_gateway.py"})
-        if (lines := _opens_by_itself(trees[rel]))
-    }
-    assert own == {}, (
-        "these send the home's secret through an opener of their own: send it through "
-        f"home_gateway.open_loopback(), or through home_gateway.reach(): {own}"
-    )
 
 
 def test_a_scheduled_scripts_launcher_sends_nothing_through_urllibs_own_opener():
@@ -1019,51 +871,6 @@ async def test_the_gateways_own_healthz_route_shows_it_is_this_homes(home):
         port = server.port
         reached = await asyncio.to_thread(home_gateway.reach, port)
     assert (reached.port, reached.home, reached.pid) == (port, home.resolve(), os.getpid())
-
-
-#: The modules a command that talks to its gateway runs in.
-CLIENTS = (
-    "cli.py",
-    "cli_server.py",
-    "cli_run.py",
-    "cli_chat.py",
-    "cli_commands.py",
-    "cli_doctor.py",
-    "auth/cli.py",
-    "schedule_trigger.py",
-    "home_gateway.py",
-)
-
-#: What answers where a gateway BINDS, or where a CHILD of one connects: never where a command
-#: connects, which is home_gateway.reach()'s answer.
-_NOT_WHERE_A_COMMAND_CONNECTS = {
-    "_DEFAULT_PORT",
-    "DASHBOARD_PORT",
-    "resolve_api_base",
-    "resolve_port",
-    "live_port",
-    "_api_base",
-    "_post",
-    "_get",
-    "_delete",
-}
-
-
-def test_no_command_asks_the_old_resolvers_for_a_port():
-    """``cli_server.resolve_client_port`` is gone, and no client module reads the port a gateway
-    binds, or the address a child of the gateway is handed, as where a command connects."""
-    assert not hasattr(cli_server, "resolve_client_port")
-    for rel in CLIENTS:
-        tree = ast.parse((SRC / rel).read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            names = {getattr(node, "id", None), getattr(node, "attr", None)}
-            if isinstance(node, ast.ImportFrom):
-                names |= {alias.name for alias in node.names}
-            hit = names & _NOT_WHERE_A_COMMAND_CONNECTS
-            assert not hit, (
-                f"{rel}:{getattr(node, 'lineno', '?')} reads {sorted(hit)}: a command connects "
-                "where home_gateway.reach() says"
-            )
 
 
 def test_every_command_asks_home_gateway(home, monkeypatch, no_transient_gateway):

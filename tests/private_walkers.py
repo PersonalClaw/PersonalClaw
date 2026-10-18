@@ -17,7 +17,9 @@ recorded in :data:`NOT_THROUGH_THE_INDEX`, by ``file::function``.
 
 The path a walk starts from is read off the source: string constants, ``/`` joins, ``Path(…)``,
 ``.parent``, ``.parents[n]``, ``__file__``, and names bound in the module, the function or the
-class. A function's own parameter is a path its caller chose, so it is never read as a root.
+class, or imported: ``REPO`` from ``tests/rails/rails_repo.py`` is the repository's root, and a
+name from a helper module directly under ``tests/`` is spelled where that helper binds it. A
+function's own parameter is a path its caller chose, so it is never read as a root.
 """
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ NOT_THROUGH_THE_INDEX: dict[str, str] = {
     ".test_no_commit_watch_script_ships": (
         "an existence check by file name over all of src/, the generated egg-info included"
     ),
-    "tests/test_backend_bundle_manifest.py::TestDataFilesReachTheBundle"
+    "tests/rails/test_backend_bundle_manifest_tree.py::TestDataFilesReachTheBundle"
     ".test_every_package_data_glob_is_carried": (
         "evaluates pyproject's package-data glob patterns, every file type; the glob is the subject"
     ),
@@ -62,6 +64,13 @@ class _Scopes:
         self.classes: dict[ast.AST, dict[str, list[ast.expr]]] = {}
         self.params: dict[ast.AST, set[str]] = {}
         self.parent: dict[ast.AST, ast.AST] = {}
+        #: Top-level ``from m import name`` bindings: local name -> (module leaf, its name).
+        self.imported: dict[str, tuple[str, str]] = {
+            alias.asname or alias.name: (node.module.rsplit(".", 1)[-1], alias.name)
+            for node in tree.body
+            if isinstance(node, ast.ImportFrom) and node.module
+            for alias in node.names
+        }
         for node in ast.walk(tree):
             for child in ast.iter_child_nodes(node):
                 self.parent[child] = node
@@ -150,8 +159,11 @@ def _parent(path: str | None) -> str | None:
 class _Spelling:
     """The path an expression builds, as text, or None when the source cannot say."""
 
-    def __init__(self, scopes: _Scopes) -> None:
+    def __init__(self, scopes: _Scopes, helpers: dict[str, "_Spelling"] | None = None) -> None:
         self.scopes = scopes
+        #: The suite's helper modules under ``tests/`` by module name, each read the same way,
+        #: so a path a test imports from one is spelled where the helper binds it.
+        self.helpers = helpers or {}
 
     def __call__(self, expr: ast.AST, at: ast.AST, seen: frozenset = frozenset()) -> set[str]:
         if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
@@ -231,6 +243,13 @@ class _Spelling:
             values = self.scopes.functions.get(scope, {}).get(name)
             if values:
                 return self._each(values, name, seen)
+        if name not in self.scopes.module and name in self.scopes.imported:
+            leaf, original = self.scopes.imported[name]
+            if leaf == "rails_repo" and original == "REPO":
+                return {_REPO}  # tests/rails/rails_repo.py: the repository's root
+            helper = self.helpers.get(leaf)
+            if helper is not None and helper is not self:
+                return helper._each(helper.scopes.module.get(original, []), original, seen)
         return self._each(self.scopes.module.get(name, []), name, seen)
 
     def _class_bound(self, name: str, at: ast.AST, seen: frozenset) -> set[str]:
@@ -296,6 +315,14 @@ def private_walks(repo: Path) -> list[str]:
     found: list[str] = []
     exempted: set[str] = set()
     tests = repo / "tests"
+    # The helper modules directly under tests/ (not test modules): a test may build a walk's
+    # start from a path one of them binds, and the helper's ``__file__`` sits where a test's did.
+    helpers: dict[str, _Spelling] = {}
+    for path in sorted(tests.glob("*.py")):
+        if path.name.startswith("test_") or path.name in ("conftest.py", "private_walkers.py"):
+            continue
+        helper_tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        helpers[path.stem] = _Spelling(_Scopes(helper_tree), helpers)
     for path in sorted(tests.rglob("*.py")):
         rel = path.relative_to(repo).as_posix()
         if path.name in ("source_index.py", "private_walkers.py"):
@@ -311,7 +338,7 @@ def private_walks(repo: Path) -> list[str]:
         if not walks:
             continue
         scopes = _Scopes(tree)
-        spell = _Spelling(scopes)
+        spell = _Spelling(scopes, helpers)
         for call, start in walks:
             roots = {r for s in spell(start, call) if (r := _root(s)) is not None}
             if not roots:

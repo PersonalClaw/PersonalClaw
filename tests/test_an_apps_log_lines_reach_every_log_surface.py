@@ -26,7 +26,6 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 import pytest
-import source_index
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -372,29 +371,3 @@ def test_personalclaw_logs_on_a_macos_service_leaves_out_a_stdout_file_that_is_n
     with pytest.raises(SystemExit):
         cli_server._logs_cmd(type("Args", (), {"follow": False, "lines": 20})())
     assert execs == [["tail", "-n", "20", str(svc_macos.STDERR_LOG)]], execs
-
-
-#: The one module that attaches a sink, and the one process that is not the gateway and
-#: keeps its own console (the availability probe's child, which must not open gateway.log).
-_ATTACHES_ITS_OWN = {"log_sinks.py", "providers/availability_probe.py"}
-
-
-def test_every_sink_the_gateway_attaches_goes_through_the_one_rule() -> None:
-    """A handler attached to one logger name (``personalclaw``, an app's) is how the gap
-    began: whatever logs under another name never reaches it. So a handler is attached in
-    ``log_sinks`` only, which gives every sink the same records."""
-    import ast
-
-    src = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
-    calls: dict[str, list[int]] = {}
-    for path, tree in source_index.package_trees():
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr in {"addHandler", "basicConfig"}
-            ):
-                calls.setdefault(path.relative_to(src).as_posix(), []).append(node.lineno)
-    assert "log_sinks.py" in calls, "the rail no longer sees log_sinks' own attach"
-    stray = {rel: lines for rel, lines in calls.items() if rel not in _ATTACHES_ITS_OWN}
-    assert not stray, f"a log handler attached outside log_sinks.attach: {stray}"

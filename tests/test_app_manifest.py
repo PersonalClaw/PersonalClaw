@@ -4,7 +4,7 @@ import json
 from dataclasses import fields
 
 import pytest
-import source_index
+from app_manifest_shared import _valid_manifest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -54,19 +54,6 @@ def test_an_app_version_that_is_not_a_version_sorts_lowest():
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _valid_manifest(**overrides) -> dict:
-    """Return a minimal valid manifest dict with optional overrides."""
-    base = {
-        "name": "test-app",
-        "version": "1.0.0",
-        "displayName": "Test App",
-        "description": "A test app",
-        "author": "tester",
-    }
-    base.update(overrides)
-    return base
 
 
 def _valid_value_for(key: str):
@@ -1190,31 +1177,3 @@ class TestIconValidation:
         letting it rot. The render site is what makes that value safe; this layer catches the
         classes it can actually prove."""
         assert AppManifest.from_dict(_valid_manifest(icon="icons")).validate() == []
-
-    def test_every_BUNDLED_icon_value_still_validates(self):
-        """The census, kept executable: a rule that refused an icon a shipped app already uses
-        would be a worse bug than #579. Scoped to the BUNDLED apps because that is what this repo
-        can assert about; the separate first-party apps repo carries 58 values in total, one of
-        which (meta-muse-spark's lowercase "brain") is why this rule is case-insensitive."""
-        import json
-        from pathlib import Path
-
-        repo = Path(__file__).resolve().parents[1]
-        seen: dict[str, str] = {}
-        apps = repo / "src" / "personalclaw" / "apps"
-        for app_json in source_index.under(source_index.package_any_files(), apps):
-            if app_json.name != "app.json":
-                continue
-            try:
-                data = json.loads(source_index.text(app_json))
-            except (json.JSONDecodeError, OSError):
-                continue
-            for value in [data.get("icon", "")] + [
-                p.get("icon", "") for p in (data.get("ui", {}) or {}).get("pages", []) or []
-            ]:
-                if value:
-                    seen[value] = app_json.parent.name
-        assert seen, "found no bundled app icons — has the bundled-apps path moved?"
-        for value, app in sorted(seen.items()):
-            errors = AppManifest.from_dict(_valid_manifest(icon=value)).validate()
-            assert errors == [], f"{app} ships icon {value!r}, which this rule would refuse"
