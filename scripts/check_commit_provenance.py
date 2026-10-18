@@ -75,8 +75,10 @@ _MAINTAINER_LINE = re.compile(r"^(?P<name>[^<>]*\S)\s+<(?P<email>[^<>\s]+)>\s+(?
 #: Dependabot's author address, exactly as GitHub writes it on the bot's commits.
 _DEPENDABOT_EMAIL = "49699333+dependabot[bot]@users.noreply.github.com"
 
-#: A full commit id, which every sha the commits API returns is.
-_SHA = re.compile(r"^[0-9a-f]{40}$")
+#: A full commit id, which every sha the commits API returns is. Applied with ``fullmatch``
+#: only: ``$`` under ``match`` also matches before a trailing newline, so ``"<40 hex>\n"`` would
+#: pass as a full commit id.
+_SHA = re.compile(r"[0-9a-f]{40}")
 
 #: What rule 3 refuses on a maintainer's commit, matched case-insensitively at the start of a
 #: line, so prose that quotes a trailer mid-line is not one. Each pattern says why it is here.
@@ -243,7 +245,7 @@ def commits_from_api(text: str, expected: int, head: str) -> list[Commit]:
     API answers for the pull request as it is when asked, so a push made after the event, or a
     list truncated or reordered on the way, could hand this run another head's commits; a list
     that does not end at the event's head is refused."""
-    if not _SHA.match(head):
+    if not _SHA.fullmatch(head):
         raise Unusable(f"--expected-head must be a full commit id, got {_clean(head)!r}")
     decoder = json.JSONDecoder()
     pages: list[Any] = []
@@ -273,7 +275,7 @@ def commits_from_api(text: str, expected: int, head: str) -> list[Commit]:
             )
         except (KeyError, TypeError) as exc:
             raise Unusable(f"commit {index} in the list lacks {_clean(str(exc))}") from exc
-        if not all(isinstance(field, str) for field in fields) or not _SHA.match(fields[0]):
+        if not all(isinstance(field, str) for field in fields) or not _SHA.fullmatch(fields[0]):
             raise Unusable(f"commit {index} in the list is not a commit the API returns")
         commits.append(Commit(*fields))
     if not commits:
