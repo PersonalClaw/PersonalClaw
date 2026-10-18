@@ -68,6 +68,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 from functools import lru_cache
 from pathlib import Path
 
@@ -114,10 +115,12 @@ _COPYRIGHT_RE = re.compile(
 )
 
 #: Directories that cannot hold a declaration of *this* project's licence: build output,
-#: caches, dependency trees and sibling worktrees.
+#: caches, dependency trees, sibling worktrees and a checkout's own scratch folder. Read only
+#: where git cannot say what the tree holds (see :func:`_walk`).
 _SKIP_DIRS = frozenset(
     {
         ".git",
+        ".local",
         ".venv",
         "venv",
         ".worktrees",
@@ -273,12 +276,58 @@ _COMMITMENT_WINDOW = 2500
 _DATE_RE = re.compile(r"\b20\d{2}-[01]\d-[0-3]\d\b")
 
 
-def _walk(root: Path):
-    """Every file under *root* that is not in a skipped directory.
+#: Variables a git hook sets for the repository it runs in. A suite run from a hook would
+#: otherwise ask that repository's index about a planted tree.
+_GIT_LOCATION_VARS = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_PREFIX",
+)
 
-    Directories are PRUNED as the walk descends rather than filtered afterwards. `rglob("*")`
-    plus a filter is the obvious spelling and takes tens of seconds here, because it
-    enumerates every object in `.git` and every file in `.venv` before discarding them.
+
+def _git_files(root: Path) -> list[Path] | None:
+    """The files the project at *root* holds, as git sees them: tracked, plus untracked files
+    git does not ignore, so a new declaration is judged before it is committed. ``None`` when
+    git cannot answer (no git, or *root* is no checkout)."""
+    env = {k: v for k, v in os.environ.items() if k not in _GIT_LOCATION_VARS}
+    try:
+        listed = subprocess.run(
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if listed.returncode != 0:
+        return None
+    names = sorted({n for n in listed.stdout.decode("utf-8", "surrogateescape").split("\0") if n})
+    # A file deleted but not yet unstaged is still listed; a submodule is listed as its folder.
+    return [root / n for n in names if (root / n).is_file()]
+
+
+def _walk(root: Path):
+    """Every file the project at *root* ships: what git lists there, or, where git cannot
+    answer, every file under *root* that is not in a skipped directory.
+
+    **Git's list first, because the rail judges what the project ships.** A checkout also holds
+    what git ignores: a scratch folder (`.local/`) with third-party sources in it, a dev home,
+    build output. A walk reads all of it, and a scratch copy of an Apache-2.0 file read as this
+    project declaring Apache-2.0 in every checkout that had one, while CI, which has none, stayed
+    green. Pruning by name chased each such folder after it bit; `.gitignore` already names
+    them all.
+
+    **The walk is the fallback**, for a tree git does not track: a planted tree in a test, or a
+    copy with no git. Directories are PRUNED as the walk descends rather than filtered
+    afterwards, and `.local/` is pruned with the rest. `rglob("*")` plus a filter is the obvious
+    spelling and takes tens of seconds here, because it enumerates every object in `.git` and
+    every file in `.venv` before discarding them.
 
     The skip check is against the path RELATIVE to *root*, never the absolute one: this
     repository is routinely checked out into a `.worktrees/<name>/` sibling, so matching
@@ -289,6 +338,10 @@ def _walk(root: Path):
     Pruning goes through `_is_skipped_dir`, not a bare set membership, so a dev home is
     matched by prefix the way `.gitignore` matches it (#3462).
     """
+    tracked = _git_files(root)
+    if tracked is not None:
+        yield from tracked
+        return
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = sorted(d for d in dirnames if not _is_skipped_dir(d))
         here = Path(dirpath)
@@ -986,6 +1039,75 @@ def test_the_rail_reds_on_a_test_phone_home_host(tmp_path: Path, monkeypatch) ->
     )
     with pytest.raises(AssertionError, match="telemetry.personalclaw-metrics.net"):
         egress.test_every_egress_host_is_a_declared_destination()
+
+
+def _git(root: Path, *args: str) -> None:
+    env = {k: v for k, v in os.environ.items() if k not in _GIT_LOCATION_VARS}
+    subprocess.run(["git", *args], cwd=root, env=env, check=True, capture_output=True)
+
+
+def _checkout_with_scratch(tmp_path: Path) -> tuple[Path, Path]:
+    """A git checkout like this one: an MIT tree, `.local/` ignored, and in it a third-party
+    source that declares Apache-2.0 (composed from `_SPDX_TAG`, see that constant)."""
+    root = _minimal_tree(tmp_path)
+    (root / ".gitignore").write_text("/.local/\n/notes-only-mine/\n", encoding="utf-8")
+    scratch = root / ".local" / "scratch" / "vendored" / "TargetManager.ts"
+    scratch.parent.mkdir(parents=True)
+    scratch.write_text(f"/**\n * {_SPDX_TAG} Apache-2.0\n */\nexport {{}};\n", encoding="utf-8")
+    # An ignored folder no prune list names: only git's own list can leave it out.
+    elsewhere = root / "notes-only-mine" / "LICENSE"
+    elsewhere.parent.mkdir()
+    elsewhere.write_text("Apache License\nVersion 2.0, January 2004\n", encoding="utf-8")
+    _git(root, "init", "-q")
+    _git(root, "add", "-A")
+    return root, scratch
+
+
+def test_a_file_git_ignores_is_not_judged(tmp_path: Path) -> None:
+    """A checkout's scratch folder is not the project: a third-party file there declares
+    another project's licence, and the rail judges only what this one ships."""
+    root, _scratch = _checkout_with_scratch(tmp_path)
+    check_every_declaration_is_mit(root)
+    assert sorted(declaration_sites(root)) == ["LICENSE", "pyproject.toml"]
+
+
+def test_the_same_file_tracked_is_judged(tmp_path: Path) -> None:
+    """The control: the identical file, once git tracks it, is the project declaring
+    Apache-2.0, so the rail fails on it. Staged is enough; so is untracked but not ignored."""
+    root, scratch = _checkout_with_scratch(tmp_path)
+    shipped = root / "web" / "TargetManager.ts"
+    shipped.parent.mkdir()
+    shipped.write_bytes(scratch.read_bytes())
+    with pytest.raises(AssertionError, match=r"web/TargetManager\.ts declares \['Apache-2\.0'\]"):
+        check_every_declaration_is_mit(root)
+    _git(root, "add", "web/TargetManager.ts")
+    with pytest.raises(AssertionError, match=r"web/TargetManager\.ts declares \['Apache-2\.0'\]"):
+        check_every_declaration_is_mit(root)
+    _git(root, "add", "-f", ".local/scratch/vendored/TargetManager.ts")
+    with pytest.raises(AssertionError, match=r"\.local/scratch/vendored/TargetManager\.ts"):
+        check_every_declaration_is_mit(root)
+
+
+def test_a_real_non_mit_declaration_still_fails_in_a_checkout(tmp_path: Path) -> None:
+    """Reading git's list must not blind the rail: the project's own manifest changed."""
+    root, _scratch = _checkout_with_scratch(tmp_path)
+    (root / "pyproject.toml").write_text(_pyproject("Apache-2.0"), encoding="utf-8")
+    with pytest.raises(AssertionError, match=r"pyproject\.toml declares \['Apache-2\.0'\]"):
+        check_every_declaration_is_mit(root)
+
+
+def test_where_git_cannot_answer_the_walk_prunes_the_scratch_folder(tmp_path: Path) -> None:
+    """The fallback, for a tree git does not track: `.local/` is pruned like any other
+    folder that cannot hold this project's declaration, and the rest is still read."""
+    root = _minimal_tree(tmp_path)
+    scratch = root / ".local" / "scratch" / "TargetManager.ts"
+    scratch.parent.mkdir(parents=True)
+    scratch.write_text(f"// {_SPDX_TAG} Apache-2.0\n", encoding="utf-8")
+    assert _git_files(root) is None, "the planted tree must not be inside a git checkout"
+    check_every_declaration_is_mit(root)
+    (root / "app.py").write_text(f"# {_SPDX_TAG} BUSL-1.1\n", encoding="utf-8")
+    with pytest.raises(AssertionError, match="BUSL-1.1"):
+        check_every_declaration_is_mit(root)
 
 
 def test_the_declaration_sweep_ignores_other_peoples_licences(tmp_path: Path) -> None:
