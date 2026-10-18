@@ -664,7 +664,18 @@ PER_TEST_TEMPORARY_FOLDERS = Row(
 
 _WORKFLOWS = ".github/workflows"
 _TRUSTED_TRIGGERS = {"pull_request_target", "workflow_run"}
-_PR_REF_MARKERS = ("pull_request.head", "workflow_run.head", "head_ref", "refs/pull/", "/pull/")
+#: Where a trusted job could name the candidate's code: its head, its ref, the run's head, and the
+#: test-merge commit GitHub builds from the candidate (`pull_request.merge_commit_sha`), and
+#: `event.after`, which on a `pull_request_target` synchronize is the candidate's new head.
+_PR_REF_MARKERS = (
+    "pull_request.head",
+    "workflow_run.head",
+    "head_ref",
+    "refs/pull/",
+    "/pull/",
+    "merge_commit_sha",
+    "event.after",
+)
 _PUBLISHING_SCOPES = {"contents", "packages", "id-token", "attestations", "deployments"}
 _RELEASE_WORKFLOW = "release.yml"
 
@@ -990,6 +1001,33 @@ NO_TRUSTED_CHECKOUT_OF_CANDIDATE_CODE = Row(
         ),
         Control("ref: refs/pull/<n>/merge fails", _feedback_checkout("ref", "refs/pull/7/merge")),
         Control("ref: github.head_ref fails", _feedback_checkout("ref", "${{ github.head_ref }}")),
+        Control(
+            "ref: the pull request's test-merge commit under pull_request_target fails",
+            _replace(
+                "dco.yml",
+                "    steps:\n",
+                "    steps:\n      - uses: actions/checkout@v7\n        with:\n"
+                "          ref: ${{ github.event.pull_request.merge_commit_sha }}\n",
+            ),
+        ),
+        Control(
+            "ref: the synchronize event's new head (event.after) fails",
+            _replace(
+                "dco.yml",
+                "    steps:\n",
+                "    steps:\n      - uses: actions/checkout@v7\n        with:\n"
+                "          ref: ${{ github.event.after }}\n",
+            ),
+        ),
+        Control(
+            "a git fetch of the test-merge commit under pull_request_target fails",
+            _replace(
+                "dco.yml",
+                "    steps:\n",
+                "    steps:\n      - run: git fetch origin "
+                '"${{ github.event.pull_request.merge_commit_sha }}"\n',
+            ),
+        ),
         Control(
             "repository: the run's head repository fails",
             _feedback_checkout(
@@ -3989,6 +4027,323 @@ EVERY_RAIL_LIVES_IN_TESTS_RAILS = Row(
 )
 
 ROWS = (*ROWS, EVERY_RAIL_LIVES_IN_TESTS_RAILS)
+
+
+# ── Every push to main checks the commits it lands, with main's previous check (#3908) ───────
+# Each push checks only `before..sha`, so a run that never finishes leaves its commits unchecked
+# for good. The check therefore runs in a workflow of its own that no later run can cancel or
+# replace, and the copy that runs is the previous main commit's, so a push cannot judge itself.
+
+_PROVENANCE = ".github/workflows/provenance.yml"
+#: The one command the job runs: the fetched check, isolated, over the push's own range.
+_PROVENANCE_RUN = (
+    'python3 -I "$check" --maintainers "$maintainers" '
+    '--mode main --range "${BEFORE}..${GITHUB_SHA}"'
+)
+
+
+def provenance_violations(tree: Tree) -> list[str]:
+    """``provenance.yml`` runs on every push to main and nothing else, one group per commit and
+    never cancelled, read-only, and runs the previous main commit's check and MAINTAINERS,
+    isolated. No other workflow runs the check over a main push."""
+    workflow = _workflow(tree, "provenance.yml")
+    if workflow is None:
+        return [f"{_PROVENANCE} is missing"]
+    bad: list[str] = []
+    if _triggers(workflow) != {"push": {"branches": ["main"]}}:
+        bad.append(f"{_PROVENANCE} runs on {_triggers(workflow)}, not on every push to main alone")
+    concurrency = workflow.get("concurrency") or {}
+    if concurrency.get("group") != "provenance-${{ github.sha }}":
+        bad.append(f"{_PROVENANCE}'s group is not its commit's own: {concurrency.get('group')!r}")
+    if concurrency.get("cancel-in-progress") is not False:
+        bad.append(f"{_PROVENANCE} can cancel a run")
+    if workflow.get("permissions") != {"contents": "read"}:
+        bad.append(f"{_PROVENANCE} grants {workflow.get('permissions')!r}, not contents: read")
+    for job_id, job in (workflow.get("jobs") or {}).items():
+        where = f"provenance.yml:{job_id}"
+        if job.get("permissions") != {"contents": "read"}:
+            bad.append(f"{where} holds {job.get('permissions')!r}, not contents: read")
+        if "concurrency" in job or "if" in job or "needs" in job:
+            bad.append(f"{where} can be skipped, replaced or cancelled on its own")
+        run = _runs(job)
+        if _PROVENANCE_RUN not in run:
+            bad.append(f"{where} does not run the fetched check over `before..sha`")
+        for fetched in ("scripts/check_commit_provenance.py", "MAINTAINERS"):
+            if f'git show "$BEFORE:{fetched}"' not in run:
+                bad.append(f"{where} does not read {fetched} from the previous main commit")
+        if re.search(r"python3?\s+(?:-\S+\s+)*(?:\./)?scripts/check_commit_provenance\.py", run):
+            bad.append(f"{where} runs the pushed copy of the check by path")
+    for name, other in _workflows(tree):
+        if (
+            name != "provenance.yml"
+            and "--mode main" in json.dumps(other)
+            and ("check_commit_provenance" in json.dumps(other))
+        ):
+            bad.append(f"{name} runs the main-push check, which only provenance.yml may")
+    return bad
+
+
+PROVENANCE_RUNS_ON_EVERY_MAIN_PUSH = _toolchain_row(
+    "provenance-checks-every-main-push-with-mains-previous-check",
+    provenance_violations,
+    (
+        _plant(
+            "a group shared across commits",
+            _PROVENANCE,
+            "group: provenance-${{ github.sha }}",
+            "group: provenance-${{ github.ref }}",
+        ),
+        _plant(
+            "a run that can be cancelled",
+            _PROVENANCE,
+            "cancel-in-progress: false",
+            "cancel-in-progress: true",
+        ),
+        _plant(
+            "a branch filter that admits more than main",
+            _PROVENANCE,
+            "    branches: [main]\n",
+            '    branches: ["**"]\n',
+        ),
+        _plant(
+            "the pushed copy of the check run by path",
+            _PROVENANCE,
+            '          python3 -I "$check" --maintainers "$maintainers" --mode main',
+            "          python3 scripts/check_commit_provenance.py --maintainers MAINTAINERS"
+            " --mode main",
+        ),
+        _plant(
+            "the pushed MAINTAINERS read",
+            _PROVENANCE,
+            'git show "$BEFORE:MAINTAINERS" > "$maintainers"',
+            'git show "$GITHUB_SHA:MAINTAINERS" > "$maintainers"',
+        ),
+        _plant(
+            "a write permission",
+            _PROVENANCE,
+            "permissions:\n  contents: read\n",
+            "permissions:\n  contents: write\n",
+        ),
+        _plant(
+            "the main-push check back in ci.yml",
+            ".github/workflows/ci.yml",
+            "  rails:\n",
+            "  provenance-again:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: python3 "
+            "scripts/check_commit_provenance.py --mode main --range x..y\n\n  rails:\n",
+            expect="ci.yml runs the main-push check",
+        ),
+        Control("the tree's provenance.yml passes", _nothing, fails=False),
+    ),
+)
+
+ROWS = (*ROWS, PROVENANCE_RUNS_ON_EVERY_MAIN_PUSH)
+
+
+# ── dco.yml checks a pull request with the base branch's check, and nothing of the candidate ──
+# It runs on `pull_request_target` and holds `pull-requests: write`, so each property here is a
+# trust property: what runs is the base branch's, the token reaches only the step that calls the
+# API, nothing a contributor wrote is pasted into code or carried between steps, and the check is
+# handed what it needs to refuse a short or stale list.
+
+_DCO = ".github/workflows/dco.yml"
+_DCO_TYPES = ["opened", "edited", "synchronize", "reopened"]
+_DCO_SPARSE = {"scripts/check_commit_provenance.py", "MAINTAINERS"}
+_DCO_FETCH = "Fetch the pull request's commits"
+_DCO_CHECK = "Verify DCO sign-off on every commit"
+_DCO_COMMENT = "Explain how to fix DCO"
+_DCO_FENCE = "const bar = '`'.repeat(Math.max(2, ...runs.map((r) => r.length)) + 1);"
+#: The Runner identity step's comment line, the anchor its token plant edits.
+_IDENTITY_COMMENT = (
+    "        # The image this job ran on, so a runner image that moves is visible in the log."
+)
+
+
+def dco_violations(tree: Tree) -> list[str]:
+    """``dco.yml``'s trust shape, one finding per property."""
+    from tools.ci.supply_chain import hands_token
+
+    workflow = _workflow(tree, "dco.yml")
+    if workflow is None:
+        return [f"{_DCO} is missing"]
+    bad: list[str] = []
+    triggers = _triggers(workflow)
+    if set(triggers) != {"pull_request_target"}:
+        bad.append(f"{_DCO} runs on {sorted(triggers)}, not pull_request_target alone")
+    types = (triggers.get("pull_request_target") or {}).get("types")  # type: ignore[union-attr]
+    if types != _DCO_TYPES:
+        bad.append(f"{_DCO} runs on {types}, not {_DCO_TYPES} (an edited title is rule 5's)")
+    steps = ((workflow.get("jobs") or {}).get("dco") or {}).get("steps") or []
+    by_name = {str(s.get("name", "")): s for s in steps}
+    checkouts = [s for s in steps if _action(s) == "actions/checkout"]
+    if len(checkouts) != 1:
+        bad.append(f"{_DCO} has {len(checkouts)} checkouts, not the base branch's one")
+    for checkout in checkouts:
+        inputs = checkout.get("with") or {}
+        if {"ref", "repository"} & set(inputs):
+            bad.append(f"{_DCO}'s checkout names a ref or repository, not the base branch")
+        if inputs.get("persist-credentials") is not False:
+            bad.append(f"{_DCO}'s checkout keeps its credentials")
+        if set(str(inputs.get("sparse-checkout", "")).split()) != _DCO_SPARSE:
+            bad.append(f"{_DCO}'s checkout is not the check and MAINTAINERS alone")
+    for step in steps:
+        where = f"{_DCO}:{step.get('name') or _action(step)}"
+        # Through `env:` or `with:` (a checkout's `token:`, a script's `github-token:`) alike.
+        handed = hands_token(step.get("env")) or hands_token(step.get("with"))
+        if handed and step.get("name") != _DCO_FETCH:
+            bad.append(f"{where} hands the job token to a step that does not fetch")
+        code = [str(step.get("run", "")), str((step.get("with") or {}).get("script", ""))]
+        if any("${{" in text for text in code):
+            bad.append(f"{where} pastes an expression into code")
+        if any("contents/" in text for text in code):
+            bad.append(f"{where} reads a file by path through the contents API")
+        if "GITHUB_OUTPUT" in json.dumps(step):
+            bad.append(f"{where} writes a step output")
+    fetch, check, comment = (by_name.get(n) for n in (_DCO_FETCH, _DCO_CHECK, _DCO_COMMENT))
+    if fetch is None or not hands_token(fetch.get("env")):
+        bad.append(f"{_DCO} has no fetch step holding the token")
+    elif [w for words in _commands(str(fetch.get("run", ""))) for w in words[:1]] != [
+        "set",
+        "gh",
+    ]:
+        bad.append(f"{_DCO}'s fetch step runs more than `gh api`")
+    if check is None:
+        bad.append(f"{_DCO} has no check step")
+    else:
+        run = str(check.get("run", ""))
+        if not run.lstrip().startswith("set -euo pipefail"):
+            bad.append(f"{_DCO}'s check step does not start with `set -euo pipefail`")
+        if "python3 -I scripts/check_commit_provenance.py --mode pr" not in run:
+            bad.append(f"{_DCO}'s check step does not run the base copy, isolated, in pr mode")
+        if (
+            '--expected-count "$COMMITS"' not in run
+            or (check.get("env") or {}).get("COMMITS") != "${{ github.event.pull_request.commits }}"
+        ):
+            bad.append(f"{_DCO}'s check is not handed the pull request's own commit count")
+        if '--event "$GITHUB_EVENT_PATH"' not in run:
+            bad.append(f"{_DCO}'s check does not read the title from the event file")
+    if comment is None:
+        bad.append(f"{_DCO} has no comment step")
+    else:
+        script = str((comment.get("with") or {}).get("script", ""))
+        if "fs.readFileSync(process.env.REPORT, 'utf8')" not in script:
+            bad.append(f"{_DCO}'s comment does not read the report from its file")
+        if _DCO_FENCE not in script:
+            bad.append(f"{_DCO}'s comment fence does not grow with the report")
+    return bad
+
+
+DCO_CHECKS_WITH_THE_BASE_BRANCHS_CHECK = _toolchain_row(
+    "dco-checks-a-pull-request-with-the-base-branchs-check",
+    dco_violations,
+    (
+        _plant(
+            "a title edit that starts no run",
+            _DCO,
+            "types: [opened, edited, synchronize, reopened]",
+            "types: [opened, synchronize, reopened]",
+        ),
+        _plant(
+            "the checkout of the pull request's head",
+            _DCO,
+            "          sparse-checkout-cone-mode: false\n",
+            "          sparse-checkout-cone-mode: false\n"
+            "          ref: ${{ github.event.pull_request.head.sha }}\n",
+        ),
+        _plant(
+            "a checkout that keeps its credentials",
+            _DCO,
+            "          persist-credentials: false\n",
+            "          persist-credentials: true\n",
+        ),
+        _plant(
+            "a checkout of more than the check and MAINTAINERS",
+            _DCO,
+            "            MAINTAINERS\n",
+            "            MAINTAINERS\n            scripts/\n",
+        ),
+        _plant(
+            "the token on the check step",
+            _DCO,
+            "          COMMITS: ${{ github.event.pull_request.commits }}\n",
+            "          COMMITS: ${{ github.event.pull_request.commits }}\n"
+            "          GH_TOKEN: ${{ github.token }}\n",
+        ),
+        _plant(
+            "the token on the Runner identity step",
+            _DCO,
+            _IDENTITY_COMMENT + "\n        run: echo",
+            "        env:\n          GH_TOKEN: ${{ github.token }}\n        run: echo",
+        ),
+        _plant(
+            "the token on the comment step",
+            _DCO,
+            "          REPORT: ${{ runner.temp }}/provenance.txt\n",
+            "          REPORT: ${{ runner.temp }}/provenance.txt\n"
+            "          GH_TOKEN: ${{ github.token }}\n",
+        ),
+        _plant(
+            "the check run in the fetch step",
+            _DCO,
+            'gh api --paginate "repos/$REPO/pulls/$PR/commits" > "$RUNNER_TEMP/commits.json"\n',
+            'gh api --paginate "repos/$REPO/pulls/$PR/commits" > "$RUNNER_TEMP/commits.json"\n'
+            "          python3 -I scripts/check_commit_provenance.py --help\n",
+        ),
+        _plant(
+            "an expression pasted into the check's run",
+            _DCO,
+            '--expected-count "$COMMITS"',
+            "--expected-count ${{ github.event.pull_request.commits }}",
+        ),
+        _plant(
+            "a step output carrying text",
+            _DCO,
+            '            --report "$RUNNER_TEMP/provenance.txt"\n',
+            '            --report "$RUNNER_TEMP/provenance.txt"\n'
+            '          echo "report=x" >> "$GITHUB_OUTPUT"\n',
+        ),
+        _plant(
+            "a check without pipefail",
+            _DCO,
+            "          set -euo pipefail\n          python3 -I",
+            "          python3 -I",
+        ),
+        _plant(
+            "the pushed copy run without isolation",
+            _DCO,
+            "python3 -I scripts/check_commit_provenance.py --mode pr",
+            "python3 scripts/check_commit_provenance.py --mode pr",
+        ),
+        _plant(
+            "the commit count not handed over",
+            _DCO,
+            '--expected-count "$COMMITS"',
+            "--expected-count 250",
+        ),
+        _plant(
+            "the title not read from the event file",
+            _DCO,
+            '--event "$GITHUB_EVENT_PATH"',
+            '--event "$RUNNER_TEMP/event.json"',
+        ),
+        _plant(
+            "the report read from somewhere else",
+            _DCO,
+            "fs.readFileSync(process.env.REPORT, 'utf8')",
+            "(process.env.REPORT_TEXT || '')",
+        ),
+        _plant("a fence of fixed length", _DCO, _DCO_FENCE, "const bar = '```';"),
+        _plant(
+            "the token handed to the checkout",
+            _DCO,
+            "          persist-credentials: false\n",
+            "          persist-credentials: false\n          token: ${{ github.token }}\n",
+            expect="hands the job token to a step that does not fetch",
+        ),
+        Control("the tree's dco.yml passes", _nothing, fails=False),
+    ),
+)
+
+ROWS = (*ROWS, DCO_CHECKS_WITH_THE_BASE_BRANCHS_CHECK)
 
 
 @pytest.mark.parametrize("row", ROWS, ids=lambda row: row.name)

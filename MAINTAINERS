@@ -1,0 +1,6 @@
+# The identities allowed to commit on main, one per line: `Name <email>  reason`.
+# scripts/check_commit_provenance.py checks every commit a push to main lands against this list
+# (rule 2), and treats a commit whose author is listed as a maintainer's (rule 3). A change to
+# this file is a change to that check: CI judges the pull request that makes it with main's copy.
+GitHub <noreply@github.com>  the squash merge of a pull request, which GitHub commits
+Keyur Golani <keyurrgolani@gmail.com>  the maintainer, for the emergency path

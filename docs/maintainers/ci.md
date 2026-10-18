@@ -87,8 +87,9 @@ id is accepted, and a shallow clone refuses, because it cannot show ancestry.
 `tests/rails/test_ci_contract.py` holds three workflow rules, each with a planted violation per form:
 
 - No `pull_request_target` or `workflow_run` workflow checks out candidate code: a checkout of
-  the pull request's or the run's head, a `refs/pull/` ref, `github.head_ref`, the head
-  repository, `gh pr checkout`, or a `git fetch` of a pull request's ref.
+  the pull request's or the run's head, a `refs/pull/` ref, `github.head_ref`, the pull
+  request's test-merge commit (`merge_commit_sha`), the head repository, `gh pr checkout`, or a
+  `git fetch` of a pull request's ref.
 - No job that runs candidate code holds a write permission or a secret: a write grant,
   `write-all`, no `permissions` at all (the repository default is unknown to the file), a
   `secrets.` reference anywhere in the job, or `secrets: inherit`.
@@ -131,6 +132,54 @@ judged by the copy it replaces, and the merge that adds the check runs the whole
 
 Runs on `main` are grouped by commit and never cancelled, so no merge goes unchecked because
 a later one replaced it. Everywhere else a newer push still cancels the older run.
+
+### Commit provenance
+
+Every commit that reaches `main` is checked by `scripts/check_commit_provenance.py` (the rules
+are in [CONTRIBUTING.md](../../CONTRIBUTING.md#developer-certificate-of-origin-dco)), in two
+places:
+
+- **`dco.yml`, on every pull request,** in `pr` mode: rules 1, 3 and 5, over the commits the
+  API returns and the title in the event payload. It runs on `pull_request_target`, so it checks
+  out only the base branch's script and `MAINTAINERS`, and puts no file or git object of the pull
+  request on disk. The commits endpoint returns at most 250 commits, so a list short of the pull
+  request's own count fails the check rather than passing half of it.
+- **`provenance.yml`, on every push to `main`,** in `main` mode: rules 1, 2, 3 and 5, over
+  `before..sha`. It is a workflow of its own because each push checks only its own range, so a
+  run that never finished would leave its commits unchecked for good. One job with no `needs:`
+  cannot be dropped by `tree-check`'s answer or by another job's outcome, and at a few seconds on
+  one runner, grouped by commit and never cancelled, it stays so whatever becomes of `ci.yml`'s
+  main runs (#3915 plans one run per candidate).
+
+`dco.yml` also runs when a pull request's title is edited, since rule 5 reads the title. Its job
+token reaches one step, which only fetches the commits with `gh api`; the check that parses them
+runs in the next step with no token. Each violation is also printed as an `::error::` annotation,
+so a red run's summary names the commit.
+
+The main push runs the **previous** main commit's copy of the script and of `MAINTAINERS`, read
+with `git show "$BEFORE:…"` and run as `python3 -I` from the runner's temporary folder, as
+`tree-check` runs the previous copy of its check. A push cannot edit the check, add its own
+committer to `MAINTAINERS` or drop a module beside the script to pass itself; a change to either
+file judges the pushes after the one that lands it. The one push with no previous copy is the one
+that adds the check: `BEFORE`'s history never held the script, so that push runs its own copy and
+says so in the summary. A `BEFORE` that once had the script and has lost it is refused, and so
+is a `BEFORE` the checkout cannot resolve (all zeros, or an old tip a forced update orphaned):
+a git failure is never read as "never had the check".
+
+**What a squash merge must carry.** On `main` nothing can be amended, so the squash commit itself
+has to pass. In GitHub's squash dialog, delete the `Co-authored-by` lines GitHub adds for the
+other authors when the squash is yours: rule 3 refuses them on a maintainer's commit. Keep the
+commit author's email equal to the email in its `Signed-off-by`: rule 1 reads the author GitHub
+records, so a contributor whose GitHub commit email differs from their sign-off fails on `main`
+(two of the four contributor squashes in history do).
+
+**What it does not cover.** Rule 4, the pushed tree against the tree the merge controller
+recorded for its pull request, is not checked: #3908 keeps it open until that record exists, and
+where the record lives is settled with #3910. Until then `GitHub <noreply@github.com>` commits a
+squash merge, a web-editor commit and a revert made from a pull request's page alike, and rule 2
+passes all three. A push to `main` that starts no run at all (one made with a workflow's own
+token, say) is never checked either, because the next run starts at its own `before`; rule 5
+closes only the skip-marker case.
 
 ### A closed pull request's runs
 
@@ -508,7 +557,7 @@ The audited writes today:
 
 | Workflow | Job | Permission | Used by |
 |---|---|---|---|
-| `dco.yml` | `dco` | `pull-requests: write` | the sign-off remediation comment |
+| `dco.yml` | `dco` | `pull-requests: write` | the commit-provenance remediation comment |
 | `pr-feedback.yml` | `lint-help` | `pull-requests: write` | the lint remediation comment |
 | `release.yml` | `pypi`, `pypi-client` | `id-token: write` | Trusted Publishing to PyPI |
 | `release.yml` | `images` | `packages: write` | pushing the two images to GHCR |

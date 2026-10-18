@@ -45,6 +45,7 @@ CONTRACT_TABLE: tuple[str, ...] = (
 #: only while a command names its entry point.
 REVIEWED_HELPERS: Mapping[str, tuple[str, ...]] = {
     "scripts/apps_sdk_contract.py": ("scripts/sdk_signature_snapshot.py",),
+    "scripts/check_commit_provenance.py": ("MAINTAINERS",),
     "scripts/gate_report.py": (
         "scripts/generate_config_baseline.py",
         "scripts/generate_docs_lint_baseline.py",

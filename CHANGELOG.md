@@ -60,6 +60,7 @@ installed needs uv 0.13.1 or newer to update, which `uv self update` gets.
 - **A bare `pytest` in core runs in one process without coverage; `make test` stays parallel, and coverage is `--cov=personalclaw`.**
 - **Core's test extra no longer installs pytest-split: the suite's CI shards are whole test files planned from recorded durations, and `pytest tests --shard-list FILE` runs the files one names.**
 - **CI builds the dashboard once and runs every browser check in one run, so one failing check no longer hides the others, and a build that does not match the code fails before any check runs.**
+- **Every pull request's commits and title are checked for a sign-off that matches each author, no co-author or tool marks on a maintainer's commit, and no marker that would skip CI, and every push to `main` is checked the same way, its committers included.**
 
 ### Added
 
