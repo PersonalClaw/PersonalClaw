@@ -88,8 +88,8 @@ tool_homes = importlib.import_module("tool_homes")
 security_census = importlib.import_module("security_census")
 
 # ── The fixture-cost report ─────────────────────────────────────────────
-# `--fixture-costs` times each fixture's own setup and writes reports/fixture-costs.json, merged
-# across xdist workers. Mechanism: tests/fixture_costs.py.
+# `--fixture-costs` times each fixture's own setup and teardown, in wall and CPU time, and writes
+# reports/fixture-costs.json, merged across xdist workers. Mechanism: tests/fixture_costs.py.
 fixture_costs = importlib.import_module("fixture_costs")
 
 #: What `pytest_configure` set for collection, put back by `pytest_unconfigure`.
@@ -248,7 +248,7 @@ def pytest_addoption(parser):
         "--fixture-costs",
         action="store_true",
         default=False,
-        help="time each fixture's own setup and write reports/fixture-costs.json "
+        help="time each fixture's own setup and teardown and write reports/fixture-costs.json "
         "(tests/fixture_costs.py)",
     )
 
