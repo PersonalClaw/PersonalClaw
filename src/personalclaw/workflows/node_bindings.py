@@ -92,14 +92,46 @@ def forget_output(ctl: RunController, path: str, node_id: str) -> None:
     ctl._instance_outputs.pop(path, None)
 
 
-def context_for(ctl: RunController, item: ReadyNode) -> BindingContext:
-    watcher_path = _enclosing_watcher(ctl, item.path)
-    seen = ctl._seen.get(watcher_path) if watcher_path else None
-    last_output, has_last = _last_output(ctl, item.path)
+def item_context(ctl: RunController, path: str, **fields: Any) -> BindingContext:
+    """THE context a read made for the step at instance *path* resolves against: the run's
+    outputs and offloaded artifacts, scoped to the fan-out items *path* is inside
+    (`BindingContext.scoped_to`). Every read the engine makes on a step's behalf goes through
+    here: its bindings, a loop's exit and convergence reads, the metric gate's `metric_from`, an
+    approval gate's recorded inputs. A read that built its own context from the node-id maps
+    read whichever item wrote last. *fields* are the rest of the context, as the read needs it.
+    Outside every fan-out item the context is the node-id maps, unchanged."""
     return BindingContext(
         inputs=dict(ctl.run.inputs),
         node_outputs=dict(ctl._outputs),
         node_artifacts=node_artifacts(ctl),
+        instance_outputs=dict(ctl._instance_outputs),
+        instance_artifacts=_instance_artifacts(ctl),
+        **fields,
+    ).scoped_to(path)
+
+
+def item_outputs(ctl: RunController, path: str) -> dict[str, Any]:
+    """node id → output as the step at instance *path* reads them (`item_context`'s outputs)."""
+    scoped = BindingContext(
+        node_outputs=dict(ctl._outputs), instance_outputs=dict(ctl._instance_outputs)
+    ).scoped_to(path)
+    return scoped.node_outputs or {}
+
+
+def item_output(ctl: RunController, path: str, node_id: str) -> Any:
+    """*node_id*'s output as the step at instance *path* reads it (`item_context`), or None."""
+    return item_outputs(ctl, path).get(node_id)
+
+
+def context_for(ctl: RunController, item: ReadyNode) -> BindingContext:
+    watcher_path = _enclosing_watcher(ctl, item.path)
+    seen = ctl._seen.get(watcher_path) if watcher_path else None
+    last_output, has_last = _last_output(ctl, item.path)
+    # Scoped to the step's own fan-out item: a sibling it binds is that item's instance, not
+    # whichever item last wrote the node id.
+    return item_context(
+        ctl,
+        item.path,
         item=item.item,
         has_item=item.has_item,
         iter_index=item.iter_index,
@@ -113,10 +145,7 @@ def context_for(ctl: RunController, item: ReadyNode) -> BindingContext:
         secret_resolver=_secrets_for(ctl, item),
         input_secrets=input_secrets.of_run(ctl.run),
         run_document=deliverable.document_path(ctl.run, ctl.spec),
-        instance_outputs=dict(ctl._instance_outputs),
-        # Scoped to the step's own fan-out item: a sibling it binds is that item's instance, not
-        # whichever item last wrote the node id (`BindingContext.scoped_to`).
-    ).scoped_to(item.path)
+    )
 
 
 #: Node kinds whose bound config is the text of a model call: a stage's agent task, an infer
@@ -282,6 +311,24 @@ def node_artifacts(ctl: RunController) -> dict[str, str] | None:
             continue
         artifacts[node.id] = inst.output_ref
     return artifacts or None
+
+
+def _instance_artifacts(ctl: RunController) -> dict[str, tuple[str, str]] | None:
+    """instance path → (node id, artifact ref), for each offloaded output of a step inside a
+    fan-out item: what `node_artifacts` holds by node id, kept per item so `scoped_to` can hand a
+    step its own item's ref. Derived from the instances, as `node_artifacts` is, so a restart
+    reads the same."""
+    by_path = {path: node for path, node in walk(ctl.root)}
+    found: dict[str, tuple[str, str]] = {}
+    for path, inst in ctl.instances.items():
+        if not item_prefixes(path) or inst.state not in SUCCESS_STATES:
+            continue
+        if not inst.output_ref or inst.output_ref.startswith("outputs/"):
+            continue
+        node = by_path.get(spec_path(path))
+        if node is not None and node.id:
+            found[path] = (node.id, inst.output_ref)
+    return found or None
 
 
 def _sibling_outputs(ctl: RunController, path: str) -> dict[str, list[Any]] | None:

@@ -141,8 +141,12 @@ which answers `{"result": …}`), because the read fails every time that case ru
 
 Inside a `foreach` item, a read of a step in the same body is that item's own step:
 `{{nodes.echo.output}}` in item 3 is item 3's `echo`, and a `branch` in each item routes on
-its own item's answer, however the items' steps interleave and across a restart. A read from
-after the fan-out names no item, so it reads the item whose step finished last.
+its own item's answer, however the items' steps interleave and across a restart. The same
+holds for everything the engine reads on a step's behalf inside an item: `{{nodes.<id>.artifact}}`,
+a metric gate's `metric_from`, the inputs an approval gate records, a loop's progress field,
+its judge's ruling and the handoff its cycle passes on, and whether an item still counts
+against `max_concurrency`. A read from after the fan-out names no item, so it reads the item
+whose step finished last.
 
 ## Macros: the patterns, as one-liners
 

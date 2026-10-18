@@ -494,7 +494,12 @@ def _resolved_for_path(ctl: RunController, path: str) -> dict[str, Any]:
     if node is None:
         return {}
     deps = node_deps(node.config or {})
-    return {dep: ctl._outputs.get(dep) for dep in sorted(deps)}
+    # The gate's own item's steps, as its bindings read them: by node id this recorded whichever
+    # item last wrote each dependency.
+    from personalclaw.workflows.node_bindings import item_outputs
+
+    outputs = item_outputs(ctl, path)
+    return {dep: outputs.get(dep) for dep in sorted(deps)}
 
 
 def resume_revise(

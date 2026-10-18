@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, Any
 from personalclaw.workflows import declines, ending_sentence, iteration_context
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import longrun, loop_convergence, node_bindings, supervisor_policy
-from personalclaw.workflows.bindings import BindingContext
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
     TERMINAL_STATES,
@@ -89,7 +88,10 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
         # move, and the synthesize stage after it would be scheduled into the NEXT
         # iteration's path — where nothing had produced its inputs.
         return
-    output = ctl._outputs.get(node_id)
+    # The settled leaf's own output, as its own item reads it: by node id this was another item's
+    # value whenever the leaf failed or was skipped here, and it feeds the breaker, the seen-set
+    # and the handoff this cycle hands on.
+    output = node_bindings.item_output(ctl, path, node_id)
     if declines.end_cycle(ctl, parent_path, node, iteration, output):
         # Her Deny ended this cycle: the next one would put the same call to her again, so the
         # loop waits for her instead, and neither its dry streak nor its breaker reads the cycle.
@@ -152,16 +154,10 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
     # produced, so it is recorded first, and the cycle reads it as the next step would.
     node_bindings.record_branch_outputs(ctl)
     layered, _ = node_bindings.iteration_output(ctl, parent_path, iteration)
-    ctx = BindingContext(
-        inputs=ctl.run.inputs,
-        node_outputs=ctl._outputs,
-        node_artifacts=node_bindings.node_artifacts(ctl),
-        iter_index=iteration,
-        last_output=layered,
-        has_last=True,
-        instance_outputs=dict(ctl._instance_outputs),
-        # A loop inside a fan-out item tests its condition on that item's own outputs.
-    ).scoped_to(parent_path)
+    # A loop inside a fan-out item tests its condition on that item's own outputs.
+    ctx = node_bindings.item_context(
+        ctl, parent_path, iter_index=iteration, last_output=layered, has_last=True
+    )
     keep_going, reason = loop_should_continue(
         node,
         iteration=iteration + 1,
@@ -443,10 +439,12 @@ def _progress_value(
     for sub, child in walk(node.body):
         if not child.id:
             continue
-        inst = ctl.instances.get(base if sub == "root" else f"{base}{sub[len('root'):]}")
+        ipath = base if sub == "root" else f"{base}{sub[len('root'):]}"
+        inst = ctl.instances.get(ipath)
         if inst is None or inst.state not in SUCCESS_STATES:
             continue
-        out = ctl._outputs.get(child.id)
+        # This instance's own output: inside a fan-out item, the node id holds another item's.
+        out = node_bindings.item_output(ctl, ipath, child.id)
         if isinstance(out, dict) and field in out:
             found, value = True, out[field]
     return found, value
