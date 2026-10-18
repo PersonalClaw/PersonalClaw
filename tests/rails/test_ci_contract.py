@@ -4219,6 +4219,12 @@ def dco_violations(tree: Tree) -> list[str]:
             or (check.get("env") or {}).get("COMMITS") != "${{ github.event.pull_request.commits }}"
         ):
             bad.append(f"{_DCO}'s check is not handed the pull request's own commit count")
+        if (
+            '--expected-head "$HEAD_SHA"' not in run
+            or (check.get("env") or {}).get("HEAD_SHA")
+            != "${{ github.event.pull_request.head.sha }}"
+        ):
+            bad.append(f"{_DCO}'s check is not handed the head the event names")
         if '--event "$GITHUB_EVENT_PATH"' not in run:
             bad.append(f"{_DCO}'s check does not read the title from the event file")
     if comment is None:
@@ -4318,6 +4324,20 @@ DCO_CHECKS_WITH_THE_BASE_BRANCHS_CHECK = _toolchain_row(
             _DCO,
             '--expected-count "$COMMITS"',
             "--expected-count 250",
+        ),
+        _plant(
+            "the event's head not handed over",
+            _DCO,
+            '            --expected-head "$HEAD_SHA" \\\n',
+            "",
+            expect="not handed the head the event names",
+        ),
+        _plant(
+            "the head read from somewhere other than the event",
+            _DCO,
+            "          HEAD_SHA: ${{ github.event.pull_request.head.sha }}\n",
+            "          HEAD_SHA: ${{ github.sha }}\n",
+            expect="not handed the head the event names",
         ),
         _plant(
             "the title not read from the event file",

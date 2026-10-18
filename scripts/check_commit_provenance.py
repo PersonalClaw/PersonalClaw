@@ -28,11 +28,14 @@ a revert made from a pull request's page, and rule 2 passes all three.
 
 Two modes, one per place the check runs:
 
-``--mode pr --commits-json FILE --expected-count N --event FILE``
+``--mode pr --commits-json FILE --expected-count N --expected-head SHA --event FILE``
     Rules 1, 3 and 5, over a pull request's commits as ``gh api --paginate
     repos/OWNER/REPO/pulls/N/commits`` writes them (one JSON array per page). That endpoint
     returns at most 250 commits and pagination then stops without an error, so the count must
-    equal ``N``, the pull request's own ``commits``. The title is read from the event payload.
+    equal ``N``, the pull request's own ``commits``. It answers for the pull request as it is
+    when asked, so the list must also end at ``SHA``, the head the event names: a push after
+    the event, or a list truncated or reordered, is refused. The title is read from the event
+    payload.
     It reads no git object, so the pull request's commits never reach the disk of the job that
     holds a write token.
 ``--mode main --range BEFORE..AFTER``
@@ -43,7 +46,8 @@ title), on stdout and in ``--report`` when given. Every field a commit supplies 
 control characters and line breaks collapsed to spaces, so no name can start a line of its own.
 The exit code is 0 for a clean range, 1 for any violation, and 2 when there is nothing that can
 be checked: an unreadable ``MAINTAINERS``, an empty or unknown range, a commit whose raw object
-holds a NUL, a commit list that is empty, malformed or short of its count. A check that cannot
+holds a NUL, a commit list that is empty, malformed, short of its count or not ending at the
+event's head. A check that cannot
 run never passes, and it writes no report, removing any it finds.
 
 It runs nothing from the repository it checks: no hook, no configured program, nothing but
@@ -233,9 +237,14 @@ def commits_in_range(spec: str) -> list[Commit]:
     return commits
 
 
-def commits_from_api(text: str, expected: int) -> list[Commit]:
+def commits_from_api(text: str, expected: int, head: str) -> list[Commit]:
     """A pull request's commits as the paginated commits API returns them: every one well
-    formed, and as many as the pull request has."""
+    formed, as many as the pull request has, and the last of them the head the event names. The
+    API answers for the pull request as it is when asked, so a push made after the event, or a
+    list truncated or reordered on the way, could hand this run another head's commits; a list
+    that does not end at the event's head is refused."""
+    if not _SHA.match(head):
+        raise Unusable(f"--expected-head must be a full commit id, got {_clean(head)!r}")
     decoder = json.JSONDecoder()
     pages: list[Any] = []
     position = 0
@@ -273,6 +282,12 @@ def commits_from_api(text: str, expected: int) -> list[Commit]:
         raise Unusable(
             f"the list holds {len(commits)} commit(s) where the pull request has {expected}; the "
             "commits API returns at most 250, so a longer pull request cannot be checked here"
+        )
+    if commits[-1].sha != head:
+        raise Unusable(
+            f"the list ends at {commits[-1].sha}, not at the event's head {head}: the pull "
+            "request moved after this run started, or the list is not its own, so it is not "
+            "checked here"
         )
     return commits
 
@@ -344,6 +359,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--range", dest="spec", help="main mode: BEFORE..AFTER")
     parser.add_argument("--commits-json", type=Path, help="pr mode: the commits API's pages")
     parser.add_argument("--expected-count", type=int, help="pr mode: the pull request's commits")
+    parser.add_argument("--expected-head", help="pr mode: the head commit the event names")
     parser.add_argument("--event", type=Path, help="pr mode: the event payload, for the title")
     # Required, with no default: the workflow that runs the check names the copy it trusts,
     # which on a push to main is the previous commit's, never the one beside this script.
@@ -357,19 +373,29 @@ def main(argv: list[str] | None = None) -> int:
     try:
         maintainers = read_maintainers(args.maintainers)
         if args.mode == "main":
-            if not args.spec or args.commits_json or args.event or args.expected_count is not None:
+            if (
+                not args.spec
+                or args.commits_json
+                or args.event
+                or args.expected_count is not None
+                or args.expected_head is not None
+            ):
                 raise Unusable("--mode main takes --range BEFORE..AFTER and no pr-mode inputs")
             commits = commits_in_range(args.spec)
         else:
             if args.spec or not args.commits_json or not args.event:
-                raise Unusable("--mode pr takes --commits-json, --expected-count and --event")
+                raise Unusable(
+                    "--mode pr takes --commits-json, --expected-count, --expected-head and --event"
+                )
             if args.expected_count is None or args.expected_count < 1:
                 raise Unusable("--mode pr needs --expected-count, the pull request's commits")
+            if args.expected_head is None:
+                raise Unusable("--mode pr needs --expected-head, the head the event names")
             try:
                 text = args.commits_json.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError) as exc:
                 raise Unusable(f"cannot read {args.commits_json}: {exc}") from exc
-            commits = commits_from_api(text, args.expected_count)
+            commits = commits_from_api(text, args.expected_count, args.expected_head)
             title = pull_request_title(args.event)
             title_lines = [
                 f"pull-request rule 5 {what}"

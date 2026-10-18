@@ -143,13 +143,23 @@ class Repo:
         )
 
     def check_api(
-        self, items: list, *extra: str, title: str = "feat: a change", count: int | None = None
+        self,
+        items: list,
+        *extra: str,
+        title: str = "feat: a change",
+        count: int | None = None,
+        head: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
+        """The given API items, with the event's head the last item's id unless one is named."""
         pages = "".join(json.dumps([item]) + "\n" for item in items)
         commits = self.root.parent / f"{self.root.name}-commits.json"
         commits.write_text(pages, encoding="utf-8")
         event = self.root.parent / f"{self.root.name}-event.json"
         event.write_text(json.dumps({"pull_request": {"title": title}}), encoding="utf-8")
+        if head is None:
+            last = items[-1] if items else None
+            named = isinstance(last, dict) and isinstance(last.get("sha"), str)
+            head = last["sha"] if named else "a" * 40
         return self.run(
             "--mode",
             "pr",
@@ -157,6 +167,8 @@ class Repo:
             str(commits),
             "--expected-count",
             str(len(items) if count is None else count),
+            "--expected-head",
+            head,
             "--event",
             str(event),
             *extra,
@@ -636,10 +648,13 @@ def test_an_empty_or_malformed_commit_list_fails_closed(repo: Repo, text: str) -
         str(commits),
         "--expected-count",
         "1",
+        "--expected-head",
+        "a" * 40,
         "--event",
         str(event),
     )
     assert done.returncode == 2, (done.stdout, done.stderr)
+    assert "--expected-head" not in done.stderr, done.stderr
 
 
 @pytest.mark.parametrize(
@@ -670,6 +685,74 @@ def test_a_commit_list_short_of_the_pull_requests_count_fails_closed(
     done = repo.check_pr(count=count)
     assert done.returncode == 2, (done.stdout, done.stderr)
     assert "at most 250" in done.stderr
+
+
+def _signed(sha: str, subject: str) -> dict:
+    return _api_item(sha, MAINTAINER, MAINTAINER, f"{subject}\n\n" + _signoff(MAINTAINER))
+
+
+@pytest.mark.parametrize(
+    ("order", "head"),
+    [
+        (["a", "b"], "c" * 40),  # truncated: the head's own commit never arrived
+        (["b", "a"], "b" * 40),  # reordered: the head is in the list, but not last
+        (["a", "b"], "b" * 39),  # not a full commit id
+    ],
+    ids=["truncated", "reordered", "head-not-a-sha"],
+)
+def test_a_commit_list_that_does_not_end_at_the_events_head_fails_closed(
+    repo: Repo, order: list[str], head: str
+) -> None:
+    """The commits API answers for the pull request as it is when asked, so a list from after a
+    later push, or one cut short or reordered, is refused rather than checked as this head's."""
+    report = repo.root.parent / "report.txt"
+    items = [_signed(c * 40, f"feat: {c}") for c in order]
+    done = repo.check_api(items, "--report", str(report), head=head)
+    assert done.returncode == 2, (done.stdout, done.stderr)
+    assert "head" in done.stderr, done.stderr
+    assert not report.exists()
+
+
+@pytest.mark.parametrize("head", ["", "b" * 39, "B" * 40], ids=["empty", "short", "upper-case"])
+def test_a_head_that_is_not_a_commit_id_is_named_as_such(repo: Repo, head: str) -> None:
+    """A head that is no commit id is the workflow's mistake (an empty or mistyped input), not
+    a pull request that moved, so the refusal says which."""
+    done = repo.check_api([_signed("b" * 40, "feat: b")], head=head)
+    assert done.returncode == 2, (done.stdout, done.stderr)
+    assert "--expected-head must be a full commit id" in done.stderr, done.stderr
+
+
+def test_a_commit_list_ending_at_the_events_head_is_checked(repo: Repo) -> None:
+    """The control for the head check: the same well-signed commits, ending at the head the
+    event names, pass."""
+    items = [_signed("a" * 40, "feat: a"), _signed("b" * 40, "feat: b")]
+    done = repo.check_api(items, head="b" * 40)
+    assert done.returncode == 0, (done.stdout, done.stderr)
+
+
+def test_pr_mode_without_the_events_head_is_refused(repo: Repo) -> None:
+    commits = repo.root.parent / "commits.json"
+    commits.write_text(json.dumps([_signed("a" * 40, "feat: a")]) + "\n", encoding="utf-8")
+    event = repo.root.parent / "event.json"
+    event.write_text('{"pull_request": {"title": "t"}}', encoding="utf-8")
+    done = repo.run(
+        "--mode",
+        "pr",
+        "--commits-json",
+        str(commits),
+        "--expected-count",
+        "1",
+        "--event",
+        str(event),
+    )
+    assert done.returncode == 2, (done.stdout, done.stderr)
+    assert "--expected-head" in done.stderr, done.stderr
+
+
+def test_main_mode_refuses_the_events_head(repo: Repo) -> None:
+    repo.commit("feat: fine\n\n" + _signoff(MAINTAINER))
+    done = repo.check_main("--expected-head", "a" * 40)
+    assert done.returncode == 2, (done.stdout, done.stderr)
 
 
 # ── Real commits on main ────────────────────────────────────────────────────────────────────

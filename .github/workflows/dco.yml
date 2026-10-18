@@ -87,6 +87,10 @@ jobs:
         id: verify
         env:
           COMMITS: ${{ github.event.pull_request.commits }}
+          # The head this event is about. The commits API answers for the pull request as it is
+          # when asked, so a push after the event would hand this run the next head's commits;
+          # the check refuses a list that does not end here.
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         # The runner image's own python3, isolated: the check is standard-library Python, and
         # nothing is installed. Exit 1 is a violation, exit 2 is a check that could not run;
         # both fail. The title is read from the event file, never pasted into this script.
@@ -96,6 +100,7 @@ jobs:
             --maintainers MAINTAINERS \
             --commits-json "$RUNNER_TEMP/commits.json" \
             --expected-count "$COMMITS" \
+            --expected-head "$HEAD_SHA" \
             --event "$GITHUB_EVENT_PATH" \
             --report "$RUNNER_TEMP/provenance.txt"
       # On a violation, post the exact fix as a PR comment (find-and-update a single
