@@ -536,3 +536,67 @@ Four gaps the run does not cover, stated because a measurement's blind spots are
 - **One machine, single runs.** These are one-shot numbers from one Apple-silicon dev box, not a
   distribution over hardware or over repeats. `--cpu-throttle` simulates a slow CPU only — not a
   slow GPU, a cold cache, a 60Hz panel, or a machine with something else running on it.
+
+---
+
+## 9. The desktop buddy's timings
+
+The desktop buddy ([`buddy/`](buddy/README.md)) waits and holds on named timings, never on
+literals. Its state machine names them and says what each one times
+([`buddy/state-machine.md`](buddy/state-machine.md#timing-names)); their values live here, beside
+the app's other motion tokens.
+
+None of them is a value the owner tunes. The buddy's settings list no timing, so none has a slider
+and none goes through §7's three places; a timing that becomes a setting later follows §7. The
+values are starting points: the buddy's playground tunes them ([#3892]), and a tuned value changes
+here first.
+
+Each timing has a reader: the state machine, which asks its host for a timer by name; the renderer,
+which times a pose or its words; or the desktop shell, which compares the system's idle time.
+Reduced motion changes how the buddy moves, never when it acts, so a wait keeps its length under
+reduced motion.
+
+| Token | Value | What it times | Read by | Under reduced motion |
+|---|---|---|---|---|
+| `beat` | 240 ms | the longest a reaction or an exit may take to yield to the truth, and the one-beat holds | the state machine and the renderer | the same bound; every exit is instant, so the truth shows at once |
+| `hoverExpand` | 650 ms | resting on the character this long expands it | the state machine | the same wait |
+| `peekLeave` | 400 ms | the peek folds this long after the pointer leaves the top-edge zone | the state machine | the same wait |
+| `collapse` | 60 s | the open card folds to compact after this long without interaction | the state machine | the same wait |
+| `collapseCountdown` | 10 s | the last part of `collapse`, while the countdown line shows | the state machine | the same wait |
+| `finishedHold` | 5 s | how long the done line and the return summary stay | the state machine | the same wait |
+| `absence` | 3 min | system idle time after which the owner counts as away | the shell | the same wait |
+| `sleep` | 10 min | floating with nothing live this long, it sleeps | the state machine | the same wait |
+| `offlineGrace` | 5 s | a lost connection shows as offline only after this long | the state machine | the same wait |
+| `alertGap` | 400 ms | the pause between one alert leaving and the next entering | the state machine | the same wait |
+| `showDelay` | 150 ms | a state shows only after this long, so fast work does not flash; the agent orb uses the same value | the state machine | the same wait |
+| `minHold` | 300 ms | a shown state stays at least this long; the agent orb uses the same value | the state machine | the same wait |
+| `badgeDwell` | 450 ms | the shortest time the badge's unfolded words stay | the renderer | the same wait; the words appear and fold without moving |
+
+### The play layer's timings
+
+Later work: play ([#3894]). These wait for the buddy's play layer, and none blocks its first
+release.
+
+| Token | Value | What it times | Read by | Under reduced motion |
+|---|---|---|---|---|
+| `gaze` | a spring: natural frequency about 6.7 rad/s, damping ratio 0.5 at bounciness 1 rising to 1.0 at 0 | the eyes, then the head, turning toward the pointer | the renderer | none: the gaze does not follow |
+| `followRange` | 30% of the face's width | how far the gaze turns before it stops | the renderer | none: the gaze does not follow |
+| `followIdle` | 4 s | with no pointer movement this long, the gaze returns to centre | the renderer | none: the gaze does not follow |
+| `pointerAway` | 400 ms | the gaze returns to centre over this long after the pointer leaves | the renderer | none: the gaze does not follow |
+| `gazeHandback` | 300 ms to 1 s | control fades back from a held pose to the gaze over this long | the renderer | none: the gaze does not follow |
+| `hitWindow` | 900 ms | how long a poke plays; the next hit must land inside it | the state machine | none: no reaction plays |
+| `dizzyHold` | 1.4 s | how long dizzy holds | the state machine | none: no reaction plays |
+| `playCooldown` | 5 s | after the chain's last reaction, hits only blink for this long | the state machine | none: no reaction plays |
+| `blinkRange` | 3 to 8 s | the random interval between blinks | the state machine | none: no fidget runs |
+
+**`gaze` is the one spring the buddy adds.** It is half way in about 0.2 s, overshoots once by
+about 16% and is settled by about 1.2 s; at bounciness 0 it does not overshoot. With mass 1, as
+`bouncy()` builds the presets, that is a stiffness of about 45 and a damping of about 6.7 at
+bounciness 1 and 13.4 at 0. When play lands it is minted inside `motion.ts` beside the four
+presets, so the spring rail (`reducedMotionAppWide.test.ts`) stays green and the bounciness dial
+and reduced motion reach it the way they reach the presets. [`web/DESIGN.md`](../../web/DESIGN.md) records the follow as a
+sanctioned personality moment. Settled for play's return: the hit chain ends at annoyed, so
+`dizzyHold` goes when play lands, and after annoyed further hits only blink for `playCooldown`.
+
+[#3892]: https://github.com/PersonalClaw/PersonalClaw/issues/3892
+[#3894]: https://github.com/PersonalClaw/PersonalClaw/issues/3894
