@@ -87,7 +87,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: >-
           python3 tools/ci/breadth_evidence.py previous --repo "$GITHUB_REPOSITORY"
-          --run-id "$GITHUB_RUN_ID" --ref "$GITHUB_REF_NAME"
+          --run-id "$GITHUB_RUN_ID" --ref "$GITHUB_REF"
           --out "$RUNNER_TEMP/previous/previous.json"
       - name: Upload the earlier results
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -98,6 +98,8 @@ jobs:
           retention-days: 1
 
   ubuntu:
+    # report holds each key to this job's latest attempt, by this name.
+    name: breadth-leg ubuntu-24.04-3.13/${{ matrix.shard }}
     needs: [freshness]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
@@ -128,7 +130,9 @@ jobs:
       # names, as `uv sync` would, and nothing else.
       - name: the uv-managed Python this shard runs on
         run: uv venv "$RUNNER_TEMP/shard-python"
+      # Read only on main: off main nothing is reused, and decide reads no map.
       - name: the earlier record's results
+        if: ${{ github.ref == 'refs/heads/main' }}
         continue-on-error: true
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -152,7 +156,8 @@ jobs:
         run: >-
           "$(uv python find "$PY")" tools/ci/breadth_evidence.py decide --key "ubuntu-24.04-3.13/${{ matrix.shard }}"
           --inputs "$RUNNER_TEMP/inputs.json"
-          --previous "$RUNNER_TEMP/previous/previous.json" --ref "$GITHUB_REF_NAME"
+          --previous "$RUNNER_TEMP/previous/previous.json" --ref "$GITHUB_REF"
+          --attempt "$GITHUB_RUN_ATTEMPT"
           --out "$RUNNER_TEMP/entry/ubuntu-24.04-3.13__${{ matrix.shard }}.json"
       - name: Install (locked)
         if: ${{ steps.decide.outputs.run != 'false' }}
@@ -186,7 +191,7 @@ jobs:
         env:
           OUTCOME: ${{ steps.pytest.outcome }}
         run: |
-          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --out "$RUNNER_TEMP/entry/ubuntu-24.04-3.13__${{ matrix.shard }}.json"
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/ubuntu-24.04-3.13__${{ matrix.shard }}.json"
       - name: Upload this shard's entry
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -202,6 +207,8 @@ jobs:
           "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/ubuntu-24.04-3.13__${{ matrix.shard }}.json"
 
   macos:
+    # report holds each key to this job's latest attempt, by this name.
+    name: breadth-leg macos-26-3.12/${{ matrix.shard }}
     needs: [freshness]
     if: ${{ !cancelled() }}
     runs-on: macos-26
@@ -233,7 +240,9 @@ jobs:
       # names, as `uv sync` would, and nothing else.
       - name: the uv-managed Python this shard runs on
         run: uv venv "$RUNNER_TEMP/shard-python"
+      # Read only on main: off main nothing is reused, and decide reads no map.
       - name: the earlier record's results
+        if: ${{ github.ref == 'refs/heads/main' }}
         continue-on-error: true
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -257,7 +266,8 @@ jobs:
         run: >-
           "$(uv python find "$PY")" tools/ci/breadth_evidence.py decide --key "macos-26-3.12/${{ matrix.shard }}"
           --inputs "$RUNNER_TEMP/inputs.json"
-          --previous "$RUNNER_TEMP/previous/previous.json" --ref "$GITHUB_REF_NAME"
+          --previous "$RUNNER_TEMP/previous/previous.json" --ref "$GITHUB_REF"
+          --attempt "$GITHUB_RUN_ATTEMPT"
           --out "$RUNNER_TEMP/entry/macos-26-3.12__${{ matrix.shard }}.json"
       - name: Install (locked)
         if: ${{ steps.decide.outputs.run != 'false' }}
@@ -291,7 +301,7 @@ jobs:
         env:
           OUTCOME: ${{ steps.pytest.outcome }}
         run: |
-          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --out "$RUNNER_TEMP/entry/macos-26-3.12__${{ matrix.shard }}.json"
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/macos-26-3.12__${{ matrix.shard }}.json"
       - name: Upload this shard's entry
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -307,6 +317,8 @@ jobs:
           "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/macos-26-3.12__${{ matrix.shard }}.json"
 
   arm:
+    # report holds each key to this job's latest attempt, by this name.
+    name: breadth-leg ubuntu-24.04-arm-3.13/${{ matrix.shard }}
     needs: [freshness]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04-arm
@@ -337,7 +349,9 @@ jobs:
       # names, as `uv sync` would, and nothing else.
       - name: the uv-managed Python this shard runs on
         run: uv venv "$RUNNER_TEMP/shard-python"
+      # Read only on main: off main nothing is reused, and decide reads no map.
       - name: the earlier record's results
+        if: ${{ github.ref == 'refs/heads/main' }}
         continue-on-error: true
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -361,7 +375,8 @@ jobs:
         run: >-
           "$(uv python find "$PY")" tools/ci/breadth_evidence.py decide --key "ubuntu-24.04-arm-3.13/${{ matrix.shard }}"
           --inputs "$RUNNER_TEMP/inputs.json"
-          --previous "$RUNNER_TEMP/previous/previous.json" --ref "$GITHUB_REF_NAME"
+          --previous "$RUNNER_TEMP/previous/previous.json" --ref "$GITHUB_REF"
+          --attempt "$GITHUB_RUN_ATTEMPT"
           --out "$RUNNER_TEMP/entry/ubuntu-24.04-arm-3.13__${{ matrix.shard }}.json"
       - name: Install (locked)
         if: ${{ steps.decide.outputs.run != 'false' }}
@@ -395,7 +410,7 @@ jobs:
         env:
           OUTCOME: ${{ steps.pytest.outcome }}
         run: |
-          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --out "$RUNNER_TEMP/entry/ubuntu-24.04-arm-3.13__${{ matrix.shard }}.json"
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/ubuntu-24.04-arm-3.13__${{ matrix.shard }}.json"
       - name: Upload this shard's entry
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -411,6 +426,8 @@ jobs:
           "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/ubuntu-24.04-arm-3.13__${{ matrix.shard }}.json"
 
   coverage-shard:
+    # report holds each key to this job's latest attempt, by this name.
+    name: breadth-leg coverage/${{ matrix.shard }}
     needs: [freshness]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
@@ -442,7 +459,9 @@ jobs:
       # names, as `uv sync` would, and nothing else.
       - name: the uv-managed Python this shard runs on
         run: uv venv "$RUNNER_TEMP/shard-python"
+      # Read only on main: off main nothing is reused, and decide reads no map.
       - name: the earlier record's results
+        if: ${{ github.ref == 'refs/heads/main' }}
         continue-on-error: true
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -466,7 +485,8 @@ jobs:
         run: >-
           "$(uv python find "$PY")" tools/ci/breadth_evidence.py decide --key "coverage/${{ matrix.shard }}"
           --inputs "$RUNNER_TEMP/inputs.json"
-          --previous "$RUNNER_TEMP/previous/previous.json" --ref "$GITHUB_REF_NAME"
+          --previous "$RUNNER_TEMP/previous/previous.json" --ref "$GITHUB_REF"
+          --attempt "$GITHUB_RUN_ATTEMPT"
           --out "$RUNNER_TEMP/entry/coverage__${{ matrix.shard }}.json"
       - name: Install (locked)
         if: ${{ steps.decide.outputs.run != 'false' }}
@@ -499,7 +519,7 @@ jobs:
         env:
           OUTCOME: ${{ steps.pytest.outcome }}
         run: |
-          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --out "$RUNNER_TEMP/entry/coverage__${{ matrix.shard }}.json"
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/coverage__${{ matrix.shard }}.json"
       - name: Upload this shard's entry
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -598,6 +618,8 @@ jobs:
           if-no-files-found: warn
 
   security-corpus:
+    # report holds each key to this job's latest attempt, by this name.
+    name: breadth-leg security-corpus/1
     # The adversarial scanner corpus (five attack classes + the
     # scanned-bytes==installed-bytes race invariant + the red-on-weakness meta-test).
     # Its own job, not a line in the matrix, so a corpus regression is legible on its
@@ -655,7 +677,7 @@ jobs:
         env:
           OUTCOME: ${{ steps.pytest.outcome }}
         run: |
-          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --out "$RUNNER_TEMP/entry/security-corpus__1.json"
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/security-corpus__1.json"
       - name: Upload this shard's entry
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -671,6 +693,8 @@ jobs:
           "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/security-corpus__1.json"
 
   canary:
+    # report holds each key to this job's latest attempt, by this name.
+    name: breadth-leg canary/${{ matrix.shard }}
     # The next hosted Ubuntu image, ahead of the move to it: the suite on ubuntu-26.04 and
     # 3.12, run every night. A red is the image's news, not a gate: `continue-on-error`.
     # `--basetemp` under RUNNER_TEMP keeps pytest's folders off the image's /tmp policy.
@@ -744,7 +768,7 @@ jobs:
         env:
           OUTCOME: ${{ steps.pytest.outcome }}
         run: |
-          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --out "$RUNNER_TEMP/entry/canary__${{ matrix.shard }}.json"
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/canary__${{ matrix.shard }}.json"
       - name: Upload this shard's entry
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -760,6 +784,8 @@ jobs:
           "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/canary__${{ matrix.shard }}.json"
 
   install-smoke:
+    # report holds each key to this job's latest attempt, by this name.
+    name: breadth-leg install-smoke/1
     # ── The front door, finally EXECUTED ────────────────────────────────────────────────────
     # `curl -fsSL https://personalclaw.dev/install | sh` is the first thing a new user runs, and
     # until now NOTHING in CI ran it. `deploy/website/install.sh`'s own header claimed this job
@@ -942,7 +968,7 @@ jobs:
         env:
           OUTCOME: ${{ job.status }}
         run: |
-          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --out "$RUNNER_TEMP/entry/install-smoke__1.json"
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/install-smoke__1.json"
       - name: Upload this shard's entry
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -958,6 +984,8 @@ jobs:
           "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/install-smoke__1.json"
 
   audit:
+    # report holds each key to this job's latest attempt, by this name.
+    name: breadth-leg audit/1
     # Report-only supply-chain scan — visibility, not a merge gate (substrate, not
     # bureaucracy). Dependabot drives the actual update PRs.
     needs: [freshness]
@@ -1012,7 +1040,7 @@ jobs:
         env:
           OUTCOME: ${{ job.status }}
         run: |
-          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --out "$RUNNER_TEMP/entry/audit__1.json"
+          "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/audit__1.json"
       - name: Upload this shard's entry
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -1059,7 +1087,7 @@ jobs:
           --tree "$(git rev-parse 'HEAD^{tree}')"
           --record "$RUNNER_TEMP/evidence/record.json"
           --actions "$RUNNER_TEMP/actions.json"
-          --ref "$GITHUB_REF_NAME" --attempt "$GITHUB_RUN_ATTEMPT"
+          --ref "$GITHUB_REF" --attempt "$GITHUB_RUN_ATTEMPT"
       # Whatever failed after the record was written, the record is kept: a night's red must
       # reach the chain the next night reads.
       - name: Upload the evidence record, named by its digest

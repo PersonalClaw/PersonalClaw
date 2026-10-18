@@ -18,12 +18,16 @@ legs were reused does not satisfy a release on its own (:func:`satisfies_release
 green on changed inputs closes it; a green on the inputs the red ran on is a flake, which keeps
 the issue open and the leg red in the record.
 
-All of that is on ``main``. Off main (a tag, a release branch) nothing is reused: no earlier
-result is read or carried, and every leg executes on every dispatch, so a release's record is
-what that dispatch measured. Within one run a key red on any attempt stays red, whatever its
-inputs (:func:`within_run`), and a release accepts a run only when no attempt of it recorded a
-red (:func:`satisfies_release`). A re-dispatch is a new run and a new measurement; whether an
-earlier dispatch of the same commit was red is the release gate's question (#3911).
+All of that is on ``main`` (the full ref, :data:`MAIN`: a tag named ``main`` is not main).
+Off main (a tag, a release branch) nothing is reused and no issue is read: no earlier result is
+read or carried, and every leg executes on every dispatch, so a release's record is what that
+dispatch measured. Every entry and record names the run attempt that wrote it. Within one run a
+key red on any attempt stays red, whatever its inputs (:func:`within_run`); on a rerun, a key
+whose shard job did not succeed in its latest attempt, or whose entry is older than that
+attempt, is red (:func:`against_jobs`). A release accepts a run only when it holds a record of
+every attempt up to the newest and no attempt recorded a red (:func:`satisfies_release`). A
+re-dispatch is a new run and a new measurement; whether an earlier dispatch of the same commit
+was red is the release gate's question (#3911).
 
 Standard library only, like every file in ``tools/ci``.
 """
@@ -46,6 +50,11 @@ from typing import Any, Protocol
 
 VERSION = 1
 PREFIX = "breadth-evidence-"
+#: The one ref whose results are reused and whose leg issues are kept: the full ref, so a tag
+#: named ``main`` (``refs/tags/main``) is off main.
+MAIN = "refs/heads/main"
+#: The job name each leg's shard runs under, which ``report`` reads back from the run's jobs.
+JOB_PREFIX = "breadth-leg "
 GREEN = "success"
 RED = "failure"
 
@@ -369,6 +378,17 @@ def previous(source: Source, *, limit: int = 30) -> tuple[dict[str, Any], str]:
     return found, said
 
 
+def _attempt(stamped: Mapping[str, Any]) -> int:
+    """The run attempt an entry or a record names; 0 when it names none (it predates the stamp)."""
+    value = stamped.get("attempt")
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _covers(records: Sequence[Mapping[str, Any]], attempts: range) -> bool:
+    """Whether ``records`` hold a record of every attempt in ``attempts``, by their stamps."""
+    return set(attempts) <= {_attempt(record) for record in records}
+
+
 def within_run(
     entries: Mapping[str, dict[str, Any]],
     earlier: list[tuple[str, dict[str, Any]]] | None,
@@ -379,17 +399,16 @@ def within_run(
 
     "Re-run failed jobs" runs a red shard again, and nothing off main may turn that red green:
     a key red on any earlier attempt is red on this one, whatever its inputs, marked
-    ``red_on_an_earlier_attempt``. Attempt N must find the N-1 earlier attempts' records; with
-    fewer, what a missing attempt measured is not known, so every key is red, marked
-    ``earlier_attempt_unread``.
+    ``red_on_an_earlier_attempt``. Attempt N must find a record of each of attempts 1 to N-1,
+    by the attempt each record names; without one, what that attempt measured is not known, so
+    every key is red, marked ``earlier_attempt_unread``.
     """
     checked = {key: dict(entry) for key, entry in entries.items()}
     if attempt <= 1:
         return checked
-    if earlier is None or len(earlier) < attempt - 1:
+    if earlier is None or not _covers([r for _, r in earlier], range(1, attempt)):
         for entry in checked.values():
-            if entry.get("result") == GREEN:
-                entry["result"], entry["earlier_attempt_unread"] = RED, True
+            entry["result"], entry["earlier_attempt_unread"] = RED, True
         return checked
     reds = {
         key
@@ -403,11 +422,45 @@ def within_run(
     return checked
 
 
-def satisfies_release(records: Sequence[Mapping[str, Any]]) -> bool:
-    """Every record of one run, oldest attempt first: a release accepts the run only when its
-    newest record satisfies a release alone (:func:`satisfies_release_alone`) and no attempt of
-    it recorded a red."""
-    if not records or not satisfies_release_alone(records[-1]):
+def job_name(key: str) -> str:
+    """The job name the shard of ``key`` runs under in ``breadth.yml``."""
+    return JOB_PREFIX + key
+
+
+def against_jobs(
+    entries: Mapping[str, dict[str, Any]],
+    jobs: Mapping[str, tuple[int, str]] | None,
+) -> dict[str, dict[str, Any]]:
+    """On a rerun: each entry checked against its shard job's latest attempt.
+
+    A rerun's entries are the newest artifact of each name, across attempts, so a shard that
+    wrote no entry on its latest attempt is stood in for by an older one, and a red it measured
+    is lost. ``jobs`` maps a job name to the attempt it last ran in and its conclusion there. A
+    key is red, marked ``shard_job``, when its job is absent, did not succeed in its latest
+    attempt, or ran in a later attempt than its entry names. With ``jobs`` unreadable (None),
+    which entry stands for which attempt is not known, so every key is red.
+    """
+    checked = {key: dict(entry) for key, entry in entries.items()}
+    for key, entry in checked.items():
+        job = None if jobs is None else jobs.get(job_name(key))
+        if job is None or job[1] != GREEN or _attempt(entry) < job[0]:
+            entry["result"], entry["shard_job"] = RED, True
+    return checked
+
+
+def satisfies_release(records: Sequence[Mapping[str, Any]], *, run_attempt: int) -> bool:
+    """Every record of one run, and the run's newest attempt (``run_attempt``, from the run
+    itself, never from a record): a release accepts the run only when it holds a record of every
+    attempt from 1 to ``run_attempt``, the record of ``run_attempt`` satisfies a release alone
+    (:func:`satisfies_release_alone`), and no attempt recorded a red.
+
+    An attempt that measured a red and then wrote no record (cancelled, a failed upload, still
+    running) leaves a gap, so the run is refused rather than accepted on an older green.
+    """
+    if run_attempt < 1 or not _covers(records, range(1, run_attempt + 1)):
+        return False
+    newest = [record for record in records if _attempt(record) == run_attempt]
+    if not all(satisfies_release_alone(record) for record in newest):
         return False
     return not any(
         isinstance(entry, Mapping) and entry.get("result") == RED
@@ -426,10 +479,12 @@ def decide(
     return carried(found["entry"], int(found["run_id"]), str(found["digest"]))
 
 
-def executed(inputs: Mapping[str, Any], result: str, ran_at: str) -> dict[str, Any]:
+def executed(
+    inputs: Mapping[str, Any], result: str, ran_at: str, attempt: int = 1
+) -> dict[str, Any]:
     if result not in (GREEN, RED):
         raise ValueError(f"not a result: {result!r}")
-    return {"inputs": dict(inputs), "result": result, "ran_at": ran_at}
+    return {"inputs": dict(inputs), "result": result, "ran_at": ran_at, "attempt": attempt}
 
 
 @dataclass(frozen=True)
@@ -448,6 +503,7 @@ def settle_record(
     run_id: int,
     tree: str,
     unsettled: frozenset[str] = frozenset(),
+    attempt: int = 1,
 ) -> tuple[dict[str, Any], list[Action]]:
     """The run's record and what each leg does to its issue.
 
@@ -490,7 +546,14 @@ def settle_record(
                         entry["result"], entry["flake"] = RED, True
         actions.append(Action(leg, action, key, red, everything_carried))
         record_legs.update(shards)
-    return {"version": VERSION, "run_id": run_id, "tree": tree, "legs": record_legs}, actions
+    record = {
+        "version": VERSION,
+        "run_id": run_id,
+        "attempt": attempt,
+        "tree": tree,
+        "legs": record_legs,
+    }
+    return record, actions
 
 
 class Issues(Protocol):
@@ -708,6 +771,27 @@ def _own_records(repo: str, run_id: int) -> list[tuple[str, dict[str, Any]]] | N
         return None
 
 
+def _latest_jobs(repo: str, run_id: int) -> dict[str, tuple[int, str]] | None:
+    """Each of the run's jobs, as its latest attempt left it: name to (attempt, conclusion).
+    None when the jobs cannot be read."""
+    try:
+        out = _gh(
+            "api",
+            "--paginate",
+            f"repos/{repo}/actions/runs/{run_id}/jobs?filter=latest&per_page=100",
+            "--jq",
+            '.jobs[] | "\\(.run_attempt)\\t\\(.conclusion)\\t\\(.name)"',
+        )
+    except (subprocess.CalledProcessError, OSError):
+        return None
+    jobs: dict[str, tuple[int, str]] = {}
+    for line in out.splitlines():
+        parts = line.split("\t", 2)
+        if len(parts) == 3 and parts[0].isdigit():
+            jobs[parts[2]] = (int(parts[0]), parts[1])
+    return jobs
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else "")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -719,17 +803,19 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("previous", help="the newest record on main, verified (freshness)")
     p.add_argument("--repo", required=True)
     p.add_argument("--run-id", type=int, required=True)
-    p.add_argument("--ref", default="main", help="the ref this run is on; off main, none is read")
+    p.add_argument("--ref", default=MAIN, help="GITHUB_REF, in full; off main, none is read")
     p.add_argument("--out", required=True)
     p = sub.add_parser("decide", help="whether a shard runs, or carries its earlier result")
     p.add_argument("--key", required=True)
     p.add_argument("--inputs", required=True)
     p.add_argument("--previous", required=True)
-    p.add_argument("--ref", default="main", help="the ref this run is on; off main, it runs")
+    p.add_argument("--ref", default=MAIN, help="GITHUB_REF, in full; off main, it runs")
+    p.add_argument("--attempt", type=int, default=1, help="GITHUB_RUN_ATTEMPT")
     p.add_argument("--out", required=True)
     p = sub.add_parser("ran", help="the entry of a shard that ran")
     p.add_argument("--inputs", required=True)
     p.add_argument("--outcome", required=True, help="the test step's outcome")
+    p.add_argument("--attempt", type=int, default=1, help="GITHUB_RUN_ATTEMPT")
     p.add_argument("--out", required=True)
     p = sub.add_parser("night", help="the night a run belongs to, from its creation time")
     p.add_argument("--created-at", required=True, help="the run's created_at, fixed on reruns")
@@ -740,7 +826,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--tree", required=True)
     p.add_argument("--record", required=True)
     p.add_argument("--actions", required=True)
-    p.add_argument("--ref", default="main", help="the ref this run is on")
+    p.add_argument("--ref", default=MAIN, help="GITHUB_REF, in full")
     p.add_argument("--attempt", type=int, default=1, help="GITHUB_RUN_ATTEMPT")
     p = sub.add_parser("issues", help="open, update or close the leg issues")
     p.add_argument("--repo", required=True)
@@ -766,7 +852,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     elif args.command == "previous":
         found: dict[str, Any] = {}
-        if args.ref != "main":
+        if args.ref != MAIN:
             # Off main nothing is reused: no earlier run is read, and every leg executes.
             said = f"none read: on {args.ref} nothing is reused, so every leg runs"
         else:
@@ -778,7 +864,7 @@ def main(argv: list[str] | None = None) -> int:
         _summary(f"### breadth freshness\n\nEarlier record: {said}. {len(found)} shard(s) known.")
     elif args.command == "decide":
         earlier: Any = {}
-        if args.ref != "main":
+        if args.ref != MAIN:
             _summary(f"`{args.key}`: on {args.ref} nothing is reused, so it runs.")
         else:
             try:
@@ -789,6 +875,9 @@ def main(argv: list[str] | None = None) -> int:
         if entry is None:
             _output("run=true")
         else:
+            # Carried in this attempt: the stamp is the attempt that carried it, not the
+            # attempt of the run it came from, which `reused_from` names.
+            entry["attempt"] = args.attempt
             _write(args.out, entry)
             origin = entry["reused_from"]
             _summary(
@@ -799,7 +888,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "ran":
         result = GREEN if args.outcome == GREEN else RED
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        _write(args.out, executed(_load(args.inputs), result, now))
+        _write(args.out, executed(_load(args.inputs), result, now, args.attempt))
     elif args.command == "night":
         _output(f"night={night_of(args.created_at)}")
     elif args.command == "report":
@@ -808,18 +897,31 @@ def main(argv: list[str] | None = None) -> int:
             for path in sorted(Path(args.legs).rglob("*.json"))
         }
         entries = fill_missing(entries)
+        on_main = args.ref == MAIN
         earlier_records: list[tuple[str, dict[str, Any]]] | None = []
-        if args.ref != "main" and args.attempt > 1:
+        if args.attempt > 1:
+            # A rerun's entries are the newest of each name, across attempts: a shard that
+            # wrote none on its latest attempt is stood in for by an older one. Each key is held
+            # to its shard job's latest attempt.
+            jobs = _latest_jobs(args.repo, args.run_id)
+            entries = against_jobs(entries, jobs)
+            _summary(
+                f"Attempt {args.attempt}: "
+                + ("the run's jobs could not be read." if jobs is None else f"{len(jobs)} jobs.")
+            )
+        if not on_main and args.attempt > 1:
             # Off main no issue holds a red: a key red on any earlier attempt of this run stays
             # red, whatever its inputs, and a missing earlier record makes every key red.
             earlier_records = _own_records(args.repo, args.run_id)
             entries = within_run(entries, earlier_records, args.attempt)
-            read = len(earlier_records) if earlier_records else 0
-            _summary(f"Attempt {args.attempt}: {read} of {args.attempt - 1} earlier record(s).")
+            named = sorted({_attempt(r) for _, r in earlier_records or []})
+            _summary(f"Attempt {args.attempt}: earlier records of attempts {named or 'none'}.")
         issues = GhIssues(args.repo)
         open_red: dict[str, frozenset[str] | None] = {}
         unread: set[str] = set()
-        for leg in sorted({leg_of(k) for k in entries}):
+        # Off main no issue is written, and main's issues say nothing of what this dispatch
+        # measured: none is read, so the record is what the dispatch measured.
+        for leg in sorted({leg_of(k) for k in entries}) if on_main else ():
             try:
                 found_issue = issues.find(issue_title(leg))
             except (subprocess.CalledProcessError, OSError, ValueError, KeyError) as exc:
@@ -830,7 +932,12 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             open_red[leg] = open_red_inputs(found_issue[1]) if found_issue else None
         record, actions = settle_record(
-            entries, open_red, run_id=args.run_id, tree=args.tree, unsettled=frozenset(unread)
+            entries,
+            open_red,
+            run_id=args.run_id,
+            tree=args.tree,
+            unsettled=frozenset(unread),
+            attempt=args.attempt,
         )
         data = canonical(record)
         Path(args.record).parent.mkdir(parents=True, exist_ok=True)
@@ -843,7 +950,8 @@ def main(argv: list[str] | None = None) -> int:
         _summary(
             f"### breadth evidence\n\nRecord `{artifact_name(record_digest)}`, sha256 "
             f"`{record_digest}`. Satisfies a release on its own: "
-            f"{'yes' if satisfies_release(attempts) else 'no'}.\n\n" + "\n".join(lines)
+            f"{'yes' if satisfies_release(attempts, run_attempt=args.attempt) else 'no'}.\n\n"
+            + "\n".join(lines)
         )
         _output(f"digest={record_digest}")
     elif args.command == "issues":

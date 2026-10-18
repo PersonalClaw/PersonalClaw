@@ -188,9 +188,16 @@ all of them green.
 
 ### Off `main`, nothing is reused
 
-On a tag or a release branch, no earlier result is read or carried. `freshness` writes an
-empty map and makes no API call, every `decide` says run whatever map it is handed, and every
-leg executes on every dispatch. The record a release reads is what that dispatch measured.
+On a tag or a release branch, no earlier result is read or carried, and no leg issue is read.
+`previous` writes an empty map and reads no earlier run (the `freshness` job still asks the API
+for its own run's `created_at`, for the night), every `decide` says run whatever map it is
+handed, the tree-keyed shards download the map only on `main`, and every leg executes on every
+dispatch. `report` reads none of `main`'s leg issues off `main`, so an open issue there can
+neither turn a tag's green into a flake nor, by failing to load, pin it red. The record a
+release reads is what that dispatch measured.
+
+"Main" is the full ref, `refs/heads/main`: every command is handed `$GITHUB_REF`, never the
+short `$GITHUB_REF_NAME`, which is `main` for a tag called `main` too.
 
 Why: the reuse on `main` rests on the leg issues, which hold every red's inputs and turn a
 green on them into a flake. Off `main` no issue is written, so reuse there had to rebuild that
@@ -199,14 +206,26 @@ and `main`'s, a check of the never-reused legs against every red in it) opened a
 red to come back green, or for a key to stay blind across dispatches. A release is rare and
 the full breadth is affordable for it, so off `main` it is measured, not reconstructed.
 
-Two rules hold within one run:
+Every entry and every record names the run attempt that wrote it (`attempt`, from
+`GITHUB_RUN_ATTEMPT`). Three rules hold within one run:
 
-- **A red stays red on a rerun.** On attempt N > 1, `report` reads the run's earlier attempts'
-  records. A key red on any of them is red on this one, whatever its inputs, marked
-  `red_on_an_earlier_attempt`. With fewer than N-1 readable earlier records, what a missing
-  attempt measured is not known, so every key is red, marked `earlier_attempt_unread`.
-- **A release refuses any red attempt.** A release accepts a run only when its newest record
-  satisfies a release alone and no attempt of it recorded a red (`satisfies_release`).
+- **A key is held to its job's latest attempt.** On any rerun, on `main` too, `report` reads the
+  run's jobs as their latest attempts left them (`jobs?filter=latest`; each leg's job is named
+  `breadth-leg <key>`). A rerun's entries are the newest of each name across attempts, so a
+  shard that wrote none on its latest attempt would be stood in for by an older one. A key is
+  red, marked `shard_job`, when its job did not succeed in its latest attempt, or ran in a later
+  attempt than its entry names. When the jobs cannot be read, every key is red.
+- **A red stays red on a rerun.** Off `main`, on attempt N > 1, `report` reads the run's earlier
+  attempts' records. A key red on any of them is red on this one, whatever its inputs, marked
+  `red_on_an_earlier_attempt`. Without a record of each of attempts 1 to N-1, by the attempt
+  each names, what a missing attempt measured is not known, so every key is red, marked
+  `earlier_attempt_unread`.
+- **A release refuses a gap or any red.** `satisfies_release` takes every record of the run and
+  the run's newest attempt, read from the run itself. It accepts the run only when there is a
+  record of every attempt from 1 to the newest, the newest attempt's record satisfies a release
+  alone, and no attempt recorded a red. An attempt that measured a red and wrote no record
+  (cancelled, a failed upload, still running) is a gap, so the run is refused rather than
+  accepted on an older attempt's green.
 
 A re-dispatch is a new run, and so a new measurement: dispatch 1 red, then dispatch 2 green,
 gives dispatch 2 an all-green record. Whether a release may proceed while an earlier dispatch
@@ -243,8 +262,10 @@ of the same commit was red is the release gate's question (#3911), not this work
   exits red after its inputs are written; the installer smoke and the audit record freshness's
   night, read from the run's `created_at` and tied to the cron slot; and a failed coverage
   download is a failure;
-- off `main` nothing is reused: `freshness` and every `decide` pass the ref, `report` passes
-  the ref and the run attempt, and no never-reused leg downloads `freshness`'s map;
+- off `main` nothing is reused: `freshness`, every `decide` and `report` pass the full ref
+  (`$GITHUB_REF`); every `decide`, `ran` and `report` pass the run attempt; every leg's job is
+  named `breadth-leg <key>`; no never-reused leg downloads `freshness`'s map, and a tree-keyed
+  shard downloads it only on `refs/heads/main`;
 - `docker-single-container.yml` checks the tree before it builds on `main`.
 
 The rows check the edits a maintainer plausibly makes: a respelled flag, a new leg, a moved

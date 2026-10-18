@@ -358,6 +358,9 @@ class _Gh:
         #: The REST listing's order is not set: newest first is one it may use.
         self.newest_first = False
         self.listings: list[tuple[str, ...]] = []
+        #: Per run: each job as its latest attempt left it, (attempt, conclusion, name); None
+        #: makes the jobs read fail.
+        self.jobs: dict[int, list[tuple[int, str, str]] | None] = {}
 
     def open_issue(self, title: str, body: str, user: dict = _BOT) -> int:
         number = len(self.issues) + 1
@@ -399,6 +402,11 @@ class _Gh:
                 )
             ]
             return "\n".join(reversed(listed) if self.newest_first else listed)
+        if "/jobs?filter=latest" in path:
+            jobs = self.jobs.get(int(path.split("/runs/")[1].split("/")[0]))
+            if jobs is None:
+                raise subprocess.CalledProcessError(1, ["gh", *args])
+            return "\n".join(f"{a}\t{c}\t{n}" for a, c, n in jobs)
         if "/comments?" in path:
             number = int(path.split("/issues/")[1].split("/")[0])
             return be.json.dumps([self.comments.get(number, [])])
@@ -542,7 +550,7 @@ def test_find_asks_only_for_the_bots_issues_and_refuses_a_page_it_cannot_trust(
         be.GhIssues("o/r").find(title)
 
 
-# ── off main: history that cannot be read, the never-reused legs, and the issues step ─────────
+# ── the issues step, which runs on main ─────────────────────────────────────────────────────────
 
 
 _KEY = "ubuntu-24.04-3.13/2"
@@ -589,7 +597,7 @@ def test_apply_opens_the_issue_of_an_unsettled_legs_measured_red() -> None:
     )
 
 
-# ── a rerun's attempts, the listing, every red in the window, and what a lost read leaves ─────
+# ── on main: a run's every record, the listing, and a leg that cannot write its issue ─────────
 
 
 def test_a_runs_later_attempt_never_turns_its_earlier_attempts_red_green() -> None:
@@ -646,29 +654,46 @@ def test_apply_tries_every_leg_whatever_one_raises() -> None:
 # ── off main nothing is reused; within a run a red stays red; a release refuses any red ───────
 
 
-def _report_off_main(tmp_path, monkeypatch, gh: _Gh, entries: dict, *, attempt: int) -> dict:
+def _at(attempt: int, record: dict) -> dict:
+    """``record``, and each of its entries, stamped with the attempt that wrote it."""
+    legs = {k: {**e, "attempt": attempt} for k, e in record["legs"].items()}
+    return {**record, "attempt": attempt, "legs": legs}
+
+
+def _latest(attempt: int, conclusion: str = be.GREEN, **overrides: tuple[int, str]) -> list:
+    """Every shard job as its latest attempt left it: ``attempt`` and ``conclusion``, but for
+    ``overrides`` (key to (attempt, conclusion))."""
+    jobs = {key: (attempt, conclusion) for key in be.expected_keys()}
+    jobs.update({key.replace("__", "/"): v for key, v in overrides.items()})
+    return [(a, c, be.job_name(key)) for key, (a, c) in sorted(jobs.items())]
+
+
+def _report_off_main(
+    tmp_path, monkeypatch, gh: _Gh, entries: dict, *, attempt: int, ref: str = "refs/tags/v0.3.0"
+) -> dict:
     """``report`` on a tag, as breadth.yml runs it, for run 7's ``attempt``."""
     monkeypatch.setattr(be, "_gh", gh)
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
     monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
     legs = tmp_path / f"legs-{attempt}"
-    legs.mkdir()
+    legs.mkdir(parents=True)
     for key, entry in entries.items():
         (legs / f"{key.replace('/', '__')}.json").write_text(be.json.dumps(entry), "utf-8")
     record, actions = tmp_path / f"record-{attempt}.json", tmp_path / f"actions-{attempt}.json"
     argv = ["report", "--repo", "o/r", "--legs", str(legs), "--run-id", "7", "--tree", "d" * 40]
     argv += ["--record", str(record), "--actions", str(actions)]
-    assert be.main([*argv, "--ref", "v0.3.0", "--attempt", str(attempt)]) == 0
+    assert be.main([*argv, "--ref", ref, "--attempt", str(attempt)]) == 0
     return be.json.loads(record.read_bytes())
 
 
 def test_a_reruns_green_after_a_red_on_the_same_run_stays_red(tmp_path, monkeypatch) -> None:
     """Attempt 1 red; "Re-run failed jobs" green, on the same inputs or not: still red."""
     gh = _Gh()
-    first, first_data = _stored(_record(**{_KEY: _leg(be.RED), "canary/1": _leg(be.RED)}))
+    first, first_data = _stored(_at(1, _record(**{_KEY: _leg(be.RED), "canary/1": _leg(be.RED)})))
     gh.records = {7: {first: first_data}}
-    rerun = _all_green(**{"canary/1": _leg(image_version="20261019.1.0")})
-    legs = _report_off_main(tmp_path, monkeypatch, gh, rerun, attempt=2)["legs"]
+    gh.jobs = {7: _latest(2)}
+    rerun = _at(2, _record(**_all_green(**{"canary/1": _leg(image_version="20261019.1.0")})))
+    legs = _report_off_main(tmp_path, monkeypatch, gh, rerun["legs"], attempt=2)["legs"]
     for key in (_KEY, "canary/1"):
         assert legs[key]["result"] == be.RED and legs[key]["red_on_an_earlier_attempt"] is True
     assert legs["ubuntu-24.04-3.13/1"]["result"] == be.GREEN, "a key never red stays green"
@@ -677,9 +702,11 @@ def test_a_reruns_green_after_a_red_on_the_same_run_stays_red(tmp_path, monkeypa
 def test_an_attempt_missing_an_earlier_record_makes_every_key_red(tmp_path, monkeypatch) -> None:
     """Attempt 3 finds only attempt 2's record: what attempt 1 measured is not known."""
     gh = _Gh()
-    second, second_data = _stored(_record(**{_KEY: _leg()}))
+    second, second_data = _stored(_at(2, _record(**{_KEY: _leg()})))
     gh.records = {7: {second: second_data}}
-    legs = _report_off_main(tmp_path, monkeypatch, gh, _all_green(), attempt=3)["legs"]
+    gh.jobs = {7: _latest(3)}
+    tonight = _at(3, _record(**_all_green()))["legs"]
+    legs = _report_off_main(tmp_path, monkeypatch, gh, tonight, attempt=3)["legs"]
     assert {e["result"] for e in legs.values()} == {be.RED}
     assert all(e["earlier_attempt_unread"] for e in legs.values())
 
@@ -716,12 +743,12 @@ def test_a_tag_dispatch_executes_every_leg_whatever_earlier_dispatches_measured(
 
 
 def test_a_release_refuses_a_run_with_any_red_attempt() -> None:
-    red_then_green = [_every_shard(**{_KEY: _leg(be.RED)}), _every_shard()]
-    assert not be.satisfies_release(red_then_green)
-    assert be.satisfies_release([_every_shard()])
-    assert be.satisfies_release([_every_shard(), _every_shard()])
-    assert not be.satisfies_release([_every_shard(**{_KEY: _leg(be.RED)})])
-    assert not be.satisfies_release([])
+    red_then_green = [_at(1, _every_shard(**{_KEY: _leg(be.RED)})), _at(2, _every_shard())]
+    assert not be.satisfies_release(red_then_green, run_attempt=2)
+    assert be.satisfies_release([_at(1, _every_shard())], run_attempt=1)
+    assert be.satisfies_release([_at(1, _every_shard()), _at(2, _every_shard())], run_attempt=2)
+    assert not be.satisfies_release([_at(1, _every_shard(**{_KEY: _leg(be.RED)}))], run_attempt=1)
+    assert not be.satisfies_release([], run_attempt=1)
 
 
 def test_on_main_a_run_with_no_record_is_skipped() -> None:
@@ -729,3 +756,138 @@ def test_on_main_a_run_with_no_record_is_skipped() -> None:
     one, one_data = _stored(_record(**{_KEY: _leg(be.RED)}))
     found, said = be.previous(_Source({2: {}, 1: {one: one_data}}))
     assert found[_KEY]["entry"]["result"] == be.RED and "run 1" in said
+
+
+# ── every record names its attempt; a rerun holds each key to its job; the full ref ────────────
+
+
+def test_a_release_refuses_a_run_whose_newest_attempt_left_no_record() -> None:
+    """Attempt 1 green wrote a record; attempt 2 measured a red and wrote none (cancelled, a
+    failed upload, still running). The run is refused, not accepted on attempt 1's green."""
+    green_first = [_at(1, _every_shard())]
+    assert be.satisfies_release(green_first, run_attempt=1)
+    assert not be.satisfies_release(green_first, run_attempt=2)
+    unstamped = [_every_shard()]
+    assert not be.satisfies_release(unstamped, run_attempt=1), "a record names its attempt"
+
+
+def test_every_entry_and_record_names_the_attempt_that_wrote_it(tmp_path, monkeypatch) -> None:
+    inputs, out = tmp_path / "inputs.json", tmp_path / "entry.json"
+    inputs.write_text(be.json.dumps(INPUTS), encoding="utf-8")
+    argv = ["ran", "--inputs", str(inputs), "--outcome", "success", "--out", str(out)]
+    assert be.main([*argv, "--attempt", "3"]) == 0
+    assert be.json.loads(out.read_text(encoding="utf-8"))["attempt"] == 3
+    gh = _Gh()
+    gh.records = {7: {}}
+    gh.jobs = {7: _latest(2)}
+    record = _report_off_main(
+        tmp_path, monkeypatch, gh, _at(2, _record(**_all_green()))["legs"], attempt=2
+    )
+    assert record["attempt"] == 2
+
+
+def test_a_reruns_shard_that_wrote_no_entry_is_red_not_its_earlier_attempts_entry(
+    tmp_path, monkeypatch
+) -> None:
+    """On attempt 2 the newest entry of K is attempt 1's green, because K's rerun wrote none:
+    K's job failed in attempt 2, so K is red. A key whose job succeeded in attempt 2 but whose
+    entry is attempt 1's is red too; a key whose job last ran in attempt 1 keeps its entry."""
+    gh = _Gh()
+    gh.jobs = {
+        7: _latest(1, **{_KEY: (2, "failure"), "canary/1": (2, be.GREEN), "audit/1": (2, be.GREEN)})
+    }
+    entries = _at(1, _record(**_all_green()))["legs"]
+    entries["audit/1"] = {**_leg(), "attempt": 2}
+    legs = _report_off_main(tmp_path, monkeypatch, gh, entries, attempt=2, ref=be.MAIN)["legs"]
+    assert legs[_KEY]["result"] == be.RED and legs[_KEY]["shard_job"] is True
+    assert legs["canary/1"]["result"] == be.RED and legs["canary/1"]["shard_job"] is True
+    assert legs["audit/1"]["result"] == be.GREEN, "its job's latest attempt wrote this entry"
+    assert legs["ubuntu-24.04-3.13/1"]["result"] == be.GREEN, "not rerun: attempt 1 stands"
+    gh.jobs = {7: None}
+    tonight = _at(2, _record(**_all_green()))["legs"]
+    unread = _report_off_main(tmp_path / "x", monkeypatch, gh, tonight, attempt=2, ref=be.MAIN)
+    assert {e["result"] for e in unread["legs"].values()} == {be.RED}, "jobs unread: all red"
+
+
+def test_off_main_report_reads_no_issue(tmp_path, monkeypatch) -> None:
+    """Main's open issue holds install-smoke's very inputs: on a tag it is not read, so the
+    record is what the dispatch measured."""
+    gh = _Gh()
+    marker = be.inputs_key({"install-smoke/1": INPUTS})
+    gh.open_issue(be.issue_title("install-smoke"), f"{be.MARKER}{marker}\n")
+    legs = _report_off_main(tmp_path, monkeypatch, gh, _all_green(), attempt=1)["legs"]
+    assert gh.queries == [], "no issue search off main"
+    assert {e["result"] for e in legs.values()} == {be.GREEN}
+
+
+@pytest.mark.parametrize("ref", ["refs/tags/main", "main", "refs/tags/v0.3.0"])
+def test_only_the_full_main_ref_is_main(ref: str, tmp_path, monkeypatch) -> None:
+    """A tag named `main` is off main: nothing read, nothing carried."""
+
+    def no_api(*args: str) -> str:
+        raise AssertionError(f"off main nothing is read, yet gh was asked for {args}")
+
+    monkeypatch.setattr(be, "_gh", no_api)
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    out = tmp_path / "previous.json"
+    argv = ["previous", "--repo", "o/r", "--run-id", "3", "--out", str(out)]
+    assert be.main([*argv, "--ref", ref]) == 0
+    assert be.json.loads(out.read_text("utf-8")) == {}
+    held = {_KEY: {"entry": _leg(), "run_id": 1, "digest": "a" * 64}}
+    previous, inputs = tmp_path / "held.json", tmp_path / "inputs.json"
+    previous.write_text(be.json.dumps(held), encoding="utf-8")
+    inputs.write_text(be.json.dumps(INPUTS), encoding="utf-8")
+    said = tmp_path / "github_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(said))
+    argv = ["decide", "--key", _KEY, "--inputs", str(inputs), "--previous", str(previous)]
+    assert be.main([*argv, "--ref", ref, "--out", str(tmp_path / "e.json")]) == 0
+    assert said.read_text(encoding="utf-8").splitlines() == ["run=true"]
+    said.write_text("", encoding="utf-8")
+    assert be.main([*argv, "--ref", be.MAIN, "--out", str(tmp_path / "e.json")]) == 0
+    assert said.read_text(encoding="utf-8").splitlines() == ["run=false"], "main carries"
+
+
+# ── main's paths the off-main tests used to hold ────────────────────────────────────────────────
+
+
+def test_main_reads_only_mains_runs_and_drops_its_own(monkeypatch) -> None:
+    gh = _Gh()
+    gh.runs = {"main": [99, 66, 55]}
+    monkeypatch.setattr(be, "_gh", gh)
+    assert be.GhSource("o/r", 99).runs() == [66, 55]
+    assert gh.branches == ["main"]
+
+
+@pytest.mark.parametrize(
+    ("outcome", "result"),
+    [("success", be.GREEN), ("failure", be.RED), ("skipped", be.RED), ("", be.RED)],
+)
+def test_ran_records_success_green_and_anything_else_red(outcome, result, tmp_path) -> None:
+    inputs, out = tmp_path / "inputs.json", tmp_path / "entry.json"
+    inputs.write_text(be.json.dumps(INPUTS), encoding="utf-8")
+    argv = ["ran", "--inputs", str(inputs), "--outcome", outcome, "--out", str(out)]
+    assert be.main(argv) == 0
+    assert be.json.loads(out.read_text(encoding="utf-8"))["result"] == result
+
+
+def test_on_main_unreadable_earlier_results_write_an_empty_map(tmp_path, monkeypatch) -> None:
+    def broken(*args: str) -> str:
+        raise subprocess.CalledProcessError(1, ["gh", *args])
+
+    monkeypatch.setattr(be, "_gh", broken)
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    out = tmp_path / "previous.json"
+    argv = ["previous", "--repo", "o/r", "--run-id", "3", "--ref", be.MAIN, "--out", str(out)]
+    assert be.main(argv) == 0
+    assert be.json.loads(out.read_text("utf-8")) == {}, "every leg runs"
+
+
+def test_on_main_a_carried_key_whose_origin_run_is_gone_is_left_out() -> None:
+    """Run 202 ran macOS and carried ubuntu from run 201, which the API now answers with a 404:
+    ubuntu is left out, so its shard runs; macOS is still known."""
+    mac = "macos-26-3.12/1"
+    gone = be.carried(_leg(), run_id=201, record_digest="f" * 64)
+    name, data = _stored(_record(**{mac: _leg(), _KEY: gone}))
+    found, _ = be.previous(_Source({202: {name: data}}, deleted=(201,)))
+    assert found[mac]["run_id"] == 202
+    assert _KEY not in found

@@ -1737,15 +1737,23 @@ def breadth_shards_violations(tree: Tree) -> list[str]:
     return bad
 
 
-_REF = '--ref "$GITHUB_REF_NAME"'
+#: The full ref: `$GITHUB_REF_NAME` is `main` for a tag named `main`, which is off main.
+_REF = '--ref "$GITHUB_REF"'
+_ATTEMPT = '--attempt "$GITHUB_RUN_ATTEMPT"'
 
 
 def freshness_ref_violations(tree: Tree) -> list[str]:
-    """Off main nothing is reused, and that rests on the ref reaching each command:
-    ``freshness`` and every ``decide`` pass it, so off main neither reads nor carries an
-    earlier result; ``report`` passes it and the run attempt, so a rerun keeps an earlier
-    attempt's red; and no never-reused leg downloads ``freshness``'s map, which nothing of
-    theirs reads."""
+    """Off main nothing is reused, and a rerun keeps every red, which rests on the full ref
+    and the run attempt reaching each command:
+
+    - ``freshness`` and every ``decide`` pass the full ref (``$GITHUB_REF``, never the short
+      name a tag called ``main`` shares), so off main neither reads nor carries a result;
+    - ``report`` passes the ref and the run attempt, and every ``decide`` and ``ran`` the
+      attempt, so each entry and record names the attempt that wrote it;
+    - every leg's job is named ``breadth-leg <key>``, the name ``report`` holds each key to in
+      the run's latest jobs;
+    - the map is downloaded only on main: no never-reused leg downloads it, and a tree-keyed
+      shard's download is gated to ``refs/heads/main``."""
     jobs = _breadth_jobs(tree)
     bad: list[str] = []
     steps = (jobs.get("freshness") or {}).get("steps") or []
@@ -1756,23 +1764,30 @@ def freshness_ref_violations(tree: Tree) -> list[str]:
         bad.append("breadth.yml:freshness reads main's runs whatever ref it runs on")
     steps = (jobs.get("report") or {}).get("steps") or []
     reports = [str(s["run"]) for s in steps if "breadth_evidence.py report" in str(s.get("run"))]
-    if (
-        len(reports) != 1
-        or _REF not in reports[0]
-        or ('--attempt "$GITHUB_RUN_ATTEMPT"' not in reports[0])
-    ):
+    if len(reports) != 1 or _REF not in reports[0] or (_ATTEMPT not in reports[0]):
         bad.append("breadth.yml:report does not name the ref and the run attempt")
     for job_id, job in jobs.items():
-        for step in job.get("steps") or []:
+        steps = job.get("steps") or []
+        keys = {m for s in steps for m in _ENTRY.findall(str(s.get("run", "")))}
+        if keys:
+            shard = "${{ matrix.shard }}" if _matrix_values(job, "shard") else "1"
+            named = {breadth_evidence.job_name(f"{key}/{shard}") for key in keys}
+            if job.get("name") not in named:
+                bad.append(f"breadth.yml:{job_id} is named {job.get('name')!r}, not {named}")
+        for step in steps:
             run = str(step.get("run", ""))
-            if "breadth_evidence.py decide" in run and _REF not in run:
-                bad.append(f"breadth.yml:{job_id}'s decision names no ref, so it carries off main")
-            if (
-                job_id in breadth_evidence.NON_REUSABLE
-                and _action(step) == "actions/download-artifact"
+            if "breadth_evidence.py decide" in run and (_REF not in run or _ATTEMPT not in run):
+                bad.append(f"breadth.yml:{job_id}'s decision names no full ref or no attempt")
+            if "breadth_evidence.py ran" in run and _ATTEMPT not in run:
+                bad.append(f"breadth.yml:{job_id}'s entry names no attempt")
+            downloads_map = (
+                _action(step) == "actions/download-artifact"
                 and (step.get("with") or {}).get("name") == "breadth-previous"
-            ):
+            )
+            if downloads_map and job_id in breadth_evidence.NON_REUSABLE:
                 bad.append(f"breadth.yml:{job_id} downloads freshness's map, which it never reads")
+            elif downloads_map and step.get("if") != "${{ github.ref == 'refs/heads/main' }}":
+                bad.append(f"breadth.yml:{job_id} downloads the map off main, where none is read")
     return bad
 
 
@@ -2451,8 +2466,9 @@ ROWS: tuple[Row, ...] = (
             _plant(
                 "a leg without needs: freshness",
                 _BREADTH,
-                "  ubuntu:\n    needs: [freshness]\n",
-                "  ubuntu:\n",
+                "    name: breadth-leg ubuntu-24.04-3.13/${{ matrix.shard }}\n"
+                "    needs: [freshness]\n",
+                "    name: breadth-leg ubuntu-24.04-3.13/${{ matrix.shard }}\n",
             ),
             _plant(
                 "report missing a leg",
@@ -2703,12 +2719,37 @@ ROWS: tuple[Row, ...] = (
         "breadth-freshness-reads-its-own-ref",
         freshness_ref_violations,
         (
-            _plant("freshness without --ref", _BREADTH, ' --ref "$GITHUB_REF_NAME"', ""),
+            _plant("freshness without --ref", _BREADTH, ' --ref "$GITHUB_REF"', ""),
+            _plant(
+                "freshness on the short ref name, which a tag called main shares",
+                _BREADTH,
+                ' --ref "$GITHUB_REF"',
+                ' --ref "$GITHUB_REF_NAME"',
+            ),
             _plant(
                 "a decision without the ref",
                 _BREADTH,
-                '--previous "$RUNNER_TEMP/previous/previous.json" --ref "$GITHUB_REF_NAME"',
+                '--previous "$RUNNER_TEMP/previous/previous.json" --ref "$GITHUB_REF"',
                 '--previous "$RUNNER_TEMP/previous/previous.json"',
+            ),
+            _plant(
+                "an entry without its attempt",
+                _BREADTH,
+                ' --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT"',
+                ' --outcome "$OUTCOME"',
+            ),
+            _plant(
+                "a leg's job renamed away from its key",
+                _BREADTH,
+                "    name: breadth-leg audit/1\n",
+                "    name: audit\n",
+            ),
+            _plant(
+                "a tree-keyed shard downloading the map off main",
+                _BREADTH,
+                "        if: ${{ github.ref == 'refs/heads/main' }}\n"
+                "        continue-on-error: true\n",
+                "        continue-on-error: true\n",
             ),
             _plant(
                 "report without the run attempt",
