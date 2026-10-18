@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { runState } from '../../test/runState'
 
 // ── The chat header names the app that started the chat, where you look ──────────────────────────
 //
@@ -17,7 +18,7 @@ const PARENT = 'The original launch plan, before anyone asked what a two-person 
 
 const h = vi.hoisted(() => ({
   detail: {
-    key: 'chat-7-x', title: 'Launch plan', running: false, queue: [] as unknown[],
+    key: 'chat-7-x', title: 'Launch plan', get run_state() { return runState({ session: 'chat-7-x' }) }, queue: [] as unknown[],
     task_mode: 'agent', approval: 'normal', memory_mode: 'persistent',
     messages: [
       { role: 'user', content: 'Plan the launch week.', ts: '2026-09-26T09:00:00+00:00' },

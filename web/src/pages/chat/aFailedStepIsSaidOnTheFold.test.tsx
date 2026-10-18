@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
+import { runState } from '../../test/runState'
 
 // ── A failed step says so on the folded work, before anyone opens it ────────────────────────
 //
@@ -83,7 +84,7 @@ afterEach(() => { vi.unstubAllGlobals() })
 
 async function openTurn(messages: unknown[]) {
   h.chatSessionDetail.mockReset().mockResolvedValue({
-    key: SESSION, title: SESSION, messages, running: false, queue: [], task_mode: 'agent',
+    key: SESSION, title: SESSION, messages, run_state: runState(), queue: [], task_mode: 'agent',
     approval: 'normal', memory_mode: 'persistent',
   })
   render(

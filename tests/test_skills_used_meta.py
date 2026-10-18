@@ -466,13 +466,14 @@ def test_the_three_origins_are_distinct_and_closed():
 #: card and its ``question_resolved``, so the chat runner sends neither. ``heartbeat`` left
 #: because nothing read it: no client dispatches on it, and the socket's keep-alive is
 #: aiohttp's own ping (``tests/test_no_frame_or_flag_is_left_without_a_reader.py``).
+#: ``chat_status`` left with it: what the turn is doing is its phase, which ``chat_phase`` says
+#: for the runner in the one ``work_phase`` frame (a removal, not a new channel).
 _BASELINE_WS_EVENTS = {
     "activity_event",
     "chat_chunk",
     "chat_done",
     "chat_message",
     "chat_segment",
-    "chat_status",
     "chat_thinking",
     "chat_user_message",
     "chat_variant_switch",
@@ -484,10 +485,11 @@ _BASELINE_WS_EVENTS = {
     "tool_result",
 }
 
-#: What a turn sends: the runner's own frames, the ring's reading said through the state, and
-#: what ``running_turn`` says for it: whether the turn takes a steer (``turn_steerable``) and a
-#: steer it did not take, requeued (``queue_push``). Neither is a skills channel.
-_TURN_WS_EVENTS = _BASELINE_WS_EVENTS | {"context_usage", "queue_push", "turn_steerable"}
+#: What a turn sends: the runner's own frames, the ring's reading said through the state, a
+#: steer it did not take, requeued (``queue_push``, from ``running_turn``), and its phase
+#: (``work_phase``, from ``chat_phase``), which also says whether the turn takes a steer: the
+#: ``turn_steerable`` frame that said so on its own is gone. None is a skills channel.
+_TURN_WS_EVENTS = _BASELINE_WS_EVENTS | {"context_usage", "queue_push", "work_phase"}
 
 _WS_NAME_RE = re.compile(r'broadcast_ws\(\s*"([a-z_]+)"')
 

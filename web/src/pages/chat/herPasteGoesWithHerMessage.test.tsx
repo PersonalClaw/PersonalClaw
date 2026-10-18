@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { hydrateTurns, turnText, type HistMsg } from './chatTypes'
+import { runState, runningState } from '../../test/runState'
 
 // ── What she pasted goes with her message, whichever way it leaves the page ───────────────────
 //
@@ -155,7 +156,7 @@ describe('a message she sends into a running turn', () => {
   it('a steer carries what she pasted, and her bubble shows it as its chip', async () => {
     const user = userEvent.setup()
     page({ seed: TYPED })
-    await answerDetail({ messages: [ASKED_ROW], running: true, steerable: true })
+    await answerDetail({ messages: [ASKED_ROW], run_state: runningState({ steerable: true }) })
     pasteIntoComposer(PASTE)
     expect(await screen.findByRole('button', { name: 'Remove paste #1' })).toBeTruthy()
 
@@ -181,7 +182,7 @@ describe('a message she sends into a running turn', () => {
     const user = userEvent.setup()
     h.sendChat.mockResolvedValue({ ok: true, queued: true })
     page({ seed: TYPED })
-    await answerDetail({ messages: [ASKED_ROW], running: true, steerable: false })
+    await answerDetail({ messages: [ASKED_ROW], run_state: runningState({ steerable: false }) })
     pasteIntoComposer(PASTE)
     await user.click(await screen.findByRole('button', { name: 'Queue — sent when this turn ends' }))
 
@@ -205,7 +206,7 @@ describe('a message she sends into a running turn', () => {
     const DRAFT = 'And rename the module.'
     h.sendChat.mockResolvedValue({ ok: true, queued: true })
     page({ seed: DRAFT })
-    await answerDetail({ messages: [ASKED_ROW], running: true, steerable: false })
+    await answerDetail({ messages: [ASKED_ROW], run_state: runningState({ steerable: false }) })
     pushFrame('queue_push', { content: SENT, ts: '2026-10-04T09:31:00.000Z', queue_id: 'q-1', pastes: PASTES })
 
     await user.click(await screen.findByRole('button', { name: 'Edit queued message' }))
@@ -228,7 +229,7 @@ describe('a message she sends into a running turn', () => {
     const QUERY = 'SELECT name\nFROM parsers\nWHERE broken\nORDER BY name;'
     h.sendChat.mockResolvedValue({ ok: true, queued: true })
     page({ seed: DRAFT })
-    await answerDetail({ messages: [ASKED_ROW], running: true, steerable: false })
+    await answerDetail({ messages: [ASKED_ROW], run_state: runningState({ steerable: false }) })
     pasteIntoComposer(QUERY)
     pushFrame('queue_push', { content: SENT, ts: '2026-10-04T09:31:00.000Z', queue_id: 'q-1', pastes: PASTES })
 
@@ -249,7 +250,7 @@ describe('a message she sends again', () => {
   it('Rewind to here sends what she pasted back, not its marker', async () => {
     const user = userEvent.setup()
     page()
-    await answerDetail({ messages: HISTORY, running: false })
+    await answerDetail({ messages: HISTORY, run_state: runState() })
     expect(await screen.findByTitle(CHIP)).toBeTruthy()
 
     await user.click(screen.getAllByRole('button', { name: 'Rewind to here' })[0])
@@ -265,7 +266,7 @@ describe('a message she sends again', () => {
   it('Edit & resend sends what she pasted with the words she changed', async () => {
     const user = userEvent.setup()
     page()
-    await answerDetail({ messages: HISTORY, running: false })
+    await answerDetail({ messages: HISTORY, run_state: runState() })
     await user.click((await screen.findAllByRole('button', { name: 'Edit & resend' }))[0])
     const box = screen.getByRole('textbox', { name: 'Edit your message' }) as HTMLTextAreaElement
     expect(box.value).toBe(DRAFTED)
@@ -283,7 +284,7 @@ describe('a message she sends again', () => {
     const user = userEvent.setup()
     h.sendChat.mockResolvedValue({ ok: true })
     page()
-    await answerDetail({ messages: HISTORY.slice(0, 2), running: false })
+    await answerDetail({ messages: HISTORY.slice(0, 2), run_state: runState() })
     await screen.findByTitle(CHIP)
 
     act(() => { editor().focus() })
@@ -303,7 +304,7 @@ describe('a message she sends again', () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
     page()
-    await answerDetail({ messages: HISTORY, running: false })
+    await answerDetail({ messages: HISTORY, run_state: runState() })
     await screen.findByTitle(CHIP)
     await user.click(screen.getAllByRole('button', { name: 'Copy' })[0])
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(SENT))
@@ -315,7 +316,7 @@ describe('a message she sends between turns', () => {
     const user = userEvent.setup()
     h.sendChat.mockResolvedValue({ ok: true })
     page({ seed: TYPED })
-    await answerDetail({ messages: [], running: false })
+    await answerDetail({ messages: [], run_state: runState() })
     pasteIntoComposer(PASTE)
     await user.click(await screen.findByRole('button', { name: 'Send message' }))
 
@@ -334,7 +335,7 @@ describe('a message she sends between turns', () => {
     const user = userEvent.setup()
     h.sendChat.mockResolvedValue({ ok: true })
     page({ seed: TYPED })
-    await answerDetail({ messages: [], running: false })
+    await answerDetail({ messages: [], run_state: runState() })
     pasteIntoComposer(PASTE)
     await user.click(await screen.findByRole('button', { name: 'Send message' }))
 

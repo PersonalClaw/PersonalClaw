@@ -256,8 +256,9 @@ function Launcher({ navigate }: RouteProps) {
     setText('')
   }
 
+  // "Jump back in" offers the chats with no turn running (their run state names none).
   const recent = (sessions ?? [])
-    .filter((s) => s.title && !s.running)
+    .filter((s) => s.title && !s.run_state?.turn)
     .sort((a, b) => sessionRecencyMs(b) - sessionRecencyMs(a))
     .slice(0, 4)
 

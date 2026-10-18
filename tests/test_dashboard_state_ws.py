@@ -194,17 +194,6 @@ class TestChatSessionStopState:
         session._stopping = False
         assert session._stop_state == "idle"
 
-    def test_to_dict_includes_stop_state(self) -> None:
-        from personalclaw.dashboard.state import _ChatSession
-
-        session = _ChatSession("s1")
-        d = session.to_dict()
-        assert d["stop_state"] == "idle"
-        session._stop_state = "soft_pending"
-        d = session.to_dict()
-        assert d["stop_state"] == "soft_pending"
-        assert d["stopping"] is True
-
 
 #: The reason the session manager gives for restarting an agent CLI's session (``_why_restarted``).
 REASON = "PersonalClaw cannot compact this agent's context"

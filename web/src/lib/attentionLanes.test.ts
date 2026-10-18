@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { LANES, laneFor, isKnownKind, KNOWN_KINDS, toLanes, inboxRaisedBy } from './attentionLanes'
 import type { ActivityInput, ApprovalInput, AttentionInput, Lane, LaneCard } from './attentionLanes'
 import type { InboxItemKind, InboxItemStatus } from './api'
+import { runState, runningState } from '../test/runState'
 
 // ── Lane derivation ─────────────────────────────────────────────────────────────────────────────
 //
@@ -43,7 +44,7 @@ function mkApproval(over: Partial<ApprovalInput> = {}): ApprovalInput {
 }
 
 function mkSession(over: Partial<ActivityInput> = {}): ActivityInput {
-  return { key: 'sess-1', title: 'Refactor the ledger', running: true, stopping: false, pending_approval: false, ...over }
+  return { key: 'sess-1', title: 'Refactor the ledger', run_state: runningState(), ...over }
 }
 
 const ALL_KINDS: InboxItemKind[] = [
@@ -233,11 +234,12 @@ describe('working is the lane the attention store cannot prove', () => {
 
   it('is populated only from observed session activity', () => {
     const lanes = toLanes([mkItem({ item_kind: 'needs_input' })], [], [
-      mkSession({ key: 'run', running: true }),
-      mkSession({ key: 'wind', running: false, stopping: true }),
-      mkSession({ key: 'quiet', running: false, stopping: false }),
+      mkSession({ key: 'run', run_state: runningState() }),
+      mkSession({ key: 'wind', run_state: runningState({ stopping: true }) }),
+      mkSession({ key: 'quiet', run_state: runState() }),
     ])
-    // running and stopping both count as working; stopping is winding down, not idle.
+    // a running turn and one a stop is asked of both count as working: the second is winding
+    // down, not idle.
     expect(lanes['working'].map((c) => c.id).sort()).toEqual(['run', 'wind'])
     expect(lanes['working'].map((c) => c.subtitle).sort()).toEqual(['running', 'stopping'])
     // a quiet session is not an attention item and does not become an idle card
@@ -249,9 +251,10 @@ describe('working is the lane the attention store cannot prove', () => {
     expect(lanes['working']).toEqual([])
   })
 
-  it('does not mirror a session pending_approval into needs-approval', () => {
-    // A boolean cannot say WHICH tool is waiting; GET /api/approvals carries that row already.
-    const lanes = toLanes([], [], [mkSession({ key: 'blocked', running: true, pending_approval: true })])
+  it('does not mirror a session waiting on an approval into needs-approval', () => {
+    // GET /api/approvals carries that row already, with the call to decide.
+    const waiting = runningState({ phase: 'approval', line: 'Needs your OK: Bash' })
+    const lanes = toLanes([], [], [mkSession({ key: 'blocked', run_state: waiting })])
     expect(lanes['needs-approval']).toEqual([])
     expect(lanes['working'].map((c) => c.id)).toEqual(['blocked'])
   })
@@ -366,7 +369,7 @@ describe('malformed input does not blank the surface', () => {
       { id: 'junk-ts', item_kind: 'needs_input', status: 'pending', ts: 'not-a-number' },
     ] as unknown as AttentionInput[]
     const badApprovals = [null, {}, { id: 'ok' }, 'x'] as unknown as ApprovalInput[]
-    const badActivity = [null, {}, { key: 'k', running: true }, 7] as unknown as ActivityInput[]
+    const badActivity = [null, {}, { key: 'k', run_state: { turn: { message_id: 'm1' } } }, { key: 'no-rs', run_state: 'running' }, 7] as unknown as ActivityInput[]
 
     let lanes!: ReturnType<typeof toLanes>
     expect(() => { lanes = toLanes(junk, badApprovals, badActivity) }).not.toThrow()
@@ -379,7 +382,7 @@ describe('malformed input does not blank the surface', () => {
     expect(ids).toContain('nan-time')
     expect(ids).not.toContain('')
     expect(lanes['needs-approval'].map((c) => c.id)).toContain('ok')
-    expect(lanes['working'].map((c) => c.id)).toContain('k')
+    expect(lanes['working'].map((c) => c.id)).toEqual(['k'])
     // a non-object refs cannot be read as an approval mirror, so the row stays your-turn
     expect(lanes['your-turn'].map((c) => c.id)).toContain('bad-refs')
 

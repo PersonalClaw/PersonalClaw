@@ -74,7 +74,7 @@ describe('the incident banner follows the switch', () => {
     await mountBanner()
     const reads = incident.mock.calls.length
     await frame({ type: 'refresh', data: { kinds: ['crons'] } })
-    await frame({ type: 'chat_status', data: { status: 'Thinking' } })
+    await frame({ type: 'work_phase', data: { session: 's', phase: 'thinking', line: 'Thinking' } })
     expect(incident.mock.calls.length).toBe(reads)
   })
 

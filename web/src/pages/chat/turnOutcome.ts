@@ -6,7 +6,7 @@
  *  reader:
  *
  *  · `chat_done.outcome` — the turn's final frame (`chat_runner.terminal_outcome_for_turn`);
- *  · session detail's `last_turn_outcome` — the same fact for a tab that missed that frame
+ *  · the chat's run state's `last_outcome` — the same fact for a tab that missed that frame
  *    (a reconnect's re-read, the stall reconciler, the mount read after a remount);
  *  · the Stop answer's `stopped` — whether THIS press stopped the turn.
  *
@@ -17,6 +17,10 @@ export type TurnOutcome = 'complete' | 'stopped' | 'interrupted' | 'error'
 
 /** What the live region says while a turn runs, before any status line arrives. */
 export const TURN_RESPONDING = 'Assistant is responding…'
+
+/** What it says of a turn her new message stopped to run in its place (cancel-and-replace): its
+ *  `chat_done` says `superseded`, and the stop is hers, by sending. */
+export const TURN_SUPERSEDED = 'Superseded by your new message…'
 
 const TURN_ENDED: Record<TurnOutcome, string> = {
   complete: 'Response complete.',

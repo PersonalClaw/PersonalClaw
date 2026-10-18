@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { endedState, runState, runningState } from '../../test/runState'
 
 // ── A turn that ran its steps and wrote no answer says so, and offers Retry ──────────────────
 //
@@ -15,7 +16,7 @@ const NOTICE = 'The agent ran 2 steps but did not write an answer. Send your mes
 
 const h = vi.hoisted(() => ({
   detail: {
-    key: 'chat-6-x', title: 'Change review', messages: [] as unknown[], running: false,
+    key: 'chat-6-x', title: 'Change review', messages: [] as unknown[], get run_state() { return runState({ session: 'chat-6-x' }) },
     queue: [] as unknown[], task_mode: 'agent', approval: 'normal', memory_mode: 'persistent',
   },
   chatSessionDetail: vi.fn(),
@@ -109,7 +110,7 @@ async function noticeStrip(): Promise<HTMLElement> {
 describe('a turn that ran its steps and wrote no answer', () => {
   it('arriving live, says so, ends as an error, and Retry asks the question again', async () => {
     // The turn is running when the page opens, as the reviewer's was.
-    h.chatSessionDetail.mockResolvedValue({ ...h.detail, running: true, messages: [question, step('call-1', 'git status'), step('call-2', 'ls -F')] })
+    h.chatSessionDetail.mockResolvedValue({ ...h.detail, run_state: runningState(), messages: [question, step('call-1', 'git status'), step('call-2', 'ls -F')] })
     page()
     await screen.findByText('Review the uncommitted diff.')
     h.chatSessionDetail.mockResolvedValue({ ...h.detail, messages: [question, step('call-1', 'git status'), step('call-2', 'ls -F')] })
@@ -130,7 +131,7 @@ describe('a turn that ran its steps and wrote no answer', () => {
   it('after a reload, offers the same Retry', async () => {
     h.chatSessionDetail.mockResolvedValue({
       ...h.detail,
-      last_turn_outcome: 'error',
+      run_state: endedState('error', { session: 'chat-6-x' }),
       messages: [question, step('call-1', 'git status'), step('call-2', 'ls -F'), { role: 'error', content: NOTICE }],
     })
     page()

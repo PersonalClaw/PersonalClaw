@@ -3,6 +3,7 @@ import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { STREAM_HEAL_WARNING, STREAM_SETTLED_GRACE_MS } from './streamStall'
+import { runState, runningState } from '../../test/runState'
 
 // ── A streamed answer renders ONCE and WHOLE, whatever React batches and whenever it reloads ──
 //
@@ -30,7 +31,7 @@ import { STREAM_HEAL_WARNING, STREAM_SETTLED_GRACE_MS } from './streamStall'
 
 const h = vi.hoisted(() => {
   const detail = {
-    key: 'chat-6-x', title: 'chat-6-x', messages: [] as unknown[], running: false,
+    key: 'chat-6-x', title: 'chat-6-x', messages: [] as unknown[], get run_state() { return runState({ session: 'chat-6-x' }) },
     queue: [] as unknown[], task_mode: 'agent', approval: 'normal', memory_mode: 'persistent',
   }
   return {
@@ -171,7 +172,7 @@ const DONE: Frame = ['chat_done', {}]
  *  is the precondition: the defect needs a flush to have claimed the trailing text first. */
 async function streamAnswerAndPaint() {
   await open()
-  await answerRead(0, { running: true, messages: [QUESTION], stream_seq: 0 })
+  await answerRead(0, { run_state: runningState(), messages: [QUESTION], stream_seq: 0 })
   for (const f of chunks(ANSWER, 1)) act(() => { deliver(f) })
   paintFrames()
   expect(screen.getAllByText(ANSWER), 'precondition: the streamed answer is painted').toHaveLength(1)
@@ -201,7 +202,7 @@ describe('the closing frames of a streamed turn', () => {
 const PARTIAL = 'one, two, three, four, '
 const REST = 'five, six, seven, eight.'
 const WHOLE = PARTIAL + REST
-const MID_ANSWER = { running: true, messages: [QUESTION, { role: 'streaming', content: PARTIAL }], stream_seq: 4 }
+const MID_ANSWER = { run_state: runningState(), messages: [QUESTION, { role: 'streaming', content: PARTIAL }], stream_seq: 4 }
 
 describe('a reload in the middle of an answer', () => {
   it('shows the whole partial and continues it in place', async () => {
@@ -236,7 +237,7 @@ describe('a reload in the middle of an answer', () => {
   it('does not paint a finished answer twice when its chunks reach the tab after the read (#3513)', async () => {
     // The refresh-first ordering on ANY mount, not only the one seeded mount the old fence knew.
     await open()
-    await answerRead(0, { running: false, messages: [QUESTION, { role: 'assistant', content: WHOLE }], stream_seq: 8 })
+    await answerRead(0, { run_state: runState(), messages: [QUESTION, { role: 'assistant', content: WHOLE }], stream_seq: 8 })
     for (const f of [...chunks(WHOLE, 1), DONE]) act(() => { deliver(f) })
     paintFrames()
     expect(screen.getAllByText(WHOLE)).toHaveLength(1)
@@ -261,7 +262,7 @@ describe('a reload in the middle of an answer', () => {
     // The bound is a cost limit, not a correctness one: the transcript still loads without the
     // socket, and the late open re-reads so nothing broadcast before it is lost.
     await waitFor(() => expect(h.detailCalls).toHaveLength(1), { timeout: 4_000 })
-    await answerRead(0, { running: true, messages: [QUESTION], stream_seq: 0 })
+    await answerRead(0, { run_state: runningState(), messages: [QUESTION], stream_seq: 0 })
     act(() => { FakeSocket.last?.onopen?.() })
     await answerRead(1, MID_ANSWER)
     expect(screen.getByText(PARTIAL.trim())).toBeTruthy()
@@ -306,7 +307,7 @@ describe("a new chat's first turn across the session-create remount", () => {
     // (#3575: a lost terminal frame on ~23% of first turns before the stall heal existed).
     const ts = await sendFromNewChat()
     await answerRead(0, {
-      running: false, stream_seq: 8,
+      run_state: runState(), stream_seq: 8,
       messages: [{ role: 'user', content: 'Count, please.', ts }, { role: 'assistant', content: WHOLE }],
     })
     await waitFor(() => expect(primaryAction()).toBe('Send message'))
@@ -315,7 +316,7 @@ describe("a new chat's first turn across the session-create remount", () => {
 
   it('keeps the just-sent message when the replacement read beats the send', async () => {
     await sendFromNewChat()
-    await answerRead(0, { running: false, messages: [], stream_seq: 0 })  // read before the POST landed
+    await answerRead(0, { run_state: runState(), messages: [], stream_seq: 0 })  // read before the POST landed
     expect(screen.getByText('Count, please.'), 'the older snapshot erased the user’s own message').toBeTruthy()
     expect(primaryAction(), 'an older snapshot must not end a turn it has not seen start').toBe('Stop')
     for (const f of [...chunks(WHOLE, 1), DONE]) act(() => { deliver(f) })
@@ -389,7 +390,7 @@ describe('a session read slower than the hold', () => {
     // chunks 1-4. It paints over what the tab shows; the frames it does not hold, `chat_done`
     // included, are applied again on top of it.
     await answerRead(0, {
-      running: true, stream_seq: 4,
+      run_state: runningState(), stream_seq: 4,
       messages: [{ role: 'user', content: 'Count, please.', ts }, { role: 'streaming', content: PARTIAL }],
     })
     expect(screen.getAllByText(WHOLE), 'the late repaint lost or doubled the answer').toHaveLength(1)
@@ -403,14 +404,14 @@ describe('a session read slower than the hold', () => {
     // Streaming, silent, and the mount read unanswered: two reconciler ticks pass.
     await wait(PAST_THE_HOLD_MS)
     expect(h.detailCalls, 'the reconciler read while a session read was in flight').toHaveLength(1)
-    await answerRead(0, { running: true, stream_seq: 0, messages: [{ role: 'user', content: 'Count, please.', ts }] })
+    await answerRead(0, { run_state: runningState(), stream_seq: 0, messages: [{ role: 'user', content: 'Count, please.', ts }] })
     // Still silent: the reconciler reads now — once.
     await waitFor(() => expect(h.detailCalls).toHaveLength(2), { timeout: 5_000 })
     for (const f of chunks(PARTIAL, 1)) act(() => { deliver(f) })
     paintFrames()
     expect(screen.getByText(PARTIAL.trim()), 'the reconciler’s read held the stream').toBeTruthy()
     // It answers with a snapshot older than the frames that arrived meanwhile: not a stall.
-    await answerRead(1, { running: false, stream_seq: 0, messages: [{ role: 'user', content: 'Count, please.', ts }] })
+    await answerRead(1, { run_state: runState(), stream_seq: 0, messages: [{ role: 'user', content: 'Count, please.', ts }] })
     expect(screen.getByText(PARTIAL.trim())).toBeTruthy()
     expect(primaryAction()).toBe('Stop')
     expect(warn.mock.calls.flat().join(' ')).not.toContain('terminal frame never reached')
@@ -456,14 +457,14 @@ describe('a chat that closes while one of its reads is out', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const view = render(page())
-    await answerRead(0, { running: true, messages: [QUESTION], stream_seq: 0 })
+    await answerRead(0, { run_state: runningState(), messages: [QUESTION], stream_seq: 0 })
     // Streaming and silent: the reconciler reads the chat on its next tick.
     act(() => { vi.advanceTimersByTime(2_100) })
     expect(h.detailCalls, 'the reconciler never read the chat').toHaveLength(2)
     view.unmount()
     // Its read lands after the chat closed, quiet past the settle grace, with the turn over.
     act(() => { vi.advanceTimersByTime(STREAM_SETTLED_GRACE_MS) })
-    await answerRead(1, { running: false, messages: [QUESTION], stream_seq: 0 })
+    await answerRead(1, { run_state: runState(), messages: [QUESTION], stream_seq: 0 })
     expect(warn.mock.calls.flat().join(' '), 'a chat that had closed was settled from its read').not.toContain(STREAM_HEAL_WARNING)
     warn.mockRestore()
   })

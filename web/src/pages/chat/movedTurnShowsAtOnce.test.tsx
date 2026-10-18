@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { hydrateTurns, type HistMsg } from './chatTypes'
+import { runningState } from '../../test/runState'
 
 // ── A chat moved to another agent mid-turn kept showing the turn that no longer existed ─────
 //
@@ -13,8 +14,8 @@ import { hydrateTurns, type HistMsg } from './chatTypes'
 // The gateway now ends that turn as stopped, answers the card cancelled, writes a notice
 // ("Moved to oncall-triage — it is answering your message."), tells every page what the chat
 // runs on (`session_binding`), and runs her message on the new agent. And it says whether the
-// running turn takes a steer at all (`turn_steerable`, session detail's `steerable`). This page
-// shows each of those as it arrives, with no reload.
+// running turn takes a steer at all (its run state's `steerable`, in each `work_phase` frame and in
+// session detail). This page shows each of those as it arrives, with no reload.
 
 const SESSION = 'chat-9-x'
 const ASKED = 'req-1'
@@ -65,9 +66,12 @@ function pushFrame(type: string, data: Record<string, unknown>) {
 let ChatPage: typeof import('../ChatPage')['ChatPage']
 let AppearanceProvider: typeof import('../../app/appearance')['AppearanceProvider']
 
+/** The default agent's turn, parked on a permission card for her message. */
+const PARKED = { session: SESSION, phase: 'approval', line: 'Needs your OK: mcp/sentry/get_issue_details' } as const
+
 /** Her message, and the default agent's turn parked on a permission card for it. */
 const RUNNING = {
-  key: SESSION, title: SESSION, running: true, steerable: false, stream_seq: 0,
+  key: SESSION, title: SESSION, run_state: runningState(PARKED), stream_seq: 0,
   queue: [] as unknown[], task_mode: 'agent', approval: 'normal', memory_mode: 'persistent',
   messages: [
     { role: 'user', content: 'sentry is lighting up for the carrier adapter again', ts: '2026-10-01T20:06:36Z' },
@@ -162,16 +166,16 @@ describe('the mid-turn send button follows the running turn', () => {
 
   it('offers Steer once the gateway says the running turn takes one, and Queue again when it does not', async () => {
     await openOnTheParkedTurn({ seed: 'ignore the EU region' })
-    pushFrame('turn_steerable', { steerable: true })
+    pushFrame('work_phase', { ...runningState({ ...PARKED, steerable: true, seq: 2 }) })
     await waitFor(() => expect(screen.getByRole('button', { name: 'Steer — send into the running turn' })).toBeTruthy())
     // The turn it could steer ended and the next one runs on an agent CLI that cannot.
-    pushFrame('turn_steerable', { steerable: false })
+    pushFrame('work_phase', { ...runningState({ session: SESSION, steerable: false, seq: 3 }) })
     await waitFor(() => expect(screen.getByRole('button', { name: 'Queue — sent when this turn ends' })).toBeTruthy())
   })
 
   it('reads whether the running turn takes a steer from the session when the page opens', async () => {
     const user = userEvent.setup()
-    await openOnTheParkedTurn({ seed: 'ignore the EU region' }, { steerable: true })
+    await openOnTheParkedTurn({ seed: 'ignore the EU region' }, { run_state: runningState({ ...PARKED, steerable: true }) })
     await user.click(screen.getByRole('button', { name: 'Steer — send into the running turn' }))
     await waitFor(() => expect(h.sendChat).toHaveBeenCalled())
     expect(h.sendChat.mock.calls[0][3]).toBe('steer')

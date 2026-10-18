@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { runState } from '../../test/runState'
 
 // ── A picked follow-up chip stays where it was, and the caret goes to the composer ────────────
 //
@@ -19,7 +20,7 @@ const CHIP = 'Add it to the school-term.md file'
 
 const h = vi.hoisted(() => ({
   detail: {
-    key: 'chat-7-x', title: 'Swim class', running: false, queue: [] as unknown[], task_mode: 'agent',
+    key: 'chat-7-x', title: 'Swim class', get run_state() { return runState({ session: 'chat-7-x' }) }, queue: [] as unknown[], task_mode: 'agent',
     approval: 'normal', memory_mode: 'persistent',
     messages: [
       { role: 'user', content: "Remind me what time Lina's swim class starts on Saturdays?", ts: '2026-10-02T09:00:00+00:00' },

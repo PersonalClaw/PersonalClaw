@@ -26,6 +26,7 @@ import { useQuery } from '../../lib/data'
 import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { cleanSay, toolDetail } from '../../lib/agentFeed'
+import { isStepPhase, phaseFeedLine } from '../../lib/workPhase'
 import {
   ACTIVE_LOOP_STATUSES,
   LOOP_ACTION_SOURCE_STATUSES,
@@ -480,7 +481,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
   }, isRunning ? 8000 : null)
 
   // Live worker activity — the hidden worker session (loop-<id>) broadcasts
-  // chat_status / tool_call / activity_event over the shared WS as it works each
+  // work_phase / tool_call / activity_event over the shared WS as it works each
   // cycle. Surface them so a running cycle reads as ALIVE (tool calls, thinking),
   // not a frozen "starting…" between finding writes. Capped, cleared on new finding.
   // Activity is keyed BY SESSION so each task's detail view shows only its own
@@ -489,6 +490,9 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
   // code-<id>, which silently matched nothing post-cutover so the panel stayed dead).
   // We bucket per session and slice the right one per task. Other sessions ignored.
   const [activityBySession, setActivityBySession] = useState<Record<string, ActivityItem[]>>({})
+  // The phase each worker last said: the gateway says a running turn's phase again every fifteen
+  // seconds, and a phase said again is not a new line in its feed.
+  const saidBySession = useRef<Record<string, string>>({})
   const workerKey = `loop-${id}`
   const onWs = useCallback((m: WsMessage) => {
     // The incident switch moved: re-read the project, whose `held` says whether it is held.
@@ -501,7 +505,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
     // closes. Kept `sess` for the per-worker activity buckets below.
     if (!belongsToLoop(sess, id)) return
     const push = (item: ActivityItem) => setActivityBySession((m0) => ({ ...m0, [sess]: [...(m0[sess] ?? []), item].slice(-50) }))
-    // A repeated status line (the worker pings "Thinking…" many times a cycle) carries
+    // A status line said again in a row (an activity note repeated) carries
     // no new info — appending each one fills the 50-item buffer with identical noise and
     // EVICTS the real tool calls / narration. Collapse a consecutive duplicate status
     // into the existing trailing one (no-op append) instead of stacking it.
@@ -511,8 +515,14 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
       if (last && last.kind === 'status' && last.label === label) return m0  // dup → skip
       return { ...m0, [sess]: [...a, { kind: 'status' as const, label }].slice(-50) }
     })
-    if (m.type === 'chat_status') {
-      const sgi = String(m.data.status ?? ''); if (sgi) pushStatus(sgi)
+    if (m.type === 'work_phase') {
+      // The worker's phase, as the gateway measured it, while its turn runs. A step's own
+      // phases are its tool card and its writing is the say line, so the feed says the rest
+      // ("Thinking" as the turn starts, "Needs your OK: …"), once per change; the thinking
+      // said after each step's result adds no row after its card.
+      const next = phaseFeedLine(m.data, saidBySession.current[sess] ?? '', (p) => isStepPhase(p) || p === 'streaming')
+      saidBySession.current[sess] = next.said
+      if (next.line) pushStatus(next.line)
     } else if (m.type === 'tool_call') {
       // Legible chip (the telltale arg field), not the raw JSON blob — shared with
       // the planning feed via toolDetail (see lib/agentFeed).

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { toLanes } from './attentionLanes'
 import type { ActivityInput, LoopInput } from './attentionLanes'
+import { runningState } from '../test/runState'
 
 // ── Mission Control's Working lane lists every RUNNING loop, whatever backs it ─────────────────
 //
@@ -21,7 +22,7 @@ function mkLoop(over: Partial<LoopInput> = {}): LoopInput {
 }
 
 function mkSession(over: Partial<ActivityInput> = {}): ActivityInput {
-  return { key: 'chat-1', title: 'a chat', running: true, stopping: false, pending_approval: false, ...over }
+  return { key: 'chat-1', title: 'a chat', run_state: runningState(), ...over }
 }
 
 describe('the Working lane', () => {

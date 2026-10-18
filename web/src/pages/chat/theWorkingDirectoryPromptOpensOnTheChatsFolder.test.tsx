@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, within, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { runState } from '../../test/runState'
 
 // ── The Working directory prompt opens on the chat's folder, can clear it, and says what moved ───
 //
@@ -18,7 +19,7 @@ const WORKSPACE = '/home/user/.personalclaw/workspace'
 
 const h = vi.hoisted(() => ({
   detail: {
-    key: 'chat-8-x', title: 'Fixing the tests', running: false, queue: [] as unknown[], task_mode: 'agent',
+    key: 'chat-8-x', title: 'Fixing the tests', get run_state() { return runState({ session: 'chat-8-x' }) }, queue: [] as unknown[], task_mode: 'agent',
     approval: 'normal', memory_mode: 'persistent', workspace_dir: '/home/user/src/recipe-box',
     messages: [
       { role: 'user', content: 'Which tests fail?', ts: '2026-10-06T09:00:00+00:00' },

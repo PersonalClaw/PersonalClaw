@@ -1,7 +1,6 @@
-"""Tests for to_dict() Board fields: options, waiting_for_input, pending_approval_info, last_activity_ts."""  # noqa: E501
+"""Tests for to_dict() Board fields: options, last_activity_ts, and the message count."""
 
 import asyncio
-import json
 
 from personalclaw.dashboard.chat_utils import _prepare_messages
 from personalclaw.dashboard.state import _ChatSession
@@ -30,61 +29,6 @@ def test_no_options_when_user_last():
     d = s.to_dict()
     assert d["has_options"] is False
     assert d["options"] == []
-
-
-def test_waiting_for_input_assistant_last():
-    s = _session({"role": "assistant", "content": "Done. What next?", "ts": "t1"})
-    # task=None means not running
-    d = s.to_dict()
-    assert d["waiting_for_input"] is True
-
-
-def test_not_waiting_when_user_last():
-    s = _session(
-        {"role": "assistant", "content": "Done.", "ts": "t1"},
-        {"role": "user", "content": "Thanks", "ts": "t2"},
-    )
-    d = s.to_dict()
-    assert d["waiting_for_input"] is False
-
-
-def test_not_waiting_when_running():
-    s = _session({"role": "assistant", "content": "Working on it.", "ts": "t1"})
-    loop = asyncio.new_event_loop()
-    # Create a non-done future to simulate running
-    s.task = loop.create_future()
-    d = s.to_dict()
-    assert d["waiting_for_input"] is False
-    loop.close()
-
-
-def test_pending_approval_info():
-    meta = json.dumps({"tool_input": "ls -la", "tool_kind": "bash", "request_id": "r1"})
-    s = _session({"role": "permission", "content": "shell", "cls": meta, "ts": "t1"})
-    loop = asyncio.new_event_loop()
-    fut = loop.create_future()
-    s._approval_futures["r1"] = fut
-    d = s.to_dict()
-    assert d["pending_approval"] is True
-    assert d["pending_approval_info"]["tool"] == "shell"
-    assert d["pending_approval_info"]["request_id"] == "r1"
-    loop.close()
-
-
-def test_pending_approval_skips_resolved():
-    old_meta = json.dumps({"resolved": True, "request_id": "r0"})
-    new_meta = json.dumps({"tool_input": "cat foo", "request_id": "r2"})
-    s = _session(
-        {"role": "permission", "content": "old_tool", "cls": old_meta, "ts": "t1"},
-        {"role": "permission", "content": "new_tool", "cls": new_meta, "ts": "t2"},
-    )
-    loop = asyncio.new_event_loop()
-    fut = loop.create_future()
-    s._approval_futures["r2"] = fut
-    d = s.to_dict()
-    assert d["pending_approval_info"]["tool"] == "new_tool"
-    assert d["pending_approval_info"]["request_id"] == "r2"
-    loop.close()
 
 
 def test_last_activity_ts_from_tool_call():

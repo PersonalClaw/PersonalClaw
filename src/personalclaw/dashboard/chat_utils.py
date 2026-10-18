@@ -293,6 +293,16 @@ def model_substitution_notice(client: object) -> str:
 #: activity.
 NO_TOOLS_ACTIVITY_KIND = "no_tools"
 
+#: The kind on what the loop breaker says as an agent CLI's turn runs: a call that keeps failing
+#: or repeating the same way, and the sentence it stops the turn on. The chat shows each where it
+#: belongs (the call's card, the turn's error row), so its page leaves this line out; a loop's page
+#: shows it in its live activity.
+LOOP_BREAKER_ACTIVITY_KIND = "loop_breaker"
+
+#: The kind on the line a message sent into a running turn is acknowledged with. The chat shows
+#: her steer itself, so its page leaves this line out; a loop's page shows it in its live activity.
+STEER_ACTIVITY_KIND = "steer"
+
 #: The ``_app`` tags a loop's hidden sessions carry: ``"loop"`` on its workers (``loop/manager``)
 #: and ``"loops"`` on its planner (``loop/plan_walkthrough``). Some checks key WORKER behaviour off
 #: ``"loop"`` alone, on purpose — the planner is not a cycle worker — but both are loop work, so

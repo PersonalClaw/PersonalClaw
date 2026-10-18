@@ -18,7 +18,7 @@ const PROMPT = 'Index this turn on the session map, please'
 // CI run 36091495547 (`e2e-a11y`, sessionMap.spec.ts's only-index test, and again on retry1) is that state:
 // the reply fully rendered, the ledger row landed ("unpriced · 51 tokens"), and the page still read
 // "Assistant is responding…" with the composer on Stop for 84 seconds — polling session detail 43
-// times with `running: false` in hand and discarding every one. `!(isLast && streaming)` then
+// times with an idle chat in hand and discarding every one. `!(isLast && streaming)` then
 // suppressed the assistant action row, so Speak / Copy / Regenerate / Fork never existed for that
 // answer and nothing short of a reload recovered it.
 test.describe('a chat whose terminal stream frame is lost', () => {
@@ -29,7 +29,7 @@ test.describe('a chat whose terminal stream frame is lost', () => {
   //    unreachable) and no frame ever delivered — without racing it. A test that waits for a race
   //    is a test that passes for the wrong reason.
   //  · The FIRST send cannot carry the clause, because it is the one send that remounts: the
-  //    replacement's `streaming` comes from its mount load's `running`, and whether that read
+  //    replacement's `streaming` comes from its mount load's run state, and whether that read
   //    catches the run live is exactly the race. Measured here: with the scripted provider on a
   //    local gateway the turn had already finished, the load hydrated it complete, and the chat was
   //    never stranded at all. The second send has no remount, so `send()` itself claims the stream

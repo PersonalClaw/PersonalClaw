@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { toLanes } from './attentionLanes'
 import type { ActivityInput, LoopInput } from './attentionLanes'
+import { runningState } from '../test/runState'
 
 // ── Mission Control's Working lane shows each loop ONCE, by its name ──────────────────────────
 //
@@ -21,7 +22,7 @@ function mkLoop(over: Partial<LoopInput> = {}): LoopInput {
 }
 
 function mkSession(over: Partial<ActivityInput> = {}): ActivityInput {
-  return { key: 'chat-1-1790000000', title: 'Trip planning', running: true, stopping: false, pending_approval: false, ...over }
+  return { key: 'chat-1-1790000000', title: 'Trip planning', run_state: runningState(), ...over }
 }
 
 /** A session of the loop, as `GET /api/chat/sessions` lists it. */
@@ -56,8 +57,8 @@ describe('the Working lane', () => {
 
   it("a paused loop's worker still winding down is the loop, stopping", () => {
     const working = toLanes([], [], [
-      workerOf(`loop-${LOOP}-t-9f8e7d6c`, { running: false, stopping: true }),
-      workerOf(`loop-${LOOP}-t-1a2b3c4d`, { running: false, stopping: true }),
+      workerOf(`loop-${LOOP}-t-9f8e7d6c`, { run_state: runningState({ stopping: true }) }),
+      workerOf(`loop-${LOOP}-t-1a2b3c4d`, { run_state: runningState({ stopping: true }) }),
     ], [mkLoop({ status: 'paused' })]).working
 
     expect(working.map((c) => [c.key, c.title, c.subtitle])).toEqual([

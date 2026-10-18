@@ -2580,8 +2580,8 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
 
         Read by the dispatcher at turn end (the same duck-typed seam
         :class:`~personalclaw.acp.session.AcpSession` exposes) so an undeliverable steer is
-        requeued onto the visible queue instead of vanishing. Deliberately NOT a new event
-        kind: the frontend filters ``activity_event {kind:"status"}`` as noise, so
+        requeued onto the visible queue instead of vanishing. Deliberately NOT an
+        ``activity_event``: the chat drops a steer's own notes (``kind:"steer"``), so
         announcing the loss that way would be an invisible fix.
         """
         return list(self._steer_pending)

@@ -497,6 +497,7 @@ CHAT_FRAMES = [
     "question_resolved",
     "routing_suggestion",
     "subagent_status",
+    "work_phase",
 ]
 
 #: The menu-bar companion's declaration, verbatim from its manifest (PersonalClawApps): it relays
@@ -752,6 +753,18 @@ class TestTheGateReadsEveryFrameThatNamesAConversation:
         for frame in ("retag_progress", "retag_done"):
             assert frame_subject(frame, reading) == ("conversation", "mine")
             assert frame_subject(frame, idle) is None
+
+    def test_a_chats_phase_names_the_chat_it_is_about(self) -> None:
+        """The other producer the census cannot read: a chat's phase is its run state's payload,
+        built by `chat_phase`, so `frame_subject` reads the chat off it like any chat frame."""
+        from personalclaw.dashboard import chat_phase
+        from personalclaw.dashboard.ws_state import frame_subject
+
+        assert frame_subject("work_phase", chat_phase.idle_payload("ours")) == (
+            "conversation",
+            "ours",
+        )
+        assert "work_phase" in _producer_types(), "the positive control"
 
     def test_every_inbox_item_frame_carries_its_source(self) -> None:
         """An inbox frame's data is the item's `to_dict()`, which is what `frame_subject` reads the

@@ -51,6 +51,7 @@ import { MessageUser } from '../ui/chat/MessageUser'
 import { MessageAssistant } from '../ui/chat/MessageAssistant'
 import { Spark } from '../ui/Spark'
 import { StreamingIndicator } from '../ui/chat/StreamingIndicator'
+import { idleRunState, phaseFamily, phaseLabel, workPhaseOf, type PhaseFamily, type WorkPhase } from '../lib/workPhase'
 import { ChatPlanGate } from '../ui/chat/ChatPlanGate'
 import { Markdown } from '../ui/Markdown'
 import { useWidgetActionBridge, takePendingWidgetAction } from '../ui/widget/useWidgetActionBridge'
@@ -97,7 +98,7 @@ import { SnipOverlay } from '../ui/SnipOverlay'
 import { chooseCaptureProvider, cropToPngFile, displayCaptureSupported, grabOneFrame, type SnipRect } from '../ui/composer/displayCapture'
 import { notify } from '../app/appSdk'
 import { spring, stagger, listItemEnter, expr } from '../design/motion'
-import { api, ApiError, hasApiCode, isSwitchedOff, transcriptionFailure, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate, type ChannelRuntime, type SessionSearchAnswer } from '../lib/api'
+import { api, ApiError, hasApiCode, isSwitchedOff, transcriptionFailure, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate, type ChannelRuntime, type SessionSearchAnswer, type RunState } from '../lib/api'
 import { refreshKinds, useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useStreamCoalescer } from './chat/useStreamCoalescer'
 import { FindBar } from '../ui/FindBar'
@@ -113,7 +114,7 @@ import { sessionMapEntries } from './chat/sessionMap'
 import { TextRunOwnership } from './chat/coalesceReducers'
 import { SnapshotReplay } from './chat/snapshotReplay'
 import { resolveStalledStream, STREAM_HEAL_WARNING } from './chat/streamStall'
-import { chatDoneOutcome, TURN_RESPONDING, turnEndedSentence, turnOutcomeOf, type TurnOutcome } from './chat/turnOutcome'
+import { chatDoneOutcome, TURN_RESPONDING, TURN_SUPERSEDED, turnEndedSentence, turnOutcomeOf, type TurnOutcome } from './chat/turnOutcome'
 import { useQuery, invalidateKeys, peekQuery, writeQuery } from '../lib/data'
 import { downloadFrom } from '../lib/download'
 import { rewindPreviewText } from '../lib/rewindPreview'
@@ -152,7 +153,7 @@ const readCachedDetail = (key: string): ChatDetail | null => peekQuery<ChatDetai
 function writeCachedDetail(key: string, d: ChatDetail): void {
   // Never cache a running turn's partial transcript — it would paint a stale,
   // mid-stream snapshot on revisit. Only settled sessions are safe to seed from.
-  if (d.running) return
+  if (d.run_state.turn) return
   // A Temporary chat is forgotten when its session ends, so its copy lives in this page only,
   // never in the browser's session storage, where it would outlive the chat.
   writeQuery(detailKey(key), d, d.memory_mode !== 'temporary')
@@ -175,7 +176,7 @@ const HOLD_LIMIT_MS = 4_000
  *  survives an adoption and is not repeated (a voice chunk would play twice, a side-chat delta
  *  would be appended twice). */
 const TRANSCRIPT_FRAMES = new Set([
-  'chat_chunk', 'chat_status', 'chat_thinking', 'chat_message', 'activity_event', 'tool_call',
+  'chat_chunk', 'work_phase', 'chat_thinking', 'chat_message', 'activity_event', 'tool_call',
   'tool_result', 'approval', 'approval_resolved', 'chat_segment', 'chat_variant_switch',
   'chat_done', 'chat_user_message', 'session_clear',
 ])
@@ -447,7 +448,7 @@ function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; onOpen: (
       .then((d) => {
         setDetail({ title: d.title, messages: d.messages ?? [] })
         setStreamText(null)
-        setBusy(!!d.running)
+        setBusy(!!d.run_state.turn)
       })
       .catch(() => { /* the last read stays: a failed re-read is no news about the chat */ })
   }
@@ -747,7 +748,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const [srAnnounce, setSrAnnounce] = useState('')
   // Whether the turn this view follows has ended without the region saying how. Stop settles the
   // composer at once, before the gateway has said the turn stopped; whichever terminal fact comes
-  // first (the Stop answer, `chat_done`, a snapshot's `last_turn_outcome`) says it, once.
+  // first (the Stop answer, `chat_done`, a snapshot's run state) says it, once.
   const endUnsaidRef = useRef(streaming)
   // Counts the turns this view has watched start, so a late answer (a Stop's) can tell whether
   // the turn it was about is still the one on screen.
@@ -1087,8 +1088,13 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // conversation yet" (a brand-new chat), where the pill shows the choice instead.
   const [naturalVoice, setNaturalVoice] = useState<{ choice: '' | 'on' | 'off'; effective: boolean; source: string; agentDefault: boolean }>(
     { choice: '', effective: false, source: '', agentDefault: false })
-  const [statusText, setStatusText] = useState('')
-  const [latestActivity, setLatestActivity] = useState<string | null>(null)
+  // What the running turn is doing, as the gateway measured it (its run state's phase and line), or
+  // null while the page holds no running turn's state: a turn it has just sent is waiting to start.
+  // `runSeqRef` is the stamp of the run state applied last, which a frame must be newer than to
+  // apply; each snapshot sets it again, as its `stream_seq` does the answer's.
+  const [turnPhase, setTurnPhase] = useState<WorkPhase | null>(null)
+  const [turnLine, setTurnLine] = useState('')
+  const runSeqRef = useRef(0)
   // The docked open-file peek panel. URL-backed (?file=<path>, push → Back closes;
   // refresh/deep-link reopens the same file beside the transcript).
   const [openFileRaw, setOpenFileRaw] = useQueryParam(query, setQuery, 'file', '')
@@ -1177,9 +1183,27 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // (an activity line counts as visible, so we don't stack two indicators)
   const showThinking = streaming && (!lastTurn || lastTurn.role === 'user' || lastTurn.segments.length === 0)
 
-  // While a turn runs, its status line ("Thinking…", a tool at work) is narrated as it changes.
-  // The start and the end are said where they happen (`markStreaming`, `sayTurnEnded`).
-  useEffect(() => { if (streaming && statusText) setSrAnnounce(statusText) }, [streaming, statusText])
+  // While a turn runs, what it waits on is narrated as it changes: its phase's word when its family
+  // does (it waits on her OK or her answer, it goes on), never call by call. The start and the end
+  // are said where they happen (`markStreaming`, `sayTurnEnded`).
+  const narratedFamily = useRef<PhaseFamily>('active')
+  useEffect(() => {
+    if (!streaming) { narratedFamily.current = 'active'; return }
+    if (!turnPhase || phaseFamily(turnPhase) === narratedFamily.current) return
+    narratedFamily.current = phaseFamily(turnPhase)
+    setSrAnnounce(phaseLabel(turnPhase))
+  }, [streaming, turnPhase])
+  /** Take a run state: the turn's phase and line while one runs, and whether it takes a steer. A
+   *  snapshot's always (a restarted gateway stamps from the start again), a `work_phase` frame's
+   *  only when it is newer than the one held. */
+  const takeRunState = (rs: RunState | null | undefined, from: 'frame' | 'snapshot' = 'frame') => {
+    if (!rs || typeof rs.seq !== 'number' || (from === 'frame' && rs.seq <= runSeqRef.current)) return
+    runSeqRef.current = rs.seq
+    const running = !!rs.turn
+    setTurnPhase(running ? workPhaseOf(rs.phase) : null)
+    setTurnLine(running ? String(rs.line ?? '') : '')
+    setTakesSteers(running && !!rs.steerable)
+  }
 
   // ── segment helpers: mutate the LAST assistant turn immutably ──
   const ensureAssistant = (list: ChatTurn[]): ChatTurn[] =>
@@ -1199,10 +1223,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // together, at dispatch, from ONE snapshot.
   const adoptSnapshot = (d: ChatDetail) => {
     const messages = d.messages || []
-    const running = !!d.running
+    const running = !!d.run_state.turn
     // …with the questions its turn is waiting on her answer to, which no row holds yet.
     setTurns(graftPendingQuestions(hydrateTurns(messages, running), d.pending_questions))
-    setTakesSteers(running && !!d.steerable)
+    takeRunState(d.run_state, 'snapshot')
     adoptedUserTs.current = new Set(messages.flatMap((m) => (m.role === 'user' && m.ts ? [m.ts] : [])))
     // The answer still being written continues IN the segment the snapshot paints for it:
     // ownership is claimed before the coalescer can flush, so the next flush extends the
@@ -1264,6 +1288,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   useEffect(() => {
     sessionRef.current = sessionId
     dropTextRun()  // drop any in-flight reveal from the prior session
+    // So is its run state: the next chat's stamps are its own, and may be older than the last one's.
+    runSeqRef.current = 0
+    setTurnPhase(null)
+    setTurnLine('')
     setQueued([])  // queue is per-session; clear when the open session changes
     setSubagents([])  // subagent cards are per-session too
     setBranchedFrom(null)  // lineage is per-session; the load below re-reads it
@@ -1299,7 +1327,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         // `chat_done` reached the instance the remount replaced) settles here rather than
         // stranding the composer on Stop until the stall reconciler notices — and says how it
         // ended, which the snapshot reports for exactly this case.
-        if (d.running || streamingRef.current) markStreaming(!!d.running, turnOutcomeOf(d.last_turn_outcome))
+        const running = !!d.run_state.turn
+        if (running || streamingRef.current) markStreaming(running, turnOutcomeOf(d.run_state.last_outcome))
         return true
       }).then((d) => {
         if (!alive) return
@@ -1434,7 +1463,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     lastWsActivityRef.current = Date.now()  // for the idle approval-reconciler
     switch (m.type) {
       case 'chat_chunk': {
-        setStatusText('')
         const chunk = String(d.content ?? '')
         // No break-flag check here any more: whichever boundary preceded this chunk already
         // CLEARED the coalescer (endTextRun / dropTextRun), so a push always opens a fresh run
@@ -1444,7 +1472,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         coalescer.push(chunk, typeof d.seq === 'number' ? d.seq : undefined)  // rAF-coalesced; onFlush does the setTurns once/frame
         break
       }
-      case 'chat_status': setStatusText(String(d.status ?? '')); break
+      // What the turn is doing, as the gateway measured it, and whether it takes a steer — applied
+      // only when newer than what the page holds: a frame held while a snapshot was read can be
+      // older than the snapshot's run state.
+      case 'work_phase': takeRunState(d as unknown as RunState); break
       // Live reasoning stream. Only consumed while the Settings → Chat
       // "Show thinking inline" toggle is on — off drops the frame here, so no
       // thinking segment ever enters transcript state (and none is persisted:
@@ -1472,7 +1503,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       case 'chat_message': {
         if (d.role === 'error') {
           endTextRun()  // land buffered text before the error segment
-          setStatusText(''); setLatestActivity(null)
           const text = turnErrorText(d.content)
           // The Settings page the failure is lifted on, when the gateway names one (a spend cap).
           const meta = d.meta as { settings?: unknown } | undefined
@@ -1551,7 +1581,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           })
           break
         }
-        if (kind === 'status' || kind === 'session' || !text) break
+        // Said elsewhere on this page: the session line, the loop breaker's notes (on the call's card
+        // and as the turn's error) and a steer's acknowledgement (her steer is shown itself).
+        if (kind === 'session' || kind === 'loop_breaker' || kind === 'steer' || !text) break
         // The turn's stats line names the model that answered and how it was chosen: the turn's
         // chip and the composer's Auto say it from here, the line itself goes to the ledger below.
         if (kind === 'stats') {
@@ -1564,7 +1596,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             return next
           })
         }
-        setLatestActivity(text)
         // Which learning path emitted a `learned` event. Absent on every other
         // activity kind, and absent on a `learned` event from a build — which
         // `learnedSurface()` renders as a non-tappable chip rather than a wrong link.
@@ -1606,8 +1637,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         setTurns((prev) => prev.map((t) => ({ ...t, segments: applyQuestionResolved(t.segments, d) })))
         break
       case 'chat_segment': endTextRun(); break
-      // Whether the running turn takes a steer, said when the turn wires its runtime.
-      case 'turn_steerable': setTakesSteers(!!d.steerable); break
       // What the chat runs on now — changed here, in another tab or by any caller of the API —
       // so the composer never names an agent the next message will not go to.
       case 'session_binding':
@@ -1665,15 +1694,13 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       }
       case 'chat_done': {
         endTextRun()  // fully reveal any buffered tail before the turn closes
-        markStreaming(false, chatDoneOutcome(d)); setStatusText(''); setLatestActivity(null)
+        markStreaming(false, chatDoneOutcome(d))
+        // A turn her rapid follow-up replaced (cancel-and-replace) is said as that: its answer was
+        // cut where it stood, and her new message runs next, queued server-side.
+        if (d.superseded) setSrAnnounce(TURN_SUPERSEDED)
         replyFinished(sessionRef.current, { last: true })
         stoppedTurnRef.current = false
         setSteered([])  // steers belong to the turn they were injected into
-        // Cancel-and-replace: this turn was superseded by a
-        // rapid follow-up. The replacement was queued server-side and the next turn
-        // auto-runs; surface a brief note so the truncated answer doesn't read as a
-        // silent failure. No ghost bubble — the turn closes cleanly here.
-        if (d.superseded) setStatusText('Superseded by your new message…')
         // Mid-stream messages are queued SERVER-side and the backend dispatches
         // the next one itself (streaming will flip back on via the next turn's
         // events). Nothing to drain client-side.
@@ -1916,9 +1943,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     readSnapshot(s, (d) => {
       adoptSnapshot(d)
       // A turn that ended while the socket was down is said as the snapshot reports it ended.
-      markStreaming(!!d.running, turnOutcomeOf(d.last_turn_outcome))
+      const running = !!d.run_state.turn
+      markStreaming(running, turnOutcomeOf(d.run_state.last_outcome))
       // An idle chat has no stopped turn still sending: its `chat_done` may be what was missed.
-      if (!d.running) { setStatusText(''); stoppedTurnRef.current = false }
+      if (!running) stoppedTurnRef.current = false
       return true
     }).catch(() => {})
   }, [])
@@ -1981,14 +2009,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         // that read settles it), and this snapshot can already be older than the transcript.
         if (lastWsActivityRef.current !== activityAtIssue || snapshots.busy()) return
         const stall = resolveStalledStream({
-          serverRunning: !!d.running,
-          serverPendingApproval: !!d.pending_approval,
+          serverRunning: !!d.run_state.turn,
+          serverPendingApproval: d.run_state.phase === 'approval',
           serverPendingQuestion: (d.pending_questions?.length ?? 0) > 0,
           msSinceTranscriptChange: Date.now() - transcriptChangedAt,
         })
         if (stall === 'wait') return  // genuinely just quiet (e.g. long model think) — leave it
         // The server's transcript is authoritative for both readings, so adopt it first and
-        // act second. `settled` is by definition `!d.running`, so adopting it also ends the
+        // act second. `settled` is by definition no turn running, so adopting it also ends the
         // text run without landing a buffered tail into the history that replaced it.
         adoptSnapshot(d)
         if (stall === 'settled') {
@@ -2000,7 +2028,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           // net cannot read as a turn that completed.
           console.warn(`[chat] ${s}: ${STREAM_HEAL_WARNING} — settled from session detail`)
           // The lost frame carried how the turn ended; session detail serves the same fact.
-          markStreaming(false, turnOutcomeOf(d.last_turn_outcome)); setStatusText(''); setLatestActivity(null)
+          markStreaming(false, turnOutcomeOf(d.run_state.last_outcome))
           return
         }
         // Server is parked on an approval the client isn't showing → recovered above.
@@ -2221,7 +2249,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // (seededDetail → loadingHistory=false): the user's message shows on the first
       // frame with NO skeleton over it, and only the pending agent reply loads.
       if (seedMessages?.length) {
-        writeCachedDetail(created.key, { key: created.key, title: '', messages: seedMessages, running: false, memory_mode: memoryMode } as unknown as ChatDetail)
+        writeCachedDetail(created.key, { key: created.key, title: '', messages: seedMessages, run_state: idleRunState(created.key), memory_mode: memoryMode } as unknown as ChatDetail)
       }
       // Hand the live run ACROSS the remount, before causing it. This instance is about
       // to be destroyed and its `streaming` state with it; the replacement reads the
@@ -2769,7 +2797,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     readSnapshot(s, (d) => {
       adoptSnapshot(d)
       // A replacement that already ended by the time the read lands is said as it ended.
-      markStreaming(!!d.running, turnOutcomeOf(d.last_turn_outcome))
+      markStreaming(!!d.run_state.turn, turnOutcomeOf(d.run_state.last_outcome))
       return true
     }).catch(() => setTurns(cutLocally))
     return true
@@ -3571,8 +3599,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       {/* Steered messages on their way into the answer being written: the turn takes each
           at its next step, and it then moves into the transcript as her bubble. Unlike a
           queued item there is nothing to cancel or reorder. Rendered so a steer is visible
-          before then: the backend broadcasts a "Steering: …" activity_event, but
-          activity_event drops `kind === 'status'` as thinking-indicator noise. */}
+          before then: the backend broadcasts a "Steering: …" activity_event, which this page
+          drops (`kind === 'steer'`) for this list. */}
       {steered.length > 0 && (
         <div className="mb-2 flex flex-col gap-1" aria-live="polite">
           {steered.map((s) => (
@@ -4026,7 +4054,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                   })}
                   <AnimatePresence>
                     {streaming && showThinking && (
-                      <StreamingIndicator statusText={statusText} activity={latestActivity} />
+                      <StreamingIndicator phase={turnPhase} line={turnLine} />
                     )}
                   </AnimatePresence>
                   {/* A step of this turn waiting for a busy local model: why, and what next. */}

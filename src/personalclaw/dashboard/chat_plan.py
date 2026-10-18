@@ -45,6 +45,7 @@ from aiohttp import web
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
+from personalclaw.dashboard import chat_phase
 from personalclaw.dashboard.chat_persistence import resolve_session
 from personalclaw.dashboard.chat_utils import (
     _history_key_for,
@@ -312,11 +313,13 @@ async def api_chat_plan_activate(request: web.Request) -> web.Response:
     if was_running:
         chat._queue.clear()
         chat._stop_state = "soft_pending"
+        chat_phase.restate(state, chat)  # a stop is asked of its turn, and nothing waits behind it
 
         async def _parked() -> None:
             # The park is complete once the turn actually stops. Resetting here (rather
             # than on approval) keeps the posture honest if the user cancels instead.
             chat._stop_state = "idle"
+            chat_phase.restate(state, chat)
             state.push_sessions_update()
 
         await state.sessions.stop_turn(

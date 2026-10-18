@@ -12,10 +12,12 @@ import { FromChannel } from './FromChannel'
 
 const MINE: ChatSessionSummary = {
   key: 'chat-8-1', title: 'Grocery list', messages: 4, origin: 'manual', lifecycle: 'active',
+  run_state: runState({ session: 'chat-8-1' }),
 }
 const PHONE: ChatSessionSummary = {
   key: 'chat-9-1', title: 'Daily agenda overview', messages: 19, origin: 'channel',
   source_id: '5550001234', source_label: 'Telegram', lifecycle: 'active',
+  run_state: runState({ session: 'chat-9-1' }),
 }
 
 vi.mock('../../lib/api', async (importOriginal) => {
@@ -34,6 +36,7 @@ vi.mock('../../lib/api', async (importOriginal) => {
 })
 
 import { ChatPage } from '../ChatPage'
+import { runState } from '../../test/runState'
 
 beforeEach(() => {
   sessionStorage.clear()

@@ -1,12 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import type { WsMessage } from './useChatSocket'
+import { TURN_STARTED, runState, runningState } from '../test/runState'
 
 // ── WS envelopes are SIGNALS, NEVER PAYLOADS (the DashboardLive contract) ─────
 //
 // This is the architectural point of `useAgentActivity`, so it is asserted the only
 // way that means anything: deliver an envelope carrying MISLEADING fields — a
-// `chat_status` claiming a state, a title and an entity list that contradict the
+// `work_phase` claiming a phase, a title and an entity list that contradict the
 // server — and prove the rendered scene came from the REFETCH, not the envelope.
 //
 // 🪤 Why a "no bad string appeared" test would be vacuous on its own: if the
@@ -18,12 +19,14 @@ import type { WsMessage } from './useChatSocket'
 /** The one envelope under test, stuffed with everything a payload-reading consumer
  *  would have grabbed. Every value here is a lie the server never said. */
 const POISON: WsMessage = {
-  type: 'chat_status',
+  type: 'work_phase',
   data: {
-    status: 'error',
+    session: 'live',
+    phase: 'input',
+    line: 'FROM-ENVELOPE',
+    turn: { message_id: TURN_STARTED, started_at: TURN_STARTED },
     state: 'error',
     title: 'FROM-ENVELOPE',
-    running: false,
     progress: 0.99,
     entities: [{ id: 'session:live', kind: 'session', state: 'error', title: 'FROM-ENVELOPE' }],
   },
@@ -52,7 +55,8 @@ function mockDeps() {
       approvals: () => Promise.resolve([]),
       chatSessions: () => {
         fetches++
-        return Promise.resolve([{ key: 'live', title: wire.title, messages: 1, running: wire.running }])
+        const run_state = wire.running ? runningState({ session: 'live' }) : runState({ session: 'live' })
+        return Promise.resolve([{ key: 'live', title: wire.title, messages: 1, run_state }])
       },
     },
   }))
@@ -89,7 +93,7 @@ beforeEach(() => {
 })
 afterEach(() => { vi.restoreAllMocks() })
 
-describe('a poisoned chat_status envelope cannot reach the rendered scene', () => {
+describe('a poisoned work_phase envelope cannot reach the rendered scene', () => {
   it('the rendered state comes from the refetch; not one envelope field survives', async () => {
     await mountProbe()
     await waitFor(() => expect(feedText()).toContain('FROM-REFETCH-1'))
@@ -110,6 +114,7 @@ describe('a poisoned chat_status envelope cannot reach the rendered scene', () =
     const text = feedText()
     expect(text, 'the envelope title must never be rendered').not.toContain('FROM-ENVELOPE')
     expect(text, 'the envelope state must never be rendered').toContain('session:live|working|')
+    expect(text, 'the envelope phase must never be rendered').not.toContain('needs_input')
     expect(text, 'the envelope progress must never be rendered').toContain('|none')
     expect(text, 'the envelope entity list must never become the scene').not.toContain('|error|')
   })
@@ -150,7 +155,7 @@ describe('a poisoned chat_status envelope cannot reach the rendered scene', () =
 })
 
 describe('signal routing', () => {
-  it.each(['chat_status', 'sessions', 'update_progress', 'subagent_started', 'subagent_done', 'approval'])(
+  it.each(['work_phase', 'sessions', 'update_progress', 'subagent_started', 'subagent_done', 'approval'])(
     '%s nudges a refetch', async (type) => {
       await mountProbe()
       await waitFor(() => expect(fetches).toBe(1))
@@ -171,7 +176,7 @@ describe('signal routing', () => {
   it('a burst of envelopes collapses into ONE refetch (debounced)', async () => {
     await mountProbe()
     await waitFor(() => expect(fetches).toBe(1))
-    for (let i = 0; i < 25; i++) deliver({ type: 'chat_status', data: {} })
+    for (let i = 0; i < 25; i++) deliver({ type: 'work_phase', data: {} })
     await waitFor(() => expect(fetches).toBe(2), { timeout: 3000 })
     await new Promise((r) => setTimeout(r, 700))
     expect(fetches, '25 envelopes must not be 25 requests').toBe(2)

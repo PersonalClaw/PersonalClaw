@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { runState, runningState } from '../../test/runState'
 
 // ── A fast-failing FIRST turn wedged the composer on Stop, forever ────────────────────────────
 //
@@ -16,13 +17,13 @@ import userEvent from '@testing-library/user-event'
 //     +4.539s  POST /api/chat?ws=1
 //     +4.560s  GET  /api/chat/sessions/<key>      ← the [sessionId] load effect, turn RUNNING
 //     +4.971s  ws   chat_message role=error  +  chat_done        ← the turn TERMINATES
-//     ~+5.05s  ←    that GET resolves: { running: true }         ← and RE-ARMS streaming
-//     +9.081s… GET  /api/chat/sessions/<key> every 2 s, 41 times, each `running:false`, discarded
+//     ~+5.05s  ←    that GET resolves: its turn running         ← and RE-ARMS streaming
+//     +9.081s… GET  /api/chat/sessions/<key> every 2 s, 41 times, each with no turn, discarded
 //
 // So the snapshot was HONEST when it was read and stale by the time it landed: the load effect's
-// `if (d.running) markStreaming(true)` had no way to know a terminal event had arrived since the
-// fetch was issued. `chat_done` and a turn-level `chat_message role==='error'` both clear
-// streaming correctly — they just lose the race.
+// `markStreaming(true)` on a snapshot whose turn runs had no way to know a terminal event had
+// arrived since the fetch was issued. `chat_done` and a turn-level `chat_message role==='error'`
+// both clear streaming correctly — they just lose the race.
 //
 // The trigger is TIMING, not the error class: a control with the Chat model UNBOUND failed in
 // ~25 s and recovered correctly (`s2j-scope.json`). Any fast first-turn failure hits this — a
@@ -39,14 +40,14 @@ import userEvent from '@testing-library/user-event'
 // deliberately NOT re-asserted here.
 //
 // These tests drive the ORDERING, because the ordering is the bug: the detail promise is held
-// open, the terminal event is delivered, and only then does the detail resolve saying
-// `running: true`. A test that resolves the fetch before the event passes on the defect.
+// open, the terminal event is delivered, and only then does the detail resolve saying its turn
+// runs. A test that resolves the fetch before the event passes on the defect.
 
 // ── mocks ────────────────────────────────────────────────────────────────────────────────────
 
 const h = vi.hoisted(() => {
   const detail = {
-    key: 'chat-6-x', title: 'chat-6-x', messages: [] as unknown[], running: false,
+    key: 'chat-6-x', title: 'chat-6-x', messages: [] as unknown[], get run_state() { return runState({ session: 'chat-6-x' }) },
     queue: [] as unknown[], task_mode: 'agent', approval: 'normal', memory_mode: 'persistent',
   }
   return {
@@ -158,7 +159,7 @@ const primaryAction = () =>
   ['Stop', 'Steer — send into the running turn', 'Queue — sent when this turn ends', 'Send message']
     .find((name) => screen.queryByRole('button', { name })) ?? '(no primary action)'
 
-// ── 1. the race: a late `running: true` must not re-arm a turn that already ended ────────────
+// ── 1. the race: a late running snapshot must not re-arm a turn that already ended ───────────────
 
 describe('a detail snapshot that lands AFTER the turn terminated', () => {
   /** Reproduce the measured ordering: read issued mid-turn → turn terminates → read lands. */
@@ -171,7 +172,7 @@ describe('a detail snapshot that lands AFTER the turn terminated', () => {
     pushFrame('chat_done', { session: 'chat-6-x' })
     // …and only NOW does the in-flight read land, honestly reporting the state it was read
     // at (~+5.05s). This ordering IS the bug: resolve it first and the defect passes.
-    await answerDetail(0, { running: true })
+    await answerDetail(0, { run_state: runningState() })
   }
 
   it('leaves the composer on Send, not wedged on Stop', async () => {
@@ -216,7 +217,7 @@ describe('a detail snapshot for a turn that is genuinely still running', () => {
     // break resuming a live turn, the branch's actual job.
     page()
     await waitFor(() => expect(h.detailCalls.length).toBeGreaterThanOrEqual(1))
-    await answerDetail(0, { running: true })  // no terminal event seen → the read is current
+    await answerDetail(0, { run_state: runningState() })  // no terminal event seen → the read is current
     await waitFor(() => expect(primaryAction()).toBe('Stop'))
   })
 })
@@ -230,7 +231,7 @@ describe('a mid-stream send the server ran as a fresh turn', () => {
     await waitFor(() => expect(h.detailCalls.length).toBeGreaterThanOrEqual(1))
     // Streaming armed with no terminal event — legitimate, and its runtime takes a steer, so the
     // composer offers Steer.
-    await answerDetail(0, { running: true, steerable: true })
+    await answerDetail(0, { run_state: runningState({ steerable: true }) })
     await waitFor(() => expect(primaryAction()).toBe('Steer — send into the running turn'))
 
     // The server gates on ITS OWN `session.running`. When the turn is already over it

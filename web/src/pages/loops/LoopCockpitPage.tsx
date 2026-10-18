@@ -41,6 +41,7 @@ import { RepromptNotice } from './RepromptNotice'
 import { NoToolsPause } from './NoToolsPause'
 import { activePhaseIndex, phaseMinCycles, phaseForCycle } from './loopPhases'
 import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
+import { livePhaseOf, phaseFeedLine } from '../../lib/workPhase'
 import { belongsToLoop } from '../workflows/containerKey'
 import { type SkillUsed, joinedSkillsOf, skillsUsedLabel, skillsUsedTitle } from '../chat/chatTypes'
 import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
@@ -246,10 +247,15 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
     api.project(projId).then((pr) => { if (alive) setProjName(pr.name) }).catch(() => {})
     return () => { alive = false }
   }, [projId])
+  // The worker's phase line while its turn runs ("Thinking", the tool it runs), as the gateway
+  // measured it; empty between turns, where the status line says "Working".
   const [statusText, setStatusText] = useState('')
   const [activity, setActivity] = useState<{ kind: string; label: string; detail?: string }[]>([])
+  // The phase each worker session last said, so the gateway's re-sends of a running turn's phase
+  // (every fifteen seconds) add nothing to the feed.
+  const saidBySession = useRef<Record<string, string>>({})
   const [now, setNow] = useState(() => 0) // seconds; ticks while active
-  // The hidden worker session key the engine broadcasts chat_status/tool_call
+  // The hidden worker session key the engine broadcasts work_phase/tool_call
   // under (loops.manager.session_key) — NO 'dashboard:' prefix. The old value
   // had one, so worker events never matched and the live activity stream was
   // always empty.
@@ -436,18 +442,24 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
     // loop, whose `held` sentence says whether the switch is holding it.
     if (refreshKinds(m).includes('incident')) { reloadLoop.current(); return }
     if (!belongsToLoop(m.data?.session as string | undefined, id)) return
-    if (m.type === 'chat_status') { const s = String(m.data.status ?? ''); setStatusText(s); setActivity((a) => [...a, { kind: 'status', label: s }].slice(-40)) }
+    if (m.type === 'work_phase') {
+      // The worker's phase, as the gateway measured it: the status line while its turn runs, and
+      // a feed line once per change. A step's own phases are its tool line below, and the thinking
+      // said after each step's result adds no line after it.
+      setStatusText(livePhaseOf(m.data)?.line ?? '')
+      const sess = String(m.data.session ?? '')
+      const next = phaseFeedLine(m.data, saidBySession.current[sess] ?? '')
+      saidBySession.current[sess] = next.said
+      const line = next.line
+      if (line) setActivity((a) => [...a, { kind: 'status', label: line }].slice(-40))
+    }
     else if (m.type === 'tool_call') setActivity((a) => [...a, { kind: 'tool', label: String(m.data.tool ?? 'tool'), detail: String(m.data.purpose ?? m.data.input_preview ?? '') }].slice(-40))
-    // The runner broadcasts turn milestones (session created, context injected,
-    // "Thinking…") as activity_event — the main progress signal for native runs
-    // that interleave long thinking gaps between tool calls. Surface them so a
-    // working cycle reads as alive, not a frozen "working" with an empty stream.
+    // The runner broadcasts turn milestones (context injected, skills loaded, the loop
+    // breaker's notes) as activity_event. Surface them so a working cycle reads as alive,
+    // not a frozen "working" with an empty stream.
     else if (m.type === 'activity_event') {
       const text = String(m.data.text ?? '')
-      if (text) {
-        if (String(m.data.kind ?? '') === 'status') setStatusText(text)
-        setActivity((a) => [...a, { kind: 'status', label: text }].slice(-40))
-      }
+      if (text) setActivity((a) => [...a, { kind: 'status', label: text }].slice(-40))
     }
   }, [id])
   useChatSocket(onWs, null)  // a live ticker: nothing replays it, and the loop has its own feed

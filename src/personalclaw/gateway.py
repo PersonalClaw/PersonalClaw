@@ -4237,6 +4237,8 @@ class GatewayOrchestrator:
                         # run_chat's finally drains the queue on any exit path, and runs the
                         # report bounded by its silence (`turn_deadline`): nobody typed it.
                         _injection_session.queue_append(announce, asked_for_by=asked)
+                        # One more message waits behind the chat's turn, which its run state says.
+                        self.dashboard_state.say_run_state(_injection_session)
                         self.dashboard_state.push_sessions_update()
                         logger.info("Subagent %s → queued in %s", info.id, _session_name)
                         if not told:
@@ -4748,6 +4750,24 @@ class GatewayOrchestrator:
                 base = {**base, "session": chat, "run": run_id}
                 if etype == "subagent_spawn":
                     extra = {**extra, "title": step}
+            if etype in ("subagent_spawn", "subagent_done"):
+                # While the chat's turn runs it is handing off to every helper still at work for
+                # it, its own and its batches' tasks alike, this one's ending not counted (its
+                # phase, `DashboardState.say_helpers`).
+                for_chat = chat or session_name
+                ended = info.id if etype == "subagent_done" else ""
+                at_work = [
+                    a
+                    for a in (self.subagent_mgr.running if self.subagent_mgr else [])
+                    if a.id != ended
+                ]
+                works_for = {
+                    key: task_of_chat(key)[0] or key.removeprefix("dashboard:")
+                    for key in {a.parent_session_key for a in at_work}
+                }
+                self.dashboard_state.say_helpers(
+                    for_chat, sum(1 for a in at_work if works_for[a.parent_session_key] == for_chat)
+                )
             if etype == "subagent_chunk":
                 # Heavy data — only to subscribed clients
                 self.dashboard_state.broadcast_ws_subagent_subscribers(etype, {**base, **extra})

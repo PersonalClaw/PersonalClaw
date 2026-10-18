@@ -116,7 +116,7 @@ describe('ChatPage wires the stall reading', () => {
     // …and say how the turn ended as the server reports it: the lost frame carried that, and
     // session detail serves the same fact. A bare settle announced every healed turn as complete.
     expect(body, 'a settled stall must announce the outcome session detail reports')
-      .toMatch(/stall === 'settled'[\s\S]*markStreaming\(false, turnOutcomeOf\(d\.last_turn_outcome\)\)/)
+      .toMatch(/stall === 'settled'[\s\S]*markStreaming\(false, turnOutcomeOf\(d\.run_state\.last_outcome\)\)/)
     // The transcript tail is replaced from history first, so a buffered coalescer tail must be
     // DISCARDED, not landed (`endTextRun` would write the old answer into the replaced tail).
     // Adopting the snapshot is what discards it: the run is re-based on the server's transcript,
@@ -126,9 +126,11 @@ describe('ChatPage wires the stall reading', () => {
     expect(body, 'a settled stall must never land the stale run').not.toMatch(/endTextRun\(\)/)
   })
 
-  it('feeds the reading the SERVER\'s running flag, not a client guess', () => {
+  it('feeds the reading the SERVER\'s run state, not a client guess', () => {
     const body = reconcilerBody(CHAT_PAGE)
-    expect(body, 'serverRunning must come from session detail').toMatch(/serverRunning:\s*!!d\.running/)
-    expect(body, 'serverPendingApproval must come from session detail').toMatch(/serverPendingApproval:\s*!!d\.pending_approval/)
+    expect(body, 'serverRunning must come from session detail').toMatch(/serverRunning:\s*!!d\.run_state\.turn\b/)
+    // A turn waiting on her OK is its run state's phase: the detail's own `pending_approval` flag
+    // is gone with the others.
+    expect(body, 'serverPendingApproval must come from session detail').toMatch(/serverPendingApproval:\s*d\.run_state\.phase === 'approval'/)
   })
 })

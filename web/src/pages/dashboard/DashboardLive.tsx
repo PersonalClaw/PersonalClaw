@@ -236,8 +236,9 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
     loadTasks(); loadSchedule(); loadStatus(); loadDiscover()
   }, [loadApprovals, loadInbox, loadProposals, loadLoops, loadTasks, loadSchedule, loadStatus, loadDiscover])
 
-  // Coalesce high-frequency work/status signals. `chat_status`/`sessions` fire on
-  // every turn lifecycle change — during active streaming that's many events/sec —
+  // Coalesce high-frequency work/status signals. `work_phase`/`sessions` fire on
+  // every turn lifecycle change — during active streaming that's many events/sec, and a
+  // running turn's phase is said again every fifteen seconds —
   // and `update_progress` steps through the self-update pipeline (its step DISPLAY
   // is the shell-level UpdateProgressOverlay; here it's only a status-refetch nudge).
   // Debounce the loops+status refetch so a burst collapses into one call (~600ms
@@ -283,7 +284,7 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
     }
     // Loop / run progress + session lifecycle nudges refresh the work + status views
     // (debounced — these can fire rapidly during streaming).
-    else if (t === 'update_progress' || t === 'chat_status' || t === 'sessions' || t.startsWith('subagent')) {
+    else if (t === 'update_progress' || t === 'work_phase' || t === 'sessions' || t.startsWith('subagent')) {
       refreshWork()
     }
   }, [soon, loadApprovals, loadInbox, loadLoops, loadTasks, loadSchedule, refreshWork])

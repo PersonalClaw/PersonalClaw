@@ -6,7 +6,10 @@ Two pieces of dead weight are gone, and these censuses keep them gone:
   client read it: the dashboard, the desktop shell and the phone page dispatch on frame types,
   and none of them names this one. The socket's keep-alive is aiohttp's own ping
   (``web.WebSocketResponse(heartbeat=30)`` in ``dashboard/ws.py``), so the frame kept nothing
-  alive either.
+  alive either. What says a running turn is alive is its phase, said again on the gateway's
+  clock (``chat_phase``).
+* A turn's free-text ``chat_status`` ("Thinking…") and its ``turn_steerable`` are gone too: what
+  a turn is doing, and whether it takes a steer, are fields of the one ``work_phase`` frame.
 * ``DefaultDialect.select_allow_option_id`` took a ``prefer_always`` flag that no caller ever
   passed. Its one caller approves a single pending call, so the once option is the one sent.
 """
@@ -18,6 +21,7 @@ import re
 from pathlib import Path
 
 import source_index
+from table_rows import row
 
 from personalclaw.acp.dialect import DefaultDialect
 
@@ -49,23 +53,31 @@ def _client_sources() -> list[Path]:
     return sorted(out)
 
 
-def test_no_turn_sends_a_heartbeat_frame() -> None:
+#: The frames retired with nothing left reading them.
+RETIRED = ["heartbeat", "chat_status", "turn_steerable"]
+
+
+def test_no_turn_sends_a_retired_frame(subtests) -> None:
     sent: set[str] = set()
     for p in _python_sources():
         sent.update(_SENT.findall(source_index.text(p)))
     # Positive control: the census sees the frames a turn really sends.
-    assert {"chat_done", "chat_chunk", "tool_call"} <= sent, sorted(sent)
-    assert "heartbeat" not in sent
+    assert {"chat_done", "chat_chunk", "tool_call", "work_phase"} <= sent, sorted(sent)
+    for frame in RETIRED:
+        with row(subtests, frame=frame):
+            assert frame not in sent
 
 
-def test_no_client_reads_a_heartbeat_frame() -> None:
-    literal = re.compile(r"""["'`]heartbeat["'`]""")
+def test_no_client_reads_a_retired_frame(subtests) -> None:
     dispatch = re.compile(r"""["'`]chat_done["'`]""")
-    sources = _client_sources()
+    sources = {p: p.read_text(encoding="utf-8") for p in _client_sources()}
     # Positive control: the scan reads the files that dispatch on frame types.
-    assert any(dispatch.search(p.read_text(encoding="utf-8")) for p in sources)
-    readers = [str(p.relative_to(_REPO)) for p in sources if literal.search(p.read_text("utf-8"))]
-    assert readers == []
+    assert any(dispatch.search(text) for text in sources.values())
+    for frame in RETIRED:
+        literal = re.compile(rf"""["'`]{frame}["'`]""")
+        with row(subtests, frame=frame):
+            readers = [str(p.relative_to(_REPO)) for p, t in sources.items() if literal.search(t)]
+            assert readers == []
 
 
 def test_approving_sends_the_once_option_and_takes_no_preference() -> None:

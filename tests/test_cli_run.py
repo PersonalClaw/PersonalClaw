@@ -415,7 +415,7 @@ async def test_a_run_authenticates_every_request_with_the_header_and_no_url_toke
 def test_streaming_json_emits_only_the_three_named_frames(capsys):
     c = cli_run._Collector("inbound:cli:x", "streaming-json")
     c.feed({"type": "chat_chunk", "data": {"session": "inbound:cli:x", "content": "hi"}})
-    c.feed({"type": "chat_status", "data": {"session": "inbound:cli:x", "status": "Thinking…"}})
+    c.feed({"type": "work_phase", "data": {"session": "inbound:cli:x", "phase": "thinking"}})
     c.feed({"type": "chat_done", "data": {"session": "inbound:cli:x"}})
     lines = [json.loads(ln) for ln in capsys.readouterr().out.strip().splitlines()]
     assert [d["type"] for d in lines] == ["chat_chunk", "chat_done"]

@@ -24,7 +24,7 @@ import { InlineError } from '../../ui/InlineError'
 import { StatusPill } from '../../ui/StatusPill'
 import { WorkspacePicker } from '../code/WorkspacePicker'
 import { useWorkspaceMissing } from '../../lib/useWorkspaceMissing'
-import { api, ApiError, MAX_NAME_LEN, type ProjectImportResult, type ProjectItem, type TaskListItem, type LoopKind, type TaskItem, type FsEntry, type WorkRow, type WorkState, type WorkOutcome, type WorkBoard, type ProjectKnowledgeItem, type SharingPolicy } from '../../lib/api'
+import { api, ApiError, MAX_NAME_LEN, type ProjectImportResult, type ProjectItem, type TaskListItem, type LoopKind, type TaskItem, type FsEntry, type WorkRow, type WorkState, type WorkOutcome, type WorkBoard, type ProjectKnowledgeItem, type SharingPolicy, type RunState } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { downloadFrom } from '../../lib/download'
 import { DEFAULT_PROJECT_KEY, useDefaultProject } from '../../lib/defaultProject'
@@ -306,7 +306,7 @@ function ProjectListPage({ onOpen, onOpenLoops, query, setQuery }: { onOpen: (id
  *  (loops / code projects / chats / artifacts) — enough to decide whether to
  *  dive into the dedicated page. */
 function ProjectPeekBody({ id, project, onOpen }: { id: string; project: ProjectItem | null; onOpen: () => void }) {
-  const [linked, setLinked] = useState<{ loops: { id: string; name: string; status: string }[]; code: { id: string; name: string; status: string }[]; chats: { key: string; title: string; running: boolean }[]; artifacts: { slug: string; name: string; kind: string }[]; knowledge: ProjectKnowledgeItem[] } | null>(null)
+  const [linked, setLinked] = useState<{ loops: { id: string; name: string; status: string }[]; code: { id: string; name: string; status: string }[]; chats: { key: string; title: string; run_state: RunState }[]; artifacts: { slug: string; name: string; kind: string }[]; knowledge: ProjectKnowledgeItem[] } | null>(null)
   const [taskLists, setTaskLists] = useState<TaskListItem[]>([])
   useEffect(() => {
     let alive = true
@@ -391,7 +391,7 @@ function ProjectPeekBody({ id, project, onOpen }: { id: string; project: Project
                     <div key={c.key} className="flex items-center gap-2 rounded-md bg-surface-container px-m py-1.5">
                       <MessageSquare size={13} className="shrink-0 text-on-surface-low" />
                       <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]">{c.title || c.key}</span>
-                      {c.running && <span className="shrink-0 text-primary text-[0.75rem]">running</span>}
+                      {c.run_state.turn && <span className="shrink-0 text-primary text-[0.75rem]">running</span>}
                     </div>
                   ))}
                   <MoreRow total={linked.chats.length} shown={8} />

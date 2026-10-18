@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { INFO_NOTICE_MS } from '../../ui/composer/ComposerNotice'
+import { runState } from '../../test/runState'
 
 // ── An error above the chat composer stays until it is dismissed or the user sends again ─────
 //
@@ -127,7 +128,7 @@ async function open(draft = '') {
   await waitFor(() => expect(h.detailCalls.length).toBeGreaterThanOrEqual(1))
   await act(async () => {
     h.detailCalls[0].resolve({
-      key: SESSION, title: SESSION, messages: TURNS, running: false, queue: [],
+      key: SESSION, title: SESSION, messages: TURNS, run_state: runState(), queue: [],
       task_mode: 'agent', approval: 'normal', memory_mode: 'persistent',
     })
   })

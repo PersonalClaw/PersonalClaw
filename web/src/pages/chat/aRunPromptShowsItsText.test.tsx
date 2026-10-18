@@ -3,6 +3,7 @@ import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { hydrateTurns, ranPromptOf, type HistMsg } from './chatTypes'
 import { MessageUser } from '../../ui/chat/MessageUser'
+import { runState } from '../../test/runState'
 
 // ── A message that ran a saved prompt shows the prompt's text, folded and labelled as the prompt's
 //
@@ -116,7 +117,7 @@ afterEach(() => { vi.unstubAllGlobals() })
 
 function openChat(messages: unknown[]) {
   h.chatSessionDetail.mockReset().mockResolvedValue({
-    key: 'chat-4-x', title: 'Handoff', messages, running: false, queue: [],
+    key: 'chat-4-x', title: 'Handoff', messages, run_state: runState({ session: 'chat-4-x' }), queue: [],
     task_mode: 'agent', approval: 'normal', memory_mode: 'persistent',
   })
   render(
@@ -154,7 +155,7 @@ describe('the chat', () => {
     openChat([{ role: 'user', content: '@handoff', ts: '2026-10-02T02:25:00Z' }])
     await waitFor(() => expect(screen.getByText('@handoff')).toBeTruthy())
     h.chatSessionDetail.mockResolvedValue({
-      key: 'chat-4-x', title: 'Handoff', running: false, queue: [],
+      key: 'chat-4-x', title: 'Handoff', run_state: runState({ session: 'chat-4-x' }), queue: [],
       task_mode: 'agent', approval: 'normal', memory_mode: 'persistent',
       messages: [
         { role: 'user', content: '@handoff', ts: '2026-10-02T02:25:00Z', meta: { ran_prompt: RAN } },

@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
 import { gotoRoute } from './helpers'
+import { idleRunState } from '../src/lib/workPhase'
 
 // ── THE CHAT HEADER NEVER OVERLAPS ITSELF, AT ANY WIDTH ─────────────────────────────────────────
 //
@@ -42,7 +43,7 @@ const DETAIL = {
     { role: 'user', content: 'Plan the launch week in detail.', ts: '2026-09-26T09:00:00+00:00' },
     { role: 'assistant', content: 'Here is the plan, day by day.', ts: '2026-09-26T09:00:20+00:00' },
   ],
-  running: false,
+  run_state: idleRunState(KEY),
   queue: [],
   task_mode: 'agent',
   approval: 'normal',

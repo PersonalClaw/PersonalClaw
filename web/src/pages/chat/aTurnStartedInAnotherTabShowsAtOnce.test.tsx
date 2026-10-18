@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act } from '@testing-library/react'
+import { runState, runningState } from '../../test/runState'
 
 // ── A chat open in a second tab shows a turn the moment it starts ──────────────────────────────
 //
@@ -8,12 +9,12 @@ import { render, screen, waitFor, act } from '@testing-library/react'
 // frame — a word of the reply, a thought, a tool card — so while the model had not started
 // answering it showed nothing of the turn at all: not the question, not "Thinking…", not Stop.
 // A local model busy with other work can take minutes to say its first word, or time out first.
-// The turn's opening status line ("Thinking…") is sent as the turn starts, so the other tab joins
-// on it.
+// The turn's phase is sent the moment the turn is accepted ("Waiting to start"), so the other tab
+// joins on it.
 
 const h = vi.hoisted(() => {
   const idle = {
-    key: 'chat-9-x', title: 'chat-9-x', running: false,
+    key: 'chat-9-x', title: 'chat-9-x', get run_state() { return runState({ session: 'chat-9-x' }) },
     messages: [
       { role: 'user', content: 'earlier question', ts: '2026-09-30T09:00:00Z' },
       { role: 'assistant', content: 'earlier answer', ts: '2026-09-30T09:00:05Z' },
@@ -101,13 +102,13 @@ async function openIdle() {
 describe('a turn another tab started in this chat', () => {
   it('shows its question and Stop as soon as it starts, before the model says a word', async () => {
     await openIdle()
-    // All the gateway has sent of the turn so far: its opening status. No answer frame yet.
-    pushFrame('chat_status', { session: 'chat-9-x', status: 'Thinking…' })
+    // All the gateway has sent of the turn so far: its phase. No answer frame yet.
+    pushFrame('work_phase', { ...runningState({ session: 'chat-9-x', phase: 'queued', line: 'Waiting to start' }) })
     await waitFor(() => expect(h.detailCalls.length).toBe(2))
     await act(async () => {
       h.detailCalls[1].resolve({
         ...h.idle,
-        running: true,
+        run_state: runningState(),
         messages: [...h.idle.messages, { role: 'user', content: 'which stage is the run on?', ts: '2026-09-30T09:05:00Z' }],
       })
     })
@@ -117,7 +118,15 @@ describe('a turn another tab started in this chat', () => {
 
   it('reads nothing for a turn in another chat', async () => {
     await openIdle()
-    pushFrame('chat_status', { session: 'chat-3-other', status: 'Thinking…' })
+    pushFrame('work_phase', { ...runningState({ session: 'chat-3-other' }) })
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
+    expect(h.detailCalls.length).toBe(1)
+    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull()
+  })
+
+  it('reads nothing for a phase that names no running turn: the last frame of one that ended', async () => {
+    await openIdle()
+    pushFrame('work_phase', { ...runState({ session: 'chat-9-x', phase: 'done', line: 'Done in 3 seconds', seq: 7 }) })
     await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
     expect(h.detailCalls.length).toBe(1)
     expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull()

@@ -412,7 +412,8 @@ async def api_projects_linked(request: web.Request) -> web.Response:
                 {
                     "key": s.key,
                     "title": getattr(s, "title", "") or s.key,
-                    "running": bool(getattr(s, "running", False)),
+                    # What its turn is doing, as the chat list serves it: its last phase frame.
+                    "run_state": s.run_state,
                 }
             )
     except Exception:

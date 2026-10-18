@@ -178,7 +178,7 @@ class TestWsNormalUserExperience:
         state.register_ws(ws)
 
         # First broadcast — alive, receives message
-        state.broadcast_ws("chat_status", {"session": "s1", "status": "Thinking…"})
+        state.broadcast_ws("work_phase", {"session": "s1", "phase": "thinking", "line": "Thinking"})
         assert ws.send_str.call_count == 1
         assert ws in state._ws_clients
 

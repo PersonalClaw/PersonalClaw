@@ -902,6 +902,7 @@ async def api_send_message(request: web.Request) -> web.Response:
                         _cls = json.loads(inject_cls)
                         _cls["queue_id"] = qid
                         session.append("queued", wrapped, json.dumps(_cls))
+                        state.say_run_state(session)  # one more message waits behind the turn
                         state.push_sessions_update()
                     else:
                         # circular import: chat_runner imports from

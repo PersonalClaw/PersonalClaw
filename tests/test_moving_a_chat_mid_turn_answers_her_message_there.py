@@ -347,15 +347,16 @@ async def test_a_change_between_turns_applies_at_once_and_says_nothing(world):
 
 @pytest.mark.asyncio
 async def test_a_turn_whose_runtime_takes_no_steer_says_so(world):
-    """An agent CLI that cannot be handed a message mid-turn is not offered one: the chat serves
-    `steerable: false` while its turn runs, so the composer says Queue, not Steer."""
+    """An agent CLI that cannot be handed a message mid-turn is not offered one: the chat's run
+    state says `steerable: false` while its turn runs, so the composer says Queue, not Steer."""
     w = world
     w.start()
     await w.asked()
     detail = await (await w.client.get(f"/api/chat/sessions/{CHAT}")).json()
-    assert detail["running"] is True
-    assert detail["steerable"] is False
-    assert w.frames_of("turn_steerable")[-1] == {"session": CHAT, "steerable": False}
+    assert detail["run_state"]["turn"] is not None
+    assert detail["run_state"]["steerable"] is False
+    last = w.frames_of("work_phase")[-1]
+    assert (last["session"], last["turn"] is not None, last["steerable"]) == (CHAT, True, False)
 
 
 # ── A runtime that takes steers: what the chat says follows the turn ───────────────────────────
@@ -408,16 +409,18 @@ async def test_the_chat_says_its_turn_takes_a_steer_only_while_that_turn_runs(tm
             if "req-1" in session._approval_futures:
                 break
             await asyncio.sleep(0.01)
-        running = await (await http.get("/api/chat/sessions/chat-steer-1")).json()
-        assert running["running"] is True and running["steerable"] is True
-        said = [d["steerable"] for k, d in frames if k == "turn_steerable"]
-        assert said == [True]
+        running = (await (await http.get("/api/chat/sessions/chat-steer-1")).json())["run_state"]
+        assert running["turn"] is not None and running["steerable"] is True
+        said = [d["steerable"] for k, d in frames if k == "work_phase"]
+        assert said[-1] is True, said
 
         state.decide_session_approval(session, "req-1", "approved", by=YOU)
         await asyncio.wait_for(session.task, timeout=10)
-        idle = await (await http.get("/api/chat/sessions/chat-steer-1")).json()
-        assert idle["running"] is False and idle["steerable"] is False
-        assert [d["steerable"] for k, d in frames if k == "turn_steerable"] == [True, False]
+        idle = (await (await http.get("/api/chat/sessions/chat-steer-1")).json())["run_state"]
+        assert idle["turn"] is None and idle["steerable"] is False
+        said = [(d["turn"] is not None, d["steerable"]) for k, d in frames if k == "work_phase"]
+        assert all(runs for runs, steers in said if steers), f"a steer offered with no turn: {said}"
+        assert said[-1] == (False, False), said
 
 
 # ── How a moved turn ends: its answer stands, or her message is asked again once ───────────────

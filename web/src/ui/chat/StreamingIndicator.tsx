@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { Spark } from '../Spark'
 import { spring, physics } from '../../design/motion'
+import { phaseLabel, type WorkPhase } from '../../lib/workPhase'
 
 const CURATED_PHRASES = [
   'Connecting the dots…',
@@ -15,43 +16,35 @@ const CURATED_PHRASES = [
 
 const ROTATION_MS = 2500
 
-type Phase = 'thinking' | 'working' | 'responding'
-
 interface Props {
-  statusText: string
-  activity: string | null
+  /** The turn's phase, as the gateway measured it (`work_phase`); `null` until it has said one, for
+   *  a turn this page has just sent: accepted, not started yet. */
+  phase: WorkPhase | null
+  /** The gateway's line for the phase ("Searching your knowledge", the tool's own label). */
+  line: string
 }
 
-export function StreamingIndicator({ statusText, activity }: Props) {
+/** The chat's indicator for a turn that has not shown anything yet: the phase's own word, and the
+ *  gateway's line when it says more than that word does. Nothing here is read out of the words: a
+ *  step whose label mentions thinking is still the step it is. */
+export function StreamingIndicator({ phase, line }: Props) {
   const reduce = useReducedMotion()
-  const phase = derivePhase(statusText)
-  const [sentence, setSentence] = useState<string>(() => activity || CURATED_PHRASES[0])
+  const label = phaseLabel(phase ?? 'queued')
+  const says = line.trim() && line.trim().toLowerCase() !== label.toLowerCase() ? line.trim() : null
+  const [sentence, setSentence] = useState<string>(() => says || CURATED_PHRASES[0])
   const curatedIdx = useRef(0)
-  const lastActivity = useRef<string | null>(null)
 
   useEffect(() => {
-    if (activity && activity !== lastActivity.current) {
-      lastActivity.current = activity
-      setSentence(activity)
+    if (says) {
+      setSentence(says)
       return
     }
     const id = setInterval(() => {
-      if (lastActivity.current && Date.now() - (activityTs.current ?? 0) < ROTATION_MS * 1.5) return
       curatedIdx.current = (curatedIdx.current + 1) % CURATED_PHRASES.length
       setSentence(CURATED_PHRASES[curatedIdx.current])
-      lastActivity.current = null
     }, ROTATION_MS)
     return () => clearInterval(id)
-  }, [activity])
-
-  const activityTs = useRef<number>(Date.now())
-  useEffect(() => { if (activity) activityTs.current = Date.now() }, [activity])
-
-  const label = useMemo(() => {
-    if (phase === 'responding') return 'Responding'
-    if (phase === 'working') return 'Working'
-    return 'Thinking'
-  }, [phase])
+  }, [says])
 
   return (
     <motion.div
@@ -74,12 +67,8 @@ export function StreamingIndicator({ statusText, activity }: Props) {
       </div>
 
       <div className="flex min-w-0 flex-col gap-xs">
-        {/* State label with coral text shimmer */}
-        <span
-          data-type="label-m"
-          className="text-shimmer-primary"
-          aria-live="polite"
-        >
+        {/* The phase's own word, with coral text shimmer */}
+        <span data-type="label-m" data-phase-label className="text-shimmer-primary" aria-live="polite">
           {label}
         </span>
 
@@ -89,7 +78,7 @@ export function StreamingIndicator({ statusText, activity }: Props) {
             <motion.p
               key={sentence}
               data-type="body-m"
-              className="absolute inset-x-0 text-on-surface-low"
+              className="absolute inset-x-0 truncate text-on-surface-low"
               initial={reduce ? { opacity: 0 } : { rotateX: 90, opacity: 0, y: 4 }}
               animate={reduce ? { opacity: 1 } : { rotateX: 0, opacity: 1, y: 0 }}
               exit={reduce ? { opacity: 0 } : { rotateX: -90, opacity: 0, y: -4 }}
@@ -103,11 +92,4 @@ export function StreamingIndicator({ statusText, activity }: Props) {
       </div>
     </motion.div>
   )
-}
-
-function derivePhase(statusText: string): Phase {
-  const s = statusText.toLowerCase()
-  if (!s || s.includes('think')) return 'thinking'
-  if (s.includes('respond') || s.includes('writing') || s.includes('streaming')) return 'responding'
-  return 'working'
 }

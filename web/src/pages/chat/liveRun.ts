@@ -5,7 +5,7 @@
  *  `new` → `chat/<key>`, which re-keys `ChatSession` and REMOUNTS it. The
  *  replacement instance's `streaming` was `useState(false)` while the run its own
  *  predecessor had just dispatched was still live, so for one async round trip —
- *  until the mount load's `d.running` came back — the composer's action button read
+ *  until the mount load's run state came back — the composer's action button read
  *  **"Send message"**: an idle state it was not in.
  *
  *  `resolveSendButton` was already correct (it re-labels to "Steer — send into the

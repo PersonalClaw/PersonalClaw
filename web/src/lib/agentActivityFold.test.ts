@@ -4,6 +4,7 @@ import {
   foldSessions, foldSubagents,
 } from './useAgentActivity'
 import type { ChatSessionSummary, Loop, PendingApproval, SpawnedAgent } from './api'
+import { endedState, runState, runningState } from '../test/runState'
 
 // ── The AgentActivityFeed fold ───────────────────────
 //
@@ -26,7 +27,7 @@ const loop = (over: Partial<Loop> = {}): Loop => ({
 } as Loop)
 
 const session = (over: Partial<ChatSessionSummary> = {}): ChatSessionSummary => ({
-  key: 's1', title: 'A chat', messages: 4, ...over,
+  key: 's1', title: 'A chat', messages: 4, run_state: runState(), ...over,
 })
 
 const sub = (over: Partial<SpawnedAgent> = {}): SpawnedAgent => ({
@@ -45,7 +46,7 @@ const SEEDED = {
     loop({ id: 'ask', status: 'needs_input', name: 'Needs me' }),
     loop({ id: 'dead', status: 'failed', name: 'Broke' }),
   ],
-  sessions: [session({ key: 'live', running: true, title: 'Live chat' }), session({ key: 'quiet' })],
+  sessions: [session({ key: 'live', run_state: runningState(), title: 'Live chat' }), session({ key: 'quiet' })],
   subagents: [sub({ id: 'busy' }), sub({ id: 'done', done: true })],
   approvals: [] as PendingApproval[],
 }
@@ -120,7 +121,15 @@ describe('waiting_approval is reachable, and an approval outranks a busy status'
 
   it('a running chat session with a pending approval is waiting_approval, not working', () => {
     const blocked = approvalSessions([approval('live')])
-    expect(foldSessions([session({ key: 'live', running: true })], blocked)[0].state).toBe('waiting_approval')
+    expect(foldSessions([session({ key: 'live', run_state: runningState() })], blocked)[0].state).toBe('waiting_approval')
+  })
+
+  it('a running chat reads as its phase says: one asking her a question needs input', () => {
+    const asking = session({ key: 'ask', run_state: runningState({ phase: 'input', line: 'Asks: Which branch?' }) })
+    const ended = session({ key: 'ended', run_state: endedState('error') })
+    expect(foldSessions([asking, ended], new Set()).map((e) => [e.id, e.state])).toEqual([
+      ['session:ask', 'needs_input'], ['session:ended', 'idle'],
+    ])
   })
 
   it('an approval on an unrelated session does not block anyone', () => {
@@ -145,7 +154,7 @@ describe('chat sessions: live always, quiet ones bounded', () => {
     const quiet = Array.from({ length: IDLE_SESSION_LIMIT + 6 }, (_, i) =>
       session({ key: `q${i}`, title: `Quiet ${i}`, last_activity_at: i }))
     const out = foldSessions(
-      [...quiet, session({ key: 'live', running: true }), session({ key: 'held' })],
+      [...quiet, session({ key: 'live', run_state: runningState() }), session({ key: 'held' })],
       approvalSessions([approval('held')]),
     )
     expect(out.find((e) => e.id === 'session:live')).toBeTruthy()
