@@ -13,18 +13,23 @@ import io
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 MARKER = b"ENVIRONMENT, NOT POLICY"
 ARTIFACT_NAME = "junit-browse-live"
 MAX_ARCHIVE_BYTES = 8 * 1024 * 1024
 MAX_JUNIT_BYTES = 8 * 1024 * 1024
+#: The waits before the second and third try of a read that hit a 5xx, a dropped connection or a
+#: timeout: three tries in all. A 4xx is never retried, and a read that never succeeds is "could
+#: not measure" (exit 2), never a finding.
+RETRY_WAITS: tuple[float, ...] = (2, 8)
 
 
 class ObservationError(RuntimeError):
@@ -68,12 +73,29 @@ class Observation:
     quarantined: bool
 
 
+def _transient(exc: BaseException) -> bool:
+    """A server error, a dropped connection or a timeout: worth one more try. A 4xx is an
+    answer (the path, the token or the rate), so it is never retried."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code >= 500
+    return isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError))
+
+
 class GitHubApi:
-    def __init__(self, repository: str, token: str, api_root: str) -> None:
+    def __init__(
+        self,
+        repository: str,
+        token: str,
+        api_root: str,
+        *,
+        opener: Any = None,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self.repository = repository
         self.token = token
         self.api_root = api_root.rstrip("/")
-        self.opener = urllib.request.build_opener(_CrossOriginRedirectHandler())
+        self.opener = opener or urllib.request.build_opener(_CrossOriginRedirectHandler())
+        self.sleep = sleep
 
     def _read(self, url: str, limit: int) -> bytes:
         request = urllib.request.Request(
@@ -84,11 +106,20 @@ class GitHubApi:
                 "X-GitHub-Api-Version": "2022-11-28",
             },
         )
-        try:
-            with self.opener.open(request, timeout=30) as response:
-                payload = response.read(limit + 1)
-        except (urllib.error.URLError, TimeoutError) as exc:
-            raise ObservationError(f"GitHub API request failed for {url}: {exc}") from exc
+        tries = len(RETRY_WAITS) + 1
+        for attempt in range(tries):
+            try:
+                with self.opener.open(request, timeout=30) as response:
+                    payload = response.read(limit + 1)
+                break
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+                if not _transient(exc):
+                    raise ObservationError(f"GitHub API read of {url} was refused: {exc}") from exc
+                if attempt == tries - 1:
+                    raise ObservationError(
+                        f"GitHub API read of {url} failed after {tries} tries: {exc}"
+                    ) from exc
+                self.sleep(RETRY_WAITS[attempt])
         if len(payload) > limit:
             raise ObservationError(f"GitHub API response exceeded {limit} bytes: {url}")
         return payload
@@ -199,7 +230,9 @@ def threshold_reached(observations: list[Observation], window: int, threshold: i
     return len(recent) == window and sum(item.quarantined for item in recent) >= threshold
 
 
-def main(argv: list[str]) -> int:
+def main(
+    argv: list[str], *, opener: Any = None, sleep: Callable[[float], None] = time.sleep
+) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repository", required=True)
     parser.add_argument("--workflow", default="ci.yml")
@@ -218,6 +251,8 @@ def main(argv: list[str]) -> int:
         args.repository,
         token,
         os.environ.get("GITHUB_API_URL", "https://api.github.com"),
+        opener=opener,
+        sleep=sleep,
     )
     try:
         observations = collect_observations(
