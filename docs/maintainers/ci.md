@@ -582,8 +582,7 @@ a helper script) can pass them; review is what holds those.
 Every record of CI history, per run and per test, is written by one component in one versioned
 schema: `tools/ci/telemetry.py` (`python -m tools.ci telemetry`), run by `ci-telemetry.yml` from
 main's own code. Nothing else writes durations, first results, reruns or quarantines, and
-the shard planner reads its durations from it. The weekly report that reads it is #3948's next
-change.
+the shard planner and the weekly report read it.
 
 - **`collect`** runs when a CI or Breadth run completes. It counts only main's own runs: a CI run
   of a commit landing on `main`, and Breadth's scheduled or dispatched run on `main`, from this
@@ -620,6 +619,21 @@ change.
   roughly 2.3 GB compressed.
 - **Not yet recorded:** `rerun_result` and `quarantined` are #3947's, `cache_hits` is #3909's,
   and `worker` and `position` are #3949's. No API reports them, so they are null, never guessed.
+
+`tools/ci/report.py` (`python -m tools.ci report --history <folder>`) reads only that schema
+and fails (exit 2) on a file in another schema or a newer version, and on a folder that does
+not exist; an empty folder is reported as no history. It prints the same table in a terminal
+and to the job summary, and `--json` writes the figures:
+
+- **the window:** the 90 days up to the newest run. While less than 90 days exist, it states the
+  exact window it read, and `window.mature` stays false, which keeps the 90-day replay and
+  maturity checks off;
+- **flake rates**, from first results: a first failure that a rerun then passed, over the test's
+  runs, rated only from 10 runs up. Two records of one test in one attempt count once. A skip or
+  an expected failure is not a run;
+- **durations:** each test's p50 and p99, the 20 slowest, and the week-over-week trend;
+- **scheduled runs:** from the newest slots file, each workflow's slots that ran, with the median
+  lag, and every missed or pending slot as a line of its own.
 
 ## Local runs
 
