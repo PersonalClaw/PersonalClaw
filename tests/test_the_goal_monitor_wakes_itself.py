@@ -156,6 +156,10 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr("personalclaw.workflows.store.config_dir", lambda: home)
     monkeypatch.setattr("personalclaw.workflows.leases.config_dir", lambda: home)
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: home)
+    # Each stage is a subagent the run polls once a tick (`_dispatched_poll_delay`), and nothing
+    # wakes the loop when one finishes; the shipped five seconds per check is the interval this
+    # test injects a short one for. The wakes themselves are answers and need no short tick.
+    monkeypatch.setattr("personalclaw.workflows.controller.TICK_WAKE_SECS", 0.05)
     return home
 
 

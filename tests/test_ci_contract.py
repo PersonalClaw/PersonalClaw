@@ -1822,6 +1822,241 @@ def no_cov_violations(tree: Tree) -> list[str]:
     ]
 
 
+# ── No fixed waits in tests ─────────────────────────────────────────────────────────────────
+
+#: The shortest constant sleep a test may not take unlisted. Below it a sleep is a yield or a
+#: short poll step; at it and above it is wall-clock time the suite pays on every leg.
+_SLEEP_FLOOR_SECS = 0.5
+
+#: Every constant sleep of the floor or more a test still takes, by ``(file, test)``, with why it
+#: has to be a sleep. Each one proves something does NOT happen within a window, or waits out a
+#: real clock the code under test reads; neither has an event a test could await instead.
+SLEEPS_THAT_STAY: dict[tuple[str, str], str] = {
+    (
+        "tests/test_a_bounded_turn_is_stopped_only_when_it_goes_quiet.py",
+        "test_the_owners_queued_message_is_not_bounded_even_when_it_goes_quiet",
+    ): "the silence the turn's bound measures has to pass, for the turn not to be stopped in it",
+    (
+        "tests/test_a_process_a_run_started_ends_with_the_run.py",
+        "test_a_daemon_a_loop_tasks_command_started_ends_with_the_loops_stop",
+    ): "proves the process is still alive after its cycle's turn ended: an absence",
+    (
+        "tests/test_a_stop_ends_the_turn_and_nothing_runs_for_it_after.py",
+        "test_an_agent_that_ignores_the_stop_runs_none_of_personalclaws_tools_after_it",
+    ): "proves nothing more is spawned after the Stop: an absence",
+    (
+        "tests/test_agent_clis_start_only_when_asked.py",
+        "test_a_gateway_start_starts_no_agent_cli",
+    ): "proves no agent CLI starts after the gateway's boot: an absence",
+    (
+        "tests/test_an_mcp_start_is_never_cut_off_part_way.py",
+        "test_a_start_meanwhile_waits_for_the_one_still_installing",
+    ): "proves the second start is still waiting while the install runs: an absence",
+    (
+        "tests/test_channel_receivers_follow_the_channel.py",
+        "test_a_start_that_outlives_its_bound_says_so",
+    ): "waits past the real start bound the health check reads",
+    (
+        "tests/test_memory_recall_answers_within_its_budget.py",
+        "test_a_recall_the_route_stopped_waiting_for_goes_no_further",
+    ): "proves the abandoned recall goes no further once its model answers: an absence",
+    (
+        "tests/test_one_store_connection_serves_many_threads.py",
+        "test_four_threads_on_one_store_read_whole_rows",
+    ): "the window four threads contend for one store connection in",
+    (
+        "tests/test_session_search.py",
+        "test_it_waits_while_a_foreground_request_holds_it",
+    ): "proves the indexer indexes nothing while a request holds it: an absence",
+    (
+        "tests/test_signed_in_devices.py",
+        "test_an_expired_sign_in_is_told_how_long_it_lasted",
+    ): "a one-second sign-in, stamped in whole seconds, has to run out on the real clock",
+    (
+        "tests/test_signed_in_devices.py",
+        "test_the_desktop_apps_own_window_whose_sign_in_ran_out_is_told_the_same",
+    ): "a one-second sign-in, stamped in whole seconds, has to run out on the real clock",
+    (
+        "tests/test_signed_in_devices.py",
+        "test_a_link_cannot_sign_a_browser_in_once_its_session_has_ended",
+    ): "a one-second sign-in, stamped in whole seconds, has to run out on the real clock",
+    (
+        "tests/test_snapshot.py",
+        "test_concurrent_snapshots_unique",
+    ): "snapshot names are stamped to the second, so the second snapshot needs the next second",
+}
+
+
+def _sleep_aliases(tree: ast.Module) -> set[str]:
+    """The names a module binds ``time`` and ``asyncio`` to, anywhere in it."""
+    names = {"time", "asyncio"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names |= {a.asname for a in node.names if a.asname and a.name in ("time", "asyncio")}
+    return names
+
+
+def _fixed_wait(node: ast.stmt, aliases: set[str]) -> float | None:
+    """The seconds of a statement that is a constant sleep of the floor or more, or None."""
+    if not isinstance(node, ast.Expr):
+        return None
+    call = node.value.value if isinstance(node.value, ast.Await) else node.value
+    if not (
+        isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "sleep"
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id in aliases
+        and call.args
+        and isinstance(call.args[0], ast.Constant)
+        and type(call.args[0].value) in (int, float)
+    ):
+        return None
+    secs = float(call.args[0].value)
+    return secs if secs >= _SLEEP_FLOOR_SECS else None
+
+
+def _test_waits(fn: ast.FunctionDef | ast.AsyncFunctionDef, aliases: set[str]) -> list[float]:
+    """The fixed waits a test's own body takes, in any block of it.
+
+    A sleep inside a function the test defines (a stub that plays a hang) or handed to another
+    call as a coroutine (``ensure_future(asyncio.sleep(999))``, a task the test cancels) is a
+    stand-in, not a wait the test pays, so it is not read.
+    """
+    waits: list[float] = []
+    todo: list[ast.stmt] = list(fn.body)
+    while todo:
+        stmt = todo.pop()
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        secs = _fixed_wait(stmt, aliases)
+        if secs is not None:
+            waits.append(secs)
+        for field in ("body", "orelse", "finalbody"):
+            todo += getattr(stmt, field, None) or []
+        for handler in getattr(stmt, "handlers", None) or []:
+            todo += handler.body
+        for case in getattr(stmt, "cases", None) or []:
+            todo += case.body
+    return waits
+
+
+def fixed_wait_violations(
+    root: Path, listed: dict[tuple[str, str], str] | None = None
+) -> list[str]:
+    """No test takes a constant ``time.sleep`` / ``asyncio.sleep`` of half a second or more
+    unless it is on :data:`SLEEPS_THAT_STAY` with its reason, and every listed site still sleeps.
+
+    A fixed wait is wall-clock time every leg pays, and under load it is a wait too short. A test
+    waits for the thing it is about instead: a run's status, a node's state, an event.
+    """
+    listed = SLEEPS_THAT_STAY if listed is None else listed
+    bad: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for path in sorted((root / "tests").rglob("*.py")):
+        rel = path.relative_to(root).as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        aliases = _sleep_aliases(tree)
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not fn.name.startswith("test_"):
+                continue
+            waits = _test_waits(fn, aliases)
+            if not waits:
+                continue
+            site = (rel, fn.name)
+            seen.add(site)
+            if site not in listed:
+                bad.append(
+                    f"{rel}::{fn.name} sleeps {max(waits):g}s: wait for what it is about, "
+                    "or list it in SLEEPS_THAT_STAY with why it has to be a sleep"
+                )
+    for site in sorted(set(listed) - seen):
+        bad.append(f"{site[0]}::{site[1]} is listed in SLEEPS_THAT_STAY but no longer sleeps")
+    for site, reason in sorted(listed.items()):
+        if not reason.strip():
+            bad.append(f"{site[0]}::{site[1]} is listed in SLEEPS_THAT_STAY with no reason")
+    return bad
+
+
+_SCAFFOLD_SLEEP = ("tests/test_waits.py", "test_it_must_wait")
+
+
+def _sleep_scaffold(root: Path) -> None:
+    """One listed test that sleeps, and tests whose stand-in sleeps are not waits."""
+    _write(
+        root,
+        _SCAFFOLD_SLEEP[0],
+        "import asyncio\nimport time\n\n\n"
+        "def test_it_must_wait():\n    time.sleep(1)\n\n\n"
+        "async def test_a_hang_is_played_by_a_stub():\n"
+        "    async def hang():\n        await asyncio.sleep(60)\n\n"
+        "    task = asyncio.ensure_future(asyncio.sleep(999))\n    task.cancel()\n\n\n"
+        "async def test_a_yield_is_not_a_wait():\n    await asyncio.sleep(0.05)\n",
+    )
+
+
+def _sleep_check(root: Path) -> list[str]:
+    if root == REPO:
+        return fixed_wait_violations(root)
+    return fixed_wait_violations(root, {_SCAFFOLD_SLEEP: "the scaffold's listed wait"})
+
+
+def _append(rel: str, text: str) -> Callable[[Path], None]:
+    def plant(root: Path) -> None:
+        path = root / rel
+        existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+        _write(root, rel, existing + text)
+
+    return plant
+
+
+FIXED_WAITS = Row(
+    name="no test takes an unlisted fixed wait of half a second or more",
+    check=_sleep_check,
+    scaffold=_sleep_scaffold,
+    controls=(
+        Control(
+            "a planted time.sleep(1) in a test module",
+            _append("tests/test_planted.py", "import time\n\n\ndef test_x():\n    time.sleep(1)\n"),
+            expect="tests/test_planted.py::test_x sleeps 1s",
+        ),
+        Control(
+            "a planted await asyncio.sleep(5) inside a with block",
+            _append(
+                "tests/test_planted.py",
+                "import asyncio\nimport contextlib\n\n\nasync def test_y():\n"
+                "    with contextlib.suppress(Exception):\n        await asyncio.sleep(5)\n",
+            ),
+            expect="test_y sleeps 5s",
+        ),
+        Control(
+            "a sleep through an alias",
+            _append(
+                "tests/test_planted.py", "import time as _t\n\n\ndef test_z():\n    _t.sleep(0.5)\n"
+            ),
+            expect="test_z sleeps 0.5s",
+        ),
+        _plant(
+            "a listed test that no longer sleeps",
+            _SCAFFOLD_SLEEP[0],
+            "    time.sleep(1)\n",
+            "    pass\n",
+            expect="no longer sleeps",
+        ),
+        Control(
+            "a short poll step passes",
+            _append(
+                "tests/test_planted.py",
+                "import asyncio\n\n\nasync def test_w():\n    await asyncio.sleep(0.4)\n",
+            ),
+            fails=False,
+        ),
+    ),
+)
+
+
 _CI = ".github/workflows/ci.yml"
 _BREADTH = ".github/workflows/breadth.yml"
 _DOCKER = ".github/workflows/docker-single-container.yml"
@@ -2855,6 +3090,7 @@ ROWS: tuple[Row, ...] = (
             Control("the coverage shard's --cov passes", _nothing, fails=False),
         ),
     ),
+    FIXED_WAITS,
 )
 
 

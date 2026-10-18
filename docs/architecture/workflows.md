@@ -35,6 +35,13 @@ while not terminal:
     apply results, persist state
 ```
 
+An answered gate, a Stop, a pause or a queued edit wakes a live loop at once (the
+controller's wake event, cleared at the start of each step under the lock), and a
+run that surfaces `needs_input` wakes a blocking caller at once. The tick
+(`TICK_WAKE_SECS`) stays the cadence for deadlines, holds, dispatched-stage polls
+and stall checks, and the backstop if a wake is ever missed. A wake only shortens
+a wait: the step under the lock is still the one writer.
+
 ## Module layout
 
 | Module | Job |

@@ -1934,6 +1934,10 @@ def pause_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:
             status=run.status.value,
         )
     store.request_pause(run_id)
+    controller = _live(run_id, supervisor)
+    if controller is not None:
+        # A live loop reads the intent on its next step; waking it makes that step now.
+        controller.wake()
     return _ok(run_id=run_id, pause_requested=True)
 
 

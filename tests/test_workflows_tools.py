@@ -654,12 +654,37 @@ class TestRuns:
 
 
 class TestObserve:
-    async def test_the_window_is_clamped(self) -> None:
+    async def test_the_window_is_clamped(self, monkeypatch) -> None:
         """An unbounded subscribe in a chat turn is a hang: the model waits, the user
         waits, and nothing says why."""
+        import time as real_time
+
+        class _Clock:
+            """`time` as the service sees it, its monotonic clock stepping 5 s per read, so the
+            clamped window passes in a few polls rather than in real seconds."""
+
+            def __init__(self) -> None:
+                self.now = real_time.monotonic()
+                self.reads: list[float] = []
+
+            def monotonic(self) -> float:
+                self.now += 5.0
+                self.reads.append(self.now)
+                return self.now
+
+            def __getattr__(self, name: str):
+                return getattr(real_time, name)
+
+        clock = _Clock()
+        monkeypatch.setattr(service, "time", clock)
         run = store.create(WorkflowRun(id="", workflow_name="w"))
         body = await service.observe(run.id, 10_000_000)
         assert body["window_ms"] == service.MAX_OBSERVE_MS and body["clamped"]
+        # The wait itself ran to the clamped window, not to the asked-for one: a 30 s window
+        # is a handful of 5 s reads, where an unclamped 10 000 s would have taken 2 000.
+        window = service.MAX_OBSERVE_MS / 1000
+        waited = clock.reads[-1] - clock.reads[0]
+        assert window <= waited <= window + 5.0, waited
 
     async def test_it_returns_early_on_a_terminal_run(self) -> None:
         run = store.create(WorkflowRun(id="", workflow_name="w", status=RunStatus.COMPLETE))

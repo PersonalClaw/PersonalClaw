@@ -159,7 +159,13 @@ def _recorded_sleeps(controller: RunController, monkeypatch: pytest.MonkeyPatch)
         seen.append(delay)
         return await real_sleep(0)
 
+    async def _fake_wait(delay: float) -> None:
+        # The idle branch's bounded wait (a wake can end it early): its delay is the observable.
+        seen.append(delay)
+        await real_sleep(0)
+
     monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
+    monkeypatch.setattr(controller, "_wait_for_wake", _fake_wait)
     return seen
 
 
