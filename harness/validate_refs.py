@@ -90,11 +90,11 @@ def collect_test_ids(files: list[str], *, timeout: int = 180) -> tuple[set[str],
     suite's: collecting the whole ``tests/`` tree for them took 75 s on a developer's machine
     and 136 s in an Ubuntu CI image (2,202 files, measured), and grows with every test added.
 
-    ``-o addopts=`` blanks the project's default addopts (``-n auto --cov …``) for this
-    run — those flags need the xdist/cov plugins and pull in worker processes we don't
-    want for a pure collect. Overriding addopts (rather than disabling plugins with
-    ``-p no:…``) is required: the addopts flags are still *parsed* even when the plugin is
-    disabled, so ``-p no:xdist`` alone leaves ``-n auto`` as an unrecognized argument.
+    ``-o addopts=`` blanks the project's default addopts (``--verbose``, ``--timeout`` …)
+    for this run, so a pure collect prints one node-id per line and carries no per-test
+    timeout. Overriding addopts (rather than disabling plugins with ``-p no:…``) keeps the
+    run valid whatever the addopts hold: a flag in them is still *parsed* when its plugin is
+    disabled, so ``-p no:timeout`` alone would leave ``--timeout`` an unrecognized argument.
     Modules that skip at collection time simply won't appear (the AST fallback in
     :func:`_node_id_matches` distinguishes those from a real dangling reference).
     """

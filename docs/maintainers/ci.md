@@ -246,9 +246,12 @@ of the same commit was red is the release gate's question (#3911), not this work
 - `tree-check` runs the previous commit's copy, read-only;
 - no `macos-14` leg anywhere (any size or case, in `runs-on` as a string, a list or a
   `{group, labels}` mapping, an expression's quoted literal, or any value of the matrix it
-  names), and no coverage on a push or pull request: per command, a root pytest (any `uv run`
-  spelling, or the root venv's `python -m pytest`) without the exact word `--no-cov` measures
-  coverage, because the addopts turn it on;
+  names), and no coverage on a push or pull request: per command, one that names `--cov` or
+  `--cov=…` measures coverage, and nothing else does, because the addopts measure none;
+- every pytest step that runs the suite names its worker count with `-n`: a step that takes a
+  split (`--splits` or `--group`), names no path, or names only `tests`. A step that names its
+  own files runs in one process, pytest's default;
+- no workflow command passes `--no-cov`, which would only undo a default that is not there;
 - `freshness` first and `report` last;
 - `NON_REUSABLE` matches the jobs;
 - the evidence is named by its digest and kept 90 days;

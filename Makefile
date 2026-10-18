@@ -71,9 +71,30 @@ lint:
 	$(PYTHON) -m mypy $(PKG) $(HARNESS) $(CI_TOOLS)
 	$(PYTHON) scripts/lint_bundled_apps.py $(PYTHON)
 
-## test: run pytest
+## test: run the whole pytest suite, one xdist worker per core, without coverage
+# pytest's own default (pyproject's addopts) is one process, so the suite's parallelism is
+# named here. `-n auto` honours PYTEST_XDIST_AUTO_NUM_WORKERS, which
+# docs/maintainers/local-pytest-determinism.md uses as its local cap. Add --cov=personalclaw
+# to measure coverage.
+#
+# worksteal (greedy per-test work distribution — the fastest balancer). The cross-worker
+# flakiness that once forced loadscope (#8/#10) is FENCED — not closed — by autouse fixtures
+# in tests/conftest.py that snapshot-and-restore process-global state around every test:
+# _reset_sel_singleton (the SecurityEventLog singleton), _isolate_real_home_writers (each
+# test's own home, which holds the cross-process single-flight lock dir),
+# _restore_pipeline_node_registry (the ingestion NODE_REGISTRY) and
+# _restore_local_model_registry (the local-model provider registry) — four of the 40 autouse
+# fixtures there.
+#
+# This is NOT a determinism guarantee and must not be read as one. The set grows as new
+# process-global state is found: #3124 added the third guard AFTER this comment previously
+# declared the class closed, following two CI shards going red on PRs whose diffs could not
+# own them. The fourth arrived the same way — a gateway-boot test enrolling every native model
+# app for the rest of its worker, which reddened an onboarding test one shard over with what
+# looked like an app name leaking into a core payload. So a red local run is not by itself
+# evidence of your own diff — see #684 before assuming it is.
 test:
-	$(PYTHON) -m pytest
+	$(PYTHON) -m pytest -n auto --dist worksteal
 
 ## test-e2e: run the BROWSER gate against an isolated gateway (axe-per-route a11y, PWA,
 ## visual regression, one real end-to-end chat turn). Deliberately NOT part of `make test`:

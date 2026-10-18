@@ -21,14 +21,15 @@ and no vendor SDK.
 
 ```bash
 pip install -e ".[dev]"
-python -m pytest -n 0 --no-cov tests/security/
+python -m pytest tests/security/
 ```
 
-`-n 0` is not required — the corpus is parallel-safe — but it keeps the
-integrity-race output readable. To run one class:
+This runs in one process, pytest's default here. The corpus is parallel-safe,
+so `-n auto` works too, but one process keeps the integrity-race output
+readable. To run one class:
 
 ```bash
-python -m pytest -n 0 --no-cov tests/security/ -k invisible-char
+python -m pytest tests/security/ -k invisible-char
 ```
 
 The corpus also runs unattended: `.github/workflows/breadth.yml` carries a
@@ -463,7 +464,7 @@ auditable rather than invisible. They are accepted, not unnoticed.
    with the class), `class`, `summary`, `expect`, and either `files` or `variants`.
 2. Point `expect` at an existing handler, or write a new one and register it in
    `HANDLERS`. An unregistered `expect` reds — deliberately.
-3. Run `python -m pytest -n 0 --no-cov tests/security/`.
+3. Run `python -m pytest tests/security/`.
 4. If the new case reveals a real bypass, it is a finding: fix the control in the same
    change, or record it under **Residual risks** above with the reasoning. A corpus
    case is never weakened to make the suite green.

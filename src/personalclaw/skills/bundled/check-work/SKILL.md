@@ -38,7 +38,7 @@ would read the same for any session is a tell that you skipped step 1.
 | Claim shape | Check shape |
 |---|---|
 | a file was written / edited | `test -e <path>`, then `grep -n '<the thing claimed>' <path>` |
-| a command passes | re-run that exact command (`make lint`, `python -m pytest -n 0 --no-cov <file>`) |
+| a command passes | re-run that exact command (`make lint`, `python -m pytest <file>`) |
 | an endpoint answers | call it (`curl -s localhost:<port>/api/...`) and read the body |
 | something was deleted / renamed | `grep -rn '<old name>' <tree>` returns nothing |
 | an artifact renders | fetch/open it and confirm the expected content is present |

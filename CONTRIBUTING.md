@@ -523,6 +523,9 @@ pytest -n 4 --dist worksteal                # the Python suite
 npm run typecheck:web && npm run test:web   # only if you touched web/
 ```
 
+A bare `pytest` runs in one process with no coverage, which suits a file or two and takes hours
+for the whole suite, so the suite names its workers. Coverage is opt-in: add `--cov=personalclaw`.
+
 When `lint` does fail in CI, a bot posts the exact fix as a PR comment — that
 works on fork PRs too, via a relay workflow, because CI itself is given a
 read-only token on a fork and cannot comment.

@@ -181,7 +181,7 @@ jobs:
         id: pytest
         if: ${{ steps.decide.outputs.run != 'false' }}
         continue-on-error: true
-        run: uv run pytest --no-cov -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration --junitxml=reports/junit-ubuntu.xml
+        run: uv run pytest -n auto --dist worksteal -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration --junitxml=reports/junit-ubuntu.xml
       - name: Upload JUnit results (ubuntu-24.04-3.13 · shard ${{ matrix.shard }})
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -293,7 +293,7 @@ jobs:
         id: pytest
         if: ${{ steps.decide.outputs.run != 'false' }}
         continue-on-error: true
-        run: uv run pytest --no-cov -n 2 -q --splits 6 --group ${{ matrix.shard }} --splitting-algorithm least_duration --junitxml=reports/junit-macos.xml
+        run: uv run pytest -n 2 --dist worksteal -q --splits 6 --group ${{ matrix.shard }} --splitting-algorithm least_duration --junitxml=reports/junit-macos.xml
       - name: Upload JUnit results (macos-26-3.12 · shard ${{ matrix.shard }})
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -404,7 +404,7 @@ jobs:
         id: pytest
         if: ${{ steps.decide.outputs.run != 'false' }}
         continue-on-error: true
-        run: uv run pytest --no-cov -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration --junitxml=reports/junit-arm.xml
+        run: uv run pytest -n auto --dist worksteal -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration --junitxml=reports/junit-arm.xml
       - name: Upload JUnit results (ubuntu-24.04-arm-3.13 · shard ${{ matrix.shard }})
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -505,7 +505,7 @@ jobs:
         id: pytest
         if: ${{ steps.decide.outputs.run != 'false' }}
         continue-on-error: true
-        run: uv run pytest --cov=personalclaw --splits 6 --group ${{ matrix.shard }} --splitting-algorithm least_duration --junitxml=reports/junit-coverage-shard.xml
+        run: uv run pytest -n auto --dist worksteal --cov=personalclaw --splits 6 --group ${{ matrix.shard }} --splitting-algorithm least_duration --junitxml=reports/junit-coverage-shard.xml
       - name: Upload JUnit results (coverage · shard ${{ matrix.shard }})
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -635,7 +635,7 @@ jobs:
     # The adversarial scanner corpus (five attack classes + the
     # scanned-bytes==installed-bytes race invariant + the red-on-weakness meta-test).
     # Its own job, not a line in the matrix, so a corpus regression is legible on its
-    # own; `-n 0` keeps the integrity-race output readable. Published methodology:
+    # own; one process, pytest's default, keeps the integrity-race output readable. Published methodology:
     # docs/security/scanner-testing.md.
     needs: [freshness]
     if: ${{ !cancelled() }}
@@ -672,7 +672,7 @@ jobs:
         id: pytest
         continue-on-error: true
         run: >
-          uv run pytest -n 0 --no-cov
+          uv run pytest
           --junitxml=reports/junit-security-corpus.xml
           tests/security
           tests/test_supply_chain_scanner.py
@@ -770,7 +770,7 @@ jobs:
       - name: pytest (canary shard ${{ matrix.shard }})
         id: pytest
         continue-on-error: true
-        run: uv run pytest --no-cov -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration --basetemp="$RUNNER_TEMP/pytest" --junitxml=reports/junit-canary.xml
+        run: uv run pytest -n auto --dist worksteal -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration --basetemp="$RUNNER_TEMP/pytest" --junitxml=reports/junit-canary.xml
       - name: Upload JUnit results (canary · shard ${{ matrix.shard }})
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

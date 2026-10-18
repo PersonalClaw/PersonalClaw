@@ -16,9 +16,10 @@ count printed while workers continue running.
 
 ## Local and CI invocation delta
 
-The local gate runs `.venv/bin/python -m pytest`, inheriting the repository
-addopts: coverage, `-n auto`, `--dist worksteal`, and a 120-second timeout.
-The worker cap resolves `auto` to three workers for these measurements.
+The local gate runs `make test`, which is `.venv/bin/python -m pytest -n auto
+--dist worksteal` with the repository addopts' 120-second timeout and no coverage.
+The worker cap resolves `auto` to three workers for these measurements. A bare
+`python -m pytest` names no workers, so it runs the suite in one process.
 
 CI does not run the same shape. The pull-request gate's `test-shard` (Ubuntu,
 Python 3.12) and `test-macos` (macOS 26, Python 3.13) jobs in `ci.yml` partition

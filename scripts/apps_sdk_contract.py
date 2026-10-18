@@ -237,7 +237,8 @@ def run_contract_tests(apps_dir: Path, *, install_deps: bool) -> list[str]:
         if install_deps and deps:
             subprocess.run(["uv", "pip", "install", "--python", sys.executable, *deps], check=True)
         # `-c os.devnull`: CI checks the apps out INSIDE this repo, where pytest would otherwise
-        # adopt core's pyproject (`-n auto`, coverage) as the apps' test config.
+        # adopt core's pyproject (its `testpaths`, `pythonpath` and addopts) as the apps' test
+        # config.
         proc = subprocess.run(
             [
                 sys.executable,
