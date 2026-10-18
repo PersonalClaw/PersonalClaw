@@ -122,6 +122,17 @@ source root itself" row of `tests/rails/test_ci_contract.py` fails on a test tha
 roots on its own. A test that must walk one itself goes in `NOT_THROUGH_THE_INDEX` in
 `tests/private_walkers.py`, by `file::function`, with the reason it cannot use the index.
 
+## A test that needs another timeout
+
+Every test runs under the suite's default cap, `--timeout` in `pyproject.toml`'s addopts. A
+test that needs another one says so with `@pytest.mark.timeout(N)` (or a module's `pytestmark`,
+or a conftest hook's `add_marker`), and lists that mark in `tests/timeout-marks.toml` with the
+cap and a one-line reason: what the test does that takes the time, and what it was measured at
+when that is known. The "every-timeout-mark-is-listed-with-its-reason" row of
+`tests/rails/test_ci_contract.py` fails on a mark the list lacks, an entry whose mark is gone, a
+cap that differs from its entry, and an entry with no reason. The cap is GitHub CI's: a busy
+laptop is not a reason to raise one. `tests/timeout_marks.py` says how a mark's site is named.
+
 ## Rails: `tests/rails`
 
 A rail checks the source tree rather than running the product: a census, a ratchet, a parity
