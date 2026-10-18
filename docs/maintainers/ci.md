@@ -117,7 +117,7 @@ id is accepted, and a shallow clone refuses, because it cannot show ancestry.
 
 ### The rows that hold it
 
-`tests/rails/test_ci_contract.py` holds three workflow rules, each with a planted violation per form:
+`tests/rails/test_ci_contract.py` holds five workflow rules, each with a planted violation per form:
 
 - No `pull_request_target` or `workflow_run` workflow checks out candidate code: a checkout of
   the pull request's or the run's head, a `refs/pull/` ref, `github.head_ref`, the pull
@@ -129,6 +129,27 @@ id is accepted, and a shallow clone refuses, because it cannot show ancestry.
 - Only `release.yml` holds a publishing permission (`contents`, `packages`, `id-token`,
   `attestations` or `deployments` write, or `write-all`) or any deployment environment. A new
   environment has to argue its way into `release.yml`.
+- No workflow that runs candidate code posts `merge-verdict`, the one check the default branch's
+  controller posts: no job whose id or name is `merge-verdict` (in any case, a matrix-built name
+  included), and no step, action input, key or workflow-level value that names it. A job name the
+  row cannot read (a matrix that is an expression, a matrix value that is one, any other
+  expression) is refused, since it could be `merge-verdict`. A trusted workflow, or a push to
+  `main`, may post it; that only the controller does is #3910's to hold once its workflow exists.
+- Every concurrency group a candidate's run joins, the workflow's and each job's (once per literal
+  matrix leg), keys on its pull request or its head. The row evaluates each group against the
+  runs of several unrelated candidates, each event as GitHub fills it in: two pull requests, two
+  forks with the same branch name, pushes to two feature branches, and the same pull requests
+  under `pull_request_target`, whose `github.ref` and `github.sha` are main's for every pull
+  request. It refuses a group two candidates share, in one workflow or across two, and one that
+  two runs for one head do not share: a second run, or a re-run (the same run id and commit, a
+  later `run_attempt`). A called workflow is held for its callers, and a `workflow_run` listener
+  of a candidate workflow is held to the first rule against each candidate's run. A context the
+  row does not model (`vars`, `inputs`, `needs`, an unreadable matrix) is refused, never read as
+  empty. A `github` property the row leaves out (`github.workflow`, `github.actor`, ...) is the
+  exception: it reads as empty, as GitHub reads a missing property, so the row does not hold a
+  group keyed on one. A `workflows:` entry of a listener is read as a glob, and a listener of a
+  `pull_request_target` workflow is held like one of a `pull_request` workflow. A push to a feature branch counts as the pull request whose head it is. A push to `main`
+  and a scheduled run are not a candidate's, so `main`'s own grouping is not this row's.
 
 Until a validator on the default branch runs the catalogue and this table, these rows run in the
 candidate's own suite, so a candidate could delete one.

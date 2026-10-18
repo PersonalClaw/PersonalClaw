@@ -16,6 +16,7 @@ control is one edit of one of them.
 from __future__ import annotations
 
 import ast
+import fnmatch
 import functools
 import json
 import re
@@ -5592,6 +5593,888 @@ QUARANTINE_IS_CAPPED_ASSIGNED_AND_EXPIRING = Row(
 )
 
 ROWS = (*ROWS, QUARANTINE_IS_CAPPED_ASSIGNED_AND_EXPIRING)
+
+
+# ── No candidate job posts the merge verdict (#3915) ──────────────────────────────────────────
+#
+# `merge-verdict` is the one check a pull request is to be required to pass, and only the default
+# branch's controller posts it (#3910). A workflow that runs a candidate's code
+# (`_runs_candidate_code`: a pull request's run, a push to a branch other than `main`, and every
+# workflow either calls) could post its own green under that name: as a job whose id or name it
+# is, or from a step that creates a check run or a commit status by that name. The row reads each
+# such workflow's keys and values for the name as a whole word, in any case, and resolves a job
+# name built from its matrix leg by leg. A name it cannot resolve (a matrix that is an expression,
+# a matrix value that is one, or any other expression) is refused: it could be `merge-verdict`.
+# A trusted workflow, and a push to `main`, may post it. That only the controller does is #3910's
+# to hold, once the controller's workflow exists.
+
+MERGE_VERDICT = "merge-verdict"
+_MERGE_VERDICT_WORD = re.compile(r"(?<![\w-])merge-verdict(?![\w-])", re.I)
+_MATRIX_REF = re.compile(r"\$\{\{\s*matrix\.(\w+)\s*\}\}")
+
+
+def _texts(value: object) -> Iterator[str]:
+    """Every key and value in a workflow's data, as text. A key PyYAML reads as a date or a
+    number is still a key, so it is read as text, never dumped."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            yield str(key)
+            yield from _texts(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _texts(item)
+    elif value is not None:
+        yield str(value)
+
+
+def _names_merge_verdict(value: object) -> bool:
+    return any(_MERGE_VERDICT_WORD.search(text) for text in _texts(value))
+
+
+def _unresolved_name(job: dict[str, Any]) -> str:
+    """Why a job's ``name`` cannot be read leg by leg, or ``""`` when every leg resolves."""
+    name = str(job.get("name", ""))
+    if "${{" not in name:
+        return ""
+    if "${{" in _MATRIX_REF.sub("", name):
+        return "an expression other than a matrix value"
+    return _matrix_gap(job, name)
+
+
+def _matrix_gap(job: dict[str, Any], text: str) -> str:
+    """Why ``text``'s ``${{ matrix.<key> }}`` cannot be read from a literal matrix, or ``""``."""
+    matrix = (job.get("strategy") or {}).get("matrix")
+    if not isinstance(matrix, dict):
+        return "a matrix that is an expression"
+    include = matrix.get("include", [])
+    if not isinstance(include, list):
+        return "an include that is an expression"
+    for key in _MATRIX_REF.findall(text):
+        values = matrix.get(key)
+        given = list(values) if isinstance(values, list) else []
+        given += [e[key] for e in include if isinstance(e, dict) and key in e]
+        if (values is not None and not isinstance(values, list)) or not given:
+            return f"matrix.{key}, which the matrix gives no literal value"
+        if any("${{" in str(v) for v in given):
+            return f"matrix.{key}, which the matrix gives as an expression"
+    return ""
+
+
+def merge_verdict_violations(tree: Tree) -> list[str]:
+    """No job of a workflow that runs candidate code is, or names, the merge verdict."""
+    workflows = [(name, wf if isinstance(wf, dict) else {}) for name, wf in _workflows(tree)]
+    candidates = _runs_candidate_code(workflows)
+    bad: list[str] = []
+    for name, workflow in workflows:
+        if name not in candidates:
+            continue
+        outside = {k: v for k, v in workflow.items() if k != "jobs"}
+        if _names_merge_verdict(outside):
+            bad.append(f"{name} runs candidate code and names {MERGE_VERDICT} outside its jobs")
+        for job_id, job in _trust_jobs(workflow).items():
+            where = f"{name}:{job_id}"
+            unresolved = _unresolved_name(job)
+            if unresolved:
+                bad.append(
+                    f"{where} runs candidate code under a name the row cannot read "
+                    f"({unresolved}), which could be {MERGE_VERDICT}"
+                )
+            names = [str(job_id)] + [
+                label for _runner, label in _legs(job, str(job.get("name", "")))
+            ]
+            if any(_MERGE_VERDICT_WORD.fullmatch(n.strip()) for n in names):
+                bad.append(f"{where} runs candidate code under the check name {MERGE_VERDICT}")
+            elif _names_merge_verdict({k: v for k, v in job.items() if k != "name"}):
+                bad.append(f"{where} runs candidate code and names {MERGE_VERDICT}")
+    return bad
+
+
+_CI = f"{_WORKFLOWS}/ci.yml"
+_JOBS = "\njobs:\n"
+_SHA40 = "0" * 40
+
+
+def _ci_adds_job(text: str) -> str:
+    return _JOBS + text
+
+
+_POSTED_CHECK_RUN = (
+    "  results:\n    runs-on: ubuntu-24.04\n    steps:\n"
+    "      - run: gh api repos/${{ github.repository }}/check-runs -f name=merge-verdict"
+    " -f head_sha=${{ github.event.pull_request.head.sha }} -f conclusion=success\n"
+)
+_REUSABLE = (
+    "name: Reusable\non:\n  workflow_call:\npermissions:\n  contents: read\n"
+    "jobs:\n  merge-verdict:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo green\n"
+)
+_VERDICT_JOB = "  merge-verdict:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo green\n"
+
+NO_CANDIDATE_POSTS_THE_MERGE_VERDICT = _toolchain_row(
+    "no workflow that runs candidate code posts the merge-verdict check",
+    merge_verdict_violations,
+    (
+        _plant(
+            "a candidate job whose id is merge-verdict",
+            _CI,
+            _JOBS,
+            _ci_adds_job(_VERDICT_JOB),
+            expect="ci.yml:merge-verdict runs candidate code under the check name",
+        ),
+        _plant(
+            "a candidate job named merge-verdict",
+            _CI,
+            _JOBS,
+            _ci_adds_job(
+                "  results:\n    name: merge-verdict\n    runs-on: ubuntu-24.04\n    steps: []\n"
+            ),
+            expect="ci.yml:results runs candidate code under the check name",
+        ),
+        _plant(
+            "the name in another case",
+            _CI,
+            _JOBS,
+            _ci_adds_job(
+                "  results:\n    name: Merge-Verdict\n    runs-on: ubuntu-24.04\n    steps: []\n"
+            ),
+            expect="under the check name",
+        ),
+        _plant(
+            "a job named from its matrix, whose one leg is merge-verdict",
+            _CI,
+            _JOBS,
+            _ci_adds_job(
+                "  results:\n    name: merge-${{ matrix.part }}\n    runs-on: ubuntu-24.04\n"
+                "    strategy:\n      matrix:\n        part: [verdict]\n    steps: []\n"
+            ),
+            expect="ci.yml:results runs candidate code under the check name",
+        ),
+        _plant(
+            "a step that posts a check run by that name",
+            _CI,
+            _JOBS,
+            _ci_adds_job(_POSTED_CHECK_RUN),
+            expect="ci.yml:results runs candidate code and names merge-verdict",
+        ),
+        _plant(
+            "an action handed the name",
+            _CI,
+            _JOBS,
+            _ci_adds_job(
+                "  results:\n    runs-on: ubuntu-24.04\n    steps:\n"
+                f"      - uses: some/checks-action@{_SHA40}\n"
+                "        with:\n          name: merge-verdict\n          conclusion: success\n"
+            ),
+            expect="ci.yml:results runs candidate code and names merge-verdict",
+        ),
+        _plant(
+            "the name in the candidate workflow's own env",
+            _CI,
+            "\nenv:\n",
+            "\nenv:\n  CHECK_NAME: merge-verdict\n",
+            expect="names merge-verdict outside its jobs",
+        ),
+        Control(
+            "a workflow a candidate calls, with a merge-verdict job",
+            _both(
+                _new_workflow(f"{_WORKFLOWS}/reusable.yml", _REUSABLE),
+                _plant(
+                    "",
+                    _CI,
+                    _JOBS,
+                    _ci_adds_job("  called:\n    uses: ./.github/workflows/reusable.yml\n"),
+                ).plant,
+            ),
+            expect="reusable.yml:merge-verdict",
+        ),
+        Control(
+            "a workflow a push to a feature branch runs, with a merge-verdict job",
+            _new_workflow(
+                f"{_WORKFLOWS}/branch-check.yml",
+                "name: Branch check\non:\n  push:\n    branches-ignore: [main]\n"
+                "permissions:\n  contents: read\njobs:\n" + _VERDICT_JOB,
+            ),
+            expect="branch-check.yml:merge-verdict",
+        ),
+        _plant(
+            "a candidate check whose name only starts with merge-verdict",
+            _CI,
+            _JOBS,
+            _ci_adds_job(
+                "  preview:\n    name: merge-verdict-preview\n    runs-on: ubuntu-24.04\n"
+                "    steps: []\n"
+            ),
+            fails=False,
+        ),
+        _plant(
+            "a job name quoted with a trailing space",
+            _CI,
+            _JOBS,
+            _ci_adds_job(
+                '  results:\n    name: "merge-verdict "\n    runs-on: ubuntu-24.04\n'
+                "    steps: []\n"
+            ),
+            expect="ci.yml:results runs candidate code under the check name",
+        ),
+        _plant(
+            "a job named from a matrix that is an expression",
+            _CI,
+            _JOBS,
+            _ci_adds_job(
+                "  results:\n    name: merge-${{ matrix.part }}\n    runs-on: ubuntu-24.04\n"
+                "    strategy:\n      matrix: ${{ fromJSON(needs.plan.outputs.parts) }}\n"
+                "    steps: []\n"
+            ),
+            expect="a matrix that is an expression",
+        ),
+        _plant(
+            "a job named from a matrix value that is an expression",
+            _CI,
+            _JOBS,
+            _ci_adds_job(
+                "  results:\n    name: merge-${{ matrix.part }}\n    runs-on: ubuntu-24.04\n"
+                "    strategy:\n      matrix:\n"
+                "        part: ${{ fromJSON(needs.plan.outputs.parts) }}\n    steps: []\n"
+            ),
+            expect="matrix.part, which the matrix gives no literal value",
+        ),
+        _plant(
+            "a job named from a matrix key the matrix does not have",
+            _CI,
+            _JOBS,
+            _ci_adds_job(
+                "  results:\n    name: merge-${{ matrix.other }}\n    runs-on: ubuntu-24.04\n"
+                "    strategy:\n      matrix:\n        part: [verdict]\n    steps: []\n"
+            ),
+            expect="matrix.other, which the matrix gives no literal value",
+        ),
+        _plant(
+            "a job named from a matrix whose include is an expression",
+            _CI,
+            _JOBS,
+            _ci_adds_job(
+                "  results:\n    name: merge-${{ matrix.part }}\n    runs-on: ubuntu-24.04\n"
+                "    strategy:\n      matrix:\n        part: [preview]\n"
+                "        include: ${{ fromJSON(needs.plan.outputs.inc) }}\n    steps: []\n"
+            ),
+            expect="an include that is an expression",
+        ),
+        _plant(
+            "a job named from an include entry that is an expression",
+            _CI,
+            _JOBS,
+            _ci_adds_job(
+                "  results:\n    name: merge-${{ matrix.part }}\n    runs-on: ubuntu-24.04\n"
+                "    strategy:\n      matrix:\n"
+                "        include: [{part: '${{ needs.plan.outputs.p }}'}]\n    steps: []\n"
+            ),
+            expect="matrix.part, which the matrix gives as an expression",
+        ),
+        _plant(
+            "a job named from a matrix value that is an expression beside an include",
+            _CI,
+            _JOBS,
+            _ci_adds_job(
+                "  results:\n    name: merge-${{ matrix.part }}\n    runs-on: ubuntu-24.04\n"
+                "    strategy:\n      matrix:\n"
+                "        part: ${{ fromJSON(needs.plan.outputs.parts) }}\n"
+                "        include: [{part: preview}]\n    steps: []\n"
+            ),
+            expect="matrix.part, which the matrix gives no literal value",
+        ),
+        _plant(
+            "a job named from an expression other than the matrix",
+            _CI,
+            _JOBS,
+            _ci_adds_job(
+                "  results:\n    name: ${{ needs.plan.outputs.check }}\n"
+                "    runs-on: ubuntu-24.04\n    steps: []\n"
+            ),
+            expect="an expression other than a matrix value",
+        ),
+        _plant(
+            "a key PyYAML reads as a date",
+            _CI,
+            "\nenv:\n",
+            "\nenv:\n  2026-01-01: merge-verdict\n",
+            expect="names merge-verdict outside its jobs",
+        ),
+        _plant(
+            "the name as a key, with a value that is not it",
+            _CI,
+            "\nenv:\n",
+            "\nenv:\n  merge-verdict: on\n",
+            expect="names merge-verdict outside its jobs",
+        ),
+        _plant(
+            "a job named from a literal matrix with no such leg",
+            _CI,
+            _JOBS,
+            _ci_adds_job(
+                "  results:\n    name: merge-${{ matrix.part }}\n    runs-on: ubuntu-24.04\n"
+                "    strategy:\n      matrix:\n        part: [preview]\n    steps: []\n"
+            ),
+            fails=False,
+        ),
+        _plant(
+            "a step that names merge-verdict-preview, a longer word",
+            _CI,
+            _JOBS,
+            _ci_adds_job(
+                "  preview:\n    runs-on: ubuntu-24.04\n    steps:\n"
+                "      - run: echo merge-verdict-preview\n"
+            ),
+            fails=False,
+        ),
+        _plant(
+            "a step that names pre-merge-verdict, a longer word",
+            _CI,
+            _JOBS,
+            _ci_adds_job(
+                "  preview:\n    runs-on: ubuntu-24.04\n    steps:\n"
+                "      - run: echo pre-merge-verdict\n"
+            ),
+            fails=False,
+        ),
+        _plant(
+            "a job named merge-verdict preview, not the name itself",
+            _CI,
+            _JOBS,
+            _ci_adds_job(
+                "  preview:\n    name: merge-verdict preview\n    runs-on: ubuntu-24.04\n"
+                "    steps: []\n"
+            ),
+            fails=False,
+        ),
+        _plant(
+            "a trusted workflow_run job named merge-verdict",
+            f"{_WORKFLOWS}/pr-feedback.yml",
+            _JOBS,
+            _JOBS + _VERDICT_JOB,
+            fails=False,
+        ),
+        Control(
+            "a push to main that records the merge verdict",
+            _new_workflow(
+                f"{_WORKFLOWS}/main-record.yml",
+                "name: Main record\non:\n  push:\n    branches: [main]\n"
+                "permissions:\n  contents: read\njobs:\n" + _VERDICT_JOB,
+            ),
+            fails=False,
+        ),
+    ),
+)
+
+
+# ── Concurrency keys on the pull request or the candidate's head (#3915) ──────────────────────
+#
+# Concurrency groups are shared across the repository: a run that joins a group cancels the run
+# in progress there (with `cancel-in-progress`), and a pending run replaces the one waiting. So a
+# group that two unrelated pull requests can both evaluate to lets one pull request's push cancel
+# or drop the other's check. The row evaluates every concurrency group a candidate's run joins,
+# the workflow's and each job's, against the event contexts of several unrelated candidates, the
+# way GitHub would, and holds two relations:
+#
+# 1. no two runs for different candidates (two pull requests from this repository, two forks with
+#    the same branch name, pushes to two feature branches) evaluate to one group, in one workflow
+#    or across two;
+# 2. every run for one candidate at one head evaluates to one group: a second run of the
+#    workflow (a new run id) and a GitHub re-run (the same run id and commit, a later
+#    `run_attempt`). So a group keys on the pull request or on its head, and on nothing that
+#    differs per run or per attempt.
+#
+# Each event is modelled as GitHub fills it in. Under `pull_request`, `github.ref` is the pull
+# request's `refs/pull/N/merge` and `github.sha` its test-merge commit. Under
+# `pull_request_target` the run is the base branch's: `github.ref` is `refs/heads/main` and
+# `github.sha` main's commit for EVERY pull request, so a group keyed on either is one group for
+# them all. A `workflow_run` listener of a candidate workflow (a trusted job that reacts to each
+# pull request's run) is held to relation 1 against each candidate run's `workflow_run` event.
+# Relation 2 does not apply to it: a listener may key on the run it listens to, attempt included
+# (ci-telemetry.yml collects each attempt).
+#
+# Any context the row does not model (`vars`, `inputs`, `needs`, `matrix`, ...) is refused as an
+# expression it cannot evaluate, never read as empty. That holds for context roots only: a
+# `github.*` property the model leaves out (`github.workflow`, `github.actor`, ...) reads as
+# "", so `a || b` falls through to `b`. A group that keys on such a property is not held.
+#
+# A push to a feature branch is the same candidate as the pull request whose head it is. A push
+# to main and a scheduled run are not a candidate's, so main's own grouping (the suite's shared
+# group on main, #3915) is not this row's.
+
+
+@dataclass(frozen=True)
+class _CandidateRun:
+    label: str
+    #: The candidate the run is for. Two runs for one candidate may share a group.
+    candidate: str
+    #: The event the run is: `pull_request`, `pull_request_target`, `push` or `workflow_run`.
+    kind: str
+    head: str
+    context: dict[str, Any]
+
+
+_REPO_SLUG = "PersonalClaw/PersonalClaw"
+_FORK = "someone/PersonalClaw"
+_FORK_2 = "another/PersonalClaw"
+#: Main's commit when the runs below start: what every `pull_request_target` and `workflow_run`
+#: run checks out, whichever pull request it is for.
+_MAIN_SHA = "base0000"
+
+
+def _candidate_pr(
+    label: str,
+    candidate: str,
+    number: int,
+    head_repo: str,
+    branch: str,
+    head: str,
+    run: int,
+    attempt: int = 1,
+    kind: str = "pull_request",
+) -> _CandidateRun:
+    target = kind == "pull_request_target"
+    pull_request = {
+        "number": number,
+        "head": {"ref": branch, "sha": head, "repo": {"full_name": head_repo}},
+        "base": {"ref": "main", "sha": _MAIN_SHA},
+    }
+    github = {
+        "repository": _REPO_SLUG,
+        "event_name": kind,
+        # `pull_request` runs the test merge; `pull_request_target` runs the base branch.
+        "ref": "refs/heads/main" if target else f"refs/pull/{number}/merge",
+        "ref_name": "main" if target else f"{number}/merge",
+        # The test-merge commit differs for every run, so a group keyed on it keys on no head.
+        "sha": _MAIN_SHA if target else f"merge{number}{run}",
+        "head_ref": branch,
+        "base_ref": "main",
+        "run_id": str(9000 + run),
+        "run_number": str(run),
+        "run_attempt": str(attempt),
+        "event": {"action": "synchronize", "number": number, "pull_request": pull_request},
+    }
+    return _CandidateRun(label, candidate, kind, head, {"github": github})
+
+
+def _candidate_push(
+    label: str, candidate: str, branch: str, head: str, run: int, attempt: int = 1
+) -> _CandidateRun:
+    github = {
+        "repository": _REPO_SLUG,
+        "event_name": "push",
+        "ref": f"refs/heads/{branch}",
+        "ref_name": branch,
+        "sha": head,
+        "head_ref": "",
+        "base_ref": "",
+        "run_id": str(9500 + run),
+        "run_number": str(run),
+        "run_attempt": str(attempt),
+        "event": {"ref": f"refs/heads/{branch}", "after": head},
+    }
+    return _CandidateRun(label, candidate, "push", head, {"github": github})
+
+
+def _listener_run(run: _CandidateRun) -> _CandidateRun:
+    """The ``workflow_run`` event a candidate run's completion starts in a listener."""
+    github = run.context["github"]
+    pull = github["event"].get("pull_request") or {}
+    head_repo = (pull.get("head") or {}).get("repo", {}).get("full_name", _REPO_SLUG)
+    listened = {
+        "id": int(github["run_id"]),
+        "run_attempt": int(github["run_attempt"]),
+        "event": github["event_name"],
+        "head_sha": run.head,
+        "head_branch": github["head_ref"] or github["ref_name"],
+        "head_repository": {"full_name": head_repo},
+        # GitHub lists no pull request for a fork's run.
+        "pull_requests": [{"number": pull["number"]}] if pull and head_repo == _REPO_SLUG else [],
+    }
+    context = {
+        "github": {
+            "repository": _REPO_SLUG,
+            "event_name": "workflow_run",
+            "ref": "refs/heads/main",
+            "ref_name": "main",
+            "sha": _MAIN_SHA,
+            "head_ref": "",
+            "base_ref": "",
+            "run_id": str(int(github["run_id"]) + 50000),
+            "run_number": github["run_number"],
+            "run_attempt": "1",
+            "event": {"action": "completed", "workflow_run": listened},
+        }
+    }
+    label = f"the listener of {run.label}"
+    return _CandidateRun(label, run.candidate, f"workflow_run:{run.kind}", run.head, context)
+
+
+_PR41 = "pull request #41 (feature-a)"
+_PR42 = "pull request #42 (feature-b)"
+_PR43 = "pull request #43 from a fork (feature-a)"
+_PR44 = "pull request #44 from another fork (feature-a)"
+
+
+def _pr_runs(kind: str) -> tuple[_CandidateRun, ...]:
+    at = " under pull_request_target" if kind == "pull_request_target" else ""
+    a, b = "feature-a", "feature-b"
+    return (
+        _candidate_pr(f"{_PR41}{at}", "pr41", 41, _REPO_SLUG, a, "a1", 1, kind=kind),
+        _candidate_pr(f"{_PR41}{at}, run again", "pr41", 41, _REPO_SLUG, a, "a1", 2, kind=kind),
+        # Between two runs of one head, so relation 2 cannot lean on the table's order.
+        _candidate_pr(f"{_PR41}{at}, a newer head", "pr41", 41, _REPO_SLUG, a, "a2", 3, kind=kind),
+        _candidate_pr(
+            f"{_PR41}{at}, re-run as attempt 2", "pr41", 41, _REPO_SLUG, a, "a1", 1, 2, kind
+        ),
+        _candidate_pr(f"{_PR42}{at}", "pr42", 42, _REPO_SLUG, b, "b1", 4, kind=kind),
+        _candidate_pr(f"{_PR43}{at}", "pr43", 43, _FORK, a, "c1", 5, kind=kind),
+        _candidate_pr(f"{_PR44}{at}", "pr44", 44, _FORK_2, a, "d1", 6, kind=kind),
+    )  # fmt: skip
+
+
+_PUSH_RUNS: tuple[_CandidateRun, ...] = (
+    _candidate_push("a push to feature-a", "pr41", "feature-a", "a1", 7),
+    _candidate_push("a push to feature-a, run again", "pr41", "feature-a", "a1", 8),
+    _candidate_push("a push to feature-a, re-run as attempt 2", "pr41", "feature-a", "a1", 7, 2),
+    _candidate_push("a push to feature-b", "pr42", "feature-b", "b1", 9),
+)
+
+_CANDIDATE_RUNS: tuple[_CandidateRun, ...] = (
+    *_pr_runs("pull_request"),
+    *_pr_runs("pull_request_target"),
+    *_PUSH_RUNS,
+    *(
+        _listener_run(r)
+        for r in (*_pr_runs("pull_request"), *_pr_runs("pull_request_target"), *_PUSH_RUNS)
+    ),
+)
+
+#: The roots of a context this row models. Anything else is refused, never read as empty.
+_MODELLED_ROOTS = frozenset({"github", "true", "false"})
+#: A named value an expression starts from: a word not after a dot, and not a function's name.
+_ROOT = re.compile(r"(?<![\w.'-])([A-Za-z_][\w-]*)\b(?!\s*\()")
+
+
+def _unmodelled(group: str) -> str:
+    """The first context root in a group's expressions the row does not model, or ``""``."""
+    for match in _EXPRESSION.finditer(group):
+        body = re.sub(r"'[^']*'", "''", match.group(1))
+        for root in _ROOT.findall(body):
+            if root not in _MODELLED_ROOTS:
+                return root
+    return ""
+
+
+def _group_legs(job: dict[str, Any], group: str) -> list[str]:
+    """A job's group once per matrix leg, its ``${{ matrix.<key> }}`` read from a literal
+    matrix. A matrix the row cannot read raises, as an expression it cannot evaluate does."""
+    if not _MATRIX_REF.search(group):
+        return [group]
+    gap = _matrix_gap(job, group)
+    if gap:
+        raise ValueError(f"an expression this row cannot evaluate: {gap}")
+    return sorted({value for _runner, value in _legs(job, group)})
+
+
+def _concurrency_group(value: object) -> str | None:
+    """A ``concurrency:`` value's group: the string itself, or its ``group``."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict) and "group" in value:
+        return str(value["group"])
+    return None
+
+
+def _listens_to(trigger: object, names: set[str]) -> set[str]:
+    """The workflow names a ``workflow_run`` trigger listens to, of ``names``, when it listens
+    off ``main``: a ``branches`` filter of ``main`` alone listens to no candidate's run."""
+    if not isinstance(trigger, dict):
+        return set()
+    branches = trigger.get("branches")
+    if isinstance(branches, list) and branches and set(map(str, branches)) <= {"main"}:
+        return set()
+    listened = trigger.get("workflows") or []
+    patterns = [str(w) for w in (listened if isinstance(listened, list) else [listened])]
+    # GitHub reads each entry as a glob; a `!` entry only narrows, so reading it as nothing
+    # holds the listener to more workflows, never fewer.
+    return {n for n in names if any(fnmatch.fnmatchcase(n, p) for p in patterns)}
+
+
+def _candidate_kinds(workflows: list[tuple[str, dict]]) -> dict[str, set[str]]:
+    """Per workflow, the candidate runs it takes part in: ``pull_request`` and
+    ``pull_request_target`` (an opening event of a pull request), ``push`` (a push to a branch
+    other than main), ``workflow_run:<kind>`` (a listener of a workflow that takes part in
+    ``<kind>``), and for a called workflow, whatever its callers take part in."""
+    kinds: dict[str, set[str]] = {}
+    for name, wf in workflows:
+        triggers = _triggers(wf)
+        own: set[str] = set()
+        for event in ("pull_request", "pull_request_target"):
+            if event in triggers and _pull_request_types(triggers[event]) - {"closed"}:
+                own.add(event)
+        if "push" in triggers and not _main_or_tags_only(triggers["push"]):
+            own.add("push")
+        kinds[name] = own
+    by_name = {str(wf.get("name", "")): file for file, wf in workflows if wf.get("name")}
+    # Read from each workflow's own kinds, so a glob that matches the listener itself reads
+    # the same whatever order the workflows come in.
+    own_kinds = {name: set(k) for name, k in kinds.items()}
+    for name, wf in workflows:
+        trigger = _triggers(wf).get("workflow_run")
+        for listened in _listens_to(trigger, set(by_name)):
+            for kind in own_kinds.get(by_name[listened], set()):
+                kinds[name].add(f"workflow_run:{kind}")
+    changed = True
+    while changed:
+        changed = False
+        for name, wf in workflows:
+            for job in _trust_jobs(wf).values():
+                callee = str(job.get("uses", ""))
+                if callee.startswith(f"./{_WORKFLOWS}/"):
+                    called = callee.split("/")[-1].split("@")[0]
+                    if called in kinds and not kinds[name] <= kinds[called]:
+                        kinds[called] |= kinds[name]
+                        changed = True
+    return kinds
+
+
+def concurrency_keying_violations(tree: Tree) -> list[str]:
+    """Every concurrency group a candidate's run joins keys on its pull request or its head."""
+    workflows = [(name, wf if isinstance(wf, dict) else {}) for name, wf in _workflows(tree)]
+    kinds = _candidate_kinds(workflows)
+    bad: list[str] = []
+    #: group key -> the (where, run) pairs that evaluate to it
+    joined: dict[str, list[tuple[str, _CandidateRun]]] = {}
+    for name, workflow in workflows:
+        if not kinds.get(name):
+            continue
+        groups = [(name, _concurrency_group(workflow.get("concurrency")))]
+        groups += [
+            (f"{name}:{job_id}", _concurrency_group(job.get("concurrency")))
+            for job_id, job in _trust_jobs(workflow).items()
+        ]
+        jobs = {"": {}, **{job_id: job for job_id, job in _trust_jobs(workflow).items()}}
+        for where, group in groups:
+            if group is None:
+                continue
+            job = jobs.get(where.partition(":")[2], {})
+            keys: dict[str, set[str]] = {}
+            try:
+                # The matrix legs first: `${{ matrix.<key> }}` is read from a literal matrix, and
+                # only what is left must be a context the row models.
+                legs = _group_legs(job, group)
+                for leg in legs:
+                    root = _unmodelled(leg)
+                    if root:
+                        raise ValueError(
+                            f"an expression this row cannot evaluate: it reads `{root}`, which "
+                            "the row does not model, so its value for each candidate is unknown"
+                        )
+                for run in _CANDIDATE_RUNS:
+                    if run.kind in kinds[name]:
+                        keys[run.label] = {_evaluate(leg, run.context) for leg in legs}
+                        for key in keys[run.label]:
+                            joined.setdefault(key, []).append((where, run))
+            except ValueError as exc:
+                bad.append(f"{where}: {exc}")
+                continue
+            runs = [r for r in _CANDIDATE_RUNS if r.label in keys]
+            # Relation 2, over every pair for one candidate at one head, whatever their order.
+            # A listener may key on the run it listens to, so it is held to relation 1 only.
+            for i, a in enumerate(runs):
+                for b in runs[i + 1 :]:
+                    if a.kind.startswith("workflow_run:"):
+                        continue
+                    same = (a.candidate, a.head, a.kind) == (b.candidate, b.head, b.kind)
+                    if same and keys[a.label] != keys[b.label]:
+                        bad.append(
+                            f"{where}: {a.label} and {b.label} evaluate to "
+                            f"{sorted(keys[a.label])!r} and {sorted(keys[b.label])!r}, so its "
+                            "group keys on neither the pull request nor the head, and a run "
+                            "never cancels or replaces its own duplicate"
+                        )
+    for key, members in joined.items():
+        first = members[0][1]
+        other = next((run for _where, run in members if run.candidate != first.candidate), None)
+        if other is not None:
+            wheres = ", ".join(sorted({where for where, _run in members}))
+            bad.append(
+                f"{wheres}: the group {key!r} is shared by {first.label} and {other.label}, so "
+                "one candidate's run cancels or replaces another's"
+            )
+    return list(dict.fromkeys(bad))
+
+
+_DCO_GROUP = "group: dco-${{ github.event.pull_request.number }}"
+_NIX = f"{_WORKFLOWS}/nix.yml"
+_NIX_GROUP = (
+    "group: nix-${{ github.event.pull_request.head.repo.full_name || github.repository }}"
+    "-${{ github.head_ref || github.ref_name }}"
+)
+
+
+def _new_pr_workflow(rel: str, concurrency: str) -> Callable[[Path], None]:
+    return _new_workflow(
+        f"{_WORKFLOWS}/{rel}",
+        f"name: New check\non:\n  pull_request:\n{concurrency}permissions: {{}}\njobs: {{}}\n",
+    )
+
+
+CONCURRENCY_KEYS_ON_THE_CANDIDATE = _toolchain_row(
+    "every concurrency group a candidate joins keys on its pull request or its head",
+    concurrency_keying_violations,
+    (
+        _plant("one group for every pull request", _NIX, _NIX_GROUP, "group: nix-lane",
+               expect="is shared by"),
+        _plant("a group keyed on the base branch", _NIX, _NIX_GROUP,
+               "group: nix-${{ github.base_ref }}", expect="pull request #42 (feature-b)"),
+        _plant("a group keyed on the branch alone, which two forks share", _NIX, _NIX_GROUP,
+               "group: nix-${{ github.head_ref }}", expect="#43 from a fork"),
+        _plant("a group keyed on the run", _NIX, _NIX_GROUP, "group: nix-${{ github.run_id }}",
+               expect="keys on neither"),
+        _plant("a group keyed on the test-merge commit", _NIX, _NIX_GROUP,
+               "group: nix-${{ github.sha }}", expect="keys on neither"),
+        _plant("an expression the row cannot evaluate", _NIX, _NIX_GROUP,
+               "group: nix-${{ format('{0}', github.head_ref) }}", expect="cannot evaluate"),
+        Control("a group written as a bare string",
+                _new_pr_workflow("new-check.yml", "concurrency: one-lane\n"),
+                expect="new-check.yml"),
+        _plant("a job's own group that every pull request shares", _CI, _JOBS, _ci_adds_job(
+            "  lane:\n    runs-on: ubuntu-24.04\n    concurrency:\n      group: lane\n"
+            "      cancel-in-progress: true\n    steps: []\n"), expect="ci.yml:lane"),
+        Control("a group that lands on another workflow's group for another pull request",
+                _new_pr_workflow("new-check.yml",
+                                 "concurrency:\n  group: nix-${{ github.repository }}-feature-b\n"),
+                expect="new-check.yml, nix.yml"),
+        Control("a feature-branch push workflow with one group for every branch",
+                _new_workflow(f"{_WORKFLOWS}/branch-check.yml",
+                              "name: Branch check\non:\n  push:\n    branches-ignore: [main]\n"
+                              "concurrency:\n  group: branch-lane\npermissions: {}\njobs: {}\n"),
+                expect="a push to feature-b"),
+        Control("a group keyed on the pull request's number",
+                _new_pr_workflow("new-check.yml",
+                                 "concurrency:\n"
+                                 "  group: new-${{ github.event.pull_request.number }}\n"
+                                 "  cancel-in-progress: true\n"), fails=False),
+        Control("a group keyed on the candidate's head",
+                _new_pr_workflow("new-check.yml",
+                                 "concurrency:\n  group: new-${{ github.event.pull_request.head.sha"
+                                 " || github.sha }}\n  cancel-in-progress: false\n"), fails=False),
+        Control("main's suite in one shared group, which is not a candidate's",
+                _new_workflow(f"{_WORKFLOWS}/main-suite.yml",
+                              "name: Main suite\non:\n  push:\n    branches: [main]\n"
+                              "concurrency:\n  group: main-suite\n  cancel-in-progress: false\n"
+                              "permissions: {}\njobs: {}\n"), fails=False),
+        Control("a scheduled run in one group",
+                _new_workflow(f"{_WORKFLOWS}/nightly.yml",
+                              "name: Nightly\non:\n  schedule:\n    - cron: '0 3 * * *'\n"
+                              "concurrency:\n  group: nightly\npermissions: {}\njobs: {}\n"),
+                fails=False),
+        # pull_request_target runs in the base branch's context, the same for every pull request.
+        _plant("a pull_request_target group every pull request shares", _DCO,
+               _DCO_GROUP, "group: dco-lane", expect="dco.yml: the group 'dco-lane' is shared by"),
+        _plant("a pull_request_target group keyed on github.ref", _DCO,
+               _DCO_GROUP, "group: dco-${{ github.ref }}", expect="under pull_request_target"),
+        _plant("a pull_request_target group keyed on github.ref_name", _DCO,
+               _DCO_GROUP, "group: dco-${{ github.ref_name }}", expect="under pull_request_target"),
+        _plant("a pull_request_target group keyed on github.sha", _DCO,
+               _DCO_GROUP, "group: dco-${{ github.sha }}", expect="is shared by"),
+        Control("dco.yml's own group, keyed on the pull request's number", _nothing, fails=False),
+        # A called workflow takes part in whatever its callers take part in.
+        Control("a reusable workflow a candidate calls, with one shared group",
+                _both(_new_workflow(f"{_WORKFLOWS}/reusable.yml",
+                                    "name: Reusable\non:\n  workflow_call:\n"
+                                    "concurrency:\n  group: reusable-lane\n"
+                                    "permissions: {}\njobs: {}\n"),
+                      _plant("", _CI, _JOBS, _ci_adds_job(
+                          "  called:\n    uses: ./.github/workflows/reusable.yml\n")).plant),
+                expect="reusable.yml: the group 'reusable-lane' is shared by"),
+        # A GitHub re-run keeps its run id and commit and raises run_attempt.
+        _plant("a group keyed on the run attempt", _NIX, _NIX_GROUP,
+               _NIX_GROUP.replace("group: nix-", "group: nix-${{ github.run_attempt }}-"),
+               expect="re-run as attempt 2"),
+        Control("a feature-branch push group keyed on the run",
+                _new_workflow(f"{_WORKFLOWS}/branch-check.yml",
+                              "name: Branch check\non:\n  push:\n    branches-ignore: [main]\n"
+                              "concurrency:\n  group: b-${{ github.ref }}-${{ github.run_id }}\n"
+                              "permissions: {}\njobs: {}\n"),
+                expect="a push to feature-a and a push to feature-a, run again"),
+        _plant("a group that tells this repository from every fork as one", _NIX, _NIX_GROUP,
+               "group: nix-${{ github.event.pull_request.head.repo.full_name"
+               " == 'PersonalClaw/PersonalClaw' }}-${{ github.head_ref }}",
+               expect=f"{_PR43} and {_PR44}"),
+        # A context the row does not model is refused, never read as empty.
+        _plant("a group that reads vars", _NIX, _NIX_GROUP,
+               "group: nix-${{ vars.LANE || github.event.pull_request.number }}",
+               expect="it reads `vars`"),
+        Control("a called workflow keyed on an input its caller fixes",
+                _both(_new_workflow(f"{_WORKFLOWS}/reusable.yml",
+                                    "name: Reusable\non:\n  workflow_call:\n"
+                                    "    inputs:\n      lane:\n        type: string\n"
+                                    "concurrency:\n  group: r-${{ inputs.lane || github.ref }}\n"
+                                    "permissions: {}\njobs: {}\n"),
+                      _plant("", _CI, _JOBS, _ci_adds_job(
+                          "  called:\n    uses: ./.github/workflows/reusable.yml\n"
+                          "    with:\n      lane: one\n")).plant),
+                expect="it reads `inputs`"),
+        _plant("a job's group keyed on a matrix the row cannot read", _CI, _JOBS,
+               _ci_adds_job("  lane:\n    runs-on: ubuntu-24.04\n"
+                            "    strategy:\n      matrix: ${{ fromJSON(needs.plan.outputs.m) }}\n"
+                            "    concurrency:\n      group: lane-${{ matrix.part }}\n"
+                            "    steps: []\n"),
+               expect="a matrix that is an expression"),
+        _plant("a job's group per literal matrix leg, shared by every pull request", _CI, _JOBS,
+               _ci_adds_job("  lane:\n    runs-on: ubuntu-24.04\n"
+                            "    strategy:\n      matrix:\n        part: [1, 2]\n"
+                            "    concurrency:\n      group: lane-${{ matrix.part }}\n"
+                            "    steps: []\n"),
+               expect="ci.yml:lane: the group 'lane-1' is shared by"),
+        # A workflow_run listener of a candidate workflow is held to relation 1.
+        Control("a listener of CI with one group for every pull request",
+                _new_workflow(f"{_WORKFLOWS}/listener.yml",
+                              "name: Listener\non:\n  workflow_run:\n    workflows: [\"CI\"]\n"
+                              "    types: [completed]\n"
+                              "concurrency:\n  group: listener\n  cancel-in-progress: true\n"
+                              "permissions: {}\njobs: {}\n"),
+                expect="listener.yml: the group 'listener' is shared by the listener of"),
+        # GitHub reads a `workflows:` entry as a glob.
+        Control("a listener of every workflow with one group for every pull request",
+                _new_workflow(f"{_WORKFLOWS}/listener.yml",
+                              "name: Listener\non:\n  workflow_run:\n    workflows: [\"*\"]\n"
+                              "    types: [completed]\n"
+                              "concurrency:\n  group: listener\n  cancel-in-progress: true\n"
+                              "permissions: {}\njobs: {}\n"),
+                expect="listener.yml: the group 'listener' is shared by the listener of"),
+        # DCO runs on pull_request_target, so its listener is a candidate's too.
+        Control("a listener of DCO with one group for every pull request",
+                _new_workflow(f"{_WORKFLOWS}/listener.yml",
+                              "name: Listener\non:\n  workflow_run:\n    workflows: [\"DCO\"]\n"
+                              "    types: [completed]\n"
+                              "concurrency:\n  group: listener\n  cancel-in-progress: true\n"
+                              "permissions: {}\njobs: {}\n"),
+                expect="listener.yml: the group 'listener' is shared by the listener of"),
+        Control("a listener of CI keyed on the run it listens to",
+                _new_workflow(f"{_WORKFLOWS}/listener.yml",
+                              "name: Listener\non:\n  workflow_run:\n    workflows: [\"CI\"]\n"
+                              "    types: [completed]\n"
+                              "concurrency:\n  group: l-${{ github.event.workflow_run.id }}"
+                              "-${{ github.event.workflow_run.run_attempt }}\n"
+                              "permissions: {}\njobs: {}\n"),
+                fails=False),
+        Control("a listener that listens on main alone",
+                _new_workflow(f"{_WORKFLOWS}/listener.yml",
+                              "name: Listener\non:\n  workflow_run:\n    workflows: [\"CI\"]\n"
+                              "    branches: [main]\n"
+                              "concurrency:\n  group: listener\npermissions: {}\njobs: {}\n"),
+                fails=False),
+        Control("a workflow that runs on pull_request only when closed",
+                _new_workflow(f"{_WORKFLOWS}/on-close.yml",
+                              "name: On close\non:\n  pull_request:\n    types: [closed]\n"
+                              "concurrency:\n  group: close-lane\npermissions: {}\njobs: {}\n"),
+                fails=False),
+    ),
+)  # fmt: skip
+
+ROWS = (*ROWS, NO_CANDIDATE_POSTS_THE_MERGE_VERDICT, CONCURRENCY_KEYS_ON_THE_CANDIDATE)
 
 
 @pytest.mark.parametrize("row", ROWS, ids=lambda row: row.name)
