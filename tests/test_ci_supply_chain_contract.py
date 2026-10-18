@@ -745,11 +745,11 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
                 _PINNED_NODE_BASE + "RUN apt-get install -y --no-install-recommends nodejs\n",
                 expect="installs Node as an OS package",
             ),
-            _line(
-                "the gateway image's OS-package nodejs once its exception is gone",
-                _POLICY,
-                'reference = "os-package nodejs"',
-                'reference = "nothing"',
+            _plant(
+                "the gateway image's runtime stage back on Debian's nodejs",
+                _BACKEND,
+                "        git \\\n    && rm -rf /var/lib/apt/lists/*\n",
+                "        git \\\n        nodejs \\\n    && rm -rf /var/lib/apt/lists/*\n",
                 expect="installs Node as an OS package",
             ),
             _append(

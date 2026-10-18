@@ -94,11 +94,3 @@ reference = "npm install of @agentclientprotocol/claude-agent-acp, @agentclientp
 owner = "maintainers"
 reason = "The gateway image installs the four agent CLIs at their newest. Pinning them by hand would leave them on one release with nothing to move them. This ends when a lock file under deploy/docker/ names them, and Dependabot's npm ecosystem refreshes it."
 expires = 2026-11-16
-
-[[exception]]
-file = "deploy/docker/Dockerfile.backend"
-scope = "node-eol"
-reference = "os-package nodejs"
-owner = "maintainers"
-reason = "The gateway image's runtime stage installs Debian's nodejs, which runs the four agent CLIs on the distribution's Node line, past the policy's date for its line. This ends when the runtime stage copies Node from a digest-pinned node image instead, in the change that follows this one."
-expires = 2026-11-16

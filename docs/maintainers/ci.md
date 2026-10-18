@@ -451,4 +451,3 @@ The exceptions today:
 | File | Rule | What it waives | Ends when |
 |---|---|---|---|
 | `deploy/docker/Dockerfile.backend` | `run-install` | the four agent CLIs installed at their newest | a lock under `deploy/docker/` names them |
-| `deploy/docker/Dockerfile.backend` | `node-eol` | the runtime stage's Debian `nodejs` | the runtime stage copies Node from a pinned node image |
