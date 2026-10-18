@@ -19,10 +19,11 @@ updates:
     groups:
       python-deps:
         patterns: ["*"]
-    # Three upper bounds in `pyproject.toml` are LOAD-BEARING, argued in comments beside them,
+    # Some upper bounds in `pyproject.toml` are LOAD-BEARING, argued in comments beside them,
     # and dependabot cannot read prose — so it re-proposes widening them every week and each
     # such PR is unmergeable on the merits, not on CI. Ignoring only the MAJOR bump keeps
-    # minor/patch updates flowing, which is the half that is safe.
+    # minor/patch updates flowing, which is the half that is safe. Every held ceiling `<N` has
+    # an entry here at `>=N`, and `tests/test_dependency_bounds.py` holds the two lists equal.
     # 🔴 `versions:`, NOT `update-types:` — MEASURED, because the first attempt at this did not
     # work. #2723 wrote `update-types: ["version-update:semver-major"]` for these two names, and
     # dependabot proposed both widenings again in #2726 **four minutes after that merged** (ignore
@@ -54,6 +55,26 @@ updates:
       # lint gate for every contributor on a change none of them made.
       - dependency-name: isort
         versions: [">=9"]
+      # `black>=26,<27`, `flake8>=7,<8`, `mypy>=2,<3`: bounded to the major `uv.lock` holds, for
+      # isort's reason. CI lints with the locked tools while `pip install -e ".[dev]"` resolves
+      # freely, so a widened bound lets a local gate run another major than the one that merges.
+      - dependency-name: black
+        versions: [">=27"]
+      - dependency-name: flake8
+        versions: [">=8"]
+      - dependency-name: mypy
+        versions: [">=3"]
+      # `openai>=1.0,<3` (the `openai` extra): openai 3 declares AsyncOpenAI's `http_client` as
+      # an `httpx2.AsyncClient`, and the openai providers hand it the egress-guarded
+      # `httpx.AsyncClient`, so whole-tree mypy fails where an unlocked install resolved 3.x.
+      # Moving to 3 is a migration of the providers, with the lock and the bound together.
+      - dependency-name: openai
+        versions: [">=3"]
+      # `av<19` (the `stt` extra): PyAV 19 removed `av.open`'s `metadata_errors` keyword, which
+      # faster-whisper's decode_audio passes on every call, so every transcription fails. Widen
+      # it only once faster-whisper stops passing the keyword.
+      - dependency-name: av
+        versions: [">=19"]
 
   # Frontend — the single root npm workspace (web + desktop share one lockfile).
   # Merge bar: every npm PR must pass ci.yml's `web` job INCLUDING the render
@@ -140,6 +161,12 @@ updates:
     ignore:
       - dependency-name: "*node"
         update-types: ["version-update:semver-major"]
+      # The python base runs the interpreter `.python-version` names, and `requires-python`
+      # (`<3.14`) refuses any newer minor, so an image past that ceiling cannot install the
+      # project. Moving it moves the ceiling, the breadth legs and this entry together;
+      # `tests/test_dependency_bounds.py` holds this range equal to `requires-python`'s ceiling.
+      - dependency-name: "*python"
+        versions: [">=3.14"]
     groups:
       node:
         patterns: ["*node"]

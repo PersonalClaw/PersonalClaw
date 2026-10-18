@@ -381,3 +381,91 @@ def test_the_locked_pyav_decodes_audio_through_faster_whisper(tmp_path: Path) ->
     )
     assert done.returncode == 0, done.stderr[-2000:]
     assert done.stdout.strip() == "8000", done.stdout
+
+
+#: Ceilings held by a comment beside them in pyproject rather than by a rail above: croniter's
+#: (the cron grammar; ``tests/test_cron_expr_corpus.py`` asserts the specifier) and the lint
+#: tools', bounded to the major ``uv.lock`` holds so a local gate runs the major CI runs.
+_HELD_BY_COMMENT = ("croniter", "black", "isort", "flake8", "mypy")
+
+
+def _held_ceilings() -> dict[str, str]:
+    """Every distribution whose upper bound is held on purpose, and that bound's version."""
+    from packaging.requirements import Requirement
+    from packaging.utils import canonicalize_name
+
+    held = {*_MUST_BE_BOUNDED, *_MUST_KEEP_A_CEILING, *_HELD_BY_COMMENT}
+    ceilings: dict[str, set[str]] = {}
+    for specs in _declarations().values():
+        for spec in specs:
+            req = Requirement(spec)
+            name = canonicalize_name(req.name)
+            if name in held:
+                ceilings.setdefault(name, set()).update(
+                    s.version for s in req.specifier if s.operator == "<"
+                )
+    missing = sorted(held - ceilings.keys())
+    assert not missing, f"pyproject.toml no longer declares {missing}; re-derive these holds"
+    for name, versions in ceilings.items():
+        assert len(versions) == 1, f"{name} is declared with ceilings {sorted(versions)}"
+    return {name: versions.pop() for name, versions in ceilings.items()}
+
+
+def _dependabot_pip_ignores() -> dict[str, list]:
+    config = yaml.safe_load((_REPO_ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8"))
+    [pip] = [u for u in config["updates"] if u["package-ecosystem"] == "pip"]
+    ignores: dict[str, list] = {}
+    for entry in pip.get("ignore") or []:
+        name = entry["dependency-name"]
+        assert name not in ignores, f"dependabot.yml ignores {name!r} twice"
+        assert "update-types" not in entry, (
+            f"dependabot.yml ignores {name!r} by update-types, which does not stop a PR that "
+            "widens a constraint; use versions: ['>=N']"
+        )
+        ignores[name] = entry.get("versions")
+    return ignores
+
+
+def test_dependabot_never_proposes_widening_a_held_ceiling() -> None:
+    """Dependabot cannot read the comments that argue a bound, so a held ceiling ``<N`` without
+    a ``versions: [">=N"]`` ignore comes back as a widening PR every week, unmergeable on the
+    merits. Both directions: every held ceiling is ignored at its own major, and every ignore
+    names a ceiling still held, so moving a bound on purpose moves its ignore with it."""
+    ceilings = _held_ceilings()
+    ignores = _dependabot_pip_ignores()
+    for name, ceiling in sorted(ceilings.items()):
+        assert name in ignores, (
+            f"pyproject holds {name}<{ceiling} on purpose but dependabot.yml's pip ignore list "
+            f"has no entry for it: add `- dependency-name: {name}` with "
+            f'`versions: [">={ceiling}"]`'
+        )
+        assert ignores[name] == [f">={ceiling}"], (
+            f"dependabot.yml ignores {name} at {ignores[name]} but pyproject holds "
+            f'{name}<{ceiling}: the entry must be versions: [">={ceiling}"]'
+        )
+    stale = sorted(ignores.keys() - ceilings.keys())
+    assert not stale, f"dependabot.yml ignores {stale}, which pyproject holds no ceiling on"
+
+
+def test_the_python_image_is_never_proposed_past_the_supported_interpreters() -> None:
+    """The gateway image runs the interpreter its ``python`` base ships, and ``requires-python``
+    refuses every minor from its ceiling up, so an image Dependabot moves to that minor builds an
+    image that cannot install the project. The docker block's ignore for the python base starts
+    exactly at that ceiling, so widening the support range moves the ignore in the same change."""
+    from packaging.specifiers import SpecifierSet
+
+    with (_REPO_ROOT / "pyproject.toml").open("rb") as fh:
+        declared = SpecifierSet(str(tomllib.load(fh)["project"]["requires-python"]))
+    [ceiling] = [s.version for s in declared if s.operator == "<"]
+    config = yaml.safe_load((_REPO_ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8"))
+    [docker] = [u for u in config["updates"] if u["package-ecosystem"] == "docker"]
+    entries = [e for e in docker.get("ignore") or [] if e["dependency-name"] == "*python"]
+    assert len(entries) == 1, (
+        f"dependabot.yml's docker block needs exactly one `*python` ignore (found {len(entries)}): "
+        f"without one it proposes a python base past requires-python {declared}; "
+        f'add `versions: [">={ceiling}"]`'
+    )
+    assert entries[0].get("versions") == [f">={ceiling}"] and "update-types" not in entries[0], (
+        f"dependabot.yml ignores the python image at {entries[0]} but requires-python is "
+        f'{declared}: the entry must be versions: [">={ceiling}"]'
+    )
