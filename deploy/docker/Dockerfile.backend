@@ -125,6 +125,16 @@ RUN /opt/venv/bin/python -m black --check src/personalclaw tests && \
     /opt/venv/bin/python -m mypy src/personalclaw || true && \
     /opt/venv/bin/python -m pytest
 
+# ── Stage 3b: the Node the agent CLIs run on ─────────────────────────────────
+# The release `.nvmrc` names, on the Debian release the python base is (trixie, glibc): Node's
+# own build, which links only glibc, libstdc++ and libgcc_s, all of which the base ships. The
+# runtime stage copies `node` and npm out of it, so the image runs a dated Node line rather than
+# Debian's packaged one, which is Node 20, past its end of life.
+# node:24.21.0-trixie-slim, as its multi-arch index. Platform manifests:
+#   linux/amd64 sha256:c83040f7e24bacea68e58a0b96a484ba430bf24abb2973eab7ba4701144b7b63
+#   linux/arm64 sha256:f78037e2794cbe13ccef68c8a3cdca5c263c27ff6d747617cb87206daf4d12a0
+FROM mirror.gcr.io/library/node:24.21.0-trixie-slim@sha256:173f125896c3b47ddf056734c7ea789d04595a6a08769a8f78e0df642781fb66 AS node-runtime
+
 # ── Stage 4: runtime ─────────────────────────────────────────────────────────
 FROM base AS runtime
 
@@ -133,9 +143,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         ffmpeg \
         git \
-        nodejs \
-        npm \
     && rm -rf /var/lib/apt/lists/*
+
+# Node and npm where the node image keeps them: /usr/local is on the base's PATH ahead of
+# /usr/bin, and npm's global prefix is the folder above node's, so `npm install -g` below puts
+# the CLIs in /usr/local/lib/node_modules and their commands in /usr/local/bin. npm and npx are
+# links, as in the node image, so npm finds its own modules from the link's target.
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
+    ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx && \
+    node --version && npm --version
 
 # Bundle the public ACP agent adapters + their underlying CLIs so the
 # acp:claude-code / acp:codex providers work out-of-box (no per-host `npm i -g`,
