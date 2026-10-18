@@ -231,6 +231,7 @@ Controls are pill-shaped, tonal, and springy; every interactive component has de
 - **Secondary:** tonal fill (#282a2c → #333537 on hover). **Ghost:** transparent → tonal hover. **Danger:** #f55e57 with white ink.
 - **Loading:** label cross-fades out, centered spinner in; width preserved.
 - **Disabled:** 40% opacity, pointer-events off.
+- **Focus:** the global 2px `:focus-visible` outline, 2px outside the button. On the solid tiers (Primary, Danger) it is drawn in the ink (`--color-on-surface`), not coral: a coral ring on a coral fill reads as part of the button. The page shows between the ring and the fill, and the ring clears 3:1 against every page surface in every scheme and theme (`design/solidButtonFocusRing.test.ts`).
 
 ### Icon Buttons
 - Round pill hit area (40px), idle at ink-variant, hover fills surface-high and brightens to ink; `filled` variant uses solid coral. Optional icon-morph crossfade and one-shot success "bloom" pop (scales with bounciness).
