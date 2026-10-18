@@ -286,11 +286,25 @@ def named_paths(
     else:
         start = Path(cwd)
     segments = _CHAIN.split(spelled)
+    # From every part, repeats included: each `cd` moves the shell again.
     bases = _working_dirs(segments, start, user_home)
     # Regardless of case: on a case-insensitive filesystem `SESSION_KEY` opens `session_key`.
     bare = frozenset(name.casefold() for name in names)
     budget = [_MAX_LISTINGS]
+    # What a part names depends on its text, *bases* and *bare*, all fixed for the call, and on the
+    # listing budget left, which only goes down. A part whose reading listed no folder had no glob,
+    # or found the budget spent and checked its globs as written: read again, it names the same
+    # paths and lists nothing. So such a part is skipped when it repeats, and a line repeating a
+    # pipeline costs what its distinct parts cost. A part whose reading listed a folder is read
+    # again, so the budget is spent as it always was and each repeat names what it did; each such
+    # reading spends a listing, so that happens at most _MAX_LISTINGS times in a call. Keyed on the
+    # exact text, and kept only for this call, so a path that changes before the next check is
+    # read again.
+    read: set[str] = set()
     for segment in segments:
+        if segment in read:
+            continue
+        left = budget[0]
         for word in _words(segment):
             if not ("/" in word or word.startswith((".", "~")) or word.casefold() in bare):
                 continue
@@ -298,3 +312,5 @@ def named_paths(
             for candidate in [path] if path.is_absolute() else [base / path for base in bases]:
                 for named in _globbed(candidate, budget):
                     yield word, named
+        if budget[0] == left:
+            read.add(segment)

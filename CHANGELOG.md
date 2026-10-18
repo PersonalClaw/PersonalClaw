@@ -12,6 +12,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A shell command that runs a read command or an interpreter many times, such as a long pipeline or a generated script, is checked for credential files in a fraction of a second, where 40 KB took about 13 seconds.**
 - **A focused primary or danger button shows its keyboard focus ring in the page's ink colour, where the coral ring matched the button's own colour and could barely be seen.**
+- **A shell command that repeats the same steps many times, such as a long pipeline written out again and again, is checked for the files it names in a fraction of the time, with the same answer: a repeated step is read again only when a glob in it lists a folder, where every repeat was read again.**
 - **When the notifications can't be read, the bell says so, with a muted mark and Retry in its shade, where it showed no badge, as if nothing were unread, and its shade said "Loading…" for good.**
 
 ### Changed
