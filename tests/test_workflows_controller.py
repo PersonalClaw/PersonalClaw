@@ -1587,29 +1587,29 @@ class TestEngineInstallFaultDiscriminator:
     """The predicate itself, at every shape that reaches it."""
 
     def test_it_recognizes_both_engine_import_shapes(self) -> None:
-        from personalclaw.workflows.controller import _is_engine_install_fault
+        from personalclaw.workflows.failure_taxonomy import is_engine_install_fault
 
         # `from personalclaw.x import y` where y is gone — the measured incident's shape.
-        assert _is_engine_install_fault(
+        assert is_engine_install_fault(
             ImportError("cannot import name 'provisioning'", name="personalclaw.workflows")
         )
         # A whole engine module missing (a partially-deleted install).
-        assert _is_engine_install_fault(
+        assert is_engine_install_fault(
             ModuleNotFoundError("No module named 'personalclaw.workflows'", name="personalclaw")
         )
 
     def test_it_does_not_claim_anything_it_cannot_attribute(self) -> None:
-        from personalclaw.workflows.controller import _is_engine_install_fault
+        from personalclaw.workflows.failure_taxonomy import is_engine_install_fault
 
-        assert not _is_engine_install_fault(
+        assert not is_engine_install_fault(
             ModuleNotFoundError("No module named 'httpx'", name="httpx")
         )
         # A hand-raised ImportError carries no `name`: unattributable reads as "not ours",
         # keeping the fail-loudly default rather than silently parking a run.
-        assert not _is_engine_install_fault(ImportError("something went wrong"))
-        assert not _is_engine_install_fault(RuntimeError("not an import problem"))
+        assert not is_engine_install_fault(ImportError("something went wrong"))
+        assert not is_engine_install_fault(RuntimeError("not an import problem"))
         # A package that merely starts with the same letters is not the engine.
-        assert not _is_engine_install_fault(
+        assert not is_engine_install_fault(
             ModuleNotFoundError("No module named 'personalclawx'", name="personalclawx")
         )
 

@@ -386,6 +386,41 @@ def loop_parent(path: str) -> tuple[str | None, int]:
     return body[: -len(".body")], int(match.group(1))
 
 
+# ── foreach item labels ───────────────────────────────────────────────────────
+
+
+#: Max characters of a foreach item's label. A row shows one line, and a fan-out over long
+#: strings would otherwise put kilobytes of prose in the event stream for no gain.
+_ITEM_LABEL_MAX = 60
+
+
+def foreach_item_label(item: Any) -> str:
+    """A short, human-readable label for one foreach item.
+
+    Prefers a NAMED field when the item is a dict, because a fan-out over records is the common
+    case and `{"path": "auth.py", …}` should read as `auth.py`, not as its JSON. Falls back to
+    a truncated stringification — something is always better than an index alone, which is
+    what the row already shows.
+    """
+    if isinstance(item, dict):
+        for key in ("label", "name", "title", "path", "id"):
+            value = item.get(key)
+            if isinstance(value, (str, int, float)) and str(value).strip():
+                return _clip_label(str(value))
+        return _clip_label(", ".join(f"{k}={v}" for k, v in list(item.items())[:3]))
+    if isinstance(item, (list, tuple)):
+        # A container's contents are not a label; its size is the only honest summary.
+        return f"{len(item)} items"
+    if item is None:
+        return ""
+    return _clip_label(str(item))
+
+
+def _clip_label(text: str) -> str:
+    text = " ".join(text.split())  # a newline inside a row breaks the layout
+    return text if len(text) <= _ITEM_LABEL_MAX else text[: _ITEM_LABEL_MAX - 1] + "…"
+
+
 # ── run timestamps ───────────────────────────────────────────────────────────
 
 

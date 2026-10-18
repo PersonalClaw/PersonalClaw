@@ -57,6 +57,28 @@ def test_a_walk_at_its_floor_passes(tmp_path, name):
     assert len(index.files(name)) == 1
 
 
+def test_a_path_outside_every_root_is_refused(tmp_path):
+    """A rail whose control plants its own tree must read that tree, not the real one: the index
+    refuses to answer for a path under none of its roots, where it used to hand back the real
+    walk and leave the rail to report a real file against the planted root."""
+    planted = _write(tmp_path, "core/phone_home.py", "X = 1\n")
+    assert not source_index.holds(planted)
+    for asked in (source_index.text, source_index.tree, source_index.rel):
+        with pytest.raises(source_index.NotIndexed, match="under none of the index's roots"):
+            asked(planted)
+    with pytest.raises(source_index.NotIndexed, match="under none of the index's roots"):
+        source_index.under(source_index.package_files(), tmp_path / "core")
+
+
+def test_a_path_under_a_root_is_answered():
+    """The control: the same calls answer for a file and a folder the index holds."""
+    path = source_index.package_files()[0]
+    assert source_index.holds(path)
+    assert source_index.text(path) is source_index.text(path)
+    assert source_index.rel(path).startswith("src/personalclaw/")
+    assert source_index.under(source_index.package_files(), path.parent)
+
+
 def test_every_real_walk_clears_its_floor():
     for name in source_index.ROOTS:
         assert len(source_index.INDEX.files(name)) >= source_index.FLOORS[name], name

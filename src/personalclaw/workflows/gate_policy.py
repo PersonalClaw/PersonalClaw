@@ -275,3 +275,29 @@ def clarification_from_output(output: Any) -> dict[str, Any] | None:
         ask.setdefault("prompt", "The action needs more information.")
         return ask
     return None
+
+
+def audit_approved_without_asking(run_id: str, node_id: str, verdict: Any) -> None:
+    """Write the SEL row of a gate the policy approved without asking (best-effort).
+
+    ``decided_by`` is the grant (`approval_grants`): a remembered "always allow", or an unattended
+    run's policy for a gate of its risk.
+    """
+    from personalclaw import approval_grants
+
+    decided_by = (
+        approval_grants.REMEMBERED
+        if verdict.decision == Decision.REMEMBERED
+        else approval_grants.GATE_POLICY
+    )
+    try:
+        from personalclaw.sel import sel
+
+        sel().log_api_access(
+            caller=f"workflow:{run_id}",
+            operation="workflow_gate.approved_without_asking",
+            outcome="auto_approved",
+            resources=f"node={node_id},decided_by={decided_by},risk={verdict.risk}",
+        )
+    except Exception:  # noqa: BLE001 - an audit write never decides a gate
+        logger.warning("SEL audit failed for a policy-approved gate %s", node_id, exc_info=True)

@@ -84,7 +84,7 @@ from personalclaw.workflows import (
 )
 from personalclaw.workflows.effects import EffectRecord, EffectStatus, effect_history
 from personalclaw.workflows.engine import NodeResult, node_commits_effects
-from personalclaw.workflows.failure_taxonomy import with_breaker_window
+from personalclaw.workflows.failure_taxonomy import is_engine_install_fault, with_breaker_window
 from personalclaw.workflows.journal import CacheKey, Journal, inputs_hash, spec_region_hash
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
@@ -102,6 +102,7 @@ from personalclaw.workflows.models import (
     WorkflowRun,
     cancelled_because,
     ended_because,
+    foreach_item_label,
     now_stamp,
     run_ending,
     spec_path,
@@ -657,7 +658,7 @@ class RunController:
             raise
         except Exception as exc:  # a controller crash must not leave a silent zombie
             logger.exception("workflow run %s: controller crashed", self.run.id)
-            if _is_engine_install_fault(exc):
+            if is_engine_install_fault(exc):
                 # The ENGINE could not be imported, so this process never got far enough to
                 # learn anything about the run. Writing FAILED here would be a verdict on the
                 # run based on evidence about the installation — measured live: a gateway left
@@ -1536,7 +1537,7 @@ class RunController:
             # every tick, so after an upstream output changes the label would be unrecoverable
             # — and a retry must show the item it originally got, not whatever now sits at that
             # index.
-            inst.item_label = _item_label(item.item)
+            inst.item_label = foreach_item_label(item.item)
         if item.item_total:
             # The fan-out's denominator, from the frontier's own `len(items)`. Stamped on EVERY
             # dispatch rather than once, unlike the label: the label must keep the item it
@@ -1739,7 +1740,7 @@ class RunController:
                 # What decided is written down where every other approval is (`approval_grants`,
                 # rule 3), not only in the run's own journal: a gate the policy approved is an
                 # approval nobody was asked for.
-                _audit_policy_approval(self.run.id, item.node.id, verdict)
+                gate_policy.audit_approved_without_asking(self.run.id, item.node.id, verdict)
                 inst.state = InstanceState.DONE
                 inst.completed_at = now_stamp()
                 ref, preview = self.journal.store_output(
@@ -2476,7 +2477,7 @@ class RunController:
             # (`_launch`) buys that without paying the incompleteness.
             if item.item_total and item.item_total > 1:
                 out["item_total"] = int(item.item_total)
-        label = _item_label(item.item)
+        label = foreach_item_label(item.item)
         if label:
             out["item_label"] = label
         return out
@@ -2643,87 +2644,6 @@ class RunController:
 
 
 # ── module helpers ───────────────────────────────────────────────────────────
-
-
-#: Max characters of a foreach item's label. A row shows one line, and a fan-out over long
-#: strings would otherwise put kilobytes of prose in the event stream for no gain.
-_ITEM_LABEL_MAX = 60
-
-
-def _item_label(item: Any) -> str:
-    """A short, human-readable label for one foreach item.
-
-    Prefers a NAMED field when the item is a dict, because a fan-out over records is the common
-    case and `{"path": "auth.py", …}` should read as `auth.py`, not as its JSON. Falls back to
-    a truncated stringification — something is always better than an index alone, which is
-    what the row already shows.
-    """
-    if isinstance(item, dict):
-        for key in ("label", "name", "title", "path", "id"):
-            value = item.get(key)
-            if isinstance(value, (str, int, float)) and str(value).strip():
-                return _clip(str(value))
-        return _clip(", ".join(f"{k}={v}" for k, v in list(item.items())[:3]))
-    if isinstance(item, (list, tuple)):
-        # A container's contents are not a label; its size is the only honest summary.
-        return f"{len(item)} items"
-    if item is None:
-        return ""
-    return _clip(str(item))
-
-
-def _audit_policy_approval(run_id: str, node_id: str, verdict: Any) -> None:
-    """Write the SEL row of a gate the policy approved without asking (best-effort).
-
-    ``decided_by`` is the grant (`approval_grants`): a remembered "always allow", or an unattended
-    run's policy for a gate of its risk.
-    """
-    from personalclaw import approval_grants
-
-    decided_by = (
-        approval_grants.REMEMBERED
-        if verdict.decision == gate_policy.Decision.REMEMBERED
-        else approval_grants.GATE_POLICY
-    )
-    try:
-        from personalclaw.sel import sel
-
-        sel().log_api_access(
-            caller=f"workflow:{run_id}",
-            operation="workflow_gate.approved_without_asking",
-            outcome="auto_approved",
-            resources=f"node={node_id},decided_by={decided_by},risk={verdict.risk}",
-        )
-    except Exception:  # noqa: BLE001 - an audit write never decides a gate
-        logger.warning("SEL audit failed for a policy-approved gate %s", node_id, exc_info=True)
-
-
-def _clip(text: str) -> str:
-    text = " ".join(text.split())  # a newline inside a row breaks the layout
-    return text if len(text) <= _ITEM_LABEL_MAX else text[: _ITEM_LABEL_MAX - 1] + "…"
-
-
-def _is_engine_install_fault(exc: BaseException) -> bool:
-    """Whether `exc` says the ENGINE ITSELF could not be imported, not that a run failed.
-
-    The distinction is the whole point: an `ImportError` naming a `personalclaw` module means
-    this PROCESS is stale (its code was deleted or predates the run's state), so it knows
-    nothing about the run and must not render a verdict on it. Every other exception — a
-    provider error, a bad spec, a third-party import that a node genuinely needs — IS about
-    the run and still terminally fails it. Widening this to all `ImportError`s would silently
-    convert real run failures into runs that never finish.
-
-    Keyed on `ImportError.name` rather than the message: the attribute is populated for both
-    shapes that occur here (`from personalclaw.x import y` sets it to `personalclaw.x`, a
-    missing module sets it to the module), and matching message text would break the moment
-    CPython rewords it. `name` can be None for a hand-raised `ImportError`, which reads as
-    "not attributable to the engine" — the conservative answer, since it keeps the existing
-    fail-loudly behaviour for anything we cannot positively identify.
-    """
-    if not isinstance(exc, ImportError):
-        return False
-    name = getattr(exc, "name", None) or ""
-    return name == "personalclaw" or name.startswith("personalclaw.")
 
 
 def _preview(value: Any, limit: int = 500) -> Any:

@@ -481,3 +481,26 @@ def with_breaker_window(failure: Failure | None, providers: Iterable[str] = ()) 
         at = time.time() + wait
         failure.retry_at = at if failure.retry_at is None else max(failure.retry_at, at)
     return failure
+
+
+def is_engine_install_fault(exc: BaseException) -> bool:
+    """Whether `exc` says the ENGINE ITSELF could not be imported, not that a run failed.
+
+    The distinction is the whole point: an `ImportError` naming a `personalclaw` module means
+    this PROCESS is stale (its code was deleted or predates the run's state), so it knows
+    nothing about the run and must not render a verdict on it. Every other exception — a
+    provider error, a bad spec, a third-party import that a node genuinely needs — IS about
+    the run and still terminally fails it. Widening this to all `ImportError`s would silently
+    convert real run failures into runs that never finish.
+
+    Keyed on `ImportError.name` rather than the message: the attribute is populated for both
+    shapes that occur here (`from personalclaw.x import y` sets it to `personalclaw.x`, a
+    missing module sets it to the module), and matching message text would break the moment
+    CPython rewords it. `name` can be None for a hand-raised `ImportError`, which reads as
+    "not attributable to the engine" — the conservative answer, since it keeps the existing
+    fail-loudly behaviour for anything we cannot positively identify.
+    """
+    if not isinstance(exc, ImportError):
+        return False
+    name = getattr(exc, "name", None) or ""
+    return name == "personalclaw" or name.startswith("personalclaw.")
