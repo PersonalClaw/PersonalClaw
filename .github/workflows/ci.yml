@@ -1251,6 +1251,49 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  audit:
+    # ── The dependency audit (#3918) ─────────────────────────────────────────────────────────
+    # The graphs core ships, read from its locks: each Python graph `uv export --locked` with
+    # the extras its artifact installs, and the whole root package-lock.json, build tools
+    # included (tools/ci/audit.py). It fails on a tool that did not run, on a high or critical
+    # finding no live waiver in tools/ci/audit-baseline.toml covers, and on a waiver that is
+    # expired, too long or stale. Every other finding is listed in the job summary. Gated on
+    # tree-check like every job a tested tree skips; a new advisory on a dependency no pull
+    # request touched stops merging until it is fixed or waived, which is the point.
+    needs: [tree-check]
+    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.1"
+          python-version: "3.12.15"
+          enable-cache: true
+          prune-cache: true
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      # pip-audit is not in uv.lock, so it is named as an exact release, in a venv of its own:
+      # the project is never installed into it, so what it audits is only the exported locks.
+      - name: pip-audit, in a venv of its own
+        run: |
+          uv venv "$RUNNER_TEMP/audit-venv"
+          uv pip install --python "$RUNNER_TEMP/audit-venv/bin/python" pip-audit==2.10.1
+      - name: audit the graphs core ships
+        run: >-
+          "$RUNNER_TEMP/audit-venv/bin/python" -m tools.ci audit run
+          --pip-audit "$RUNNER_TEMP/audit-venv/bin/python" --work "$RUNNER_TEMP/audit"
+
   browse-live:
     # ── The BEHAVIOURAL proof, finally EXECUTED on the merge gate ────────────────────────────────
     # Two of the browse safety guarantees can only be proven by a real browser:

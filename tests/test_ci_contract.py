@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import ci_masking
 import private_walkers
 import pytest
 import security_census
@@ -3834,6 +3835,24 @@ CLOSED_PR_RUNS_ARE_CANCELLED = _toolchain_row(
 )
 
 ROWS = (*ROWS, CLOSED_PR_RUNS_ARE_CANCELLED)
+
+
+# ── Nothing throws an exit status away unseen (#3918) ─────────────────────────────────────────
+# The checker and its reasoned list live in tests/ci_masking.py: every `|| true`, `|| :` and
+# `continue-on-error` in a workflow, a Dockerfile or a script under scripts/ is named there with
+# its reason, and an entry that matches nothing fails, so the list cannot rot.
+
+NOTHING_IS_MASKED_UNSEEN = Row(
+    name="nothing-throws-an-exit-status-away-unseen",
+    check=ci_masking.violations,
+    scaffold=ci_masking.scaffold,
+    controls=(
+        *(_plant(name, rel, old, new) for name, rel, old, new in ci_masking.PLANTS),
+        Control("every masked site in the tree is named, with its reason", _nothing, fails=False),
+    ),
+)
+
+ROWS = (*ROWS, NOTHING_IS_MASKED_UNSEEN)
 
 
 @pytest.mark.parametrize("row", ROWS, ids=lambda row: row.name)
