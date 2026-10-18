@@ -75,8 +75,11 @@ _VARIABLE_PREFIX = re.compile(
 )
 _ENTRY_TOKEN = re.compile(r"(?:^|/)((?:scripts|tools|harness|\.github)/[\w./-]+)")
 
-_SHA = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
-_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+#: A full object id, SHA-1 (40 hex) or SHA-256 (64 hex), in lower case; and an evidence digest.
+#: Both are applied with ``fullmatch`` only: ``$`` under ``match`` also matches before a trailing
+#: newline, so ``"<40 hex>\n"`` would pass as a full commit id.
+_SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
+_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 
 #: The fields every GitHub receipt carries: the merge verdict's output, the reuse receipt of a
 #: push to main and the release manifest. A local receipt names no controller.
@@ -423,7 +426,7 @@ def require_on_main(repo: Path, commit: str, *, main: str = "origin/main") -> No
     Only a full commit id is accepted, so a branch or tag name cannot stand in for one. A
     shallow clone cannot prove ancestry, so it refuses too.
     """
-    if not _SHA.match(commit):
+    if not _SHA.fullmatch(commit):
         raise Refused(f"{commit!r} is not a full commit id")
     if _git_out(repo, "rev-parse", "--is-shallow-repository").strip() == "true":
         raise Refused("a shallow clone cannot show that a commit is on main")
@@ -445,7 +448,7 @@ def _mapping(
     ):
         raise Refused(f"{name} must map names to non-empty strings")
     if value is not None:
-        bad = [k for k, v in raw.items() if not value.match(v)]
+        bad = [k for k, v in raw.items() if not value.fullmatch(v)]
         if bad:
             raise Refused(f"{name} has a malformed value for {', '.join(sorted(bad))}")
     return dict(raw)
@@ -462,7 +465,7 @@ def check_receipt(repo: Path, data: Mapping[str, object], *, main: str = "origin
         raise Refused(f"the receipt lacks {', '.join(missing)}")
     for name in ("controller_revision", "head_sha", "tree_oid"):
         value = data[name]
-        if not isinstance(value, str) or not _SHA.match(value):
+        if not isinstance(value, str) or not _SHA.fullmatch(value):
             raise Refused(f"{name} must be a full object id, got {value!r}")
     receipt = Receipt(
         controller_revision=str(data["controller_revision"]),
