@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Fixed
+
+- **A shell command that runs a read command or an interpreter many times, such as a long pipeline or a generated script, is checked for credential files in a fraction of a second, where 40 KB took about 13 seconds.**
+
 ## [0.2.2] — 2026-10-18
 
 A patch release on 0.2.1. A long shell command, such as one that writes a file from a here-document,

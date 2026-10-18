@@ -345,7 +345,18 @@ _READ_CMDS = (
 # It over-blocks a one-liner that merely MENTIONS a credential path without reading it. That
 # is the fail-closed direction on a narrow input, and the refusal is visible with a reason —
 # where the alternative is a read that succeeds and looks like nothing happened.
-_SCRIPT_OPEN = r"(?:python|ruby|perl|node|deno|bun|php|osascript)\S*\s"
+_SCRIPT_NAMES = r"(?:python|ruby|perl|node|deno|bun|php|osascript)"
+_SCRIPT_OPEN = rf"{_SCRIPT_NAMES}\S*\s"
+
+#: The redirect or pipe in front of a home path.
+_REDIRECT_OPEN = r"[<>|]\s*"
+
+#: What comes before the home in :func:`_build_sensitive_regex`: a read command, an interpreter, or
+#: a redirect or pipe.
+_SENSITIVE_HEAD = rf"(?:{_READ_CMDS}.*|{_SCRIPT_OPEN}.*|{_REDIRECT_OPEN})"
+
+#: The flags :func:`_build_sensitive_regex` compiles with, which the two-step search assumes.
+_SENSITIVE_FLAGS = re.IGNORECASE
 
 
 def _build_sensitive_regex() -> re.Pattern[str]:
@@ -366,10 +377,12 @@ def _build_sensitive_regex() -> re.Pattern[str]:
     # position, so a leading `.*` changes no verdict. It only cost time: tried from every
     # position, each attempt ran to the end of the line, so a line with no match took time in the
     # square of its length (about 40 s at 100 KB).
+    #
+    # This regex is the definition of the check. The screen asks :func:`_reads_credential_folder`,
+    # which gives the same answer without its cost on a line that repeats a read command.
     return re.compile(
-        rf"(?:{_READ_CMDS}.*|{_SCRIPT_OPEN}.*|[<>|]\s*){home_alts}[+,\s]*/(?:{dirs_pattern})"
-        rf"(?:/|\s|$|['\"),])",
-        re.IGNORECASE,
+        rf"{_SENSITIVE_HEAD}{home_alts}[+,\s]*/(?:{dirs_pattern})(?:/|\s|$|['\"),])",
+        _SENSITIVE_FLAGS,
     )
 
 
@@ -381,6 +394,95 @@ def _get_sensitive_re() -> re.Pattern[str]:
     if _SENSITIVE_RE is None:
         _SENSITIVE_RE = _build_sensitive_regex()
     return _SENSITIVE_RE
+
+
+#: Where a read command can begin, and its match: every position, overlapping ones included.
+_READ_START = re.compile(rf"(?=({_READ_CMDS}))", re.IGNORECASE)
+#: Where an interpreter's name can begin.
+_SCRIPT_START = re.compile(rf"(?={_SCRIPT_NAMES})", re.IGNORECASE)
+_WHITESPACE = re.compile(r"\s")
+
+#: ``(the regex the parts were taken from, (its redirect alternative, its tail))``.
+_SENSITIVE_PARTS: tuple[re.Pattern[str], tuple[re.Pattern[str], re.Pattern[str]] | None] | None = (
+    None
+)
+
+
+def _sensitive_parts(
+    full: re.Pattern[str],
+) -> tuple[re.Pattern[str], re.Pattern[str]] | None:
+    """*full*'s redirect alternative and its tail (the home and credential folder every
+    alternative ends with), compiled on their own; ``None`` when *full* is not built the way
+    :func:`_build_sensitive_regex` builds it, pattern and flags. The tail is cut from *full*'s own
+    pattern, so it names the same home; the redirect alternative is :data:`_REDIRECT_OPEN` in front
+    of it, as in the head."""
+    global _SENSITIVE_PARTS
+    if _SENSITIVE_PARTS is not None and _SENSITIVE_PARTS[0] is full:
+        return _SENSITIVE_PARTS[1]
+    parts = None
+    built = re.compile("", _SENSITIVE_FLAGS).flags
+    if full.pattern.startswith(_SENSITIVE_HEAD) and full.flags == built:
+        tail = full.pattern[len(_SENSITIVE_HEAD) :]
+        parts = (
+            re.compile(rf"{_REDIRECT_OPEN}{tail}", _SENSITIVE_FLAGS),
+            re.compile(tail, _SENSITIVE_FLAGS),
+        )
+    _SENSITIVE_PARTS = (full, parts)
+    return parts
+
+
+def _reads_credential_folder(text: str) -> bool:
+    """Whether :func:`_get_sensitive_re` finds a match in *text*, in time that grows with its
+    length times the cost of one tail search: each command is visited once, however many there
+    are. (A tail search can itself cost more than the text after it, as the whole regex's did; see
+    :data:`command_paths.HOME_PATTERNS`. That is unchanged here.)
+
+    The regex's read and interpreter alternatives are a command, then ``.*``, then the tail. A
+    search tried ``.*`` from every command it found, each time to the end of the line, so a line
+    that repeats a read command took time in its length times the number of commands: 3.0 s at
+    20 KB, 12.9 s at 40 KB. Here the same question is asked in two steps. Such an alternative
+    matches exactly when some command's match ends at a position *e* and the tail matches at some
+    *q* at or after *e* with no newline between them, which is all ``.*`` can cross. Each command
+    ends at one position: a read command's words are letters and digits followed by one
+    whitespace, so two of them that match from one start end at the same place (a longer word
+    would need a letter where the shorter one has its whitespace), and an interpreter's match ends
+    just past the first whitespace after its name. The leftmost tail at or after *e* and the next
+    newline after *e* only move forward as *e* does, so each is searched for once per stretch of
+    the line rather than once per command. The redirect alternative is searched on its own.
+    """
+    full = _get_sensitive_re()
+    parts = _sensitive_parts(full)
+    if parts is None:
+        # A deliberate fail-safe: a regex not built the way the parts are cut from it is searched
+        # whole, so a mis-built regex costs time, never a verdict.
+        return full.search(text) is not None
+    redirect, tail = parts
+    if redirect.search(text) is not None:
+        return True
+    ends = {m.end(1) for m in _READ_START.finditer(text)}
+    space: int | None = -1
+    for m in _SCRIPT_START.finditer(text):
+        if space is not None and space < m.start():
+            found = _WHITESPACE.search(text, m.start())
+            space = found.start() if found is not None else None
+        if space is None:
+            break
+        ends.add(space + 1)
+    at = -1
+    newline = -1
+    for end in sorted(ends):
+        if at < end:
+            found = tail.search(text, end)
+            if found is None:
+                return False
+            at = found.start()
+        if newline != len(text) and newline < end:
+            newline = text.find("\n", end)
+            if newline < 0:
+                newline = len(text)
+        if at <= newline:
+            return True
+    return False
 
 
 def is_sensitive_path(path_str: str) -> bool:
@@ -818,7 +920,7 @@ def is_sensitive_bash_command(
     Defence in depth: a command can build a path out of pieces no reading of its text sees.
     """
     normalised = strip_shell_quotes(_normalise_for_matching(command))
-    if _get_sensitive_re().search(normalised):
+    if _reads_credential_folder(normalised):
         return _SHELL_REFUSAL[CREDENTIAL]
     owned = SensitivePaths(home_credential_dirs=False)
     folders = _credential_folders()
