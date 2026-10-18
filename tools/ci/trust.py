@@ -343,11 +343,11 @@ def entry_points(
 ) -> frozenset[str]:
     """The files a command in the revision's workflows runs, with the helpers they load.
 
-    Until the catalogue (#3909) lands, a workflow step is a catalogue command. A step names an
-    entry point when it runs a tracked file, hands one to an interpreter, runs ``make`` (the
-    ``Makefile``) or ``npm``/``npx`` (the ``package.json`` it reads), uses a local action, or
-    names a file under ``scripts/``, ``tools/``, ``harness/`` or ``.github/``. Tests are code
-    under test and never count, except the contract table.
+    Until the workflows run the catalogue's commands (#3909), a workflow step is a catalogue
+    command. A step names an entry point when it runs a tracked file, hands one to an
+    interpreter, runs ``make`` (the ``Makefile``) or ``npm``/``npx`` (the ``package.json`` it
+    reads), uses a local action, or names a file under ``scripts/``, ``tools/``, ``harness/`` or
+    ``.github/``. Tests are code under test and never count, except the contract table.
     """
     tracked = _blobs(repo, rev)
     return _entry_points(repo, tracked, helpers)

@@ -1,0 +1,288 @@
+# The catalogue of CI's validation jobs, read by tools/ci/catalogue.py.
+#
+# One [[job]] per job. Nothing runs from this file yet: ci.yml still runs its own run: lines,
+# and the CI contract table's row "every catalogue command is the workflow's" holds the two to
+# each other: each step below is a run: line of the ci.yml job it maps to, token for token and in
+# order, and each run: line of that job that validates something is one entry's step. Change a
+# command in both places, in the same commit. docs/maintainers/ci.md ("The catalogue") says what
+# each field means and how to add a job.
+#
+# A step is an argv run from the repository root, or from `workdir` under it, with `env` (its
+# workflow step's own env) set on top of its job's. A value only the runner knows is a
+# placeholder: {runner_temp}, {shard} or {base}.
+#
+# `inputs` are git pathspecs. Nothing selects jobs by them yet, so an entry whose job ci.yml
+# gates on a classifier (scripts/ci_touches_frontend.py, scripts/ci_touches_sdk.py) declares the
+# whole tree until selection moves here: a wider input runs a job more often, never less.
+
+[[job]]
+id = "static"
+tiers = ["change", "merge"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync", "shellcheck", "dash"]
+cache = ["uv"]
+security = "ordinary"
+python = "3.12.15"
+timeout_min = 10
+full_history = true
+junit = ["reports/junit-lint-installer.xml"]
+command = [
+  { argv = ["uv", "run", "black", "--check", "src/personalclaw", "tests", "harness", "scripts", "tools/ci"] },
+  { argv = ["uv", "run", "isort", "--check-only", "src/personalclaw", "tests", "harness", "scripts", "tools/ci"] },
+  { argv = ["uv", "run", "flake8", "src/personalclaw", "tests", "harness", "scripts", "tools/ci"] },
+  { argv = ["uv", "run", "mypy", "src/personalclaw", "harness", "tools/ci"] },
+  { argv = ["uv", "run", "python", "scripts/lint_bundled_apps.py"] },
+  { argv = ["sh", "-n", "deploy/website/install.sh"], env = { PERSONALCLAW_REQUIRE_INSTALL_PROOF = "1" } },
+  { argv = ["dash", "-n", "deploy/website/install.sh"], env = { PERSONALCLAW_REQUIRE_INSTALL_PROOF = "1" } },
+  { argv = ["shellcheck", "-s", "sh", "deploy/website/install.sh"], env = { PERSONALCLAW_REQUIRE_INSTALL_PROOF = "1" } },
+  { argv = ["uv", "run", "pytest", "tests/test_website_installer.py", "--junitxml=reports/junit-lint-installer.xml"], env = { PERSONALCLAW_REQUIRE_INSTALL_PROOF = "1" } },
+  { argv = ["uv", "run", "python", "-m", "harness", "validate"] },
+  { argv = ["uv", "run", "python", "-m", "harness", "scan", "--diff", "--base", "{base}"] },
+]
+
+[[job]]
+id = "rails"
+tiers = ["change", "merge"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync", "node", "npm-ci"]
+cache = ["uv", "npm"]
+security = "ordinary"
+python = "3.12.15"
+reuse = "tree"
+timeout_min = 10
+workers = 4
+needs_node = true
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-rails.xml", "reports/junit-npm-floors.xml"]
+command = [
+  { argv = ["uv", "run", "pytest", "-n", "4", "--dist", "worksteal", "-q", "tests/rails", "--junitxml=reports/junit-rails.xml"] },
+  { argv = ["uv", "run", "python", "-m", "tools.ci", "rails", "check"] },
+  { argv = ["uv", "run", "python", "scripts/check_asset_licenses.py"] },
+  { argv = ["uv", "run", "python", "scripts/gate_report.py"] },
+  { argv = ["npm", "ci"] },
+  { argv = ["uv", "run", "pytest", "tests/test_npm_advisory_floors.py", "--junitxml=reports/junit-npm-floors.xml"], env = { PERSONALCLAW_REQUIRE_NPM_TREE = "1" } },
+]
+
+# The suite, its security-marked modules included: the merge tier's security evidence is this
+# run of them, so the job is security posture and never reused.
+[[job]]
+id = "python-suite"
+tiers = ["merge"]
+inputs = [":(glob)**"]
+external_inputs = ["shard-history"]
+toolchain = ["uv-sync", "tmux"]
+cache = ["uv"]
+security = "security"
+python = "3.12.15"
+timeout_min = 55
+workers = "auto"
+shards = 4
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-test-shard-{shard}.xml"]
+command = [
+  { argv = ["uv", "run", "python", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "test-shard", "--shard", "{shard}/4", "--out", "{runner_temp}/shard.txt"] },
+  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-test-shard-{shard}.xml"] },
+]
+
+[[job]]
+id = "python-suite-macos"
+tiers = ["merge"]
+inputs = [":(glob)**"]
+external_inputs = ["shard-history"]
+toolchain = ["uv-sync", "tmux"]
+cache = ["uv"]
+security = "security"
+platform = "macos-26"
+python = "3.13.16"
+timeout_min = 50
+workers = 2
+shards = 4
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
+junit = ["reports/junit-test-macos-{shard}.xml"]
+command = [
+  { argv = ["uv", "run", "python", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "test-macos", "--shard", "{shard}/4", "--out", "{runner_temp}/shard.txt"] },
+  { argv = ["uv", "run", "pytest", "-n", "2", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-test-macos-{shard}.xml"] },
+]
+
+# The adversarial scanner corpus, on pushes to main.
+[[job]]
+id = "security"
+tiers = ["breadth"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "security"
+python = "3.12.15"
+timeout_min = 25
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1" }
+junit = ["reports/junit-security-corpus.xml"]
+command = [
+  { argv = ["uv", "run", "pytest", "--junitxml=reports/junit-security-corpus.xml", "tests/security", "tests/test_supply_chain_scanner.py", "tests/test_supply_chain_gates.py"] },
+]
+
+[[job]]
+id = "client"
+tiers = ["change", "merge"]
+inputs = [":(glob)**"]
+external_inputs = ["package-index"]
+toolchain = ["uv"]
+cache = ["uv"]
+security = "ordinary"
+python = "3.12.15"
+timeout_min = 5
+junit = ["reports/junit-client.xml"]
+install_exemptions = [
+  { install = "uv pip install --python .venv-client packages/personalclaw-client-py[dev]", reason = "the client is not part of core's uv workspace and has no lock of its own" },
+]
+command = [
+  { argv = ["uv", "build", "packages/personalclaw-client-py", "--out-dir", "dist-client"] },
+  { argv = ["uv", "venv", ".venv-client"] },
+  { argv = ["uv", "pip", "install", "--python", ".venv-client", "packages/personalclaw-client-py[dev]"] },
+  { argv = [".venv-client/bin/python", "-m", "pytest", "packages/personalclaw-client-py/tests", "--junitxml=reports/junit-client.xml"] },
+]
+
+# The web job's tests, its build, and the wheel built with that build: three entries, one job.
+# ci.yml sets VITEST_MAX_WORKERS to the runner's core count, through GITHUB_ENV, before the
+# vitest steps; a value only the runner knows, it is not a step env here, and whatever runs
+# these steps sets it the same way.
+[[job]]
+id = "web-unit"
+tiers = ["change", "merge"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["node", "npm-ci"]
+cache = ["npm"]
+security = "ordinary"
+reuse = "tree"
+timeout_min = 45
+needs_node = true
+command = [
+  { argv = ["npm", "ci"] },
+  { argv = ["npm", "run", "typecheck:web"] },
+  { argv = ["npm", "run", "test:web"] },
+  { argv = ["npm", "run", "test:desktop"] },
+  { argv = ["npm", "run", "test:mobile"] },
+]
+
+[[job]]
+id = "web-build"
+tiers = ["merge"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["node", "npm-ci"]
+cache = ["npm"]
+security = "ordinary"
+reuse = "tree"
+timeout_min = 45
+needs_node = true
+command = [
+  { argv = ["npm", "ci"] },
+  { argv = ["npm", "run", "build"] },
+  { argv = ["python3", "scripts/check_asset_licenses.py", "--built-web"] },
+  { argv = ["python3", "scripts/spa_dist_freshness.py", "stamp"] },
+]
+
+[[job]]
+id = "package"
+tiers = ["merge"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv"]
+cache = ["uv"]
+security = "ordinary"
+python = "3.12.15"
+timeout_min = 45
+after = ["web-build"]
+command = [
+  { argv = ["uv", "build", "--wheel", "--out-dir", "dist"] },
+  { argv = ["uv", "run", "--no-project", "python", "scripts/verify_wheel.py", "--wheel", "dist/*.whl"] },
+]
+
+# ci.yml runs it only when scripts/ci_touches_frontend.py says the diff reaches the frontend.
+[[job]]
+id = "e2e"
+tiers = ["merge"]
+inputs = [":(glob)**"]
+external_inputs = ["browser-download"]
+toolchain = ["uv-sync", "node", "npm-ci", "chromium"]
+cache = ["uv", "npm"]
+security = "ordinary"
+python = "3.12.15"
+timeout_min = 30
+needs_node = true
+needs_browser = true
+after = ["web-build"]
+command = [
+  { argv = ["npm", "ci"] },
+  { argv = ["npx", "playwright", "install", "--with-deps", "chromium"] },
+  { argv = ["npx", "playwright", "test", "--grep-invert", "@visual"], workdir = "web", env = { PLAYWRIGHT_JSON_OUTPUT_NAME = "e2e-report.json" } },
+  { argv = ["node", "e2e/assert-no-route-skips.mjs", "e2e-report.json"], workdir = "web" },
+]
+
+# A real browser driven by the browse tool. Its steps run two security-marked modules (the
+# browsed page's safety script, and a denied navigation that never reaches the network), so its
+# result is security evidence; and it is live. Either way it is never reused.
+[[job]]
+id = "browse-live"
+tiers = ["merge"]
+inputs = [":(glob)**"]
+external_inputs = ["browser-download"]
+toolchain = ["uv-sync", "node", "npm-ci", "chromium"]
+cache = ["uv", "npm"]
+security = "security"
+live = true
+python = "3.12.15"
+timeout_min = 30
+needs_node = true
+needs_browser = true
+junit = ["reports/junit-browse-live.xml"]
+command = [
+  { argv = ["uv", "run", "pytest", "tests/test_browse_safety_script.py", "tests/test_browse_cdp_live.py", "tests/test_browse_behavioural_proof_is_reachable.py", "--junitxml=reports/junit-browse-live.xml"], env = { PERSONALCLAW_REQUIRE_BROWSE_PROOF = "1", PERSONALCLAW_SKIP_APP_BACKENDS = "1" } },
+]
+
+# ci.yml runs it only when scripts/ci_touches_sdk.py says the diff changes what the apps build
+# against; these are that classifier's triggers.
+[[job]]
+id = "apps-contract"
+tiers = ["merge"]
+inputs = [
+  "src/personalclaw/sdk/",
+  "scripts/apps_sdk_contract.py",
+  "scripts/ci_touches_sdk.py",
+  "scripts/sdk_signature_snapshot.py",
+  ".github/workflows/ci.yml",
+]
+external_inputs = ["apps-partner", "package-index"]
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "ordinary"
+python = "3.12.15"
+timeout_min = 15
+command = [
+  { argv = ["uv", "run", "python", "scripts/apps_sdk_contract.py", "--apps-dir", ".ci-apps", "--base-ref", "{base}", "--install-deps"] },
+]
+
+# The dependency audit reads the advisories published at the time of the run: live, never reused.
+[[job]]
+id = "audit"
+tiers = ["merge"]
+inputs = [":(glob)**"]
+external_inputs = ["advisory-feed", "package-index"]
+toolchain = ["uv", "node"]
+cache = ["uv"]
+security = "ordinary"
+live = true
+python = "3.12.15"
+timeout_min = 15
+needs_node = true
+install_exemptions = [
+  { install = "uv pip install --python {runner_temp}/audit-venv/bin/python pip-audit==2.10.1", reason = "the auditor runs in a venv of its own, apart from the graphs it audits; its version is pinned" },
+]
+command = [
+  { argv = ["uv", "venv", "{runner_temp}/audit-venv"] },
+  { argv = ["uv", "pip", "install", "--python", "{runner_temp}/audit-venv/bin/python", "pip-audit==2.10.1"] },
+  { argv = ["{runner_temp}/audit-venv/bin/python", "-m", "tools.ci", "audit", "run", "--pip-audit", "{runner_temp}/audit-venv/bin/python", "--work", "{runner_temp}/audit"] },
+]
