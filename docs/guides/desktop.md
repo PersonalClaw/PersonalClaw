@@ -343,7 +343,9 @@ Two things follow from where that switch lives:
 
 - **A kind you have set to Badge or Digest never raises one**, even with Desktop ticked.
   Those modes mean "do not interrupt me", and an OS banner is an interruption. Only the
-  **Notify** mode delivers natively.
+  **Notify** mode delivers natively. By default only approvals, questions and errors are
+  Notify; a loop's progress after each cycle is a Digest and every other kind a Badge, so
+  ticking Desktop on one of those raises nothing until you set its row to Notify.
 - **The dashboard is always the record.** A native notification is an *addition* — the
   note still lands in the bell and the notifications feed. So nothing is lost when the
   desktop app is closed: the rule simply falls back to the dashboard delivery it would

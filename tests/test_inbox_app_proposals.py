@@ -458,7 +458,8 @@ async def test_the_owners_rule_for_an_apps_proposal_kind_decides_its_delivery(
     tmp_path, monkeypatch
 ):
     """Settings → Notifications lists each app's proposal kind as a row of its own. Set to Never,
-    that app's proposals stop notifying, and another app's kind of the same name still does."""
+    that app's proposals stop notifying, and another app's kind of the same name still reaches
+    the bell, as a badge: an app's proposal kind names no mode, so it takes the default."""
     state = _gateway_state(tmp_path, monkeypatch)
     (tmp_path / "entity_settings").mkdir(parents=True, exist_ok=True)
     (tmp_path / "entity_settings" / "notification_rules.json").write_text(
@@ -472,4 +473,4 @@ async def test_the_owners_rule_for_an_apps_proposal_kind_decides_its_delivery(
 
     assert _notes_titled(state, "Muted by its rule") == []
     (kept,) = _notes_titled(state, "Still notified")
-    assert kept["mode"] == "immediate" and kept["source"] == "app:other"
+    assert kept["mode"] == "badge" and kept["source"] == "app:other"

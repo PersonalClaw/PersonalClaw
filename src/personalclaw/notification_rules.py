@@ -8,8 +8,9 @@ quieten one noisy kind was to raise the floor for everything.
 This module adds the second axis. Each ``(source, kind)`` from
 :mod:`personalclaw.notification_kinds` gets a rule:
 
-* **mode** — ``never`` (drop), ``badge`` (persist, no toast), ``immediate`` (today's
-  behavior), ``digest`` (batch for the scheduled summary).
+* **mode** — ``never`` (drop), ``badge`` (persist, no toast), ``immediate`` (a toast, and the
+  rule's other targets), ``digest`` (batch for the scheduled summary). With no rule a kind takes
+  its registered default, and only a decision or an error defaults to ``immediate``.
 * **targets** — where an ``immediate`` goes: ``dashboard`` today, ``channel_dm`` when a
   channel is configured, ``native`` as a real OS notification whenever the desktop shell is
   connected (see :func:`native_delivery`), ``push`` for a
@@ -28,12 +29,15 @@ for keywords, whole-word matching on name parts of 3+ characters — so the beha
 already configured survives the move to rules (a backfill carries those fields into conditions).
 
 **Every failure path is fail-OPEN.** A missing file, malformed JSON, a bad mode, a corrupt
-rule: all fall back to the registry default, which is ``immediate``. This mirrors the
-existing gate ("a broken settings file must not silence the system") and is the
-deliberate choice for an attention system — a notification shown when it could have been
-batched is a small annoyance, while one silently dropped can lose a loop that needed an
-answer. The one exception is ``mode: never``, which is only ever honored when it was read
-cleanly from a well-formed rule.
+rule: all fall back to the kind's registry default (:mod:`personalclaw.notification_kinds`),
+and no default silences anything: most are ``badge``, which is listed and counted in the bell,
+and a decision or an error is ``immediate``. This mirrors the existing gate
+("a broken settings file must not silence the system") and is the deliberate choice for an
+attention system — a notification shown when it could have been batched is a small annoyance,
+while one silently dropped can lose a loop that needed an answer. The one exception is
+``mode: never``, which is only ever honored when it was read cleanly from a well-formed rule.
+When resolving the rule fails outright, :func:`rule_outcome` delivers ``immediate``; it says
+why.
 """
 
 from __future__ import annotations
@@ -122,7 +126,13 @@ class Conditions:
     name_mention: bool = False
 
     def matches(self, text: str, user_name: str = "") -> str:
-        """Why this escalates, or "" — the same shape as ``inbox.evaluate_alert``."""
+        """Why this escalates, or "" — the same shape as ``inbox.evaluate_alert``.
+
+        The reason names what matched: the keyword, or the part of the name as the owner wrote it.
+        An inbox alert's note carries the reason and only the first 200 characters of the
+        message, and ``notify()`` matches the conditions again against the note's own text, so a
+        name mentioned past that cut still raises the alert.
+        """
         low = (text or "").lower()
         if not low:
             return ""
@@ -130,10 +140,11 @@ class Conditions:
             k = str(kw).strip().lower()
             if k and k in low:
                 return f"keyword: {kw}"
-        if self.name_mention and user_name.strip():
-            for part in user_name.strip().lower().split():
+        name = user_name.strip()
+        if self.name_mention and name:
+            for written, part in zip(name.split(), name.lower().split()):
                 if len(part) >= _MIN_NAME_PART and re.search(rf"\b{re.escape(part)}\b", low):
-                    return "name mention"
+                    return f"name mention: {written}"
         return ""
 
 
@@ -391,10 +402,13 @@ def _backfill_inbox_alerts() -> None:
     conditions = {"keywords": keywords, "name_mention": name_mention}
     # Both kinds, because an alert was about the MESSAGE arriving and a mention is the same
     # event seen from the other side; splitting them would silently narrow what the user set.
+    # Conditions and no mode: what the user set was the conditions, so each row keeps its default
+    # and a message that matches is raised to a toast by them. A stored mode would pin a choice
+    # the user never made: every agent message would interrupt on this home, and on no other.
     doc: dict[str, Any] = {
         "rules": {
-            "inbox/alert": {"mode": "immediate", "conditions": dict(conditions)},
-            "agent/message": {"mode": "immediate", "conditions": dict(conditions)},
+            "inbox/alert": {"conditions": dict(conditions)},
+            "agent/message": {"conditions": dict(conditions)},
         }
     }
     try:
@@ -430,9 +444,9 @@ def ensure_target(source: str, kind: str, target: str) -> bool:
 
     Two things it deliberately is NOT:
 
-    * **Not a default.** ``test_no_rules_file_delivers_exactly_like_before`` pins a universal
-      invariant with its rationale written down — *"an unconfigured rule adds no delivery
-      channel"*, for every kind including a brand-new one. A per-kind default target would
+    * **Not a default.** ``test_no_rules_file_resolves_every_kind_to_its_registered_default``
+      pins a universal invariant with its rationale written down — *"an unconfigured rule adds no
+      delivery channel"*, for every kind including a brand-new one. A per-kind default target would
       break exactly that. Here the rule stops being unconfigured because the user configured
       it, and it shows up ticked in the rules matrix afterwards, where it can be changed.
     * **Not an override.** A stored rule for this key is an explicit choice — including the
@@ -497,10 +511,12 @@ def rule_outcome(kind: str, text: str, *, posture: str) -> RuleOutcome:
     badge, waits for the notification digest, or is never sent, and a sentence of its own about
     quiet hours said "held back" while a badge rule had put the digest in the bell.
 
-    * The user's rule for the kind, fail-open to ``immediate`` when it cannot be read (a policy
-      layer that can't read its own config must not be able to silence the system), with the
-      user's conditions — a keyword, their name (``identity.operator_name``) — raising a quieter
-      mode to ``immediate``.
+    * The user's rule for the kind, or the kind's registered default where there is none, with
+      the user's conditions — a keyword, their name (``identity.operator_name``) — raising a
+      quieter mode to ``immediate``. When resolving the rule raises, the note is ``immediate``,
+      not its kind's default: nothing then says whether it is a question somebody must answer,
+      and a policy layer that can't read its own config must not be able to silence the system,
+      nor leave a question to wait unseen in the bell.
     * Quiet hours decide what a PING becomes; the gate said "not now" and the mode is HOW, so this
       is the one place that vocabulary lives. ``digest`` and ``badge`` are already quiet and are
       delivered as the rule says: the gate used to drop them before the rule was read, so a loop

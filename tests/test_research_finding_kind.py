@@ -296,21 +296,22 @@ def test_a_finding_gets_its_OWN_digest_heading():
     assert "— 2" not in body, f"the finding was folded into another group:\n{body}"
 
 
-def test_the_kind_keeps_the_immediate_default_the_registry_ships():
-    """A digest-by-default addition is experienced as "notifications stopped working", with
-    no setting the user knowingly changed. ``digest`` is one click in the rules matrix — the
-    registry row is what makes that click possible."""
-    assert nk.resolve_kind("knowledge", "research_finding").default_mode == "immediate"
-    # The population's CANONICAL home is
-    # `test_notification_kinds::test_the_kinds_defaulting_to_something_other_than_immediate_are_EXACTLY_these`,
-    # which carries the per-kind justification. This copy is the local vacuity floor: it keeps
-    # the assertion above from being the only thing standing between a future kind and a quiet
-    # default. Widened for `user/note` — a note the USER wrote defaults to `badge`,
-    # because a toast tells you something you did not know and you cannot be informed of your
-    # own keystrokes. And for `mcp/description_changed`, a quiet notice that a server whose labels
-    # the owner does not trust changed what a tool says: nothing waits on her and nothing ran.
-    quiet = sorted(k.key for k in nk.all_kinds() if k.default_mode != "immediate")
-    assert quiet == ["mcp/description_changed", "system/usage_recap", "user/note"]
+def test_a_finding_waits_in_the_bell_by_default():
+    """A finding is neither a decision nor an error, so with no rule of the owner's it is a badge:
+    the report runs while nobody is watching, and its findings wait in the bell, listed and
+    counted, instead of toasting at whatever hour it finished. Notify or Digest is one click in
+    the rules matrix, and this registry row is what makes that click possible.
+
+    The rule's canonical home is
+    `test_notification_kinds::test_a_kind_interrupts_by_default_exactly_when_it_is_a_decision_or_an_error`.
+    """
+    finding = nk.resolve_kind("knowledge", "research_finding")
+    assert finding.key == "knowledge/research_finding", "resolved to the generic fallback"
+    assert (finding.default_mode, finding.decision, finding.default_severity) == (
+        "badge",
+        False,
+        nk.SEV_INFO,
+    )
 
 
 def test_the_semantics_module_is_the_canonical_home_of_the_string():

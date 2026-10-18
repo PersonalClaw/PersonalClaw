@@ -1337,10 +1337,17 @@ NOTIFICATION_EVENTS = [
 @pytest.fixture
 def noted(tmp_path):
     """Your socket, APP's and the other app's, each declaring every notification frame, over a
-    state holding APP's conversation and yours."""
+    state holding APP's conversation and yours. Every kind `_raise_notes` raises is set to
+    Notify, so each note goes out as a `notification` frame: they wait in the bell by default.
+    The apps' proposals are `system/generic` here, since `_install` writes an app without
+    loading it, and loading is what registers its proposal kind."""
     state = _make_state(tmp_path)
     _resident(state, "mine", "my bank PIN is heron-quince")
     _resident(state, "ours", "the app's own line", creator=APP)
+    rules = tmp_path / "entity_settings" / "notification_rules.json"
+    rules.parent.mkdir(parents=True, exist_ok=True)
+    pinging = ["system/info", "heartbeat/status", "system/generic"]
+    rules.write_text(json.dumps({"rules": {k: {"mode": "immediate"} for k in pinging}}), "utf-8")
     with _home(tmp_path):
         for name in (APP, OTHER):
             _install(

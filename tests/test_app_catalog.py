@@ -696,7 +696,8 @@ def test_app_update_notification_kind_is_registered():
     k = nk.resolve_kind("apps", "update")
     assert k.key == "apps/update"
     assert k.attention is True
-    assert k.default_mode == "immediate"
+    # A badge: an update waits on nobody and nothing failed, so it waits in the bell.
+    assert k.default_mode == "badge"
     # the wire string round-trips (or a rule against it would be silently ignored)
     assert nk.kind_for_legacy_pair("apps", "update") == "app_update"
     assert nk.kind_for_legacy("app_update").key == "apps/update"

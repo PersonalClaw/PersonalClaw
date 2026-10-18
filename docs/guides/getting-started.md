@@ -416,6 +416,12 @@ PersonalClaw *looks*, the other whether it *installs*.
   while it waits on your OK, and `run_state.last_outcome` says how the last turn ended. On the
   socket, the `work_phase` frame replaces `chat_status` and `turn_steerable`
   ([work phases](../architecture/work-phases.md)).
+- **Only approvals, questions and errors interrupt you by default.** A loop's progress after
+  each cycle waits for the daily digest, and every other notification waits in the bell as a
+  Badge, listed and counted; neither reaches the Desktop, Push or Channel DM targets ticked on
+  its row. If you ticked one of those on such a row in Settings → Notifications → Per-kind
+  delivery and left its mode as it was, set the row to Notify to keep receiving it there. A row
+  whose mode you set keeps it.
 
 ### Upgrading from 0.1.x
 

@@ -17,6 +17,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **The chat says what its agent is doing as the gateway measures it: waiting to start, thinking, searching your knowledge, the tool it runs, writing, or waiting on your OK or your answer, and a first message on a new chat shows at once.**
 - **The dashboard API is version 2, and a client built for version 1 is refused: chat sessions, a chat's detail and a project's chats report the chat's `run_state` in place of their running, stopping, approval and outcome flags, and the `work_phase` frame replaces `chat_status` and `turn_steerable`.**
+- **Only approvals, questions and errors interrupt you; a loop's progress after each cycle waits for the daily digest, and every other notification waits in the bell.**
 
 ## [0.2.2] — 2026-10-18
 

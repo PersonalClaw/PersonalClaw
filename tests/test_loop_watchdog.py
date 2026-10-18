@@ -478,6 +478,33 @@ class TestJudgeErrorOnlyWhenACheckExists:
         assert "judge_error" in {e for e, _ in events}
 
 
+class TestABlindJudgeAsksItsOwner:
+    """A done-ness judge the canary proved blind pauses its loop until the owner acts, as a stall
+    or a block does, so it asks as they do: a durable Inbox row and one `loop/needs_input`
+    notification, a decision, which interrupts an owner who has set no rule. As a plain warning it
+    waited in the bell while the loop sat paused."""
+
+    def test_the_pause_asks_as_a_question(self):
+        from personalclaw import notification_kinds as nk
+        from personalclaw import notification_rules as nr
+
+        blind = {"goal_type": "open_ended", "judge_calibrated": False}
+        c = _running(kind="goal", kind_config=blind, max_cycles=20)
+        wd = _wd()
+        wd._state._sessions[manager.session_key(c.id)] = _FakeSession(manager.session_key(c.id))
+        _run(wd._poll_once())  # seed liveness
+        _write_finding(c.id, 1)
+        _run(wd._poll_once())  # the judge is blind: no verdict it gives can be trusted
+        assert store.get(c.id).status == LoopStatus.NEEDS_INPUT.value
+        paused = W.LoopWatchdog._NOTIFY_EVENTS["judge_blind"][1]
+        (note,) = [n for n in wd._state.notes if n[1] == paused]
+        kind, title, _body, meta = note
+        asked = nk.kind_for_legacy(kind)
+        assert (asked.key, asked.decision) == ("loop/needs_input", True), asked.key
+        assert meta.get("inbox_item"), "no Inbox row waits with the paused loop"
+        assert nr.rule_outcome(kind, title, posture="deliver").mode == "immediate"
+
+
 class TestReconcileLinkedTasks:
     """On completion the watchdog force-closes still-open linked tasks (the worker
     leaves them open), EXCEPT a task whose exit criteria are unmet — left open so an

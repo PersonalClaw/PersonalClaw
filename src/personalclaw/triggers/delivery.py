@@ -286,7 +286,7 @@ def build_delivery(
     escalate past a "digest" rule while a success should not, and that is a property of what
     happened rather than of who is reporting it. Both names come from `notification_kinds` so the
     user's existing rules apply — inventing a kind here would produce a notification no rule
-    matches, which resolves to `immediate` and ignores the user's settings.
+    matches, which resolves to `system/generic`, a badge, and ignores the user's settings.
 
     *scheduled* says the trigger is a CLOCK trigger — a scheduled job — and picks the `cron/*`
     pair over the generic `system/*` one.

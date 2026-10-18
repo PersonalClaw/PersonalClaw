@@ -1578,10 +1578,11 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         `badge` are local deliveries too — a foreign note in the morning digest is a foreign
         note fired, one day late.
 
-        With no rules file and no addressee, every registered kind resolves to ``immediate``
-        and this behaves exactly as it did before either layer existed — that equivalence is
-        the safety property of shipping without a gate, and `test_notification_rules.py` /
-        `test_notification_addressing.py` pin the two halves of it.
+        With no rules file and no addressee, each kind is delivered by its registered default,
+        to this owner: only a decision (an approval, a question) or an error interrupts, and the
+        rest arrive quietly, nearly all as a ``badge`` listed and counted in the bell
+        (`notification_kinds`). `test_notification_rules.py` pins the default and
+        `test_notification_addressing.py` the owner.
 
         ``raised_by_app`` names the app a note is raised for (an app's proposal). Besides a note
         about a conversation it started, it is the one note an app may read

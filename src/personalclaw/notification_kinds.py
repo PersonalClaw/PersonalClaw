@@ -21,8 +21,8 @@ bug worth failing the import over rather than resolving by last-write-wins.
 ``(system, generic)`` kind and logs a warning instead of raising. This mirrors the
 existing delivery gate's philosophy (`providers/entity_routes.notification_allowed`
 delivers when its own settings file is unreadable): a notification the system could not
-classify is still a notification the user should see. Losing a message because a plugin
-forgot to register is worse than showing one with a generic label.
+classify is still a notification the user should see, in the bell, as a badge. Losing a
+message because a plugin forgot to register is worse than showing one with a generic label.
 
 **Severity means the same thing it already did.** 1=info, 2=warning, 3=error, matching
 `_MIN_SEVERITY_RANK` in `providers/entity_routes.py` — 3 is the rank that bypasses quiet
@@ -33,17 +33,19 @@ while, and the two disagreed — every kind outside `{error, warning, inbox_aler
 info there however this file declared it, so `loop/needs_input` showed severity 2 in the
 rules matrix and was filtered as severity 1 at delivery. One declaration, one answer.
 
-**Every default_mode is ``immediate``, deliberately.** ``badge`` is the interesting new
-capability — persist without interrupting — and heartbeats, loop progress and
-signal-retirement notices are all obvious candidates for it. But the registry replaces the
-delivery path outright with no gate to hide behind, so its safety property is that a user
-with no rules file sees *exactly* what they see today, and today every emitter that passes
-the global gate produces a toast. Shipping opinionated `badge` defaults would silently
-stop delivering three kinds of notification as a side effect of a refactor — the user
-would experience it as "notifications stopped working," with no setting they knowingly
-changed. So the registry ships behavior-preserving defaults and `badge` becomes something
-the user opts into per row in the rules matrix. `tests/test_notification_kinds.py` pins
-this as an invariant, not a coincidence.
+**Only a decision or an error interrupts by default.** With no rule of the owner's, a kind
+defaults to ``immediate`` only when it is a decision (``decision=True``: work is parked until
+the owner answers — an approval, a question, a paused room) or an error (``SEV_ERROR``:
+something broke). Every other kind defaults to ``badge``: listed and counted in the bell, with
+no toast, desktop banner, phone push or channel message. A ping about something that neither
+waits on the owner nor failed teaches them to mute the channel that also carries a loop's
+question, so the quiet delivery is the default; a rule of the owner's always wins, and Notify is
+one click on the kind's row in the rules matrix. The rule rides on two properties every
+registration already declares, so there is no list to keep beside them, and :func:`register`
+holds it: an ``immediate`` default on any other kind raises, and a kind that names no mode (an
+app's proposal kind) is a badge. A default quieter still is the kind's own call, with its reason
+at its registration: ``system/usage_recap`` and ``loop/progress`` wait for the digest.
+`tests/test_notification_kinds.py` pins the rule and every population.
 """
 
 from __future__ import annotations
@@ -76,14 +78,15 @@ class NotificationKind:
     """One registered kind of notification.
 
     ``default_mode``/``default_severity`` are the behavior when the user has no rule for
-    this pair — which is the common case, and the case the "no rules file behaves exactly
-    as before" regression test pins.
+    this pair, which is the common case. ``default_mode`` is ``badge`` when a registration names
+    none, and only a decision or an error may be ``immediate`` (:func:`register` refuses it on
+    any other kind).
     """
 
     source: str
     kind: str
     label: str
-    default_mode: Mode = "immediate"
+    default_mode: Mode = "badge"
     default_severity: int = SEV_INFO
     #: True when this kind carries a durable record rather than only a transient delivery: an
     #: inbox item (the attention kinds), or the card the Triggers
@@ -120,7 +123,9 @@ _REGISTRY: dict[tuple[str, str], NotificationKind] = {}
 
 
 def register(k: NotificationKind) -> None:
-    """Register a kind. Raises ``ValueError`` on a duplicate ``(source, kind)``."""
+    """Register a kind. Raises ``ValueError`` on a duplicate ``(source, kind)``, an unknown mode
+    or severity, a verifiable decision, and an ``immediate`` default on a kind that is neither a
+    decision nor an error."""
     ident = (k.source, k.kind)
     if ident in _REGISTRY:
         raise ValueError(f"duplicate notification kind registration: {k.key}")
@@ -132,6 +137,11 @@ def register(k: NotificationKind) -> None:
         raise ValueError(
             f"{k.key}: a decision cannot be verifiable — no model's verdict may hide a decision "
             "the user owes"
+        )
+    if k.default_mode == "immediate" and not (k.decision or k.default_severity == SEV_ERROR):
+        raise ValueError(
+            f"{k.key}: only a decision or an error may default to immediate — anything else "
+            "waits in the bell until the owner's rule makes it a ping"
         )
     _REGISTRY[ident] = k
 
@@ -174,7 +184,7 @@ def resolve_kind(source: str, kind: str) -> NotificationKind:
         source=GENERIC_SOURCE,
         kind=GENERIC_KIND,
         label=f"{source}/{kind}" if source or kind else "Notification",
-        default_mode="immediate",
+        default_mode="badge",
         default_severity=SEV_INFO,
     )
 
@@ -256,14 +266,14 @@ _KINDS: tuple[NotificationKind, ...] = (
     # gone: `cron/result` and `cron/failed` are separate pairs with separate wire strings, and the
     # failure path had meanwhile been re-routed through `system/error` (SEV_ERROR) by the
     # ScheduleService removal, which silently made exactly the change the old comment existed to
-    # prevent. So `cron/failed` ranks SEV_ERROR **to preserve the delivery users have today** while
-    # the row becomes reachable again — a scheduled job that breaks keeps riding through a raised
-    # min_severity, and now does it under a row the user can actually configure.
+    # prevent. So `cron/failed` ranks SEV_ERROR, the delivery a broken job already had, under a
+    # row the user can actually configure: it rides through a raised min_severity and quiet hours,
+    # and, as an error, it interrupts by default while a job's result waits in the bell.
     NotificationKind(
         "cron",
         "result",
         "Scheduled job result",
-        "immediate",
+        "badge",
         SEV_INFO,
         owner="personalclaw.triggers.delivery",
     ),
@@ -305,12 +315,14 @@ _KINDS: tuple[NotificationKind, ...] = (
         decision=True,
         owner="personalclaw.gateway",
     ),
-    # heartbeat — 5 sites in gateway.py
+    # heartbeat — 5 sites in gateway.py. A badge, not the digest `loop/progress` waits for: each
+    # note is the result of a HEARTBEAT.md task the owner wrote, sent once when the task finishes
+    # (one still unfinished sends nothing), so the owner's own list bounds how many arrive.
     NotificationKind(
         "heartbeat",
         "status",
         "Heartbeat",
-        "immediate",
+        "badge",
         SEV_INFO,
         owner="personalclaw.gateway",
     ),
@@ -319,7 +331,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         "loop",
         "complete",
         "Loop complete",
-        "immediate",
+        "badge",
         SEV_INFO,
         owner="personalclaw.loop.watchdog",
     ),
@@ -344,11 +356,18 @@ _KINDS: tuple[NotificationKind, ...] = (
         decision=True,
         owner="personalclaw.loop.watchdog",
     ),
+    # `digest` by DEFAULT: the one frequent kind, a heads-up after every cycle of every loop, about
+    # 30 an hour for a loop at the default 2-minute cycle. Measured over a simulated night of three
+    # loops on the default budget, as a badge it was 87 of the bell's 98 notes, and 387 of 398 with
+    # an ongoing loop beside them. Past 400 the log keeps its newest 200, so on a log that already
+    # held notes that night also trimmed the evening's failed job and error out of the bell. A
+    # loop's progress shows live on its own page, on the Loops list and in Home's Active work; the
+    # digest counts the cycles each morning, and Badge or Notify is one click on this row.
     NotificationKind(
         "loop",
         "progress",
         "Loop progress",
-        "immediate",
+        "digest",
         SEV_INFO,
         owner="personalclaw.loop.watchdog",
     ),
@@ -357,7 +376,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         "inbox",
         "alert",
         "Inbox alert",
-        "immediate",
+        "badge",
         SEV_WARNING,
         owner="personalclaw.inbox",
     ),
@@ -366,7 +385,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         "agent",
         "message",
         "Agent message",
-        "immediate",
+        "badge",
         SEV_INFO,
         owner="personalclaw.dashboard.handlers.messaging",
     ),
@@ -374,7 +393,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         "agent",
         "subagent",
         "Subagent update",
-        "immediate",
+        "badge",
         SEV_INFO,
         owner="personalclaw.gateway",
     ),
@@ -382,7 +401,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         "hook",
         "fired",
         "Trigger fired",
-        "immediate",
+        "badge",
         SEV_INFO,
         owner="personalclaw.dashboard.handlers.hooks",
     ),
@@ -408,7 +427,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         "system",
         "warning",
         "System warning",
-        "immediate",
+        "badge",
         SEV_WARNING,
         owner="personalclaw.action_providers.notify_provider",
     ),
@@ -424,7 +443,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         "system",
         "info",
         "Notice",
-        "immediate",
+        "badge",
         SEV_INFO,
         owner="personalclaw.action_providers.notify_provider",
     ),
@@ -432,7 +451,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         "system",
         "success",
         "Success",
-        "immediate",
+        "badge",
         SEV_INFO,
         owner="personalclaw.action_providers.notify_provider",
     ),
@@ -442,23 +461,24 @@ _KINDS: tuple[NotificationKind, ...] = (
         "system",
         "route_drift",
         "App route drift",
-        "immediate",
+        "badge",
         SEV_INFO,
         owner="personalclaw.tool_providers.app_routes",
     ),
     # Resolution-only: old persisted `session` notifications keep their label and severity,
     # but no production emitter owns the row, so Settings must not offer inert policy for it.
-    NotificationKind("system", "session", "Session notice", "immediate", SEV_INFO, owner=None),
+    NotificationKind("system", "session", "Session notice", "badge", SEV_INFO, owner=None),
     # tasks — a task's due date is coming. INFO: a reminder, not a warning — nothing has
     # failed and nothing is at risk yet. Not an attention kind: the task itself is the durable
-    # record, so the notice persists no row of its own. Quiet hours are honoured by DEFERRING it
-    # (`tasks/due_notices.py`) rather than by this registration: the gate would drop an INFO note
-    # inside the window, and a reminder dropped at 02:00 is one that never arrives.
+    # record, so the notice persists no row of its own. A badge, so the reminder waits in the bell
+    # until the owner makes its row Notify. Quiet hours are honoured by DEFERRING it
+    # (`tasks/due_notices.py`) rather than by this registration: inside the window a ping is
+    # suppressed, and a reminder the owner asked to be pinged for at 02:00 would never ring.
     NotificationKind(
         "tasks",
         "due",
         "Task due",
-        "immediate",
+        "badge",
         SEV_INFO,
         owner="personalclaw.tasks.due_notices",
     ),
@@ -467,7 +487,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         "learning",
         "retire",
         "Retired a learned signal",
-        "immediate",
+        "badge",
         SEV_INFO,
         owner="personalclaw.feedback",
     ),
@@ -480,7 +500,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         "skills",
         "proposal",
         "Skill proposal",
-        "immediate",
+        "badge",
         SEV_INFO,
         attention=True,
         verifiable=True,
@@ -499,7 +519,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         "guardrails",
         "autonomy_revocation",
         "Earned autonomy revoked",
-        "immediate",
+        "badge",
         SEV_WARNING,
         attention=True,
         owner="personalclaw.inbox",
@@ -515,7 +535,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         "learning",
         "proposal",
         "Learning proposal",
-        "immediate",
+        "badge",
         SEV_INFO,
         attention=True,
         verifiable=True,
@@ -525,7 +545,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         "planning",
         "proposal",
         "Planning proposal",
-        "immediate",
+        "badge",
         SEV_INFO,
         attention=True,
         verifiable=True,
@@ -551,7 +571,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         "system",
         "digest",
         "Daily digest",
-        "immediate",
+        "badge",
         SEV_INFO,
         attention=True,
         owner="personalclaw.notification_rules",
@@ -564,16 +584,16 @@ _KINDS: tuple[NotificationKind, ...] = (
         "system",
         "auto_denied",
         "Denied without an answer",
-        "immediate",
+        "badge",
         SEV_WARNING,
         attention=True,
         owner="personalclaw.auto_denials",
     ),
-    # The monthly spend recap. `digest` by DEFAULT, unlike every other kind here: a
-    # recap of a month that already closed is the least urgent thing the system emits, and
-    # interrupting for it would teach a user to mute the channel that also carries a budget
-    # warning. `attention=False` — the recap persists no row of its own; the digest it rides
-    # into is the durable item.
+    # The monthly spend recap. `digest` by DEFAULT, the one kind here that waits for the digest
+    # rather than the bell: a recap of a month that already closed is the least urgent thing the
+    # system emits, so it is folded into the summary instead of being counted as news.
+    # `attention=False` — the recap persists no row of its own; the digest it rides into is the
+    # durable item.
     NotificationKind(
         "system",
         "usage_recap",
@@ -589,7 +609,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         "apps",
         "update",
         "App update available",
-        "immediate",
+        "badge",
         SEV_INFO,
         attention=True,
         owner="personalclaw.inbox",
@@ -601,15 +621,14 @@ _KINDS: tuple[NotificationKind, ...] = (
     # event by construction; the report runner invokes that shared path rather than adding
     # a second sender.
     #
-    # `immediate` like everything else here, NOT `digest`, even though a weekly report is
-    # the most digest-shaped thing this system emits: a default that quietly stops toasting
-    # is experienced as "notifications broke", with no setting the user knowingly changed.
-    # It has its own registry row precisely so `digest` is one click in the rules matrix.
+    # A `badge`, like every kind that is neither a decision nor an error: the finding is listed
+    # and counted in the bell beside its durable row, and nothing interrupts for it. It has its
+    # own registry row precisely so `digest`, or Notify, is one click in the rules matrix.
     NotificationKind(
         "knowledge",
         "research_finding",
         "Research report finding",
-        "immediate",
+        "badge",
         SEV_INFO,
         attention=True,
         owner="personalclaw.action_providers.knowledge_report_provider",
@@ -618,16 +637,15 @@ _KINDS: tuple[NotificationKind, ...] = (
     # composed while nobody is watching and the durable row is what links the artifact, so
     # a transient toast would be the one delivery shape that loses the whole feature.
     #
-    # `immediate` and SEV_INFO, which together are what make quiet hours suppress the PING
-    # while the artifact stays durable — `notification_allowed` drops anything below
-    # SEV_ERROR inside the window, and `deliver_identity_report` writes the artifact first.
-    # Not `digest`: same reasoning as `knowledge/research_finding` — a default that quietly
-    # stops toasting is experienced as "notifications broke".
+    # A `badge`, like `knowledge/research_finding`: the report waits in the bell, inside quiet
+    # hours too, and nothing pings for it unless the owner makes its row Notify. SEV_INFO, so such
+    # a ping never rings through quiet hours: inside the window it is suppressed while the
+    # artifact stays durable, because `deliver_identity_report` writes the artifact first.
     NotificationKind(
         "learning",
         "report",
         "Identity report",
-        "immediate",
+        "badge",
         SEV_INFO,
         attention=True,
         owner="personalclaw.inbox",
@@ -659,14 +677,14 @@ _KINDS: tuple[NotificationKind, ...] = (
     # to system/generic, carry GENERIC's severity and mode, and show no row in Settings →
     # Notifications. That is the 🪤 above, one level down.
     #
-    # `badge` by DEFAULT — the second kind here to decline `immediate`, and for the opposite
-    # reason to `usage_recap`'s. A toast exists to tell you something you did not know; you
+    # `badge` by DEFAULT, like every kind that is neither a decision nor an error, and here the
+    # reason is plainest. A toast exists to tell you something you did not know; you
     # cannot be informed of your own keystrokes. Capturing three notes from the tray would
     # raise three toasts about text the user had just typed, which teaches them to mute the
     # channel that also carries a loop's question. `badge` is exactly the mode for this: the
     # row persists and the unread badge counts it (`unread_count` counts open INBOX items,
     # so the note is still visibly waiting), and nothing interrupts. Delivery is real, not
-    # declined — a user who wants the toast flips this one row to `immediate`.
+    # declined — a user who wants the toast flips this one row to Notify.
     #
     # `verifiable=False` deliberately: the second-opinion pass files a REFUTED claim
     # as FILTERED and withholds it. A note is not a claim about the world, it is what the
@@ -683,11 +701,11 @@ _KINDS: tuple[NotificationKind, ...] = (
     ),
     # mcp — a server whose read-only labels the owner does not trust changed what one of its tools
     # says (`mcp_read_only_trust.observe`). A description is text the model reads, so she is told,
-    # once per change. `badge` by DEFAULT, the third kind here to decline `immediate`: nothing is
-    # waiting on her and nothing ran (the server's tools ask whatever they say), and a server
-    # that rewrites its descriptions with each release would otherwise toast at every update,
-    # which teaches her to mute the channel that also carries a loop's question. The note persists
-    # and is counted unread; one click in the rules matrix makes it a toast.
+    # once per change. `badge` by DEFAULT, like every kind that is neither a decision nor an error:
+    # nothing is waiting on her and nothing ran (the server's tools ask whatever they say), and a
+    # server that rewrites its descriptions with each release would otherwise toast at every
+    # update, which teaches her to mute the channel that also carries a loop's question. The note
+    # persists and is counted unread; one click in the rules matrix makes it a toast.
     NotificationKind(
         "mcp",
         "description_changed",
@@ -701,7 +719,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         GENERIC_SOURCE,
         GENERIC_KIND,
         "Uncategorized",
-        "immediate",
+        "badge",
         SEV_INFO,
         owner="personalclaw.inbox",
     ),

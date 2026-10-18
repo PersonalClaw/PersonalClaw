@@ -2,9 +2,10 @@
 
 The load-bearing tests here are the two that catch a *silent* regression:
 
-* ``test_every_default_mode_is_immediate`` — this plan replaces the delivery path with no
-  gate, so a `badge` default would stop delivering a kind as a side effect of a refactor.
-  The user would read that as "notifications broke."
+* ``test_a_kind_interrupts_by_default_exactly_when_it_is_a_decision_or_an_error`` — with no
+  rule of the owner's, only approvals, questions and errors interrupt. A kind that pinged by
+  default would teach the owner to mute the channel that also carries a loop's question, and a
+  decision that only badged would leave work parked with nobody told.
 * ``test_every_emitted_kind_string_resolves`` — walks the AST of `src/` for real
   `.notify()` call sites and asserts each flat kind string maps to a registration. A new
   emitter with an unregistered kind is caught here rather than by a warning in a log
@@ -19,6 +20,7 @@ import re
 
 import pytest
 import source_index
+from table_rows import row
 
 from personalclaw import notification_kinds as nk
 
@@ -79,6 +81,42 @@ def test_register_rejects_out_of_range_severity(sev):
         nk.register(nk.NotificationKind("t", f"bad-sev-{sev}", "T", "immediate", sev))
 
 
+#: What `register()` makes of an ``immediate`` default, by the two things that decide it:
+#: ``(case, severity, decision, registers)``.
+_IMMEDIATE_DEFAULTS = [
+    ("an info notice", nk.SEV_INFO, False, False),
+    ("a warning", nk.SEV_WARNING, False, False),
+    ("a decision", nk.SEV_INFO, True, True),
+    ("an error", nk.SEV_ERROR, False, True),
+]
+
+
+def test_register_lets_only_a_decision_or_an_error_interrupt_by_default(subtests):
+    """The registry holds the rule itself, as it refuses a verifiable decision, so neither a new
+    built-in kind nor an app's can ship a default that interrupts the owner for something that
+    neither waits on them nor failed."""
+    assert len(_IMMEDIATE_DEFAULTS) == 4, "a row was dropped from the table"
+    for case, severity, decision, registers in _IMMEDIATE_DEFAULTS:
+        with row(subtests, case=case):
+            loud = nk.NotificationKind("t", "loud", "T", "immediate", severity, decision=decision)
+            try:
+                if registers:
+                    nk.register(loud)
+                    assert nk.resolve_kind("t", "loud") is loud, f"{case} was not registered"
+                else:
+                    with pytest.raises(ValueError, match="immediate"):
+                        nk.register(loud)
+                    assert "t/loud" not in {k.key for k in nk.all_kinds()}, f"{case} registered"
+            finally:
+                # Every row declares the same pair, so each leaves the registry as it found it.
+                nk.unregister("t", "loud")
+
+
+def test_a_kind_that_names_no_mode_waits_in_the_bell():
+    """The dataclass default, so a kind declared without a mode cannot interrupt by accident."""
+    assert nk.NotificationKind("t", "x", "T").default_mode == "badge"
+
+
 def test_kind_is_frozen():
     """A registration is a constant; a consumer must not be able to retune delivery."""
     k = nk.resolve_kind("cron", "result")
@@ -90,11 +128,13 @@ def test_kind_is_frozen():
 
 
 def test_unknown_pair_resolves_to_generic_not_raise(caplog):
-    """Fail-OPEN: a kind we can't classify is still shown, mirroring the delivery gate."""
+    """Fail-OPEN: a kind we can't classify is still shown, mirroring the delivery gate. As a
+    badge: listed and counted in the bell, like every kind that is neither a decision nor an
+    error."""
     with caplog.at_level("WARNING"):
         k = nk.resolve_kind("nope", "nada")
     assert (k.source, k.kind) == (nk.GENERIC_SOURCE, nk.GENERIC_KIND)
-    assert k.default_mode == "immediate", "an unclassifiable notification must still deliver"
+    assert k.default_mode == "badge", "an unclassifiable notification must still be in the bell"
     assert "nope/nada" in caplog.text
 
 
@@ -142,61 +182,103 @@ def test_legacy_junk_resolves_to_generic(junk):
     assert nk.kind_for_legacy(junk).key == f"{nk.GENERIC_SOURCE}/{nk.GENERIC_KIND}"
 
 
-# ── the behavior-preservation invariants ────────────────────────────────
+# ── what interrupts by default ──────────────────────────────────────────
+
+#: The kinds that interrupt an owner who has set no rule: the decisions, where work is parked
+#: until the owner answers (an approval, a question, a paused room, runs or imported triggers to
+#: review), and the errors.
+_INTERRUPT_BY_DEFAULT = [
+    "agent/room_paused",
+    "approval/requested",
+    "cron/failed",
+    "cron/run_review",
+    "cron/trigger_import",
+    "loop/failed",
+    "loop/needs_input",
+    "system/agent_request",
+    "system/error",
+]
+
+#: The kinds that wait in the bell, listed and counted, until the owner sets their row to Notify.
+_BADGE_BY_DEFAULT = [
+    "agent/message",
+    "agent/subagent",
+    "apps/update",
+    "cron/result",
+    "guardrails/autonomy_revocation",
+    "heartbeat/status",
+    "hook/fired",
+    "inbox/alert",
+    "knowledge/research_finding",
+    "learning/proposal",
+    "learning/report",
+    "learning/retire",
+    "loop/complete",
+    "mcp/description_changed",
+    "planning/proposal",
+    "skills/proposal",
+    "system/auto_denied",
+    "system/digest",
+    "system/generic",
+    "system/info",
+    "system/route_drift",
+    "system/session",
+    "system/success",
+    "system/warning",
+    "tasks/due",
+    "user/note",
+]
 
 
-def test_every_default_mode_is_immediate():
-    """No gate hides this rollout, so defaults MUST reproduce today's delivery.
+def test_a_kind_interrupts_by_default_exactly_when_it_is_a_decision_or_an_error():
+    """Only approvals, questions and errors interrupt an owner who has set no rule.
 
-    Every emitter that passes the global gate produces a toast today. A `badge` default
-    would silently stop delivering that kind — experienced as "notifications broke," with
-    no setting the user knowingly changed. `badge` is opt-in per row in the rules matrix.
+    The rule rides on two things every registration already declares, `decision` and
+    `default_severity`, so there is no list to keep beside the registry: a decision is work
+    parked until the owner answers, and an error is something that broke. Everything else is
+    listed and counted in the bell without a toast, and one click on its row makes it Notify.
 
-    The obligation is BEHAVIOR PRESERVATION, so it binds exactly the kinds that HAD a
-    pre-registry emitter — the `_LEGACY_FLAT` population. A kind nothing ever emitted has no
-    "today's delivery" to preserve and may declare an honest default; that is the same
-    no-history-no-obligation split `_ATTENTION_FLAT` already makes for SEVERITY (see
-    `test_attention_pairs_have_no_legacy_history`). The exempt population is pinned by the test
-    below, so widening it is a deliberate act rather than a drift.
+    The literal lists are the vacuity guard: the rule alone would hold for a registry in which
+    nothing was a decision and nothing interrupted. Two kinds wait for the digest: a recap of a
+    month that already closed, and a loop's heads-up after each cycle, the one kind frequent
+    enough to bury the rest of the bell.
     """
-    historical = {nk.kind_for_legacy(flat).key for flat in nk._LEGACY_FLAT}
-    offenders = [
-        k.key for k in nk.all_kinds() if k.default_mode != "immediate" and k.key in historical
-    ]
-    assert not offenders, (
-        "these kinds would change delivery behavior with no rules file: "
-        f"{offenders} — see the module docstring"
+    kinds = nk.all_kinds()
+    by_mode = {mode: sorted(k.key for k in kinds if k.default_mode == mode) for mode in nk.MODES}
+    by_rule = sorted(k.key for k in kinds if k.decision or k.default_severity == nk.SEV_ERROR)
+    assert (
+        by_mode["immediate"] == by_rule
+    ), f"interrupting by default: {by_mode['immediate']}; decisions and errors: {by_rule}"
+    assert by_mode["immediate"] == _INTERRUPT_BY_DEFAULT
+    assert by_mode["badge"] == _BADGE_BY_DEFAULT
+    assert by_mode["digest"] == ["loop/progress", "system/usage_recap"]
+    assert by_mode["never"] == []
+
+
+def test_an_apps_proposal_kind_waits_in_the_bell_by_default():
+    """An app's proposal kind names no mode, so it takes the dataclass default. Registered for
+    real (the refusal in `register` would otherwise be swallowed as "already registered" and the
+    kind would fall open to system/generic, which is a badge too), then dropped again."""
+    from personalclaw import proposals_contract as pc
+    from personalclaw.apps.manifest import AppManifest
+
+    manifest = AppManifest.from_dict(
+        {
+            "name": "demo-bell",
+            "version": "1.0.0",
+            "displayName": "Demo",
+            "description": "x",
+            "permissions": {"proposals": [{"kind_suffix": "draft", "label": "Draft reply"}]},
+        }
     )
-
-
-def test_the_kinds_defaulting_to_something_other_than_immediate_are_EXACTLY_these():
-    """The vacuity guard on the carve-out above.
-
-    Without this, scoping the invariant to the historical population would let any future kind
-    quietly ship a `badge` or `never` default and deliver nothing, which is the exact failure the
-    invariant exists to prevent — just displaced onto new kinds.
-
-    `system/usage_recap` is a monthly recap of a month that already closed: the least
-    urgent thing the system emits, and its change specifies digest delivery.
-
-    `user/note` is the one kind the USER emits. A toast tells you something you did not
-    know, and you cannot be informed of your own keystrokes — capturing three notes from the
-    tray would raise three toasts about text just typed, which teaches a user to mute the
-    channel that also carries a loop's question. `badge` still persists the note and still
-    counts it (`unread_count` counts open inbox items), so nothing is declined: delivery is one
-    click away in this very matrix.
-
-    `mcp/description_changed` tells the owner that a server whose read-only labels she does not
-    trust changed what one of its tools says. Nothing is waiting on her and nothing ran (the
-    server's tools ask whatever they say), and a server that rewrites its descriptions with each
-    release would otherwise toast at every update. The quiet notice the change calls for: it
-    persists and is counted unread, and one click here makes it a toast.
-    """
-    quiet = sorted(k.key for k in nk.all_kinds() if k.default_mode != "immediate")
-    assert quiet == ["mcp/description_changed", "system/usage_recap", "user/note"], (
-        f"the non-immediate default population changed to {quiet} — every addition needs the "
-        "same justification usage_recap carries, so widen this list deliberately"
-    )
+    assert pc.register_app_proposal_kinds("demo-bell", manifest) == ["proposal:draft"]
+    try:
+        assert ("app:demo-bell", "proposal:draft") in nk._REGISTRY
+        k = nk.resolve_kind("app:demo-bell", "proposal:draft")
+        assert k.key == "app:demo-bell/proposal:draft"
+        assert k.default_mode == "badge"
+    finally:
+        pc.deregister_app_proposal_kinds("demo-bell", manifest)
 
 
 def test_severity_vocabulary_matches_the_existing_delivery_gate():

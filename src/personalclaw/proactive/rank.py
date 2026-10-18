@@ -12,8 +12,9 @@ has already been paid; the body here is assembled from typed fields the pipeline
 also makes the digest assertable: a test can require that a dropped item's title is absent,
 which is the property the gate's refusal path only *means* something through.
 
-The digest is `info`-ranked on purpose. `notification_allowed` defers `info` inside quiet
-hours, which for a MORNING digest is the correct behaviour rather than a limitation.
+The digest is `info`-ranked on purpose: only an error rings through quiet hours, so a digest
+raised inside them wakes nobody, which for a MORNING digest is the correct behaviour rather
+than a limitation. With no rule of the owner's its notice waits in the bell as a badge.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ from personalclaw.proactive.manifest import (
 )
 from personalclaw.proactive.proposals import Proposal
 
-#: Notification kind for a digest. `info` so quiet hours defer it. An error inside the
+#: Notification kind for a digest. `info`, so quiet hours never let it ring. An error inside the
 #: window does NOT promote the digest: promoting would mean a run failure at 02:00 wakes the
 #: user through the surface whose whole promise is that it waits until morning.
 DIGEST_NOTIFY_KIND = "info"

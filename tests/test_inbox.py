@@ -292,7 +292,9 @@ def test_evaluate_alert_reads_the_notification_rule(tmp_path, monkeypatch):
     # Full configured name, message uses one part → still fires (word-boundary match per
     # name part, short particles skipped).
     rule(name_mention=True)
-    assert evaluate_alert(item("hey Marlow can you look?"), "Jordan Marlow") == "name mention"
+    assert (
+        evaluate_alert(item("hey Marlow can you look?"), "Jordan Marlow") == "name mention: Marlow"
+    )
     # A substring inside another word must NOT fire.
     assert evaluate_alert(item("the marlowe novel arrived"), "Marlow") == ""
     # No name configured → nothing to match.
