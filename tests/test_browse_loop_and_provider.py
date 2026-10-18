@@ -496,10 +496,10 @@ class TestTheLoop:
         assert any(f"already visited {CHANGELOG_URL}" in p for p in decide.page_prompts)
 
     @pytest.mark.security
-    def test_a_navigate_step_that_loads_no_document_is_refused_not_visited(self):
+    def test_a_navigate_step_that_loads_no_document_is_neither_a_visit_nor_a_block(self):
         """A NAVIGATE the gate allowed but the browser answered with errorText left the tab on
-        the page it held: the step is a refusal, the URL is not recorded as visited, and the
-        model is told."""
+        the page it held: the URL is not recorded as visited, and not as blocked either, since no
+        egress policy refused it, and the model is told it loaded no page."""
 
         class _NoDocument(_FakeSession):
             async def navigate(self, url: str):
@@ -524,12 +524,13 @@ class TestTheLoop:
         )
 
         assert session.navigations == [INDEX_URL, CHANGELOG_URL]
-        assert result.blocked_urls == (CHANGELOG_URL,)
+        assert result.blocked_urls == ()
         assert CHANGELOG_URL not in result.visited_urls
         assert any(
-            f"navigation to {CHANGELOG_URL} was refused: net::ERR_ABORTED" in p
+            f"navigation to {CHANGELOG_URL} loaded no page: net::ERR_ABORTED" in p
             for p in decide.page_prompts
         )
+        assert not any("was refused" in p for p in decide.page_prompts)
 
     def test_a_denied_first_navigation_is_a_failure_not_a_park(self):
         """A run that never loaded a page produced nothing to keep, so it fails rather than
@@ -1019,3 +1020,58 @@ def _binding_ctx():
     from personalclaw.workflows.bindings import BindingContext
 
     return BindingContext(inputs={}, node_outputs={})
+
+
+class TestALoadFailureIsNotAnEgressBlock:
+    """A start URL the gate allowed but that loaded no page is a failed run, not an egress block:
+    it is not recorded as blocked, and the fix it is given is not the egress policy."""
+
+    def _provider_result(self, monkeypatch, nav):
+        from personalclaw.action_providers import browse_provider as bp
+        from personalclaw.action_providers.base import ActionContext
+
+        session, page = _fresh_pair()
+
+        async def navigate(url):
+            session.navigations.append(url)
+            return nav
+
+        session.navigate = navigate
+        monkeypatch.setattr(bp, "_decide", _Decide("DONE"))
+        monkeypatch.setattr(
+            bp.BrowseActionProvider,
+            "_open",
+            lambda self, cfg, ctx, *, cdp_url="": _done((session, page, None)),
+        )
+        return _run(
+            bp.BrowseActionProvider().execute(
+                {"goal": "read the docs", "start_url": INDEX_URL}, ActionContext(event="clock")
+            )
+        )
+
+    def test_a_start_url_that_loaded_no_page_is_not_sent_to_the_egress_policy(self, monkeypatch):
+        """🔴 Red before: a start URL answered with net::ERR_ABORTED parked as an egress block,
+        listed as blocked, and the fix said to check the BROWSE egress policy."""
+        result = self._provider_result(
+            monkeypatch,
+            SimpleNamespace(
+                ok=False, allowed=True, url=INDEX_URL, reason="", error="net::ERR_ABORTED"
+            ),
+        )
+        payload = json.loads(result.stdout)
+        assert result.success is False and payload["parked"] is False
+        assert payload["blocked_urls"] == []
+        assert payload["error"] == "the start URL loaded no page: net::ERR_ABORTED"
+        assert "egress" not in result.agent_error.fix
+
+    def test_a_start_url_the_policy_denied_still_names_the_egress_policy(self, monkeypatch):
+        """Vacuity partner: a denied start URL is still an egress block, with the policy fix."""
+        result = self._provider_result(
+            monkeypatch,
+            SimpleNamespace(ok=False, allowed=False, url=INDEX_URL, reason="denied", error=""),
+        )
+        payload = json.loads(result.stdout)
+        assert result.success is False
+        assert payload["park_reason"] == PARK_NAVIGATION_BLOCKED
+        assert payload["blocked_urls"] == [INDEX_URL]
+        assert "egress policy" in result.agent_error.fix

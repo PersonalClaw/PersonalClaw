@@ -34,6 +34,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **`personalclaw-client` signs in with the token it is given: it sends it as `Authorization: Bearer`, where it sent a cookie the gateway never reads, so every call was refused.**
 - **Knowledge consolidation's background check no longer sends your items to the embedding model: it groups them by the vectors they already have, runs at most once per the minimum hours you set (your own consolidation is never held back by it), and the call log names knowledge maintenance as the caller of the embeddings it makes.**
 - **A workflow step inside a fan-out reads the steps of its own item, where it could be handed another item's answer, and a branch in each item takes the case its own item's answer selects.**
+- **A browse run whose start page fails to load says so instead of blaming your egress settings, a blocked redirect torn down cleanly no longer ends a healthy run, and a watched source whose browse step could not run says why instead of telling you to change its URL.**
 
 ### Changed
 

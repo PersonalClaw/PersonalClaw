@@ -677,7 +677,12 @@ class BrowseActionProvider(ActionProvider):
                     code="ERR_BROWSE_FAILED",
                     what=f"browse could not pursue {result.goal!r}",
                     why=result.error or result.park_detail or "the run ended without a result",
-                    fix="check the start URL against the BROWSE egress policy, then re-run",
+                    fix=(
+                        "check the start URL against the BROWSE egress policy, then re-run"
+                        if result.park_reason == PARK_NAVIGATION_BLOCKED
+                        else "check that the start URL serves a page and the run's browser can "
+                        "reach it, then re-run"
+                    ),
                 ),
             )
         if result.parked:

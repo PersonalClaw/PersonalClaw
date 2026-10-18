@@ -117,6 +117,16 @@ class CdpSessionError(RuntimeError):
     and its :attr:`GatedCdpSession.page_transport` refuses to read or act on the page."""
 
 
+class PageReplyDiscarded(RuntimeError):
+    """A page command's reply came back after a teardown began, so it was discarded: it may have
+    been read off the denied document before the page was blanked.
+
+    Not a :class:`CdpSessionError`: the session is still sound when that teardown succeeded
+    (:attr:`GatedCdpSession.quarantine_reason` says which), and the same read sent again waits
+    for the teardown and reads the blanked page. A caller may re-read; it should not resend an
+    action, which is not idempotent."""
+
+
 class _PageStayedDetached(RuntimeError):
     """A teardown command was refused with :data:`PAGE_DETACHED` until the bound ran out."""
 
@@ -642,8 +652,9 @@ class _PageTransport:
     a click) goes through :meth:`send`, which refuses once the session is quarantined: a session
     that could not tear a denied document down may still have it loaded, and refusing to navigate
     is not enough while the page itself can still be read. A command waits while a teardown runs,
-    and a reply that comes back after a teardown began is discarded rather than returned, because
-    it may have been read off the denied document before it was blanked.
+    and a reply that comes back after a teardown began is discarded rather than returned
+    (:class:`PageReplyDiscarded`), because it may have been read off the denied document before it
+    was blanked.
     """
 
     def __init__(self, session: GatedCdpSession) -> None:
@@ -662,7 +673,7 @@ class _PageTransport:
         teardowns = session._teardowns
         reply = await session._transport.send(method, params)
         if session._teardowns != teardowns or not session._settled.is_set():
-            raise CdpSessionError(
+            raise PageReplyDiscarded(
                 f"{method}'s reply was discarded: a denied navigation was torn down while it ran"
             )
         self._refuse_if_quarantined(method)
