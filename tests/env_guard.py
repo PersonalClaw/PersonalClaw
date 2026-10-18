@@ -18,11 +18,21 @@ later test in the worker.
 
 What it cannot see: a write made after the test's teardown by something the test left running (a
 thread, a task) lands in the next test's window and is charged to that test.
+
+**A running gateway's address stays out of the run.** A shell a gateway started carries the port
+it bound (``PERSONALCLAW_PORT``), and a shell an owner set up for an app may carry the address and
+token the app template teaches. A test that inherits one reaches for that gateway: the doctor
+asked the live gateway's port which home it serves, and only the port guard stopped it.
+:func:`forget_the_gateway` takes every such variable out of the run's environment before anything
+under test is imported (``config.loader`` reads the port when it is first imported), and the xdist
+workers and every child a test starts inherit what is left. A test that needs one sets its own.
 """
 
 from __future__ import annotations
 
 import os
+import re
+from collections.abc import MutableMapping
 
 #: The product's own environment namespace. A value a test leaves there changes what every later
 #: test in the worker tests: the port children address, an inbound token, a home, a project dir.
@@ -30,6 +40,40 @@ PRODUCT_PREFIX = "PERSONALCLAW_"
 
 #: Watched beside the product's own: no code PersonalClaw runs may change them.
 WATCHED = frozenset({"PATH", "TMPDIR"})
+
+#: What names a running gateway, or speaks to it, when a shell carries it: the port a gateway
+#: publishes to its children (``gateway_base.PORT_ENV``), the session and channel it hands an agent
+#: CLI, and the address and token the app template's install snippet exports. Spelt out rather than
+#: imported, because importing the product would read the port before it is taken out;
+#: ``tests/test_a_test_never_inherits_a_running_gateways_address.py`` holds these to the product.
+#: ``PERSONALCLAW_RUN`` is deliberately not here: it names the run that started this test run, and
+#: is how that run ends what the tests leave running.
+GATEWAY_NAMES = frozenset(
+    {
+        "PERSONALCLAW_PORT",
+        "PERSONALCLAW_SESSION_KEY",
+        "PERSONALCLAW_CHANNEL_ID",
+        "PERSONALCLAW_URL",
+        "PERSONALCLAW_TOKEN",
+    }
+)
+
+#: An inbound surface's token (``inbound.auth.token_env_key``), which the gateway reads from its
+#: environment before its credential store.
+GATEWAY_TOKEN_NAME = re.compile(r"PERSONALCLAW_INBOUND_[A-Z0-9_]+_TOKEN")
+
+
+def names_a_gateway(key: str) -> bool:
+    """Whether *key* names a running gateway or carries a credential for one."""
+    return key in GATEWAY_NAMES or GATEWAY_TOKEN_NAME.fullmatch(key) is not None
+
+
+def forget_the_gateway(environ: MutableMapping[str, str] = os.environ) -> list[str]:
+    """Take every variable that names a running gateway out of *environ*; their names, sorted."""
+    names = sorted(key for key in environ if names_a_gateway(key))
+    for key in names:
+        del environ[key]
+    return names
 
 
 def snapshot() -> dict[str, str]:

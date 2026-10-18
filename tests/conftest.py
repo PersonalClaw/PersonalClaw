@@ -46,6 +46,13 @@ real_home_guard.GUARD.install()
 # once the bytecode-cache rail is active so that its own bytecode is under it.
 env_guard = importlib.import_module("env_guard")
 
+# ── A running gateway's address stays out ───────────────────────────────
+# Before `personalclaw` is first imported: the port, session, address and tokens a shell carries
+# for a running gateway are taken out of this process's environment, so no test, xdist worker or
+# child reaches that gateway by inheriting them. Which names and why: tests/env_guard.py. Proof:
+# tests/test_a_test_never_inherits_a_running_gateways_address.py.
+env_guard.forget_the_gateway()
+
 # ── Port guard ──────────────────────────────────────────────────────────
 # From here on a connection to a server this process did not start is refused before it is made:
 # a local model server's port (Ollama's 11434 among them) at any address unless this process is
