@@ -75,7 +75,40 @@ manifest) names its judge beside what it judged: `controller_revision` (the comm
 `tools/ci` copy the trusted job ran), `head_sha`, `tree_oid`, `external_revisions`, `toolchain`
 and `evidence_digests`. `trust.check_receipt` refuses a receipt that lacks one, whose controller
 revision is not a commit on `main`, or whose tree is not its head's tree. A local receipt names
-no controller, because a local result never stands in for GitHub's.
+no controller, because a local result never stands in for GitHub's. `trust.receipt_from` is the
+format half of that check, with no git: the merge verdict's verifier uses it, and checks the
+head's tree from the API.
+
+### The merge verdict's record
+
+The merge controller posts its verdict as a `merge-verdict` check run on the pull request's head,
+with its GitHub App's token, and that check run is the record (#3910). Its output has a title and
+a summary for people, and the receipt as canonical JSON in one fenced block
+(`tools/ci/merge_verdict.py`). Only the App that posted a check run can change it, and it stays
+with the commit. Neither an artifact (it expires, and any job can upload one under the same name)
+nor a commit status (no room for the receipt) holds it. The main commit a squash lands is not in
+it: the push job will record that in its own record, beside this one, when #3908 checks rule 4.
+
+`python -m tools.ci verify-check-run <sha> --repo OWNER/NAME [--external NAME=SHA ...]` says
+whether the verdict on a head counts: exit 0 accepted (it prints the receipt), 1 refused, 2 an
+answer it could not read. `--help` exits 0 and a usage error 2, as argparse's do, so acceptance
+is exit 0 with the `accepted:` line. Every rule fails closed:
+
+- **Which App is believed:** the one `main`'s required-status-check rule names for
+  `merge-verdict`. No such rule, a rule naming no App, two Apps, or GitHub Actions' own App
+  refuses every verdict, so a candidate's own job named `merge-verdict` satisfies nothing. Until
+  that ruleset exists, every verdict is refused.
+- **Newest wins:** every `merge-verdict` check run on the head is read, page by page against the
+  API's count, which must hold from page to page. The newest of that App's runs (the highest id,
+  whatever order the API lists them in) decides, so a later pending or red run takes back an
+  older green. Only a `completed` run concluded `success` is accepted; another App's runs
+  neither count nor hide the controller's.
+- **The identity:** exactly one receipt, with no key given twice, naming this head; the head's
+  tree as the API reads it (a squash-merged head is not on `main`, so local git cannot); a
+  controller revision on `main`; and every external revision the caller expects.
+
+Nothing posts the record yet: the controller workflow and its App come later in #3910.
+`tests/test_ci_merge_verdict.py` holds each rule on planted check runs.
 
 ### Reachability
 
@@ -209,12 +242,12 @@ records, so a contributor whose GitHub commit email differs from their sign-off 
 (two of the four contributor squashes in history do).
 
 **What it does not cover.** Rule 4, the pushed tree against the tree the merge controller
-recorded for its pull request, is not checked: #3908 keeps it open until that record exists, and
-where the record lives is settled with #3910. Until then `GitHub <noreply@github.com>` commits a
-squash merge, a web-editor commit and a revert made from a pull request's page alike, and rule 2
-passes all three. A push to `main` that starts no run at all (one made with a workflow's own
-token, say) is never checked either, because the next run starts at its own `before`; rule 5
-closes only the skip-marker case.
+recorded for its pull request, is not checked: #3908 keeps it open until that record is posted.
+It lives in the merge controller's check run (see "The merge verdict's record"). Until then
+`GitHub <noreply@github.com>` commits a squash merge, a web-editor commit and a revert made from
+a pull request's page alike, and rule 2 passes all three. A push to `main` that starts no run at
+all (one made with a workflow's own token, say) is never checked either, because the next run
+starts at its own `before`; rule 5 closes only the skip-marker case.
 
 ### A closed pull request's runs
 

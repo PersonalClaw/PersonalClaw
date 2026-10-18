@@ -7,6 +7,15 @@ from collections.abc import Callable
 
 from . import audit, rails_census, shards, telemetry, variation_census, verdict
 
+
+def _verify_check_run(argv: list[str]) -> int:
+    # Imported when called: the other commands, which every CI run starts, load neither the
+    # verifier nor tools/ci/trust.py.
+    from . import merge_verdict
+
+    return merge_verdict.main(argv)
+
+
 COMMANDS: dict[str, Callable[[list[str]], int]] = {
     "audit": audit.main,
     "rails": rails_census.main,
@@ -14,6 +23,7 @@ COMMANDS: dict[str, Callable[[list[str]], int]] = {
     "telemetry": telemetry.main,
     "variation-census": variation_census.main,
     "verdict": verdict.main,
+    "verify-check-run": _verify_check_run,
 }
 
 

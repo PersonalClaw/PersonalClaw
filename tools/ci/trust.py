@@ -24,8 +24,6 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
-import yaml
-
 #: Every file under these decides which jobs run, what each one runs or how the verdict is
 #: computed. The catalogue (#3909) lives under ``tools/ci/``.
 DEFINITION_ROOTS: tuple[str, ...] = (".github/workflows/", ".github/actions/", "tools/ci/")
@@ -303,6 +301,10 @@ def _strings(value: object) -> Iterable[str]:
 
 
 def _workflow_entries(text: str, tracked: Mapping[str, Entry]) -> set[str]:
+    # Imported here, not at the top: ``python3 -m tools.ci`` runs on the runner image's bare
+    # Python, and only reading workflows needs PyYAML.
+    import yaml
+
     try:
         workflow = yaml.safe_load(text)
     except yaml.YAMLError:
@@ -454,11 +456,13 @@ def _mapping(
     return dict(raw)
 
 
-def check_receipt(repo: Path, data: Mapping[str, object], *, main: str = "origin/main") -> Receipt:
-    """The receipt, if it names a controller on ``main`` and its head's own tree.
+def receipt_from(data: Mapping[str, object]) -> Receipt:
+    """The receipt, if it carries every field in its format. Reads no repository.
 
     ``external_revisions`` may be empty, for a run that used no other repository. The toolchain
-    and the evidence digests may not: a receipt that records neither says nothing.
+    and the evidence digests may not: a receipt that records neither says nothing. Whether the
+    controller is on ``main`` and the tree is the head's is :func:`check_receipt`'s, or the
+    caller's when the head is not in a local clone.
     """
     missing = [name for name in RECEIPT_FIELDS if name not in data]
     if missing:
@@ -479,6 +483,13 @@ def check_receipt(repo: Path, data: Mapping[str, object], *, main: str = "origin
         raise Refused("the receipt names no toolchain")
     if not receipt.evidence_digests:
         raise Refused("the receipt names no evidence")
+    return receipt
+
+
+def check_receipt(repo: Path, data: Mapping[str, object], *, main: str = "origin/main") -> Receipt:
+    """The receipt, if it is in format (:func:`receipt_from`), names a controller on ``main`` and
+    names its head's own tree."""
+    receipt = receipt_from(data)
     require_on_main(repo, receipt.controller_revision, main=main)
     tree = _git(repo, "rev-parse", "--verify", "--quiet", f"{receipt.head_sha}^{{tree}}")
     if tree.returncode != 0:
