@@ -67,9 +67,24 @@ _PHASES = ("setup", "teardown")
 _CLOCKS = ("wall", "cpu")
 
 
-def _now() -> tuple[float, float]:
-    """Wall and this thread's CPU time, in microseconds."""
-    return time.perf_counter() * 1e6, time.thread_time() * 1e6
+def _start() -> tuple[float, float]:
+    """Wall and this thread's CPU time, in microseconds, as a span starts: the wall clock first."""
+    wall = time.perf_counter() * 1e6
+    return wall, time.thread_time() * 1e6
+
+
+def _stop() -> tuple[float, float]:
+    """Wall and this thread's CPU time, in microseconds, as a span stops: the CPU clock first.
+
+    Read in this order, the wall span holds the CPU span, so a span's wall time is never less than
+    its CPU time: a thread spends no more CPU time than the time that passes. Read wall first at
+    both ends, the CPU span started and stopped one read later than the wall span, and when the
+    last read took longer than the second one, a busy span read more CPU time than wall time
+    (5.018 ms against 5.017 ms in CI). Each is rounded to whole microseconds with ``round``, which
+    keeps the order. A setup's own time is its span less the setups nested in it, and a difference
+    keeps no such order."""
+    cpu = time.thread_time() * 1e6
+    return time.perf_counter() * 1e6, cpu
 
 
 def _percentile(values: list[int], fraction: float) -> int:
@@ -183,11 +198,11 @@ class Plugin:
     def pytest_fixture_setup(self, fixturedef, request):  # noqa: ARG002 — hook signature
         key = self._key(fixturedef)
         self._nested.append([0.0, 0.0])
-        wall0, cpu0 = _now()
+        wall0, cpu0 = _start()
         try:
             return (yield)
         finally:
-            wall1, cpu1 = _now()
+            wall1, cpu1 = _stop()
             wall, cpu = wall1 - wall0, cpu1 - cpu0
             nested = self._nested.pop()
             if self._nested:
@@ -199,14 +214,14 @@ class Plugin:
             fixturedef.addfinalizer(lambda ident=id(fixturedef): self._teardown_starts(ident))
 
     def _teardown_starts(self, ident: int) -> None:
-        self._tearing_down[ident] = _now()
+        self._tearing_down[ident] = _start()
 
     @pytest.hookimpl(tryfirst=True)
     def pytest_fixture_post_finalizer(self, fixturedef, request):  # noqa: ARG002 — hook signature
         started = self._tearing_down.pop(id(fixturedef), None)
         if started is None:
             return
-        wall1, cpu1 = _now()
+        wall1, cpu1 = _stop()
         self._record(self._key(fixturedef), "teardown", wall1 - started[0], cpu1 - started[1])
 
     @pytest.hookimpl(optionalhook=True)

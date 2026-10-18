@@ -205,3 +205,69 @@ def test_a_planted_teardown_is_charged_to_its_own_fixture(tmp_path: Path, worker
     total = report["per_test"]["teardown"]["cpu_median_ms"]
     assert abs(total - planted) <= 1.0, (total, planted, report["per_test"]["teardown"])
     assert report["per_test"]["teardown"]["median_ms"] >= asleep["median_ms"], report["per_test"]
+
+
+class _BusyClock:
+    """``time`` as the report reads it, on a thread that is busy the whole time: both clocks read
+    the same elapsed time, and each read of either takes the next of *steps* (microseconds)."""
+
+    def __init__(self, steps: list[float]) -> None:
+        self._steps = list(steps)
+        self._now = 0.0
+
+    def _read(self) -> float:
+        self._now += self._steps.pop(0) / 1e6
+        return self._now
+
+    perf_counter = _read
+    thread_time = _read
+
+
+def _a_fixture() -> None:
+    """The function a fake fixture definition names, so the report can key it by its file."""
+
+
+class _FixtureDef:
+    func = staticmethod(_a_fixture)
+    argname = "busy"
+    scope = "function"
+
+    def __init__(self) -> None:
+        self.finalizers: list = []
+
+    def addfinalizer(self, finalizer) -> None:
+        self.finalizers.append(finalizer)
+
+
+#: Reads that took 1 µs, 1 µs, 5 ms (the span itself) and 3 µs: the last read took longer than
+#: the second. Read wall first at both ends, the CPU span is the last three steps (5,003 µs) and
+#: the wall span the middle two (5,001 µs), which is how CI read a busy 5 ms teardown as 5.018 ms
+#: of CPU in 5.017 ms of wall time.
+_STEPS = [1.0, 1.0, 5000.0, 3.0]
+
+
+@pytest.mark.parametrize("phase", ["setup", "teardown"])
+def test_a_busy_span_never_reads_more_cpu_time_than_wall_time(
+    tmp_path: Path, monkeypatch, phase: str
+) -> None:
+    """🔴 Red before: read wall first at both ends, a span whose last clock read took longer than
+    its second read more CPU time than wall time. However long each read takes, the wall span now
+    holds the CPU span."""
+    import fixture_costs
+
+    monkeypatch.setattr(fixture_costs, "time", _BusyClock(_STEPS))
+    plugin = fixture_costs.Plugin(tmp_path)
+    fixturedef = _FixtureDef()
+    if phase == "setup":
+        hook = plugin.pytest_fixture_setup(fixturedef, None)
+        next(hook)
+        with pytest.raises(StopIteration):
+            next(hook)
+    else:
+        plugin._key(fixturedef)
+        plugin._teardown_starts(id(fixturedef))
+        plugin.pytest_fixture_post_finalizer(fixturedef, None)
+    measured = next(iter(plugin._fixtures.values()))[phase]
+    assert len(measured["wall"]) == len(measured["cpu"]) == 1, measured
+    assert measured["cpu"][0] >= 5000, measured
+    assert measured["wall"][0] >= measured["cpu"][0], measured
