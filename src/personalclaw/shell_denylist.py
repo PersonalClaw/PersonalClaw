@@ -6,6 +6,7 @@ memory on every read, and merged with the patterns the owner added. :mod:`person
 keeps the tool-name rules (``is_denied``) and the other built-in controls.
 """
 
+import functools
 import hashlib
 import json
 import logging
@@ -315,6 +316,27 @@ class DeniedCommand:
         return f"Blocked: {self.why()}. It was not run."
 
 
+@functools.lru_cache(maxsize=1024)
+def _search_form(pattern: str) -> "re.Pattern[str] | None":
+    """*pattern* compiled for :func:`denied_command`'s search, or ``None`` when it does not compile.
+
+    A pattern that begins with ``.*`` is searched without it. A search already tries every
+    position, so ``.*X`` finds a match exactly when ``X`` does (``.*`` is no group, so the
+    numbering of the rest is the same, and it can always match empty). The leading ``.*`` only
+    costs time: tried from every position, each attempt runs to the end of the line before it
+    backs off, so a pattern that finds no match took time in the square of the line's length.
+    It is kept when a quantifier follows it (``.*?``), where it is not a whole atom, and nothing
+    is changed for a pattern that does not compile as written, which matches nothing, as before.
+    """
+    try:
+        compiled = re.compile(pattern, re.IGNORECASE)
+    except re.error:
+        return None
+    if pattern.startswith(".*") and pattern[2:3] not in ("*", "+", "?", "{"):
+        return re.compile(pattern[2:], re.IGNORECASE)
+    return compiled
+
+
 def denied_command(command: str) -> DeniedCommand | None:
     """The shell denylist's answer for *command*: the rule it matches, or None to let it run.
 
@@ -343,10 +365,8 @@ def denied_command(command: str) -> DeniedCommand | None:
         return DeniedCommand(pattern="", added=True)
     baseline = set(baseline_denied_command_patterns())
     for pat in patterns:
-        try:
-            if not re.search(pat, command, re.IGNORECASE):
-                continue
-        except re.error:
+        search = _search_form(pat)
+        if search is None or not search.search(command):
             continue
         if pat == GIT_PUSH_BASELINE_PATTERN and allowed(command):
             continue
