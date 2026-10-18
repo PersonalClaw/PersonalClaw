@@ -51,7 +51,7 @@ _BASE_FILES = {
     "web/e2e/assert.mjs": "process.exit(0)\n",
     "src/app.py": "print('product code')\n",
     "tests/test_app.py": "def test_it():\n    pass\n",
-    "tests/test_ci_contract.py": "ROWS = ()\n",
+    "tests/rails/test_ci_contract.py": "ROWS = ()\n",
     "README.md": "readme\n",
 }
 
@@ -188,8 +188,8 @@ def test_a_makefile_no_command_runs_is_not_a_definition(planted: Path) -> None:
             id="a reviewed helper of an entry point",
         ),
         pytest.param(
-            {"tests/test_ci_contract.py": "ROWS = None\n"},
-            {("tests/test_ci_contract.py", "modified")},
+            {"tests/rails/test_ci_contract.py": "ROWS = None\n"},
+            {("tests/rails/test_ci_contract.py", "modified")},
             id="the contract table, the one test that judges",
         ),
     ],

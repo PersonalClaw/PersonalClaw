@@ -521,7 +521,7 @@ def test_run_chat_is_off_the_facade_for_good():
     From here the chokepoint is structural, not conventional: an app can only start a
     channel-originated turn through `services.deliver_channel_inbound`, which applies
     `guard_inbound` unconditionally, and the `personalclaw.sdk.*`-only import boundary
-    (`tests/test_apps_import_boundary.py`) leaves no path around it. Re-adding the export
+    (`tests/rails/test_apps_import_boundary.py`) leaves no path around it. Re-adding the export
     would silently reopen the ungated route — the reason this asserts absence instead of
     being deleted with the gap it used to declare.
 

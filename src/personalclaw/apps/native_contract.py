@@ -20,7 +20,7 @@ This module is the contract that removes that asymmetry:
 * **Allowed imports = the published SDK, and nothing else.** A bundled app's module may
   import ``personalclaw.sdk.*``, the standard library, and core's own third-party
   dependencies. It may NOT import any other ``personalclaw.*`` module. This is the same
-  rule ``tests/test_apps_import_boundary.py`` applies to installed apps —
+  rule ``tests/rails/test_apps_import_boundary.py`` applies to installed apps —
   deliberately the SAME rule, not a second, narrower one: a bundled app is reached
   through the same ``providers/loader.py`` seam, is registered through the same typed
   handler, and is upgraded by the same release, so a separate "native-only" allowlist

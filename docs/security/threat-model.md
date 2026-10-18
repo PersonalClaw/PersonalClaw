@@ -632,7 +632,7 @@ Data leaving the running system:
   temp file beside the destination that is created 0600, and the finished file is renamed into
   place. A snapshot's members are stamped 0600 (folders 0700), so a restore's staging copy, the
   files a restore puts back and a `tar -x` by hand are private too, and a restore writes the audit
-  key back 0600 from its first byte. `tests/test_archive_writer_census.py` holds every archive
+  key back 0600 from its first byte. `tests/rails/test_archive_writer_census.py` holds every archive
   writer to it.
 - **Credential-free snapshots** (`durability/inventory.py`, `credential=True`): `.env`,
   `.env.pre-keychain`, `.local_secret`, and an older release's `credentials.json` (kept only
@@ -647,7 +647,7 @@ Data leaving the running system:
   own service there: `personalclaw` for the default home, `personalclaw-<id>` for any other, the id
   minted once and kept in the home, never derived from its path. A dev, scratch or test home never
   lists, reads, mirrors into its children's environment, overwrites or deletes the default home's
-  secrets. `tests/test_keychain_namespace_census.py` fails a keychain call that names any other
+  secrets. `tests/rails/test_keychain_namespace_census.py` fails a keychain call that names any other
   service, and an id file that holds no id turns the keychain off for that home rather than falling
   back to another's name.
 - **One home, and read-only places outside it only by choice** (`outside_home.py`): PersonalClaw
@@ -704,7 +704,7 @@ Data leaving the running system:
   their records reads as deleted; the machine id every copy names is read the same way, and a link
   at it refuses the export whole. Every lock in the home is opened by `home_paths.open_lock`,
   which never empties its file and refuses a link at its name; a request stopped by one is
-  answered `409 link_in_the_way`, naming it. `tests/test_home_path_census.py` fails a write, an
+  answered `409 link_in_the_way`, naming it. `tests/rails/test_home_path_census.py` fails a write, an
   export's read or a lock that takes its path from anywhere else. A replace restore used to move a
   store aside, leave a link where it found one, and copy the snapshot's file to its path, wherever
   the link led; a project import and a pack's install wrote through a folder that was a link; an

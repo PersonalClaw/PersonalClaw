@@ -44,6 +44,9 @@ VERSION = 1
 #: Directories pytest's default ``norecursedirs`` skips, besides any starting with a dot.
 _SKIPPED_DIRS = frozenset({"__pycache__", "node_modules", "build", "dist", "venv", "CVS"})
 
+#: The rails' folder, run by the ``rails`` job and never by a shard (``rails_census.RAILS``).
+RAILS = "tests/rails"
+
 
 # ── the universe ──────────────────────────────────────────────────────────────────────────────
 
@@ -59,8 +62,10 @@ def universe(root: Path) -> list[str]:
     ``test_*.py`` and ``*_test.py``, when the config names none), as sorted posix paths
     relative to ``root``. A future ``foo_test.py`` cannot fall outside every shard.
 
-    Nothing is excluded: the rails stay in the shards until #3928's own job runs them, and the
-    security paths until a merge-tier security job does, or they would run nowhere.
+    One folder is excluded: ``tests/rails``, the rails, which the ``rails`` job runs once per
+    run (``tools/ci/rails_census.py``), so ``check`` proves no shard of any leg lists one. The
+    security paths stay in the shards until a merge-tier security job runs them, or they would
+    run nowhere.
     """
     options = _pytest_options(root)
     named_paths = options.get("testpaths", ["."])
@@ -71,7 +76,13 @@ def universe(root: Path) -> list[str]:
     for testpath in testpaths:
         base = root / testpath
         for current, dirs, names in os.walk(base):
-            dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d not in _SKIPPED_DIRS)
+            dirs[:] = sorted(
+                d
+                for d in dirs
+                if not d.startswith(".")
+                and d not in _SKIPPED_DIRS
+                and (Path(current) / d).relative_to(root).as_posix() != RAILS
+            )
             for name in names:
                 if name.endswith(".py") and any(fnmatch.fnmatch(name, p) for p in patterns):
                     found.add((Path(current) / name).relative_to(root).as_posix())

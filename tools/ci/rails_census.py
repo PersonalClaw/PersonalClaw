@@ -1,0 +1,517 @@
+"""Which test modules are rails: they check the source tree rather than run the product.
+
+A **rail** reads the repository itself — the package, ``web/src``, ``docs``, the workflows,
+``tests/``, any file beside them — and judges what it finds. Rails live in ``tests/rails/`` and
+run once per CI run, in the ``rails`` job; the suite's shards never collect them
+(``tools/ci/shards.py``). This module decides membership from each module's source, read with
+``ast`` and never imported, so the rule is code and the ``rails`` row of the CI contract table
+can hold the tree to it.
+
+A test **reads the tree** when its own body, a module-level helper or fixture it reaches, or the
+parameters its decorators compute, does one of these:
+
+- reads the suite's source index (``tests/source_index.py``) or the controller sources built on
+  it (``tests/controller_sources.py``);
+- names ``.github`` (a workflow, an action, Dependabot's settings);
+- walks a path the module binds at its top level or derives from ``__file__`` (``rglob``,
+  ``os.walk``, a ``**`` glob, recursive ``glob.glob``); a walk of a path the test was handed,
+  ``tmp_path`` among them, reads a tree the test made, not the repository;
+- reads a file at a path the module binds at its top level or derives from ``__file__``
+  (``read_text``, ``read_bytes``, ``open``), or parses product source (``ast.parse`` of
+  ``inspect.getsource``).
+
+A test **leaves the process** when it reaches a gateway, a browser, a container, a model
+endpoint or the network: it calls ``urlopen``, ``requests``, ``httpx`` or ``aiohttp``'s client,
+``socket.create_connection``, spawns ``docker`` or ``podman``, or imports one of the suite's
+helpers that start such things (:data:`OUTSIDE_HELPERS`). A local child (``git``, a CLI parse,
+a fresh interpreter) and an in-process ``TestServer``/``TestClient`` stay inside it.
+
+A module is a rail when at least one of its tests reads the tree and none leaves the process.
+A module with a test of each kind is **mixed**: it is split, its tree half moved and its other
+half kept in the suite. A security-marked module (``pytestmark = pytest.mark.security``) stays
+where it is whatever it reads: those tests run on every shard and are never selected out.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import json
+import sys
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass, field
+from pathlib import Path
+
+#: Where rails live. Nothing else under ``tests/`` may hold one.
+RAILS = "tests/rails"
+
+#: The rails that still hold behaviour tests, one repository-relative path a line, waiting for
+#: the split that moves their tree tests into :data:`RAILS`. A transition list: it only shrinks,
+#: and goes when the last split lands. Under ``tools/ci/``, so a change that adds to it is
+#: judged by the default branch's definitions (``tools/ci/trust.py``).
+PENDING_SPLIT = "tools/ci/rails-pending-split.txt"
+
+#: The suite's test helpers that read the tree for a rail.
+TREE_HELPERS = frozenset({"source_index", "controller_sources"})
+
+#: Helpers that only name the repository's root (``tests/rails/rails_repo.py``): a path built
+#: from one is a repository path, but importing one reads nothing.
+ROOT_HELPERS = frozenset({"rails_repo"})
+
+#: The suite's test helpers that start something outside the process: a gateway, a browser, a
+#: container runtime, a model endpoint. A module that imports one leaves the process.
+OUTSIDE_HELPERS = frozenset(
+    {"signed_in_gateway", "browse_chrome", "container_runtime", "loopback_model_endpoint"}
+)
+
+#: Programs a test spawns that leave the process (a container runtime starts a daemon's work).
+OUTSIDE_PROGRAMS = frozenset({"docker", "podman", "finch", "nerdctl"})
+
+_WALKS = frozenset({"rglob", "walk"})
+_READS = frozenset({"read_text", "read_bytes", "open"})
+_NETWORK_CALLS = frozenset({"urlopen", "create_connection", "ClientSession"})
+_NETWORK_MODULES = frozenset({"requests", "httpx"})
+_SPAWNS = frozenset(
+    {"run", "Popen", "check_output", "check_call", "call", "create_subprocess_exec"}
+)
+
+
+@dataclass
+class Module:
+    """One test module's verdict, with the reasons behind it."""
+
+    path: str
+    #: ``rail``, ``mixed``, ``suite`` (reads no tree, or every tree reader leaves the process
+    #: too) or ``security`` (marked: stays put, whatever it reads).
+    kind: str = "suite"
+    #: Test names that read the tree, each with the first reason found.
+    tree: dict[str, str] = field(default_factory=dict)
+    #: Test names that leave the process, each with the first reason found.
+    outside: dict[str, str] = field(default_factory=dict)
+    tests: int = 0
+
+    def line(self) -> str:
+        """One line for the census report: the verdict and the reason a reader would check."""
+        if self.kind == "rail":
+            name, why = next(iter(self.tree.items()))
+            return f"rail      {self.path}  ({len(self.tree)}/{self.tests} read the tree; {why})"
+        if self.kind == "mixed":
+            name, why = next(iter(self.outside.items()))
+            return (
+                f"mixed     {self.path}  ({len(self.tree)} read the tree, {len(self.outside)} "
+                f"leave the process: {name}, {why})"
+            )
+        if self.kind == "security":
+            why = next(iter(self.tree.values()), "")
+            return f"security  {self.path}  (marked; stays put{'; ' + why if why else ''})"
+        return f"suite     {self.path}"
+
+
+# ── one module ──────────────────────────────────────────────────────────────────────────────
+
+
+def _is_security_marked(tree: ast.Module) -> bool:
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "pytestmark" for t in node.targets
+        ):
+            for sub in ast.walk(node.value):
+                if isinstance(sub, ast.Attribute) and sub.attr == "security":
+                    return True
+    return False
+
+
+class _Module:
+    """The module's top-level bindings, what each function references, and its imports."""
+
+    def __init__(self, tree: ast.Module) -> None:
+        self.tree = tree
+        self.functions: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
+        self.classes: dict[str, ast.ClassDef] = {}
+        #: Names bound at the top level to something other than a function or a class.
+        self.constants: set[str] = set()
+        #: Local names that stand for a tree helper or an outside helper, by what they are.
+        self.aliases: dict[str, str] = {}
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                self.functions[node.name] = node
+            elif isinstance(node, ast.ClassDef):
+                self.classes[node.name] = node
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for target in targets:
+                    for sub in ast.walk(target):
+                        if isinstance(sub, ast.Name):
+                            self.constants.add(sub.id)
+        for each in ast.walk(tree):
+            if isinstance(each, ast.Import):
+                for alias in each.names:
+                    leaf = alias.name.rsplit(".", 1)[-1]
+                    self.aliases[alias.asname or leaf] = leaf
+            elif isinstance(each, ast.ImportFrom) and each.module:
+                leaf = each.module.rsplit(".", 1)[-1]
+                for alias in each.names:
+                    self.aliases[alias.asname or alias.name] = leaf
+
+    def helper(self, name: str) -> str | None:
+        """The tree or outside helper a local name stands for, if any."""
+        leaf = self.aliases.get(name)
+        return leaf if leaf in TREE_HELPERS | OUTSIDE_HELPERS else None
+
+
+def _call_name(call: ast.Call) -> tuple[str, str]:
+    """``(owner, name)`` for ``owner.name(...)``, ``("", name)`` for ``name(...)``."""
+    func = call.func
+    if isinstance(func, ast.Attribute):
+        owner = func.value
+        while isinstance(owner, ast.Attribute):
+            owner = owner.value
+        return (owner.id if isinstance(owner, ast.Name) else "", func.attr)
+    return ("", func.id) if isinstance(func, ast.Name) else ("", "")
+
+
+def _repository_path(expr: ast.AST, module: _Module, params: set[str]) -> bool:
+    """Whether *expr* names a path the module binds at its top level or derives from
+    ``__file__``, rather than one the function was handed."""
+    for sub in ast.walk(expr):
+        if isinstance(sub, ast.Name):
+            if sub.id == "__file__":
+                return True
+            if sub.id in params:
+                return False
+            if sub.id in module.constants or module.helper(sub.id) in TREE_HELPERS:
+                return True
+            if module.aliases.get(sub.id) in ROOT_HELPERS:
+                return True
+        if isinstance(sub, ast.Attribute) and sub.attr == "__file__":
+            return True
+    return False
+
+
+def _own_reasons(node: ast.AST, module: _Module, params: set[str]) -> tuple[str | None, str | None]:
+    """``(tree reason, outside reason)`` from *node*'s own source, not what it calls."""
+    tree_why: str | None = None
+    outside_why: str | None = None
+    docstrings = {
+        id(each.body[0].value)
+        for each in ast.walk(node)
+        if isinstance(each, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+        and each.body
+        and isinstance(each.body[0], ast.Expr)
+        and isinstance(each.body[0].value, ast.Constant)
+    }
+    for sub in ast.walk(node):
+        if id(sub) in docstrings:
+            continue  # prose about a path reads nothing
+        if isinstance(sub, ast.Name) and module.helper(sub.id):
+            helper = module.helper(sub.id)
+            if helper in TREE_HELPERS:
+                tree_why = tree_why or f"reads {helper}"
+            elif helper in OUTSIDE_HELPERS:
+                outside_why = outside_why or f"uses {helper}"
+        elif isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+            if ".github" in sub.value.split("/") or sub.value.startswith(".github"):
+                tree_why = tree_why or "reads .github"
+        elif isinstance(sub, ast.Call):
+            owner, name = _call_name(sub)
+            func = sub.func
+            receiver = func.value if isinstance(func, ast.Attribute) else None
+            if name in _WALKS and receiver is not None:
+                start = receiver if name == "rglob" else (sub.args[0] if sub.args else None)
+                if name == "walk" and owner != "os":
+                    start = None
+                if start is not None and _repository_path(start, module, params):
+                    tree_why = tree_why or f"walks the repository ({name})"
+            elif name in ("glob", "iglob") and receiver is not None and sub.args:
+                pattern = sub.args[0]
+                recursive = any(k.arg == "recursive" for k in sub.keywords)
+                deep = isinstance(pattern, ast.Constant) and "**" in str(pattern.value)
+                start = pattern if owner == "glob" else receiver
+                if (recursive or deep) and _repository_path(start, module, params):
+                    tree_why = tree_why or "walks the repository (glob)"
+            elif name == "parse" and owner == "ast" and sub.args:
+                # A parse of source the test read from the repository, or of a live module's
+                # source; a parse of a string the test wrote reads no tree.
+                for inner in ast.walk(sub.args[0]):
+                    if not isinstance(inner, ast.Call):
+                        continue
+                    inner_owner, inner_name = _call_name(inner)
+                    inner_func = inner.func
+                    inner_receiver = (
+                        inner_func.value if isinstance(inner_func, ast.Attribute) else None
+                    )
+                    if inner_name == "getsource":
+                        tree_why = tree_why or "parses product source"
+                    elif (
+                        inner_name in _READS
+                        and inner_receiver is not None
+                        and _repository_path(inner_receiver, module, params)
+                    ) or (
+                        inner_name == "open"
+                        and inner_owner == ""
+                        and inner.args
+                        and _repository_path(inner.args[0], module, params)
+                    ):
+                        tree_why = tree_why or "parses a repository file"
+            if name in _NETWORK_CALLS or owner in _NETWORK_MODULES:
+                outside_why = outside_why or f"calls {owner + '.' if owner else ''}{name}"
+            if name in _SPAWNS and owner in ("subprocess", "asyncio") and sub.args:
+                argv = sub.args[0]
+                if (
+                    isinstance(argv, (ast.List, ast.Tuple))
+                    and argv.elts
+                    and isinstance(argv.elts[0], ast.Constant)
+                    and str(argv.elts[0].value) in OUTSIDE_PROGRAMS
+                ):
+                    outside_why = outside_why or f"spawns {str(argv.elts[0].value)}"
+    return tree_why, outside_why
+
+
+def _params(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    args = node.args
+    every = [*args.posonlyargs, *args.args, *args.kwonlyargs]
+    every += [a for a in (args.vararg, args.kwarg) if a is not None]
+    return {a.arg for a in every}
+
+
+class _Reach:
+    """What each function reaches: its own reasons, then those of every module-level function,
+    fixture and class it names, and (for a method) of the methods of its class it calls."""
+
+    def __init__(self, module: _Module) -> None:
+        self.module = module
+        self.memo: dict[int, tuple[str | None, str | None]] = {}
+
+    def of(self, node: ast.AST, cls: ast.ClassDef | None = None) -> tuple[str | None, str | None]:
+        key = id(node)
+        if key in self.memo:
+            return self.memo[key]
+        self.memo[key] = (None, None)  # a cycle reaches nothing more
+        params = (
+            _params(node) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) else set()
+        )
+        tree_why, outside_why = _own_reasons(node, self.module, params)
+        for name in self._named(node, cls, params):
+            target, owner = self._target(name, cls)
+            if target is None:
+                continue
+            t, o = self.of(target, owner)
+            tree_why, outside_why = tree_why or t, outside_why or o
+        self.memo[key] = (tree_why, outside_why)
+        return tree_why, outside_why
+
+    def _named(self, node: ast.AST, cls: ast.ClassDef | None, params: set[str]) -> Iterator[str]:
+        """Names *node* reaches: names it loads, fixtures it asks for, ``self.x`` methods."""
+        seen: set[str] = set()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for decorator in node.decorator_list:
+                for sub in ast.walk(decorator):
+                    if isinstance(sub, ast.Name) and sub.id not in seen:
+                        seen.add(sub.id)
+                        yield sub.id
+            for name in sorted(params):
+                if name not in seen:
+                    seen.add(name)
+                    yield name
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Name) and sub.id not in seen:
+                seen.add(sub.id)
+                yield sub.id
+            elif (
+                isinstance(sub, ast.Attribute)
+                and isinstance(sub.value, ast.Name)
+                and sub.value.id in ("self", "cls")
+                and f"self.{sub.attr}" not in seen
+            ):
+                seen.add(f"self.{sub.attr}")
+                yield f"self.{sub.attr}"
+
+    def _target(
+        self, name: str, cls: ast.ClassDef | None
+    ) -> tuple[ast.AST | None, ast.ClassDef | None]:
+        if name.startswith("self."):
+            if cls is None:
+                return None, None
+            attr = name[5:]
+            for item in cls.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == attr:
+                    return item, cls
+            return None, None
+        if name in self.module.functions:
+            return self.module.functions[name], None
+        if name in self.module.classes:
+            return self.module.classes[name], self.module.classes[name]
+        if name in self.module.constants:
+            for node in self.module.tree.body:
+                if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    if any(
+                        isinstance(s, ast.Name) and s.id == name
+                        for t in targets
+                        for s in ast.walk(t)
+                    ):
+                        return node, None
+        return None, None
+
+
+def _tests(
+    tree: ast.Module,
+) -> Iterator[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef, ast.ClassDef | None]]:
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith(
+            "test"
+        ):
+            yield node.name, node, None
+        elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+            for item in node.body:
+                if isinstance(
+                    item, (ast.FunctionDef, ast.AsyncFunctionDef)
+                ) and item.name.startswith("test"):
+                    yield f"{node.name}.{item.name}", item, node
+
+
+def classify(rel: str, source: str) -> Module:
+    """The verdict on one test module, from its source."""
+    tree = ast.parse(source, filename=rel)
+    module = _Module(tree)
+    reach = _Reach(module)
+    found = Module(path=rel)
+    class_level: dict[int, tuple[str | None, str | None]] = {}
+    for name, node, cls in _tests(tree):
+        found.tests += 1
+        t, o = reach.of(node, cls)
+        if cls is not None:
+            # A class's own fixtures and attributes serve all its tests.
+            if id(cls) not in class_level:
+                own = [
+                    item
+                    for item in cls.body
+                    if not (
+                        isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and item.name.startswith("test")
+                    )
+                ]
+                ct: str | None = None
+                co: str | None = None
+                for item in own:
+                    it, io = reach.of(item, cls)
+                    ct, co = ct or it, co or io
+                class_level[id(cls)] = (ct, co)
+            ct, co = class_level[id(cls)]
+            t, o = t or ct, o or co
+        if t:
+            found.tree[name] = t
+        if o:
+            found.outside[name] = o
+    if _is_security_marked(tree):
+        found.kind = "security"
+    elif found.tree and not found.outside:
+        found.kind = "rail"
+    elif found.tree and set(found.outside) != set(found.tree) | set(found.outside):
+        # Some tests leave the process and some read the tree without leaving: two halves.
+        tree_only = set(found.tree) - set(found.outside)
+        found.kind = "mixed" if tree_only else "suite"
+    else:
+        found.kind = "suite"
+    return found
+
+
+# ── the tree ────────────────────────────────────────────────────────────────────────────────
+
+
+def test_modules(root: Path) -> Iterator[Path]:
+    """Every ``test_*.py`` under ``root/tests``, in path order."""
+    for path in sorted((root / "tests").rglob("test_*.py")):
+        if "__pycache__" not in path.parts and not any(p.startswith(".") for p in path.parts):
+            yield path
+
+
+def census(root: Path) -> list[Module]:
+    """The verdict on every test module under ``root/tests``."""
+    return [
+        classify(path.relative_to(root).as_posix(), path.read_text(encoding="utf-8"))
+        for path in test_modules(root)
+    ]
+
+
+def pending_split(root: Path) -> set[str]:
+    """The modules :data:`PENDING_SPLIT` names under ``root``: rails that still hold behaviour
+    tests, waiting for their split. Blank lines and ``#`` comments are skipped."""
+    path = root / PENDING_SPLIT
+    if not path.is_file():
+        return set()
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return {line.strip() for line in lines if line.strip() and not line.startswith("#")}
+
+
+def misplaced(modules: Iterable[Module], pending: Iterable[str] = ()) -> list[str]:
+    """Rails outside :data:`RAILS`, mixed modules anywhere, and modules under :data:`RAILS`
+    that are not rails, each as one line naming the module and why.
+
+    A module named in *pending* is waiting for its split, so it may stay where it is while it
+    is a rail or mixed. A pending name that is neither any more (split, moved, renamed or gone)
+    is reported, so the list only shrinks."""
+    waiting = set(pending)
+    bad: list[str] = []
+    seen: set[str] = set()
+    for found in modules:
+        seen.add(found.path)
+        inside = found.path.startswith(RAILS + "/")
+        if found.path in waiting:
+            if inside or found.kind not in ("rail", "mixed"):
+                bad.append(
+                    f"{found.path} is pending a split in {PENDING_SPLIT} but is "
+                    f"{'under ' + RAILS + '/' if inside else 'a ' + found.kind + ' module'} "
+                    "now: drop it from the list"
+                )
+            continue
+        if found.kind == "rail" and not inside:
+            bad.append(f"{found.path} is a rail outside {RAILS}/: {found.line().split('(', 1)[1]}")
+        elif found.kind == "mixed":
+            bad.append(f"{found.path} is mixed; split it: {found.line().split('(', 1)[1]}")
+        elif inside and found.kind != "rail":
+            bad.append(f"{found.path} is under {RAILS}/ but is not a rail ({found.kind})")
+    bad += [
+        f"{name} is pending a split in {PENDING_SPLIT} but is not a test module now: drop it"
+        for name in sorted(waiting - seen)
+    ]
+    return bad
+
+
+#: How many names :data:`PENDING_SPLIT` held when it was written. The list only shrinks, so a
+#: longer one means a name was added: lower this as splits land, never raise it.
+PENDING_CEILING = 216
+
+
+def violations(root: Path, ceiling: int = PENDING_CEILING) -> list[str]:
+    """Everything wrong with ``root``'s rails: :func:`misplaced` under its pending list, and a
+    pending list longer than *ceiling*."""
+    pending = pending_split(root)
+    bad = misplaced(census(root), pending)
+    if len(pending) > ceiling:
+        bad.append(
+            f"{PENDING_SPLIT} names {len(pending)} modules, more than its ceiling of {ceiling}: "
+            "the list only shrinks, so move a new rail into tests/rails/ instead of listing it"
+        )
+    return bad
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="python -m tools.ci rails")
+    parser.add_argument("command", choices=["census", "check"])
+    parser.add_argument("--root", default=".")
+    parser.add_argument("--json", action="store_true", help="the census as JSON")
+    args = parser.parse_args(argv)
+    modules = census(Path(args.root))
+    if args.command == "census":
+        if args.json:
+            print(json.dumps([m.__dict__ for m in modules], indent=1))
+        else:
+            for found in modules:
+                if found.kind != "suite":
+                    print(found.line())
+        return 0
+    bad = violations(Path(args.root))
+    for line in bad:
+        print(line, file=sys.stderr)
+    return 1 if bad else 0

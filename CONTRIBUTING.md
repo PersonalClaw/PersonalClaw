@@ -219,7 +219,7 @@ environment: `uv sync --locked --inexact` in one uv made, `pip install -e .` in 
 and `nvm use` or `fnm use` reads `.nvmrc`. uv must be 0.13.1 or newer (`[tool.uv]
 required-version` in `pyproject.toml`), and CI installs exactly 0.13.1. Every workflow that runs uv
 sets `UV_PYTHON_PREFERENCE: only-managed`, so CI runs on a Python uv downloads, never on one the
-runner image ships, even when the image's is the same patch. `tests/test_ci_contract.py` holds the
+runner image ships, even when the image's is the same patch. `tests/rails/test_ci_contract.py` holds the
 workflows and the image to these files. CI pins every action, image and tool its workflows and
 Dockerfiles fetch, apart from OS packages and the dated exceptions in
 `tools/ci/supply-chain.toml`, and every job holds only the token permissions it uses: see

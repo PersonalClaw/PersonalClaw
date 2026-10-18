@@ -84,7 +84,7 @@ id is accepted, and a shallow clone refuses, because it cannot show ancestry.
 
 ### The rows that hold it
 
-`tests/test_ci_contract.py` holds three workflow rules, each with a planted violation per form:
+`tests/rails/test_ci_contract.py` holds three workflow rules, each with a planted violation per form:
 
 - No `pull_request_target` or `workflow_run` workflow checks out candidate code: a checkout of
   the pull request's or the run's head, a `refs/pull/` ref, `github.head_ref`, the head
@@ -282,7 +282,7 @@ of the same commit was red is the release gate's question (#3911), not this work
 
 ### The rows that hold it
 
-`tests/test_ci_contract.py` holds each of these with planted violations:
+`tests/rails/test_ci_contract.py` holds each of these with planted violations:
 
 - `ci.yml` runs on every push to `main` (no negated branch, no path filter) and never cancels a
   `main` run, at the workflow or the job level;
@@ -340,7 +340,7 @@ The actions, images and tools the workflows and Dockerfiles fetch are named exac
 tests the same inputs on a day nothing in the repository changed, and every job holds only the
 token permissions it uses. The rules live in `tools/ci/supply_chain.py` (with the shell reader
 in `tools/ci/shell_installs.py`), the policy they read in `tools/ci/supply-chain.toml`, and
-`tests/test_ci_supply_chain_contract.py` holds each rule as a row with planted violations.
+`tests/rails/test_ci_supply_chain_contract.py` holds each rule as a row with planted violations.
 
 ### What the check reads, and what it does not
 

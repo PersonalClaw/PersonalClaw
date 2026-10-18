@@ -191,7 +191,7 @@ async def test_every_refusal_uses_the_one_wire_envelope(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     """A new surface must not add to the flat `{"error": "<prose>"}` population, which is
-    shrink-only (`tests/test_wire_error_envelope_census.py`)."""
+    shrink-only (`tests/rails/test_wire_error_envelope_census.py`)."""
     pc = tmp_path / ".personalclaw"
     pc.mkdir()
     client = await _client(monkeypatch, pc)

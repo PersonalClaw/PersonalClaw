@@ -38,7 +38,7 @@ toward the same per-address lockout as the sign-in page, so a session cannot be 
 **Containment never asks.** Signing a device out, signing out every other device, replacing the
 signing key, revoking an integration token, removing a secret, turning incident mode on and
 tightening a sign-in setting must work when something is wrong, and a prompt would only delay
-them. They do not call this; ``tests/test_owner_presence_census.py`` holds both halves.
+them. They do not call this; ``tests/rails/test_owner_presence_census.py`` holds both halves.
 """
 
 from __future__ import annotations

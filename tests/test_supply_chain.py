@@ -23,7 +23,7 @@ BREADTH_WORKFLOW = WORKFLOWS / "breadth.yml"
 
 def _action(step: object) -> str:
     """The action a step uses, without its ref: the ref is a commit SHA that moves with every
-    release, and tests/test_ci_contract.py holds it to one."""
+    release, and tests/rails/test_ci_contract.py holds it to one."""
     return str(step.get("uses", "") if isinstance(step, dict) else "").split("@", 1)[0]
 
 

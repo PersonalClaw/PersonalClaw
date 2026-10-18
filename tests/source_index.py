@@ -14,7 +14,7 @@ forty times, each inside some test's timeout. Every such rail now asks this modu
   by every rail that asks for it, so a rail reads it and never changes it.
 - ``PARSES`` counts every parse this module made. Parsing a file a second time raises
   ``DoubleParse`` where it happens: two caches of the same file in one process are the waste this
-  module exists to end. ``tests/test_source_index.py`` holds the process to it.
+  module exists to end. ``tests/rails/test_source_index.py`` holds the process to it.
 
 ``warm()`` walks every root and parses the package. The suite's runtest hook in
 ``tests/conftest.py`` calls it before the first test whose module reads this index, wrapped

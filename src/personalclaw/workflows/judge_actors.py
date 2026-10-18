@@ -22,7 +22,7 @@ judge branch:
   node's prompt — so "attempt 3 of 5" really can reach a judge, and that is the pressure that
   produces a lenient pass.
 
-`tests/test_workflows_judge_actors_claims.py` holds this text to the call graph in both
+`tests/rails/test_workflows_judge_actors_claims.py` holds this text to the call graph in both
 directions, so a future session cannot strand the claim on either side.
 
 **The worker actor may never transition a node to `done`.** It can reach `waiting`

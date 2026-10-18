@@ -37,7 +37,7 @@ import ast
 from pathlib import Path
 
 import source_index
-from test_session_acquisition_census import REACQUIRES, _census, _functions
+from session_acquisitions import REACQUIRES, _census, _functions
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 SNIPPET = SRC / "config" / "prompt_snippets" / "safety-rules.md"

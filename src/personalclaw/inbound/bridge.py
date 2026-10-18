@@ -467,7 +467,7 @@ def _json(payload: dict, status: int = 200) -> web.Response:
     and because the argument is a *variable* by the time it reaches `json_response`,
     the wire-envelope census scored this whole module at ZERO on both of its rails.
     A local wrapper is a place error shapes hide, so this one is now success-only —
-    and `tests/test_wire_error_envelope_census.py` follows wrapper indirection so the
+    and `tests/rails/test_wire_error_envelope_census.py` follows wrapper indirection so the
     next one cannot hide either.
     """
     return web.json_response(payload, status=status)

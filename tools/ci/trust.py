@@ -33,8 +33,8 @@ DEFINITION_ROOTS: tuple[str, ...] = (".github/workflows/", ".github/actions/", "
 #: The CI contract table and the census it reads. Tests are otherwise code under test, but a
 #: candidate that deletes a row of this table must not pass by it.
 CONTRACT_TABLE: tuple[str, ...] = (
-    "tests/test_ci_contract.py",
-    "tests/test_ci_supply_chain_contract.py",
+    "tests/rails/test_ci_contract.py",
+    "tests/rails/test_ci_supply_chain_contract.py",
     "tests/security_census.py",
 )
 

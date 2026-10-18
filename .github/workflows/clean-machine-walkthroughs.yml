@@ -80,7 +80,7 @@ on:
 # `inputs.which || 'all'`: the dispatch input when there is one, `all` when there is not. A
 # job-level `if:` cannot read `env`, so the fallback is repeated per job rather than named once.
 # `record` needs no fallback — its `if: always()` reads no input at all. The four guards are
-# railed by `tests/test_walkthroughs_workflow.py`, which parses this file and asserts every one
+# railed by `tests/rails/test_walkthroughs_workflow.py`, which parses this file and asserts every one
 # of them still admits a null `inputs`.
 
 # Read-only by default. No job here needs to write to the repo, and a walkthrough that

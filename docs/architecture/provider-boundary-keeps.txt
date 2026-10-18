@@ -1,6 +1,6 @@
 # Provider-boundary keeps — the machine-checked allowlist of DELIBERATE vendor
 # residue in core. Each line is a core file
-# that the residue-sweep test (tests/test_provider_boundary_residue.py) would
+# that the residue-sweep test (tests/rails/test_provider_boundary_residue.py) would
 # otherwise flag for a vendor SDK import or a vendor credential-key / secret-detection
 # literal, plus a one-line judgment for why it stays. This file IS the keeps table — the
 # test fails if a listed file no longer contains a marker (stale entry) or if a marker appears

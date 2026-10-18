@@ -29,7 +29,7 @@ them — a client with its own copy would offer a filter the server rejects.
 
 Every failure leaves through :func:`~personalclaw.http_errors.json_error`, the ONE structured
 wire envelope `AGENTS.md` §"Shared conventions" declares (the flat ``{"error": …}`` shape is a
-ratcheted, shrinking population — ``tests/test_wire_error_envelope_census.py``).
+ratcheted, shrinking population — ``tests/rails/test_wire_error_envelope_census.py``).
 """
 
 from __future__ import annotations

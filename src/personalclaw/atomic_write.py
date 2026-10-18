@@ -35,8 +35,9 @@ the home, in a folder the user named, or in a temp folder. The folders it makes 
 (:func:`make_private_dirs`). A writer that opens the destination itself and tightens it afterwards
 leaves it readable for as long as the write takes: a snapshot's temp file was ``-rw-r--r--`` for
 the minute its 400 MB took. Every archive core writes to disk goes through it, a pack's too (its
-owner hands it on by reading it, which 0600 allows), and ``tests/test_archive_writer_census.py``
-holds every archive writer and every declared export writer to it.
+owner hands it on by reading it, which 0600 allows), and
+``tests/rails/test_archive_writer_census.py`` holds every archive writer and every declared export
+writer to it.
 """
 
 import json

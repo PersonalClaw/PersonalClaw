@@ -208,7 +208,7 @@ therefore ends red, on `build`, and that is the expected result. What to check:
 - each desktop log shows `PyInstaller: 6.22.3, contrib hooks: 2026.8` and no
   `Implicit publishing` line from electron-builder.
 
-`tests/test_a_release_dispatched_on_a_branch_publishes_nothing.py` holds the wiring that
+`tests/rails/test_a_release_dispatched_on_a_branch_publishes_nothing.py` holds the wiring that
 makes this safe.
 
 ## Tagging

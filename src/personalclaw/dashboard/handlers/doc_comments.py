@@ -4,11 +4,11 @@ The store these serve is :mod:`personalclaw.doc_comments`; its module docstring 
 why the layer moved off ``localStorage``. Refusals answer with the ONE wire envelope
 (``json_error``) rather than the flat ``{"error": "<prose>"}`` several older handlers still
 carry — the flat population is shrink-only
-(``tests/test_wire_error_envelope_census.py``), so a new surface must not add to it.
+(``tests/rails/test_wire_error_envelope_census.py``), so a new surface must not add to it.
 
 The body read goes through the ONE reader, ``request_validation.json_object_body``, rather
 than a private ``_body`` helper — the population of private readers is shrink-only too
-(``tests/test_one_request_body_reader.py``). ``empty_ok=False`` because every route below
+(``tests/rails/test_one_request_body_reader.py``). ``empty_ok=False`` because every route below
 has a required field, so absent bytes are a broken caller rather than "all defaults", and
 the refusal it raises is turned into the envelope once by
 :mod:`personalclaw.dashboard.request_boundary`, which is why no route here carries a

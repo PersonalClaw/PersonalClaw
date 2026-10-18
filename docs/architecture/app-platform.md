@@ -509,7 +509,7 @@ backend has no access to the gateway's SecurityEventLog).
 
 - **Python**: `sdk/` is THE stable app-facing import surface —
   apps import core **only** via `personalclaw.sdk.*`
-  (boundary-lint-enforced by `tests/test_apps_import_boundary.py`). Modules
+  (boundary-lint-enforced by `tests/rails/test_apps_import_boundary.py`). Modules
   cover models, channels, tools, search, memory, knowledge, STT/TTS,
   credentials, settings (`ProviderSettings` — each app's persisted store),
   security helpers, `provider_helpers.register_branded_app` for
@@ -677,7 +677,7 @@ next load runs what is on disk.
 the vacuity floor (at least one bundled app must actually ship a module) plus the
 "no core implementation" property: no core module may reference a bundle-owned module.
 That rail never skips, unlike its installed-app twin
-(`tests/test_apps_import_boundary.py`), which skips whenever the workspace `apps/` dir is
+(`tests/rails/test_apps_import_boundary.py`), which skips whenever the workspace `apps/` dir is
 absent.
 
 **Reference implementation:** `apps/native/personalclaw-ui-docs/` — the design-system docs

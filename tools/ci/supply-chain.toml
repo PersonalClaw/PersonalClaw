@@ -1,5 +1,5 @@
 # CI's supply-chain policy, read by tools/ci/supply_chain.py and held by the supply-chain rows
-# of tests/test_ci_supply_chain_contract.py. See docs/maintainers/ci.md, "Supply chain", for how to pin, how a
+# of tests/rails/test_ci_supply_chain_contract.py. See docs/maintainers/ci.md, "Supply chain", for how to pin, how a
 # refresh arrives, and how to add or renew an exception.
 
 # Each Node release line CI or an image may run, and the date it reaches end of life, from the

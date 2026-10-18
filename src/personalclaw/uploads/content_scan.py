@@ -4,7 +4,8 @@ Every route that stores an uploaded file the agent or the library will later rea
 :func:`scan_upload` before anything is made from it: a chat attachment, a file uploaded to a
 folder, a Knowledge file, a resumable upload when it completes, a file dropped into a workflow
 run, a binary artifact's new bytes, a pinned screen frame, a project archive and a backup import,
-whether the file arrived in one request or in parts. ``tests/test_stored_upload_scan_census.py``
+whether the file arrived in one request or in parts.
+``tests/rails/test_stored_upload_scan_census.py``
 reads the package for every route that takes a file's bytes from a request, and fails on one that
 neither scans them nor says why not. A file dropped in the memory vault's ``raw/`` folder, which no
 request brings, is handed to it when a sync takes it into Knowledge

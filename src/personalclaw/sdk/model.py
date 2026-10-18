@@ -87,7 +87,7 @@ from personalclaw.llm.openai import OpenAIProvider  # noqa: F401
 
 # ``CACHE_HINT_KEY`` rides alongside ``PromptCache`` because an app whose provider owns
 # its OWN wire (Bedrock's Converse API) must READ the neutral marker to translate it —
-# core never learns that vendor's cache syntax. Core's own tests/test_apps_import_boundary.py
+# core never learns that vendor's cache syntax. Core's own tests/rails/test_apps_import_boundary.py
 # names this the prescribed fix: "If a symbol isn't on the SDK yet, the fix is to PROMOTE it
 # to a personalclaw.sdk submodule instead of reaching around the boundary."
 # ``VOLATILE_KEY`` is the same app's other half: the marker on the runtime's per-turn system

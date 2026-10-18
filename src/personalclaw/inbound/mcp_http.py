@@ -109,7 +109,7 @@ def _json(payload: dict, status: int = 200) -> web.Response:
 
     What no longer travels through here is the HTTP-level ``{"error": "<prose>"}``
     refusal. Seven of them did, and because the payload is a *variable* by the time it
-    reaches `json_response`, `tests/test_wire_error_envelope_census.py` scored this
+    reaches `json_response`, `tests/rails/test_wire_error_envelope_census.py` scored this
     module at ZERO on both of its rails until it was widened to follow wrapper
     indirection — the same blindness that hid eleven in `inbound/bridge.py`. A local
     response wrapper is exactly where an error shape hides, so this one is now

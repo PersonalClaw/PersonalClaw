@@ -51,7 +51,7 @@ it records what it received and exits. It is never spoken to over ACP, and no ho
 it, because the environment is what it measures.
 
 An app's harness imports core through ``personalclaw.sdk`` like the app does
-(``tests/test_apps_import_boundary.py``), which is why these are published here rather than
+(``tests/rails/test_apps_import_boundary.py``), which is why these are published here rather than
 reached for in core's internals by each test suite.
 """
 

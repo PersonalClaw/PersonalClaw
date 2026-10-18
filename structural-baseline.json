@@ -416,7 +416,7 @@
           "*"
         ],
         "name": "core-must-not-import-its-own-published-facade",
-        "rationale": "``personalclaw.sdk`` is the OUTWARD facade that removable app bundles import; tests/test_apps_import_boundary.py pins the other direction (apps may reach core only through it) and that test SKIPS in a standalone clone, so this direction has never been guarded at all. When core imports its own facade, the facade becomes load-bearing INSIDE core and can no longer be reshaped for apps without breaking core — the provider-boundary tenet inverted. Measured 10 edges across 7 files.",
+        "rationale": "``personalclaw.sdk`` is the OUTWARD facade that removable app bundles import; tests/rails/test_apps_import_boundary.py pins the other direction (apps may reach core only through it) and that test SKIPS in a standalone clone, so this direction has never been guarded at all. When core imports its own facade, the facade becomes load-bearing INSIDE core and can no longer be reshaped for apps without breaking core — the provider-boundary tenet inverted. Measured 10 edges across 7 files.",
         "upper": [
           "sdk"
         ]

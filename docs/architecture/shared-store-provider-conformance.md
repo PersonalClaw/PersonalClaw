@@ -102,7 +102,7 @@ the clause is vacuously safe.
 ## Running the kit
 
 Import from the SDK facade — never the `personalclaw.testing` path directly (the apps
-import boundary, `tests/test_apps_import_boundary.py`, forbids reaching past
+import boundary, `tests/rails/test_apps_import_boundary.py`, forbids reaching past
 `personalclaw.sdk.*`). Fill in a `SharedStoreCase` describing how to drive **your** record
 shape; the kit owns the fixtures and the adversarial exercises.
 

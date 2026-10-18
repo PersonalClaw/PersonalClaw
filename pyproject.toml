@@ -509,7 +509,7 @@ personalclaw = [
 [tool.uv]
 # The oldest uv that reads and writes this lockfile's format (revision 5). A floor, not an exact
 # pin, so a newer uv keeps working in a checkout; CI and the gateway image install exactly this
-# release (tests/test_ci_contract.py holds the three to one version).
+# release (tests/rails/test_ci_contract.py holds the three to one version).
 required-version = ">=0.13.1"
 
 [tool.uv.sources]

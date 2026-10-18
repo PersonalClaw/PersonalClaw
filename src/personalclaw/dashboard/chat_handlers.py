@@ -425,7 +425,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
 
     if ws_mode:
         # Built as a LITERAL at the call site, not assembled into a name above: the wire
-        # envelope census (tests/test_wire_error_envelope_census.py) reads response shapes
+        # envelope census (tests/rails/test_wire_error_envelope_census.py) reads response shapes
         # statically, and `json_response(_body)` hides this one from it. The suggestion key
         # is absent rather than null when there is nothing to suggest — the frontend keys
         # the chip off the field's presence.

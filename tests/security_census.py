@@ -3,10 +3,10 @@
 The rules that keep a test from being rerun into green, quarantined or selected out key on the
 ``security`` marker, never on a folder. This is the rule that keeps the marked set complete: a
 module must declare ``pytestmark = pytest.mark.security`` (or a list holding it) when one of three
-clauses names it, and the CI contract row in ``tests/test_ci_contract.py`` fails on any that does
-not. A module may carry the marker without matching a clause, so the set grows by hand and never
-shrinks by accident. Including a test that only uses a registry for its setup costs nothing;
-leaving out one that proves a boundary is the dangerous direction.
+clauses names it, and the CI contract row in ``tests/rails/test_ci_contract.py`` fails on any that
+does not. A module may carry the marker without matching a clause, so the set grows by hand and
+never shrinks by accident. Including a test that only uses a registry for its setup costs
+nothing; leaving out one that proves a boundary is the dangerous direction.
 
 The three clauses:
 

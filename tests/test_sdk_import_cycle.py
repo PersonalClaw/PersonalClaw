@@ -1,7 +1,7 @@
 """``personalclaw.sdk.*`` must import cleanly whichever submodule an app reaches for FIRST.
 
 ``personalclaw.sdk`` is the only sanctioned import path for an app bundle
-(``tests/test_apps_import_boundary.py`` pins that direction), so an SDK submodule that
+(``tests/rails/test_apps_import_boundary.py`` pins that direction), so an SDK submodule that
 loads only when a SIBLING was imported before it is a boundary defect, not a style nit.
 
 The defect this file exists to keep out: ``sdk/provider_helpers.py`` imported its core

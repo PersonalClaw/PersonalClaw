@@ -60,7 +60,7 @@ Nothing here is cached. A resolution is a `readlink` plus (at most) one `AppConf
 which is what `_job_tz` already cost per computation, and a cache would make a corrected
 config or a changed host zone require a restart to take effect.
 
-`tests/test_timezone_resolution_has_one_owner.py` is the rail: this module is the only
+`tests/rails/test_timezone_resolution_has_one_owner.py` is the rail: this module is the only
 place in `src/personalclaw/` allowed to construct a `ZoneInfo`, read `/etc/localtime`, or
 touch `time.tzname`. A seventh hand-rolled resolver reds it.
 """

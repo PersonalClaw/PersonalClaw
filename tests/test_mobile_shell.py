@@ -16,7 +16,7 @@ Parsed from source, never executed: node is not a test dependency of the Python 
 convention ``tests/test_desktop_seam.py`` set for the same reason — ``desktop/``'s shell-side
 modules cannot import core's Python either, so their shared vocabulary is held by a rail). The
 behavioural half lives in ``mobile/test/*.test.mjs`` and runs in CI as ``npm run test:mobile``,
-which ``tests/test_ci_tier_enforcement.py`` requires to exist.
+which ``tests/rails/test_ci_tier_enforcement.py`` requires to exist.
 
 **What no rail here can prove:** that a real iPhone or Android device renders the companion inside
 its safe area. Those two keys are read by native code, so the assertions below establish only that
@@ -340,7 +340,7 @@ def test_the_generated_native_projects_are_not_committed():
 
 
 def test_the_mobile_tier_is_wired_the_way_the_ci_rail_requires():
-    """A companion to ``tests/test_ci_tier_enforcement.py``, stated from this change's side.
+    """A companion to ``tests/rails/test_ci_tier_enforcement.py``, stated from this change's side.
 
     That file enforces the general rule; this one records that ``mobile`` is deliberately a
     workspace member *because* of it. Keeping the shell outside the workspace graph would have

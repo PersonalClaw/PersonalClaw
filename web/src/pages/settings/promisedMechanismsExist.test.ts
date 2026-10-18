@@ -270,7 +270,7 @@ describe('the census: every empty-state promise is accounted for', () => {
       // mechanism is named rather than hoped for — the engine's own `RunJournal.step_completed`
       // appends one ledger event per completed step, and this panel projects exactly that kind
       // (`introspection.findings_rail`). Traced in the same change:
-      // `tests/test_ledger_rails.py::test_the_rails_agree_with_the_ledgers_own_step_aggregate`
+      // `tests/rails/test_ledger_rails.py::test_the_rails_agree_with_the_ledgers_own_step_aggregate`
       // pins the rail's row count to `ledger.reader.run_totals`' `steps_completed`, so the copy is
       // backed by an assertion rather than by a comment — checked
       'pages/workflows/LedgerRailsPanel.tsx',

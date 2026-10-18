@@ -15,7 +15,7 @@ The load-bearing claims, each guarding a specific way unattended automation goes
 The event-hold suite that used to sit here went with the machinery it tested (#375):
 `evaluate_event_gate`/`HoldState`/`HoldVerdict` had zero production callers, and a suite
 over an unreachable function is a green rail that certifies nothing.
-`tests/test_workflows_gate_policy_reachability.py` is what now keeps that from recurring.
+`tests/rails/test_workflows_gate_policy_reachability.py` is what now keeps that from recurring.
 """
 
 from __future__ import annotations
