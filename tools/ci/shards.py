@@ -12,10 +12,11 @@ the recorded files. The same files and durations always give the same buckets.
 **The durations source is interim, until #3948.** #3948 keeps one shared CI telemetry record,
 written by one history writer, and the planner is to read its per-file test seconds for the
 leg's own platform and worker count. That record does not exist yet, so
-:class:`LatestGreenMainJunit` reads the same figures from the junit reports of the newest green
-``main`` run of the leg's workflow, and persists nothing. When the record lands, it replaces
-this one class behind :class:`DurationsSource`; nothing else changes. Durations only balance
-the shards: an unreadable source gives equal weights and the same complete plan.
+:class:`RecentMainJunit` reads the same figures as each file's median over the junit reports of
+the newest three completed ``main`` runs of the leg's workflow, and persists nothing. When the
+record lands, it replaces this one class behind :class:`DurationsSource`; nothing else changes.
+Durations only balance the shards: an unreadable source gives equal weights and the same
+complete plan.
 
 Standard library only, like every file in ``tools/ci``.
 """
@@ -176,7 +177,7 @@ class Leg:
 
 class DurationsSource(Protocol):
     """Where the per-file seconds come from. #3948's telemetry record replaces the interim
-    :class:`LatestGreenMainJunit` behind this one method."""
+    :class:`RecentMainJunit` behind this one method."""
 
     def durations(self, leg: Leg, files: Sequence[str]) -> tuple[dict[str, float], str]:
         """Per-file seconds for ``leg``, and one line saying where they came from."""
@@ -187,50 +188,80 @@ Text = Callable[..., str]
 Binary = Callable[..., bytes]
 
 
-class LatestGreenMainJunit:
-    """Interim, until #3948: the leg's junit reports in the newest green ``main`` run of its
-    workflow that holds them. Only that leg's reports are read, so one platform's times never
-    weigh another's. A report a rerun uploaded again under the same name is skipped: the lowest
-    artifact id, the first attempt's, is read, so a rerun never overwrites the first result.
-    Nothing is written or kept."""
+class RecentMainJunit:
+    """Interim, until #3948: each file's median seconds over the leg's junit reports in the
+    newest ``RUNS`` completed ``main`` runs of its workflow that hold them.
 
-    def __init__(self, repo: str, *, text: Text, binary: Binary, runs: int = 20) -> None:
+    Why a median of several runs, not the newest green one: a file's seconds swing with the
+    runner it lands on (measured over seven main runs: the same file 71-146 s, and one shard's
+    files together 0.66-1.52x their median), so a plan from one run inherits that run's noise,
+    and replayed over those runs, the median of three planned 1.02-1.06x where one run planned
+    up to 1.30x. Why red runs too: a red run's reports still time every file it ran, and reading
+    green ones only froze the source while main was red (eight main plans in a row read one run).
+    A cancelled run stopped part-way, so its times are not its files' own, and it is skipped.
+
+    Only that leg's reports are read, so one platform's times never weigh another's. A report a
+    rerun uploaded again under the same name is skipped: the lowest artifact id, the first
+    attempt's, is read. Nothing is written or kept."""
+
+    RUNS = 3
+    COUNTED = frozenset({"success", "failure"})
+
+    def __init__(self, repo: str, *, text: Text, binary: Binary, runs: int = 30) -> None:
         self.repo, self.text, self.binary, self.limit = repo, text, binary, runs
+
+    def _run_seconds(self, run: int, leg: Leg, files: Sequence[str]) -> dict[str, float] | None:
+        first: dict[str, int] = {}
+        for line in self.text(
+            "api",
+            "--paginate",
+            f"repos/{self.repo}/actions/runs/{run}/artifacts?per_page=100",
+            "--jq",
+            '.artifacts[] | select(.expired | not) | "\\(.id) \\(.name)"',
+        ).splitlines():
+            ident, _, name = line.partition(" ")
+            if ident.isdigit() and name.startswith(leg.report_prefix):
+                first[name] = min(int(ident), first.get(name, int(ident)))
+        if not first:
+            return None
+        seconds: dict[str, float] = {}
+        for name in sorted(first):
+            archive = self.binary("api", f"repos/{self.repo}/actions/artifacts/{first[name]}/zip")
+            with zipfile.ZipFile(io.BytesIO(archive)) as reports:
+                for member in reports.namelist():
+                    if member.endswith(".xml"):
+                        for path, s in junit_seconds(reports.read(member), files).items():
+                            seconds[path] = seconds.get(path, 0.0) + s
+        return seconds
 
     def durations(self, leg: Leg, files: Sequence[str]) -> tuple[dict[str, float], str]:
         listed = self.text(
             "api",
             f"repos/{self.repo}/actions/workflows/{leg.workflow}/runs"
-            f"?branch=main&status=success&per_page={self.limit}",
+            f"?branch=main&status=completed&per_page={self.limit}",
             "--jq",
-            ".workflow_runs[].id",
+            '.workflow_runs[] | "\\(.id) \\(.conclusion)"',
         )
-        for run in (int(r) for r in listed.split()):
-            first: dict[str, int] = {}
-            for line in self.text(
-                "api",
-                "--paginate",
-                f"repos/{self.repo}/actions/runs/{run}/artifacts?per_page=100",
-                "--jq",
-                '.artifacts[] | select(.expired | not) | "\\(.id) \\(.name)"',
-            ).splitlines():
-                ident, _, name = line.partition(" ")
-                if ident.isdigit() and name.startswith(leg.report_prefix):
-                    first[name] = min(int(ident), first.get(name, int(ident)))
-            if not first:
+        read: list[tuple[int, dict[str, float]]] = []
+        for line in listed.splitlines():
+            ident, _, conclusion = line.partition(" ")
+            if not ident.isdigit() or conclusion.strip() not in self.COUNTED:
                 continue
-            seconds: dict[str, float] = {}
-            for name in sorted(first):
-                archive = self.binary(
-                    "api", f"repos/{self.repo}/actions/artifacts/{first[name]}/zip"
-                )
-                with zipfile.ZipFile(io.BytesIO(archive)) as reports:
-                    for member in reports.namelist():
-                        if member.endswith(".xml"):
-                            for path, s in junit_seconds(reports.read(member), files).items():
-                                seconds[path] = seconds.get(path, 0.0) + s
-            return seconds, f"run {run}'s {len(first)} {leg.report_prefix}* report(s)"
-        return {}, f"no green main run of {leg.workflow} holds {leg.report_prefix}* reports"
+            seconds = self._run_seconds(int(ident), leg, files)
+            if seconds is not None:
+                read.append((int(ident), seconds))
+            if len(read) == self.RUNS:
+                break
+        if not read:
+            return {}, f"no completed main run of {leg.workflow} holds {leg.report_prefix}* reports"
+        merged = {
+            path: statistics.median(s[path] for _, s in read if path in s)
+            for path in sorted({p for _, s in read for p in s})
+        }
+        runs = [str(run) for run, _ in read]
+        if len(runs) == 1:
+            return merged, f"run {runs[0]}'s {leg.report_prefix}* reports"
+        return merged, f"the median of runs {', '.join(runs)}' {leg.report_prefix}* reports"
 
 
 #: How long one ``gh`` call may take. A hung call would otherwise hold the plan job, and every
@@ -380,7 +411,7 @@ def _plan(args: argparse.Namespace) -> int:
     if not files:
         print(f"no test file is collectable under {root}", file=sys.stderr)
         return 1
-    source: DurationsSource = LatestGreenMainJunit(args.repo, text=_gh_text, binary=_gh_binary)
+    source: DurationsSource = RecentMainJunit(args.repo, text=_gh_text, binary=_gh_binary)
     # A breadth shard records its list's digest as an input, so a result is carried only onto
     # the files it measured. A plan made afresh from each run's durations moves files between
     # shards every night (measured: two green main runs hours apart planned 885-949 of each

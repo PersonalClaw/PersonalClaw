@@ -197,7 +197,7 @@ class _Gh:
     """``gh`` as the source calls it: runs, artifact listings and artifact zips."""
 
     def __init__(self) -> None:
-        self.runs: list[int] = []
+        self.runs: list[int | tuple[int, str]] = []
         self.artifacts: dict[int, list[tuple[int, str, bool]]] = {}
         self.zips: dict[int, bytes] = {}
         self.asked: list[str] = []
@@ -209,8 +209,10 @@ class _Gh:
         if self.broken:
             raise subprocess.CalledProcessError(1, ["gh", *args])
         if "/runs?" in path:
-            assert "branch=main" in path and "status=success" in path, path
-            return "\n".join(str(r) for r in self.runs)
+            assert "branch=main" in path and "status=completed" in path, path
+            return "\n".join(
+                f"{r} {'success'}" if isinstance(r, int) else f"{r[0]} {r[1]}" for r in self.runs
+            )
         if "/artifacts?" in path:
             run = int(path.split("/runs/")[1].split("/")[0])
             return "\n".join(
@@ -227,8 +229,8 @@ class _Gh:
 LEG = shards.Leg("test-shard", "ci.yml", "junit-test-shard-", 4)
 
 
-def _source(gh: _Gh) -> shards.LatestGreenMainJunit:
-    return shards.LatestGreenMainJunit("o/r", text=gh.text, binary=gh.binary)
+def _source(gh: _Gh) -> shards.RecentMainJunit:
+    return shards.RecentMainJunit("o/r", text=gh.text, binary=gh.binary)
 
 
 def test_the_source_reads_the_newest_green_main_run_that_holds_the_legs_reports() -> None:
@@ -273,7 +275,54 @@ def test_the_source_says_so_when_no_green_main_run_holds_reports() -> None:
     gh.runs = [30]
     gh.artifacts = {30: [(1, "junit-test-shard-1", True)]}
     durations, said = _source(gh).durations(LEG, FILES)
-    assert durations == {} and "no green main run" in said
+    assert durations == {} and "no completed main run" in said
+
+
+def _runs_of(gh: _Gh, seconds: dict[int, float], conclusions: dict[int, str] | None = None) -> None:
+    """Main runs, newest first, each holding one report that gives tests/test_a.py its seconds."""
+    conclusions = conclusions or {}
+    gh.runs = [(run, conclusions.get(run, "success")) for run in sorted(seconds, reverse=True)]
+    gh.artifacts = {run: [(run * 10, "junit-test-shard-1", False)] for run in seconds}
+    gh.zips = {
+        run * 10: _zip("r.xml", _junit(("tests.test_a", "t", s))) for run, s in seconds.items()
+    }
+
+
+def test_the_source_takes_each_files_median_over_the_newest_three_runs() -> None:
+    """One run's seconds swing with its runners (measured: the same file 71-146 s in seven main
+    runs), so a plan from one run inherits that run's noise. Three runs' median does not."""
+    gh = _Gh()
+    _runs_of(gh, {50: 2.0, 40: 90.0, 30: 3.0, 20: 500.0})
+    durations, said = _source(gh).durations(LEG, FILES)
+    assert durations == {"tests/test_a.py": 3.0}
+    assert "50" in said and "40" in said and "30" in said and "20" not in said
+    assert not any("/artifacts/200/" in a for a in gh.asked), "a fourth run is never read"
+
+
+def test_a_red_main_run_still_measures_its_files_and_a_cancelled_one_does_not() -> None:
+    """Green-only froze the source: while main was red, eight main plans in a row read the same
+    one run. A red run's reports still time every file it ran; a cancelled run stopped part-way,
+    so its times are not the files' own."""
+    gh = _Gh()
+    _runs_of(gh, {50: 2.0, 40: 900.0, 30: 4.0, 20: 6.0}, {50: "failure", 40: "cancelled"})
+    durations, said = _source(gh).durations(LEG, FILES)
+    assert durations == {"tests/test_a.py": 4.0}
+    assert "40" not in said.split("reports")[0]
+
+
+def test_a_file_one_run_did_not_report_takes_the_median_of_the_runs_that_did() -> None:
+    gh = _Gh()
+    _runs_of(gh, {50: 2.0, 40: 4.0, 30: 10.0})
+    gh.zips[400] = _zip("r.xml", _junit(("tests.test_ab", "t", 7.0)))
+    durations, _ = _source(gh).durations(LEG, FILES)
+    assert durations == {"tests/test_a.py": 6.0, "tests/test_ab.py": 7.0}
+
+
+def test_fewer_than_three_runs_are_read_as_they_are() -> None:
+    gh = _Gh()
+    _runs_of(gh, {50: 2.0})
+    durations, said = _source(gh).durations(LEG, FILES)
+    assert durations == {"tests/test_a.py": 2.0} and "50" in said
 
 
 # ── the command line ──────────────────────────────────────────────────────────────────────────
@@ -584,7 +633,8 @@ def test_without_keep_no_earlier_plan_is_read(tmp_path: Path, monkeypatch) -> No
     """Off main nothing is reused, so `freshness` passes no --keep-from-main there."""
     gh = _KeepGh({20: _earlier(ODD)})
     leg = _keep(tmp_path, monkeypatch, gh, keep=False)
-    assert not any("status=completed" in a for a in gh.asked)
+    # The durations source lists main's runs too; only the keep reads a run's plan artifacts.
+    assert not any("/artifacts?" in a for a in gh.asked)
     assert leg["buckets"] != ODD
 
 

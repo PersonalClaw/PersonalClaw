@@ -520,7 +520,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
-      actions: read   # the newest green main run and its junit reports
+      actions: read   # main's recent completed runs and their junit reports
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -560,7 +560,7 @@ jobs:
     # `coverage` legs. A shard passes no `--cov`, and pytest measures nothing it is not asked to.
     #
     # Each shard runs its share of the run's one plan (`shard-plan`, tools/ci/shards.py): whole
-    # test files, balanced by the per-file seconds the newest green main run recorded, so a
+    # test files, balanced by each file's median seconds over main's three newest runs, so a
     # worker collects only its shard's files and every file runs in exactly one shard.
     needs: [tree-check, shard-plan]
     if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}

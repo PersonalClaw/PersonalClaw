@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -28,6 +29,14 @@ def pytest_ignore_collect(collection_path, config):
 
 def pytest_collection_finish(session):
     shard_list.collection_finish(session)
+
+
+def pytest_sessionfinish(session):
+    shard_list.session_finish(session)
+
+
+def pytest_terminal_summary(terminalreporter):
+    shard_list.report(terminalreporter)
 """
 
 
@@ -89,3 +98,58 @@ def test_a_listed_file_collection_never_reaches_fails_the_run(tmp_path: Path) ->
     done = _collect(root, "--shard-list", "list.txt")
     assert done.returncode != 0
     assert "tests/test_gone.py" in done.stdout + done.stderr
+
+
+def _run(
+    root: Path, *args: str, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    import os
+
+    return subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-o", "addopts="]
+        + ["tests", *args],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, **(env or {})},
+    )
+
+
+_LINE = re.compile(
+    r"^(gw\d+|main): collected in (\d+\.\d+)s, peak RSS (\d+) MB, (\d+) MB over the run$", re.M
+)
+
+
+def test_each_worker_reports_its_collection_seconds_and_peak_memory(tmp_path: Path) -> None:
+    """A shard's log names, for each xdist worker, how long it took to collect its files and the
+    most memory it held, so a run shows both against #3923's bars (30 s and 600 MB)."""
+    root = _tree(tmp_path)
+    (root / "list.txt").write_text("tests/test_a.py\ntests/test_b.py\n", encoding="utf-8")
+    summary = root / "summary.md"
+    done = _run(
+        root, "--shard-list", "list.txt", "-n", "2", env={"GITHUB_STEP_SUMMARY": str(summary)}
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "shard collection and memory" in done.stdout
+    workers = {
+        m.group(1): (float(m.group(2)), int(m.group(3))) for m in _LINE.finditer(done.stdout)
+    }
+    assert set(workers) == {"gw0", "gw1"}, done.stdout
+    assert all(0 < mb < 100_000 for _, mb in workers.values()), workers
+    text = summary.read_text(encoding="utf-8")
+    assert "gw0" in text and "peak RSS" in text
+
+
+def test_a_run_without_workers_reports_its_own_process(tmp_path: Path) -> None:
+    root = _tree(tmp_path)
+    (root / "list.txt").write_text("tests/test_a.py\n", encoding="utf-8")
+    done = _run(root, "--shard-list", "list.txt")
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert [m.group(1) for m in _LINE.finditer(done.stdout)] == ["main"], done.stdout
+
+
+def test_without_a_shard_list_nothing_is_reported(tmp_path: Path) -> None:
+    done = _run(_tree(tmp_path))
+    assert done.returncode == 0
+    assert "shard collection and memory" not in done.stdout

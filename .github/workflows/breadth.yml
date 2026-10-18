@@ -99,8 +99,8 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       # One shard plan for the run (#3923): every suite leg's test files, split into whole-file
-      # shards by the per-file seconds the newest green main breadth run recorded in its junit
-      # reports (tools/ci/shards.py), made once so every shard of a leg reads the same buckets.
+      # shards by each file's median seconds over the junit reports of main's three newest
+      # breadth runs (tools/ci/shards.py), made once so every shard of a leg reads the same buckets.
       # After the earlier results, so a planning failure never touches reuse. Interim until
       # #3948's telemetry record; an unreadable source gives equal weights and a whole plan.
       #

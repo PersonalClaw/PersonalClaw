@@ -288,6 +288,10 @@ def pytest_collection_finish(session):
     shard_list.collection_finish(session)
 
 
+def pytest_sessionfinish(session):
+    shard_list.session_finish(session)
+
+
 def pytest_unconfigure(config):
     _LET_THE_KEYCHAIN_BACK_IN()
     git_helper_guard.close()
@@ -306,6 +310,7 @@ def pytest_terminal_summary(terminalreporter):
         terminalreporter.write_sep("-", "security marker census")
         terminalreporter.write_line(census)
     source_index.report(terminalreporter)
+    shard_list.report(terminalreporter)
     skipped = container_runtime.skipped_without_the_opt_in(
         terminalreporter.stats.get("skipped", [])
     )

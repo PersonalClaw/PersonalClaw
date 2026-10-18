@@ -13,23 +13,43 @@ noisy, but the hook was the fast one every time.
 The run fails, rather than quietly running less or more, when the list is missing, empty or
 unreadable (pytest given no selection would collect every test), or when a file it names is
 never reached by collection (renamed, deleted, or outside ``testpaths``).
+
+Each process that collects a shard's files also records, for the run's summary, how long it
+took from its start to the end of its collection, the most memory (peak RSS) it had held by
+then, and the most it held over the whole run, which is what decides how many workers a runner's
+memory holds. The summary also names the machine's CPUs, since a shard whose every file ran
+slower together ran on a slower host. An xdist worker sends its figures to the controller as
+it ends; the controller prints one line per worker under "shard collection and memory" and
+writes the same to the job summary, so a CI run shows both against #3923's bars (collection
+30 s, 600 MB per worker).
 """
 
 from __future__ import annotations
 
 import fnmatch
+import os
+import resource
+import sys
+import time
 from pathlib import Path
 
 import pytest
 
 OPTION = "--shard-list"
 _KEY = pytest.StashKey["ShardList"]()
+#: Each process's (collection seconds, peak RSS at collection's end, peak RSS over the run),
+#: in seconds and MB, by worker id ("main" without xdist).
+COSTS = pytest.StashKey[dict[str, tuple[float, int, int]]]()
+#: The figures' key in an xdist worker's output, which the controller reads as the worker ends.
+_WORKER_KEY = "shard_list_collection"
 
 
 class ShardList:
     def __init__(self, root: Path, listed: frozenset[Path], patterns: list[str]) -> None:
         self.root, self.listed, self.patterns = root, listed, patterns
         self.reached: set[Path] = set()
+        self.started = time.perf_counter()
+        self.collected: tuple[float, int] | None = None
 
     def is_test_file(self, path: Path) -> bool:
         return path.suffix == ".py" and any(fnmatch.fnmatch(path.name, p) for p in self.patterns)
@@ -57,6 +77,7 @@ def configure(config: pytest.Config) -> None:
     if not listed:
         raise pytest.UsageError(f"{OPTION} {named} names no file, so nothing would be selected")
     config.stash[_KEY] = ShardList(root, listed, list(config.getini("python_files")))
+    config.pluginmanager.register(_Controller(), "shard-list-costs")
 
 
 def ignore_collect(collection_path: Path, config: pytest.Config) -> bool | None:
@@ -79,3 +100,76 @@ def collection_finish(session: pytest.Session) -> None:
         raise pytest.UsageError(
             f"{OPTION} names {len(missing)} file(s) collection never reached: {missing[:5]}"
         )
+    shard.collected = (round(time.perf_counter() - shard.started, 2), peak_rss_mb())
+
+
+def session_finish(session: pytest.Session) -> None:
+    """Record this process's figures: its collection's, and its peak RSS over the whole run,
+    which is what decides how many workers a runner's memory holds."""
+    shard = session.config.stash.get(_KEY, None)
+    if shard is None or shard.collected is None:
+        return
+    figures = (*shard.collected, peak_rss_mb())
+    workeroutput = getattr(session.config, "workeroutput", None)
+    if workeroutput is not None:
+        workeroutput[_WORKER_KEY] = list(figures)
+    else:
+        session.config.stash.setdefault(COSTS, {})["main"] = figures
+
+
+def cpu() -> str:
+    """The machine's CPU count and, on Linux, its model: a shard whose every file ran slower
+    together ran on a slower host, which no plan can see."""
+    model = ""
+    try:
+        for line in Path("/proc/cpuinfo").read_text(encoding="utf-8").splitlines():
+            if line.startswith("model name"):
+                model = " (" + line.split(":", 1)[1].strip() + ")"
+                break
+    except OSError:
+        pass
+    return f"{os.cpu_count()} CPUs{model}"
+
+
+def peak_rss_mb() -> int:
+    """This process's peak resident memory so far, in MB. ``ru_maxrss`` is bytes on macOS and
+    kilobytes on Linux."""
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return round(peak / (1024 * 1024 if sys.platform == "darwin" else 1024))
+
+
+class _Controller:
+    """Receives each xdist worker's figures as the worker ends."""
+
+    @pytest.hookimpl(optionalhook=True)
+    def pytest_testnodedown(self, node, error) -> None:  # noqa: ARG002 — xdist hook signature
+        figures = getattr(node, "workeroutput", {}).get(_WORKER_KEY)
+        if figures is not None:
+            seconds, collected, run = figures
+            node.config.stash.setdefault(COSTS, {})[node.gateway.id] = (
+                float(seconds),
+                int(collected),
+                int(run),
+            )
+
+
+def report(terminalreporter) -> None:
+    """One line per process that collected a shard: its collection seconds and peak RSS, in the
+    terminal and in the job summary."""
+    costs = terminalreporter.config.stash.get(COSTS, None)
+    if not costs:
+        return
+    lines = [
+        f"{worker}: collected in {seconds:.2f}s, peak RSS {collected} MB, {run} MB over the run"
+        for worker, (seconds, collected, run) in sorted(costs.items())
+    ]
+    lines.append(f"on {cpu()}")
+    terminalreporter.write_sep("-", "shard collection and memory")
+    for line in lines:
+        terminalreporter.write_line(line)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as fh:
+            fh.write(
+                "### shard collection and memory\n\n" + "".join(f"- {line}\n" for line in lines)
+            )
