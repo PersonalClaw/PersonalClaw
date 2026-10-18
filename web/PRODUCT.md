@@ -22,7 +22,7 @@ The one AI agent platform you fully own — every capability and every vendor is
 
 ## Brand Personality
 
-Friendly, playful, approachable. PersonalClaw should feel like a capable companion, not an enterprise console: soft physical controls, warm coral energy, springy motion that makes delegation feel light. The visual voice blends two influences: a **neural-expressive** signature (fractional variable-font weights, ambient glow, gradient energy that reads as live intelligence) and **Google's playful expressive element design** (pill shapes, tonal surfaces, springy overshoot on interaction) — interpreted through PersonalClaw's own coral identity, not copied literally. Playfulness is earned and tunable (the app literally has a bounciness slider) — it never gets in the way of the task, and it never undercuts the sense that serious agentic machinery is running underneath.
+Friendly, playful, approachable. PersonalClaw should feel like a capable companion, not an enterprise console: soft physical controls, warm coral energy, springy motion that makes delegation feel light. The visual voice blends two influences: a **neural-expressive** signature (fractional variable-font weights and gradient energy that read as live intelligence, with ambient glow left to the identities: Claw Arcade carries it, and the default look draws none) and a **playful, expressive element style** (pill shapes, tonal surfaces, springy overshoot on interaction) — interpreted through PersonalClaw's own coral identity, not copied literally. Playfulness is earned and tunable (the app literally has a bounciness slider) — it never gets in the way of the task, and it never undercuts the sense that serious agentic machinery is running underneath.
 
 ## Anti-references
 

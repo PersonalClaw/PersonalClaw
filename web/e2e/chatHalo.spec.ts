@@ -1,12 +1,13 @@
 import { test, expect, type Page } from '@playwright/test'
-import { gotoRoute, driveScriptedTurns, seedTheme } from './helpers'
+import { gotoRoute, driveScriptedTurns, seedBackdrop, seedTheme } from './helpers'
 import { THEMES } from './routes'
 
 // ── The composer's halo on an ONGOING chat: no hard edge, no floating shapes ───────────────────
 //
 // Owner report, on the chat session page: "weird shadow shapes that change from time
 // to time", and the halo around the composer "gets cut off and I can see a hard edge where it
-// should be a smooth halo". Both measured on a fresh home before the fix (1440×900, default design):
+// should be a smooth halo". Both measured on a fresh home before the fix, at 1440×900, under the
+// wave field that was then the default:
 //
 //  · THE HARD EDGE. The halo is `ui/DotGlow`'s bloom, reaching ~180px past the composer inside a
 //    layer that clips at its own box. A docked composer sits one page gutter (16px) from that box's
@@ -20,6 +21,10 @@ import { THEMES } from './routes'
 // This spec measures the PAINTED result, which jsdom cannot: thin strips along the stage's edges
 // must be the canvas colour (the halo has faded to nothing before the clip), with a positive
 // control proving the same probe does see the halo where it is meant to be.
+//
+// The halo is the wave field's (`web/DESIGN.md` §7): the default look has no backdrop at all, and
+// Claw Arcade brings this one. So every test here asks for the wave field before the app boots,
+// the way the Background control would; without it the positive control finds nothing to see.
 
 /** Median of the max-channel distance from the canvas colour over a screenshot region. A median,
  *  so the sparse wave dots the layer draws cannot move it — a cut halo is a uniform band and moves
@@ -78,6 +83,7 @@ for (const theme of THEMES) {
   test.describe(`the composer halo on an ongoing chat (${theme})`, () => {
     test('fades out before every edge of its stage — at rest and focused', async ({ page }) => {
       await seedTheme(page, theme)
+      await seedBackdrop(page, 'waves')
       await gotoRoute(page, 'chat')
       await driveScriptedTurns(page, 'Keep the halo whole', 2)
       await page.evaluate(() => { const a = document.activeElement as HTMLElement | null; a?.blur?.() })
@@ -91,6 +97,7 @@ for (const theme of THEMES) {
 
     test('while a reply streams, the only light is the composer’s', async ({ page }) => {
       await seedTheme(page, theme)
+      await seedBackdrop(page, 'waves')
       // Hold the stream open: frames queue until released, so the page sits in `streaming` long
       // enough to look at it (well inside the 3.5s grace before the stall reconciler reads the
       // server, so this is a live stream and not a healed one).
@@ -141,6 +148,7 @@ test.describe('the composer halo at phone width', () => {
   for (const theme of THEMES) {
     test(`fades out before the viewport edges on an ongoing chat (${theme})`, async ({ page }) => {
       await seedTheme(page, theme)
+      await seedBackdrop(page, 'waves')
       await gotoRoute(page, 'chat')
       await driveScriptedTurns(page, 'Keep the halo whole', 2)
       await page.evaluate(() => { const a = document.activeElement as HTMLElement | null; a?.blur?.() })

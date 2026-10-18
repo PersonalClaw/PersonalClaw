@@ -29,8 +29,8 @@ export const runtime = {
   bounciness: 1,
   // Expressiveness (--expressiveness): the PRIMARY intensity dial for the whole
   // motion/morph language — 0 = refined/tasteful (heavy effects fade toward
-  // subtle: gentler morph, smaller lift, sheen off), 1 = bold/showpiece. Default
-  // 0.8 (bold-leaning) per the v2 brand decision. Every expressive treatment
+  // subtle: gentler morph, smaller lift, Claw Arcade's sheen off), 1 = bold/showpiece.
+  // Default 0.8 (bold-leaning) per the v2 brand decision. Every expressive treatment
   // (hover-lift, press depth, morph delta, container-transform, sheen gate)
   // multiplies through `expr()`/`exprHeavy()` in design/motion.ts so ONE dial
   // governs the system. Reduced-motion still overrides everything to near-static

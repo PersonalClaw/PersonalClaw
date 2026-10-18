@@ -31,9 +31,9 @@ import { DotGlow } from './DotGlow'
 import { runtime } from '../design/runtime'
 import { PERSONALITIES } from '../design/personalities'
 
-// DotGlow resolves the backdrop mode from the appearance store; 'waves' is the
-// default and the only mode with a live loop to suppress. Colour application is
-// The concern and has nothing to do with this contract.
+// DotGlow resolves the backdrop mode from the appearance store; 'waves' is Claw
+// Arcade's backdrop and the mode whose live loop there is to suppress. Colour
+// application is the store's concern and has nothing to do with this contract.
 vi.mock('../app/appearance', () => ({
   useAppearance: () => ({ selectValue: () => 'waves' }),
 }))

@@ -5,6 +5,12 @@
 
 export type TokenKind = 'color' | 'scalar' | 'select'
 
+/** The backdrop modes (`--bg-style`), in the order the Background control offers them. One
+ *  declaration: the select's options, an identity's backdrop dial and the canvas that draws it
+ *  (`ui/DotGlow`) all read this list. */
+export const BG_STYLES = ['waves', 'still', 'glow', 'none'] as const
+export type BgStyle = (typeof BG_STYLES)[number]
+
 export interface ColorToken {
   kind: 'color'
   /** CSS var name set on <html> (overrides @theme defaults). */
@@ -144,11 +150,13 @@ export const TOKENS: Token[] = [
 
   // ── 3D surface (the dot wave point-of-view + dots) ──
   // Master backdrop switch, first in the group so it reads as the mode selector
-  // the rest of the 3D-surface controls tune. 'waves' = the animated breathing
-  // dot-wave surface (default); 'still' = the same field frozen (no breathing);
-  // 'glow' = only the soft light hugging the composer, no dot lattice; 'none' =
-  // off (plain canvas). DotGlow reads this live from the appearance store.
-  sel('--bg-style', 'Background', '3D surface', 'waves', ['waves', 'still', 'glow', 'none']),
+  // the rest of the 3D-surface controls tune. 'none' = off, the default: a calm
+  // canvas that paints nothing and asks for no frame (web/DESIGN.md §7). An identity
+  // brings its own backdrop as a dial — Retro Terminal 'still' (the field painted
+  // once, no halo), Claw Arcade 'waves' (the animated breathing dot-wave surface and
+  // its halo). 'glow' = only the soft light hugging the composer, no dot lattice.
+  // DotGlow reads this live from the appearance store.
+  sel('--bg-style', 'Background', '3D surface', 'none', [...BG_STYLES]),
   s('--surface-angle', 'View angle', '3D surface', 45, 0, 180, 1, '°', 'surfaceAngle'),
   s('--surface-distance', 'View distance', '3D surface', 1, 0.4, 2.2, 0.05, '', 'surfaceDistance'),
   s('--dot-size', 'Dot size', '3D surface', 1, 0.3, 9, 0.1, '', 'dotSize'),
@@ -165,8 +173,8 @@ export const TOKENS: Token[] = [
   s('--bounciness', 'Bounciness', 'Motion', 1, 0, 1, 0.05, '', 'bounciness'),
   // Expressiveness: the PRIMARY intensity dial (0 = refined/tasteful … 1 = bold/
   // showpiece). Scales hover-lift, press depth, liquid morph / container-transform,
-  // and the heavy-effect sheen gate app-wide via expr()/exprHeavy() in
-  // design/motion.ts. Default 0.8 (bold-leaning).
+  // and the heavy-effect gates (Claw Arcade's button sheen among them) app-wide via
+  // expr()/exprHeavy() in design/motion.ts. Default 0.8 (bold-leaning).
   s('--expressiveness', 'Expressiveness', 'Motion', 0.8, 0, 1, 0.05, '', 'expressiveness'),
   // Gesture physics — read by dragElastic()/swipeDismiss() in design/motion.ts.
   // Elasticity is how far a dragged element stretches past its constraints (0 =

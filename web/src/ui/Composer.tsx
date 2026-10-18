@@ -10,6 +10,7 @@ import { DROP_GROW_PX, RISE_GROW_PX, riseScale } from './composer/rise'
 import { useMicRecorder } from './composer/useMicRecorder'
 import type { ComposerProps } from './composer/types'
 import { useIsMobile } from '../app/useIsMobile'
+import { usePersonality } from '../app/personality'
 import { api } from '../lib/api'
 import { useQuery } from '../lib/data'
 import { usePushToTalk, ensureMicGrant } from '../lib/pushToTalk'
@@ -21,6 +22,11 @@ import { MicCaptureChip } from './MicCaptureChip'
 const MIN_MAX_H = 48, DEFAULT_REST_H = 92, MAX_MAX_H = 480, STORE_KEY = 'composer-resth2'
 
 const DEFAULT_CONTROLS = { agent: true, model: true, approval: true, reasoning: false, attach: true, mic: true, optimize: true }
+
+/** A focused composer in the default look (`web/DESIGN.md` §5): the plain 2px coral ring every
+ *  input gets from the global focus ring (`design/tokens.css`), drawn on the composer's sheet
+ *  because its editor draws none. Reaches 4px out, well inside the page gutter it sits in. */
+const FOCUS_RING = { outlineWidth: '2px', outlineStyle: 'solid', outlineColor: 'var(--color-primary)', outlineOffset: '2px' } as const
 
 /** The one configurable composer — used by Chat and the goal composer. `controls` picks
  *  which inline pills + "+"-menu items appear; `data`/`selection` feed real
@@ -36,6 +42,11 @@ export function Composer({
 }: ComposerProps) {
   const [focused, setFocused] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+  // The decorative light is the identity's (`web/DESIGN.md` §7). Claw Arcade keeps it, so its
+  // composer wakes on focus and on a file dragged over it: the gradient ring, the coral rim and
+  // the spring rise below. Everywhere else a focused composer shows `FOCUS_RING` and stays put.
+  const light = !!usePersonality().personality.behavior.decorativeLight
+  const awake = light && (focused || dragOver)
   // On mobile the return key inserts a newline (send is button-only) — a phone
   // keyboard's Enter must not fire a half-typed message. Reactive to rotation/resize.
   const isMobile = useIsMobile()
@@ -271,40 +282,46 @@ export function Composer({
 
   return (
     <div ref={rootRef} className="relative w-full" style={{ maxWidth: 'var(--content-width)' }}>
-      {/* Two "awake" states drive the composer's motion, both scaled through expr()
-          (bold rises tall, refined barely): FOCUS = "rises to meet you"; DRAG-OVER =
-          "opens its arms to receive" — a bigger lift + fuller ring than focus, since
-          a file is about to land. Springs on a bounce tier so it settles with life.
-          The scale's GROWTH is capped in px (`riseScale`) so a wide composer rises
-          without crossing the page gutter it sits in. */}
+      {/* Under the decorative light, two "awake" states drive the composer's motion,
+          both scaled through expr() (bold rises tall, refined barely): FOCUS = "rises
+          to meet you"; DRAG-OVER = "opens its arms to receive" — a bigger lift + fuller
+          ring than focus, since a file is about to land. Springs on a bounce tier so it
+          settles with life. The scale's GROWTH is capped in px (`riseScale`) so a wide
+          composer rises without crossing the page gutter it sits in. Without the light
+          the composer never moves on focus. */}
       <motion.div
         layout
         animate={{
-          y: dragOver ? -expr(11, 0.4) : focused ? -expr(6, 0.4) : 0,
-          scale: dragOver ? riseScale(expr(0.028, 0.4), DROP_GROW_PX, width) : focused ? riseScale(expr(0.016, 0.4), RISE_GROW_PX, width) : 1,
+          y: !awake ? 0 : dragOver ? -expr(11, 0.4) : -expr(6, 0.4),
+          scale: !awake ? 1 : dragOver ? riseScale(expr(0.028, 0.4), DROP_GROW_PX, width) : riseScale(expr(0.016, 0.4), RISE_GROW_PX, width),
         }}
         transition={physics.playful}
         className="relative"
       >
-        {/* Pill↔pill-rounder shape morph: on mobile the resting composer rounds up
-            toward a soft capsule; on focus (or on desktop) it settles to the
-            standard sheet radius. Ring + surface morph in lockstep. The ring's glow
-            intensity scales with expressiveness and surges to full on drag-over,
-            where it also breathes (a slow opacity pulse) so the halo reads as a live,
-            liquid surface eager to receive the drop rather than a static outline. */}
-        <motion.div aria-hidden className="absolute -inset-px"
-          animate={{
-            opacity: dragOver ? [0.7 + expr(0.3, 0.4), 0.85 + expr(0.15, 0.4), 0.7 + expr(0.3, 0.4)] : focused ? 0.55 + expr(0.4, 0.4) : 0,
-            borderRadius: (isMobile && !focused && !dragOver) ? 'var(--radius-2xl)' : 'calc(var(--radius-xli) + 1px)',
-          }}
-          transition={dragOver ? { opacity: { duration: 1.4, ease: 'easeInOut', repeat: Infinity }, borderRadius: spring.spatialDefault } : spring.spatialDefault}
-          style={{ background: 'conic-gradient(from 0deg, var(--ring-stop-1), var(--ring-stop-2), var(--ring-stop-3), var(--ring-stop-4), var(--ring-stop-1))' }} />
+        {/* The gradient ring, the decorative light's alone. Pill↔pill-rounder shape
+            morph: on mobile the resting composer rounds up toward a soft capsule; on
+            focus (or on desktop) it settles to the standard sheet radius. Ring + surface
+            morph in lockstep. The ring's glow intensity scales with expressiveness and
+            surges to full on drag-over, where it also breathes (a slow opacity pulse) so
+            the halo reads as a live, liquid surface eager to receive the drop rather than
+            a static outline. */}
+        {light && (
+          <motion.div aria-hidden className="absolute -inset-px"
+            animate={{
+              opacity: dragOver ? [0.7 + expr(0.3, 0.4), 0.85 + expr(0.15, 0.4), 0.7 + expr(0.3, 0.4)] : focused ? 0.55 + expr(0.4, 0.4) : 0,
+              borderRadius: (isMobile && !focused && !dragOver) ? 'var(--radius-2xl)' : 'calc(var(--radius-xli) + 1px)',
+            }}
+            transition={dragOver ? { opacity: { duration: 1.4, ease: 'easeInOut', repeat: Infinity }, borderRadius: spring.spatialDefault } : spring.spatialDefault}
+            style={{ background: 'conic-gradient(from 0deg, var(--ring-stop-1), var(--ring-stop-2), var(--ring-stop-3), var(--ring-stop-4), var(--ring-stop-1))' }} />
+        )}
         {/* Awake shadow is the composer's OWN token, not the cards' `--shadow-lift`: that
             one reaches ~60px and was cut into a hard line by the page gutter the composer
-            sits in. The wide glow is the halo's job (DotGlow), which fades before edges. */}
+            sits in. The wide glow is the halo's job (DotGlow), which fades before edges.
+            Without the light a focused composer keeps its Rest shadow and wears `FOCUS_RING`. */}
         <motion.div
-          animate={{ boxShadow: (focused || dragOver) ? 'var(--shadow-composer-focus)' : 'var(--shadow-rest)', borderRadius: (isMobile && !focused && !dragOver) ? 'var(--radius-2xl)' : 'var(--radius-xli)' }}
+          animate={{ boxShadow: awake ? 'var(--shadow-composer-focus)' : 'var(--shadow-rest)', borderRadius: (isMobile && !focused && !dragOver) ? 'var(--radius-2xl)' : 'var(--radius-xli)' }}
           transition={spring.spatialDefault}
+          style={!light && focused ? FOCUS_RING : undefined}
           className="relative flex flex-col gap-s bg-surface-container px-m py-s"
           onDragEnter={onDragEnter} onDragOver={canAttach ? (e) => e.preventDefault() : undefined}
           onDragLeave={onDragLeave} onDrop={onDrop}

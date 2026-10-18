@@ -13,6 +13,19 @@ export async function seedTheme(page: Page, theme: Theme): Promise<void> {
   await page.emulateMedia({ colorScheme: theme })
 }
 
+/** Pick the backdrop (`--bg-style`) BEFORE the app boots, as if the owner had chosen it under
+ *  Settings › Design › Backdrop & motion. The default look has none, so a spec that measures the
+ *  backdrop's light asks for it. Merged into the stored appearance rather than replacing it, so
+ *  nothing else the page saved is lost on a reload. */
+export async function seedBackdrop(page: Page, style: 'waves' | 'still' | 'glow' | 'none'): Promise<void> {
+  await page.addInitScript((s) => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('appearance') ?? '{}')
+      localStorage.setItem('appearance', JSON.stringify({ ...stored, selects: { ...stored.selects, '--bg-style': s } }))
+    } catch { /* ignore */ }
+  }, style)
+}
+
 /** The app SHELL — `ui/NavRail`, rendered only once the server reports a non-empty
  *  `dashboard.user_name` (`onboarded` is derived from it in `app/identity.tsx`). So its
  *  presence proves three things at once: the gateway answered, the session is

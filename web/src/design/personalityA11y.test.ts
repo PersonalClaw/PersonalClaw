@@ -64,7 +64,14 @@ const ALLOWED_BEHAVIOR_KEYS = new Set([
   'errorTreatment',
   'soundCues',
   'dials',
+  'decorativeLight',
 ])
+
+/** Dial tokens whose one reader takes them from the appearance store, not from `runtime`, so they
+ *  carry no `runtimeKey` by design. `ui/DotGlow` reads the backdrop (`--bg-style`) through
+ *  `selectValue`, because a change has to tear down and rebuild its render loop, which a value
+ *  read off `runtime` inside the loop could not do; a runtime key would be a value nothing reads. */
+const STORE_READ_DIAL_TOKENS = new Set(['--bg-style'])
 
 const ALLOWED_DENSITY = new Set(['comfortable', 'dense', 'cli'])
 /** The three cue POINTS. Spelled out rather than derived, so re-voicing a moment can
@@ -172,10 +179,11 @@ const RAILS: Rail[] = [
     id: 'dialTokens',
     title: 'presets only dials that name a real token, within that token’s range',
     // A dial is applied by writing its token through the appearance store, so the
-    // token has to exist AND carry a `runtimeKey` — without one the write sets a CSS
-    // var that the canvas/motion bridge never reads, and the identity quietly arrives
-    // without its temperament. The range check catches the same failure one step in:
-    // `setScalar` does not clamp, and the sliders' min/max are the declared domain.
+    // token has to exist AND have a reader — a `runtimeKey`, or a place in
+    // `STORE_READ_DIAL_TOKENS` — without one the write sets a CSS var that the
+    // canvas/motion bridge never reads, and the identity quietly arrives without its
+    // temperament. The range check catches the same failure one step in: `setScalar`
+    // does not clamp, and the sliders' min/max are the declared domain.
     check: (p) => {
       const dials = p.behavior.dials
       if (!dials) return null
@@ -184,7 +192,7 @@ const RAILS: Rail[] = [
         if (!varName) return `${p.id} → '${dial}' is not a declared dial`
         const token = TOKENS.find((t) => t.varName === varName)
         if (!token) return `${p.id} → dial '${dial}' names missing token '${varName}'`
-        if (token.kind === 'color' || !token.runtimeKey) {
+        if (token.kind === 'color' || (!token.runtimeKey && !STORE_READ_DIAL_TOKENS.has(varName))) {
           return `${p.id} → dial '${dial}' names '${varName}', which feeds no runtime dial`
         }
         if (typeof value === 'number') {
@@ -299,8 +307,20 @@ describe('the conditional rails scan a non-empty population', () => {
     ['errorTreatment', (p: Personality) => p.behavior.errorTreatment],
     ['soundCues', (p: Personality) => p.behavior.soundCues],
     ['dials', (p: Personality) => p.behavior.dials],
+    ['decorativeLight', (p: Personality) => p.behavior.decorativeLight],
   ])('at least one personality declares %s', (_field, pick) => {
     expect(declares(pick)).not.toEqual([])
+  })
+
+  it('the store-read exemption names only dial tokens that really have no runtime key', () => {
+    // An exemption that outlived its reason would let a dial with no reader at all through.
+    const dialVars = new Set(Object.values(PERSONALITY_DIAL_TOKENS))
+    expect(STORE_READ_DIAL_TOKENS.size).toBeGreaterThan(0)
+    for (const varName of STORE_READ_DIAL_TOKENS) {
+      expect(dialVars.has(varName), `${varName} is not a dial's token`).toBe(true)
+      const token = TOKENS.find((t) => t.varName === varName)
+      expect(token && token.kind !== 'color' && !token.runtimeKey, `${varName} has a runtime key: drop it from the exemption`).toBe(true)
+    }
   })
 
   it('both proof identities are fully specified — every behavior except the default’s', () => {
@@ -437,15 +457,23 @@ describe('the default identity is restorable', () => {
     expect(getPersonality(DEFAULT_PERSONALITY)?.behavior.displayName).toBeUndefined()
   })
 
-  it('the default declares no cue voice, no dial, no shell element, no treatment', () => {
+  it('the default declares no cue voice, no dial, no shell element, no treatment, no light', () => {
     // "Switch back" has to be a real restore, and every one of these is a behavior
     // whose residue you would only notice later: a tone you did not choose, a sparkle
-    // backdrop, an overlay, a skinned error panel.
+    // backdrop, an overlay, a skinned error panel, a glowing focus ring.
     const b = getPersonality(DEFAULT_PERSONALITY)!.behavior
     expect(b.soundCues).toBeUndefined()
     expect(b.dials).toBeUndefined()
     expect(b.shellElement).toBeUndefined()
     expect(b.errorTreatment).toBeUndefined()
+    expect(b.decorativeLight).toBeUndefined()
+  })
+
+  it('the decorative light is Claw Arcade’s alone', () => {
+    // `web/DESIGN.md` §7: "Claw Arcade is the one identity that keeps the light". Every
+    // other identity, the default included, keeps the default look's plain focus ring and
+    // flat buttons, so a second identity declaring it is a design change, made in §7 first.
+    expect(PERSONALITIES.filter((p) => p.behavior.decorativeLight).map((p) => p.id)).toEqual(['claw-arcade'])
   })
 
   it('an unknown or removed id falls back to the default, never a broken state', () => {

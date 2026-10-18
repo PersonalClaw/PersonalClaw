@@ -36,6 +36,7 @@ import { lazy, type ComponentType, type LazyExoticComponent } from 'react'
 import type { ErrorTreatmentId } from './errorTreatments'
 import type { DotPattern, DotShape } from './runtime'
 import type { CueName, CuePoint } from './soundCues'
+import type { BgStyle } from './tokenRegistry'
 
 /** The closed set of shell-element ids. A personality may mount ONE registered
  *  decorative component at the App shell — never arbitrary code, never markup it
@@ -90,9 +91,12 @@ export function getShellElement(id: string | undefined): LazyExoticComponent<Com
  *  the preset lands in the user's saved overrides, so they can dial it straight back
  *  afterwards and it sticks. A personality SEEDS these; it does not own them.
  *
- *  Deliberately four dials, not "any token". An identity gets to arrive with a
- *  motion temperament and a dot glyph; it does not get to resize the type, recolor
- *  outside its `baseScheme`, or reach the layout. */
+ *  Deliberately five dials, not "any token". An identity gets to arrive with a
+ *  motion temperament, a dot glyph and its backdrop; it does not get to resize the
+ *  type, recolor outside its `baseScheme`, or reach the layout. The backdrop is a
+ *  dial because the default look has none (`web/DESIGN.md` §7): an identity that
+ *  wants one brings it, and the owner can still turn it off from the Background
+ *  control without leaving the identity. */
 export interface PersonalityDials {
   /** `--expressiveness`: the primary motion-intensity dial (0 refined … 1 bold). */
   expressiveness?: number
@@ -102,6 +106,9 @@ export interface PersonalityDials {
   dotShape?: DotShape
   /** `--dot-pattern`: the lattice the dots sit on. */
   dotPattern?: DotPattern
+  /** `--bg-style`: the backdrop the identity arrives with. Omitted = the token default,
+   *  `none`, which is how the default identity gets its calm canvas. */
+  bgStyle?: BgStyle
 }
 
 /** dial → the token varName it writes. One declaration, so the provider that applies
@@ -112,6 +119,7 @@ export const PERSONALITY_DIAL_TOKENS: Record<keyof PersonalityDials, string> = {
   bounciness: '--bounciness',
   dotShape: '--dot-shape',
   dotPattern: '--dot-pattern',
+  bgStyle: '--bg-style',
 }
 
 /** Assistant-name + prompt-persona + chrome behaviors a personality may carry.
@@ -163,6 +171,13 @@ export interface PersonalityBehavior {
    *  appearance overrides at activation (see `PersonalityDials`). Omitted = the
    *  token defaults, which is what makes a standard scheme's motion untouched. */
   dials?: PersonalityDials
+  /** The decorative light the identity keeps (`web/DESIGN.md` §7): a focused composer's
+   *  animated gradient ring, with its coral rim and spring rise, and the pointer-tracking
+   *  sheen on solid buttons. Omitted = the default look, where a focused composer shows a
+   *  plain 2px coral ring and a solid button stays flat. The wave field and its halo are
+   *  the backdrop's (`dials.bgStyle`), so the owner can switch those off by hand without
+   *  leaving the identity; this is the part that comes and goes with the identity alone. */
+  decorativeLight?: boolean
 }
 
 export interface Personality {
@@ -199,7 +214,7 @@ export const PERSONALITIES: Personality[] = [
     // persona snippet and the shell element; the arcade carries a persona only.
     id: 'retro-terminal',
     label: 'Retro Terminal',
-    hint: 'Mono-green phosphor, dense CLI spacing, a scanline haze, and a terse operator voice.',
+    hint: 'Mono-green phosphor, a still grid of square dots, dense CLI spacing, a scanline haze, and a terse operator voice.',
     baseScheme: 'phosphor',
     behavior: {
       displayName: 'TERM',
@@ -212,10 +227,10 @@ export const PERSONALITIES: Personality[] = [
       errorTreatment: 'terminal-frame',
       // The ASCII BEL: what a terminal actually does when a job wants you.
       soundCues: { approval_needed: 'terminal_bell' },
-      // A CRT is orderly and unhurried: square dots on a straight lattice, and the
-      // motion language pulled down to its refined end — no overshoot at all, so
-      // panels arrive flat instead of springing.
-      dials: { expressiveness: 0.25, bounciness: 0, dotShape: 'square', dotPattern: 'grid' },
+      // A CRT is orderly and unhurried: square dots on a straight lattice, painted once
+      // and left still, and the motion language pulled down to its refined end — no
+      // overshoot at all, so panels arrive flat instead of springing.
+      dials: { expressiveness: 0.25, bounciness: 0, dotShape: 'square', dotPattern: 'grid', bgStyle: 'still' },
     },
   },
   {
@@ -224,7 +239,7 @@ export const PERSONALITIES: Personality[] = [
     // character is carried by the dials, the cue voice and the error skin.
     id: 'claw-arcade',
     label: 'Claw Arcade',
-    hint: 'Amber cabinet glow, sparkle dots, bouncy motion, and a playful, high-energy voice.',
+    hint: 'Amber cabinet glow, a moving field of sparkle dots, bouncy motion, and a playful, high-energy voice.',
     baseScheme: 'amber',
     behavior: {
       displayName: 'CLAW-1',
@@ -236,10 +251,12 @@ export const PERSONALITIES: Personality[] = [
       errorTreatment: 'arcade-panel',
       // A finished turn is a credit accepted.
       soundCues: { turn_complete: 'coin_blip' },
-      // The opposite temperament to the terminal's, on the same four dials: motion
-      // at full tilt, and a sparkle glyph on an offset lattice so the backdrop reads
-      // as an attract screen rather than a graph.
-      dials: { expressiveness: 1, bounciness: 1, dotShape: 'sparkle', dotPattern: 'diamond' },
+      // The opposite temperament to the terminal's, on the same five dials: motion
+      // at full tilt, the wave field moving, and a sparkle glyph on an offset lattice
+      // so the backdrop reads as an attract screen rather than a graph.
+      dials: { expressiveness: 1, bounciness: 1, dotShape: 'sparkle', dotPattern: 'diamond', bgStyle: 'waves' },
+      // The one identity that keeps the light: a cabinet glows.
+      decorativeLight: true,
     },
   },
 ]
