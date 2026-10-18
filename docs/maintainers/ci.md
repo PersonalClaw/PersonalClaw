@@ -430,8 +430,25 @@ logs in its Runner identity step.
 
 ### How a refresh arrives
 
+Dependabot's version updates for Python, npm and actions wait a week after a release before
+proposing it (`cooldown: default-days: 7`), so a broken or compromised release has time to be
+noticed and pulled first. The wait never delays a security update. The `docker` block keeps
+Dependabot's three-day default, because a base-image bump is how the images' OS security fixes
+arrive, and images have no separate security-update path.
+
 - **Actions:** Dependabot's `github-actions` ecosystem, weekly. Its PR moves the SHA and the
   comment together.
+- **Python dependencies:** Dependabot's `pip` ecosystem, weekly, in one `python-deps` group. A
+  PR that moves a `[project]` constraint leaves `uv.lock` stale and fails `uv sync --locked`, so
+  re-lock it on the branch (`uv lock`, with the uv CI pins) or close it. Each upper bound
+  `pyproject.toml` holds on purpose has an ignore at its own major, and
+  `tests/test_dependency_bounds.py` holds the two lists equal. The `uv` ecosystem would rewrite
+  the lock with the constraint, but Dependabot's updater runs a uv older than
+  `[tool.uv] required-version`, which refuses it.
+- **The build backend:** `[build-system] requires` pins setuptools exactly, equal to the
+  setuptools `uv.lock` resolves (`tests/test_verify_wheel_contract.py`). Dependabot ignores it,
+  since it would move the pin without the lock. Bump both in one commit: edit the pin, then
+  `uv lock --upgrade-package setuptools` with the uv CI pins.
 - **Dockerfile bases:** Dependabot's `docker` ecosystem for `deploy/docker/`, weekly. It moves
   the `FROM` line. In the same PR, refresh the tag and the platform digests in the comment
   above it by hand, since Dependabot does not read comments, and the contract fails a comment

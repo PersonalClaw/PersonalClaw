@@ -2,19 +2,28 @@
 # to keep PR volume low for a solo maintainer.
 version: 2
 updates:
-  # Python — the packaging metadata + uv.lock (pip ecosystem covers pyproject/uv).
+  # Python — the packaging metadata in `pyproject.toml`.
   #
-  # 🔴 A pip PR here CANNOT be merged as-opened, and the reason is mechanical: dependabot
-  # rewrites `pyproject.toml` and does NOT regenerate `uv.lock`, so `uv sync --locked` — the
-  # first step of every Python job in ci.yml — fails with "The lockfile at `uv.lock` needs to
-  # be updated, but `--locked` was provided." Every Python lane then dies in its SETUP step in
-  # 10-20s while `web` and `client` pass, which reads like a broken repo rather than a
-  # dependency PR that is simply incomplete. Regenerate the lock on the branch (`uv lock`)
-  # before evaluating one, or close it.
+  # 🔴 A pip PR here that moves a `[project]` constraint CANNOT be merged as-opened, and the
+  # reason is mechanical: dependabot rewrites `pyproject.toml` and does NOT regenerate
+  # `uv.lock`, so `uv sync --locked` — the first step of every Python job in ci.yml — fails
+  # with "The lockfile at `uv.lock` needs to be updated, but `--locked` was provided." Every
+  # Python lane then dies in its SETUP step in 10-20s while `web` and `client` pass, which
+  # reads like a broken repo rather than a dependency PR that is simply incomplete. Regenerate
+  # the lock on the branch (`uv lock`) before evaluating one, or close it. The `uv` ecosystem
+  # rewrites the lock with the constraint, but Dependabot's updater runs a uv older than
+  # `[tool.uv] required-version`, which refuses it, so this block stays on pip until it can.
+  #
+  # Every block but docker waits a week after a release before proposing it, so a broken or
+  # compromised release has time to be noticed and pulled. The wait never delays a security
+  # update. Docker keeps Dependabot's three-day default: a base-image bump is how the images'
+  # OS security fixes arrive, and images have no separate security-update path.
   - package-ecosystem: pip
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     groups:
       python-deps:
@@ -75,6 +84,13 @@ updates:
       # it only once faster-whisper stops passing the keyword.
       - dependency-name: av
         versions: [">=19"]
+      # `setuptools==84.0.0` (`[build-system] requires`): exact on purpose, and held equal to the
+      # setuptools `uv.lock` resolves (`tests/test_verify_wheel_contract.py`), because `make build`
+      # is byte-reproducible only on one backend. Dependabot moves the pin without the lock, so a
+      # bump here can never pass that test. Bump both in one commit by hand: edit the pin, then
+      # `uv lock --upgrade-package setuptools` (docs/maintainers/ci.md, "How a refresh arrives").
+      # An exact pin is ignored outright, with no `versions:`.
+      - dependency-name: setuptools
 
   # Frontend — the single root npm workspace (web + desktop share one lockfile).
   # Merge bar: every npm PR must pass ci.yml's `web` job INCLUDING the render
@@ -93,6 +109,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 10
     groups:
       # React is excluded from `js-deps` below so it arrives as its own PR and gets
@@ -142,6 +160,8 @@ updates:
       - /.github/actions/*
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns: ["*"]
