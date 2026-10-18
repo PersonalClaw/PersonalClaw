@@ -24,8 +24,7 @@ TESTS = Path(__file__).resolve().parent
 CONFTEST = f"""
 import sys
 
-sys.path.insert(0, {str(TESTS)!r})
-sys.path.insert(0, {str(TESTS.parent)!r})  # tools.ci, as the suite's pythonpath gives it
+sys.path.insert(0, {str(TESTS)!r})  # tests/ alone, as a test's own pytest run has it
 import run_facts
 
 
@@ -81,3 +80,9 @@ def test_the_platform_names_the_os_machine_and_python() -> None:
 
 def test_the_suite_registers_it() -> None:
     assert "run_facts.configure(config)" in (TESTS / "conftest.py").read_text(encoding="utf-8")
+
+
+def test_the_property_names_are_the_collectors() -> None:
+    """The suite writes the two properties under the names the collector reads."""
+    assert run_facts.PLATFORM_PROPERTY == telemetry.PLATFORM_PROPERTY
+    assert run_facts.WORKERS_PROPERTY == telemetry.WORKERS_PROPERTY
