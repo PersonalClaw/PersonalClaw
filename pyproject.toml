@@ -234,7 +234,7 @@ anthropic = ["anthropic>=0.20"]
 # `httpx2.AsyncClient`, and the openai providers hand it the egress-guarded `httpx.AsyncClient`, so
 # whole-tree mypy goes red where pip resolved 3.x while CI's locked environment passes. Moving to
 # openai 3 is a migration: the lock and this bound move together (tests/test_dependency_bounds.py).
-openai    = ["openai>=1.0,<3"]
+openai    = ["openai>=1.0,<4"]
 bedrock   = ["boto3>=1.34"]        # Amazon Bedrock Converse provider
 httpx     = ["httpx>=0.27"]        # Ollama + vLLM providers
 
@@ -251,7 +251,7 @@ slack = ["slack-sdk>=3.27,<4"]
 # its decode_audio passes to `av.open` on every call (1.0 through 1.2.1, the newest), so
 # every transcription fails. The ceiling is ours to carry; `tests/test_dependency_bounds.py`
 # holds it and asks for it to be re-derived when faster-whisper stops passing the keyword.
-stt   = ["faster-whisper>=1.0", "av<19"]    # substrate for apps/faster-whisper (in-process Whisper STT)
+stt   = ["faster-whisper>=1.0", "av<20"]    # substrate for apps/faster-whisper (in-process Whisper STT)
 tts   = ["huggingface-hub>=0.23", "piper-tts>=1.2"]  # substrate for apps/piper-tts: voice downloads (ONNX from rhasspy/piper-voices) + the piper synthesis runtime (provides the `piper` binary)
 eval  = ["jinja2>=3.0"]
 # sentence-transformers 5.6 is the oldest release checked for the local-only model card the
