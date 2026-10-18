@@ -12,8 +12,11 @@ threads (file reads and writes and the hash leave the interpreter lock, so the l
 turns), and the scan in a child process (its parse of the window holds the lock: in a worker
 thread it still stopped the loop for 0.12 s).
 
-The threshold, for each case below: while the upload lands, the event loop never goes
-:data:`_BOUND` (0.1 s) without a turn, and every health check asked meanwhile answers within it.
+The threshold, for each case below: while the upload lands, no single step of the event loop
+(one callback it runs, during which it runs nothing else) takes :data:`_BOUND` (0.1 s), and every
+health check asked meanwhile answers within it. A step is timed as asyncio's debug mode times a
+slow callback: a blocking call on the loop is inside one, a wait on the disk included, while time
+the loop spends idle in its selector, given CPU or not, is between steps (:class:`_Probe`).
 """
 
 from __future__ import annotations
@@ -21,7 +24,10 @@ from __future__ import annotations
 import asyncio
 import gc
 import os
+import subprocess
+import sys
 import tempfile
+import textwrap
 import threading
 import time
 from types import SimpleNamespace
@@ -30,6 +36,7 @@ from unittest.mock import patch
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from table_rows import row
 
 from personalclaw.dashboard.handlers import knowledge as kn_handlers
 from personalclaw.dashboard.handlers_system import api_healthz
@@ -39,7 +46,7 @@ from personalclaw.knowledge.store import KnowledgeStore
 from personalclaw.uploads.store import UploadStore
 
 _MB = 1024 * 1024
-#: The longest the event loop may go without a turn, and a health check may take, while it lands.
+#: The longest one step of the event loop may take, and a health check, while it lands.
 _BOUND = 0.1
 #: The resumable upload: 256 MB, assembled from 32 parts and hashed (on the loop: about 0.19 s).
 _LARGE = 256 * _MB
@@ -95,16 +102,55 @@ def _mkdir(path):
 
 
 class _Probe:
-    """Beside some work: a 10 ms tick on the event loop, and a health check asked again 10 ms
-    after the last one answered."""
+    """Beside some work: a health check asked again 10 ms after the last one answered, and the
+    time each step of the event loop takes.
+
+    A step is one callback the loop runs (``Handle._run``: a task resumed up to its next
+    ``await``, a timer, an I/O callback), timed as asyncio's debug mode times it for its
+    ``slow_callback_duration`` warning. While a step runs the loop runs nothing else, so the
+    longest step (:attr:`worst_step`) is the longest the loop was blocked: a blocking call on it,
+    a wait on the disk included, is inside a step however little CPU it uses. Time the loop spends
+    waiting in its selector for something to do is between steps, so a process given no CPU while
+    it waits there is not counted as blocked.
+
+    A 10 ms tick is kept beside it, and its longest gap (:attr:`worst_gap`) is reported: that gap
+    is wall time between two turns, the selector's wait included, which is why it is not the
+    measure."""
 
     def __init__(self, client: TestClient) -> None:
         self.client = client
+        self.worst_step = 0.0
+        self.worst_step_was = ""
         self.worst_gap = 0.0
         self.slowest_answer = 0.0
         self.answered_during = 0
 
+    def _timed(self, loop_thread: int, real):
+        probe = self
+
+        def run(handle):
+            if threading.get_ident() != loop_thread:
+                return real(handle)
+            began = time.monotonic()
+            try:
+                return real(handle)
+            finally:
+                took = time.monotonic() - began
+                if took > probe.worst_step:
+                    probe.worst_step = took
+                    probe.worst_step_was = repr(handle)[:200]
+
+        return run
+
     async def during(self, work):
+        with patch.object(
+            asyncio.events.Handle,
+            "_run",
+            self._timed(threading.get_ident(), asyncio.events.Handle._run),
+        ):
+            return await self._during(work)
+
+    async def _during(self, work):
         stop = asyncio.Event()
         started = finished = 0.0
 
@@ -147,7 +193,8 @@ class _Probe:
 
     def says(self) -> str:
         return (
-            f"the work took {self.took:.2f}s; the event loop's longest gap was "
+            f"the work took {self.took:.2f}s; the event loop's longest step was "
+            f"{self.worst_step:.3f}s ({self.worst_step_was}); its longest gap between turns "
             f"{self.worst_gap:.3f}s and the slowest health check {self.slowest_answer:.3f}s "
             f"({self.answered_during} answered during it)"
         )
@@ -201,7 +248,7 @@ async def test_completing_a_large_upload_leaves_the_gateway_answering(gateway):
     item = gateway.store.get_item(body["item_id"])
     assert item["file_size"] == _LARGE
     assert not (gateway.parts / info["uploadId"]).exists(), "its parts were removed"
-    assert probe.worst_gap < _BOUND, probe.says()
+    assert probe.worst_step < _BOUND, probe.says()
     assert probe.slowest_answer < _BOUND, probe.says()
     assert probe.answered_during >= 1, f"premise: the gateway was asked meanwhile; {probe.says()}"
 
@@ -241,7 +288,7 @@ async def test_filing_a_large_single_request_upload_leaves_the_gateway_answering
     assert status == 200, body
     assert gateway.queued == [body["item_id"]], "premise: the upload became an item"
     assert gateway.store.get_item(body["item_id"])["file_size"] == _LARGER
-    assert probe.worst_gap < _BOUND, probe.says()
+    assert probe.worst_step < _BOUND, probe.says()
     assert probe.slowest_answer < _BOUND, probe.says()
     assert probe.answered_during >= 1, f"premise: the gateway was asked meanwhile; {probe.says()}"
 
@@ -278,7 +325,7 @@ async def test_scanning_a_large_text_upload_leaves_the_gateway_answering(gateway
     assert status == 200, body
     (path,) = body["paths"]
     assert os.path.getsize(path) == len(payload), "premise: the scanned upload was kept"
-    assert probe.worst_gap < _BOUND, probe.says()
+    assert probe.worst_step < _BOUND, probe.says()
     assert probe.slowest_answer < _BOUND, probe.says()
     assert probe.answered_during >= 1, f"premise: the gateway was asked meanwhile; {probe.says()}"
 
@@ -468,6 +515,289 @@ def test_the_module_that_makes_the_item_loads_with_the_upload_handlers():
     from personalclaw.knowledge import file_items
 
     assert getattr(uploads, "store_file_item", None) is file_items.store_file_item
+
+
+# ── what the probe counts as the loop being blocked ─────────────────────────────────────────
+
+#: How long each planted block below holds the event loop, and how long the process is stopped.
+_PLANTED = 0.2
+_STOPPED = 0.25
+
+
+def _block_by_sleeping(_tmp_path) -> None:
+    time.sleep(_PLANTED)
+
+
+def _block_by_writing(tmp_path) -> None:
+    """A write that waits, as a write to a busy disk does, using no CPU meanwhile: 1 MB into a
+    pipe whose reader starts draining it only after :data:`_PLANTED`."""
+    fifo = tmp_path / "slow-disk"
+    os.mkfifo(fifo)
+
+    def drain() -> None:
+        with open(fifo, "rb") as reader:
+            time.sleep(_PLANTED)
+            while reader.read(1 << 16):
+                pass
+
+    drainer = threading.Thread(target=drain)
+    drainer.start()
+    with open(fifo, "wb") as writer:
+        writer.write(b"\0" * _MB)
+    drainer.join()
+
+
+_PLANTED_BLOCKS = {
+    "a blocking sleep": _block_by_sleeping,
+    "a blocking file write": _block_by_writing,
+}
+
+
+def _planted_app(block, tmp_path) -> web.Application:
+    async def planted(_request: web.Request) -> web.Response:
+        block(tmp_path)  # on the event loop, in the request
+        return web.json_response({"ok": True})
+
+    app = web.Application()
+    app.router.add_get("/api/healthz", api_healthz)
+    app.router.add_get("/planted", planted)
+    return app
+
+
+@pytest.mark.asyncio
+async def test_a_blocking_call_on_the_loop_fails_the_probe(subtests, tmp_path):
+    """The vacuity arm: a request that blocks the loop for 0.2 s, with a sleep or with a write
+    that waits as a busy disk makes it wait, is a step over the bound. The tick's gap, which the
+    probe measured before, catches it too, so the step catches everything that measure did."""
+    assert len(_PLANTED_BLOCKS) == 2
+    for name, block in _PLANTED_BLOCKS.items():
+        with row(subtests, block=name):
+            where = tmp_path / name.replace(" ", "-")
+            where.mkdir()
+            async with TestClient(TestServer(_planted_app(block, where))) as client:
+                probe = _Probe(client)
+
+                async def ask_planted():
+                    r = await client.get("/planted")
+                    return r.status
+
+                status = await probe.during(ask_planted())
+
+            assert status == 200, f"{name}: premise: the planted request answered"
+            assert probe.worst_step >= _BOUND, f"{name}: the step missed it; {probe.says()}"
+            assert probe.worst_gap >= _BOUND, f"{name}: premise: the tick saw it; {probe.says()}"
+
+
+class _StoppedWhileIdle:
+    """Stops this process from outside (``SIGSTOP``, then ``SIGCONT`` after :data:`_STOPPED`)
+    once, while the event loop waits in its selector: a process the machine gives no CPU while
+    it has nothing to do. The loop's next selector wait hands a helper process the word, and
+    stays there until the helper has stopped and continued it, so the stop lands in that wait
+    and in no step."""
+
+    _HELPER = textwrap.dedent("""
+        import os, signal, sys, time
+        pid, stopped = int(sys.argv[1]), float(sys.argv[2])
+        if sys.stdin.buffer.read(1) == b"s":
+            os.kill(pid, signal.SIGSTOP)
+            time.sleep(stopped)
+            os.kill(pid, signal.SIGCONT)
+        sys.stdout.buffer.write(b"c")
+        sys.stdout.buffer.flush()
+        """)
+
+    def __init__(self) -> None:
+        self.stopped = False
+        self._helper = subprocess.Popen(
+            [sys.executable, "-c", self._HELPER, str(os.getpid()), str(_STOPPED)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+        )
+
+    def selector(self, real):
+        def select(timeout=None):
+            if not self.stopped:
+                self.stopped = True
+                self._helper.stdin.write(b"s")
+                self._helper.stdin.flush()
+                assert self._helper.stdout.read(1) == b"c", "the helper never continued us"
+            return real(timeout)
+
+        return select
+
+    def close(self) -> None:
+        if self._helper.poll() is None:
+            self._helper.stdin.close()
+        self._helper.wait(10)
+
+
+@pytest.mark.asyncio
+async def test_a_process_stopped_while_the_loop_is_idle_does_not_fail_the_probe(tmp_path):
+    """🔴 Red before (the tick's gap was the measure): stopped for 0.25 s while it had nothing to
+    do, the process went 0.25 s without a turn, and the probe called that a blocked loop. No step
+    ran meanwhile, so the step measure passes it, as it does a runner that gives the process no
+    core while it waits."""
+    async with TestClient(TestServer(_planted_app(_block_by_sleeping, tmp_path))) as client:
+        probe = _Probe(client)
+        stop = _StoppedWhileIdle()
+        selector = asyncio.get_running_loop()._selector  # type: ignore[attr-defined]
+        try:
+
+            async def idle():
+                await asyncio.sleep(0.05)
+                with patch.object(selector, "select", stop.selector(selector.select)):
+                    await asyncio.sleep(_STOPPED + 0.1)
+
+            await probe.during(idle())
+        finally:
+            stop.close()
+
+    assert stop.stopped, "premise: the process was stopped"
+    assert probe.worst_gap >= _STOPPED, f"premise: the tick counted the stop; {probe.says()}"
+    assert probe.worst_step < _BOUND, f"the stop was counted as a step; {probe.says()}"
+
+
+# ── what the upload's requests read and write on disk, they do off the loop ─────────────────
+
+
+def _recorder(ran: list[int], real):
+    """*real*, recording the thread of each call into *ran*."""
+
+    def call(*args, **kwargs):
+        ran.append(threading.get_ident())
+        return real(*args, **kwargs)
+
+    return call
+
+
+@pytest.mark.asyncio
+async def test_the_health_check_reads_the_disk_in_a_worker_thread(gateway, monkeypatch):
+    """🔴 Red before: the health check resolved the home and the folder the code is served from
+    on the event loop. Each walks the file system and waits on the disk (0.13 s caught on a busy
+    machine, in the very check this file asks while an upload lands). Both are read in a worker
+    thread."""
+    from personalclaw.config import loader as config_loader
+    from personalclaw.dashboard import handlers_system
+
+    loop_thread = threading.get_ident()
+    ran: dict[str, list[int]] = {"resolve_config_dir": [], "_serving_root": []}
+    async with TestClient(TestServer(gateway.app)) as client:
+        monkeypatch.setattr(
+            config_loader,
+            "resolve_config_dir",
+            _recorder(ran["resolve_config_dir"], config_loader.resolve_config_dir),
+        )
+        monkeypatch.setattr(
+            handlers_system,
+            "_serving_root",
+            _recorder(ran["_serving_root"], handlers_system._serving_root),
+        )
+        r = await client.get("/api/healthz")
+        body = await r.json()
+
+    assert r.status == 200 and body["status"] == "ok", body
+    assert body["root_ok"] is True and body["home_id"], f"premise: it still answers whose; {body}"
+    assert all(ran.values()), f"premise: each ran; {ran}"
+    on_loop = [name for name, threads in ran.items() if loop_thread in threads]
+    assert not on_loop, f"the health check read the disk on the event loop's thread: {on_loop}"
+
+
+@pytest.mark.asyncio
+async def test_a_parts_record_is_saved_in_a_worker_thread(gateway, monkeypatch):
+    """🔴 Red before: each part's PUT saved the upload's record (``meta.json``) on the event loop:
+    a temporary file written, its mode set and renamed over the record, each waiting on the disk
+    (0.31 s caught on a busy machine). It is saved in a worker thread."""
+    from personalclaw.uploads import store as upload_store
+
+    loop_thread = threading.get_ident()
+    saved: list[int] = []
+    payload = _bytes(10 * _MB)  # two parts
+    async with TestClient(TestServer(gateway.app)) as client:
+        info = await _init(
+            client, len(payload), target="knowledge", filename="clip.mp4", mime="video/mp4"
+        )
+        monkeypatch.setattr(
+            upload_store, "atomic_json_write", _recorder(saved, upload_store.atomic_json_write)
+        )
+        await _send_parts(client, info, payload)
+        r = await client.get(f"/api/uploads/{info['uploadId']}")
+        status = await r.json()
+
+    assert status["received"] == [0, 1], f"premise: both parts were recorded; {status}"
+    assert len(saved) == 2, f"premise: one save of the record per part; {saved}"
+    assert loop_thread not in saved, "a part's record was saved on the event loop's thread"
+
+
+class _Body:
+    """A part's body, handed out a chunk at a time, as aiohttp's reader hands it."""
+
+    def __init__(self, data: bytes) -> None:
+        self._data = memoryview(data)
+
+    async def read_chunk(self, n: int) -> bytes:
+        chunk, self._data = bytes(self._data[:n]), self._data[n:]
+        return chunk
+
+
+@pytest.mark.asyncio
+async def test_a_drop_while_a_parts_record_is_saved_does_not_bring_the_upload_back(
+    tmp_path, monkeypatch
+):
+    """Saved in a worker thread, the record could be written after a drop had taken the upload's
+    folder away, and writing it makes the folder again: the dropped upload came back. The save
+    and the drop's rename take one lock, so a drop asked meanwhile waits for the save, then drops
+    the upload whole."""
+    from personalclaw.uploads import store as upload_store
+
+    store = UploadStore(tmp_path)
+    sess = store.init(filename="clip.mp4", size=20 * _MB, mime="video/mp4", target="knowledge")
+    real = upload_store.atomic_json_write
+    entered, go = threading.Event(), threading.Event()
+
+    def held(path, data):
+        entered.set()
+        assert go.wait(5), "the test never let the save go on"
+        return real(path, data)
+
+    monkeypatch.setattr(upload_store, "atomic_json_write", held)
+    writing = asyncio.ensure_future(store.write_part(sess.id, 0, _Body(_bytes(sess.part_size))))
+    assert await asyncio.to_thread(entered.wait, 5), "the record's save never began"
+    dropping = asyncio.ensure_future(store.drop(sess.id))
+    await asyncio.sleep(0.2)  # the drop is asked while the record is being saved
+    go.set()
+    written, dropped = await asyncio.gather(writing, dropping, return_exceptions=True)
+
+    assert not isinstance(written, BaseException), f"the part was not written: {written!r}"
+    assert dropped is True, f"the drop did not drop the upload: {dropped!r}"
+    assert not (tmp_path / sess.id).exists(), "the dropped upload was made again"
+
+
+@pytest.mark.asyncio
+async def test_the_librarys_files_folder_is_made_in_a_worker_thread(gateway, monkeypatch):
+    """🔴 Red before: an upload asked for the library's files folder on the event loop, which
+    resolves the home and makes the folder when it is missing, each waiting on the disk. It is
+    asked in a worker thread."""
+    import personalclaw.knowledge as knowledge
+
+    loop_thread = threading.get_ident()
+    ran: list[int] = []
+    monkeypatch.setattr(
+        knowledge, "knowledge_files_dir", _recorder(ran, knowledge.knowledge_files_dir)
+    )
+    payload = _bytes(_MB)
+    boundary = "pcuploadboundary"
+    async with TestClient(TestServer(gateway.app)) as client:
+        r = await client.post(
+            "/api/knowledge/ingest",
+            data=_multipart("walkthrough.mov", "video/quicktime", payload, boundary),
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        body = await r.json()
+
+    assert r.status == 200, body
+    assert gateway.queued == [body["item_id"]], "premise: the upload became an item"
+    assert ran, "premise: the upload asked for the files folder"
+    assert loop_thread not in ran, "the files folder was made on the event loop's thread"
 
 
 # ── while its complete runs, nothing else touches the upload ────────────────────────────────

@@ -90,7 +90,12 @@ event loop, where on a 512 MB upload it stopped every other request for up to 0.
   runner's reads and writes. Most Knowledge routes and ingest stages still call the store on the
   loop; moving them off is the follow-up;
 - the module that makes the item is imported with the upload handlers, so no complete pays for
-  its first import on the loop (0.13-0.44 s on a busy machine).
+  its first import on the loop (0.13-0.44 s on a busy machine);
+- the smaller reads and writes of the disk these requests make run in worker threads too, since
+  each waits on a busy disk however little it reads: a part's record (`meta.json`, 0.31 s caught
+  on a busy machine), saved under one lock with a drop's taking away of the upload's folder so a
+  dropped upload never comes back; the library's files folder, resolved and made when missing;
+  and the health check's reading of the home and of the folder the code is served from (0.13 s).
 
 While an upload's complete runs, `UploadStore.completing` holds it: a retried complete, a late part
 and a drop are refused with 409 (`upload_completing` for the drop), and the sweep passes it over.
