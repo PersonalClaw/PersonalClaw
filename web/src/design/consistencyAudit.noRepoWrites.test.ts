@@ -53,6 +53,10 @@ const MAY_WRITE: Record<string, string> = {
  *  `mkdtempSync(join(tmpdir(), …))` and removes it after every test, which is checked below.
  *  The same bar as above: a row is a decision with a reason, not a way to make this green. */
 const MAY_WRITE_SCRATCH: Record<string, string> = {
+  'design/e2eIsolation.test.ts':
+    'Writes two Playwright configs (the real projects, and one with the stateful set planted ' +
+    'into the shared project) for `playwright test --list`, to prove the isolation reporter ' +
+    'fails a run that shares a stateful spec.',
   'app/thirdPartyNotices.test.ts':
     'Lays out a throwaway repository (a package-lock.json, installed packages and a web ' +
     'build) for the third-party notices plugin to read, and to write its notices into.',
