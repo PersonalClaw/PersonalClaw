@@ -66,6 +66,10 @@ class VacuousWalk(AssertionError):
     """A walk found fewer files than its floor."""
 
 
+class NotIndexed(AssertionError):
+    """A path outside every root the index holds was asked of it."""
+
+
 def _parse(path: Path, source: str, rel: str) -> ast.Module:
     """The one place this module parses. A second parse of the same file is refused."""
     if PARSES[path]:
@@ -104,15 +108,33 @@ class SourceIndex:
             self._walks[name] = found
         return self._walks[name]
 
+    def holds(self, path: Path) -> bool:
+        """Whether *path* lies under one of this index's roots."""
+        return any(path.is_relative_to(self.root / root) for root in set(ROOTS.values()))
+
+    def _refuse_unheld(self, path: Path, asked: str) -> None:
+        # A rail whose control plants its own tree must read that tree, not this one. Answering
+        # for a path outside every root would mix the two: the planted file read beside the real
+        # walk, reported against a root it is not under.
+        if not self.holds(path):
+            raise NotIndexed(
+                f"{asked} was asked for {path}, which is under none of the index's roots "
+                f"({', '.join(sorted(set(ROOTS.values())))} of {self.root}): a tree the test "
+                "planted is read by the test, not through the source index"
+            )
+
     def rel(self, path: Path) -> str:
+        self._refuse_unheld(path, "rel")
         return path.relative_to(self.root).as_posix()
 
     def text(self, path: Path) -> str:
+        self._refuse_unheld(path, "text")
         if path not in self._texts:
             self._texts[path] = path.read_text(encoding="utf-8")
         return self._texts[path]
 
     def tree(self, path: Path) -> ast.Module:
+        self._refuse_unheld(path, "tree")
         if path not in self._trees:
             self._trees[path] = _parse(path, self.text(path), self.rel(path))
         return self._trees[path]
@@ -155,8 +177,17 @@ def workflow_files() -> tuple[Path, ...]:
     return INDEX.files("workflows")
 
 
+def holds(path: Path) -> bool:
+    """Whether *path* lies under one of the roots the index holds."""
+    return INDEX.holds(path)
+
+
 def under(files: Iterable[Path], folder: Path, suffixes: tuple[str, ...] = ()) -> list[Path]:
-    """The files of a walk that lie under *folder* (and end in one of *suffixes*, if given)."""
+    """The files of a walk that lie under *folder* (and end in one of *suffixes*, if given).
+
+    A *folder* outside every root the index holds is refused: filtering the real walk by it
+    would answer an empty list, which a rail reads as a clean tree."""
+    INDEX._refuse_unheld(folder, "under")
     return [
         p for p in files if p.is_relative_to(folder) and (not suffixes or p.name.endswith(suffixes))
     ]

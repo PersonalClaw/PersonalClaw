@@ -21,8 +21,9 @@ from __future__ import annotations
 import pytest
 
 from personalclaw.workflows import service, store
-from personalclaw.workflows.controller import EngineServices, RunController, _item_label
+from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.models import NodeInstance, RunStatus, WorkflowRun
+from personalclaw.workflows.models import foreach_item_label as _item_label
 
 pytestmark = pytest.mark.anyio
 

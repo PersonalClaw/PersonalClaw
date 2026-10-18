@@ -85,10 +85,29 @@ def skip_reason(host: str) -> str | None:
     return None
 
 
+def _files_under(root: Path, index_walk) -> list[Path]:
+    """The files of *root*: the suite's index walk when *root* is a root the index holds, else
+    the tree a test planted there (``test_licence_governance`` points ``_CORE`` and ``_WEB`` at
+    one). Reading the real walk for a planted root would judge a tree that test did not build."""
+    if source_index.holds(root):
+        return source_index.under(index_walk(), root)
+    return sorted(p for p in root.rglob("*") if p.is_file())
+
+
+def _text(path: Path) -> str:
+    return source_index.text(path) if source_index.holds(path) else path.read_text("utf-8")
+
+
+def _tree(path: Path) -> ast.Module:
+    return source_index.tree(path) if source_index.holds(path) else ast.parse(_text(path))
+
+
 def _shipped_files() -> list[Path]:
-    out: list[Path] = list(source_index.package_files())
+    out = [p for p in _files_under(_CORE, source_index.package_files) if p.suffix == ".py"]
     for pattern in ("*.ts", "*.tsx"):
-        for p in (w for w in source_index.web_files() if fnmatch(w.name, pattern)):
+        for p in (
+            w for w in _files_under(_WEB, source_index.web_files) if fnmatch(w.name, pattern)
+        ):
             # A test fixture's URL is not something the product contacts.
             if p.name.endswith((".test.ts", ".test.tsx")) or "__tests__" in p.parts:
                 continue
@@ -253,7 +272,7 @@ def _network_module_hosts() -> dict[str, list[str]]:
     for f in _shipped_files():
         if f.suffix != ".py":
             continue
-        for host in live_hosts_in_network_module(source_index.tree(f)):
+        for host in live_hosts_in_network_module(_tree(f)):
             out.setdefault(host, []).append(str(f.relative_to(_CORE)))
     return out
 
@@ -262,7 +281,7 @@ def _found() -> dict[str, str]:
     """host -> first file it appears in (a shipped fetch record counts as a file)."""
     out: dict[str, str] = {}
     for f in _shipped_files():
-        for host in hosts_in(source_index.text(f)):
+        for host in hosts_in(_text(f)):
             out.setdefault(host, str(f.relative_to(_ROOT)))
     for host, where in _record_fetches().items():
         out.setdefault(host, where)
