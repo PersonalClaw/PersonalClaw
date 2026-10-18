@@ -746,6 +746,9 @@ def test_remediation_binds_the_doctor_scope_its_own_cap_reads(monkeypatch):
         seen.append((current_run_key(), current_run_budget()))
         return "judged"
 
+    # A registry of this test's own: a judgment-lane job left registered is seen by every later
+    # test in the worker, and the doctor's cost exemption rests on there being none.
+    monkeypatch.setattr(rem, "_JOBS", dict(rem._JOBS))
     rem.register_job(
         RemediationJob(id="fix.scope", title="J", run=judge, fixes_deficit="s", lane="judgment")
     )
