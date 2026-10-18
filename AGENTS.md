@@ -285,6 +285,10 @@ re-invents a shape another touches:
   because those fields are host-wide gates with one meaning and ~300 call sites; the
   table's membership rule is "a security control whose restrictive value is
   expressible", which is why an unlimited-by-default ceiling is deliberately not in it.
+- **When a variation earns its own test** — prove a behaviour once; a variation gets
+  its own test only for a new code path, a security boundary, a real bug, a distinct
+  door or platform behaviour, and is otherwise a row of one `subtests` table test
+  ([docs/maintainers/testing.md](docs/maintainers/testing.md)).
 - **SDK export boundary** — apps import core only via `personalclaw.sdk.*`
   (`test_apps_import_boundary.py`); a new app-facing primitive is added to the
   relevant `sdk/<area>.py` re-export, never reached into directly. An SDK export

@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 
-from . import shards
+from . import shards, variation_census
 
-COMMANDS = {"shards": shards.main}
+COMMANDS: dict[str, Callable[[list[str] | None], int]] = {
+    "shards": shards.main,
+    "variation-census": variation_census.main,
+}
 
 
 def main(argv: list[str]) -> int:

@@ -129,6 +129,9 @@ roots on its own. A test that must walk one itself goes in `NOT_THROUGH_THE_INDE
 
 ## Conventions
 
+- A variation earns its own test only by the rule in
+  [docs/maintainers/testing.md](../docs/maintainers/testing.md); otherwise it is a row of one
+  `subtests` table test
 - Test files: `tests/test_<module>.py`
 - pytest-asyncio is configured in strict mode — every async test needs
   `@pytest.mark.asyncio`

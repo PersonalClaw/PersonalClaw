@@ -383,6 +383,8 @@ Two runtime facts that save debugging time:
 
 - Every behavior change comes with tests. The suite is large; run the shards
   relevant to your change locally, and the full suite before a PR.
+- Prove a behaviour once. When a variation earns its own test, and when it is a row in a
+  table test instead: [docs/maintainers/testing.md](docs/maintainers/testing.md).
 - Destructive tests must be isolated: monkeypatch `config_dir`/`tmp_path` so a
   test can never touch a real `~/.personalclaw` (this has bitten before).
 - A fake key looks like no key. A test that only passes an API key or a token through uses a
