@@ -9,14 +9,20 @@ import { usePersonality } from '../app/personality'
 type Variant = 'primary' | 'tonal' | 'secondary' | 'ghost' | 'danger' | 'ghost-accent'
 type Size = 'xs' | 'sm' | 'md' | 'lg'
 
+// The two SOLID tiers draw their focus ring in the ink, not the accent. The app-wide `:focus-visible`
+// ring in `design/tokens.css` is `--color-primary`, which on `primary` is the fill's own colour
+// (1.00:1) and on `danger` all but the same red, so the ring read as part of the button. The ring
+// sits 2px outside the button, so the page shows between it and the fill and the page is what it
+// must clear 3:1 against: `--color-on-surface` does, in every scheme and theme, and it is neither
+// coral nor a status colour. Rail: `design/solidButtonFocusRing.test.ts`.
 const variants: Record<Variant, string> = {
-  primary: 'bg-primary text-on-primary hover:bg-primary-emphasis',
+  primary: 'bg-primary text-on-primary hover:bg-primary-emphasis focus-visible:outline-on-surface',
   // tonal: the primary-tinted chip CTA (Material's tonal button) — the pattern
   // pages kept hand-rolling as `bg-primary/15 text-primary hover:bg-primary/25`.
   tonal: 'bg-primary/15 text-on-primary-tint hover:bg-primary/25',
   secondary: 'bg-surface-high text-on-surface hover:bg-surface-highest',
   ghost: 'bg-transparent text-on-surface hover:bg-surface-high',
-  danger: 'bg-danger text-on-danger hover:opacity-90',
+  danger: 'bg-danger text-on-danger hover:opacity-90 focus-visible:outline-on-surface',
   // ghost-accent: a ghost button whose LABEL carries the accent — the "Try again" retry after a
   // failed load, four sites of it. They each wrote `variant="ghost" className="text-primary"`, which
   // is wrong twice over:

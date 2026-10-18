@@ -11,6 +11,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Fixed
 
 - **A shell command that runs a read command or an interpreter many times, such as a long pipeline or a generated script, is checked for credential files in a fraction of a second, where 40 KB took about 13 seconds.**
+- **A focused primary or danger button shows its keyboard focus ring in the page's ink colour, where the coral ring matched the button's own colour and could barely be seen.**
 - **When the notifications can't be read, the bell says so, with a muted mark and Retry in its shade, where it showed no badge, as if nothing were unread, and its shade said "Loading…" for good.**
 
 ### Changed
