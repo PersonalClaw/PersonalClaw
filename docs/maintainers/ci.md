@@ -171,8 +171,19 @@ run does but imports only the files the list names (`tests/shard_list.py`). A br
 records its list's digest as one of its inputs, so a result is carried only onto the files it
 measured. Modules stay whole, so a module-scoped fixture is set up in one shard.
 
-The per-file seconds come from the junit reports of the newest green `main` run of the leg's
-workflow, the leg's own reports only and the first attempt's of each, and nothing is kept.
+The per-file seconds are each file's median over the junit reports of the three newest
+completed `main` runs of the leg's workflow, red ones included and cancelled ones skipped, the
+leg's own reports only and the first attempt's of each, and nothing is kept. One run is not
+enough: a file's seconds swing with the runner it lands on (one file took 71-146 s over seven
+main runs), and replayed over those runs the median of three planned within 1.06x where one
+run planned up to 1.30x. Red runs count because their reports still time every file they
+ran; reading green runs only froze the source for as long as `main` was red.
+
+What no plan can balance is the runner itself. Over the same seven runs, all of one shard's
+files together ran 0.66-1.52x their median on Linux and 0.70-1.95x on macOS, the whole
+shard at once, as a slower host does. So each shard's log ends with "shard collection and
+memory": each worker's collection seconds, its peak RSS at collection's end and over the run,
+and the machine's CPUs, which shows a slow host for what it is.
 That source is interim, until #3948: its shared telemetry record, written by one history
 writer, is where the planner is to read each leg's per-file test time for its own platform
 and worker count, and it does not exist yet. It replaces one class, `LatestGreenMainJunit`,
