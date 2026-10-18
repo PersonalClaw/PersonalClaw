@@ -250,23 +250,3 @@ def test_the_helper_and_the_call_site_agree():
         assert _approves("ls*", row.line) == (
             _decision(["ls*"], row.line) == TOOL_AUTO_APPROVE
         ), row
-
-
-def test_the_pattern_and_the_deny_lists_exception_read_one_line_the_same_way():
-    """One reading, two halves of the decision: `git stash push` is the deny list's exception to
-    `*git*push*`, and `git stash push*` an operator's pattern. For every row without a redirect,
-    the exception applies exactly when the pattern approves, so neither can learn a second notion
-    of what one command is. (The pattern's verdict is read on its own here: the call site asks
-    the deny list first, which would make the two agree by construction.)"""
-    from personalclaw.security import is_denied
-
-    rows = [row for row in TABLE if not row.redirects]
-    assert any(row.plain for row in rows) and any(not row.plain for row in rows), "vacuity"
-    disagree = []
-    for row in rows:
-        line = f"git stash push {row.spelling} notes"
-        exception_applies = is_denied(line) is None
-        approved = _approves("git stash push*", line)
-        if exception_applies != approved:
-            disagree.append((line, exception_applies, approved))
-    assert not disagree, disagree[:10]

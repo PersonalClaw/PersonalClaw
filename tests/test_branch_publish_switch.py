@@ -199,10 +199,14 @@ def test_a_push_is_refused_when_its_exception_cannot_be_logged():
         assert security.is_denied(f"{PUSH} origin feature-x") is not None
 
 
-def test_the_stash_exception_is_unchanged():
-    assert security.is_denied("git stash push -m wip") is None
+def test_a_stash_push_is_judged_the_same_whatever_the_switch():
+    """A shell call that runs a stash push is not refused, switch off or on, and no deny exception
+    is recorded for it: it is not a push, so nothing excepts it."""
+    before = len(_sel_rows("deny_exception"))
+    assert security.is_denied("Running: git stash push -m wip") is None
     _set_switch(True)
-    assert security.is_denied("git stash push -m wip") is None
+    assert security.is_denied("Running: git stash push -m wip") is None
+    assert len(_sel_rows("deny_exception")) == before
 
 
 # ── the baseline's integrity ─────────────────────────────────────────────────────────────────

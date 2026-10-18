@@ -15,6 +15,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **The built-in push rule judges a `git stash push` as the command it is, where a text exception could let a command through that was not a stash push.**
 - **An agent can no longer change a security setting by running `personalclaw config` in its shell; your own terminal still can.**
 - **A folder holding a `personalclaw` package no longer runs its own code in place of PersonalClaw's when an agent runs a command there, or when PersonalClaw starts an app, the computer-use driver, an evaluation, an upload scan or a restart: that code ran before the sandbox did.**
 - **A browse run whose page redirects itself to a site your egress settings deny can no longer read or act on that page when the browser refuses to tear it down, and a refusal that lasts only a moment after the redirect no longer ends the run.**
@@ -23,6 +24,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **An answered approval, a Stop or an edit takes effect immediately.**
 - **The gateway image runs its bundled agent CLIs on Node 24, where it shipped Debian's Node 20, which no longer gets security fixes.**
+- **An agent's shell command is no longer refused as a push when it only reads text that says "push", such as a search of your workflow files, or when the word is in a commit, tag, merge, note or stash message given with `-m` or `--message`. A message given in a here-document, and any other git argument or word containing "push", are still refused, and so is a real push unless you allow pushes in Settings → Security.**
 - **A message you send while a turn runs is no longer stopped after 10 minutes when its turn comes: it runs until it is done, as one sent to an idle chat does, and a turn nobody is watching, such as a subagent's report or a loop's cycle, is stopped only once it has made no progress for its whole limit, saying how far it got.**
 - **Best-of-n on Claude Haiku 5.5 gets an answer from every candidate, where each one asked for a temperature other than 1 failed: the model refuses a custom temperature, top_p or top_k, so none is sent and best-of-n says so.**
 - **The context ring measures Claude Haiku 5.5 against its 1M-token window, where it said no window was declared for the model.**

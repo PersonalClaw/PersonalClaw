@@ -584,10 +584,22 @@ class HookManager:
                     f"{refusal(named)} {hint(named.kind)}", control="owner_only", rule=named.word
                 )
 
-        # Built-in security deny list (always enforced)
-        reason = is_denied(normalized, self._config.auto_deny_tools) or is_denied(
-            tool_name, self._config.auto_deny_tools
-        )
+        # Built-in security deny list (always enforced). A shell call's command is judged as the
+        # command it is, so the push rule refuses a push and not a command that only names one.
+        # A title that is the very command the call runs (bare, in backticks, or after
+        # `Running: `) is not judged again as a name: the command's own check decides it. A title
+        # that differs from its command is still judged as a name.
+        if command and _title_is_command(tool_name, command):
+            # Both forms, as a `Running: ` title is judged: an owner's pattern may name either.
+            deny = self._config.auto_deny_tools
+            reason = is_denied(command, deny, shell=True) or is_denied(
+                f"{_COMMAND_TITLE}{command}", deny, shell=True
+            )
+        else:
+            shell = tool_name.startswith("Running: ")
+            reason = is_denied(normalized, self._config.auto_deny_tools, shell=shell) or is_denied(
+                tool_name, self._config.auto_deny_tools, shell=shell
+            )
         if reason:
             return ToolHookResult.deny(reason)
 
@@ -634,6 +646,18 @@ _MORE_THAN_IT_NAMES = "more than it names"
 _NOT_NAMED = "not named"
 #: The display title an agent CLI's shell call carries: the rest of it is the command.
 _COMMAND_TITLE = "Running: "
+
+
+def _title_is_command(title: str, command: str) -> bool:
+    """Whether a call's *title* is the *command* it runs and nothing else: the command bare, in
+    backticks, or after ``Running: ``, with runs of whitespace read as one space."""
+    runs = " ".join(command.split())
+    shown = " ".join(title.split())
+    if shown.startswith(_COMMAND_TITLE):
+        shown = shown[len(_COMMAND_TITLE) :].strip()
+    if len(shown) >= 2 and shown.startswith("`") and shown.endswith("`"):
+        shown = shown[1:-1].strip()
+    return bool(runs) and shown == runs
 
 
 def _bare_pattern(pattern: str) -> str:
