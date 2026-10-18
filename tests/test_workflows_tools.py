@@ -661,10 +661,13 @@ class TestObserve:
 
         class _Clock:
             """`time` as the service sees it, its monotonic clock stepping 5 s per read, so the
-            clamped window passes in a few polls rather than in real seconds."""
+            clamped window passes in a few polls rather than in real seconds. It starts on a
+            whole second, so every read is exact: from a start such as 58.97, adding 5 s six
+            times lands a rounding error short of 30 s, and the bounds below would fail on the
+            arithmetic rather than on the clamp."""
 
             def __init__(self) -> None:
-                self.now = real_time.monotonic()
+                self.now = float(int(real_time.monotonic()))
                 self.reads: list[float] = []
 
             def monotonic(self) -> float:
