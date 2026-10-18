@@ -3,7 +3,8 @@ import { Clock, Tag, Cpu, Zap, Users, ArrowUpCircle, ShieldAlert, Activity, Memo
 import type { LucideIcon } from 'lucide-react'
 import { api } from '../../../lib/api'
 import { confirm } from '../../../ui/dialog'
-import { useDashboardLive } from '../DashboardLive'
+import { InlineError } from '../../../ui/InlineError'
+import { useSystemLive } from '../../settings/SystemLive'
 import { RowAction } from './kit'
 import { NO_READING, fixedReading, isReading, percentReading } from '../../../lib/readings'
 import type { RouteProps } from '../../../app/useQueryState'
@@ -11,9 +12,9 @@ import type { RouteProps } from '../../../app/useQueryState'
 /** One rail metric — icon + value + word-label, always all three.
  *
  *  🪤 THE LABEL USED TO BE SHED AT `@min-[1520px]`, AND THAT IS A CONTAINER WIDTH, NOT A
- *  VIEWPORT ONE. The rail island tracks `--content-width`, so it runs ~230px narrower than the
- *  window: measured 1052px at a 1280 viewport, 1212px at 1440, 1500px at 1728. All three are
- *  under 1520, so every 14"/16" laptop — the product's stated context — read nine bare numbers
+ *  VIEWPORT ONE. The strip's box (a rail island on Home then, the Health section of
+ *  Settings › System now) runs well narrower than the window: on Home it measured 1052px at a
+ *  1280 viewport, 1212px at 1440 and 1500px at 1728, all under 1520, so every 14"/16" laptop — the product's stated context — read nine bare numbers
  *  ("13.44", "4", "0") with no word saying what they counted. Labels appeared only from 1920 up.
  *  The `title` tooltip that was supposed to make that lossless sat on a plain non-interactive
  *  `<div>`: no accessible name, no keyboard path, nothing on touch. It is gone with the shedding
@@ -35,7 +36,7 @@ function Metric({ icon: Icon, value, label, tone }: { icon: LucideIcon; value: s
 
 /** A tiny inline sparkline over a rolling sample buffer — a minimal SVG polyline,
  *  theme-token stroked, no deps. Flat until ≥2 samples. */
-function Spark({ samples, tone = 'var(--color-primary)', width = 56, height = 16 }: {
+function Spark({ samples, tone = 'var(--color-on-surface-low)', width = 56, height = 16 }: {
   samples: number[]; tone?: string; width?: number; height?: number
 }) {
   if (samples.length < 2) return null
@@ -72,7 +73,7 @@ function fmtRate(kbs: number | undefined): string {
  *  live rates come from /api/system (already computed server-side, surfaced
  *  here) with a rolling CPU sparkline; an inline Update action + a YOLO indicator. */
 export function SystemHealth({ navigate }: RouteProps) {
-  const { status, system, doctor, doctorErr, doctorOff } = useDashboardLive()
+  const { status, statusErr, system, systemErr, retry, doctor, doctorErr, doctorOff } = useSystemLive()
   // Client-side rolling buffer of CPU% samples for the sparkline (the backend
   // computes the instantaneous rate; history is cheap to keep here).
   const cpuHist = useRef<number[]>([])
@@ -85,6 +86,8 @@ export function SystemHealth({ navigate }: RouteProps) {
   }, [system])
 
   if (!status) {
+    // A failed read is said, with Retry; only a read still on its way is a skeleton.
+    if (statusErr) return <InlineError icon onRetry={retry}>Couldn&rsquo;t read the gateway&rsquo;s status.</InlineError>
     return <div className="skeleton h-8 w-full rounded-lg" />
   }
 
@@ -103,7 +106,7 @@ export function SystemHealth({ navigate }: RouteProps) {
     })
   }
 
-  const cpuTone = system && isReading(system.cpu_pct) && system.cpu_pct >= 85 ? 'var(--color-warn)' : 'var(--color-primary)'
+  const cpuTone = system && isReading(system.cpu_pct) && system.cpu_pct >= 85 ? 'var(--color-warn)' : 'var(--color-on-surface-low)'
   const memPct = system ? percentReading(system.mem_used_gb, system.mem_total_gb) ?? 0 : 0
   const memTone = memPct >= 90 ? 'var(--color-warn)' : 'var(--color-info)'
 
@@ -113,14 +116,17 @@ export function SystemHealth({ navigate }: RouteProps) {
     // Gaps tighten as the container narrows and the decorative sparkline sheds
     // (see the Spark wrapper), but the word-labels never do: the strip wraps to a
     // second line rather than leave a number unnamed (see Metric's trap note).
-    // The container is the rail island, tracking --content-width. The
-    // island owns symmetric vertical padding now, so the strip just centers.
+    // The container is the Health section's box. The
+    // box owns symmetric vertical padding now, so the strip just centers.
     <div className="flex h-full w-full flex-wrap items-center gap-x-l gap-y-s @6xl:gap-x-xl">
       <Metric icon={Clock} value={status.uptime ?? '—'} label="uptime" />
       <Metric icon={Tag} value={`v${status.version ?? '?'}`} label={status.platform ?? ''} />
       {/* Live metrics from /api/system. The gateway leaves out a reading its probe could not
           take on this poll (`lib/readings`): cpu and mem then show the placeholder rather than
           throwing, which blanked Home; net, disk and load show only on a host that reports them. */}
+      {!system && !!systemErr && (
+        <span data-type="body-m" className="text-on-surface-low">Host metrics couldn&rsquo;t be read</span>
+      )}
       {system && (
         <>
           <div className="flex shrink-0 items-center gap-s">

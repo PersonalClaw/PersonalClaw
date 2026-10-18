@@ -7,6 +7,7 @@ import { loopStatusLabel, loopStatusColor, effectiveLoopStatus, shownCycle, ACTI
 import { loopRoute } from '../../../lib/loopKind'
 import { SlotEmptyState, RowAction, StatusDot } from './kit'
 import { ListSkeleton } from '../../../ui/ListScaffold'
+import { InlineError } from '../../../ui/InlineError'
 import { ProgressRing } from '../../../ui/ProgressRing'
 import { spring } from '../../../design/motion'
 import type { RouteProps } from '../../../app/useQueryState'
@@ -22,7 +23,7 @@ function pendingText(l: Loop): string | null {
  *  `needs_input`. Long-running autonomous runs are the emphasis (double-height in
  *  the curated layout). Opening a row jumps to its cockpit. */
 export function ActiveWork({ navigate }: RouteProps) {
-  const { loops, read } = useDashboardLive()
+  const { loops, loopsErr, retryLoops, read } = useDashboardLive()
   const active = loops
     // Anything in flight or awaiting them — the ONE active-status set (lib/loopStatus).
     .filter((l) => ACTIVE_LOOP_STATUSES.has(l.status))
@@ -38,6 +39,9 @@ export function ActiveWork({ navigate }: RouteProps) {
     // also keeps the two arms of one gate adjacent — the shape `ui/loadingNounPairing` sources the
     // noun from, here the empty sentence's own "active work".
     if (!read.loops) return <ListSkeleton rows={2} what="active work" />
+    // 🔴 A FAILED READ IS NOT AN EMPTY LANE. A swallowed rejection leaves `[]`, which the line
+    // below reads as "No active work" over loops it never saw. Same shape as To triage's lanes.
+    if (loopsErr) return <InlineError icon onRetry={retryLoops}>Couldn&rsquo;t load active work.</InlineError>
     return <SlotEmptyState icon={Coffee}>No active work. Loops you launch appear here as they run.</SlotEmptyState>
   }
 

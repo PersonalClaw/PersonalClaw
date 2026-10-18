@@ -54,12 +54,12 @@ beforeEach(() => { vi.resetModules(); sessionStorage.clear() })
 
 describe('the dashboard health strip cannot mistake "could not probe" for "healthy"', () => {
   async function mountStrip() {
-    const { DashboardLiveProvider } = await import('./DashboardLive')
+    const { SystemLiveProvider } = await import('../settings/SystemLive')
     const { SystemHealth } = await import('./widgets/SystemHealth')
     render(
-      <DashboardLiveProvider>
+      <SystemLiveProvider>
         <SystemHealth navigate={vi.fn()} sub="" navEpoch={0} query={{}} setQuery={() => {}} />
-      </DashboardLiveProvider>,
+      </SystemLiveProvider>,
     )
   }
 
@@ -185,8 +185,8 @@ describe('the settings health and safety cards say when they could not check', (
 })
 
 describe('the probe failure reaches the consumers at all', () => {
-  it('DashboardLive publishes it instead of dropping it', () => {
-    const src = readFileSync(join(process.cwd(), 'src/pages/dashboard/DashboardLive.tsx'), 'utf8')
+  it('the machine feed publishes it instead of dropping it', () => {
+    const src = readFileSync(join(process.cwd(), 'src/pages/settings/SystemLive.tsx'), 'utf8')
     const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
     // 🪤 Without this the "Health unknown" row is an INERT control — `doctorErr` would be permanently
     // null and every DOM test above would pass against a branch that can never fire.

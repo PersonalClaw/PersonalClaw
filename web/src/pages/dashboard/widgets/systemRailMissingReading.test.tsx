@@ -49,12 +49,12 @@ function valueOf(label: string): string | null | undefined {
 }
 
 async function mountStrip() {
-  const { DashboardLiveProvider } = await import('../DashboardLive')
+  const { SystemLiveProvider } = await import('../../settings/SystemLive')
   const { SystemHealth } = await import('./SystemHealth')
   render(
-    <DashboardLiveProvider>
+    <SystemLiveProvider>
       <SystemHealth navigate={vi.fn()} sub="" navEpoch={0} query={{}} setQuery={() => {}} />
-    </DashboardLiveProvider>,
+    </SystemLiveProvider>,
   )
   // `cpu` renders once the live /api/system slice has arrived.
   await waitFor(() => expect(valueOf('cpu')).toBeTruthy())

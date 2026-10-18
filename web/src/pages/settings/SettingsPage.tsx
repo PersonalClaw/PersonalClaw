@@ -3,7 +3,7 @@ import {
   Palette, Plug, Bell, Cpu, Shield, ShieldAlert, Database, User, MessageSquare, Bot, Inbox,
   FolderSync, ScrollText, Archive, AudioLines, DownloadCloud, FileText, ChevronRight, Search, Blocks, Activity, Scissors, Compass, Stethoscope, ThumbsUp,
   HardDriveDownload, Coins, Route, LayoutDashboard, Rss, Package, Smartphone, MonitorSmartphone, Plug2, FileType2,
-  FlaskConical, KeyRound, MessageCircle, Workflow, RefreshCcw,
+  FlaskConical, KeyRound, MessageCircle, Workflow, RefreshCcw, Gauge,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
@@ -30,6 +30,7 @@ import { DurabilityPanel } from './DurabilityPanel'
 import { VoicePanel } from './VoicePanel'
 import { UpdatesPanel } from './UpdatesPanel'
 import { DiagnosticsPanel } from './DiagnosticsPanel'
+import { SystemPanel } from './SystemPanel'
 import { FeedbackPanel } from './FeedbackPanel'
 import { UsagePanel } from './UsagePanel'
 import { RoutingPanel } from './RoutingPanel'
@@ -113,6 +114,9 @@ const SUBPAGES: SubPage[] = [
   // question Guardrails asks about what can act.
   { id: 'external-access', label: 'External access', icon: Plug2, render: () => <ExternalAccessPanel /> },
   { id: 'audit', label: 'Audit log', icon: ScrollText, render: () => <AuditPanel /> },
+  // The machine's own state, read live: the health strip and what is holding memory. It used to
+  // sit on Home; beside Doctor and Diagnostics because all three answer "how is this machine".
+  { id: 'system', label: 'System', icon: Gauge, render: (c) => <SystemPanel navigate={c.navigate} /> },
   { id: 'doctor', label: 'Doctor', icon: Stethoscope, render: () => <DoctorPanel /> },
   { id: 'diagnostics', label: 'Diagnostics', icon: Activity, render: () => <DiagnosticsPanel /> },
   { id: 'tool-output', label: 'Tool output', icon: Scissors, render: () => <ProjectionRulesPanel /> },

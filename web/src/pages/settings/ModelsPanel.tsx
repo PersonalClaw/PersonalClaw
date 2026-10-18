@@ -703,10 +703,8 @@ function LoadedModelsSection() {
     setBusy(provider)
     try {
       await api.unloadModelProvider(provider)
-      // `refresh()` refetches THIS surface's key. The dashboard's "on this machine" widget makes the
-      // byte-identical read and can also unload, so each left the other's cached copy describing memory
-      // that is no longer held — visible on its next mount until the revalidation lands. One shared key
-      // means there is only one answer to be wrong.
+      // `refresh()` refetches THIS surface's key; the bust clears the shared `models:loaded` key, so
+      // any other reader of the loaded-model set starts from the memory that is held now.
       invalidateKeys('models:loaded')
       refresh()
     } catch (e) {

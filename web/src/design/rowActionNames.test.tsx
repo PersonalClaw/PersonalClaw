@@ -68,9 +68,6 @@ describe('every row-scoped RowAction names its row', () => {
     // "Health unknown" row and the fourth says the Doctor is switched off — singletons like their
     // siblings (the strip has no rows to name), so `named` stays 0.
     ['pages/dashboard/widgets/SystemHealth.tsx', 0, 4],
-    // One Unload per resident model — five rows of a bare "Unload" is this rail's
-    // exact defect, so the name carries the model.
-    ['pages/dashboard/widgets/OnThisMachine.tsx', 1, 0],
   ]
 
   for (const [rel, named, singletons] of WIDGETS) {

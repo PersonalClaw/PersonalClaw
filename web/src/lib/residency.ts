@@ -1,7 +1,6 @@
-// Shared derivations for the loaded-models / memory-pressure surface.
-// Two surfaces render this data — the Settings → Models section and the dashboard's
-// "On this machine" band — so the decisions (ordering, tone, wording) live HERE once
-// rather than being re-derived in each and drifting apart.
+// Derivations for the loaded-models / memory-pressure surface, Settings › Models'
+// "On this machine" section: ordering, tone and wording, kept apart from the panel so a
+// second reader would share them rather than re-derive them.
 import type { LoadedModel, MemoryPressure } from './api'
 
 /** The fill token for a pressure level, against the SERVER's configured threshold.
@@ -15,7 +14,9 @@ export function pressureTone(p: MemoryPressure): string {
   if (p.source === 'unavailable') return 'var(--color-outline-variant)'
   if (p.warn) return 'var(--color-danger)'
   if (p.used_pct >= p.warn_pct * 0.85) return 'var(--color-warning)'
-  return 'var(--color-primary)'
+  // Normal use is information, not the agent's voice: coral is kept for the agent, the primary
+  // action, focus and selection.
+  return 'var(--color-info)'
 }
 
 /** Human caption under the bar — or an honest "unknown" when nothing could be measured.

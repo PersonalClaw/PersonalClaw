@@ -64,7 +64,7 @@ const route = { sub: '', navigate: () => {}, navEpoch: 0, setQuery: () => {}, qu
 /** Every read held open — nothing has been read, and nothing has failed. */
 const ALL_PENDING = {
   approvals: pending, inboxOpen: pending, skillProposals: pending, uLoops: pending,
-  readyTasks: pending, notifications: pending, triggersHistory: pending,
+  readyTasks: pending, triggersHistory: pending,
 }
 
 async function mount(widget: 'hero' | 'action' | 'tasks' | 'active' | 'schedule') {
@@ -80,39 +80,39 @@ async function mount(widget: 'hero' | 'action' | 'tasks' | 'active' | 'schedule'
 beforeEach(() => { vi.resetModules(); sessionStorage.clear() })
 
 describe('the hero states no count before the first read', () => {
-  it('renders dashes on the first frame, not five zeros', async () => {
+  it('renders dashes on the first frame, not zeros and not nothing', async () => {
     mockApi(ALL_PENDING)
     await mount('hero')
     // Synchronous — no waitFor. This is the frame the old code asserted zeros on.
-    expect(screen.queryByLabelText('0 loops running'), 'the zero was a claim from no data').toBeNull()
-    expect(screen.queryByLabelText('0 unread')).toBeNull()
+    expect(screen.queryByLabelText('0 approvals waiting'), 'the zero was a claim from no data').toBeNull()
     expect(screen.queryByLabelText('0 inbox')).toBeNull()
-    expect(screen.getAllByText('—').length, 'all five lanes are unknown').toBe(5)
+    expect(screen.getAllByText('—').length, 'all three counted lanes are unknown').toBe(3)
   })
 
   it('🪤 says LOADING, not "couldn’t be read" — nothing has failed yet', async () => {
     mockApi(ALL_PENDING)
     await mount('hero')
-    expect(screen.getByLabelText('Loading loops running…')).toBeInTheDocument()
-    expect(screen.getByLabelText('Loading unread…')).toBeInTheDocument()
+    expect(screen.getByLabelText('Loading approvals waiting…')).toBeInTheDocument()
+    expect(screen.getByLabelText('Loading inbox…')).toBeInTheDocument()
     expect(screen.queryByLabelText(/couldn’t be read/), 'no fault has been measured').toBeNull()
   })
 
-  it('a GENUINELY empty lane still reads 0 once read — or this rail says nothing', async () => {
-    // 🪤 Without this the fix could dash every count forever and pass everything above.
+  it('a GENUINELY empty lane is not drawn once read — or this rail says nothing', async () => {
+    // 🪤 Without this the fix could dash every count forever and pass everything above. A lane read
+    // and found empty draws no pill (a zero is not drawn), never a dash.
     mockApi({})
     await mount('hero')
-    await waitFor(() => expect(screen.getByLabelText('0 loops running')).toBeInTheDocument())
-    expect(screen.queryByText('—'), 'nothing is unknown once every read succeeded').toBeNull()
+    await waitFor(() => expect(screen.queryByText('—'), 'nothing is unknown once every read succeeded').toBeNull())
+    expect(screen.queryByRole('button'), 'and nothing reads 0').toBeNull()
   })
 
   it('a FAILED lane still says "couldn’t be read" — the sibling rail keeps working', async () => {
-    mockApi({ uLoops: boom })
+    mockApi({ readyTasks: boom })
     await mount('hero')
-    const pill = await waitFor(() => screen.getByLabelText(/loops running — couldn’t be read/))
+    const pill = await waitFor(() => screen.getByLabelText(/tasks ready — couldn’t be read/))
     expect(pill.textContent).toContain('—')
-    // And the other four resolved, so they are numbers rather than dashes.
-    expect(screen.getByLabelText('0 unread')).toBeInTheDocument()
+    // And the other two resolved empty, so they are not drawn at all.
+    await waitFor(() => expect(screen.getAllByRole('button')).toHaveLength(1))
   })
 })
 
@@ -194,8 +194,7 @@ describe('the signal itself', () => {
     // tests for the pending case while leaving a failed lane on its skeleton forever.
     for (const [call, slice] of [
       ['approvals', 'approvals'], ['inboxOpen', 'inbox'], ['skillProposals', 'proposals'],
-      ['uLoops', 'loops'], ['readyTasks', 'tasks'], ['notifications', 'notifications'],
-      ['triggersHistory', 'schedule'],
+      ['uLoops', 'loops'], ['readyTasks', 'tasks'], ['triggersHistory', 'schedule'],
     ]) {
       expect(code, `${call} must mark '${slice}' read in a finally`)
         .toMatch(new RegExp(`${call}\\([\\s\\S]{0,400}?\\.finally\\(\\(\\) => markRead\\('${slice}'\\)\\)`))
@@ -211,8 +210,8 @@ describe('the signal itself', () => {
 
   it('VACUITY: the context really publishes `read`, and every slice a consumer names is in it', () => {
     expect(code, '`read` is on the context type').toMatch(/read: Readonly<Record<ReadSlice, boolean>>/)
-    expect(code, 'and in the provided value').toMatch(/notificationsErr, read,/)
-    for (const s of ['approvals', 'inbox', 'proposals', 'loops', 'tasks', 'notifications', 'schedule']) {
+    expect(code, 'and in the provided value').toMatch(/tasksErr, read,/)
+    for (const s of ['approvals', 'inbox', 'proposals', 'loops', 'tasks', 'schedule']) {
       expect(code, `'${s}' is a declared ReadSlice`).toMatch(new RegExp(`'${s}'`))
     }
   })

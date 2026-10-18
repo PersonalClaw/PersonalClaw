@@ -27,13 +27,10 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // and #1686, describe their staleness as surviving a reload; by this measurement the survival is one
 // revalidation window, not indefinite.)
 //
-// 🔴 MODELS. Two surfaces made the byte-identical `api.modelsLoaded()` read under two surface-named
-// keys, and BOTH offer Unload. Each only called `refresh()` — its own key — so each left the other's
-// cached copy describing freed memory as still resident, to be painted on its next mount until that
-// mount's refetch landed. `OnThisMachine`'s own doc claims the two surfaces "cannot drift into
-// disagreeing about which model is reclaimable"; shared derivations keep the rendering honest, but
-// nothing kept the cached data honest. Fixed by sharing ONE key rather than making two keys mutually
-// reachable: the reads are identical, so two keys bought nothing but the drift and a duplicate fetch.
+// MODELS. Two surfaces once made the byte-identical `api.modelsLoaded()` read under two
+// surface-named keys, and both offered Unload, so each left the other's cached copy describing freed
+// memory as still resident. Home's copy has since gone (Settings › Models is the one home of what
+// holds memory); the panel keeps the shared key and its bust, so a reader added later starts right.
 //
 // 🪤 A BUST IS ONLY LOAD-BEARING WHILE A READER IS MOUNTED. Neither pair is ever co-mounted (list vs
 // `#/tasks/new`; dashboard vs `#/settings/models`), and the hook has no cross-instance subscribers —
@@ -94,27 +91,18 @@ describe('the task collection is busted as a collection, not as one key', () => 
   })
 })
 
-describe('both readers of the loaded-model set share one key', () => {
-  it('neither key is named after its surface any more', () => {
+describe('the loaded-model set is read under one key', () => {
+  it('the key is not named after its surface', () => {
     const panel = codeOf('pages/settings/ModelsPanel.tsx')
-    const widget = codeOf('pages/dashboard/widgets/OnThisMachine.tsx')
     expect(panel).toMatch(/useQuery\('models:loaded'/)
-    expect(widget).toMatch(/useQuery\('models:loaded'/)
-    expect(panel + widget, 'the surface-named keys are gone')
-      .not.toMatch(/settings:models-loaded|dashboard:on-this-machine/)
+    expect(panel, 'the surface-named keys are gone').not.toMatch(/settings:models-loaded|dashboard:on-this-machine/)
   })
 
-  it('both Unload paths bust it, not just their own hook', () => {
-    for (const rel of ['pages/settings/ModelsPanel.tsx', 'pages/dashboard/widgets/OnThisMachine.tsx']) {
-      const code = codeOf(rel)
-      const at = code.indexOf('await api.unloadModelProvider(')
-      expect(at, `${rel} must still unload`).toBeGreaterThan(-1)
-      // 🪤 Asserted per call site, not tree-wide: `refresh()` alone is the exact bug, and it reads as
-      // a complete handler. The two surfaces are never mounted together, so nothing can notify the
-      // other's hook — the shared key is what makes its next mount correct.
-      expect(code.slice(at, at + 420), `${rel}: refresh() only refetches this surface`)
-        .toMatch(/invalidateKeys\('models:loaded'\)/)
-    }
+  it('Unload busts it, not just its own hook', () => {
+    const code = codeOf('pages/settings/ModelsPanel.tsx')
+    const at = code.indexOf('await api.unloadModelProvider(')
+    expect(at, 'the panel must still unload').toBeGreaterThan(-1)
+    expect(code.slice(at, at + 420), 'refresh() only refetches this surface').toMatch(/invalidateKeys\('models:loaded'\)/)
   })
 })
 

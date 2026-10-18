@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { Loop } from '../../lib/api'
 
 // ── Home says what is RUNNING, in the numbers every other loop surface uses ─────────────────────
@@ -11,6 +11,9 @@ import type { Loop } from '../../lib/api'
 //     COMPLETED count, bypassing the one `shownCycle` every other surface uses (issue 274's shape);
 //   • a run-backed loop (a General loop is a workflow run) opened `#/loops/<id>`, and its
 //     Answer typed into a nudge box — which steers a run and answers no gate.
+//
+// The hero no longer counts loops at all: it badges only what waits on the owner, and a running
+// loop waits on nobody. The first case below holds that; Active Work is where loops are read.
 
 const loops: Loop[] = []
 
@@ -59,18 +62,16 @@ function mount(node: 'hero' | 'active', navigate = vi.fn()) {
 
 beforeEach(() => { loops.length = 0; sessionStorage.clear() })
 
-describe('the hero counts loops that are running', () => {
-  it('a paused loop and a loop waiting on the user are not "running"', async () => {
-    loops.push(loop({ id: 'a' }), loop({ id: 'b', status: 'paused' }), loop({ id: 'c', status: 'needs_input' }))
+describe('the hero badges no loop — a running loop waits on nobody', () => {
+  it('a running loop draws no pill; Active work lists it (the control)', async () => {
+    loops.push(loop({ id: 'a' }), loop({ id: 'b', status: 'paused' }))
     mount('hero')
-    await waitFor(() => expect(screen.getByLabelText('1 loop running')).toBeInTheDocument())
-  })
-
-  it('opens the loops, not the Projects landing that had no way to them', async () => {
-    loops.push(loop({ id: 'a' }))
-    const navigate = mount('hero')
-    fireEvent.click(await screen.findByLabelText('1 loop running'))
-    expect(navigate).toHaveBeenCalledWith('loops/history')
+    // The approvals, tasks and inbox lanes are read and empty, so a quiet hero is nothing at all.
+    await waitFor(() => expect(screen.queryByText('—')).toBeNull())
+    expect(screen.queryByLabelText(/loops? running/), 'loops are shown in Active work, not badged').toBeNull()
+    cleanup()
+    mount('active')
+    expect(await screen.findAllByText('Packing note')).not.toHaveLength(0)
   })
 })
 

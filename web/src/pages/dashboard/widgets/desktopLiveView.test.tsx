@@ -10,7 +10,7 @@ import type { ComputerUseLiveView } from '../../../lib/api'
 //
 //  · a FAILED fetch must not render as a quiet desktop — "the agent is doing nothing" over a
 //    dead endpoint is a confident false statement about the operator's machine (the exact
-//    shape OnThisMachine and the Discover slot each shipped once).
+//    shape the Discover slot and the old Home memory band each shipped once).
 //  · both views are OPTIONAL and OFF until toggled — the widget's default render is the feed
 //    alone, and each stage layer appears only behind its own named switch.
 //  · the fake cursor renders FROM SERVED DATA ONLY: the widget draws `trail` points the

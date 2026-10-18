@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 
 // ── Nine numbers with nothing saying what they count ────────────────────────────────────────────
 //
@@ -78,12 +78,12 @@ function metrics(): HTMLElement[] {
 const RESPONSIVE = /(?:^|\s)(?:@(?:min-\[[^\]]+\]|max-\[[^\]]+\]|[a-z0-9]+)|(?:max-)?(?:sm|md|lg|xl|2xl)):/
 
 async function mountStrip() {
-  const { DashboardLiveProvider } = await import('../DashboardLive')
+  const { SystemLiveProvider } = await import('../../settings/SystemLive')
   const { SystemHealth } = await import('./SystemHealth')
   render(
-    <DashboardLiveProvider>
+    <SystemLiveProvider>
       <SystemHealth navigate={vi.fn()} sub="" navEpoch={0} query={{}} setQuery={() => {}} />
-    </DashboardLiveProvider>,
+    </SystemLiveProvider>,
   )
   // The live slice arrives asynchronously; without it only uptime/version/triggers/subagents exist.
   await waitFor(() => expect(metrics().length).toBe(9))
@@ -140,5 +140,14 @@ describe('every dashboard metric says what it is measuring, at every width', () 
     expect(strip, 'the metric strip must stay a wrapping flex row').not.toBeNull()
     expect(found.every((m) => m.className.split(/\s+/).includes('shrink-0')),
       'and each metric stays unsqueezed so the wrap, not the word, gives way').toBe(true)
+  })
+})
+
+describe('the strip keeps coral for the agent', () => {
+  it('cpu at a normal load is drawn in a neutral tone, not coral', async () => {
+    await mountStrip()
+    const cpu = await screen.findByText('cpu')
+    const icon = cpu.parentElement!.querySelector('svg')!
+    expect(icon.getAttribute('style') ?? '').not.toMatch(/--color-primary/)
   })
 })
